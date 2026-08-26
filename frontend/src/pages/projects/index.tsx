@@ -6,7 +6,7 @@ import { Card } from '@/shared/ui/card'
 import { Button } from '@/shared/ui/button'
 import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
-import { FolderGit2, Plus, ChevronRight, Pencil, Trash2 } from 'lucide-react'
+import { FolderGit2, Plus, ChevronRight, Pencil, Trash2, GitFork } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Project } from '@/api/types'
 
@@ -126,6 +126,11 @@ export function ProjectsPage() {
                 </div>
               </Link>
               <div className="mt-3 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                <Button asChild size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs">
+                  <Link to={`/repositories?project=${encodeURIComponent(p.name)}`}>
+                    <GitFork className="h-3 w-3" /> {t('projects.repositories')}
+                  </Link>
+                </Button>
                 <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs" onClick={() => setEditing(p)}>
                   <Pencil className="h-3 w-3" /> {t('projects.edit')}
                 </Button>

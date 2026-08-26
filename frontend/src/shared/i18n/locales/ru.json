@@ -23,7 +23,8 @@
     "edit": "Изменить",
     "updated": "Проект обновлён",
     "deleted": "Проект удалён",
-    "deleteConfirm": "Удалить проект"
+    "deleteConfirm": "Удалить проект",
+    "repositories": "Репозитории"
   },
   "pipelines": {
     "title": "Пайплайны",
@@ -47,7 +48,9 @@
     "deleted": "Репозиторий удалён",
     "deleteConfirm": "Удалить репозиторий",
     "open": "Открыть",
-    "notFound": "Репозиторий не найден"
+    "notFound": "Репозиторий не найден",
+    "projectFilter": "Проект",
+    "allProjects": "Все проекты"
   },
   "repositoryBrowser": {
     "commits": "Коммиты",

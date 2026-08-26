@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { Link } from 'react-router'
+import { Link, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
-import { useRepositories, useCreateRepository, useDeleteRepository } from '@/api/hooks'
+import { useRepositories, useCreateRepository, useDeleteRepository, useProjects } from '@/api/hooks'
 import { Card } from '@/shared/ui/card'
 import { Button } from '@/shared/ui/button'
 import { Input } from '@/shared/ui/input'
@@ -16,12 +16,35 @@ function buildCloneUrl(name: string): string {
 
 export function RepositoriesPage() {
   const { t } = useTranslation()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const projectFilter = searchParams.get('project') ?? 'all'
+  const { data: projects = [] } = useProjects()
   const { data: repositories = [], isLoading } = useRepositories()
   const createRepository = useCreateRepository()
   const deleteRepository = useDeleteRepository()
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ name: '' })
   const [copied, setCopied] = useState<string | null>(null)
+
+  // A repository belongs to a project when the project repository_url points at it.
+  function repoProjectName(repoName: string): string | null {
+    const match = projects.find(p => p.repository_url.includes(`/${repoName}.git`))
+    return match?.name ?? null
+  }
+
+  const visibleRepositories =
+    projectFilter === 'all'
+      ? repositories
+      : repositories.filter(r => repoProjectName(r.name) === projectFilter)
+
+  function setProjectFilter(value: string) {
+    if (value === 'all') {
+      searchParams.delete('project')
+      setSearchParams(searchParams, { replace: true })
+    } else {
+      setSearchParams({ project: value }, { replace: true })
+    }
+  }
 
   function handleDelete(repo: Repository) {
     if (!window.confirm(`${t('repositories.deleteConfirm')} "${repo.name}"?`)) return
@@ -58,6 +81,23 @@ export function RepositoriesPage() {
         </Button>
       </div>
 
+      <div className="flex items-center gap-2">
+        <label htmlFor="project-filter" className="text-sm text-text-secondary">
+          {t('repositories.projectFilter')}
+        </label>
+        <select
+          id="project-filter"
+          value={projectFilter}
+          onChange={e => setProjectFilter(e.target.value)}
+          className="h-8 rounded-md border border-border bg-surface px-2 text-sm text-text-primary outline-none focus:border-accent"
+        >
+          <option value="all">{t('repositories.allProjects')}</option>
+          {projects.map(p => (
+            <option key={p.id} value={p.name}>{p.name}</option>
+          ))}
+        </select>
+      </div>
+
       {showForm && (
         <Card className="p-4">
           <form onSubmit={handleSubmit} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -75,15 +115,20 @@ export function RepositoriesPage() {
 
       {isLoading ? (
         <p className="text-sm text-text-muted">{t('common.loading')}</p>
-      ) : repositories.length === 0 ? (
+      ) : visibleRepositories.length === 0 ? (
         <Card className="p-8 text-center"><p className="text-text-muted">{t('repositories.empty')}</p></Card>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {repositories.map(r => (
+          {visibleRepositories.map(r => (
             <Card key={r.id} className="group p-4 transition-colors hover:border-accent">
               <div className="flex items-center gap-2">
                 <GitFork className="h-4 w-4 text-accent" />
                 <span className="font-medium">{r.name}</span>
+                {repoProjectName(r.name) && (
+                  <code className="ml-auto rounded bg-surface-raised px-1.5 py-0.5 text-[11px] text-text-secondary">
+                    {repoProjectName(r.name)}
+                  </code>
+                )}
               </div>
               <p className="mt-2 text-xs text-text-muted">
                 {new Date(r.created_at).toLocaleString()}

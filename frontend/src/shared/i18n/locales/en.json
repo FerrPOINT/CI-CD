@@ -23,7 +23,8 @@
     "edit": "Edit",
     "updated": "Project updated",
     "deleted": "Project deleted",
-    "deleteConfirm": "Delete project"
+    "deleteConfirm": "Delete project",
+    "repositories": "Repositories"
   },
   "pipelines": {
     "title": "Pipelines",
@@ -47,7 +48,9 @@
     "deleted": "Repository deleted",
     "deleteConfirm": "Delete repository",
     "open": "Open",
-    "notFound": "Repository not found"
+    "notFound": "Repository not found",
+    "projectFilter": "Project",
+    "allProjects": "All projects"
   },
   "repositoryBrowser": {
     "commits": "Commits",
