@@ -6,53 +6,53 @@ Forge CI/CD хранит bare Git-репозитории, отдаёт Smart HTT
 
 ## Скриншоты
 
-### Login
+### Вход
 
-![Login](docs/screenshots/01-login.png)
+![Вход](docs/screenshots/01-login.png)
 
 ### Дашборд
 
-![Dashboard](docs/screenshots/02-dashboard.png)
+![Дашборд](docs/screenshots/02-dashboard.png)
 
 ### Проекты
 
-![Projects](docs/screenshots/03-projects.png)
+![Проекты](docs/screenshots/03-projects.png)
 
 ### Git-репозитории
 
-![Repositories](docs/screenshots/04-repositories.png)
+![Git-репозитории](docs/screenshots/04-repositories.png)
 
 ### Пайплайны
 
-![Pipelines](docs/screenshots/05-pipelines.png)
+![Пайплайны](docs/screenshots/05-pipelines.png)
 
 ### Детали пайплайна
 
-![Pipeline detail](docs/screenshots/06-pipeline-detail.png)
+![Детали пайплайна](docs/screenshots/06-pipeline-detail.png)
 
 ### Настройки
 
-![Settings](docs/screenshots/07-settings.png)
+![Настройки](docs/screenshots/07-settings.png)
 
 ### Администрирование
 
-![Admin](docs/screenshots/08-admin.png)
+![Администрирование](docs/screenshots/08-admin.png)
 
 ### Репозиторий: коммиты и ветки
 
-![Repository browser](docs/screenshots/09-repository-browser.png)
+![Репозиторий: коммиты и ветки](docs/screenshots/09-repository-browser.png)
 
 ### Сравнение веток
 
-![Compare](docs/screenshots/10-compare.png)
+![Сравнение веток](docs/screenshots/10-compare.png)
 
 ### Pull-запросы
 
-![Pull requests](docs/screenshots/11-pull-requests.png)
+![Pull-запросы](docs/screenshots/11-pull-requests.png)
 
 ### Репозитории (фильтр)
 
-![Repositories filtered](docs/screenshots/12-repositories-filtered.png)
+![Репозитории (фильтр)](docs/screenshots/12-repositories-filtered.png)
 
 ### Runners
 
@@ -60,35 +60,35 @@ Forge CI/CD хранит bare Git-репозитории, отдаёт Smart HTT
 
 ### Секреты проекта
 
-![Secrets](docs/screenshots/14-secrets.png)
+![Секреты проекта](docs/screenshots/14-secrets.png)
 
 ### Артефакты
 
-![Artifacts](docs/screenshots/15-artifacts.png)
+![Артефакты](docs/screenshots/15-artifacts.png)
 
 ### Окружения
 
-![Environments](docs/screenshots/16-environments.png)
+![Окружения](docs/screenshots/16-environments.png)
 
 ### Расписания
 
-![Schedules](docs/screenshots/17-schedules.png)
+![Расписания](docs/screenshots/17-schedules.png)
 
 ### Webhooks и уведомления
 
-![Webhooks](docs/screenshots/18-webhooks.png)
+![Webhooks и уведомления](docs/screenshots/18-webhooks.png)
 
 ### Отчёты
 
-![Reports](docs/screenshots/19-reports.png)
+![Отчёты](docs/screenshots/19-reports.png)
 
 ### Журнал аудита
 
-![Audit log](docs/screenshots/20-audit-log.png)
+![Журнал аудита](docs/screenshots/20-audit-log.png)
 
 ### Пользователи и API-токены
 
-![Users](docs/screenshots/21-users.png)
+![Пользователи и API-токены](docs/screenshots/21-users.png)
 
 ## Порты по умолчанию
 
