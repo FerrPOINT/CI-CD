@@ -44,6 +44,22 @@ pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
             name TEXT NOT NULL UNIQUE,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         );
+        CREATE TABLE IF NOT EXISTS pull_requests (
+            id UUID PRIMARY KEY,
+            repository_name TEXT NOT NULL,
+            number INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            source_branch TEXT NOT NULL,
+            target_branch TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','merged','closed')),
+            created_by TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            merged_at TIMESTAMPTZ,
+            merge_commit_sha TEXT,
+            UNIQUE(repository_name, number)
+        );
         CREATE TABLE IF NOT EXISTS job_logs (
             id BIGSERIAL PRIMARY KEY,
             job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,

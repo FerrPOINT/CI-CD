@@ -1,11 +1,12 @@
 import { useState } from 'react'
+import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { useRepositories, useCreateRepository, useDeleteRepository } from '@/api/hooks'
 import { Card } from '@/shared/ui/card'
 import { Button } from '@/shared/ui/button'
 import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
-import { GitFork, Plus, Trash2, Copy, Check } from 'lucide-react'
+import { GitFork, Plus, Trash2, Copy, Check, FolderOpen } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Repository } from '@/api/types'
 
@@ -96,6 +97,11 @@ export function RepositoriesPage() {
                 </Button>
               </div>
               <div className="mt-3 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                <Button asChild size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs">
+                  <Link to={`/repositories/${encodeURIComponent(r.name)}`}>
+                    <FolderOpen className="h-3 w-3" /> {t('repositories.open')}
+                  </Link>
+                </Button>
                 <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs text-danger hover:text-danger" onClick={() => handleDelete(r)}>
                   <Trash2 className="h-3 w-3" /> {t('common.delete')}
                 </Button>

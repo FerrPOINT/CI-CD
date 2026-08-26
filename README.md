@@ -16,6 +16,9 @@ Forge CI/CD хранит bare Git-репозитории, отдаёт Smart HTT
 | Детали пайплайна | ![Pipeline detail](docs/screenshots/06-pipeline-detail.png) |
 | Настройки | ![Settings](docs/screenshots/07-settings.png) |
 | Администрирование | ![Admin](docs/screenshots/08-admin.png) |
+| Репозиторий: коммиты и ветки | ![Repository browser](docs/screenshots/09-repository-browser.png) |
+| Сравнение веток | ![Compare](docs/screenshots/10-compare.png) |
+| Pull-запросы | ![Pull requests](docs/screenshots/11-pull-requests.png) |
 
 ## Порты по умолчанию
 
@@ -34,6 +37,13 @@ Forge CI/CD хранит bare Git-репозитории, отдаёт Smart HTT
 - Хранилище репозиториев в Docker volume `cicd_git_repos`
 - Опциональная защита Git-трафика через `CICD_GIT_TOKEN` (Basic auth или `x-git-token`)
 - `post-receive` hook создаётся автоматически и запускает пайплайн на push
+
+### Просмотр репозитория и код-ревью
+
+- Repository browser: коммиты и ветки репозитория в Dashboard
+- Compare: diff между ветками — merge-base, изменённые файлы, добавления/удаления, patch
+- Pull requests: создание, список, merge (через `git merge-tree` без worktree), close и reopen
+- Merge создаёт настоящий merge-commit в bare-репозитории и обновляет refs
 
 ```bash
 # Создать репозиторий
@@ -186,6 +196,7 @@ CI-CD/
 - [Доменная модель](docs/DOMAIN_MODEL.md)
 - [API](docs/API.md)
 - [Git-хостинг](docs/GIT_HOSTING.md)
+- [Pull requests и сравнение](docs/PULL_REQUESTS.md)
 - [Git webhooks](docs/WEBHOOKS.md)
 - [Деплой](docs/DEPLOYMENT.md)
 - [Локальный запуск](docs/LOCAL_SETUP.md)
@@ -201,6 +212,7 @@ CI-CD/
 
 - [x] MVP control plane: проекты, пайплайны, стадии, джобы, логи
 - [x] Встроенный Git Smart HTTP + post-receive auto-trigger
+- [x] Repository browser, compare, pull requests с merge
 - [ ] Auth и RBAC
 - [ ] Реальные Docker runners
 - [ ] Webhooks для GitHub/GitLab/Gitea и SSE events

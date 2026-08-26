@@ -1,6 +1,20 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from './client'
-import type { Project, Pipeline, PipelineDetail, Job, JobLog, Repository, Status } from './types'
+import { api, apiRetry } from './client'
+import type {
+  Commit,
+  Comparison,
+  CreatePullRequestInput,
+  Job,
+  JobLog,
+  Pipeline,
+  PipelineDetail,
+  Project,
+  PullRequest,
+  PullRequestAction,
+  Repository,
+  RepositoryRef,
+  Status,
+} from './types'
 
 const KEYS = {
   projects: ['projects'] as const,
@@ -8,6 +22,10 @@ const KEYS = {
   pipeline: (id: string) => ['pipeline', id] as const,
   logs: (jobId: string) => ['logs', jobId] as const,
   repositories: ['repositories'] as const,
+  refs: (repo: string) => ['repository-refs', repo] as const,
+  commits: (repo: string, branch: string) => ['repository-commits', repo, branch] as const,
+  comparison: (repo: string, from: string, to: string) => ['repository-comparison', repo, from, to] as const,
+  pullRequests: (repo: string) => ['pull-requests', repo] as const,
 }
 
 export function useProjects() {
@@ -111,5 +129,75 @@ export function useDeleteRepository() {
   return useMutation({
     mutationFn: (name: string) => api<{ deleted: string }>(`/repositories/${name}`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.repositories }),
+  })
+}
+
+function repositoryPath(repo: string): string {
+  return encodeURIComponent(repo)
+}
+
+export function useRepositoryRefs(repo: string | undefined) {
+  return useQuery({
+    queryKey: KEYS.refs(repo ?? ''),
+    queryFn: () => api<RepositoryRef[]>(`/repos/${repositoryPath(repo ?? '')}/refs`),
+    enabled: Boolean(repo),
+    retry: apiRetry,
+  })
+}
+
+export function useRepositoryCommits(repo: string | undefined, branch = 'main') {
+  return useQuery({
+    queryKey: KEYS.commits(repo ?? '', branch),
+    queryFn: () => {
+      const params = new URLSearchParams({ branch, limit: '50' })
+      return api<Commit[]>(`/repos/${repositoryPath(repo ?? '')}/commits?${params}`)
+    },
+    enabled: Boolean(repo && branch),
+    retry: apiRetry,
+  })
+}
+
+export function useRepositoryComparison(repo: string | undefined, from: string, to: string) {
+  return useQuery({
+    queryKey: KEYS.comparison(repo ?? '', from, to),
+    queryFn: () => {
+      const params = new URLSearchParams({ from, to })
+      return api<Comparison>(`/repos/${repositoryPath(repo ?? '')}/compare?${params}`)
+    },
+    enabled: Boolean(repo && from && to),
+    retry: apiRetry,
+  })
+}
+
+export function usePullRequests(repo: string | undefined) {
+  return useQuery({
+    queryKey: KEYS.pullRequests(repo ?? ''),
+    queryFn: () => api<PullRequest[]>(`/repos/${repositoryPath(repo ?? '')}/pulls`),
+    enabled: Boolean(repo),
+    retry: apiRetry,
+  })
+}
+
+export function useCreatePullRequest(repo: string | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: CreatePullRequestInput) =>
+      api<PullRequest>(`/repos/${repositoryPath(repo ?? '')}/pulls`, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.pullRequests(repo ?? '') }),
+  })
+}
+
+export function usePullRequestAction(repo: string | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ number, action }: { number: number; action: PullRequestAction }) =>
+      api<PullRequest>(`/repos/${repositoryPath(repo ?? '')}/pulls/${number}/action`, {
+        method: 'POST',
+        body: JSON.stringify({ action }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.pullRequests(repo ?? '') }),
   })
 }

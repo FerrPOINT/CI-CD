@@ -19,6 +19,9 @@ use crate::{
         create_repository, delete_repository, git_info_refs, git_service_endpoint,
         internal_git_push, list_repositories,
     },
+    pulls::{
+        compare_refs, create_pull_request, list_commits, list_pull_requests, list_refs, pr_action,
+    },
     store::next_log_sequence,
 };
 
@@ -58,6 +61,12 @@ impl ApiError {
         Self {
             status: StatusCode::UNAUTHORIZED,
             message: "unauthorized".into(),
+        }
+    }
+    pub(crate) fn conflict(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            message: message.into(),
         }
     }
     pub(crate) fn internal(error: sqlx::Error) -> Self {
@@ -117,6 +126,17 @@ pub fn app_with_git(pool: Option<PgPool>, git: crate::git_host::GitConfig) -> Ro
         .route("/git/{repo}/git-upload-pack", post(git_service_endpoint))
         .route("/git/{repo}/git-receive-pack", post(git_service_endpoint))
         .route("/api/v1/internal/git-push", post(internal_git_push))
+        .route("/api/v1/repos/{repo}/refs", get(list_refs))
+        .route("/api/v1/repos/{repo}/commits", get(list_commits))
+        .route("/api/v1/repos/{repo}/compare", get(compare_refs))
+        .route(
+            "/api/v1/repos/{repo}/pulls",
+            get(list_pull_requests).post(create_pull_request),
+        )
+        .route(
+            "/api/v1/repos/{repo}/pulls/{number}/action",
+            post(pr_action),
+        )
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(Arc::new(AppState { pool, git }))

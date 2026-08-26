@@ -57,3 +57,62 @@ export interface Repository {
   name: string
   created_at: string
 }
+
+export interface RepositoryRef {
+  name: string
+  sha: string
+  target: string
+}
+
+export interface Commit {
+  sha: string
+  short_sha: string
+  author: string
+  email: string
+  message: string
+  date: string
+}
+
+export type ChangeStatus = 'added' | 'modified' | 'deleted'
+
+export interface ChangedFile {
+  path: string
+  status: ChangeStatus
+  additions: number
+  deletions: number
+}
+
+export interface Comparison {
+  from: string
+  to: string
+  merge_base: string
+  files: ChangedFile[]
+  patch: string
+}
+
+export type PullRequestStatus = 'open' | 'closed' | 'merged'
+export type PullRequestAction = 'merge' | 'close' | 'reopen'
+
+export interface PullRequest {
+  id: string
+  repository_name: string
+  number: number
+  title: string
+  description: string
+  source_branch: string
+  target_branch: string
+  status: PullRequestStatus
+  created_by: string
+  created_at: string
+  updated_at: string
+  merged_at: string | null
+  merge_commit_sha: string | null
+}
+
+export interface CreatePullRequestInput {
+  repository_name: string
+  title: string
+  description?: string
+  source_branch: string
+  target_branch: string
+}
