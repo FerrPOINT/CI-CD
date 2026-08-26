@@ -1,0 +1,52 @@
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_USER: ${CICD_DATABASE_USER:-cicd}
+      POSTGRES_PASSWORD: ${CICD_DATABASE_PASSWORD:-cicd_local_only}
+      POSTGRES_DB: ${CICD_DATABASE_NAME:-cicd}
+    ports:
+      - "${CICD_DATABASE_PORT:-22543}:5432"
+    volumes:
+      - cicd_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${CICD_DATABASE_USER:-cicd} -d ${CICD_DATABASE_NAME:-cicd}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    environment:
+      CICD_DATABASE_URL: postgresql://${CICD_DATABASE_USER:-cicd}:${CICD_DATABASE_PASSWORD:-cicd_local_only}@postgres:5432/${CICD_DATABASE_NAME:-cicd}
+      CICD_BIND: 0.0.0.0:22801
+      CICD_GIT_ROOT: /var/lib/forge/git
+      CICD_GIT_TOKEN: ${CICD_GIT_TOKEN:-}
+      CICD_GIT_INTERNAL_TOKEN: ${CICD_GIT_INTERNAL_TOKEN:-forge-internal-dev-token}
+      RUST_LOG: info
+    ports:
+      - "${CICD_API_PORT:-22801}:22801"
+    volumes:
+      - cicd_git_repos:/var/lib/forge/git
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:22801/api/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "${CICD_WEB_PORT:-22802}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  cicd_postgres_data:
+  cicd_git_repos:

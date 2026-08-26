@@ -1,0 +1,74 @@
+{
+  "app": {
+    "name": "Forge CI/CD"
+  },
+  "navigation": {
+    "dashboard": "Dashboard",
+    "projects": "Projects",
+    "pipelines": "Pipelines",
+    "repositories": "Repositories",
+    "admin": "Admin",
+    "settings": "Settings",
+    "create": "Create",
+    "toggleMenu": "Toggle menu"
+  },
+  "projects": {
+    "title": "Projects",
+    "create": "Create project",
+    "name": "Name",
+    "repositoryUrl": "Repository URL",
+    "defaultBranch": "Default branch",
+    "empty": "No projects yet. Create one.",
+    "add": "Add",
+    "edit": "Edit",
+    "updated": "Project updated",
+    "deleted": "Project deleted",
+    "deleteConfirm": "Delete project"
+  },
+  "pipelines": {
+    "title": "Pipelines",
+    "run": "Run pipeline",
+    "gitRef": "Git ref",
+    "status": "Status",
+    "created": "Created",
+    "queued": "Queued",
+    "running": "Running",
+    "success": "Success",
+    "failed": "Failed",
+    "canceled": "Canceled",
+    "empty": "No pipelines yet. Run one."
+  },
+  "repositories": {
+    "title": "Repositories",
+    "create": "Create repository",
+    "name": "Name",
+    "cloneUrl": "Clone URL",
+    "empty": "No repositories yet. Create one.",
+    "deleted": "Repository deleted",
+    "deleteConfirm": "Delete repository"
+  },
+  "jobs": {
+    "start": "Start",
+    "pass": "Pass",
+    "fail": "Fail",
+    "cancel": "Cancel",
+    "logs": "Logs",
+    "image": "Image",
+    "command": "Command"
+  },
+  "stages": {
+    "build": "Build",
+    "test": "Tests",
+    "deploy": "Deploy"
+  },
+  "common": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "close": "Close",
+    "loading": "Loading…",
+    "error": "Failed",
+    "retry": "Retry",
+    "search": "Search"
+  }
+}
