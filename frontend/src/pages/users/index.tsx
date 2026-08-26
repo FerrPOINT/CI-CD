@@ -1,0 +1,201 @@
+import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { useUsers, useCreateUser, useUpdateUser, useApiTokens, useCreateApiToken, useDeleteApiToken } from '@/api/hooks'
+import { Card } from '@/shared/ui/card'
+import { Button } from '@/shared/ui/button'
+import { Input } from '@/shared/ui/input'
+import { Label } from '@/shared/ui/label'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
+import { Users as UsersIcon, Plus, KeyRound, Trash2, Copy } from 'lucide-react'
+import { toast } from 'sonner'
+import type { UserRole } from '@/api/types'
+
+const ROLES: UserRole[] = ['admin', 'maintainer', 'developer', 'viewer']
+
+export function UsersPage() {
+  const { t } = useTranslation()
+  const { data: users = [], isLoading } = useUsers()
+  const createUser = useCreateUser()
+  const updateUser = useUpdateUser()
+  const [showForm, setShowForm] = useState(false)
+  const [form, setForm] = useState({ username: '', role: 'viewer' as UserRole })
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    createUser.mutate(form, {
+      onSuccess: () => { setShowForm(false); setForm({ username: '', role: 'viewer' }); toast.success(t('users.created')) },
+      onError: (err) => toast.error(err.message),
+    })
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <UsersIcon className="h-5 w-5 text-accent" />
+          <h1 className="text-2xl font-bold">{t('users.title')}</h1>
+        </div>
+        <Button size="sm" onClick={() => setShowForm(v => !v)}>
+          <Plus className="h-4 w-4" />
+          {t('users.create')}
+        </Button>
+      </div>
+
+      {showForm && (
+        <Card className="p-4">
+          <form onSubmit={handleSubmit} className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="username">{t('users.username')}</Label>
+              <Input id="username" required value={form.username} onChange={e => setForm({ ...form, username: e.target.value })} />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="role">{t('users.role')}</Label>
+              <select id="role" className="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm" value={form.role} onChange={e => setForm({ ...form, role: e.target.value as UserRole })}>
+                {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </div>
+            <div className="flex gap-2 sm:col-span-2">
+              <Button type="submit" disabled={createUser.isPending}>{t('users.create')}</Button>
+              <Button type="button" variant="ghost" onClick={() => setShowForm(false)}>{t('common.cancel')}</Button>
+            </div>
+          </form>
+        </Card>
+      )}
+
+      {isLoading ? (
+        <p className="text-sm text-text-muted">{t('common.loading')}</p>
+      ) : users.length === 0 ? (
+        <Card className="p-8 text-center"><p className="text-text-muted">{t('users.empty')}</p></Card>
+      ) : (
+        <Card>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t('users.username')}</TableHead>
+                <TableHead>{t('users.role')}</TableHead>
+                <TableHead>{t('users.enabled')}</TableHead>
+                <TableHead>{t('users.created')}</TableHead>
+                <TableHead>{t('users.toggle')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {users.map(u => (
+                <TableRow key={u.id}>
+                  <TableCell className="font-medium">{u.username}</TableCell>
+                  <TableCell>
+                    <span className="rounded-md bg-surface-raised px-2 py-0.5 text-xs font-medium">{u.role}</span>
+                  </TableCell>
+                  <TableCell>
+                    <span className={`rounded-full px-2 py-0.5 text-xs ${u.enabled ? 'bg-emerald-500/15 text-emerald-500' : 'bg-surface-raised text-text-muted'}`}>
+                      {u.enabled ? t('users.active') : t('users.disabled')}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-xs text-text-muted">{new Date(u.created_at).toLocaleString()}</TableCell>
+                  <TableCell>
+                    <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() =>
+                      updateUser.mutate({ id: u.id, username: u.username, role: u.role, enabled: !u.enabled }, {
+                        onSuccess: () => toast.success(t('users.updated')),
+                        onError: (err) => toast.error(err.message),
+                      })
+                    }>
+                      {u.enabled ? t('users.disable') : t('users.enable')}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
+      )}
+
+      <ApiTokensSection />
+    </div>
+  )
+}
+
+function ApiTokensSection() {
+  const { t } = useTranslation()
+  const { data: tokens = [], isLoading } = useApiTokens()
+  const createToken = useCreateApiToken()
+  const deleteToken = useDeleteApiToken()
+  const [newToken, setNewToken] = useState<string | null>(null)
+  const [name, setName] = useState('')
+
+  function handleCreate(e: React.FormEvent) {
+    e.preventDefault()
+    createToken.mutate({ name }, {
+      onSuccess: (data) => { setNewToken(data.value); setName(''); toast.success(t('tokens.created')) },
+      onError: (err) => toast.error(err.message),
+    })
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <KeyRound className="h-5 w-5 text-accent" />
+        <h2 className="text-lg font-semibold">{t('tokens.title')}</h2>
+      </div>
+
+      <Card className="p-4">
+        <form onSubmit={handleCreate} className="flex items-end gap-2">
+          <div className="flex-1 space-y-1.5">
+            <Label htmlFor="token-name">{t('tokens.name')}</Label>
+            <Input id="token-name" required value={name} onChange={e => setName(e.target.value)} />
+          </div>
+          <Button type="submit" disabled={createToken.isPending}>
+            <Plus className="h-4 w-4" />
+            {t('tokens.create')}
+          </Button>
+        </form>
+      </Card>
+
+      {newToken && (
+        <Card className="border-emerald-500/30 bg-emerald-500/5 p-4">
+          <div className="flex items-center gap-2">
+            <p className="flex-1 break-all font-mono text-sm">{newToken}</p>
+            <Button size="sm" variant="ghost" className="h-8 gap-1 text-xs" onClick={() => { navigator.clipboard.writeText(newToken); toast.success(t('tokens.copied')) }}>
+              <Copy className="h-3 w-3" /> {t('tokens.copy')}
+            </Button>
+          </div>
+          <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">{t('tokens.copyWarning')}</p>
+          <Button size="sm" variant="ghost" className="mt-2 h-7 text-xs" onClick={() => setNewToken(null)}>{t('common.dismiss')}</Button>
+        </Card>
+      )}
+
+      {isLoading ? (
+        <p className="text-sm text-text-muted">{t('common.loading')}</p>
+      ) : tokens.length === 0 ? (
+        <Card className="p-6 text-center"><p className="text-text-muted">{t('tokens.empty')}</p></Card>
+      ) : (
+        <Card>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t('tokens.name')}</TableHead>
+                <TableHead>{t('tokens.hint')}</TableHead>
+                <TableHead>{t('tokens.created')}</TableHead>
+                <TableHead className="w-20"></TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {tokens.map(tok => (
+                <TableRow key={tok.id}>
+                  <TableCell className="font-medium">{tok.name}</TableCell>
+                  <TableCell className="font-mono text-xs text-text-muted">{tok.token_hint}</TableCell>
+                  <TableCell className="text-xs text-text-muted">{new Date(tok.created_at).toLocaleString()}</TableCell>
+                  <TableCell>
+                    <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs text-danger hover:text-danger" onClick={() => {
+                      if (window.confirm(t('tokens.deleteConfirm'))) deleteToken.mutate(tok.id, { onSuccess: () => toast.success(t('tokens.deleted')), onError: (err) => toast.error(err.message) })
+                    }}>
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
+      )}
+    </div>
+  )
+}

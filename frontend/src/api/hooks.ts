@@ -1,19 +1,33 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, apiRetry } from './client'
 import type {
+  ApiToken,
+  Artifact,
+  AuditEvent,
   Commit,
   Comparison,
+  CreatedApiToken,
   CreatePullRequestInput,
+  Deployment,
+  Environment,
   Job,
   JobLog,
+  NotificationConfig,
   Pipeline,
   PipelineDetail,
   Project,
+  ProjectReport,
   PullRequest,
   PullRequestAction,
   Repository,
   RepositoryRef,
+  Runner,
+  Schedule,
+  SecretMetadata,
   Status,
+  User,
+  UserRole,
+  Webhook,
 } from './types'
 
 const KEYS = {
@@ -63,6 +77,24 @@ export function usePipelines(projectId: string | undefined) {
     queryKey: KEYS.pipelines(projectId ?? ''),
     queryFn: () => api<Pipeline[]>(`/projects/${projectId}/pipelines`),
     enabled: !!projectId,
+  })
+}
+
+export function useCancelPipeline() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (pipelineId: string) =>
+      api<{ canceled: string }>(`/pipelines/${pipelineId}/cancel`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['pipelines'] }),
+  })
+}
+
+export function useRetryPipeline() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (pipelineId: string) =>
+      api<{ retried: string }>(`/pipelines/${pipelineId}/retry`, { method: 'POST' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['pipelines'] }),
   })
 }
 
@@ -199,5 +231,258 @@ export function usePullRequestAction(repo: string | undefined) {
         body: JSON.stringify({ action }),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.pullRequests(repo ?? '') }),
+  })
+}
+
+// --- Platform hooks ---
+
+const PLATFORM_KEYS = {
+  runners: ['runners'] as const,
+  secrets: (projectId: string) => ['secrets', projectId] as const,
+  artifacts: (jobId: string) => ['artifacts', jobId] as const,
+  environments: (projectId: string) => ['environments', projectId] as const,
+  deployments: (environmentId: string) => ['deployments', environmentId] as const,
+  schedules: (projectId: string) => ['schedules', projectId] as const,
+  webhooks: (projectId: string) => ['webhooks', projectId] as const,
+  notifications: (projectId: string) => ['notifications', projectId] as const,
+  report: (projectId: string) => ['report', projectId] as const,
+  auditLog: ['audit-log'] as const,
+  users: ['users'] as const,
+  tokens: ['api-tokens'] as const,
+}
+
+export function useRunners() {
+  return useQuery({ queryKey: PLATFORM_KEYS.runners, queryFn: () => api<Runner[]>('/runners') })
+}
+
+export function useRegisterRunner() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { name: string; tags?: string[] }) =>
+      api<Runner>('/runners', { method: 'POST', body: JSON.stringify(input) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.runners }),
+  })
+}
+
+export function useRunnerHeartbeat() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, status }: { id: string; status?: 'online' | 'offline' | 'paused' }) =>
+      api<Runner>(`/runners/${id}/heartbeat`, { method: 'POST', body: JSON.stringify({ status }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.runners }),
+  })
+}
+
+export function useDeleteRunner() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api<{ deleted: string }>(`/runners/${id}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.runners }),
+  })
+}
+
+export function useSecrets(projectId: string | undefined) {
+  return useQuery({
+    queryKey: PLATFORM_KEYS.secrets(projectId ?? ''),
+    queryFn: () => api<SecretMetadata[]>(`/projects/${projectId}/secrets`),
+    enabled: Boolean(projectId),
+  })
+}
+
+export function useUpsertSecret(projectId: string | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { key: string; value: string }) =>
+      api<SecretMetadata>(`/projects/${projectId}/secrets`, { method: 'POST', body: JSON.stringify(input) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.secrets(projectId ?? '') }),
+  })
+}
+
+export function useDeleteSecret() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api<{ deleted: string }>(`/secrets/${id}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['secrets'] }),
+  })
+}
+
+export function useArtifacts(jobId: string | undefined) {
+  return useQuery({
+    queryKey: PLATFORM_KEYS.artifacts(jobId ?? ''),
+    queryFn: () => api<Artifact[]>(`/jobs/${jobId}/artifacts`),
+    enabled: Boolean(jobId),
+  })
+}
+
+export function useEnvironments(projectId: string | undefined) {
+  return useQuery({
+    queryKey: PLATFORM_KEYS.environments(projectId ?? ''),
+    queryFn: () => api<Environment[]>(`/projects/${projectId}/environments`),
+    enabled: Boolean(projectId),
+  })
+}
+
+export function useCreateEnvironment(projectId: string | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { name: string; url?: string }) =>
+      api<Environment>(`/projects/${projectId}/environments`, { method: 'POST', body: JSON.stringify(input) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.environments(projectId ?? '') }),
+  })
+}
+
+export function useDeleteEnvironment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api<{ deleted: string }>(`/environments/${id}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['environments'] }),
+  })
+}
+
+export function useDeployments(environmentId: string | undefined) {
+  return useQuery({
+    queryKey: PLATFORM_KEYS.deployments(environmentId ?? ''),
+    queryFn: () => api<Deployment[]>(`/environments/${environmentId}/deployments`),
+    enabled: Boolean(environmentId),
+  })
+}
+
+export function useCreateDeployment(environmentId: string | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { git_ref: string; status?: 'pending' | 'running' | 'success' | 'failed' }) =>
+      api<Deployment>(`/environments/${environmentId}/deployments`, { method: 'POST', body: JSON.stringify(input) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.deployments(environmentId ?? '') }),
+  })
+}
+
+export function useSchedules(projectId: string | undefined) {
+  return useQuery({
+    queryKey: PLATFORM_KEYS.schedules(projectId ?? ''),
+    queryFn: () => api<Schedule[]>(`/projects/${projectId}/schedules`),
+    enabled: Boolean(projectId),
+  })
+}
+
+export function useCreateSchedule(projectId: string | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { cron: string; git_ref: string; enabled?: boolean }) =>
+      api<Schedule>(`/projects/${projectId}/schedules`, { method: 'POST', body: JSON.stringify(input) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.schedules(projectId ?? '') }),
+  })
+}
+
+export function useUpdateSchedule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...input }: { id: string; cron: string; git_ref: string; enabled?: boolean }) =>
+      api<Schedule>(`/schedules/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['schedules'] }),
+  })
+}
+
+export function useDeleteSchedule() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api<{ deleted: string }>(`/schedules/${id}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['schedules'] }),
+  })
+}
+
+export function useWebhooks(projectId: string | undefined) {
+  return useQuery({
+    queryKey: PLATFORM_KEYS.webhooks(projectId ?? ''),
+    queryFn: () => api<Webhook[]>(`/projects/${projectId}/webhooks`),
+    enabled: Boolean(projectId),
+  })
+}
+
+export function useCreateWebhook(projectId: string | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { url: string; events?: string[]; enabled?: boolean }) =>
+      api<Webhook>(`/projects/${projectId}/webhooks`, { method: 'POST', body: JSON.stringify(input) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.webhooks(projectId ?? '') }),
+  })
+}
+
+export function useDeleteWebhook() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api<{ deleted: string }>(`/webhooks/${id}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['webhooks'] }),
+  })
+}
+
+export function useNotifications(projectId: string | undefined) {
+  return useQuery({
+    queryKey: PLATFORM_KEYS.notifications(projectId ?? ''),
+    queryFn: () => api<NotificationConfig[]>(`/projects/${projectId}/notifications`),
+    enabled: Boolean(projectId),
+  })
+}
+
+export function useSaveNotifications(projectId: string | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (inputs: { channel: string; target: string; enabled?: boolean }[]) =>
+      api<NotificationConfig[]>(`/projects/${projectId}/notifications`, { method: 'PUT', body: JSON.stringify(inputs) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.notifications(projectId ?? '') }),
+  })
+}
+
+export function useProjectReport(projectId: string | undefined) {
+  return useQuery({
+    queryKey: PLATFORM_KEYS.report(projectId ?? ''),
+    queryFn: () => api<ProjectReport>(`/projects/${projectId}/reports/summary`),
+    enabled: Boolean(projectId),
+  })
+}
+
+export function useAuditLog() {
+  return useQuery({ queryKey: PLATFORM_KEYS.auditLog, queryFn: () => api<AuditEvent[]>('/audit-log') })
+}
+
+export function useUsers() {
+  return useQuery({ queryKey: PLATFORM_KEYS.users, queryFn: () => api<User[]>('/users') })
+}
+
+export function useCreateUser() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { username: string; role: UserRole; enabled?: boolean }) =>
+      api<User>('/users', { method: 'POST', body: JSON.stringify(input) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.users }),
+  })
+}
+
+export function useUpdateUser() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...input }: { id: string; username: string; role: UserRole; enabled?: boolean }) =>
+      api<User>(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.users }),
+  })
+}
+
+export function useApiTokens() {
+  return useQuery({ queryKey: PLATFORM_KEYS.tokens, queryFn: () => api<ApiToken[]>('/api-tokens') })
+}
+
+export function useCreateApiToken() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { name: string; user_id?: string }) =>
+      api<CreatedApiToken>('/api-tokens', { method: 'POST', body: JSON.stringify(input) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.tokens }),
+  })
+}
+
+export function useDeleteApiToken() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api<{ deleted: string }>(`/api-tokens/${id}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.tokens }),
   })
 }

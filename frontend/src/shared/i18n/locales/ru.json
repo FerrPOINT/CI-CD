@@ -9,6 +9,9 @@
     "repositories": "Репозитории",
     "admin": "Администрирование",
     "settings": "Настройки",
+    "runners": "Runner-ы",
+    "users": "Пользователи",
+    "auditLog": "Журнал аудита",
     "create": "Создать",
     "toggleMenu": "Переключить меню"
   },
@@ -37,7 +40,9 @@
     "success": "Успешно",
     "failed": "Ошибка",
     "canceled": "Отменён",
-    "empty": "Нет запусков. Запустите первый пайплайн."
+    "empty": "Нет запусков. Запустите первый пайплайн.",
+    "cancel": "Отменить",
+    "retry": "Повторить"
   },
   "repositories": {
     "title": "Репозитории",
@@ -124,6 +129,137 @@
     "loading": "Загрузка…",
     "error": "Ошибка",
     "retry": "Повторить",
-    "search": "Поиск"
+    "search": "Поиск",
+    "dismiss": "Закрыть"
+  },
+  "runners": {
+    "title": "Runner-ы",
+    "register": "Зарегистрировать runner",
+    "name": "Имя",
+    "tags": "Теги (через запятую)",
+    "status": "Статус",
+    "lastSeen": "Последняя активность",
+    "heartbeat": "Heartbeat",
+    "heartbeatSent": "Heartbeat отправлен",
+    "registered": "Runner зарегистрирован",
+    "empty": "Runner-ы не зарегистрированы."
+  },
+  "secrets": {
+    "title": "Секреты проекта",
+    "add": "Добавить секрет",
+    "key": "Ключ",
+    "value": "Значение",
+    "save": "Сохранить секрет",
+    "saved": "Секрет сохранён",
+    "deleted": "Секрет удалён",
+    "deleteConfirm": "Удалить секрет",
+    "updated": "Обновлён",
+    "empty": "Секреты не настроены.",
+    "encryptedNotice": "Секреты шифруются at-rest с помощью AES-256-GCM и переменной окружения CICD_SECRETS_KEY. Значения никогда не возвращаются через API."
+  },
+  "artifacts": {
+    "title": "Артефакты",
+    "name": "Имя",
+    "size": "Размер",
+    "type": "Тип",
+    "created": "Создан",
+    "download": "Скачать",
+    "empty": "Артефакты для этой задачи отсутствуют."
+  },
+  "environments": {
+    "title": "Окружения",
+    "create": "Создать окружение",
+    "name": "Имя",
+    "url": "URL",
+    "created": "Окружение создано",
+    "deleted": "Окружение удалено",
+    "deleteConfirm": "Удалить окружение",
+    "deployments": "Деплои",
+    "empty": "Окружения не настроены."
+  },
+  "deployments": {
+    "create": "Деплой",
+    "gitRef": "Git ref",
+    "status": "Статус",
+    "created": "Деплой создан",
+    "empty": "Деплоев нет."
+  },
+  "schedules": {
+    "title": "Расписания",
+    "create": "Создать расписание",
+    "cron": "Cron-выражение",
+    "gitRef": "Git ref",
+    "enabled": "Включено",
+    "enabledOn": "Вкл",
+    "enabledOff": "Выкл",
+    "created": "Расписание создано",
+    "deleted": "Расписание удалено",
+    "deleteConfirm": "Удалить расписание",
+    "empty": "Расписания не настроены."
+  },
+  "webhooks": {
+    "title": "Webhook-и",
+    "create": "Добавить webhook",
+    "url": "URL",
+    "events": "События (через запятую)",
+    "enabled": "Включён",
+    "on": "Вкл",
+    "off": "Выкл",
+    "created": "Webhook создан",
+    "deleted": "Webhook удалён",
+    "deleteConfirm": "Удалить webhook",
+    "empty": "Webhook-и не настроены."
+  },
+  "notifications": {
+    "title": "Уведомления",
+    "add": "Добавить канал",
+    "channelPlaceholder": "slack",
+    "targetPlaceholder": "https://hooks.slack.com/...",
+    "saved": "Уведомления сохранены"
+  },
+  "reports": {
+    "title": "Отчёты",
+    "totalPipelines": "Всего пайплайнов",
+    "successful": "Успешных",
+    "failed": "Неудачных",
+    "successRate": "Доля успехов",
+    "avgDuration": "Среднее время",
+    "noData": "Нет данных по пайплайнам."
+  },
+  "auditLog": {
+    "title": "Журнал аудита",
+    "action": "Действие",
+    "resource": "Ресурс",
+    "actor": "Инициатор",
+    "time": "Время",
+    "empty": "События аудита отсутствуют."
+  },
+  "users": {
+    "title": "Пользователи и роли",
+    "create": "Создать пользователя",
+    "username": "Имя пользователя",
+    "role": "Роль",
+    "enabled": "Активен",
+    "created": "Пользователь создан",
+    "updated": "Пользователь обновлён",
+    "active": "Активен",
+    "disabled": "Отключён",
+    "enable": "Включить",
+    "disable": "Отключить",
+    "empty": "Пользователей нет.",
+    "toggle": "Переключить"
+  },
+  "tokens": {
+    "title": "API-токены",
+    "name": "Имя токена",
+    "create": "Сгенерировать",
+    "hint": "Подсказка",
+    "created": "Токен создан",
+    "deleted": "Токен отозван",
+    "deleteConfirm": "Отозвать этот токен?",
+    "copy": "Копировать",
+    "copied": "Скопировано",
+    "copyWarning": "Скопируйте токен сейчас — он больше не будет показан.",
+    "empty": "API-токенов нет."
   }
 }

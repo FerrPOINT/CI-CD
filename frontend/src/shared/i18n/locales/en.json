@@ -9,6 +9,9 @@
     "repositories": "Repositories",
     "admin": "Admin",
     "settings": "Settings",
+    "runners": "Runners",
+    "users": "Users",
+    "auditLog": "Audit Log",
     "create": "Create",
     "toggleMenu": "Toggle menu"
   },
@@ -37,7 +40,9 @@
     "success": "Success",
     "failed": "Failed",
     "canceled": "Canceled",
-    "empty": "No pipelines yet. Run one."
+    "empty": "No pipelines yet. Run one.",
+    "cancel": "Cancel",
+    "retry": "Retry"
   },
   "repositories": {
     "title": "Repositories",
@@ -124,6 +129,137 @@
     "loading": "Loading…",
     "error": "Error",
     "retry": "Retry",
-    "search": "Search"
+    "search": "Search",
+    "dismiss": "Dismiss"
+  },
+  "runners": {
+    "title": "Runners",
+    "register": "Register runner",
+    "name": "Name",
+    "tags": "Tags (comma-separated)",
+    "status": "Status",
+    "lastSeen": "Last seen",
+    "heartbeat": "Heartbeat",
+    "heartbeatSent": "Heartbeat sent",
+    "registered": "Runner registered",
+    "empty": "No runners registered."
+  },
+  "secrets": {
+    "title": "Project Secrets",
+    "add": "Add secret",
+    "key": "Key",
+    "value": "Value",
+    "save": "Save secret",
+    "saved": "Secret saved",
+    "deleted": "Secret deleted",
+    "deleteConfirm": "Delete secret",
+    "updated": "Updated",
+    "empty": "No secrets configured.",
+    "encryptedNotice": "Secrets are encrypted at rest with AES-256-GCM using the CICD_SECRETS_KEY env variable. Values are never returned via the API."
+  },
+  "artifacts": {
+    "title": "Artifacts",
+    "name": "Name",
+    "size": "Size",
+    "type": "Type",
+    "created": "Created",
+    "download": "Download",
+    "empty": "No artifacts for this job."
+  },
+  "environments": {
+    "title": "Environments",
+    "create": "Create environment",
+    "name": "Name",
+    "url": "URL",
+    "created": "Environment created",
+    "deleted": "Environment deleted",
+    "deleteConfirm": "Delete environment",
+    "deployments": "Deployments",
+    "empty": "No environments yet."
+  },
+  "deployments": {
+    "create": "Deploy",
+    "gitRef": "Git ref",
+    "status": "Status",
+    "created": "Deployment created",
+    "empty": "No deployments yet."
+  },
+  "schedules": {
+    "title": "Schedules",
+    "create": "Create schedule",
+    "cron": "Cron expression",
+    "gitRef": "Git ref",
+    "enabled": "Enabled",
+    "enabledOn": "On",
+    "enabledOff": "Off",
+    "created": "Schedule created",
+    "deleted": "Schedule deleted",
+    "deleteConfirm": "Delete schedule",
+    "empty": "No schedules configured."
+  },
+  "webhooks": {
+    "title": "Webhooks",
+    "create": "Add webhook",
+    "url": "URL",
+    "events": "Events (comma-separated)",
+    "enabled": "Enabled",
+    "on": "On",
+    "off": "Off",
+    "created": "Webhook created",
+    "deleted": "Webhook deleted",
+    "deleteConfirm": "Delete webhook",
+    "empty": "No webhooks configured."
+  },
+  "notifications": {
+    "title": "Notifications",
+    "add": "Add channel",
+    "channelPlaceholder": "slack",
+    "targetPlaceholder": "https://hooks.slack.com/...",
+    "saved": "Notifications saved"
+  },
+  "reports": {
+    "title": "Reports",
+    "totalPipelines": "Total pipelines",
+    "successful": "Successful",
+    "failed": "Failed",
+    "successRate": "Success rate",
+    "avgDuration": "Avg. duration",
+    "noData": "No pipeline data yet."
+  },
+  "auditLog": {
+    "title": "Audit Log",
+    "action": "Action",
+    "resource": "Resource",
+    "actor": "Actor",
+    "time": "Time",
+    "empty": "No audit events."
+  },
+  "users": {
+    "title": "Users & Roles",
+    "create": "Create user",
+    "username": "Username",
+    "role": "Role",
+    "enabled": "Enabled",
+    "created": "User created",
+    "updated": "User updated",
+    "active": "Active",
+    "disabled": "Disabled",
+    "enable": "Enable",
+    "disable": "Disable",
+    "empty": "No users yet.",
+    "toggle": "Toggle"
+  },
+  "tokens": {
+    "title": "API Tokens",
+    "name": "Token name",
+    "create": "Generate",
+    "hint": "Hint",
+    "created": "Token created",
+    "deleted": "Token revoked",
+    "deleteConfirm": "Revoke this token?",
+    "copy": "Copy",
+    "copied": "Copied to clipboard",
+    "copyWarning": "Copy this token now — it will not be shown again.",
+    "empty": "No API tokens."
   }
 }

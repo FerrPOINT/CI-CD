@@ -6,7 +6,7 @@ import { Card } from '@/shared/ui/card'
 import { Button } from '@/shared/ui/button'
 import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
-import { FolderGit2, Plus, ChevronRight, Pencil, Trash2, GitFork } from 'lucide-react'
+import { FolderGit2, Plus, ChevronRight, Pencil, Trash2, GitFork, KeyRound, Globe, Clock, Webhook, BarChart3 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Project } from '@/api/types'
 
@@ -125,10 +125,35 @@ export function ProjectsPage() {
                   <code className="rounded bg-surface-raised px-1.5 py-0.5">{p.default_branch}</code>
                 </div>
               </Link>
-              <div className="mt-3 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+              <div className="mt-3 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 flex-wrap">
                 <Button asChild size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs">
                   <Link to={`/repositories?project=${encodeURIComponent(p.name)}`}>
                     <GitFork className="h-3 w-3" /> {t('projects.repositories')}
+                  </Link>
+                </Button>
+                <Button asChild size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs">
+                  <Link to={`/projects/${p.id}/secrets`}>
+                    <KeyRound className="h-3 w-3" /> {t('secrets.title')}
+                  </Link>
+                </Button>
+                <Button asChild size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs">
+                  <Link to={`/projects/${p.id}/environments`}>
+                    <Globe className="h-3 w-3" /> {t('environments.title')}
+                  </Link>
+                </Button>
+                <Button asChild size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs">
+                  <Link to={`/projects/${p.id}/schedules`}>
+                    <Clock className="h-3 w-3" /> {t('schedules.title')}
+                  </Link>
+                </Button>
+                <Button asChild size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs">
+                  <Link to={`/projects/${p.id}/webhooks`}>
+                    <Webhook className="h-3 w-3" /> {t('webhooks.title')}
+                  </Link>
+                </Button>
+                <Button asChild size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs">
+                  <Link to={`/projects/${p.id}/reports`}>
+                    <BarChart3 className="h-3 w-3" /> {t('reports.title')}
                   </Link>
                 </Button>
                 <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs" onClick={() => setEditing(p)}>

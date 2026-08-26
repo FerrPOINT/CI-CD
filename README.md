@@ -19,6 +19,16 @@ Forge CI/CD хранит bare Git-репозитории, отдаёт Smart HTT
 | Репозиторий: коммиты и ветки | ![Repository browser](docs/screenshots/09-repository-browser.png) |
 | Сравнение веток | ![Compare](docs/screenshots/10-compare.png) |
 | Pull-запросы | ![Pull requests](docs/screenshots/11-pull-requests.png) |
+| Репозитории (фильтр) | ![Repositories filtered](docs/screenshots/12-repositories-filtered.png) |
+| Runners | ![Runners](docs/screenshots/13-runners.png) |
+| Secrets | ![Secrets](docs/screenshots/14-secrets.png) |
+| Artifacts | ![Artifacts](docs/screenshots/15-artifacts.png) |
+| Environments | ![Environments](docs/screenshots/16-environments.png) |
+| Schedules | ![Schedules](docs/screenshots/17-schedules.png) |
+| Webhooks | ![Webhooks](docs/screenshots/18-webhooks.png) |
+| Reports | ![Reports](docs/screenshots/19-reports.png) |
+| Audit log | ![Audit log](docs/screenshots/20-audit-log.png) |
+| Users | ![Users](docs/screenshots/21-users.png) |
 
 ## Порты по умолчанию
 
@@ -44,6 +54,25 @@ Forge CI/CD хранит bare Git-репозитории, отдаёт Smart HTT
 - Compare: diff между ветками — merge-base, изменённые файлы, добавления/удаления, patch
 - Pull requests: создание, список, merge (через `git merge-tree` без worktree), close и reopen
 - Merge создаёт настоящий merge-commit в bare-репозитории и обновляет refs
+
+### Runner и CI/CD выполнение
+
+- Embedded runner: реальное выполнение команд джоб, клонирование репо, стриминг логов
+- `.forge-ci.yml` из репозитория: кастомные stages/jobs (fallback на дефолтный шаблон)
+- Cancel/Retry для пайплайнов и отдельных джоб (с kill процесса)
+- Stop-on-failure: каскадная отмена последующих стадий
+
+### Платформа
+
+- **Runners**: регистрация, статус, теги
+- **Secrets**: шифрованные переменные проекта (AES-256-GCM), инжект в джобы
+- **Artifacts**: загрузка, скачивание, retention
+- **Environments**: окружения деплоя
+- **Schedules**: cron-триггеры пайплайнов
+- **Webhooks**: исходящие уведомления (pipeline events)
+- **Reports**: агрегаты success rate / durations
+- **Audit log**: журнал действий
+- **Users**: управление пользователями и API-токенами
 
 ```bash
 # Создать репозиторий

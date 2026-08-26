@@ -29,6 +29,7 @@ use crate::{
 pub struct AppState {
     pub pool: Option<PgPool>,
     pub git: crate::git_host::GitConfig,
+    pub running_jobs: Option<crate::runner::RunningJobs>,
 }
 
 type ApiResult<T> = Result<Json<T>, ApiError>;
@@ -86,17 +87,35 @@ impl IntoResponse for ApiError {
     }
 }
 
-fn pool(state: &AppState) -> Result<&PgPool, ApiError> {
+pub(crate) fn pool(state: &AppState) -> Result<&PgPool, ApiError> {
     state.pool.as_ref().ok_or_else(ApiError::unavailable)
 }
 
 pub fn app(pool: Option<PgPool>) -> Router {
-    app_with_git(pool, crate::git_host::GitConfig::default())
+    app_with(pool, None)
 }
 
-pub fn app_with_git(pool: Option<PgPool>, git: crate::git_host::GitConfig) -> Router {
+pub fn app_with_git(
+    pool: Option<PgPool>,
+    git: crate::git_host::GitConfig,
+    running: Option<crate::runner::RunningJobs>,
+) -> Router {
+    build_router(pool, git, running)
+}
+
+#[allow(dead_code)]
+fn app_with(pool: Option<PgPool>, running: Option<crate::runner::RunningJobs>) -> Router {
+    build_router(pool, crate::git_host::GitConfig::default(), running)
+}
+
+fn build_router(
+    pool: Option<PgPool>,
+    git: crate::git_host::GitConfig,
+    running: Option<crate::runner::RunningJobs>,
+) -> Router {
     Router::new()
         .route("/api/v1/health", get(health))
+        .merge(crate::platform::routes())
         .route("/api/v1/projects", get(list_projects).post(create_project))
         .route(
             "/api/v1/projects/{project_id}",
@@ -110,6 +129,15 @@ pub fn app_with_git(pool: Option<PgPool>, git: crate::git_host::GitConfig) -> Ro
         )
         .route("/api/v1/pipelines/{pipeline_id}", get(get_pipeline))
         .route("/api/v1/jobs/{job_id}/status", post(change_job_status))
+        .route(
+            "/api/v1/pipelines/{pipeline_id}/cancel",
+            post(cancel_pipeline),
+        )
+        .route(
+            "/api/v1/pipelines/{pipeline_id}/retry",
+            post(retry_pipeline),
+        )
+        .route("/api/v1/jobs/{job_id}/retry", post(retry_job))
         .route(
             "/api/v1/jobs/{job_id}/logs",
             get(list_logs).post(append_log),
@@ -139,7 +167,11 @@ pub fn app_with_git(pool: Option<PgPool>, git: crate::git_host::GitConfig) -> Ro
         )
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
-        .with_state(Arc::new(AppState { pool, git }))
+        .with_state(Arc::new(AppState {
+            pool,
+            git,
+            running_jobs: running,
+        }))
 }
 
 async fn health() -> Json<serde_json::Value> {
@@ -314,34 +346,197 @@ async fn trigger_pipeline(
     pipeline_detail(pool, pipeline.id).await.map(Json)
 }
 
-/// Creates a queued pipeline with the default build/test/deploy template stages.
+/// Creates a queued pipeline. Stage/job structure comes from `.forge-ci.yml`
+/// in the project repository at the given ref when available; otherwise the
+/// default build/test/deploy template is used.
 pub(crate) async fn create_pipeline(
     pool: &PgPool,
     project_id: Uuid,
     git_ref: String,
 ) -> Result<Pipeline, ApiError> {
+    let repository_url: Option<String> =
+        sqlx::query_scalar("SELECT repository_url FROM projects WHERE id = $1")
+            .bind(project_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(ApiError::internal)?
+            .flatten();
+    // Try fetching .forge-ci.yml via git (works for any http repo reachable from backend).
+    let config = read_forge_ci_config_safe(repository_url.as_deref(), &git_ref)
+        .await
+        .unwrap_or_default();
+    let stages = parse_forge_ci(&config);
+
     let pipeline = sqlx::query_as::<_, Pipeline>(
         "INSERT INTO pipelines (id, project_id, git_ref, status) VALUES ($1, $2, $3, 'queued') RETURNING id, project_id, git_ref, status, created_at, started_at, finished_at",
     )
     .bind(Uuid::new_v4())
     .bind(project_id)
-    .bind(git_ref)
+    .bind(&git_ref)
     .fetch_one(pool)
     .await
     .map_err(ApiError::internal)?;
-    let templates = [
-        ("build", "checkout", "alpine/git:latest", "git fetch --all"),
-        ("test", "unit-tests", "rust:1.86", "cargo test"),
-        ("deploy", "deploy", "alpine:3.21", "echo deploy"),
-    ];
-    for (position, (stage_name, job_name, image, command)) in templates.iter().enumerate() {
+    for (position, stage) in stages.iter().enumerate() {
         let stage_id = Uuid::new_v4();
         sqlx::query("INSERT INTO stages (id, pipeline_id, name, position, status) VALUES ($1, $2, $3, $4, 'queued')")
-            .bind(stage_id).bind(pipeline.id).bind(*stage_name).bind(position as i32).execute(pool).await.map_err(ApiError::internal)?;
-        sqlx::query("INSERT INTO jobs (id, stage_id, name, image, command, position, status) VALUES ($1, $2, $3, $4, $5, 0, 'queued')")
-            .bind(Uuid::new_v4()).bind(stage_id).bind(*job_name).bind(*image).bind(*command).execute(pool).await.map_err(ApiError::internal)?;
+            .bind(stage_id).bind(pipeline.id).bind(&stage.name).bind(position as i32).execute(pool).await.map_err(ApiError::internal)?;
+        for (job_position, job) in stage.jobs.iter().enumerate() {
+            sqlx::query("INSERT INTO jobs (id, stage_id, name, image, command, position, status) VALUES ($1, $2, $3, $4, $5, $6, 'queued')")
+                .bind(Uuid::new_v4()).bind(stage_id).bind(&job.name).bind(&job.image).bind(&job.command).bind(job_position as i32).execute(pool).await.map_err(ApiError::internal)?;
+        }
     }
     Ok(pipeline)
+}
+
+#[derive(Debug, Default)]
+struct CiStage {
+    name: String,
+    jobs: Vec<CiJob>,
+}
+#[derive(Debug)]
+struct CiJob {
+    name: String,
+    image: String,
+    command: String,
+}
+
+/// Reads `.forge-ci.yml` without deadlocking. Tries `git show` on a local
+/// bare repo first (no HTTP, no clone). Falls back to a bounded blocking
+/// clone for external HTTP URLs via `spawn_blocking`.
+async fn read_forge_ci_config_safe(repo_url: Option<&str>, git_ref: &str) -> Option<String> {
+    let url = repo_url?;
+    // Local bare repo: extract name from URL and use --git-dir.
+    if let Some(name) = extract_repo_name_from_url(url) {
+        let git_root =
+            std::env::var("CICD_GIT_ROOT").unwrap_or_else(|_| "/var/lib/forge/git".into());
+        let bare_path = std::path::Path::new(&git_root).join(format!("{name}.git"));
+        if bare_path.exists() {
+            let output = std::process::Command::new("git")
+                .arg(format!("--git-dir={}", bare_path.display()))
+                .args(["show", &format!("{git_ref}:.forge-ci.yml")])
+                .output()
+                .ok()?;
+            if output.status.success() {
+                return Some(String::from_utf8_lossy(&output.stdout).to_string());
+            }
+            return None;
+        }
+    }
+    // External URL: bounded blocking clone in spawn_blocking.
+    let url = url.to_string();
+    let git_ref = git_ref.to_string();
+    let handle = tokio::task::spawn_blocking(move || {
+        let dir = std::env::temp_dir().join(format!("forge-ci-{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&dir);
+        let clone = std::process::Command::new("git")
+            .args([
+                "clone", "--quiet", "--depth", "1", "--branch", &git_ref, &url,
+            ])
+            .arg(&dir)
+            .output()
+            .ok()?;
+        if !clone.status.success() {
+            let _ = std::fs::remove_dir_all(&dir);
+            return None;
+        }
+        let content = std::fs::read_to_string(dir.join(".forge-ci.yml")).ok();
+        let _ = std::fs::remove_dir_all(&dir);
+        content
+    });
+    handle.await.ok().flatten()
+}
+
+/// Extracts the repository name from a URL like `http://host/git/name.git`.
+fn extract_repo_name_from_url(url: &str) -> Option<String> {
+    let path = url.split('/').next_back()?;
+    let name = path.strip_suffix(".git").unwrap_or(path);
+    Some(name.to_string())
+}
+
+/// Parses `.forge-ci.yml`:
+/// ```yaml
+/// stages:
+///   - name: build
+///     jobs:
+///       - name: compile
+///         image: rust:1.86
+///         command: cargo build --release
+/// ```
+fn parse_forge_ci(raw: &str) -> Vec<CiStage> {
+    #[derive(serde::Deserialize)]
+    struct YamlJob {
+        name: String,
+        #[serde(default = "default_image")]
+        image: String,
+        command: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct YamlStage {
+        name: String,
+        #[serde(default)]
+        jobs: Vec<YamlJob>,
+    }
+    #[derive(serde::Deserialize)]
+    struct YamlConfig {
+        #[serde(default)]
+        stages: Vec<YamlStage>,
+    }
+    fn default_image() -> String {
+        "alpine:3.21".into()
+    }
+
+    let parsed: Option<YamlConfig> = serde_yaml::from_str(raw).ok();
+    let mut stages: Vec<CiStage> = parsed
+        .map(|c| {
+            c.stages
+                .into_iter()
+                .map(|s| CiStage {
+                    name: s.name,
+                    jobs: s
+                        .jobs
+                        .into_iter()
+                        .map(|j| CiJob {
+                            name: j.name,
+                            image: j.image,
+                            command: j.command,
+                        })
+                        .collect(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    // Drop stages without jobs (nothing to execute).
+    stages.retain(|s| !s.jobs.is_empty());
+    if stages.is_empty() {
+        vec![
+            CiStage {
+                name: "build".into(),
+                jobs: vec![CiJob {
+                    name: "checkout".into(),
+                    image: "alpine/git:latest".into(),
+                    command: "git fetch --all".into(),
+                }],
+            },
+            CiStage {
+                name: "test".into(),
+                jobs: vec![CiJob {
+                    name: "unit-tests".into(),
+                    image: "rust:1.86".into(),
+                    command: "cargo test".into(),
+                }],
+            },
+            CiStage {
+                name: "deploy".into(),
+                jobs: vec![CiJob {
+                    name: "deploy".into(),
+                    image: "alpine:3.21".into(),
+                    command: "echo deploy".into(),
+                }],
+            },
+        ]
+    } else {
+        stages
+    }
 }
 
 async fn list_pipelines(
@@ -392,7 +587,140 @@ async fn change_job_status(
     Ok(Json(updated))
 }
 
-async fn refresh_statuses(pool: &PgPool, stage_id: Uuid) -> Result<(), ApiError> {
+async fn cancel_pipeline(
+    State(state): State<Arc<AppState>>,
+    Path(pipeline_id): Path<Uuid>,
+) -> ApiResult<serde_json::Value> {
+    let pool = pool(&state)?;
+    let pipeline = sqlx::query_scalar::<_, String>("SELECT status FROM pipelines WHERE id = $1")
+        .bind(pipeline_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(ApiError::not_found)?;
+    if pipeline != "queued" && pipeline != "running" {
+        return Err(ApiError::conflict("pipeline is not active"));
+    }
+    if let Some(running) = state.running_jobs.as_ref() {
+        let job_ids: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT j.id FROM jobs j JOIN stages s ON s.id = j.stage_id WHERE s.pipeline_id = $1",
+        )
+        .bind(pipeline_id)
+        .fetch_all(pool)
+        .await
+        .map_err(ApiError::internal)?;
+        let mut guard = running.lock().await;
+        for job_id in job_ids {
+            if let Some(pid) = guard.remove(&job_id) {
+                let _ = tokio::process::Command::new("kill")
+                    .arg("-TERM")
+                    .arg(pid.to_string())
+                    .status()
+                    .await;
+            }
+        }
+    }
+    sqlx::query("UPDATE pipelines SET status = 'canceled', finished_at = now() WHERE id = $1")
+        .bind(pipeline_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::internal)?;
+    sqlx::query(
+        "UPDATE jobs SET status = 'canceled', finished_at = now() WHERE status = 'queued' AND stage_id IN (SELECT id FROM stages WHERE pipeline_id = $1)",
+    )
+    .bind(pipeline_id)
+    .execute(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    sqlx::query(
+        "UPDATE stages SET status = 'canceled' WHERE status = 'queued' AND pipeline_id = $1",
+    )
+    .bind(pipeline_id)
+    .execute(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(Json(serde_json::json!({"canceled": pipeline_id})))
+}
+
+async fn retry_pipeline(
+    State(state): State<Arc<AppState>>,
+    Path(pipeline_id): Path<Uuid>,
+) -> ApiResult<serde_json::Value> {
+    let pool = pool(&state)?;
+    let status = sqlx::query_scalar::<_, String>("SELECT status FROM pipelines WHERE id = $1")
+        .bind(pipeline_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(ApiError::not_found)?;
+    if status != "failed" && status != "canceled" {
+        return Err(ApiError::conflict(
+            "only failed or canceled pipelines can be retried",
+        ));
+    }
+    sqlx::query(
+        "UPDATE jobs SET status = 'queued', started_at = NULL, finished_at = NULL WHERE status IN ('failed','canceled') AND stage_id IN (SELECT id FROM stages WHERE pipeline_id = $1)",
+    )
+    .bind(pipeline_id)
+    .execute(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    sqlx::query(
+        "UPDATE stages SET status = 'queued' WHERE status IN ('failed','canceled') AND pipeline_id = $1",
+    )
+    .bind(pipeline_id)
+    .execute(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    sqlx::query(
+        "UPDATE pipelines SET status = 'queued', started_at = NULL, finished_at = NULL WHERE id = $1",
+    )
+    .bind(pipeline_id)
+    .execute(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(Json(serde_json::json!({"retried": pipeline_id})))
+}
+
+async fn retry_job(State(state): State<Arc<AppState>>, Path(job_id): Path<Uuid>) -> ApiResult<Job> {
+    let pool = pool(&state)?;
+    let job = sqlx::query_as::<_, Job>("SELECT id, stage_id, name, image, command, position, status, started_at, finished_at FROM jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(ApiError::not_found)?;
+    if job.status != "failed" && job.status != "canceled" {
+        return Err(ApiError::conflict(
+            "only failed or canceled jobs can be retried",
+        ));
+    }
+    sqlx::query("DELETE FROM job_logs WHERE job_id = $1")
+        .bind(job_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::internal)?;
+    let updated = sqlx::query_as::<_, Job>("UPDATE jobs SET status = 'queued', started_at = NULL, finished_at = NULL WHERE id = $1 RETURNING id, stage_id, name, image, command, position, status, started_at, finished_at")
+        .bind(job_id)
+        .fetch_one(pool)
+        .await
+        .map_err(ApiError::internal)?;
+    sqlx::query(
+        "UPDATE stages SET status = 'queued' WHERE id = $1 AND status IN ('failed','canceled')",
+    )
+    .bind(job.stage_id)
+    .execute(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    sqlx::query("UPDATE pipelines SET status = 'running', finished_at = NULL WHERE id = (SELECT pipeline_id FROM stages WHERE id = $1) AND status IN ('failed','canceled')")
+        .bind(job.stage_id)
+        .execute(pool)
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(Json(updated))
+}
+
+pub(crate) async fn refresh_statuses(pool: &PgPool, stage_id: Uuid) -> Result<(), ApiError> {
     let stage_status: String = sqlx::query_scalar("SELECT CASE WHEN bool_or(status = 'failed') THEN 'failed' WHEN bool_and(status = 'success') THEN 'success' WHEN bool_or(status = 'running') THEN 'running' WHEN bool_or(status = 'canceled') THEN 'canceled' ELSE 'queued' END FROM jobs WHERE stage_id = $1").bind(stage_id).fetch_one(pool).await.map_err(ApiError::internal)?;
     let pipeline_id: Uuid =
         sqlx::query_scalar("UPDATE stages SET status = $2 WHERE id = $1 RETURNING pipeline_id")

@@ -348,7 +348,7 @@ pub async fn git_service_endpoint(
         Ok(body) => body,
         Err(e) => return e.into_response(),
     };
-    match run_git_service(&path, service, body).await {
+    match run_git_service(path.as_path(), service, body).await {
         Ok(out) => (
             StatusCode::OK,
             [(

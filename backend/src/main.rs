@@ -1,4 +1,4 @@
-use cicd::{api::app_with_git, git_host::GitConfig, store::migrate};
+use cicd::{api::app_with_git, git_host::GitConfig, runner, store::migrate};
 use sqlx::postgres::PgPoolOptions;
 use tracing_subscriber::EnvFilter;
 
@@ -21,8 +21,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .connect(&database_url)
         .await?;
     migrate(&pool).await?;
+
+    // Embedded runner: executes queued jobs stage by stage.
+    let running = runner::RunningJobs::default();
+    let supervisor_pool = pool.clone();
+    let supervisor_running = running.clone();
+    tokio::spawn(async move {
+        runner::supervisor_loop(supervisor_pool, supervisor_running).await;
+    });
+
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!(%bind, "CI/CD API listening");
-    axum::serve(listener, app_with_git(Some(pool), git)).await?;
+    axum::serve(listener, app_with_git(Some(pool), git, Some(running))).await?;
     Ok(())
 }

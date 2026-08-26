@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { useParams, Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
-import { usePipeline, useUpdateJobStatus, useJobLogs, useAppendLog } from '@/api/hooks'
+import { usePipeline, useUpdateJobStatus, useJobLogs, useAppendLog, useCancelPipeline, useRetryPipeline } from '@/api/hooks'
 import { Card } from '@/shared/ui/card'
 import { Button } from '@/shared/ui/button'
 import { Input } from '@/shared/ui/input'
-import { ChevronRight, Terminal, Play, CheckCircle2, XCircle, Square } from 'lucide-react'
+import { ChevronRight, Terminal, Play, CheckCircle2, XCircle, Square, Ban, RotateCcw, Package } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Status } from '@/api/types'
 
@@ -22,6 +22,8 @@ export function PipelineDetailPage() {
   const { pipelineId } = useParams<{ pipelineId: string }>()
   const { data, isLoading } = usePipeline(pipelineId)
   const updateStatus = useUpdateJobStatus()
+  const cancelPipeline = useCancelPipeline()
+  const retryPipeline = useRetryPipeline()
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
   const [logMessage, setLogMessage] = useState('')
 
@@ -48,6 +50,16 @@ export function PipelineDetailPage() {
         </div>
         <div className="mt-2 flex items-center gap-3">
           <h1 className="text-2xl font-bold">#{pipeline.id.slice(0, 8)}</h1>
+          {(pipeline.status === 'queued' || pipeline.status === 'running') && (
+            <Button size="sm" variant="ghost" className="h-8 gap-1 text-danger hover:text-danger" disabled={cancelPipeline.isPending} onClick={() => cancelPipeline.mutate(pipeline.id)}>
+              <Ban className="h-4 w-4" /> {t('pipelines.cancel')}
+            </Button>
+          )}
+          {(pipeline.status === 'failed' || pipeline.status === 'canceled') && (
+            <Button size="sm" variant="ghost" className="h-8 gap-1" disabled={retryPipeline.isPending} onClick={() => retryPipeline.mutate(pipeline.id)}>
+              <RotateCcw className="h-4 w-4" /> {t('pipelines.retry')}
+            </Button>
+          )}
           <code className="rounded bg-surface-raised px-2 py-1 text-sm">{pipeline.git_ref}</code>
           <span className={`h-2.5 w-2.5 rounded-full ${statusColors[pipeline.status]}`} />
         </div>
@@ -96,6 +108,11 @@ export function PipelineDetailPage() {
                     )}
                     <Button size="sm" variant="ghost" onClick={() => setSelectedJobId(job.id)}>
                       <Terminal className="h-3 w-3" /> {t('jobs.logs')}
+                    </Button>
+                    <Button asChild size="sm" variant="ghost">
+                      <Link to={`/jobs/${job.id}/artifacts`}>
+                        <Package className="h-3 w-3" /> {t('artifacts.title')}
+                      </Link>
                     </Button>
                   </div>
                 </div>

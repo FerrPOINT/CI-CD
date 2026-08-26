@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link, useLocation, Outlet } from 'react-router'
-import { GitBranch, LayoutDashboard, FolderGit2, Settings, GitFork, Server, Menu, X } from 'lucide-react'
+import { GitBranch, LayoutDashboard, FolderGit2, Settings, GitFork, Server, Menu, X, KeyRound, Globe, Clock, Webhook, BarChart3, History, Users, Cpu } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/shared/ui/button'
 import { ThemeToggle } from '@/shared/ui/theme-toggle'
@@ -14,6 +14,9 @@ export function AppShell() {
     { to: '/', icon: LayoutDashboard, label: t('navigation.dashboard') },
     { to: '/projects', icon: FolderGit2, label: t('navigation.projects') },
     { to: '/repositories', icon: GitFork, label: t('navigation.repositories') },
+    { to: '/runners', icon: Cpu, label: t('navigation.runners') },
+    { to: '/users', icon: Users, label: t('navigation.users') },
+    { to: '/audit-log', icon: History, label: t('navigation.auditLog') },
     { to: '/admin', icon: Server, label: t('navigation.admin') },
     { to: '/settings', icon: Settings, label: t('navigation.settings') },
   ]
