@@ -306,6 +306,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "cicd-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "reqwest",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "cicd-domain"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "cicd-server"
 version = "0.1.0"
 dependencies = [
@@ -314,10 +333,9 @@ dependencies = [
  "axum",
  "base64",
  "chrono",
- "clap",
+ "cicd-domain",
  "flate2",
  "git2",
- "reqwest",
  "serde",
  "serde_json",
  "serde_yaml",

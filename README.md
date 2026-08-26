@@ -290,6 +290,8 @@ CI-CD/
 ## Документы
 
 - [Техническое задание](docs/TZ.md)
+- [Индекс архитектуры](docs/ARCHITECTURE_INDEX.md) — входная точка: карта контекстов, current vs target
+- [Функциональная архитектура](docs/FUNCTIONAL_ARCHITECTURE.md) — capability map, ownership, инварианты
 - [Архитектура](docs/ARCHITECTURE.md)
 - [Дата-модель](docs/DATA_MODEL.md)
 - [Доменная модель](docs/DOMAIN_MODEL.md)

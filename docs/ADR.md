@@ -48,6 +48,10 @@ Proposed / Accepted / Deprecated / Superseded by ADR-NNNN
 | ADR-0002 | React + Vite + Tailwind + shadcn/ui для Dashboard | Accepted | 2026-08-26 |
 | ADR-0003 | Ручные переходы статусов job в MVP | Accepted | 2026-08-26 |
 | ADR-0004 | Только PostgreSQL для постоянных данных | Accepted | 2026-08-26 |
+| ADR-0005 | Cargo workspace и слоистая архитектура | Accepted | 2026-08-26 |
+| ADR-0006 | PostgreSQL outbox для асинхронных эффектов | Accepted | 2026-08-26 |
+| ADR-0007 | Исполнение отделено от control plane | Accepted | 2026-08-26 |
+| ADR-0008 | Версионные SQLx migrations | Accepted | 2026-08-26 |
 
 ---
 
@@ -121,5 +125,9 @@ Proposed / Accepted / Deprecated / Superseded by ADR-NNNN
 - `docs/adr/0002-react-vite-tailwind.md` — React + Vite + Tailwind.
 - `docs/adr/0003-manual-job-transitions.md` — Ручные переходы статусов.
 - `docs/adr/0004-postgresql-only.md` — Только PostgreSQL.
+- `docs/adr/0005-workspace-layered-architecture.md` — Cargo workspace и слоистая архитектура.
+- `docs/adr/0006-postgresql-outbox.md` — надёжные асинхронные эффекты.
+- `docs/adr/0007-runner-security-boundary.md` — граница control plane/execution.
+- `docs/adr/0008-versioned-sqlx-migrations.md` — versioned migrations.
 - `docs/ROADMAP.md` — план разработки.
 - `docs/CODE_STYLE.md` — конвенции кода.
