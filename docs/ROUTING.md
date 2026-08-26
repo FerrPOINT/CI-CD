@@ -21,10 +21,24 @@
 | Route | Page | Lazy Import | Описание |
 |-------|------|-------------|----------|
 | `/` | `DashboardPage` | `@/pages/dashboard` | Главная / дашборд |
-| `/projects` | `ProjectsPage` | `@/pages/projects` | Список проектов + создание |
+| `/projects` | `ProjectsPage` | `@/pages/projects` | Список проектов + создание; карточка проекта ведёт на secrets/environments/schedules/webhooks/reports |
 | `/projects/:projectId/pipelines` | `PipelinesPage` | `@/pages/pipelines` | Пайплайны проекта + запуск |
-| `/pipelines/:pipelineId` | `PipelineDetailPage` | `@/pages/pipeline-detail` | Детали пайплайна: стадии, задачи, логи |
-| `/admin` | `AdminPage` | `@/pages/admin` | Админ-панель (планируется) |
+| `/pipelines/:pipelineId` | `PipelineDetailPage` | `@/pages/pipeline-detail` | Детали пайплайна: стадии, задачи, логи, артефакты |
+| `/repositories` | `RepositoriesPage` | `@/pages/repositories` | Список Git-репозиториев + создание, фильтр по проекту |
+| `/repositories/:repo` | `RepositoryBrowserPage` | `@/pages/repository-browser` | Коммиты и ветки репозитория |
+| `/repositories/:repo/compare` | `ComparePage` | `@/pages/compare` | Diff между ветками |
+| `/repositories/:repo/pulls` | `PullRequestsPage` | `@/pages/pull-requests` | Pull requests: создание, merge, close |
+| `/settings` | `SettingsPage` | `@/pages/settings` | Настройки (тема, язык) |
+| `/admin` | `AdminPage` | `@/pages/admin` | Админ-панель (системная информация) |
+| `/runners` | `RunnersPage` | `@/pages/runners` | Регистрация runner-ов, heartbeat, удаление |
+| `/projects/:projectId/secrets` | `SecretsPage` | `@/pages/secrets` | Секреты проекта (AES-256-GCM) |
+| `/jobs/:jobId/artifacts` | `ArtifactsPage` | `@/pages/artifacts` | Артефакты задачи, скачивание |
+| `/projects/:projectId/environments` | `EnvironmentsPage` | `@/pages/environments` | Окружения и деплои |
+| `/projects/:projectId/schedules` | `SchedulesPage` | `@/pages/schedules` | Cron-расписания |
+| `/projects/:projectId/webhooks` | `WebhooksPage` | `@/pages/webhooks` | Webhooks + каналы уведомлений |
+| `/projects/:projectId/reports` | `ReportsPage` | `@/pages/reports` | Отчёты: success rate, duration |
+| `/audit-log` | `AuditLogPage` | `@/pages/audit-log` | Журнал аудита |
+| `/users` | `UsersPage` | `@/pages/users` | Пользователи, роли, API-токены |
 
 ## 4. Public Routes
 
@@ -69,7 +83,21 @@ export const router = createBrowserRouter([
       { path: '/projects', element: withSuspense(<ProjectsPage />) },
       { path: '/projects/:projectId/pipelines', element: withSuspense(<PipelinesPage />) },
       { path: '/pipelines/:pipelineId', element: withSuspense(<PipelineDetailPage />) },
+      { path: '/repositories', element: withSuspense(<RepositoriesPage />) },
+      { path: '/repositories/:repo', element: withSuspense(<RepositoryBrowserPage />) },
+      { path: '/repositories/:repo/compare', element: withSuspense(<ComparePage />) },
+      { path: '/repositories/:repo/pulls', element: withSuspense(<PullRequestsPage />) },
+      { path: '/settings', element: withSuspense(<SettingsPage />) },
       { path: '/admin', element: withSuspense(<AdminPage />) },
+      { path: '/runners', element: withSuspense(<RunnersPage />) },
+      { path: '/projects/:projectId/secrets', element: withSuspense(<SecretsPage />) },
+      { path: '/jobs/:jobId/artifacts', element: withSuspense(<ArtifactsPage />) },
+      { path: '/projects/:projectId/environments', element: withSuspense(<EnvironmentsPage />) },
+      { path: '/projects/:projectId/schedules', element: withSuspense(<SchedulesPage />) },
+      { path: '/projects/:projectId/webhooks', element: withSuspense(<WebhooksPage />) },
+      { path: '/projects/:projectId/reports', element: withSuspense(<ReportsPage />) },
+      { path: '/audit-log', element: withSuspense(<AuditLogPage />) },
+      { path: '/users', element: withSuspense(<UsersPage />) },
     ],
   },
   { path: '/login', element: withSuspense(<LoginPage />) },
@@ -116,12 +144,25 @@ const DashboardPage = lazy(() => import('@/pages/dashboard').then(m => ({ defaul
 ```
 /                         ── AppShell ── DashboardPage
 ├── /projects             ── AppShell ── ProjectsPage
-├── /projects/:projectId/
-│   └── pipelines         ── AppShell ── PipelinesPage
+│   ├── /:projectId/pipelines   ── PipelinesPage
+│   ├── /:projectId/secrets     ── SecretsPage
+│   ├── /:projectId/environments── EnvironmentsPage
+│   ├── /:projectId/schedules   ── SchedulesPage
+│   ├── /:projectId/webhooks    ── WebhooksPage
+│   └── /:projectId/reports     ── ReportsPage
 ├── /pipelines/:pipelineId ─ AppShell ── PipelineDetailPage
-├── /admin                ── AppShell ── AdminPage
-├── /login                ─────────────── LoginPage (public)
-└── *                     ─────────────── Navigate to /
+├── /jobs/:jobId/artifacts ─ AppShell ── ArtifactsPage
+├── /repositories           ── AppShell ── RepositoriesPage
+│   ├── /:repo              ── RepositoryBrowserPage
+│   ├── /:repo/compare      ── ComparePage
+│   └── /:repo/pulls        ── PullRequestsPage
+├── /runners               ── AppShell ── RunnersPage
+├── /audit-log             ── AppShell ── AuditLogPage
+├── /users                 ── AppShell ── UsersPage
+├── /settings              ── AppShell ── SettingsPage
+├── /admin                 ── AppShell ── AdminPage
+├── /login                 ─────────────── LoginPage (public)
+└── *                      ─────────────── Navigate to /
 ```
 
 ## 9. Navigation
@@ -153,14 +194,12 @@ function PipelinesPage() {
 
 ## 10. Планируемые маршруты
 
-При реализации Phase 1+ будут добавлены:
+Реализованные platform-роуты перечислены в секции 6/8. При реализации Phase 1+ будут добавлены:
 
 | Route | Page | Phase | Описание |
 |-------|------|-------|----------|
-| `/settings` | `SettingsPage` | Phase 1+ | Настройки пользователя |
 | `/projects/:id/settings` | `ProjectSettingsPage` | Phase 1+ | Настройки проекта |
-| `/secrets` | `SecretsPage` | Phase 7 | Управление секретами |
-| `/runners` | `RunnersPage` | Phase 4+ | Управление runner-агентами |
+| `/login` (auth enforcement) | `LoginPage` + `RequireAuth` | Phase 1 | Аутентификация |
 
 ### 10.1 RequireAuth (план)
 

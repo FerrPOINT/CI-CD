@@ -15,9 +15,46 @@ projects (1) ──── (N) pipelines (1) ──── (N) stages (1) ──�
    │                    │                    │ status CHECK       │
    │                    │                    │                    │ BIGSERIAL PK
    └── CASCADE          └── CASCADE          └── CASCADE          └── CASCADE
+
+repositories (1) ──── (N) pull_requests (по repository_name)
+   │
+   │ UUID PK, name UNIQUE
 ```
 
 Уровень изоляции: каждый родитель CASCADE-deletes удаляет всех потомков.
+
+---
+
+## 0.1 repositories
+
+Реестр bare Git-репозиториев (Git-хостинг). Полное описание — `docs/GIT_HOSTING.md`.
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| id | UUID PK | нет | `gen_random_uuid()` | Идентификатор |
+| name | TEXT UNIQUE | нет | — | Имя репозитория (совпадает с именем bare-репо в `CICD_GIT_ROOT`) |
+| created_at | TIMESTAMPTZ | нет | `now()` | Время создания |
+
+## 0.2 pull_requests
+
+Pull requests между ветками bare-репозитория (создание, merge через `git merge-tree`, close/reopen).
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| id | UUID PK | нет | `gen_random_uuid()` | Идентификатор |
+| repository_name | TEXT | нет | — | Репозиторий (FK по имени на `repositories.name` логически) |
+| number | INTEGER | нет | — | Порядковый номер PR в рамках репозитория |
+| title | TEXT | нет | — | Заголовок |
+| description | TEXT | нет | `''` | Описание |
+| source_branch | TEXT | нет | — | Ветка-источник |
+| target_branch | TEXT | нет | — | Ветка-приёмник |
+| status | TEXT CHECK | нет | `'open'` | `open` / `merged` / `closed` |
+| created_by | TEXT | нет | `''` | Автор |
+| created_at / updated_at | TIMESTAMPTZ | нет | `now()` | Timestamps |
+| merged_at | TIMESTAMPTZ | да | NULL | Время merge |
+| merge_commit_sha | TEXT | да | NULL | SHA merge-коммита |
+
+`UNIQUE(repository_name, number)`.
 
 ---
 
