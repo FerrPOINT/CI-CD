@@ -122,6 +122,7 @@
     "deploy": "Деплой"
   },
   "common": {
+    "theme": "Тема: {{theme}}",
     "save": "Сохранить",
     "cancel": "Отменить",
     "delete": "Удалить",
@@ -142,6 +143,8 @@
     "heartbeat": "Heartbeat",
     "heartbeatSent": "Heartbeat отправлен",
     "registered": "Runner зарегистрирован",
+    "deleted": "Runner удалён",
+    "deleteConfirm": "Удалить runner",
     "empty": "Runner-ы не зарегистрированы."
   },
   "secrets": {

@@ -29,6 +29,10 @@ pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/api/v1/runners", get(list_runners).post(register_runner))
         .route(
+            "/api/v1/runners/{runner_id}",
+            axum::routing::delete(delete_runner),
+        )
+        .route(
             "/api/v1/runners/{runner_id}/heartbeat",
             post(runner_heartbeat),
         )
@@ -150,6 +154,19 @@ async fn runner_heartbeat(
         .bind(runner_id).bind(status).fetch_optional(pool(&state)?).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?;
     audit(pool(&state)?, "runner.heartbeat", "runner", runner_id, None).await?;
     Ok(Json(runner))
+}
+async fn delete_runner(
+    State(state): State<Arc<AppState>>,
+    Path(runner_id): Path<Uuid>,
+) -> ApiResult<serde_json::Value> {
+    let id: Uuid = sqlx::query_scalar("DELETE FROM runners WHERE id = $1 RETURNING id")
+        .bind(runner_id)
+        .fetch_optional(pool(&state)?)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(ApiError::not_found)?;
+    audit(pool(&state)?, "runner.deleted", "runner", id, None).await?;
+    Ok(Json(serde_json::json!({"deleted": id})))
 }
 
 #[derive(Debug, Serialize, FromRow)]
@@ -541,7 +558,7 @@ async fn project_report(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
 ) -> ApiResult<Report> {
-    Ok(Json(sqlx::query_as("SELECT count(*) AS total_pipelines, count(*) FILTER (WHERE status = 'success') AS successful_pipelines, count(*) FILTER (WHERE status = 'failed') AS failed_pipelines, COALESCE(count(*) FILTER (WHERE status = 'success')::float / NULLIF(count(*) FILTER (WHERE status IN ('success', 'failed', 'canceled')), 0), 0) AS success_rate, COALESCE(avg(EXTRACT(EPOCH FROM (finished_at - started_at))) FILTER (WHERE finished_at IS NOT NULL AND started_at IS NOT NULL), 0) AS average_duration_seconds FROM pipelines WHERE project_id = $1").bind(project_id).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?))
+    Ok(Json(sqlx::query_as("SELECT count(*)::bigint AS total_pipelines, count(*) FILTER (WHERE status = 'success')::bigint AS successful_pipelines, count(*) FILTER (WHERE status = 'failed')::bigint AS failed_pipelines, COALESCE(count(*) FILTER (WHERE status = 'success')::float8 / NULLIF(count(*) FILTER (WHERE status IN ('success', 'failed', 'canceled')), 0), 0)::float8 AS success_rate, COALESCE(avg(EXTRACT(EPOCH FROM (finished_at - started_at))) FILTER (WHERE finished_at IS NOT NULL AND started_at IS NOT NULL), 0)::float8 AS average_duration_seconds FROM pipelines WHERE project_id = $1").bind(project_id).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?))
 }
 
 #[derive(Debug, Serialize, FromRow)]

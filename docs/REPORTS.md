@@ -4,7 +4,7 @@
 
 План Phase 9: сбор и визуализация CI/CD метрик — success rate, средняя длительность, история пайплайнов, частота деплоев. Отчёты доступны через API и в админ-панели Dashboard.
 
-> **Статус:** Planned (Phase 9). Не реализовано. См. `docs/ROADMAP.md`.
+> **Статус:** MVP реализован (`GET /projects/{id}/reports/summary`: total/successful/failed, success_rate, average_duration + страница Reports). Не реализовано: фильтры по периоду, графики, failure trends. См. `docs/ROADMAP.md` Phase 9.
 
 ---
 

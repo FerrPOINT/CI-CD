@@ -20,7 +20,7 @@
 - CI: GitHub Actions (fmt, clippy, test, build).
 - Тесты: domain transitions, API contract, CLI contract, frontend unit.
 
-Это control plane, а не remote-execution system. Runner-агенты, webhooks, secrets, artifacts, YAML-парсинг, RBAC и реальные деплойment'ы отложены.
+Это control plane с embedded runner (Docker/shell) и platform-MVP: runners registry + heartbeat, encrypted secrets, artifacts, environments/deployments, schedules, webhooks/notifications config, reports, audit log, users/roles model, API tokens. Отложены: auth/RBAC enforcement, доставка webhook-ов, cron-scheduler execution, secret injection в runner-окружение.
 
 ---
 
@@ -97,13 +97,14 @@
 
 **Цель**: выполнение задач в реальных контейнерах.
 
-- [ ] Runner registration: `runners` таблица, `POST /runners/register` (token-based).
-- [ ] Runner agent: отдельный процесс, подключается к API, забирает jobs из очереди.
-- [ ] Job execution: `docker run` с указанным `image` и `command`, стриминг stdout/stderr в `job_logs`.
-- [ ] Job lifecycle: API автоматически переводит `queued → running → success/failed` через runner.
-- [ ] Runner heartbeat: `POST /runners/{id}/heartbeat`.
-- [ ] Concurrency: несколько runners, job locking (`SELECT FOR UPDATE SKIP LOCKED`).
-- [ ] Frontend: runner status в admin, real-time job progress.
+- [x] Runner registration: `runners` таблица, `POST /runners` + heartbeat + delete.
+- [x] Embedded runner: supervisor loop внутри cicd-server, забирает jobs из очереди (`SELECT FOR UPDATE SKIP LOCKED`).
+- [x] Job execution: `docker run` с указанным `image` и `command` (или shell-режим), стриминг stdout в `job_logs`.
+- [x] Job lifecycle: `queued → running → success/failed` автоматически через runner.
+- [x] Runner heartbeat: `POST /runners/{id}/heartbeat`.
+- [x] `.forge-ci.yml` парсинг stages/jobs из репозитория.
+- [ ] Отдельный runner-агент (external process) и multi-runner пулы с tags.
+- [ ] Frontend: real-time job progress.
 - [ ] Verification: runner e2e test (запуск реального `alpine:3.21 echo hello`).
 
 ---
@@ -112,13 +113,16 @@
 
 **Цель**: уведомление внешних систем о событиях.
 
-- [ ] `webhooks` таблица: URL, events, secret, project_id.
+- [x] `webhooks` таблица: URL, events, project_id.
+- [x] `notification_configs` таблица: каналы уведомлений (channel + target).
+- [x] Endpoint `GET/POST/DELETE /projects/{id}/webhooks` — конфигурация webhook-ов.
+- [x] Endpoint `GET/PUT /projects/{id}/notifications` — конфигурация уведомлений.
+- [x] Frontend: страница Webhooks (webhook-и + notifications).
 - [ ] `webhook_deliveries` таблица: попытки доставки, статус, response code.
 - [ ] Events: `pipeline.started`, `pipeline.finished`, `job.started`, `job.finished`, `job.failed`.
-- [ ] Endpoint `POST /projects/{id}/webhooks` — регистрация webhook.
 - [ ] Delivery: async background task, retry с exponential backoff (3 attempts).
-- [ ] HMAC-SHA256 подписка payload'а.
-- [ ] Frontend: webhook management UI, delivery history.
+- [ ] HMAC-SHA256 подпись payload'а.
+- [ ] Frontend: delivery history.
 - [ ] Verification: webhook delivery test, retry test, signature verification.
 
 ---
@@ -127,12 +131,13 @@
 
 **Цель**: безопасное хранение секретов проектов.
 
-- [ ] `secrets` таблица: `project_id`, `key`, `encrypted_value`, `created_at`.
-- [ ] Шифрование: AES-256-GCM, ключ из `CICD_SECRETS_KEY` env var.
-- [ ] Endpoints: `GET/POST/DELETE /projects/{id}/secrets`.
+- [x] `project_secrets` таблица: `project_id`, `key`, `encrypted_value`, timestamps.
+- [x] Шифрование: AES-256-GCM, ключ из `CICD_SECRETS_KEY` env var.
+- [x] Endpoints: `GET/POST/DELETE` (`/projects/{id}/secrets`, `/secrets/{id}`).
+- [x] Frontend: страница Secrets (значения не отображаются никогда).
 - [ ] Secrets доступны runner'ам через env vars при выполнении job.
 - [ ] Маскирование секретов в логах (replace на `***`).
-- [ ] Frontend: secrets management UI (значения скрыты по умолчанию, reveal on click).
+- [ ] Rotation ключа (re-encrypt при смене `CICD_SECRETS_KEY`).
 - [ ] Verification: encryption/decryption unit tests, masking test, API integration.
 
 ---
@@ -141,11 +146,13 @@
 
 **Цель**: хранение артефактов сборки.
 
-- [ ] `artifacts` таблица: `job_id`, `filename`, `size_bytes`, `storage_key`, `created_at`.
-- [ ] Storage: локальная файловая система (`CICD_STORAGE` dir) или S3-compatible.
-- [ ] Endpoints: `POST /jobs/{id}/artifacts` (multipart upload), `GET /artifacts/{id}/download`.
-- [ ] Лимит размера (default 100 МБ), TTL для автоматической очистки.
-- [ ] Frontend: artifacts tab в job details, скачивание.
+- [x] `artifacts` таблица: `job_id`, `name`, `size_bytes`, `storage_path`, `created_at`.
+- [x] Storage: локальная файловая система (`CICD_ARTIFACTS_DIR`), volume в docker-compose.
+- [x] Endpoints: `GET/POST /jobs/{id}/artifacts` (raw body + `X-Artifact-Name`), `GET /artifacts/{id}/download`.
+- [x] Лимит размера: 50 MiB на файл.
+- [x] Frontend: страница Artifacts со скачиванием.
+- [ ] TTL для автоматической очистки.
+- [ ] S3-compatible storage.
 - [ ] Verification: upload/download test, size limit test, cleanup test.
 
 ---
@@ -154,29 +161,32 @@
 
 **Цель**: системная админка и отчёты.
 
-- [ ] `audit_log` таблица: действия администратора.
+- [x] `audit_log` таблица: события (runners, secrets, tokens, артефакты).
+- [x] `users` таблица: username, role (admin/maintainer/developer/viewer), enabled.
+- [x] `api_tokens` таблица: SHA-256 hash, hint, привязка к user.
+- [x] Admin API: `GET /audit-log`, `GET/POST/PATCH /users`, `GET/POST/DELETE /api-tokens`.
+- [x] Reports: `GET /projects/{id}/reports/summary` (total, success rate, avg duration).
+- [x] Frontend: страницы Audit Log, Users & Tokens, Reports.
 - [ ] `system_settings` таблица: key-value конфигурация инстанса.
-- [ ] Admin panel: users management, system settings, audit log.
-- [ ] Reports: pipeline success rate, average duration, failure trends.
-- [ ] Frontend: `/admin` page с tabs (Users, Settings, Audit Log, Reports).
 - [ ] Charts: `recharts` для визуализации (success rate, duration histogram).
+- [ ] Auth enforcement: вход по паролю, проверка ролей и токенов на запросах.
 - [ ] Verification: admin API integration, frontend component tests, report accuracy.
 
 ---
 
 ## 12. Future (v1.x)
 
-- RBAC: роли (admin, maintainer, developer, viewer), per-project permissions.
+- RBAC enforcement: роли (admin, maintainer, developer, viewer), per-project permissions.
 - Git integration: auto-trigger на push (GitHub/GitLab webhook listener).
 - YAML pipeline editor в UI с валидацией.
 - Matrix builds (параллельные jobs с параметрами).
 - Manual approval gates между stages.
-- Scheduled pipelines (cron).
+- Scheduled pipelines execution (cron-scheduler; хранение расписаний уже реализовано).
 - Self-hosted runner pools с метками (tags).
 - OIDC/OAuth SSO.
 - Prometheus metrics endpoint (`/metrics`).
 - Rate limiting (tower-governor).
-- API tokens для CLI/automation.
+- API token enforcement для CLI/automation (хранение уже реализовано).
 - Multi-arch runner support (amd64/arm64).
 
 ---

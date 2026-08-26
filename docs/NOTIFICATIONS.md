@@ -4,7 +4,7 @@
 
 План Phase 6: система уведомлений о смене статуса пайплайнов и задач. Каналы доставки: email, SMS, in-app alerts, SSE (Server-Sent Events) для real-time push в Dashboard.
 
-> **Статус:** Planned (Phase 6). Не реализовано. См. `docs/ROADMAP.md`.
+> **Статус:** MVP реализовано хранение конфигурации каналов (`notification_configs` + `GET/PUT /projects/{id}/notifications` + UI на странице Webhooks). Не реализовано: реальная доставка уведомлений, SSE. См. `docs/ROADMAP.md` Phase 6.
 
 ---
 

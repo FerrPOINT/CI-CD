@@ -6,29 +6,89 @@ Forge CI/CD хранит bare Git-репозитории, отдаёт Smart HTT
 
 ## Скриншоты
 
-| Экран | Скриншот |
-|---|---|
-| Login | ![Login](docs/screenshots/01-login.png) |
-| Дашборд | ![Dashboard](docs/screenshots/02-dashboard.png) |
-| Проекты | ![Projects](docs/screenshots/03-projects.png) |
-| Git-репозитории | ![Repositories](docs/screenshots/04-repositories.png) |
-| Пайплайны | ![Pipelines](docs/screenshots/05-pipelines.png) |
-| Детали пайплайна | ![Pipeline detail](docs/screenshots/06-pipeline-detail.png) |
-| Настройки | ![Settings](docs/screenshots/07-settings.png) |
-| Администрирование | ![Admin](docs/screenshots/08-admin.png) |
-| Репозиторий: коммиты и ветки | ![Repository browser](docs/screenshots/09-repository-browser.png) |
-| Сравнение веток | ![Compare](docs/screenshots/10-compare.png) |
-| Pull-запросы | ![Pull requests](docs/screenshots/11-pull-requests.png) |
-| Репозитории (фильтр) | ![Repositories filtered](docs/screenshots/12-repositories-filtered.png) |
-| Runners | ![Runners](docs/screenshots/13-runners.png) |
-| Secrets | ![Secrets](docs/screenshots/14-secrets.png) |
-| Artifacts | ![Artifacts](docs/screenshots/15-artifacts.png) |
-| Environments | ![Environments](docs/screenshots/16-environments.png) |
-| Schedules | ![Schedules](docs/screenshots/17-schedules.png) |
-| Webhooks | ![Webhooks](docs/screenshots/18-webhooks.png) |
-| Reports | ![Reports](docs/screenshots/19-reports.png) |
-| Audit log | ![Audit log](docs/screenshots/20-audit-log.png) |
-| Users | ![Users](docs/screenshots/21-users.png) |
+### Login
+
+![Login](docs/screenshots/01-login.png)
+
+### Дашборд
+
+![Dashboard](docs/screenshots/02-dashboard.png)
+
+### Проекты
+
+![Projects](docs/screenshots/03-projects.png)
+
+### Git-репозитории
+
+![Repositories](docs/screenshots/04-repositories.png)
+
+### Пайплайны
+
+![Pipelines](docs/screenshots/05-pipelines.png)
+
+### Детали пайплайна
+
+![Pipeline detail](docs/screenshots/06-pipeline-detail.png)
+
+### Настройки
+
+![Settings](docs/screenshots/07-settings.png)
+
+### Администрирование
+
+![Admin](docs/screenshots/08-admin.png)
+
+### Репозиторий: коммиты и ветки
+
+![Repository browser](docs/screenshots/09-repository-browser.png)
+
+### Сравнение веток
+
+![Compare](docs/screenshots/10-compare.png)
+
+### Pull-запросы
+
+![Pull requests](docs/screenshots/11-pull-requests.png)
+
+### Репозитории (фильтр)
+
+![Repositories filtered](docs/screenshots/12-repositories-filtered.png)
+
+### Runners
+
+![Runners](docs/screenshots/13-runners.png)
+
+### Секреты проекта
+
+![Secrets](docs/screenshots/14-secrets.png)
+
+### Артефакты
+
+![Artifacts](docs/screenshots/15-artifacts.png)
+
+### Окружения
+
+![Environments](docs/screenshots/16-environments.png)
+
+### Расписания
+
+![Schedules](docs/screenshots/17-schedules.png)
+
+### Webhooks и уведомления
+
+![Webhooks](docs/screenshots/18-webhooks.png)
+
+### Отчёты
+
+![Reports](docs/screenshots/19-reports.png)
+
+### Журнал аудита
+
+![Audit log](docs/screenshots/20-audit-log.png)
+
+### Пользователи и API-токены
+
+![Users](docs/screenshots/21-users.png)
 
 ## Порты по умолчанию
 
@@ -57,22 +117,24 @@ Forge CI/CD хранит bare Git-репозитории, отдаёт Smart HTT
 
 ### Runner и CI/CD выполнение
 
-- Embedded runner: реальное выполнение команд джоб, клонирование репо, стриминг логов
+- Embedded runner: реальное выполнение команд джоб (Docker или shell), клонирование репо, стриминг логов
 - `.forge-ci.yml` из репозитория: кастомные stages/jobs (fallback на дефолтный шаблон)
 - Cancel/Retry для пайплайнов и отдельных джоб (с kill процесса)
 - Stop-on-failure: каскадная отмена последующих стадий
+- Runners registry: регистрация, heartbeat (online/offline/paused), теги, удаление
 
-### Платформа
+### Платформа (MVP)
 
-- **Runners**: регистрация, статус, теги
-- **Secrets**: шифрованные переменные проекта (AES-256-GCM), инжект в джобы
-- **Artifacts**: загрузка, скачивание, retention
-- **Environments**: окружения деплоя
-- **Schedules**: cron-триггеры пайплайнов
-- **Webhooks**: исходящие уведомления (pipeline events)
-- **Reports**: агрегаты success rate / durations
-- **Audit log**: журнал действий
-- **Users**: управление пользователями и API-токенами
+- **Project Secrets**: encrypted-at-rest (AES-256-GCM, `CICD_SECRETS_KEY`), значения никогда не возвращаются через API
+- **Artifacts**: метаданные, upload (raw body) / download, локальное хранилище (`CICD_ARTIFACTS_DIR`, 50 MiB лимит)
+- **Environments & Deployments**: создание окружений (available/stopped/degraded) и запись деплоев
+- **Schedules**: cron-выражение + project/ref (хранение и API; execution scheduler — TODO)
+- **Webhooks**: конфигурация исходящих webhook-ов (url, events, enabled; доставка — TODO)
+- **Notifications**: конфигурация каналов уведомлений (slack/email/…; доставка — TODO)
+- **Reports**: success rate, average duration по проекту
+- **Audit Log**: последние 200 событий (runner, secret, artifact, token операции)
+- **Users & Roles**: модель пользователей с ролями admin/maintainer/developer/viewer (auth enforcement — TODO)
+- **API Tokens**: генерация (SHA-256 hash, одноразовый показ значения) и отзыв (проверка токенов — TODO)
 
 ```bash
 # Создать репозиторий
@@ -103,7 +165,7 @@ git clone http://127.0.0.1:22802/git/my-service.git
 ### Dashboard и администрирование
 
 - Dashboard с проектами и показателями CI/CD
-- Страницы: Projects, Repositories, Pipelines, Pipeline Detail, Settings, Admin
+- Страницы: Projects, Repositories, Pipelines, Pipeline Detail, Runners, Secrets, Artifacts, Environments, Schedules, Webhooks, Reports, Audit Log, Users, Settings, Admin
 - Три темы: `dark`, `gray`, `light`
 - Локализация `ru` / `en`, язык по умолчанию — русский
 - REST API с JSON error envelope и health-check
@@ -114,15 +176,18 @@ git clone http://127.0.0.1:22802/git/my-service.git
 # 1. Скопировать конфигурацию
 cp .env.example .env
 
-# 2. Поднять весь стек
+# 2. Сгенерировать ключ для шифрования секретов (обязательно для secrets)
+echo "CICD_SECRETS_KEY=$(openssl rand -base64 32)" >> .env
+
+# 3. Поднять весь стек
 # Docker создаст PostgreSQL, backend и frontend
 docker compose up --build -d
 
-# 3. Проверить сервисы
+# 4. Проверить сервисы
 curl http://127.0.0.1:22801/api/v1/health
 # {"service":"cicd","status":"ok"}
 
-# 4. Открыть Dashboard
+# 5. Открыть Dashboard
 # http://127.0.0.1:22802
 ```
 
@@ -139,6 +204,8 @@ curl http://127.0.0.1:22801/api/v1/health
 | `CICD_GIT_ROOT` | `/var/lib/forge/git` | Путь к bare-репозиториям внутри backend container |
 | `CICD_GIT_TOKEN` | пусто | Токен Git Smart HTTP; пустой = local dev без auth |
 | `CICD_GIT_INTERNAL_TOKEN` | dev token | Токен вызова post-receive -> pipeline hook |
+| `CICD_SECRETS_KEY` | пусто | Base64 32-byte ключ для AES-256-GCM шифрования секретов |
+| `CICD_ARTIFACTS_DIR` | `/var/lib/forge/artifacts` | Директория локального хранилища артефактов |
 
 Не используйте дефолтные секреты вне локальной разработки.
 
@@ -207,7 +274,10 @@ CI-CD/
 │       ├── api.rs           # REST routes, pipeline/job orchestration
 │       ├── domain.rs        # Status transition rules
 │       ├── git_host.rs      # Bare repositories + Smart HTTP + post-receive hook
-│       ├── store.rs         # PostgreSQL schema bootstrap
+│       ├── platform.rs      # Platform APIs: runners, secrets, artifacts, environments,
+│       │                    #   schedules, webhooks, notifications, reports, audit, users, tokens
+│       ├── runner.rs        # Embedded runner: Docker/shell execution, supervisor loop
+│       ├── store.rs         # PostgreSQL schema bootstrap (migrate)
 │       └── bin/cicd-cli.rs  # CLI client
 ├── frontend/                # React SPA (pages, widgets, typed API hooks)
 ├── docs/                    # Architecture, API, operations, roadmap and ADRs
@@ -226,7 +296,11 @@ CI-CD/
 - [API](docs/API.md)
 - [Git-хостинг](docs/GIT_HOSTING.md)
 - [Pull requests и сравнение](docs/PULL_REQUESTS.md)
-- [Git webhooks](docs/WEBHOOKS.md)
+- [Secrets management](docs/SECRETS_MGMT.md)
+- [Artifacts](docs/ARTIFACTS.md)
+- [Webhooks](docs/WEBHOOKS.md)
+- [Notifications](docs/NOTIFICATIONS.md)
+- [Reports](docs/REPORTS.md)
 - [Деплой](docs/DEPLOYMENT.md)
 - [Локальный запуск](docs/LOCAL_SETUP.md)
 - [Безопасность](docs/SECURITY.md)
@@ -242,12 +316,20 @@ CI-CD/
 - [x] MVP control plane: проекты, пайплайны, стадии, джобы, логи
 - [x] Встроенный Git Smart HTTP + post-receive auto-trigger
 - [x] Repository browser, compare, pull requests с merge
-- [ ] Auth и RBAC
+- [x] Runners: регистрация, список, heartbeat
+- [x] Project secrets: encrypted-at-rest (AES-256-GCM), без возврата значений
+- [x] Artifacts: метаданные, upload/download, локальное хранилище
+- [x] Environments & deployments
+- [x] Schedules: cron-выражение + project/ref, хранение и API
+- [x] Webhooks config + notifications config
+- [x] Reports: success rate, average duration
+- [x] Audit log
+- [x] Users & roles model + API tokens
+- [ ] Auth и RBAC enforcement
 - [ ] Реальные Docker runners
-- [ ] Webhooks для GitHub/GitLab/Gitea и SSE events
-- [ ] Encrypted project secrets
-- [ ] Artifact storage
-- [ ] CI/CD reports и audit log
+- [ ] Webhook delivery и SSE events
+- [ ] Cron-scheduler execution
+- [ ] Secret injection в runner окружение
 
 ## Лицензия
 

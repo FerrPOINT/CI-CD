@@ -122,6 +122,7 @@
     "deploy": "Deploy"
   },
   "common": {
+    "theme": "Theme: {{theme}}",
     "save": "Save",
     "cancel": "Cancel",
     "delete": "Delete",
@@ -142,6 +143,8 @@
     "heartbeat": "Heartbeat",
     "heartbeatSent": "Heartbeat sent",
     "registered": "Runner registered",
+    "deleted": "Runner deleted",
+    "deleteConfirm": "Delete runner",
     "empty": "No runners registered."
   },
   "secrets": {

@@ -656,6 +656,112 @@ curl -sS -X POST "http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/status" \
 curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq -r .pipeline.id)"
 ```
 
+---
+
+## Platform endpoints (MVP)
+
+> **Security note:** auth/RBAC is not enforced yet (Phase 1 — TODO). All endpoints below are unauthenticated in the current MVP. Use a reverse proxy or network isolation to restrict access in shared environments.
+
+### Runners
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/runners` | Список зарегистрированных runner-ов |
+| POST | `/runners` | Регистрация runner (name, tags[]) |
+| DELETE | `/runners/{runner_id}` | Удалить runner |
+| POST | `/runners/{runner_id}/heartbeat` | Обновить статус и last_seen_at |
+
+### Project Secrets
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/projects/{project_id}/secrets` | Метаданные секретов (без значений) |
+| POST | `/projects/{project_id}/secrets` | Создать/обновить секрет (key, value) |
+| DELETE | `/secrets/{secret_id}` | Удалить секрет |
+
+> Секреты шифруются at-rest (AES-256-GCM, `CICD_SECRETS_KEY`). Значения **никогда** не возвращаются через API — только метаданные (id, key, timestamps).
+
+### Artifacts
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/jobs/{job_id}/artifacts` | Метаданные артефактов задачи |
+| POST | `/jobs/{job_id}/artifacts` | Загрузить артефакт (raw body, `X-Artifact-Name`) |
+| GET | `/artifacts/{artifact_id}/download` | Скачать артефакт |
+
+> Артефакты хранятся в локальной ФС (`CICD_ARTIFACTS_DIR`, default `/var/lib/forge/artifacts`). Лимит — 50 MiB на файл.
+
+### Environments & Deployments
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/projects/{project_id}/environments` | Список окружений проекта |
+| POST | `/projects/{project_id}/environments` | Создать окружение (name, url) |
+| PATCH | `/environments/{environment_id}` | Обновить окружение |
+| DELETE | `/environments/{environment_id}` | Удалить окружение |
+| GET | `/environments/{environment_id}/deployments` | Список деплоев |
+| POST | `/environments/{environment_id}/deployments` | Создать деплой (git_ref, status) |
+
+### Schedules
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/projects/{project_id}/schedules` | Список расписаний |
+| POST | `/projects/{project_id}/schedules` | Создать (cron, git_ref, enabled) |
+| PATCH | `/schedules/{schedule_id}` | Обновить |
+| DELETE | `/schedules/{schedule_id}` | Удалить |
+
+> Cron — стандартное 5-полей выражение (`*/5 * * * *`). Исполнение расписаний (cron-scheduler) не реализовано в MVP — только хранение и API.
+
+### Webhooks
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/projects/{project_id}/webhooks` | Список webhook-ов |
+| POST | `/projects/{project_id}/webhooks` | Создать (url, events[], enabled) |
+| DELETE | `/webhooks/{webhook_id}` | Удалить |
+
+> Отправка webhook-ов при событиях не реализована в MVP — только хранение конфигурации.
+
+### Notifications
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/projects/{project_id}/notifications` | Список каналов уведомлений |
+| PUT | `/projects/{project_id}/notifications` | Заменить все каналы (array) |
+
+### Reports
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/projects/{project_id}/reports/summary` | Агрегаты: total/successful/failed, success_rate, avg_duration |
+
+### Audit Log
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/audit-log` | Последние 200 событий аудита |
+
+### Users & Roles
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/users` | Список пользователей |
+| POST | `/users` | Создать (username, role: admin/maintainer/developer/viewer, enabled) |
+| PATCH | `/users/{user_id}` | Обновить |
+
+> Auth не реализован — пользователи хранятся как модель для будущего RBAC. Пароли не хранятся.
+
+### API Tokens
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/api-tokens` | Список токенов (hint only) |
+| POST | `/api-tokens` | Создать (name, user_id?) → возвращает `value` один раз |
+| DELETE | `/api-tokens/{token_id}` | Отозвать |
+
+> Токены хранятся как SHA-256 хэш. Полное значение возвращается только при создании. Проверка токенов при запросах не реализована в MVP.
+
 ## References
 
 - `docs/ARCHITECTURE.md` — архитектура приложения.

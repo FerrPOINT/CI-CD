@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::{
     Json, Router,
@@ -361,11 +362,10 @@ pub(crate) async fn create_pipeline(
             .await
             .map_err(ApiError::internal)?
             .flatten();
-    // Try fetching .forge-ci.yml via git (works for any http repo reachable from backend).
-    let config = read_forge_ci_config_safe(repository_url.as_deref(), &git_ref)
-        .await
-        .unwrap_or_default();
-    let stages = parse_forge_ci(&config);
+    // Never clone here: this path is called by post-receive and must return
+    // before git-receive-pack finishes. Local config is read from the bare repo.
+    let config = read_local_forge_ci_config(repository_url.as_deref(), &git_ref).await;
+    let stages = parse_forge_ci(config.as_deref()).map_err(ApiError::bad_request)?;
 
     let pipeline = sqlx::query_as::<_, Pipeline>(
         "INSERT INTO pipelines (id, project_id, git_ref, status) VALUES ($1, $2, $3, 'queued') RETURNING id, project_id, git_ref, status, created_at, started_at, finished_at",
@@ -400,50 +400,27 @@ struct CiJob {
     command: String,
 }
 
-/// Reads `.forge-ci.yml` without deadlocking. Tries `git show` on a local
-/// bare repo first (no HTTP, no clone). Falls back to a bounded blocking
-/// clone for external HTTP URLs via `spawn_blocking`.
-async fn read_forge_ci_config_safe(repo_url: Option<&str>, git_ref: &str) -> Option<String> {
-    let url = repo_url?;
-    // Local bare repo: extract name from URL and use --git-dir.
-    if let Some(name) = extract_repo_name_from_url(url) {
-        let git_root =
-            std::env::var("CICD_GIT_ROOT").unwrap_or_else(|_| "/var/lib/forge/git".into());
-        let bare_path = std::path::Path::new(&git_root).join(format!("{name}.git"));
-        if bare_path.exists() {
-            let output = std::process::Command::new("git")
-                .arg(format!("--git-dir={}", bare_path.display()))
-                .args(["show", &format!("{git_ref}:.forge-ci.yml")])
-                .output()
-                .ok()?;
-            if output.status.success() {
-                return Some(String::from_utf8_lossy(&output.stdout).to_string());
-            }
-            return None;
-        }
+/// Reads `.forge-ci.yml` from an already-pushed local bare repository.
+/// External URLs deliberately use the template: cloning during post-receive
+/// could wait on the same Smart HTTP request that is still completing.
+async fn read_local_forge_ci_config(repo_url: Option<&str>, git_ref: &str) -> Option<String> {
+    let name = extract_repo_name_from_url(repo_url?)?;
+    let git_root = std::env::var("CICD_GIT_ROOT").unwrap_or_else(|_| "/var/lib/forge/git".into());
+    let bare_path = std::path::Path::new(&git_root).join(format!("{name}.git"));
+    if !bare_path.is_dir() {
+        return None;
     }
-    // External URL: bounded blocking clone in spawn_blocking.
-    let url = url.to_string();
-    let git_ref = git_ref.to_string();
-    let handle = tokio::task::spawn_blocking(move || {
-        let dir = std::env::temp_dir().join(format!("forge-ci-{}", uuid::Uuid::new_v4()));
-        let _ = std::fs::create_dir_all(&dir);
-        let clone = std::process::Command::new("git")
-            .args([
-                "clone", "--quiet", "--depth", "1", "--branch", &git_ref, &url,
-            ])
-            .arg(&dir)
-            .output()
-            .ok()?;
-        if !clone.status.success() {
-            let _ = std::fs::remove_dir_all(&dir);
-            return None;
-        }
-        let content = std::fs::read_to_string(dir.join(".forge-ci.yml")).ok();
-        let _ = std::fs::remove_dir_all(&dir);
-        content
-    });
-    handle.await.ok().flatten()
+
+    let output = tokio::process::Command::new("git")
+        .arg(format!("--git-dir={}", bare_path.display()))
+        .args(["show", &format!("{git_ref}:.forge-ci.yml")])
+        .output()
+        .await
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// Extracts the repository name from a URL like `http://host/git/name.git`.
@@ -462,7 +439,7 @@ fn extract_repo_name_from_url(url: &str) -> Option<String> {
 ///         image: rust:1.86
 ///         command: cargo build --release
 /// ```
-fn parse_forge_ci(raw: &str) -> Vec<CiStage> {
+fn parse_forge_ci(raw: Option<&str>) -> Result<Vec<CiStage>, String> {
     #[derive(serde::Deserialize)]
     struct YamlJob {
         name: String,
@@ -485,57 +462,146 @@ fn parse_forge_ci(raw: &str) -> Vec<CiStage> {
         "alpine:3.21".into()
     }
 
-    let parsed: Option<YamlConfig> = serde_yaml::from_str(raw).ok();
+    let Some(raw) = raw else {
+        return Ok(default_pipeline());
+    };
+    let parsed: YamlConfig =
+        serde_yaml::from_str(raw).map_err(|error| format!("invalid .forge-ci.yml: {error}"))?;
     let mut stages: Vec<CiStage> = parsed
-        .map(|c| {
-            c.stages
+        .stages
+        .into_iter()
+        .map(|stage| CiStage {
+            name: stage.name,
+            jobs: stage
+                .jobs
                 .into_iter()
-                .map(|s| CiStage {
-                    name: s.name,
-                    jobs: s
-                        .jobs
-                        .into_iter()
-                        .map(|j| CiJob {
-                            name: j.name,
-                            image: j.image,
-                            command: j.command,
-                        })
-                        .collect(),
+                .map(|job| CiJob {
+                    name: job.name,
+                    image: job.image,
+                    command: job.command,
                 })
-                .collect()
+                .collect(),
         })
-        .unwrap_or_default();
+        .collect();
     // Drop stages without jobs (nothing to execute).
-    stages.retain(|s| !s.jobs.is_empty());
-    if stages.is_empty() {
-        vec![
-            CiStage {
-                name: "build".into(),
-                jobs: vec![CiJob {
-                    name: "checkout".into(),
-                    image: "alpine/git:latest".into(),
-                    command: "git fetch --all".into(),
-                }],
-            },
-            CiStage {
-                name: "test".into(),
-                jobs: vec![CiJob {
-                    name: "unit-tests".into(),
-                    image: "rust:1.86".into(),
-                    command: "cargo test".into(),
-                }],
-            },
-            CiStage {
+    stages.retain(|stage| !stage.jobs.is_empty());
+    validate_ci_stages(&stages)?;
+    Ok(stages)
+}
+
+fn default_pipeline() -> Vec<CiStage> {
+    vec![
+        CiStage {
+            name: "build".into(),
+            jobs: vec![CiJob {
+                name: "checkout".into(),
+                image: "alpine/git:latest".into(),
+                command: "git fetch --all".into(),
+            }],
+        },
+        CiStage {
+            name: "test".into(),
+            jobs: vec![CiJob {
+                name: "unit-tests".into(),
+                image: "rust:1.86".into(),
+                command: "cargo test".into(),
+            }],
+        },
+        CiStage {
+            name: "deploy".into(),
+            jobs: vec![CiJob {
                 name: "deploy".into(),
-                jobs: vec![CiJob {
-                    name: "deploy".into(),
-                    image: "alpine:3.21".into(),
-                    command: "echo deploy".into(),
-                }],
-            },
-        ]
-    } else {
-        stages
+                image: "alpine:3.21".into(),
+                command: "echo deploy".into(),
+            }],
+        },
+    ]
+}
+
+fn validate_ci_stages(stages: &[CiStage]) -> Result<(), String> {
+    if stages.is_empty() {
+        return Err(".forge-ci.yml must define at least one stage".into());
+    }
+    for stage in stages {
+        if stage.name.trim().is_empty() || stage.jobs.is_empty() {
+            return Err("every stage must have a name and at least one job".into());
+        }
+        for job in &stage.jobs {
+            if job.name.trim().is_empty()
+                || job.command.trim().is_empty()
+                || !is_safe_image_reference(&job.image)
+            {
+                return Err("every job needs a name, command, and safe image reference".into());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_safe_image_reference(image: &str) -> bool {
+    !image.is_empty()
+        && !image.starts_with('.')
+        && !image.contains("..")
+        && image.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '/' | ':' | '.' | '_' | '-')
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_multiple_jobs_and_normalizes_optional_values() {
+        let stages = parse_forge_ci(Some(
+            r#"
+stages:
+  - name: build
+    jobs:
+      - name: compile
+        image: rust:1.86
+        command: cargo build --release
+      - name: lint
+        command: cargo fmt --check
+  - name: test
+    jobs:
+      - name: unit
+        image: rust:1.86
+        command: cargo test
+"#,
+        ))
+        .expect("valid configuration");
+
+        assert_eq!(stages.len(), 2);
+        assert_eq!(stages[0].name, "build");
+        assert_eq!(stages[0].jobs.len(), 2);
+        assert_eq!(stages[0].jobs[1].image, "alpine:3.21");
+        assert_eq!(stages[1].jobs[0].command, "cargo test");
+    }
+
+    #[test]
+    fn uses_the_template_only_when_no_configuration_was_found() {
+        let stages = parse_forge_ci(None).expect("missing config uses template");
+
+        assert_eq!(
+            stages
+                .iter()
+                .map(|stage| stage.name.as_str())
+                .collect::<Vec<_>>(),
+            ["build", "test", "deploy"]
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_or_empty_configuration_instead_of_deploying_the_template() {
+        for source in [
+            "stages: []",
+            "stages:\n  - name: build\n    jobs: []",
+            "stages:\n  - name: build\n    jobs:\n      - name: compile\n        command: ''",
+            "stages:\n  - name: build\n    jobs:\n      - name: compile\n        image: ../unsafe\n        command: echo nope",
+        ] {
+            assert!(parse_forge_ci(Some(source)).is_err(), "{source}");
+        }
     }
 }
 
@@ -612,11 +678,7 @@ async fn cancel_pipeline(
         let mut guard = running.lock().await;
         for job_id in job_ids {
             if let Some(pid) = guard.remove(&job_id) {
-                let _ = tokio::process::Command::new("kill")
-                    .arg("-TERM")
-                    .arg(pid.to_string())
-                    .status()
-                    .await;
+                kill_running_job(job_id, pid).await;
             }
         }
     }
@@ -626,20 +688,44 @@ async fn cancel_pipeline(
         .await
         .map_err(ApiError::internal)?;
     sqlx::query(
-        "UPDATE jobs SET status = 'canceled', finished_at = now() WHERE status = 'queued' AND stage_id IN (SELECT id FROM stages WHERE pipeline_id = $1)",
+        "UPDATE jobs SET status = 'canceled', finished_at = now() \
+         WHERE status IN ('queued','running') AND stage_id IN \
+         (SELECT id FROM stages WHERE pipeline_id = $1)",
     )
     .bind(pipeline_id)
     .execute(pool)
     .await
     .map_err(ApiError::internal)?;
     sqlx::query(
-        "UPDATE stages SET status = 'canceled' WHERE status = 'queued' AND pipeline_id = $1",
+        "UPDATE stages SET status = 'canceled' \
+         WHERE status IN ('queued','running') AND pipeline_id = $1",
     )
     .bind(pipeline_id)
     .execute(pool)
     .await
     .map_err(ApiError::internal)?;
     Ok(Json(serde_json::json!({"canceled": pipeline_id})))
+}
+
+/// Kill a running job process: try Docker container stop by name, then
+/// SIGTERM and SIGKILL the child PID as fallback.
+async fn kill_running_job(job_id: Uuid, pid: u32) {
+    let container_name = format!("forge-job-{job_id}");
+    let _ = tokio::process::Command::new("docker")
+        .args(["stop", "-t", "2", &container_name])
+        .status()
+        .await;
+    let _ = tokio::process::Command::new("kill")
+        .arg("-TERM")
+        .arg(pid.to_string())
+        .status()
+        .await;
+    let _ = tokio::time::timeout(Duration::from_secs(2), async {}).await;
+    let _ = tokio::process::Command::new("kill")
+        .arg("-KILL")
+        .arg(pid.to_string())
+        .status()
+        .await;
 }
 
 async fn retry_pipeline(

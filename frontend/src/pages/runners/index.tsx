@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useRunners, useRegisterRunner, useRunnerHeartbeat } from '@/api/hooks'
+import { useRunners, useRegisterRunner, useRunnerHeartbeat, useDeleteRunner } from '@/api/hooks'
 import { Card } from '@/shared/ui/card'
 import { Button } from '@/shared/ui/button'
 import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
-import { Server, Plus, Activity } from 'lucide-react'
+import { Server, Plus, Activity, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 export function RunnersPage() {
@@ -14,6 +14,7 @@ export function RunnersPage() {
   const { data: runners = [], isLoading } = useRunners()
   const registerRunner = useRegisterRunner()
   const heartbeat = useRunnerHeartbeat()
+  const deleteRunner = useDeleteRunner()
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ name: '', tags: '' })
 
@@ -73,7 +74,7 @@ export function RunnersPage() {
                 <TableHead>{t('runners.tags')}</TableHead>
                 <TableHead>{t('runners.status')}</TableHead>
                 <TableHead>{t('runners.lastSeen')}</TableHead>
-                <TableHead className="w-24"></TableHead>
+                <TableHead className="w-28"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -91,11 +92,20 @@ export function RunnersPage() {
                   </TableCell>
                   <TableCell className="text-xs text-text-muted">{r.last_seen_at ? new Date(r.last_seen_at).toLocaleString() : '—'}</TableCell>
                   <TableCell>
-                    <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs" onClick={() =>
-                      heartbeat.mutate({ id: r.id }, { onSuccess: () => toast.success(t('runners.heartbeatSent')), onError: (err) => toast.error(err.message) })
-                    }>
-                      <Activity className="h-3 w-3" /> {t('runners.heartbeat')}
-                    </Button>
+                    <div className="flex gap-1">
+                      <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs" onClick={() =>
+                        heartbeat.mutate({ id: r.id }, { onSuccess: () => toast.success(t('runners.heartbeatSent')), onError: (err) => toast.error(err.message) })
+                      }>
+                        <Activity className="h-3 w-3" /> {t('runners.heartbeat')}
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs text-danger hover:text-danger" onClick={() => {
+                        if (window.confirm(`${t('runners.deleteConfirm')} "${r.name}"?`)) {
+                          deleteRunner.mutate(r.id, { onSuccess: () => toast.success(t('runners.deleted')), onError: (err) => toast.error(err.message) })
+                        }
+                      }}>
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}

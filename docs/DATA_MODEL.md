@@ -314,16 +314,161 @@ Foreign-key constraints:
 
 ---
 
-## 8. Планируемые таблицы (Roadmap)
+## 8. Platform tables (MVP)
+
+Все таблицы создаются через `store::migrate()` (`CREATE TABLE IF NOT EXISTS`).
+
+### 8.1 runners
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | UUID | NOT NULL | — | PK |
+| `name` | TEXT | NOT NULL | — | UNIQUE, имя runner |
+| `tags` | TEXT[] | NOT NULL | `'{}'` | Теги для фильтрации |
+| `status` | TEXT | NOT NULL | `'offline'` | CHECK: `online`, `offline`, `paused` |
+| `last_seen_at` | TIMESTAMPTZ | NULL | — | Последний heartbeat |
+| `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | Время регистрации |
+
+### 8.2 project_secrets
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | UUID | NOT NULL | — | PK |
+| `project_id` | UUID | NOT NULL | — | FK → `projects(id)` CASCADE |
+| `key` | TEXT | NOT NULL | — | Имя секрета (UNIQUE per project) |
+| `encrypted_value` | TEXT | NOT NULL | — | AES-256-GCM ciphertext (`v1:nonce:payload`) |
+| `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
+| `updated_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
+
+> `UNIQUE(project_id, key)`. Ключ шифрования — `CICD_SECRETS_KEY` (base64 32 bytes). Значения не возвращаются через API.
+
+### 8.3 artifacts
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | UUID | NOT NULL | — | PK |
+| `job_id` | UUID | NOT NULL | — | FK → `jobs(id)` CASCADE |
+| `name` | TEXT | NOT NULL | — | Имя файла |
+| `storage_path` | TEXT | NOT NULL | — | Путь в локальной ФС |
+| `content_type` | TEXT | NOT NULL | `'application/octet-stream'` | MIME |
+| `size_bytes` | BIGINT | NOT NULL | — | Размер в байтах |
+| `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
+
+> Хранилище: `CICD_ARTIFACTS_DIR` (default `/var/lib/forge/artifacts`). Лимит — 50 MiB.
+
+### 8.4 environments
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | UUID | NOT NULL | — | PK |
+| `project_id` | UUID | NOT NULL | — | FK → `projects(id)` CASCADE |
+| `name` | TEXT | NOT NULL | — | `UNIQUE(project_id, name)` |
+| `url` | TEXT | NULL | — | URL окружения |
+| `status` | TEXT | NOT NULL | `'available'` | CHECK: `available`, `stopped`, `degraded` |
+| `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
+
+### 8.5 deployments
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | UUID | NOT NULL | — | PK |
+| `environment_id` | UUID | NOT NULL | — | FK → `environments(id)` CASCADE |
+| `pipeline_id` | UUID | NULL | — | FK → `pipelines(id)` SET NULL |
+| `git_ref` | TEXT | NOT NULL | — | Деплойимый Git-реф |
+| `status` | TEXT | NOT NULL | `'pending'` | CHECK: `pending`, `running`, `success`, `failed` |
+| `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
+
+### 8.6 schedules
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | UUID | NOT NULL | — | PK |
+| `project_id` | UUID | NOT NULL | — | FK → `projects(id)` CASCADE |
+| `cron` | TEXT | NOT NULL | — | 5-полей cron-выражение |
+| `git_ref` | TEXT | NOT NULL | — | Git-реф для запуска |
+| `enabled` | BOOLEAN | NOT NULL | `TRUE` | Включено/выключено |
+| `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
+
+### 8.7 webhooks
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | UUID | NOT NULL | — | PK |
+| `project_id` | UUID | NOT NULL | — | FK → `projects(id)` CASCADE |
+| `url` | TEXT | NOT NULL | — | URL приёмника |
+| `events` | TEXT[] | NOT NULL | `'{}'` | Подписанные события |
+| `enabled` | BOOLEAN | NOT NULL | `TRUE` | — |
+| `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
+
+### 8.8 notification_configs
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | UUID | NOT NULL | — | PK |
+| `project_id` | UUID | NOT NULL | — | FK → `projects(id)` CASCADE |
+| `channel` | TEXT | NOT NULL | — | Тип канала (slack, email, …) |
+| `target` | TEXT | NOT NULL | — | Адрес назначения |
+| `enabled` | BOOLEAN | NOT NULL | `TRUE` | — |
+| `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
+
+### 8.9 audit_log
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | BIGSERIAL | NOT NULL | — | PK |
+| `action` | TEXT | NOT NULL | — | Действие (`runner.registered`, `secret.upserted`, …) |
+| `resource_type` | TEXT | NOT NULL | — | Тип ресурса |
+| `resource_id` | UUID | NULL | — | ID ресурса |
+| `actor` | TEXT | NULL | — | Инициатор (NULL = system) |
+| `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
+
+> Append-only. GET `/audit-log` возвращает последние 200 событий.
+
+### 8.10 users
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | UUID | NOT NULL | — | PK |
+| `username` | TEXT | NOT NULL | — | UNIQUE |
+| `role` | TEXT | NOT NULL | — | CHECK: `admin`, `maintainer`, `developer`, `viewer` |
+| `enabled` | BOOLEAN | NOT NULL | `TRUE` | — |
+| `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
+
+> Пароли не хранятся — модель для будущего RBAC.
+
+### 8.11 api_tokens
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | UUID | NOT NULL | — | PK |
+| `name` | TEXT | NOT NULL | — | Имя токена |
+| `token_hash` | TEXT | NOT NULL | — | UNIQUE, SHA-256 хэш |
+| `token_hint` | TEXT | NOT NULL | — | Подсказка (`cicd_xxxx...yyyy`) |
+| `user_id` | UUID | NULL | — | FK → `users(id)` SET NULL |
+| `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
+| `last_used_at` | TIMESTAMPTZ | NULL | — | — |
+
+> Полное значение возвращается только при создании. Проверка токенов при запросах — TODO.
+
+### 8.12 Индексы
+
+```
+idx_runners_status          ON runners(status)
+idx_project_secrets_project ON project_secrets(project_id)
+idx_artifacts_job            ON artifacts(job_id)
+idx_deployments_environment  ON deployments(environment_id)
+idx_schedules_project        ON schedules(project_id)
+idx_webhooks_project         ON webhooks(project_id)
+idx_audit_log_created        ON audit_log(created_at DESC)
+idx_pipelines_project_id     ON pipelines(project_id)
+```
+
+## 9. Планируемые таблицы (Roadmap)
 
 | Фаза | Таблицы | Назначение |
 |---|---|---|
-| Phase 1 (Auth) | `users`, `sessions` | Аутентификация, JWT |
-| Phase 5 (Runner) | `runners`, `runner_registrations` | Реальные runner-агенты |
-| Phase 6 (Webhooks) | `webhooks`, `webhook_deliveries` | Webhook-уведомления |
-| Phase 7 (Secrets) | `secrets` | Шифрованные секреты проектов |
-| Phase 8 (Artifacts) | `artifacts` | Хранилище артефактов сборки |
-| Phase 9 (Admin) | `audit_log`, `system_settings` | Аудит, системные настройки |
+| Phase 1 (Auth) | `sessions` | Аутентификация, JWT |
+| Phase 6 (Webhooks) | `webhook_deliveries` | Доставка webhook-уведомлений |
 
 ## References
 

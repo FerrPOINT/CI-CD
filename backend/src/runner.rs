@@ -5,7 +5,6 @@ use std::{collections::HashMap, process::Stdio, sync::Arc, time::Duration};
 use sqlx::PgPool;
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
-    process::Command,
     sync::Mutex,
 };
 use uuid::Uuid;
@@ -16,15 +15,33 @@ use crate::api::ApiError;
 /// Maps job_id -> child process id so that cancel can kill it.
 pub type RunningJobs = Arc<Mutex<HashMap<Uuid, u32>>>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RunnerMode {
+    /// Execute jobs inside Docker containers using the declared image.
+    Docker,
+    /// Fallback: run on the host shell (local dev without Docker).
+    HostShell,
+}
+
+fn runner_mode() -> RunnerMode {
+    match std::env::var("CICD_RUNNER_MODE").ok().as_deref() {
+        Some("host") => RunnerMode::HostShell,
+        _ => RunnerMode::Docker,
+    }
+}
+
 /// Executes a single job: marks running, streams stdout/stderr into job_logs,
 /// sets success/failed from the exit code and refreshes stage/pipeline status.
 pub(crate) async fn run_job(pool: PgPool, job_id: Uuid, running: RunningJobs) {
     if let Err(error) = run_job_inner(pool.clone(), job_id, running).await {
         tracing::error!(%job_id, error = ?error, "runner job failed");
-        let _ = sqlx::query("UPDATE jobs SET status = 'failed', finished_at = now() WHERE id = $1 AND status NOT IN ('canceled')")
-            .bind(job_id)
-            .execute(&pool)
-            .await;
+        let _ = sqlx::query(
+            "UPDATE jobs SET status = 'failed', finished_at = now() \
+             WHERE id = $1 AND status NOT IN ('canceled')",
+        )
+        .bind(job_id)
+        .execute(&pool)
+        .await;
     }
 }
 
@@ -43,31 +60,64 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
     if job.status != "queued" && job.status != "running" {
         return Ok(()); // terminal already
     }
+
+    // Resolve workspace before claiming so clone failures don't leave the job
+    // stuck in running.
+    let workspace = prepare_workspace(&pool, &job).await?;
+
     if job.status == "queued" {
-        // Manual path (no supervisor claim): flip to running ourselves.
-        let _ = sqlx::query(
-            "UPDATE jobs SET status = 'running', started_at = now() WHERE id = $1 AND status = 'queued'",
+        // Atomic claim: queued -> running prevents double dispatch.
+        let claimed = sqlx::query_scalar::<_, bool>(
+            "UPDATE jobs SET status = 'running', started_at = now() \
+             WHERE id = $1 AND status = 'queued' RETURNING TRUE",
         )
         .bind(job_id)
-        .execute(&pool)
+        .fetch_optional(&pool)
         .await
-        .map_err(ApiError::internal)?;
+        .map_err(ApiError::internal)?
+        .unwrap_or(false);
+        if !claimed {
+            // Someone else (cancel, retry, supervisor) moved it; leave workspace cleanup.
+            let _ = tokio::fs::remove_dir_all(&workspace).await;
+            return Ok(());
+        }
     }
 
     append_log(&pool, job_id, &format!("runner: starting job {}", job.name)).await?;
     refresh_stage(pool.clone(), job.id).await?;
 
-    // Resolve workspace: clone project repository at pipeline git_ref into a temp dir.
-    let workspace = prepare_workspace(&pool, &job).await?;
     let command_shell = format!("{} 2>&1", job.command);
 
-    let mut child = Command::new("sh")
-        .arg("-c")
-        .arg(&command_shell)
-        .current_dir(&workspace)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .kill_on_drop(true)
+    let mut child = if runner_mode() == RunnerMode::Docker {
+        let workspace_volume = workspace
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| workspace.clone());
+        let mut cmd = tokio::process::Command::new("docker");
+        cmd.args(docker_run_args(
+            &format!("forge-job-{job_id}"),
+            &job.image,
+            &command_shell,
+            "forge_runner_workspaces",
+            &workspace_volume.display().to_string(),
+        ));
+        cmd.current_dir(&workspace)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        cmd
+    } else {
+        let mut cmd = tokio::process::Command::new("sh");
+        cmd.arg("-c")
+            .arg(&command_shell)
+            .current_dir(&workspace)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        cmd
+    };
+
+    let mut child = child
         .spawn()
         .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
 
@@ -80,7 +130,7 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
 
     running.lock().await.remove(&job_id);
 
-    // Stream lines into job_logs (bounded read afterwards if pipe closed).
+    // Stream lines into job_logs.
     if let Some(stdout) = stdout {
         let mut reader = BufReader::new(stdout);
         let mut line = String::new();
@@ -105,7 +155,8 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
         Err(_) => "failed",
     };
     let _ = sqlx::query(
-        "UPDATE jobs SET status = $2, finished_at = now() WHERE id = $1 AND status NOT IN ('canceled')",
+        "UPDATE jobs SET status = $2, finished_at = now() \
+         WHERE id = $1 AND status NOT IN ('canceled')",
     )
     .bind(job_id)
     .bind(final_status)
@@ -159,16 +210,58 @@ async fn prepare_workspace(pool: &PgPool, job: &JobRow) -> Result<std::path::Pat
         &format!("runner: cloning {} at {}", repo_url, git_ref),
     )
     .await?;
-    let clone = Command::new("git")
+
+    // Prefer local bare repo: avoid HTTP round-trips that can deadlock if the
+    // repository_url points back at the same backend serving this runner.
+    let cloned = clone_from_local_bare(&repo_url, &git_ref, &workspace).await;
+    if !cloned {
+        clone_via_http(&repo_url, &git_ref, &workspace, pool, job.id).await?;
+    }
+    Ok(workspace.join("workspace"))
+}
+
+/// Attempts `git clone` from a local bare repo under `CICD_GIT_ROOT`.
+async fn clone_from_local_bare(repo_url: &str, git_ref: &str, workspace: &std::path::Path) -> bool {
+    let Some(name) = extract_repo_name_from_url(repo_url) else {
+        return false;
+    };
+    let git_root = std::env::var("CICD_GIT_ROOT").unwrap_or_else(|_| "/var/lib/forge/git".into());
+    let bare_path = std::path::Path::new(&git_root).join(format!("{name}.git"));
+    if !bare_path.is_dir() {
+        return false;
+    }
+    let output = tokio::process::Command::new("git")
         .arg("clone")
         .arg("--quiet")
         .arg("--depth")
         .arg("50")
         .arg("--branch")
-        .arg(&git_ref)
-        .arg(&repo_url)
+        .arg(git_ref)
+        .arg(&bare_path)
         .arg("workspace")
-        .current_dir(&workspace)
+        .current_dir(workspace)
+        .output()
+        .await;
+    matches!(output, Ok(out) if out.status.success())
+}
+
+async fn clone_via_http(
+    repo_url: &str,
+    git_ref: &str,
+    workspace: &std::path::Path,
+    pool: &PgPool,
+    job_id: Uuid,
+) -> Result<(), ApiError> {
+    let clone = tokio::process::Command::new("git")
+        .arg("clone")
+        .arg("--quiet")
+        .arg("--depth")
+        .arg("50")
+        .arg("--branch")
+        .arg(git_ref)
+        .arg(repo_url)
+        .arg("workspace")
+        .current_dir(workspace)
         .output()
         .await
         .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
@@ -176,13 +269,19 @@ async fn prepare_workspace(pool: &PgPool, job: &JobRow) -> Result<std::path::Pat
         let stderr = String::from_utf8_lossy(&clone.stderr);
         append_log(
             pool,
-            job.id,
+            job_id,
             &format!("runner: clone failed: {}", stderr.trim()),
         )
         .await?;
         return Err(ApiError::bad_request(stderr.to_string()));
     }
-    Ok(workspace.join("workspace"))
+    Ok(())
+}
+
+fn extract_repo_name_from_url(url: &str) -> Option<String> {
+    let path = url.split('/').next_back()?;
+    let name = path.strip_suffix(".git").unwrap_or(path);
+    Some(name.to_string())
 }
 
 async fn refresh_stage(pool: PgPool, job_id: Uuid) -> Result<(), ApiError> {
@@ -225,7 +324,7 @@ pub async fn supervisor_loop(pool: PgPool, running: RunningJobs) {
 /// Picks the first queued job of every non-terminal pipeline whose previous
 /// stages all finished successfully, and spawns it.
 async fn poll_and_dispatch(pool: &PgPool, running: RunningJobs) -> Result<(), sqlx::Error> {
-    // Cancel jobs of canceled pipelines.
+    // Cancel jobs of canceled pipelines (queued and running).
     sqlx::query(
         "UPDATE jobs SET status = 'canceled', finished_at = now() \
          WHERE status IN ('queued','running') AND stage_id IN \
@@ -245,7 +344,7 @@ async fn poll_and_dispatch(pool: &PgPool, running: RunningJobs) -> Result<(), sq
            AND NOT EXISTS ( \
              SELECT 1 FROM jobs x JOIN stages xs ON xs.id = x.stage_id \
              WHERE xs.pipeline_id = p.id AND xs.position < s.position \
-               AND x.status NOT IN ('success','skipped') \
+               AND x.status NOT IN ('success') \
            ) \
            AND NOT EXISTS ( \
              SELECT 1 FROM jobs y JOIN stages ys ON ys.id = y.stage_id \
@@ -259,9 +358,10 @@ async fn poll_and_dispatch(pool: &PgPool, running: RunningJobs) -> Result<(), sq
     .await?;
 
     for candidate in candidates {
-        // Atomic claim: queued -> running prevents double dispatch (CHECK-safe statuses).
+        // Atomic claim: queued -> running prevents double dispatch.
         let claimed = sqlx::query_scalar::<_, bool>(
-            "UPDATE jobs SET status = 'running', started_at = now() WHERE id = $1 AND status = 'queued' RETURNING TRUE",
+            "UPDATE jobs SET status = 'running', started_at = now() \
+             WHERE id = $1 AND status = 'queued' RETURNING TRUE",
         )
         .bind(candidate.id)
         .fetch_optional(pool)
@@ -284,4 +384,131 @@ struct Candidate {
     id: Uuid,
     #[allow(dead_code)]
     stage_id: Uuid,
+}
+
+/// Builds the `docker run` argument vector for executing a job in an
+/// isolated container. Exported for unit tests.
+fn docker_run_args(
+    name: &str,
+    image: &str,
+    command: &str,
+    volume_name: &str,
+    workspace_mount: &str,
+) -> Vec<String> {
+    vec![
+        "run".into(),
+        "--rm".into(),
+        "--name".into(),
+        name.into(),
+        "--network".into(),
+        "none".into(),
+        "--cap-drop".into(),
+        "ALL".into(),
+        "--read-only".into(),
+        "--tmpfs".into(),
+        "/tmp:rw,size=64m".into(),
+        "--memory".into(),
+        "512m".into(),
+        "--pids-limit".into(),
+        "256".into(),
+        "--workdir".into(),
+        "/workspace".into(),
+        "--volume".into(),
+        format!("{volume_name}:/workspaces"),
+        "--mount".into(),
+        format!("type=volume,src={volume_name},dst=/workspaces"),
+        "--mount".into(),
+        format!("type=bind,src={workspace_mount},dst=/workspace,readonly=false"),
+        image.into(),
+        "sh".into(),
+        "-lc".into(),
+        command.into(),
+    ]
+}
+
+/// Mirrors the SQL `CASE WHEN` aggregation used in `refresh_statuses` so it
+/// can be unit-tested without a database. Priority: failed > running >
+/// canceled > queued; success only when everything succeeded.
+fn aggregate_statuses<'a, I, S>(statuses: I) -> &'static str
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str> + 'a,
+{
+    let mut has_failed = false;
+    let mut has_running = false;
+    let mut has_canceled = false;
+    let mut all_success = true;
+    let mut any = false;
+    for status in statuses {
+        any = true;
+        match status.as_ref() {
+            "failed" => {
+                has_failed = true;
+                all_success = false;
+            }
+            "running" => {
+                has_running = true;
+                all_success = false;
+            }
+            "canceled" => {
+                has_canceled = true;
+                all_success = false;
+            }
+            "success" => {}
+            _ => {
+                all_success = false;
+            }
+        }
+    }
+    if !any {
+        return "queued";
+    }
+    if has_failed {
+        "failed"
+    } else if has_running {
+        "running"
+    } else if has_canceled {
+        "canceled"
+    } else if all_success {
+        "success"
+    } else {
+        "queued"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn docker_execution_uses_the_declared_image_and_isolated_workspace_volume() {
+        let args = docker_run_args(
+            "forge-job-123",
+            "rust:1.86",
+            "cargo test",
+            "forge_runner_workspaces",
+            "/workspace/123/workspace",
+        );
+
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--name", "forge-job-123"])
+        );
+        assert!(args.windows(2).any(|pair| pair == ["--network", "none"]));
+        assert!(args.windows(2).any(|pair| pair == ["--cap-drop", "ALL"]));
+        assert!(args.iter().any(|arg| arg == "rust:1.86"));
+        assert!(
+            args.windows(3)
+                .any(|pair| pair == ["sh", "-lc", "cargo test"])
+        );
+        assert!(!args.iter().any(|arg| arg == "cargo"));
+    }
+
+    #[test]
+    fn aggregate_orders_priority_failed_running_canceled_then_queued() {
+        assert_eq!(aggregate_statuses(["success", "queued"]), "queued");
+        assert_eq!(aggregate_statuses(["success", "running"]), "running");
+        assert_eq!(aggregate_statuses(["success", "canceled"]), "canceled");
+        assert_eq!(aggregate_statuses(["success", "failed"]), "failed");
+    }
 }

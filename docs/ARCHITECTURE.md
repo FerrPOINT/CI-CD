@@ -2,11 +2,11 @@
 
 ## 1. Контекст
 
-Self-hosted CI/CD control plane (GitLab CI / Jenkins-like). MVP покрывает проекты-репозитории, ручной запуск пайплайнов для Git-рефа, упорядоченные стадии (build / test / deploy) с задачами, переходы статусов задач с доменной валидацией, агрегацию статусов вверх (job → stage → pipeline) и append-only логи задач.
+Self-hosted CI/CD control plane (GitLab CI / Jenkins-like). MVP покрывает проекты-репозитории, ручной запуск пайплайнов для Git-рефа, упорядоченные стадии (build / test / deploy) с задачами, переходы статусов задач с доменной валидацией, агрегацию статусов вверх (job → stage → pipeline), append-only логи задач и embedded runner, исполняющий задачи в Docker или shell.
 
-Связь frontend ↔ backend — REST API `/api/v1/*`, Vite dev proxy проксирует `/api` на `http://localhost:22801`. Frontend использует типизированные интерфейсы (`Project`, `Pipeline`, `Stage`, `Job`, `JobLog`), повторяющие DTO бэкенда.
+Связь frontend ↔ backend — REST API `/api/v1/*`, Vite dev proxy проксирует `/api` на `http://localhost:22801`. Frontend использует типизированные интерфейсы (`Project`, `Pipeline`, `Stage`, `Job`, `JobLog`, `Runner`, `SecretMetadata`, `Artifact`, `Environment`, `Schedule`, `Webhook`), повторяющие DTO бэкенда.
 
-Это control plane, а не remote-execution system: задачи переводятся вручную через UI/API/CLI. Runner-агенты, webhooks, secrets, artifacts, YAML-парсинг и RBAC отложены (см. `docs/ROADMAP.md`).
+Помимо core control plane реализованы platform-MVP подсистемы: registry runner-ов с heartbeat, encrypted-at-rest секреты проектов (AES-256-GCM), артефакты с локальным хранилищем и upload/download, окружения с деплойами, расписания (cron + project/ref), конфигурация исходящих webhook-ов и уведомлений, отчёты (success rate / duration), audit log, модель users/roles и API-токены. Auth/RBAC enforcement, доставка webhook-ов, cron-scheduler execution и secret injection в runner-окружение — отложены (см. `docs/ROADMAP.md`).
 
 ## 2. Технологический стек
 

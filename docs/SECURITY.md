@@ -10,7 +10,11 @@ Forge CI/CD — self-hosted CI/CD control plane. В текущей версии 
 |----------|--------|----------|
 | Auth (login/JWT) | ❌ не реализовано | Phase 1 (план) |
 | RBAC | ❌ не реализовано | Phase 1 (план) |
-| Secrets management | ❌ не реализовано | Phase 7 (план) |
+| Secrets management | ✅ MVP | AES-256-GCM at-rest, `CICD_SECRETS_KEY`; значения не возвращаются через API |
+| API tokens | ✅ MVP (storage) | SHA-256 hash; проверка токенов при запросах не реализована |
+| Users & roles | ✅ MVP (storage) | Модель без auth enforcement; пароли не хранятся |
+| Audit log | ✅ MVP | Последние 200 событий |
+| Artifacts storage | ✅ MVP | Локальная ФС, 50 MiB лимит |
 | SQL injection prevention | ✅ реализовано | parameterized queries через SQLx |
 | Input validation | ✅ частично | проверка `trim().is_empty()` на входе |
 | CORS | ⚠️ permissive | `CorsLayer::permissive()` — ограничить в production |
