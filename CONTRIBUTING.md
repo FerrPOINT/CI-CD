@@ -45,6 +45,7 @@ perf: кэшировать список пайплайнов
 
 Перед отправкой PR убедитесь:
 
+- [ ] Изменение capability/контракта: обновлены `TRACEABILITY.md` (REQ-ID) и, при новой границе доверия, `THREAT_MODEL.md`.
 - [ ] Тесты пройдены: backend `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --workspace`; frontend `pnpm test`, `pnpm build`.
 - [ ] Документация обновлена: `docs/API.md` при изменении API, `docs/DATA_MODEL.md` при изменении схемы БД, новый ADR в `docs/adr/` для архитектурных решений.
 - [ ] Скриншоты приложены для UI-изменений (full-page: 375 / 1920 / 2560, в `docs/screenshots/`).

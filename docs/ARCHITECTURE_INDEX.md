@@ -26,6 +26,10 @@ This index is the entry point for architecture decisions. It separates **current
 | Git and pull requests | `docs/GIT_HOSTING.md`, `docs/PULL_REQUESTS.md` | `docs/API.md` |
 | Deployment and operations | `docs/DEPLOYMENT.md`, `docs/RUNTIME.md`, `docs/OPS_RUNBOOK.md`, `docs/BACKUP_RESTORE.md` | `docs/TROUBLESHOOTING.md` |
 
+## SDLC и качество
+
+Полнота жизненного цикла поддерживается отдельным набором: `docs/PRODUCT_REQUIREMENTS.md` (REQ-ID), `docs/TRACEABILITY.md` (RTM), `docs/TEST_PLAN.md`, `docs/THREAT_MODEL.md`, `docs/RISK_REGISTER.md`, `docs/ACCESSIBILITY.md`, `docs/THIRD_PARTY.md` (SBOM), `docs/SLO.md`, `docs/METRICS.md`, `docs/DISASTER_RECOVERY.md`, `docs/INCIDENT_RESPONSE.md`. Любой новый ADR с новой границей доверия обновляет threat model.
+
 ## Current vs target notation
 
 - **Current**: behavior verified in repository code and/or real local checks.

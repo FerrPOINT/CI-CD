@@ -11,6 +11,10 @@
 
 ### Added
 
+- SDLC-набор по отраслевым стандартам (ISO/IEC/IEEE 12207/15289, IEEE 829, ASVS 4.0, CISA SBOM 2026): TEST_PLAN (уровни тестирования, SEV1–SEV4, coverage-политика), TRACEABILITY/RTM (REQ-ID ↔ контракты ↔ тесты ↔ evidence, 25 capability + NFR), THREAT_MODEL (STRIDE по границам доверия, маппинг на контракты), RISK_REGISTER, DISASTER_RECOVERY (tiers/RTO/RPO/3-2-1-1/дриллы), INCIDENT_RESPONSE (SEV-матрица, постмортемы, security-инциденты), THIRD_PARTY (инвентарь, license-политика, CycloneDX SBOM target), ACCESSIBILITY (WCAG 2.2 AA программа), SLO (SLI/SLO/error budget), METRICS (DORA + runtime).
+- PRODUCT_REQUIREMENTS: все capability и NFR получили REQ-ID/NFR-ID; RTM-строка обязательна в PR.
+- CODEOWNERS, .well-known/security.txt.
+
 - Канонический реестр имён и authority matrix: ADR-0009; устранены конфликты migration path, outbox-имён и runner namespace.
 - Нормативные контракты `docs/contracts/` (API, AUTHZ, RUNNER_PROTOCOL, PIPELINE_DSL, EVENT, DATA_LIFECYCLE, MIGRATION, UI_API) и narrative-слой `docs/architecture/` с sequence-флоу и transition map.
 - Документация по аудиториям: USER_GUIDE, DEVELOPMENT_GUIDE, OPERATIONS, PRODUCT_REQUIREMENTS; CURRENT_STATE и DOCUMENTATION_GOVERNANCE; `scripts/verify_docs.py` (ссылки/канон/статусы/дубликаты скринов).

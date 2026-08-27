@@ -1,0 +1,27 @@
+# CODEOWNERS — Forge CI/CD
+# Review-политика: изменения в перечисленных путях требуют ревью владельца.
+# До настройки команды GitHub: @FerrPOINT является владельцем по умолчанию.
+
+# Владелец по умолчанию — всё, что не переопределено ниже.
+* @FerrPOINT
+
+# Архитектура и нормативные контракты — максимальная строгость ревью.
+/docs/adr/            @FerrPOINT
+/docs/contracts/      @FerrPOINT
+/docs/THREAT_MODEL.md @FerrPOINT
+/docs/IMPLEMENTATION_CONTRACTS.md @FerrPOINT
+
+# Схема и миграции — изменения только с ревью.
+/backend/src/store.rs          @FerrPOINT
+/backend/migrations/           @FerrPOINT
+
+# Безопасность и credentials-контур.
+/docs/SECURITY.md              @FerrPOINT
+/docs/contracts/AUTHZ_CONTRACT.md @FerrPOINT
+/backend/src/platform.rs       @FerrPOINT
+
+# Инфраструктура и деплой.
+/docker-compose.yml            @FerrPOINT
+/backend/Dockerfile            @FerrPOINT
+/frontend/Dockerfile           @FerrPOINT
+/.github/workflows/            @FerrPOINT

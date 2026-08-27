@@ -96,6 +96,8 @@ git push                       # → post-receive → пайплайн созд�
 - Справочники: [API](docs/API.md), [DATA_MODEL](docs/DATA_MODEL.md), [GIT_HOSTING](docs/GIT_HOSTING.md), [ENV](docs/ENV.md), [CLI](docs/CLI.md)
 - Реализация (исполнимые спецификации): [IMPLEMENTATION_CONTRACTS](docs/IMPLEMENTATION_CONTRACTS.md) · [MIGRATION_SPEC](docs/MIGRATION_EXECUTION_SPEC.md) · [AUTH_SPEC](docs/AUTH_IMPLEMENTATION_SPEC.md) · [EXECUTION_SPEC](docs/EXECUTION_AUTOMATION_IMPLEMENTATION_SPEC.md) · [ADR 0001–0009](docs/ADR.md)
 
+**Качество, безопасность и SDLC:** [TEST_PLAN](docs/TEST_PLAN.md) · [TRACEABILITY](docs/TRACEABILITY.md) · [THREAT_MODEL](docs/THREAT_MODEL.md) · [RISK_REGISTER](docs/RISK_REGISTER.md) · [ACCESSIBILITY](docs/ACCESSIBILITY.md) · [THIRD_PARTY/SBOM](docs/THIRD_PARTY.md) · [SLO](docs/SLO.md) · [METRICS](docs/METRICS.md) · [DISASTER_RECOVERY](docs/DISASTER_RECOVERY.md) · [INCIDENT_RESPONSE](docs/INCIDENT_RESPONSE.md)
+
 **Участие и политика:** [CONTRIBUTING](CONTRIBUTING.md) · [SECURITY](SECURITY.md) · [SUPPORT](SUPPORT.md) · [CHANGELOG](CHANGELOG.md) · лицензия [MIT](LICENSE)
 
 ## Структура

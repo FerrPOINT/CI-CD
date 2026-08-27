@@ -89,7 +89,7 @@ Production-развёртывание не должно быть вариант�
 - versioned migrations, pre-deploy backup, readiness с проверкой БД, resource limits, централизованные логи, metrics и alerting;
 - private versioned object storage для artifacts, защищённое Git storage, off-site encrypted backup и регулярный isolated restore drill.
 
-Целевые SLO и требования DR определены в [контракте жизненного цикла данных](contracts/DATA_LIFECYCLE.md): PostgreSQL RPO не более 15 минут, Git/artifacts RPO не более 24 часов и single-region RTO не более 4 часов. Эти показатели **не достигнуты Current verified MVP**.
+Процедуры восстановления и дриллы — [DISASTER_RECOVERY](DISASTER_RECOVERY.md); реакция на инциденты и severity — [INCIDENT_RESPONSE](INCIDENT_RESPONSE.md). Целевые SLO и требования DR определены в [контракте жизненного цикла данных](contracts/DATA_LIFECYCLE.md): PostgreSQL RPO не более 15 минут, Git/artifacts RPO не более 24 часов и single-region RTO не более 4 часов. Эти показатели **не достигнуты Current verified MVP**.
 
 ## Обновление
 
