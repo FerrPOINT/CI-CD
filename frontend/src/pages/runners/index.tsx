@@ -5,9 +5,10 @@ import { Card } from '@/shared/ui/card'
 import { Button } from '@/shared/ui/button'
 import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
+import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
 import { Server, Plus, Activity, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
+import type { Runner } from '@/api/types'
 
 export function RunnersPage() {
   const { t } = useTranslation()
@@ -17,6 +18,7 @@ export function RunnersPage() {
   const deleteRunner = useDeleteRunner()
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ name: '', tags: '' })
+  const [pendingDelete, setPendingDelete] = useState<Runner | null>(null)
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -31,12 +33,12 @@ export function RunnersPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Server className="h-5 w-5 text-accent" />
-          <h1 className="text-2xl font-bold">{t('runners.title')}</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <Server className="h-5 w-5 shrink-0 text-accent" />
+          <h1 className="truncate text-2xl font-bold">{t('runners.title')}</h1>
         </div>
-        <Button size="sm" onClick={() => setShowForm(v => !v)}>
+        <Button size="sm" className="shrink-0" onClick={() => setShowForm(v => !v)}>
           <Plus className="h-4 w-4" />
           {t('runners.register')}
         </Button>
@@ -66,53 +68,96 @@ export function RunnersPage() {
       ) : runners.length === 0 ? (
         <Card className="p-8 text-center"><p className="text-text-muted">{t('runners.empty')}</p></Card>
       ) : (
-        <Card>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t('runners.name')}</TableHead>
-                <TableHead>{t('runners.tags')}</TableHead>
-                <TableHead>{t('runners.status')}</TableHead>
-                <TableHead>{t('runners.lastSeen')}</TableHead>
-                <TableHead className="w-28"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+        <ul className="grid gap-3 md:hidden" aria-label={t('runners.title')}>
+          {runners.map(r => (
+            <li key={r.id}>
+              <Card className="p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{r.name}</p>
+                    <p className="mt-0.5 text-xs text-text-muted">{r.tags.length ? r.tags.join(', ') : '—'}</p>
+                  </div>
+                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${
+                    r.status === 'online' ? 'bg-emerald-500/15 text-emerald-500' : r.status === 'paused' ? 'bg-amber-500/15 text-amber-500' : 'bg-surface-raised text-text-muted'
+                  }`}>
+                    {t(`runners.status_${r.status}`)}
+                  </span>
+                </div>
+                <p className="mt-2 text-xs text-text-muted">{t('runners.lastSeen')}: {r.last_seen_at ? new Date(r.last_seen_at).toLocaleString() : '—'}</p>
+                <div className="mt-3 flex gap-2">
+                  <Button size="sm" variant="outline" className="min-h-9 flex-1" onClick={() =>
+                    heartbeat.mutate({ id: r.id }, { onSuccess: () => toast.success(t('runners.heartbeatSent')), onError: (err) => toast.error(err.message) })
+                  }>
+                    <Activity className="h-3 w-3" /> {t('runners.heartbeat')}
+                  </Button>
+                  <Button size="sm" variant="ghost" aria-label={`${t('common.delete')} ${r.name}`} className="min-h-9 text-danger hover:text-danger" onClick={() => setPendingDelete(r)}>
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
+              </Card>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {runners.length > 0 && (
+        <Card className="hidden md:block">
+          <table className="w-full text-sm">
+            <caption className="sr-only">{t('runners.title')}</caption>
+            <thead>
+              <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-text-muted">
+                <th scope="col" className="px-4 py-3">{t('runners.name')}</th>
+                <th scope="col" className="px-4 py-3">{t('runners.tags')}</th>
+                <th scope="col" className="px-4 py-3">{t('runners.status')}</th>
+                <th scope="col" className="px-4 py-3">{t('runners.lastSeen')}</th>
+                <th scope="col" className="w-28 px-4 py-3"><span className="sr-only">{t('common.delete')}</span></th>
+              </tr>
+            </thead>
+            <tbody>
               {runners.map(r => (
-                <TableRow key={r.id}>
-                  <TableCell className="font-medium">{r.name}</TableCell>
-                  <TableCell className="text-xs text-text-muted">{r.tags.length ? r.tags.join(', ') : '—'}</TableCell>
-                  <TableCell>
+                <tr key={r.id} className="border-b border-border/50 last:border-0">
+                  <td className="px-4 py-3 font-medium">{r.name}</td>
+                  <td className="px-4 py-3 text-xs text-text-muted">{r.tags.length ? r.tags.join(', ') : '—'}</td>
+                  <td className="px-4 py-3">
                     <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs ${
                       r.status === 'online' ? 'bg-emerald-500/15 text-emerald-500' : r.status === 'paused' ? 'bg-amber-500/15 text-amber-500' : 'bg-surface-raised text-text-muted'
                     }`}>
-                      <span className={`h-1.5 w-1.5 rounded-full ${r.status === 'online' ? 'bg-emerald-500' : 'bg-text-muted'}`} />
-                      {r.status}
+                      <span aria-hidden className={`h-1.5 w-1.5 rounded-full ${r.status === 'online' ? 'bg-emerald-500' : 'bg-text-muted'}`} />
+                      {t(`runners.status_${r.status}`)}
                     </span>
-                  </TableCell>
-                  <TableCell className="text-xs text-text-muted">{r.last_seen_at ? new Date(r.last_seen_at).toLocaleString() : '—'}</TableCell>
-                  <TableCell>
+                  </td>
+                  <td className="px-4 py-3 text-xs text-text-muted">{r.last_seen_at ? new Date(r.last_seen_at).toLocaleString() : '—'}</td>
+                  <td className="px-4 py-3">
                     <div className="flex gap-1">
                       <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs" onClick={() =>
                         heartbeat.mutate({ id: r.id }, { onSuccess: () => toast.success(t('runners.heartbeatSent')), onError: (err) => toast.error(err.message) })
                       }>
                         <Activity className="h-3 w-3" /> {t('runners.heartbeat')}
                       </Button>
-                      <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs text-danger hover:text-danger" onClick={() => {
-                        if (window.confirm(`${t('runners.deleteConfirm')} "${r.name}"?`)) {
-                          deleteRunner.mutate(r.id, { onSuccess: () => toast.success(t('runners.deleted')), onError: (err) => toast.error(err.message) })
-                        }
-                      }}>
+                      <Button size="sm" variant="ghost" aria-label={`${t('common.delete')} ${r.name}`} className="h-7 px-2 text-danger hover:text-danger" onClick={() => setPendingDelete(r)}>
                         <Trash2 className="h-3 w-3" />
                       </Button>
                     </div>
-                  </TableCell>
-                </TableRow>
+                  </td>
+                </tr>
               ))}
-            </TableBody>
-          </Table>
+            </tbody>
+          </table>
         </Card>
       )}
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={`${t('runners.deleteConfirm')}${pendingDelete ? ` "${pendingDelete.name}"?` : '?'}`}
+        description={t('runners.deleteWarning')}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (pendingDelete) {
+            deleteRunner.mutate(pendingDelete.id, { onSuccess: () => toast.success(t('runners.deleted')), onError: (err) => toast.error(err.message) })
+          }
+          setPendingDelete(null)
+        }}
+      />
     </div>
   )
 }

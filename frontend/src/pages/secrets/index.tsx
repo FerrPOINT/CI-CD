@@ -9,6 +9,7 @@ import { Label } from '@/shared/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
 import { KeyRound, Plus, Trash2, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
+import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
 import type { SecretMetadata } from '@/api/types'
 
 export function SecretsPage() {
@@ -18,6 +19,7 @@ export function SecretsPage() {
   const upsert = useUpsertSecret(projectId)
   const del = useDeleteSecret()
   const [showForm, setShowForm] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState<SecretMetadata | null>(null)
   const [form, setForm] = useState({ key: '', value: '' })
 
   function handleSubmit(e: React.FormEvent) {
@@ -29,7 +31,6 @@ export function SecretsPage() {
   }
 
   function handleDelete(s: SecretMetadata) {
-    if (!window.confirm(`${t('secrets.deleteConfirm')} "${s.key}"?`)) return
     del.mutate(s.id, { onSuccess: () => toast.success(t('secrets.deleted')), onError: (err) => toast.error(err.message) })
   }
 
@@ -102,6 +103,15 @@ export function SecretsPage() {
           </Table>
         </Card>
       )}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={pendingDelete ? `${t('secrets.deleteConfirm')} "${pendingDelete.key}"?` : ''}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (pendingDelete) del.mutate(pendingDelete.id, { onSuccess: () => toast.success(t('secrets.deleted')), onError: (err) => toast.error(err.message) })
+          setPendingDelete(null)
+        }}
+      />
     </div>
   )
 }

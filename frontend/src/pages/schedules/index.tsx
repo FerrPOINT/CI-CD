@@ -9,6 +9,7 @@ import { Label } from '@/shared/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
 import { Clock, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
+import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
 import type { Schedule } from '@/api/types'
 
 export function SchedulesPage() {
@@ -18,6 +19,7 @@ export function SchedulesPage() {
   const createSchedule = useCreateSchedule(projectId)
   const deleteSchedule = useDeleteSchedule()
   const [showForm, setShowForm] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState<Schedule | null>(null)
   const [form, setForm] = useState({ cron: '', git_ref: 'main' })
 
   function handleSubmit(e: React.FormEvent) {
@@ -29,7 +31,6 @@ export function SchedulesPage() {
   }
 
   function handleDelete(s: Schedule) {
-    if (!window.confirm(`${t('schedules.deleteConfirm')}?`)) return
     deleteSchedule.mutate(s.id, { onSuccess: () => toast.success(t('schedules.deleted')), onError: (err) => toast.error(err.message) })
   }
 
@@ -103,6 +104,15 @@ export function SchedulesPage() {
           </Table>
         </Card>
       )}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={pendingDelete ? `${t('schedules.deleteConfirm')} "${pendingDelete.cron}"?` : ''}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (pendingDelete) deleteSchedule.mutate(pendingDelete.id, { onSuccess: () => toast.success(t('schedules.deleted')), onError: (err) => toast.error(err.message) })
+          setPendingDelete(null)
+        }}
+      />
     </div>
   )
 }

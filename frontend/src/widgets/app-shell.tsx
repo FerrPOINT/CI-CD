@@ -1,14 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, Outlet } from 'react-router'
 import { GitBranch, LayoutDashboard, FolderGit2, Settings, GitFork, Server, Menu, X, History, Users, Cpu } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/shared/ui/button'
 import { ThemeToggle } from '@/shared/ui/theme-toggle'
 
-export function AppShell() {
+function NavigationList({ onNavigate, isActive }: { onNavigate: () => void; isActive: (path: string) => boolean }) {
   const { t } = useTranslation()
-  const location = useLocation()
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   const navItems = [
     { to: '/', icon: LayoutDashboard, label: t('navigation.dashboard') },
@@ -21,16 +19,79 @@ export function AppShell() {
     { to: '/settings', icon: Settings, label: t('navigation.settings') },
   ]
 
+  return (
+    <nav className="flex flex-col gap-1" aria-label={t('navigation.toggleMenu')}>
+      {navItems.map(({ to, icon: Icon, label }) => (
+        <Link
+          key={to}
+          to={to}
+          onClick={onNavigate}
+          aria-current={isActive(to) ? 'page' : undefined}
+          className={`flex min-h-11 items-center gap-3 rounded-md px-3 text-sm transition-colors ${
+            isActive(to)
+              ? 'bg-surface-raised text-text-primary'
+              : 'text-text-secondary hover:bg-surface-raised hover:text-text-primary'
+          }`}
+        >
+          <Icon className="h-4 w-4 shrink-0" />
+          <span className="truncate">{label}</span>
+        </Link>
+      ))}
+    </nav>
+  )
+}
+
+export function AppShell() {
+  const { t } = useTranslation()
+  const location = useLocation()
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const menuButtonRef = useRef<HTMLButtonElement>(null)
+
   function isActive(path: string) {
     if (path === '/') return location.pathname === '/'
     return location.pathname.startsWith(path)
   }
 
+  // Close drawer on route change
+  useEffect(() => {
+    setMobileMenuOpen(false)
+  }, [location.pathname])
+
+  // Escape closes drawer and restores focus
+  useEffect(() => {
+    if (!mobileMenuOpen) return
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setMobileMenuOpen(false)
+        menuButtonRef.current?.focus()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [mobileMenuOpen])
+
+  // Lock body scroll while drawer is open
+  useEffect(() => {
+    if (!mobileMenuOpen) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prev }
+  }, [mobileMenuOpen])
+
   return (
     <div className="min-h-screen bg-background text-text-primary">
       <header className="sticky top-0 z-50 flex h-12 items-center justify-between border-b border-border bg-surface px-3 md:px-4">
         <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" className="h-8 w-8 md:hidden" onClick={() => setMobileMenuOpen(v => !v)}>
+          <Button
+            ref={menuButtonRef}
+            variant="ghost"
+            size="icon"
+            aria-label={t('navigation.toggleMenu')}
+            aria-expanded={mobileMenuOpen}
+            aria-controls="mobile-navigation"
+            className="h-9 w-9 md:hidden"
+            onClick={() => setMobileMenuOpen(v => !v)}
+          >
             {mobileMenuOpen ? <X className="h-[18px] w-[18px]" /> : <Menu className="h-[18px] w-[18px]" />}
           </Button>
           <Link to="/" className="flex items-center gap-2 font-bold">
@@ -44,27 +105,31 @@ export function AppShell() {
       </header>
 
       <div className="flex">
-        <aside className={`${mobileMenuOpen ? 'block' : 'hidden md:block'} w-56 shrink-0 border-r border-border bg-surface p-3`}>
-          <nav className="flex flex-col gap-1">
-            {navItems.map(({ to, icon: Icon, label }) => (
-              <Link
-                key={to}
-                to={to}
-                onClick={() => setMobileMenuOpen(false)}
-                className={`flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors ${
-                  isActive(to)
-                    ? 'bg-surface-raised text-text-primary'
-                    : 'text-text-secondary hover:bg-surface-raised hover:text-text-primary'
-                }`}
-              >
-                <Icon className="h-4 w-4 shrink-0" />
-                <span className="truncate">{label}</span>
-              </Link>
-            ))}
-          </nav>
+        {/* Desktop sidebar */}
+        <aside className="hidden w-56 shrink-0 border-r border-border bg-surface p-3 md:block">
+          <NavigationList onNavigate={() => {}} isActive={isActive} />
         </aside>
 
-        <main className="flex-1 overflow-x-auto p-4 md:p-6">
+        {/* Mobile drawer */}
+        {mobileMenuOpen && (
+          <div className="fixed inset-0 z-40 md:hidden" role="dialog" aria-modal="true" aria-label={t('navigation.toggleMenu')}>
+            <button
+              type="button"
+              aria-label={t('common.close')}
+              tabIndex={-1}
+              className="absolute inset-0 h-full w-full cursor-default bg-black/60"
+              onClick={() => setMobileMenuOpen(false)}
+            />
+            <aside
+              id="mobile-navigation"
+              className="absolute inset-y-0 left-0 w-64 max-w-[85vw] overflow-y-auto border-r border-border bg-surface p-3 pt-16 shadow-xl"
+            >
+              <NavigationList onNavigate={() => setMobileMenuOpen(false)} isActive={isActive} />
+            </aside>
+          </div>
+        )}
+
+        <main className="min-w-0 flex-1 p-4 md:p-6">
           <Outlet />
         </main>
       </div>

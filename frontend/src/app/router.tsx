@@ -11,6 +11,7 @@ const RepositoriesPage = lazy(() => import('@/pages/repositories').then(m => ({ 
 const RepositoryBrowserPage = lazy(() => import('@/pages/repository-browser').then(m => ({ default: m.RepositoryBrowserPage })))
 const ComparePage = lazy(() => import('@/pages/compare').then(m => ({ default: m.ComparePage })))
 const PullRequestsPage = lazy(() => import('@/pages/pull-requests').then(m => ({ default: m.PullRequestsPage })))
+const PullRequestDetailPage = lazy(() => import('@/pages/pull-request-detail').then(m => ({ default: m.PullRequestDetailPage })))
 const SettingsPage = lazy(() => import('@/pages/settings').then(m => ({ default: m.SettingsPage })))
 const LoginPage = lazy(() => import('@/pages/login').then(m => ({ default: m.LoginPage })))
 const RunnersPage = lazy(() => import('@/pages/runners').then(m => ({ default: m.RunnersPage })))
@@ -42,6 +43,7 @@ export const router = createBrowserRouter([
       { path: '/repositories/:repo', element: withSuspense(<RepositoryBrowserPage />) },
       { path: '/repositories/:repo/compare', element: withSuspense(<ComparePage />) },
       { path: '/repositories/:repo/pulls', element: withSuspense(<PullRequestsPage />) },
+      { path: '/repositories/:repo/pulls/:number', element: withSuspense(<PullRequestDetailPage />) },
       { path: '/settings', element: withSuspense(<SettingsPage />) },
       { path: '/runners', element: withSuspense(<RunnersPage />) },
       { path: '/projects/:projectId/secrets', element: withSuspense(<SecretsPage />) },

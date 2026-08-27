@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
-import { ChevronRight, GitPullRequest, GitMerge, Plus, RotateCcw, XCircle } from 'lucide-react'
+import { ChevronRight, GitPullRequest, GitMerge, Plus, RotateCcw, XCircle, FileDiff } from 'lucide-react'
 import { toast } from 'sonner'
 import {
   useCreatePullRequest,
@@ -130,7 +130,7 @@ function PullRequestCard({ repo, pullRequest, locale }: { repo: string; pullRequ
           <div className="flex flex-wrap items-center gap-2">
             <GitPullRequest className="h-4 w-4 shrink-0 text-accent" />
             <span className="font-medium">#{pullRequest.number}</span>
-            <span className="truncate font-medium">{pullRequest.title}</span>
+            <Link to={`/repositories/${encodeURIComponent(repo)}/pulls/${pullRequest.number}`} className="truncate font-medium hover:text-accent">{pullRequest.title}</Link>
             <span className={`rounded px-2 py-0.5 text-xs font-medium ${statusStyles[pullRequest.status]}`}>
               {t(`pulls.status_${pullRequest.status}`)}
             </span>
@@ -144,6 +144,12 @@ function PullRequestCard({ repo, pullRequest, locale }: { repo: string; pullRequ
           {pullRequest.description && (
             <p className="mt-2 text-sm text-text-secondary">{pullRequest.description}</p>
           )}
+          <Link
+            to={`/repositories/${encodeURIComponent(repo)}/compare?from=${encodeURIComponent(pullRequest.target_branch)}&to=${encodeURIComponent(pullRequest.source_branch)}`}
+            className="mt-2 inline-flex items-center gap-1 text-xs text-accent hover:underline"
+          >
+            <FileDiff className="h-3 w-3" /> {t('pulls.viewDiff')}
+          </Link>
           {pullRequest.merge_commit_sha && (
             <p className="mt-2 text-xs text-text-muted">
               {t('pulls.mergeCommit')}: <code className="rounded bg-surface-raised px-1.5 py-0.5">{pullRequest.merge_commit_sha.slice(0, 7)}</code>

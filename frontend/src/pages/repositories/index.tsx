@@ -8,6 +8,7 @@ import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
 import { GitFork, Plus, Trash2, Copy, Check, FolderOpen } from 'lucide-react'
 import { toast } from 'sonner'
+import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
 import type { Repository } from '@/api/types'
 
 function buildCloneUrl(name: string): string {
@@ -23,6 +24,7 @@ export function RepositoriesPage() {
   const createRepository = useCreateRepository()
   const deleteRepository = useDeleteRepository()
   const [showForm, setShowForm] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState<Repository | null>(null)
   const [form, setForm] = useState({ name: '' })
   const [copied, setCopied] = useState<string | null>(null)
 
@@ -47,7 +49,6 @@ export function RepositoriesPage() {
   }
 
   function handleDelete(repo: Repository) {
-    if (!window.confirm(`${t('repositories.deleteConfirm')} "${repo.name}"?`)) return
     deleteRepository.mutate(repo.name, {
       onSuccess: () => toast.success(t('repositories.deleted')),
       onError: (err) => toast.error(err.message),
@@ -155,6 +156,15 @@ export function RepositoriesPage() {
           ))}
         </div>
       )}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={pendingDelete ? `${t('repositories.deleteConfirm')} "${pendingDelete.name}"?` : ''}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (pendingDelete) deleteRepository.mutate(pendingDelete.name, { onSuccess: () => toast.success(t('repositories.deleted')), onError: (err) => toast.error(err.message) })
+          setPendingDelete(null)
+        }}
+      />
     </div>
   )
 }

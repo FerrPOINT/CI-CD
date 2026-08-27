@@ -10,6 +10,7 @@ import { Textarea } from '@/shared/ui/textarea'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
 import { Webhook, Plus, Trash2, Bell } from 'lucide-react'
 import { toast } from 'sonner'
+import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
 import type { Webhook as WebhookType } from '@/api/types'
 
 export function WebhooksPage() {
@@ -19,6 +20,7 @@ export function WebhooksPage() {
   const createWebhook = useCreateWebhook(projectId)
   const deleteWebhook = useDeleteWebhook()
   const [showForm, setShowForm] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState<WebhookType | null>(null)
   const [form, setForm] = useState({ url: '', events: 'pipeline.started, pipeline.finished' })
 
   function handleSubmit(e: React.FormEvent) {
@@ -33,8 +35,7 @@ export function WebhooksPage() {
   }
 
   function handleDelete(w: WebhookType) {
-    if (!window.confirm(`${t('webhooks.deleteConfirm')}?`)) return
-    deleteWebhook.mutate(w.id, { onSuccess: () => toast.success(t('webhooks.deleted')), onError: (err) => toast.error(err.message) })
+    setPendingDelete(w)
   }
 
   return (
@@ -105,6 +106,16 @@ export function WebhooksPage() {
           </Table>
         </Card>
       )}
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={pendingDelete ? `${t('webhooks.deleteConfirm')} "${pendingDelete.url}"?` : ''}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (pendingDelete) deleteWebhook.mutate(pendingDelete.id, { onSuccess: () => toast.success(t('webhooks.deleted')), onError: (err: Error) => toast.error(err.message) })
+          setPendingDelete(null)
+        }}
+      />
 
       <NotificationsSection />
     </div>

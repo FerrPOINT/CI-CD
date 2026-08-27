@@ -105,7 +105,17 @@
     "empty": "Pull-запросов нет. Создайте первый.",
     "status_open": "Открыт",
     "status_closed": "Закрыт",
-    "status_merged": "Слит"
+    "status_merged": "Слит",
+    "notFound": "Pull-запрос не найден.",
+    "createdBy": "Автор",
+    "createdAt": "Создан",
+    "mergedAt": "Слит",
+    "actions": "Действия",
+    "viewDiff": "Посмотреть изменения",
+    "action_merge": "Pull-запрос слит",
+    "action_close": "Pull-запрос закрыт",
+    "action_reopen": "Pull-запрос открыт снова",
+    "pipelineStatusHint": "Статус пайплайна для PR появится после реализации связи pipeline ↔ PR (target)."
   },
   "jobs": {
     "start": "Запустить",
@@ -145,7 +155,11 @@
     "registered": "Runner зарегистрирован",
     "deleted": "Runner удалён",
     "deleteConfirm": "Удалить runner",
-    "empty": "Runner-ы не зарегистрированы."
+    "empty": "Runner-ы не зарегистрированы.",
+    "status_online": "Онлайн",
+    "status_offline": "Оффлайн",
+    "status_paused": "Пауза",
+    "deleteWarning": "Runner будет удалён из реестра. Активные lease завершатся с ошибкой."
   },
   "secrets": {
     "title": "Секреты проекта",

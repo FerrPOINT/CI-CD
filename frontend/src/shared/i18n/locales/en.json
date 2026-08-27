@@ -105,7 +105,17 @@
     "empty": "No pull requests yet. Create one.",
     "status_open": "Open",
     "status_closed": "Closed",
-    "status_merged": "Merged"
+    "status_merged": "Merged",
+    "notFound": "Pull request not found.",
+    "createdBy": "Author",
+    "createdAt": "Created",
+    "mergedAt": "Merged",
+    "actions": "Actions",
+    "viewDiff": "View changes",
+    "action_merge": "Pull request merged",
+    "action_close": "Pull request closed",
+    "action_reopen": "Pull request reopened",
+    "pipelineStatusHint": "Pipeline status for the PR will appear once pipeline ↔ PR linkage is implemented (target)."
   },
   "jobs": {
     "start": "Start",
@@ -145,7 +155,11 @@
     "registered": "Runner registered",
     "deleted": "Runner deleted",
     "deleteConfirm": "Delete runner",
-    "empty": "No runners registered."
+    "empty": "No runners registered.",
+    "status_online": "Online",
+    "status_offline": "Offline",
+    "status_paused": "Paused",
+    "deleteWarning": "The runner will be removed from the registry. Active leases will fail."
   },
   "secrets": {
     "title": "Project Secrets",

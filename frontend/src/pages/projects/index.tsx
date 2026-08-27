@@ -8,6 +8,7 @@ import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
 import { FolderGit2, Plus, ChevronRight, Pencil, Trash2, GitFork, KeyRound, Globe, Clock, Webhook, BarChart3 } from 'lucide-react'
 import { toast } from 'sonner'
+import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
 import type { Project } from '@/api/types'
 
 export function ProjectsPage() {
@@ -17,11 +18,11 @@ export function ProjectsPage() {
   const updateProject = useUpdateProject()
   const deleteProject = useDeleteProject()
   const [showForm, setShowForm] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState<Project | null>(null)
   const [form, setForm] = useState({ name: '', repository_url: '', default_branch: 'main' })
   const [editing, setEditing] = useState<Project | null>(null)
 
   function handleDelete(project: Project) {
-    if (!window.confirm(`${t('projects.deleteConfirm')} "${project.name}"?`)) return
     deleteProject.mutate(project.id, {
       onSuccess: () => toast.success(t('projects.deleted')),
       onError: (err) => toast.error(err.message),
@@ -167,6 +168,15 @@ export function ProjectsPage() {
           ))}
         </div>
       )}
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={pendingDelete ? `${t('projects.deleteConfirm')} "${pendingDelete.name}"?` : ''}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (pendingDelete) deleteProject.mutate(pendingDelete.id, { onSuccess: () => toast.success(t('projects.deleted')), onError: (err) => toast.error(err.message) })
+          setPendingDelete(null)
+        }}
+      />
     </div>
   )
 }
