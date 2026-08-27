@@ -6,7 +6,8 @@ services:
       POSTGRES_PASSWORD: ${CICD_DATABASE_PASSWORD:-cicd_local_only}
       POSTGRES_DB: ${CICD_DATABASE_NAME:-cicd}
     ports:
-      - "${CICD_DATABASE_PORT:-22543}:5432"
+      # Local development only: database is never exposed beyond this host.
+      - "127.0.0.1:${CICD_DATABASE_PORT:-22543}:5432"
     volumes:
       - cicd_postgres_data:/var/lib/postgresql/data
     healthcheck:
