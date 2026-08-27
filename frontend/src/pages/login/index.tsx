@@ -1,43 +1,73 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router'
-import { GitBranch } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/shared/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card'
 import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
+import { login } from '@/api/auth'
 
 export function LoginPage() {
   const { t } = useTranslation()
-  const navigate = useNavigate()
-  const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  async function onSubmit(event: React.FormEvent) {
+    event.preventDefault()
+    setError(null)
+    setBusy(true)
+    try {
+      await login(username.trim(), password)
+      window.location.href = '/'
+    } catch {
+      setError(t('login.invalidCredentials'))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="w-full max-w-sm space-y-6">
-        <div className="flex flex-col items-center gap-2">
-          <GitBranch className="h-10 w-10 text-accent" />
-          <h1 className="text-xl font-bold text-text-primary">{t('app.name')}</h1>
-          <p className="text-sm text-text-muted">Self-hosted CI/CD control plane</p>
-        </div>
-        <form
-          className="space-y-4"
-          onSubmit={(e) => {
-            e.preventDefault()
-            navigate('/')
-          }}
-        >
-          <div className="space-y-1.5">
-            <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="admin@example.com" />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="password">Password</Label>
-            <Input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
-          </div>
-          <Button type="submit" className="w-full">Sign in</Button>
-        </form>
-      </div>
+    <div className="flex min-h-screen items-center justify-center bg-background p-4">
+      <Card className="w-full max-w-sm">
+        <CardHeader>
+          <CardTitle>{t('login.title')}</CardTitle>
+          <p className="text-sm text-muted-foreground">{t('login.description')}</p>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={onSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="username">{t('login.username')}</Label>
+              <Input
+                id="username"
+                autoComplete="username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="password">{t('login.password')}</Label>
+              <Input
+                id="password"
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </div>
+            {error && (
+              <p role="alert" className="text-sm text-destructive">
+                {error}
+              </p>
+            )}
+            <Button type="submit" className="w-full" disabled={busy}>
+              {busy ? t('login.signingIn') : t('login.submit')}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   )
 }

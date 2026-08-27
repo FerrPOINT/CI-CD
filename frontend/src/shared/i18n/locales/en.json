@@ -284,5 +284,14 @@
     "totalRuns": "Total runs",
     "success": "Success",
     "failed": "Failed"
+  },
+  "login": {
+    "title": "Sign in to Forge",
+    "description": "CI/CD control plane access",
+    "username": "Username",
+    "password": "Password",
+    "submit": "Sign in",
+    "signingIn": "Signing in…",
+    "invalidCredentials": "Invalid username or password"
   }
 }

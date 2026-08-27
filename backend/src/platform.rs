@@ -573,7 +573,7 @@ struct AuditEvent {
 async fn list_audit_log(State(state): State<Arc<AppState>>) -> ApiResult<Vec<AuditEvent>> {
     Ok(Json(sqlx::query_as("SELECT id, action, resource_type, resource_id, actor, created_at FROM audit_log ORDER BY created_at DESC LIMIT 200").fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
-async fn audit(
+pub(crate) async fn audit(
     db: &PgPool,
     action: &str,
     resource_type: &str,
@@ -689,8 +689,10 @@ async fn list_tokens(State(state): State<Arc<AppState>>) -> ApiResult<Vec<ApiTok
 }
 async fn create_token(
     State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
     Json(input): Json<CreateToken>,
 ) -> ApiResult<CreatedToken> {
+    let user_id = input.user_id.or(claims.map(|c| c.0.sub));
     if input.name.trim().is_empty() {
         return Err(ApiError::bad_request("token name is required"));
     }
@@ -701,7 +703,7 @@ async fn create_token(
     );
     let token_hash = sha256(&value);
     let hint = format!("{}...{}", &value[..9], &value[value.len() - 4..]);
-    let token = sqlx::query_as::<_, ApiToken>("INSERT INTO api_tokens (id, name, token_hash, token_hint, user_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, name, token_hint, user_id, created_at, last_used_at").bind(Uuid::new_v4()).bind(input.name.trim()).bind(token_hash).bind(hint).bind(input.user_id).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
+    let token = sqlx::query_as::<_, ApiToken>("INSERT INTO api_tokens (id, name, token_hash, token_hint, user_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, name, token_hint, user_id, created_at, last_used_at").bind(Uuid::new_v4()).bind(input.name.trim()).bind(token_hash).bind(hint).bind(user_id).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
     audit(pool(&state)?, "token.created", "api_token", token.id, None).await?;
     Ok(Json(CreatedToken { token, value }))
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useLocation, Outlet } from 'react-router'
+import { Link, useLocation, Outlet, useNavigate } from 'react-router'
 import { GitBranch, LayoutDashboard, FolderGit2, Settings, GitFork, Server, Menu, X, History, Users, Cpu } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/shared/ui/button'
@@ -42,6 +42,18 @@ function NavigationList({ onNavigate, isActive }: { onNavigate: () => void; isAc
 }
 
 export function AppShell() {
+  const navigate = useNavigate()
+  useEffect(() => {
+    let cancelled = false
+    import('@/api/auth').then(async (m) => {
+      if (m.currentSession()) return
+      const required = await m.authRequired()
+      if (required && !cancelled) navigate('/login', { replace: true })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [navigate])
   const { t } = useTranslation()
   const location = useLocation()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)

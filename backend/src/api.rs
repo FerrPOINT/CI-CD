@@ -15,6 +15,7 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use uuid::Uuid;
 
 use crate::{
+    platform::audit,
     domain::JobStatus,
     git_host::{
         create_repository, delete_repository, git_info_refs, git_service_endpoint,
@@ -26,7 +27,8 @@ use crate::{
     store::next_log_sequence,
 };
 
-#[derive(Clone, Default)]
+static STATE_POOL: std::sync::OnceLock<sqlx::PgPool> = std::sync::OnceLock::new();
+
 pub struct AppState {
     pub pool: Option<PgPool>,
     pub git: crate::git_host::GitConfig,
@@ -88,6 +90,12 @@ impl ApiError {
         Self {
             status: StatusCode::NOT_FOUND,
             message: "resource not found".into(),
+        }
+    }
+    pub(crate) fn forbidden() -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            message: "forbidden".into(),
         }
     }
     pub(crate) fn unauthorized() -> Self {
@@ -174,11 +182,71 @@ async fn require_auth(
     if std::env::var("CICD_AUTH_SECRET").is_err() {
         return Ok(next.run(req).await); // trusted-network mode: no enforcement
     }
-    let claims = crate::auth::bearer_claims(req.headers()).map_err(|_| ApiError::unauthorized())?;
+    let claims = bearer_identity(req.headers()).await.map_err(|_| ApiError::unauthorized())?;
+    let role = crate::authz::Role::parse(&claims.role).ok_or_else(ApiError::unauthorized)?;
     if !user_enabled(&state, claims.sub).await? {
         return Err(ApiError::unauthorized());
     }
+    let method = req.method().as_str().to_string();
+    let path = req.uri().path().to_string();
+    let (mut parts, body) = req.into_parts();
+    parts.extensions.insert(claims.clone());
+    let req = axum::extract::Request::from_parts(parts, body);
+    if !crate::authz::allows(role, &method, &path) {
+        if let Some(pool) = state.pool.as_ref() {
+            let _ = audit(
+                pool,
+                "auth.denied",
+                "route",
+                claims.sub,
+                Some(&format!("{method} {path}")),
+            )
+            .await;
+        }
+        return Err(ApiError::forbidden());
+    }
     Ok(next.run(req).await)
+}
+
+/// JWT access tokens carry the role at issue time; PATs (`cicd_…`) are
+/// resolved against api_tokens and assume the owner's role.
+async fn bearer_identity(headers: &axum::http::HeaderMap) -> Result<crate::auth::AccessClaims, ApiError> {
+    let value = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(ApiError::unauthorized)?;
+    let token = value.strip_prefix("Bearer ").ok_or_else(ApiError::unauthorized)?;
+    if token.starts_with("cicd_") {
+        let hash = crate::auth::hash_token(token);
+        let hash2 = hash.clone();
+        let row = sqlx::query_as::<_, (Uuid, String)>(
+            "SELECT u.id, u.role FROM api_tokens t JOIN users u ON u.id = t.user_id \
+             WHERE t.token_hash = $1 AND u.enabled",
+        )
+        .bind(&hash)
+        .fetch_optional(
+            STATE_POOL
+                .get()
+                .ok_or_else(ApiError::unavailable)?,
+        )
+        .await
+        .map_err(ApiError::internal)?;
+        let (sub, role) = row.ok_or_else(ApiError::unauthorized)?;
+        // Touch last_used_at best-effort.
+        let _ = sqlx::query("UPDATE api_tokens SET last_used_at = now() WHERE token_hash = $1")
+            .bind(&hash)
+            .execute(STATE_POOL.get().ok_or_else(ApiError::unavailable)?)
+            .await;
+        let now = chrono::Utc::now();
+        Ok(crate::auth::AccessClaims {
+            sub,
+            role,
+            iat: now.timestamp(),
+            exp: now.timestamp() + 900,
+        })
+    } else {
+        crate::auth::verify_access(token).map_err(|_| ApiError::unauthorized())
+    }
 }
 
 async fn user_enabled(state: &AppState, user_id: uuid::Uuid) -> Result<bool, ApiError> {
@@ -199,6 +267,9 @@ fn build_router(
     git: crate::git_host::GitConfig,
     running: Option<crate::runner::RunningJobs>,
 ) -> Router {
+    if let Some(p) = pool.as_ref() {
+        let _ = STATE_POOL.set(p.clone());
+    }
     Router::new()
         .route("/api/v1/health", get(health))
         .route("/api/v1/openapi.json", get(serve_openapi_json))
@@ -265,7 +336,7 @@ fn build_router(
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(Arc::new(AppState {
-            pool,
+            pool: pool.clone(),
             git,
             running_jobs: running,
         }))
@@ -289,8 +360,10 @@ async fn auth_login(
     .ok_or_else(ApiError::unauthorized)?;
     let (user_id, role, enabled, password_hash) = row;
     if !enabled || !verify_password(&password_hash, &input.password) {
+        let _ = audit(pool, "auth.login_failed", "user", user_id, Some(input.username.trim())).await;
         return Err(ApiError::unauthorized());
     }
+    let _ = audit(pool, "auth.login_success", "user", user_id, Some(input.username.trim())).await;
     let refresh = new_refresh_token();
     create_session(pool, user_id, &hash_token(&refresh))
         .await

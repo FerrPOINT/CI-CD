@@ -284,5 +284,14 @@
     "totalRuns": "Всего запусков",
     "success": "Успешных",
     "failed": "Неудачных"
+  },
+  "login": {
+    "title": "Вход в Forge",
+    "description": "Доступ к панели управления CI/CD",
+    "username": "Имя пользователя",
+    "password": "Пароль",
+    "submit": "Войти",
+    "signingIn": "Входим…",
+    "invalidCredentials": "Неверное имя пользователя или пароль"
   }
 }
