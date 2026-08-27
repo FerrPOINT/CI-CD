@@ -330,7 +330,8 @@ async fn bearer_identity(
         let hash = crate::auth::hash_token(token);
         let row = sqlx::query_as::<_, (Uuid, String)>(
             "SELECT u.id, u.role FROM api_tokens t JOIN users u ON u.id = t.user_id \
-             WHERE t.token_hash = $1 AND u.enabled",
+             WHERE t.token_hash = $1 AND u.enabled \
+               AND (t.expires_at IS NULL OR t.expires_at > now())",
         )
         .bind(&hash)
         .fetch_optional(STATE_POOL.get().ok_or_else(ApiError::unavailable)?)
@@ -419,6 +420,8 @@ fn build_router(
             "/api/v1/jobs/{job_id}/logs",
             get(list_logs).post(append_log),
         )
+        .route("/api/v1/jobs/{job_id}/start", post(start_manual_job))
+        .route("/api/v1/jobs/{job_id}/logs/stream", get(job_log_stream))
         .route(
             "/api/v1/repositories",
             get(list_repositories).post(create_repository),
@@ -764,13 +767,15 @@ pub(crate) async fn create_pipeline(
     // before git-receive-pack finishes. Local config is read from the bare repo.
     let config = read_local_forge_ci_config(repository_url.as_deref(), &git_ref).await;
     let stages = parse_forge_ci(config.as_deref()).map_err(ApiError::bad_request)?;
+    let commit_sha = resolve_commit_sha(repository_url.as_deref(), &git_ref).await;
 
     let pipeline = sqlx::query_as::<_, Pipeline>(
-        "INSERT INTO pipelines (id, project_id, git_ref, status) VALUES ($1, $2, $3, 'queued') RETURNING id, project_id, git_ref, status, created_at, started_at, finished_at",
+        "INSERT INTO pipelines (id, project_id, git_ref, commit_sha, status) VALUES ($1, $2, $3, $4, 'queued') RETURNING id, project_id, git_ref, status, created_at, started_at, finished_at",
     )
     .bind(Uuid::new_v4())
     .bind(project_id)
     .bind(&git_ref)
+    .bind(&commit_sha)
     .fetch_one(pool)
     .await
     .map_err(ApiError::internal)?;
@@ -779,8 +784,10 @@ pub(crate) async fn create_pipeline(
         sqlx::query("INSERT INTO stages (id, pipeline_id, name, position, status) VALUES ($1, $2, $3, $4, 'queued')")
             .bind(stage_id).bind(pipeline.id).bind(&stage.name).bind(position as i32).execute(pool).await.map_err(ApiError::internal)?;
         for (job_position, job) in stage.jobs.iter().enumerate() {
-            sqlx::query("INSERT INTO jobs (id, stage_id, name, image, command, position, status) VALUES ($1, $2, $3, $4, $5, $6, 'queued')")
-                .bind(Uuid::new_v4()).bind(stage_id).bind(&job.name).bind(&job.image).bind(&job.command).bind(job_position as i32).execute(pool).await.map_err(ApiError::internal)?;
+            sqlx::query("INSERT INTO jobs (id, stage_id, name, image, command, position, status, timeout_seconds, allow_failure, manual) VALUES ($1, $2, $3, $4, $5, $6, 'queued', $7, $8, $9)")
+                .bind(Uuid::new_v4()).bind(stage_id).bind(&job.name).bind(&job.image).bind(&job.command).bind(job_position as i32)
+                .bind(job.timeout_seconds).bind(job.allow_failure).bind(job.manual)
+                .execute(pool).await.map_err(ApiError::internal)?;
         }
     }
     Ok(pipeline)
@@ -796,6 +803,9 @@ struct CiJob {
     name: String,
     image: String,
     command: String,
+    timeout_seconds: Option<i32>,
+    allow_failure: bool,
+    manual: bool,
 }
 
 /// Reads `.forge-ci.yml` from an already-pushed local bare repository.
@@ -821,6 +831,26 @@ async fn read_local_forge_ci_config(repo_url: Option<&str>, git_ref: &str) -> Op
         .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+/// Resolves a ref to a commit sha in the local bare repo (best-effort).
+async fn resolve_commit_sha(repo_url: Option<&str>, git_ref: &str) -> Option<String> {
+    let name = extract_repo_name_from_url(repo_url?)?;
+    let git_root = std::env::var("CICD_GIT_ROOT").unwrap_or_else(|_| "/var/lib/forge/git".into());
+    let bare_path = std::path::Path::new(&git_root).join(format!("{name}.git"));
+    if !bare_path.is_dir() {
+        return None;
+    }
+    let output = tokio::process::Command::new("git")
+        .arg(format!("--git-dir={}", bare_path.display()))
+        .args(["rev-parse", git_ref])
+        .output()
+        .await
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 /// Extracts the repository name from a URL like `http://host/git/name.git`.
 fn extract_repo_name_from_url(url: &str) -> Option<String> {
     let path = url.split('/').next_back()?;
@@ -844,6 +874,15 @@ fn parse_forge_ci(raw: Option<&str>) -> Result<Vec<CiStage>, String> {
         #[serde(default = "default_image")]
         image: String,
         command: String,
+        /// e.g. "30s", "5m", "1h" — default 1h.
+        #[serde(default)]
+        timeout: Option<String>,
+        /// Job failure does not fail the stage/pipeline.
+        #[serde(default)]
+        allow_failure: bool,
+        /// Waits for an explicit start (approval gate).
+        #[serde(default)]
+        when: Option<String>,
     }
     #[derive(serde::Deserialize)]
     struct YamlStage {
@@ -858,6 +897,19 @@ fn parse_forge_ci(raw: Option<&str>) -> Result<Vec<CiStage>, String> {
     }
     fn default_image() -> String {
         "alpine:3.21".into()
+    }
+
+    fn parse_timeout(raw: Option<&str>) -> Option<i32> {
+        let raw = raw?.trim();
+        let (value, unit) =
+            raw.split_at(raw.find(|c: char| !c.is_ascii_digit()).unwrap_or(raw.len()));
+        let value: i32 = value.parse().ok()?;
+        match unit.trim() {
+            "s" | "sec" | "secs" | "" => Some(value),
+            "m" | "min" | "mins" => value.checked_mul(60),
+            "h" | "hour" | "hours" => value.checked_mul(3600),
+            _ => None,
+        }
     }
 
     let Some(raw) = raw else {
@@ -877,6 +929,9 @@ fn parse_forge_ci(raw: Option<&str>) -> Result<Vec<CiStage>, String> {
                     name: job.name,
                     image: job.image,
                     command: job.command,
+                    timeout_seconds: parse_timeout(job.timeout.as_deref()),
+                    allow_failure: job.allow_failure,
+                    manual: job.when.as_deref() == Some("manual"),
                 })
                 .collect(),
         })
@@ -895,6 +950,9 @@ fn default_pipeline() -> Vec<CiStage> {
                 name: "checkout".into(),
                 image: "alpine/git:latest".into(),
                 command: "git fetch --all".into(),
+                timeout_seconds: None,
+                allow_failure: false,
+                manual: false,
             }],
         },
         CiStage {
@@ -903,6 +961,9 @@ fn default_pipeline() -> Vec<CiStage> {
                 name: "unit-tests".into(),
                 image: "rust:1.86".into(),
                 command: "cargo test".into(),
+                timeout_seconds: None,
+                allow_failure: false,
+                manual: false,
             }],
         },
         CiStage {
@@ -910,6 +971,9 @@ fn default_pipeline() -> Vec<CiStage> {
             jobs: vec![CiJob {
                 name: "deploy".into(),
                 image: "alpine:3.21".into(),
+                timeout_seconds: None,
+                allow_failure: false,
+                manual: false,
                 command: "echo deploy".into(),
             }],
         },
@@ -948,6 +1012,44 @@ fn is_safe_image_reference(image: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_execution_controls() {
+        let stages = parse_forge_ci(Some(
+            r#"
+stages:
+  - name: build
+    jobs:
+      - name: compile
+        command: make
+        timeout: 30s
+      - name: lint
+        command: make lint
+        allow_failure: true
+  - name: deploy
+    jobs:
+      - name: prod
+        command: ./deploy.sh
+        when: manual
+"#,
+        ))
+        .expect("valid configuration");
+        assert_eq!(stages[0].jobs[0].timeout_seconds, Some(30));
+        assert!(!stages[0].jobs[0].allow_failure);
+        assert!(stages[0].jobs[1].allow_failure);
+        assert!(stages[1].jobs[0].manual);
+        assert_eq!(stages[1].jobs[0].timeout_seconds, None);
+    }
+
+    #[test]
+    fn timeout_units_parse() {
+        // parse_timeout lives inside parse_forge_ci; verify via full config.
+        let stages = parse_forge_ci(Some(
+            "stages:\n  - name: a\n    jobs:\n      - name: j\n        command: x\n        timeout: 5m\n",
+        ))
+        .expect("valid");
+        assert_eq!(stages[0].jobs[0].timeout_seconds, Some(300));
+    }
 
     #[test]
     fn parses_multiple_jobs_and_normalizes_optional_values() {
@@ -1219,7 +1321,7 @@ async fn retry_job(State(state): State<Arc<AppState>>, Path(job_id): Path<Uuid>)
 }
 
 pub(crate) async fn refresh_statuses(pool: &PgPool, stage_id: Uuid) -> Result<(), ApiError> {
-    let stage_status: String = sqlx::query_scalar("SELECT CASE WHEN bool_or(status = 'failed') THEN 'failed' WHEN bool_and(status = 'success') THEN 'success' WHEN bool_or(status = 'running') THEN 'running' WHEN bool_or(status = 'canceled') THEN 'canceled' ELSE 'queued' END FROM jobs WHERE stage_id = $1").bind(stage_id).fetch_one(pool).await.map_err(ApiError::internal)?;
+    let stage_status: String = sqlx::query_scalar("SELECT CASE WHEN bool_or(status = 'failed' AND NOT allow_failure) THEN 'failed' WHEN bool_and(status = 'success' OR (status = 'failed' AND allow_failure)) THEN 'success' WHEN bool_or(status = 'running') THEN 'running' WHEN bool_or(status = 'canceled') THEN 'canceled' ELSE 'queued' END FROM jobs WHERE stage_id = $1").bind(stage_id).fetch_one(pool).await.map_err(ApiError::internal)?;
     let pipeline_id: Uuid =
         sqlx::query_scalar("UPDATE stages SET status = $2 WHERE id = $1 RETURNING pipeline_id")
             .bind(stage_id)
@@ -1228,7 +1330,35 @@ pub(crate) async fn refresh_statuses(pool: &PgPool, stage_id: Uuid) -> Result<()
             .await
             .map_err(ApiError::internal)?;
     let pipeline_status: String = sqlx::query_scalar("SELECT CASE WHEN bool_or(status = 'failed') THEN 'failed' WHEN bool_and(status = 'success') THEN 'success' WHEN bool_or(status = 'running') THEN 'running' WHEN bool_or(status = 'canceled') THEN 'canceled' ELSE 'queued' END FROM stages WHERE pipeline_id = $1").bind(pipeline_id).fetch_one(pool).await.map_err(ApiError::internal)?;
-    sqlx::query("UPDATE pipelines SET status = $2, started_at = CASE WHEN $2 = 'running' THEN COALESCE(started_at, now()) ELSE started_at END, finished_at = CASE WHEN $2 IN ('success','failed','canceled') THEN now() ELSE finished_at END WHERE id = $1").bind(pipeline_id).bind(pipeline_status).execute(pool).await.map_err(ApiError::internal)?;
+    let previous: Option<String> = sqlx::query_scalar("SELECT status FROM pipelines WHERE id = $1")
+        .bind(pipeline_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(ApiError::internal)?;
+    sqlx::query("UPDATE pipelines SET status = $2, started_at = CASE WHEN $2 = 'running' THEN COALESCE(started_at, now()) ELSE started_at END, finished_at = CASE WHEN $2 IN ('success','failed','canceled') THEN now() ELSE finished_at END WHERE id = $1").bind(pipeline_id).bind(&pipeline_status).execute(pool).await.map_err(ApiError::internal)?;
+    // Emit a domain event exactly once, on the terminal transition, so
+    // outbox webhook fan-out fires (ADR-0006).
+    if matches!(pipeline_status.as_str(), "success" | "failed" | "canceled")
+        && previous.as_deref() != Some(pipeline_status.as_str())
+    {
+        let project_id: Option<Uuid> =
+            sqlx::query_scalar("SELECT project_id FROM pipelines WHERE id = $1")
+                .bind(pipeline_id)
+                .fetch_optional(pool)
+                .await
+                .map_err(ApiError::internal)?;
+        if let Some(project_id) = project_id {
+            crate::outbox::emit_pipeline_event(
+                pool,
+                project_id,
+                pipeline_id,
+                &format!("pipeline.{pipeline_status}"),
+                &pipeline_status,
+            )
+            .await
+            .map_err(ApiError::internal)?;
+        }
+    }
     Ok(())
 }
 
@@ -1244,6 +1374,97 @@ struct JobLog {
 struct AppendLog {
     message: String,
 }
+#[utoipa::path(post, path="/api/v1/jobs/{job_id}/start", tag="jobs", params(("job_id"=Uuid, Path)), responses((status=200), (status=409, description="job is not a waiting manual job")))]
+/// Starts a manual (`when: manual`) job — approval gate (GitLab parity).
+async fn start_manual_job(
+    State(state): State<Arc<AppState>>,
+    Path(job_id): Path<Uuid>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let pool = pool(&state)?;
+    let manual: Option<bool> = sqlx::query_scalar("SELECT manual FROM jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(ApiError::internal)?;
+    match manual {
+        Some(true) => {}
+        Some(false) => return Err(ApiError::conflict("job is not manual")),
+        None => return Err(ApiError::not_found()),
+    }
+    let updated = sqlx::query_scalar::<_, bool>(
+        "UPDATE jobs SET manual = false WHERE id = $1 AND manual RETURNING TRUE",
+    )
+    .bind(job_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    if !updated.unwrap_or(false) {
+        return Err(ApiError::conflict("job already started"));
+    }
+    crate::metrics::PIPELINES_CREATED_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    Ok(Json(serde_json::json!({"started": true})))
+}
+
+#[utoipa::path(get, path="/api/v1/jobs/{job_id}/logs/stream", tag="jobs", params(("job_id"=Uuid, Path), ("after"=Option<i32>, Query)), responses((status=200, description="text/event-stream of job log lines")))]
+/// SSE live log stream: emits existing lines, then polls for new ones.
+async fn job_log_stream(
+    State(state): State<Arc<AppState>>,
+    Path(job_id): Path<Uuid>,
+    axum::extract::Query(params): axum::extract::Query<StreamParams>,
+) -> Result<
+    axum::response::Sse<
+        tokio_stream::wrappers::UnboundedReceiverStream<
+            Result<axum::response::sse::Event, std::convert::Infallible>,
+        >,
+    >,
+    ApiError,
+> {
+    let pool = pool(&state)?;
+    let mut after = params.after.unwrap_or(-1);
+    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+    let p = pool.clone();
+    let jid = job_id;
+    tokio::spawn(async move {
+        loop {
+            let rows = sqlx::query_as::<_, (i32, String)>(
+                "SELECT sequence, message FROM job_logs WHERE job_id = $1 AND sequence > $2 ORDER BY sequence",
+            )
+            .bind(jid)
+            .bind(after)
+            .fetch_all(&p)
+            .await
+            .unwrap_or_default();
+            for (seq, message) in rows {
+                after = seq;
+                let _ = sender.send(Ok(axum::response::sse::Event::default()
+                    .id(seq.to_string())
+                    .data(message)));
+            }
+            let done: Option<String> = sqlx::query_scalar(
+                "SELECT status FROM jobs WHERE id = $1 AND status IN ('success','failed','canceled')",
+            )
+            .bind(jid)
+            .fetch_optional(&p)
+            .await
+            .unwrap_or_default();
+            if let Some(status) = done {
+                let _ = sender.send(Ok(axum::response::sse::Event::default()
+                    .event("done")
+                    .data(status)));
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+        }
+    });
+    let stream = tokio_stream::wrappers::UnboundedReceiverStream::new(receiver);
+    Ok(axum::response::sse::Sse::new(stream))
+}
+
+#[derive(serde::Deserialize, utoipa::IntoParams)]
+struct StreamParams {
+    after: Option<i32>,
+}
+
 #[utoipa::path(get, path="/api/v1/jobs/{job_id}/logs", tag="jobs", params(("job_id"=Uuid, Path)), responses((status=200, body=[JobLog])))]
 async fn list_logs(
     State(state): State<Arc<AppState>>,

@@ -396,6 +396,49 @@ pub async fn pr_action(
             if pr.status != "open" {
                 return Err(ApiError::conflict("pull request is not open"));
             }
+            // P0-4 merge gate: when the target branch is protected, require a
+            // success pipeline on the PR source branch head (GitLab parity).
+            let protected: Option<bool> = sqlx::query_scalar(
+                "SELECT BOOL_OR($2 = ANY(p.protected_branches)) FROM projects p \
+                 WHERE p.repository_url LIKE ('%' || $1 || '%')",
+            )
+            .bind(&pr.repository_name)
+            .bind(&pr.target_branch)
+            .fetch_optional(pool)
+            .await
+            .map_err(ApiError::internal)?;
+            if protected == Some(true) {
+                let source_head: Option<String> = {
+                    let path = resolve_repo_path(&state, &repo).await?;
+                    let out = tokio::process::Command::new("git")
+                        .arg(format!("--git-dir={}", path.display()))
+                        .args(["rev-parse", &pr.source_branch])
+                        .output()
+                        .await
+                        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+                    out.status
+                        .success()
+                        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+                };
+                let green: Option<Uuid> = sqlx::query_scalar(
+                    "SELECT pl.id FROM pipelines pl \
+                     JOIN projects pr2 ON pr2.id = pl.project_id \
+                     WHERE pr2.repository_url LIKE ('%' || $1 || '%') AND pl.git_ref = $2 \
+                       AND pl.commit_sha = $3 AND pl.status = 'success' \
+                     ORDER BY pl.created_at DESC LIMIT 1",
+                )
+                .bind(&pr.repository_name)
+                .bind(&pr.source_branch)
+                .bind(source_head.clone().unwrap_or_default())
+                .fetch_optional(pool)
+                .await
+                .map_err(ApiError::internal)?;
+                if green.is_none() {
+                    return Err(ApiError::conflict(
+                        "target branch is protected: a successful pipeline for the PR head commit is required before merge",
+                    ));
+                }
+            }
             let path = resolve_repo_path(&state, &repo).await?;
             // Use git merge-tree for bare repos (no worktree needed)
             let merge_output = tokio::process::Command::new("git")

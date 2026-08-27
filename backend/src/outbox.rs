@@ -34,13 +34,13 @@ pub async fn emit_pipeline_event(
     .execute(&mut *tx)
     .await?;
 
-    let hooks = sqlx::query_as::<_, (Uuid, String)>(
-        "SELECT id, url FROM webhooks WHERE project_id = $1 AND enabled",
+    let hooks = sqlx::query_as::<_, (Uuid, String, Option<String>)>(
+        "SELECT id, url, secret FROM webhooks WHERE project_id = $1 AND enabled",
     )
     .bind(project_id)
     .fetch_all(&mut *tx)
     .await?;
-    for (hook_id, url) in hooks {
+    for (hook_id, url, secret) in hooks {
         sqlx::query(
             "INSERT INTO outbox_messages (id, event_id, subscription_id, channel, destination, payload) \
              VALUES ($1, $2, $3, 'webhook', $4, $5)",
@@ -49,7 +49,7 @@ pub async fn emit_pipeline_event(
         .bind(event_id)
         .bind(format!("webhook:{hook_id}"))
         .bind(url)
-        .bind(serde_json::json!({ "event": event_type, "pipeline_id": pipeline_id, "status": status }))
+        .bind(serde_json::json!({ "event": event_type, "pipeline_id": pipeline_id, "status": status, "signed": secret.is_some() }))
         .execute(&mut *tx)
         .await?;
     }
@@ -58,8 +58,8 @@ pub async fn emit_pipeline_event(
 }
 
 fn next_delay(attempts: i32) -> chrono::Duration {
-    // 15s, 30s, 1m, 2m, 4m, 8m, 16m, 1h cap.
-    let secs = 15i64.saturating_mul(1 << attempts.min(7) as u32).min(3600);
+    // 15s, 30s, 1m, 2m, 4m, 8m, 16m, 32m, 1h cap.
+    let secs = 15i64.saturating_mul(1 << attempts.min(8) as u32).min(3600);
     Duration::seconds(secs)
 }
 
@@ -76,7 +76,30 @@ pub async fn deliver_due(pool: &PgPool, client: &reqwest::Client) -> usize {
 
     let mut delivered = 0;
     for (id, url, payload, attempts) in due {
-        let result = client.post(&url).json(&payload).send().await;
+        let mut request = client.post(&url).json(&payload);
+        // Sign when the webhook has a secret (subscription_id = "webhook:<id>").
+        if let Some(secret) = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT w.secret FROM webhooks w \
+             WHERE w.id = (SELECT (regexp_match(m.subscription_id, 'webhook:([0-9a-f-]{36})'))[1]::uuid \
+                           FROM outbox_messages m WHERE m.id = $1)",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .flatten()
+        {
+            let body = serde_json::to_string(&payload).unwrap_or_default();
+            type HmacSha256 = hmac::Hmac<sha2::Sha256>;
+            let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
+                .expect("hmac key");
+            mac.update(body.as_bytes());
+            use hmac::Mac as HmacExt;
+            let sig = hex_encode(&mac.finalize().into_bytes());
+            request = request.header("X-Forge-Signature", format!("sha256={sig}"));
+        }
+        let result = request.send().await;
         let ok = matches!(&result, Ok(r) if r.status().is_success());
         if ok {
             let _ = sqlx::query(
@@ -177,6 +200,10 @@ pub async fn supervisor_loop(pool: PgPool) {
     }
 }
 
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,7 +211,7 @@ mod tests {
     #[test]
     fn backoff_is_bounded() {
         assert_eq!(next_delay(0).num_seconds(), 15);
-        assert_eq!(next_delay(7).num_seconds(), 3600);
-        assert_eq!(next_delay(20).num_seconds(), 3600);
+        assert_eq!(next_delay(7).num_seconds(), 1920); // 15s * 2^7
+        assert_eq!(next_delay(20).num_seconds(), 3600); // capped at 1h
     }
 }

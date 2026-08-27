@@ -11,6 +11,11 @@
 
 ### Added
 
+- P0 (GitLab/Jenkins parity): `CICD_*` CI variables in every job (`PIPELINE_ID`, `JOB_ID/NAME`, `STAGE_NAME`, `PROJECT_ID/NAME`, `COMMIT_REF/SHA`, `ARTIFACTS_DIR`), shared per-pipeline artifacts directory passed between jobs/stages, job `timeout` DSL (default 1h, kill on expiry), merge gate on protected branches (`projects.protected_branches`, 409 without a success pipeline on the PR head).
+- P1: webhook HMAC-SHA256 signing (`webhooks.secret` → `X-Forge-Signature`), PAT expiry (`api_tokens.expires_at`, `expires_in_days`), SSE live logs `GET /api/v1/jobs/{id}/logs/stream`, DSL `allow_failure` / `when: manual` + `POST /api/v1/jobs/{id}/start` approval gate.
+- Migration 0005_execution_gaps; outbox now emits real domain events on pipeline terminal transitions (fixes dead webhook fan-out); compose passes `CICD_AUTH_SECRET` through to the backend.
+
+
 - RBAC (AUTHZ_CONTRACT §RBAC): role-политики на всех роутах (`viewer`→read, `developer`→write, `maintainer`→secrets/tokens-read/runners-read, `admin`→users/tokens/runners manage); 403 с `auth.denied` audit-событием; PAT (`cicd_…`) принимаются enforcement-слоем с ролью владельца, `last_used_at` обновляется.
 - Frontend auth: страница /login (i18n ru/en), Bearer в api-клиенте, прозрачный refresh на 401, гард-редирект при включённом auth-режиме; login/logout аудит (`auth.login_success`/`auth.login_failed`).
 - Error envelope по API_CONTRACT: `{error:{code,message,request_id}}` + `x-request-id` header (принимается входящий, генерится при отсутствии).

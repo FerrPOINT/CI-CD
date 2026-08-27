@@ -28,6 +28,7 @@ services:
       CICD_SECRETS_KEY: ${CICD_SECRETS_KEY:-}
       CICD_ARTIFACTS_DIR: /var/lib/forge/artifacts
       CICD_RUNNER_MODE: ${CICD_RUNNER_MODE:-docker}
+      CICD_AUTH_SECRET: ${CICD_AUTH_SECRET:-}
       RUST_LOG: info
     ports:
       - "${CICD_API_PORT:-22801}:22801"

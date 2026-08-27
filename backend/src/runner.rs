@@ -47,8 +47,12 @@ pub(crate) async fn run_job(pool: PgPool, job_id: Uuid, running: RunningJobs) {
 
 async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Result<(), ApiError> {
     let job = sqlx::query_as::<_, JobRow>(
-        "SELECT j.id, j.stage_id, j.name, j.image, j.command, j.status, s.pipeline_id, p.project_id \
-         FROM jobs j JOIN stages s ON s.id = j.stage_id JOIN pipelines p ON p.id = s.pipeline_id \
+        "SELECT j.id, j.stage_id, j.name, j.image, j.command, j.status, \
+                s.pipeline_id, p.project_id, s.name AS stage_name, \
+                p.git_ref, p.commit_sha, pr.name AS project_name \
+         FROM jobs j JOIN stages s ON s.id = j.stage_id \
+         JOIN pipelines p ON p.id = s.pipeline_id \
+         JOIN projects pr ON pr.id = p.project_id \
          WHERE j.id = $1",
     )
     .bind(job_id)
@@ -93,10 +97,53 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
         .map(|(_, v)| v.clone())
         .collect();
 
+    // P0-2/P0-3: per-job timeout + shared pipeline artifacts directory.
+    let timeout_secs =
+        sqlx::query_scalar::<_, Option<i32>>("SELECT timeout_seconds FROM jobs WHERE id = $1")
+            .bind(job_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(ApiError::internal)?
+            .unwrap_or(3600)
+            .clamp(5, 24 * 3600);
+    let artifacts_root =
+        std::env::var("CICD_ARTIFACTS_DIR").unwrap_or_else(|_| "/var/lib/forge/artifacts".into());
+    let pipeline_artifacts = std::path::Path::new(&artifacts_root)
+        .join("pipelines")
+        .join(job.pipeline_id.to_string());
+    let job_artifacts = pipeline_artifacts.join("jobs").join(job_id.to_string());
+    tokio::fs::create_dir_all(&job_artifacts)
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+
     append_log(&pool, job_id, &format!("runner: starting job {}", job.name)).await?;
     refresh_stage(pool.clone(), job.id).await?;
 
     let command_shell = format!("{} 2>&1", job.command);
+
+    // P0-1: GitLab/Jenkins-style CI variables, CICD_-prefixed.
+    let mut envs: Vec<(String, String)> = vec![
+        ("CICD_PIPELINE_ID".into(), job.pipeline_id.to_string()),
+        ("CICD_JOB_ID".into(), job_id.to_string()),
+        ("CICD_JOB_NAME".into(), job.name.clone()),
+        ("CICD_STAGE_NAME".into(), job.stage_name.clone()),
+        ("CICD_PROJECT_ID".into(), job.project_id.to_string()),
+        ("CICD_PROJECT_NAME".into(), job.project_name.clone()),
+        ("CICD_COMMIT_REF".into(), job.git_ref.clone()),
+        (
+            "CICD_COMMIT_SHA".into(),
+            job.commit_sha.clone().unwrap_or_default(),
+        ),
+        (
+            "CICD_ARTIFACTS_DIR".into(),
+            job_artifacts.display().to_string(),
+        ),
+        (
+            "CICD_PIPELINE_ARTIFACTS_DIR".into(),
+            pipeline_artifacts.display().to_string(),
+        ),
+    ];
+    envs.extend(secrets.iter().cloned());
 
     let mut child = if runner_mode() == RunnerMode::Docker {
         let workspace_volume = workspace
@@ -111,7 +158,7 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
             "forge_runner_workspaces",
             &workspace_volume.display().to_string(),
         ));
-        for (k, v) in &secrets {
+        for (k, v) in &envs {
             cmd.env(k, v);
         }
         cmd.current_dir(&workspace)
@@ -127,7 +174,7 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true);
-        for (k, v) in &secrets {
+        for (k, v) in &envs {
             cmd.env(k, v);
         }
         cmd
@@ -142,7 +189,22 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
     }
 
     let stdout = child.stdout.take();
-    let exit_status = child.wait().await;
+    let exit_status = tokio::select! {
+        status = child.wait() => status,
+        _ = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs as u64)) => {
+            append_log(&pool, job_id, &format!("runner: job timed out after {timeout_secs}s, killing")).await?;
+            let _ = child.start_kill();
+            running.lock().await.remove(&job_id);
+            sqlx::query("UPDATE jobs SET status = 'failed', finished_at = now() WHERE id = $1")
+                .bind(job_id)
+                .execute(&pool)
+                .await
+                .map_err(ApiError::internal)?;
+            refresh_stage(pool.clone(), job.id).await?;
+            let _ = tokio::fs::remove_dir_all(&workspace).await;
+            return Ok(());
+        }
+    };
 
     running.lock().await.remove(&job_id);
 
@@ -198,6 +260,13 @@ struct JobRow {
     pipeline_id: Uuid,
     #[allow(dead_code)]
     project_id: Uuid,
+    #[allow(dead_code)]
+    stage_name: String,
+    #[allow(dead_code)]
+    git_ref: String,
+    commit_sha: Option<String>,
+    #[allow(dead_code)]
+    project_name: String,
 }
 
 /// Clones the project repository (bare) into /tmp/forge-runner/<job> at git_ref.
@@ -367,16 +436,18 @@ async fn poll_and_dispatch(pool: &PgPool, running: RunningJobs) -> Result<(), sq
          JOIN stages s ON s.id = j.stage_id \
          JOIN pipelines p ON p.id = s.pipeline_id \
          WHERE j.status = 'queued' \
+           AND NOT j.manual \
            AND p.status IN ('queued','running') \
            AND NOT EXISTS ( \
              SELECT 1 FROM jobs x JOIN stages xs ON xs.id = x.stage_id \
              WHERE xs.pipeline_id = p.id AND xs.position < s.position \
                AND x.status NOT IN ('success') \
+               AND NOT (x.status = 'failed' AND x.allow_failure) \
            ) \
            AND NOT EXISTS ( \
              SELECT 1 FROM jobs y JOIN stages ys ON ys.id = y.stage_id \
              WHERE ys.pipeline_id = p.id AND ys.position = s.position \
-               AND y.status = 'failed' \
+               AND y.status = 'failed' AND NOT y.allow_failure \
            ) \
          ORDER BY p.created_at, s.position, j.position \
          LIMIT 16",

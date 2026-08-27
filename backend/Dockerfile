@@ -6,7 +6,7 @@ COPY cli/Cargo.toml cli/Cargo.toml
 COPY migration/Cargo.toml migration/Cargo.toml
 RUN mkdir -p src/bin domain/src cli/src migration/src \
  && printf 'fn main() {}\n' > src/main.rs && printf '' > src/lib.rs \
- && printf 'fn main() {}\n' > src/bin/openapi-dump.rs \
+ && printf 'fn main() {}\n' > src/bin/openapi-dump.rs && printf 'fn main() {}\n' > src/bin/dummy.rs \
  && printf '\n' > domain/src/lib.rs \
  && printf 'fn main() {}\n' > cli/src/main.rs \
  && printf 'fn main() {}\n' > migration/src/main.rs \

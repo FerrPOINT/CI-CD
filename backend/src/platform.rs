@@ -494,6 +494,10 @@ pub(crate) struct CreateWebhook {
     #[serde(default)]
     events: Vec<String>,
     enabled: Option<bool>,
+    /// Optional HMAC-SHA256 signing secret; deliveries carry
+    /// `X-Forge-Signature: sha256=<hex>`.
+    #[serde(default)]
+    secret: Option<String>,
 }
 #[utoipa::path(get, path = "/api/v1/projects/{project_id}/webhooks", tag = "webhooks", params(("project_id" = Uuid, Path)), responses((status = 200, body = [Webhook])))]
 async fn list_webhooks(
@@ -511,7 +515,7 @@ async fn create_webhook(
     if !input.url.starts_with("http://") && !input.url.starts_with("https://") {
         return Err(ApiError::bad_request("webhook url must be http(s)"));
     }
-    Ok(Json(sqlx::query_as("INSERT INTO webhooks (id, project_id, url, events, enabled) VALUES ($1, $2, $3, $4, $5) RETURNING id, project_id, url, events, enabled, created_at").bind(Uuid::new_v4()).bind(project_id).bind(input.url.trim()).bind(input.events).bind(input.enabled.unwrap_or(true)).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?))
+    Ok(Json(sqlx::query_as("INSERT INTO webhooks (id, project_id, url, events, enabled, secret) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, project_id, url, events, enabled, created_at").bind(Uuid::new_v4()).bind(project_id).bind(input.url.trim()).bind(input.events).bind(input.enabled.unwrap_or(true)).bind(input.secret.as_deref().map(str::trim).filter(|s| !s.is_empty())).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?))
 }
 #[utoipa::path(delete, path = "/api/v1/webhooks/{webhook_id}", tag = "webhooks", params(("webhook_id" = Uuid, Path)), responses((status = 200), (status = 404)))]
 async fn delete_webhook(
@@ -714,6 +718,9 @@ pub(crate) struct CreatedToken {
 pub(crate) struct CreateToken {
     name: String,
     user_id: Option<Uuid>,
+    /// Optional lifetime in days; omit for a non-expiring token.
+    #[serde(default)]
+    expires_in_days: Option<i32>,
 }
 #[utoipa::path(get, path = "/api/v1/api-tokens", tag = "tokens", responses((status = 200, body = [ApiToken])))]
 async fn list_tokens(State(state): State<Arc<AppState>>) -> ApiResult<Vec<ApiToken>> {
@@ -736,7 +743,11 @@ async fn create_token(
     );
     let token_hash = sha256(&value);
     let hint = format!("{}...{}", &value[..9], &value[value.len() - 4..]);
-    let token = sqlx::query_as::<_, ApiToken>("INSERT INTO api_tokens (id, name, token_hash, token_hint, user_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, name, token_hint, user_id, created_at, last_used_at").bind(Uuid::new_v4()).bind(input.name.trim()).bind(token_hash).bind(hint).bind(user_id).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
+    let expires_at = input
+        .expires_in_days
+        .filter(|d| *d > 0)
+        .map(|d| chrono::Utc::now() + chrono::Duration::days(d as i64));
+    let token = sqlx::query_as::<_, ApiToken>("INSERT INTO api_tokens (id, name, token_hash, token_hint, user_id, expires_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, name, token_hint, user_id, created_at, last_used_at").bind(Uuid::new_v4()).bind(input.name.trim()).bind(token_hash).bind(hint).bind(user_id).bind(expires_at).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
     audit(pool(&state)?, "token.created", "api_token", token.id, None).await?;
     Ok(Json(CreatedToken { token, value }))
 }

@@ -48,11 +48,13 @@ path = "src/main.rs"
 name = "openapi-dump"
 path = "src/bin/openapi-dump.rs"
 
+
 [features]
 integration = []
 
 [dependencies]
 reqwest.workspace = true
+tokio-stream = "0.1"
 utoipa = { workspace = true }
 argon2 = { workspace = true }
 rand_core = { workspace = true }
@@ -70,6 +72,7 @@ serde.workspace = true
 serde_json.workspace = true
 serde_yaml = "0.9"
 sha2 = "0.10"
+hmac = "0.12"
 sqlx = { workspace = true }
 thiserror.workspace = true
 tokio.workspace = true
