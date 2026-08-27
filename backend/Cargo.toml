@@ -48,6 +48,9 @@ path = "src/main.rs"
 name = "openapi-dump"
 path = "src/bin/openapi-dump.rs"
 
+[features]
+integration = []
+
 [dependencies]
 utoipa = { workspace = true }
 argon2 = { workspace = true }

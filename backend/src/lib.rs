@@ -1,5 +1,10 @@
 pub mod api;
 pub mod auth;
+
+/// Versioned migrations shared by the server binary and integration tests (ADR-0008).
+pub fn migrations() -> sqlx::migrate::Migrator {
+    sqlx::migrate!("./migrations")
+}
 pub mod domain;
 pub mod git_host;
 pub mod platform;

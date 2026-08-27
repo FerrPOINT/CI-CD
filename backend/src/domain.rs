@@ -4,4 +4,4 @@
 //! package (`backend/domain`). This shim keeps existing paths compiling
 //! during the migration to the layered workspace architecture.
 
-pub use cicd_domain::{JobStatus, TransitionError};
+pub use cicd_domain::{JobStatus, PipelineStatus, TransitionError, aggregate_status};

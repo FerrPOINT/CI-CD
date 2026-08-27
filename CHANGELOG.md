@@ -11,6 +11,17 @@
 
 ### Added
 
+- Auth foundation (AUTHZ_CONTRACT Phase 1, REQ-AUTH-002 частично): миграция `0003_auth_foundation` (user_credentials/sessions), argon2id + JWT access 15m (HS256, CICD_AUTH_SECRET) + refresh-ротация 30d, `POST /auth/login|refresh`, Bearer-enforcement middleware (allowlist: health/openapi/login/refresh/git; без секрета — trusted-network режим), users create/update принимают password; e2e проверено на живой БД (401 без токена, 200 с токеном, 401 неверный пароль).
+- Real-DB integration-уровень (TEST_PLAN): `backend/tests/integration_db.rs` (feature `integration`): идемпотентность миграций, project CRUD, auth сессии+ротация+disable — 3/3 зелёные на test-compose PostgreSQL.
+- Strangler ADR-0005 шаг: `PipelineStatus` + `aggregate_status` перенесены в `cicd-domain` (4 unit-теста), реэкспорт через shim.
+
+### Changed
+
+- Cargo.lock: time 0.3.41 / simple_asn1 0.6.3 (rust 1.86 MSRV-совместимость).
+- CI: backend-гейт openapi drift-diff, frontend-гейт `pnpm openapi:check`.
+
+### Added
+
 - ADR-0008 реализован: `backend/migrations/` (baseline `0001_bootstrap_v1.sql` verbatim из startup bootstrap, `0002_runtime_role.sql` grants forge_runtime), crate `cicd-migrate` (dry-run/apply/verify, advisory lock `FORGE`), server стартует через embedded `sqlx::migrate!`; проверено на живой test-compose БД (apply → идемпотентный повтор).
 - Тестовый контур: cicd-migrate прогоняется в docker-сети test-compose.
 

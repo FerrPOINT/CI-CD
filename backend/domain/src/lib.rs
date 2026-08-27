@@ -94,3 +94,76 @@ mod tests {
         );
     }
 }
+
+/// Pipeline/stage level status mirrors job status today; introduced as a
+/// distinct type so pipeline-level transitions can diverge later (ADR-0005).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PipelineStatus {
+    Queued,
+    Running,
+    Success,
+    Failed,
+    Canceled,
+}
+
+impl PipelineStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Running => "running",
+            Self::Success => "success",
+            Self::Failed => "failed",
+            Self::Canceled => "canceled",
+        }
+    }
+}
+
+impl TryFrom<&str> for PipelineStatus {
+    type Error = String;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "queued" => Ok(Self::Queued),
+            "running" => Ok(Self::Running),
+            "success" => Ok(Self::Success),
+            "failed" => Ok(Self::Failed),
+            "canceled" => Ok(Self::Canceled),
+            _ => Err(format!("unknown pipeline status: {value}")),
+        }
+    }
+}
+
+/// Aggregate result of child statuses (jobs -> stage -> pipeline).
+pub fn aggregate_status(children: &[JobStatus]) -> JobStatus {
+    if children.is_empty() {
+        return JobStatus::Queued;
+    }
+    if children.iter().any(|s| matches!(s, JobStatus::Failed)) {
+        return JobStatus::Failed;
+    }
+    if children
+        .iter()
+        .any(|s| matches!(s, JobStatus::Running | JobStatus::Queued))
+    {
+        return JobStatus::Running;
+    }
+    JobStatus::Success
+}
+
+#[cfg(test)]
+mod aggregate_tests {
+    use super::*;
+
+    #[test]
+    fn failure_wins_over_running() {
+        let agg = aggregate_status(&[JobStatus::Success, JobStatus::Running, JobStatus::Failed]);
+        assert_eq!(agg, JobStatus::Failed);
+    }
+
+    #[test]
+    fn all_success_is_success() {
+        let agg = aggregate_status(&[JobStatus::Success, JobStatus::Success]);
+        assert_eq!(agg, JobStatus::Success);
+    }
+}
