@@ -1,0 +1,546 @@
+openapi: 3.1.0
+info:
+  title: Forge CI/CD API
+  description: Self-hosted CI/CD control plane. Array responses and error envelope follow docs/contracts/API_CONTRACT.md current compatibility mode.
+  license:
+    name: MIT
+    identifier: MIT
+  version: 0.1.0
+paths:
+  /api/v1/health:
+    get:
+      tags:
+      - health
+      operationId: health
+      responses:
+        '200':
+          description: Liveness and readiness
+  /api/v1/jobs/{job_id}/logs:
+    get:
+      tags:
+      - jobs
+      operationId: list_logs
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/JobLog'
+    post:
+      tags:
+      - jobs
+      operationId: append_log
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppendLog'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/JobLog'
+  /api/v1/jobs/{job_id}/retry:
+    post:
+      tags:
+      - jobs
+      operationId: retry_job
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '404':
+          description: ''
+  /api/v1/jobs/{job_id}/status:
+    post:
+      tags:
+      - jobs
+      operationId: change_job_status
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeStatus'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '404':
+          description: ''
+  /api/v1/pipelines/{pipeline_id}:
+    get:
+      tags:
+      - pipelines
+      operationId: get_pipeline
+      parameters:
+      - name: pipeline_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineDetail'
+        '404':
+          description: ''
+  /api/v1/pipelines/{pipeline_id}/cancel:
+    post:
+      tags:
+      - pipelines
+      operationId: cancel_pipeline
+      parameters:
+      - name: pipeline_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pipeline'
+        '404':
+          description: ''
+  /api/v1/pipelines/{pipeline_id}/retry:
+    post:
+      tags:
+      - pipelines
+      operationId: retry_pipeline
+      parameters:
+      - name: pipeline_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pipeline'
+        '404':
+          description: ''
+  /api/v1/projects:
+    get:
+      tags:
+      - projects
+      operationId: list_projects
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Project'
+    post:
+      tags:
+      - projects
+      operationId: create_project
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProject'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '400':
+          description: validation error
+  /api/v1/projects/{project_id}:
+    get:
+      tags:
+      - projects
+      operationId: get_project
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '404':
+          description: ''
+    delete:
+      tags:
+      - projects
+      operationId: delete_project
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+        '404':
+          description: ''
+    patch:
+      tags:
+      - projects
+      operationId: update_project
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProject'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+        '404':
+          description: ''
+  /api/v1/projects/{project_id}/pipelines:
+    get:
+      tags:
+      - pipelines
+      operationId: list_pipelines
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Pipeline'
+    post:
+      tags:
+      - pipelines
+      operationId: trigger_pipeline
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TriggerPipeline'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pipeline'
+        '404':
+          description: ''
+components:
+  schemas:
+    AppendLog:
+      type: object
+      required:
+      - message
+      properties:
+        message:
+          type: string
+    ChangeStatus:
+      type: object
+      required:
+      - status
+      properties:
+        status:
+          $ref: '#/components/schemas/JobStatus'
+    CreateProject:
+      type: object
+      required:
+      - name
+      - repository_url
+      properties:
+        default_branch:
+          type:
+          - string
+          - 'null'
+        name:
+          type: string
+        repository_url:
+          type: string
+    Job:
+      type: object
+      required:
+      - id
+      - stage_id
+      - name
+      - image
+      - command
+      - position
+      - status
+      properties:
+        command:
+          type: string
+        finished_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        image:
+          type: string
+        name:
+          type: string
+        position:
+          type: integer
+          format: int32
+        stage_id:
+          type: string
+          format: uuid
+        started_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        status:
+          type: string
+    JobLog:
+      type: object
+      required:
+      - id
+      - job_id
+      - sequence
+      - message
+      - created_at
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: integer
+          format: int64
+        job_id:
+          type: string
+          format: uuid
+        message:
+          type: string
+        sequence:
+          type: integer
+          format: int32
+    JobStatus:
+      type: string
+      enum:
+      - queued
+      - running
+      - success
+      - failed
+      - canceled
+    Pipeline:
+      type: object
+      required:
+      - id
+      - project_id
+      - git_ref
+      - status
+      - created_at
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        finished_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        git_ref:
+          type: string
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        started_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        status:
+          type: string
+    PipelineDetail:
+      type: object
+      required:
+      - pipeline
+      - stages
+      properties:
+        pipeline:
+          $ref: '#/components/schemas/Pipeline'
+        stages:
+          type: array
+          items:
+            $ref: '#/components/schemas/StageDetail'
+    Project:
+      type: object
+      required:
+      - id
+      - name
+      - repository_url
+      - default_branch
+      - created_at
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        default_branch:
+          type: string
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        repository_url:
+          type: string
+    Stage:
+      type: object
+      required:
+      - id
+      - pipeline_id
+      - name
+      - position
+      - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        pipeline_id:
+          type: string
+          format: uuid
+        position:
+          type: integer
+          format: int32
+        status:
+          type: string
+    StageDetail:
+      allOf:
+      - $ref: '#/components/schemas/Stage'
+      - type: object
+        required:
+        - jobs
+        properties:
+          jobs:
+            type: array
+            items:
+              $ref: '#/components/schemas/Job'
+    TriggerPipeline:
+      type: object
+      properties:
+        git_ref:
+          type:
+          - string
+          - 'null'
+    UpdateProject:
+      type: object
+      properties:
+        default_branch:
+          type:
+          - string
+          - 'null'
+        name:
+          type:
+          - string
+          - 'null'
+        repository_url:
+          type:
+          - string
+          - 'null'
+tags:
+- name: health
+  description: Liveness/readiness
+- name: projects
+  description: Project registry
+- name: pipelines
+  description: Pipeline lifecycle
+- name: jobs
+  description: Jobs, logs and retries

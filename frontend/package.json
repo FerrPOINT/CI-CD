@@ -9,7 +9,9 @@
     "test": "vitest run",
     "lint": "eslint src",
     "seed:evidence": "node scripts/seed-evidence.mjs",
-    "shoot:evidence": "node scripts/shoot-evidence.mjs"
+    "shoot:evidence": "node scripts/shoot-evidence.mjs",
+    "openapi:generate": "openapi-typescript ../openapi/openapi.yaml -o src/api/schema.d.ts",
+    "openapi:check": "openapi-typescript ../openapi/openapi.yaml -o /tmp/schema-check.d.ts && diff -q src/api/schema.d.ts /tmp/schema-check.d.ts"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.1.13",
@@ -42,6 +44,7 @@
     "@types/react-dom": "^19.1.2",
     "@vitejs/plugin-react": "^4.4.0",
     "jsdom": "^26.1.0",
+    "openapi-typescript": "^7.13.0",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.9.3",
     "vite": "^6.2.0",

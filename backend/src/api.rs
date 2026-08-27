@@ -35,6 +35,36 @@ pub struct AppState {
 
 type ApiResult<T> = Result<Json<T>, ApiError>;
 
+/// OpenAPI 3 document for the current API surface (API_CONTRACT, utoipa).
+#[derive(utoipa::OpenApi)]
+#[openapi(
+    info(title = "Forge CI/CD API", version = "0.1.0", description = "Self-hosted CI/CD control plane. Array responses and error envelope follow docs/contracts/API_CONTRACT.md current compatibility mode."),
+    paths(
+        health, list_projects, create_project, get_project, update_project, delete_project,
+        trigger_pipeline, list_pipelines, get_pipeline, cancel_pipeline, retry_pipeline,
+        change_job_status, retry_job, list_logs, append_log,
+    ),
+    components(schemas(Project, CreateProject, UpdateProject, TriggerPipeline, Pipeline, Stage, Job, PipelineDetail, StageDetail, JobLog, ChangeStatus)),
+    tags(
+        (name = "health", description = "Liveness/readiness"),
+        (name = "projects", description = "Project registry"),
+        (name = "pipelines", description = "Pipeline lifecycle"),
+        (name = "jobs", description = "Jobs, logs and retries"),
+    )
+)]
+pub struct ApiDoc;
+
+pub(crate) async fn serve_openapi_json() -> Json<serde_json::Value> {
+    use utoipa::OpenApi as _;
+    Json(serde_json::to_value(ApiDoc::openapi()).expect("serialize openapi"))
+}
+
+/// Canonical YAML serialization of the OpenAPI document (openapi-dump bin).
+pub fn openapi_yaml() -> Result<String, serde_yaml::Error> {
+    use utoipa::OpenApi as _;
+    serde_yaml::to_string(&ApiDoc::openapi())
+}
+
 #[derive(Debug)]
 pub struct ApiError {
     status: StatusCode,
@@ -116,6 +146,7 @@ fn build_router(
 ) -> Router {
     Router::new()
         .route("/api/v1/health", get(health))
+        .route("/api/v1/openapi.json", get(serve_openapi_json))
         .merge(crate::platform::routes())
         .route("/api/v1/projects", get(list_projects).post(create_project))
         .route(
@@ -175,11 +206,12 @@ fn build_router(
         }))
 }
 
+#[utoipa::path(get, path="/api/v1/health", tag="health", responses((status=200, description="Liveness and readiness")))]
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"status": "ok", "service": "cicd"}))
 }
 
-#[derive(Debug, Serialize, FromRow)]
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
 struct Project {
     id: Uuid,
     name: String,
@@ -187,13 +219,14 @@ struct Project {
     default_branch: String,
     created_at: DateTime<Utc>,
 }
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct CreateProject {
     name: String,
     repository_url: String,
     default_branch: Option<String>,
 }
 
+#[utoipa::path(post, path="/api/v1/projects", tag="projects", request_body=CreateProject, responses((status=200, body=Project), (status=400, description="validation error")))]
 async fn create_project(
     State(state): State<Arc<AppState>>,
     Json(input): Json<CreateProject>,
@@ -209,11 +242,13 @@ async fn create_project(
     Ok(Json(project))
 }
 
+#[utoipa::path(get, path="/api/v1/projects", tag="projects", responses((status=200, body=[Project])))]
 async fn list_projects(State(state): State<Arc<AppState>>) -> ApiResult<Vec<Project>> {
     let projects = sqlx::query_as::<_, Project>("SELECT id, name, repository_url, default_branch, created_at FROM projects ORDER BY created_at DESC").fetch_all(pool(&state)?).await.map_err(ApiError::internal)?;
     Ok(Json(projects))
 }
 
+#[utoipa::path(get, path="/api/v1/projects/{project_id}", tag="projects", params(("project_id"=Uuid, Path)), responses((status=200, body=Project), (status=404)))]
 async fn get_project(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
@@ -229,13 +264,14 @@ async fn get_project(
     Ok(Json(project))
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, utoipa::ToSchema)]
 struct UpdateProject {
     name: Option<String>,
     repository_url: Option<String>,
     default_branch: Option<String>,
 }
 
+#[utoipa::path(patch, path="/api/v1/projects/{project_id}", tag="projects", request_body=UpdateProject, params(("project_id"=Uuid, Path)), responses((status=200, body=Project), (status=404)))]
 async fn update_project(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
@@ -268,6 +304,7 @@ async fn update_project(
     Ok(Json(project))
 }
 
+#[utoipa::path(delete, path="/api/v1/projects/{project_id}", tag="projects", params(("project_id"=Uuid, Path)), responses((status=200), (status=404)))]
 async fn delete_project(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
@@ -281,11 +318,11 @@ async fn delete_project(
     Ok(Json(serde_json::json!({"deleted": deleted})))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct TriggerPipeline {
     git_ref: Option<String>,
 }
-#[derive(Debug, Serialize, FromRow)]
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
 pub(crate) struct Pipeline {
     pub(crate) id: Uuid,
     pub(crate) project_id: Uuid,
@@ -295,7 +332,7 @@ pub(crate) struct Pipeline {
     pub(crate) started_at: Option<DateTime<Utc>>,
     pub(crate) finished_at: Option<DateTime<Utc>>,
 }
-#[derive(Debug, Serialize, FromRow)]
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
 struct Stage {
     id: Uuid,
     pipeline_id: Uuid,
@@ -303,7 +340,7 @@ struct Stage {
     position: i32,
     status: String,
 }
-#[derive(Debug, Serialize, FromRow)]
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
 struct Job {
     id: Uuid,
     stage_id: Uuid,
@@ -315,18 +352,19 @@ struct Job {
     started_at: Option<DateTime<Utc>>,
     finished_at: Option<DateTime<Utc>>,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct PipelineDetail {
     pipeline: Pipeline,
     stages: Vec<StageDetail>,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 struct StageDetail {
     #[serde(flatten)]
     stage: Stage,
     jobs: Vec<Job>,
 }
 
+#[utoipa::path(post, path="/api/v1/projects/{project_id}/pipelines", tag="pipelines", request_body=TriggerPipeline, params(("project_id"=Uuid, Path)), responses((status=200, body=Pipeline), (status=404)))]
 async fn trigger_pipeline(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
@@ -605,6 +643,7 @@ stages:
     }
 }
 
+#[utoipa::path(get, path="/api/v1/projects/{project_id}/pipelines", tag="pipelines", params(("project_id"=Uuid, Path)), responses((status=200, body=[Pipeline])))]
 async fn list_pipelines(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
@@ -612,6 +651,7 @@ async fn list_pipelines(
     let pipelines = sqlx::query_as::<_, Pipeline>("SELECT id, project_id, git_ref, status, created_at, started_at, finished_at FROM pipelines WHERE project_id = $1 ORDER BY created_at DESC LIMIT 50").bind(project_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?;
     Ok(Json(pipelines))
 }
+#[utoipa::path(get, path="/api/v1/pipelines/{pipeline_id}", tag="pipelines", params(("pipeline_id"=Uuid, Path)), responses((status=200, body=PipelineDetail), (status=404)))]
 async fn get_pipeline(
     State(state): State<Arc<AppState>>,
     Path(pipeline_id): Path<Uuid>,
@@ -633,10 +673,11 @@ async fn pipeline_detail(pool: &PgPool, pipeline_id: Uuid) -> Result<PipelineDet
     })
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct ChangeStatus {
     status: JobStatus,
 }
+#[utoipa::path(post, path="/api/v1/jobs/{job_id}/status", tag="jobs", params(("job_id"=Uuid, Path)), responses((status=200, body=Job), (status=404)))]
 async fn change_job_status(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
@@ -653,6 +694,7 @@ async fn change_job_status(
     Ok(Json(updated))
 }
 
+#[utoipa::path(post, path="/api/v1/pipelines/{pipeline_id}/cancel", tag="pipelines", params(("pipeline_id"=Uuid, Path)), responses((status=200, body=Pipeline), (status=404)))]
 async fn cancel_pipeline(
     State(state): State<Arc<AppState>>,
     Path(pipeline_id): Path<Uuid>,
@@ -728,6 +770,7 @@ async fn kill_running_job(job_id: Uuid, pid: u32) {
         .await;
 }
 
+#[utoipa::path(post, path="/api/v1/pipelines/{pipeline_id}/retry", tag="pipelines", params(("pipeline_id"=Uuid, Path)), responses((status=200, body=Pipeline), (status=404)))]
 async fn retry_pipeline(
     State(state): State<Arc<AppState>>,
     Path(pipeline_id): Path<Uuid>,
@@ -768,6 +811,7 @@ async fn retry_pipeline(
     Ok(Json(serde_json::json!({"retried": pipeline_id})))
 }
 
+#[utoipa::path(post, path="/api/v1/jobs/{job_id}/retry", tag="jobs", params(("job_id"=Uuid, Path)), responses((status=200, body=Job), (status=404)))]
 async fn retry_job(State(state): State<Arc<AppState>>, Path(job_id): Path<Uuid>) -> ApiResult<Job> {
     let pool = pool(&state)?;
     let job = sqlx::query_as::<_, Job>("SELECT id, stage_id, name, image, command, position, status, started_at, finished_at FROM jobs WHERE id = $1")
@@ -820,7 +864,7 @@ pub(crate) async fn refresh_statuses(pool: &PgPool, stage_id: Uuid) -> Result<()
     Ok(())
 }
 
-#[derive(Debug, Serialize, FromRow)]
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
 struct JobLog {
     id: i64,
     job_id: Uuid,
@@ -828,10 +872,11 @@ struct JobLog {
     message: String,
     created_at: DateTime<Utc>,
 }
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 struct AppendLog {
     message: String,
 }
+#[utoipa::path(get, path="/api/v1/jobs/{job_id}/logs", tag="jobs", params(("job_id"=Uuid, Path)), responses((status=200, body=[JobLog])))]
 async fn list_logs(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
@@ -839,6 +884,7 @@ async fn list_logs(
     let logs = sqlx::query_as::<_, JobLog>("SELECT id, job_id, sequence, message, created_at FROM job_logs WHERE job_id = $1 ORDER BY sequence").bind(job_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?;
     Ok(Json(logs))
 }
+#[utoipa::path(post, path="/api/v1/jobs/{job_id}/logs", tag="jobs", params(("job_id"=Uuid, Path)), responses((status=200, body=[JobLog])))]
 async fn append_log(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,

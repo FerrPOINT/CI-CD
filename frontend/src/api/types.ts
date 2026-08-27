@@ -1,41 +1,16 @@
+// Re-export the generated OpenAPI contract types (pnpm openapi:generate).
+// Hand-written aliases below stay until all consumers migrate.
+import type { components } from './schema'
+
+export type Project = components['schemas']['Project']
+export type Pipeline = components['schemas']['Pipeline']
+export type Job = components['schemas']['Job']
+
 export type Status = 'queued' | 'running' | 'success' | 'failed' | 'canceled'
 
-export interface Project {
-  id: string
-  name: string
-  repository_url: string
-  default_branch: string
-  created_at: string
-}
+export type StageDetail = components['schemas']['StageDetail']
 
-export interface Pipeline {
-  id: string
-  project_id: string
-  git_ref: string
-  status: Status
-  created_at: string
-  started_at: string | null
-  finished_at: string | null
-}
-
-export interface Job {
-  id: string
-  stage_id: string
-  name: string
-  image: string
-  command: string
-  position: number
-  status: Status
-  started_at: string | null
-  finished_at: string | null
-}
-
-export interface Stage {
-  id: string
-  pipeline_id: string
-  name: string
-  position: number
-  status: Status
+export interface Stage extends Omit<StageDetail, 'jobs'> {
   jobs: Job[]
 }
 

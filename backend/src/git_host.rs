@@ -476,7 +476,7 @@ mod tests {
     fn validates_repo_names() {
         assert!(validate_repo_name("demo").is_ok());
         assert!(validate_repo_name("demo.git").is_ok());
-        assert_eq!(validate_repo_name("demo.git").unwrap(), "demo");
+        assert_eq!(validate_repo_name("demo.git").expect("valid name"), "demo");
         assert!(validate_repo_name("").is_err());
         assert!(validate_repo_name("../etc").is_err());
         assert!(validate_repo_name(".hidden").is_err());
@@ -500,7 +500,9 @@ mod tests {
             token: None,
             internal_token: Some("test-internal".into()),
         };
-        tokio::fs::create_dir_all(&dir).await.unwrap();
+        tokio::fs::create_dir_all(&dir)
+            .await
+            .expect("create temp dir");
         // Minimal in-memory check is impossible without Postgres; verify hook + git layout directly.
         let path = repo_path(&dir, "demo");
         let status = Command::new("git")
@@ -508,7 +510,7 @@ mod tests {
             .arg(&path)
             .status()
             .await
-            .unwrap();
+            .expect("git init");
         assert!(status.success());
         assert!(path.join("HEAD").exists());
         let hook = post_receive_hook("demo", config.internal_token.as_deref());

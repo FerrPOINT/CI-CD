@@ -9,7 +9,7 @@ import { ChevronRight, Terminal, Play, CheckCircle2, XCircle, Square, Ban, Rotat
 import { toast } from 'sonner'
 import type { Status } from '@/api/types'
 
-const statusColors: Record<Status, string> = {
+const statusColors: Record<string, string> = {
   queued: 'bg-text-muted',
   running: 'bg-warning',
   success: 'bg-success',

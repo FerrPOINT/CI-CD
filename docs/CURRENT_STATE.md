@@ -36,7 +36,7 @@ backend/
 │   ├── git_host.rs     # bare repos, Smart HTTP, post-receive
 │   ├── pulls.rs        # refs/commits/compare/pull requests
 │   ├── runner.rs       # embedded executor
-│   ├── store.rs        # bootstrap schema (до ADR-0008 migrations)
+│   ├── migrations/     # versioned SQLx migrations (ADR-0008, applied at startup + cicd-migrate)
 │   └── domain.rs       # re-export shim → cicd-domain
 ├── domain/             # cicd-domain: чистые типы + JobStatus
 ├── cli/                # cicd-cli: HTTP-only (project/pipeline/job)

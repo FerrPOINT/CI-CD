@@ -10,7 +10,7 @@ import { Play, ChevronRight, Clock } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Status } from '@/api/types'
 
-const statusColors: Record<Status, string> = {
+const statusColors: Record<string, string> = {
   queued: 'text-text-muted',
   running: 'text-warning',
   success: 'text-success',

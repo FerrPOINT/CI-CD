@@ -116,7 +116,7 @@ docker compose up -d
 
 > **Не используйте `docker compose restart` для нового образа, Dockerfile, исходного кода или env/config.** `restart` запускает старый контейнер с прежней конфигурацией; для применения изменения нужен `docker compose up -d` или `docker compose up -d --build`.
 
-Перед обновлением с данными создайте manual backup из этого документа. Current MVP запускает bootstrap DDL при старте backend, поэтому это не является контролируемой schema migration и не делает rollback безопасным.
+Перед обновлением с данными создайте manual backup из этого документа. Схема применяется versioned migrations (`backend/migrations/`, ADR-0008): при старте backend и отдельно через `cicd-migrate` (advisory lock, идемпотентно). Rollback не поддерживается — восстановление через backup + forward-only migrations (MIGRATION_CONTRACT).
 
 ### Target approved: controlled rollout
 

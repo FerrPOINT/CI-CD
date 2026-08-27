@@ -11,6 +11,17 @@
 
 ### Added
 
+- ADR-0008 реализован: `backend/migrations/` (baseline `0001_bootstrap_v1.sql` verbatim из startup bootstrap, `0002_runtime_role.sql` grants forge_runtime), crate `cicd-migrate` (dry-run/apply/verify, advisory lock `FORGE`), server стартует через embedded `sqlx::migrate!`; проверено на живой test-compose БД (apply → идемпотентный повтор).
+- Тестовый контур: cicd-migrate прогоняется в docker-сети test-compose.
+
+- ADR/API_CONTRACT реализованы частично (Current): utoipa-аннотации на контроллерах core-групп (health/projects/pipelines/jobs+logs), `GET /api/v1/openapi.json`, канонический артефакт `openapi/openapi.yaml` (546 строк, OpenAPI 3.1) через `cargo run --bin openapi-dump`, CI drift-гейт `diff` против коммита; фронт: `openapi-typescript` генерация `src/api/schema.d.ts` (`pnpm openapi:generate`), гейт `pnpm openapi:check`, DTO Project/Pipeline/Job/Stage переведены на generated-типы. Platform-группа (runners/secrets/…) — следующий шаг.
+
+### Changed
+
+- `git_host.rs`: `unwrap()` в тестах заменены на `expect` (прод-код unwrap-free и был).
+
+### Added
+
 - SDLC-набор по отраслевым стандартам (ISO/IEC/IEEE 12207/15289, IEEE 829, ASVS 4.0, CISA SBOM 2026): TEST_PLAN (уровни тестирования, SEV1–SEV4, coverage-политика), TRACEABILITY/RTM (REQ-ID ↔ контракты ↔ тесты ↔ evidence, 25 capability + NFR), THREAT_MODEL (STRIDE по границам доверия, маппинг на контракты), RISK_REGISTER, DISASTER_RECOVERY (tiers/RTO/RPO/3-2-1-1/дриллы), INCIDENT_RESPONSE (SEV-матрица, постмортемы, security-инциденты), THIRD_PARTY (инвентарь, license-политика, CycloneDX SBOM target), ACCESSIBILITY (WCAG 2.2 AA программа), SLO (SLI/SLO/error budget), METRICS (DORA + runtime).
 - PRODUCT_REQUIREMENTS: все capability и NFR получили REQ-ID/NFR-ID; RTM-строка обязательна в PR.
 - CODEOWNERS, .well-known/security.txt.
