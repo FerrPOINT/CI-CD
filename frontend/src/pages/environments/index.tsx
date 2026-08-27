@@ -9,6 +9,7 @@ import { Label } from '@/shared/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
 import { Globe, Plus, Trash2, Rocket } from 'lucide-react'
 import { toast } from 'sonner'
+import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
 import type { Environment } from '@/api/types'
 
 export function EnvironmentsPage() {
@@ -18,6 +19,7 @@ export function EnvironmentsPage() {
   const createEnv = useCreateEnvironment(projectId)
   const deleteEnv = useDeleteEnvironment()
   const [showForm, setShowForm] = useState(false)
+  const [pendingEnv, setPendingEnv] = useState<Environment | null>(null)
   const [form, setForm] = useState({ name: '', url: '' })
   const [selectedEnv, setSelectedEnv] = useState<Environment | null>(null)
 
@@ -80,7 +82,7 @@ export function EnvironmentsPage() {
                     <Rocket className="h-3 w-3" /> {t('environments.deployments')}
                   </Button>
                   <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs text-danger hover:text-danger" onClick={() => {
-                    if (window.confirm(`${t('environments.deleteConfirm')} "${env.name}"?`)) deleteEnv.mutate(env.id, { onSuccess: () => toast.success(t('environments.deleted')), onError: (err) => toast.error(err.message) })
+                    setPendingEnv(env)
                   }}>
                     <Trash2 className="h-3 w-3" />
                   </Button>
@@ -91,6 +93,16 @@ export function EnvironmentsPage() {
           ))}
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingEnv !== null}
+        title={pendingEnv ? `${t('environments.deleteConfirm')} "${pendingEnv.name}"?` : ''}
+        onCancel={() => setPendingEnv(null)}
+        onConfirm={() => {
+          if (pendingEnv) deleteEnv.mutate(pendingEnv.id, { onSuccess: () => toast.success(t('environments.deleted')), onError: (err: Error) => toast.error(err.message) })
+          setPendingEnv(null)
+        }}
+      />
     </div>
   )
 }

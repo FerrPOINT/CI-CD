@@ -8,7 +8,8 @@ import { Label } from '@/shared/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
 import { Users as UsersIcon, Plus, KeyRound, Trash2, Copy } from 'lucide-react'
 import { toast } from 'sonner'
-import type { UserRole } from '@/api/types'
+import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
+import type { UserRole, ApiToken } from '@/api/types'
 
 const ROLES: UserRole[] = ['admin', 'maintainer', 'developer', 'viewer']
 
@@ -30,12 +31,12 @@ export function UsersPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <UsersIcon className="h-5 w-5 text-accent" />
-          <h1 className="text-2xl font-bold">{t('users.title')}</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <UsersIcon className="h-5 w-5 shrink-0 text-accent" />
+          <h1 className="truncate text-2xl font-bold">{t('users.title')}</h1>
         </div>
-        <Button size="sm" onClick={() => setShowForm(v => !v)}>
+        <Button size="sm" className="shrink-0" onClick={() => setShowForm(v => !v)}>
           <Plus className="h-4 w-4" />
           {t('users.create')}
         </Button>
@@ -67,7 +68,35 @@ export function UsersPage() {
       ) : users.length === 0 ? (
         <Card className="p-8 text-center"><p className="text-text-muted">{t('users.empty')}</p></Card>
       ) : (
-        <Card>
+        <>
+        <ul className="grid gap-3 md:hidden">
+          {users.map(u => (
+            <li key={u.id}>
+              <Card className="p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">{u.username}</p>
+                    <span className="mt-1 inline-block rounded-md bg-surface-raised px-2 py-0.5 text-xs font-medium">{u.role}</span>
+                  </div>
+                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${u.enabled ? 'bg-emerald-500/15 text-emerald-500' : 'bg-surface-raised text-text-muted'}`}>
+                    {u.enabled ? t('users.active') : t('users.disabled')}
+                  </span>
+                </div>
+                <p className="mt-2 text-xs text-text-muted">{new Date(u.created_at).toLocaleString()}</p>
+                <Button size="sm" variant="outline" className="mt-3 min-h-9 w-full" onClick={() =>
+                  updateUser.mutate({ id: u.id, username: u.username, role: u.role, enabled: !u.enabled }, {
+                    onSuccess: () => toast.success(t('users.updated')),
+                    onError: (err) => toast.error(err.message),
+                  })
+                }>
+                  {u.enabled ? t('users.disable') : t('users.enable')}
+                </Button>
+              </Card>
+            </li>
+          ))}
+        </ul>
+
+        <Card className="hidden md:block">
           <Table>
             <TableHeader>
               <TableRow>
@@ -106,6 +135,7 @@ export function UsersPage() {
             </TableBody>
           </Table>
         </Card>
+        </>
       )}
 
       <ApiTokensSection />
@@ -118,6 +148,7 @@ function ApiTokensSection() {
   const { data: tokens = [], isLoading } = useApiTokens()
   const createToken = useCreateApiToken()
   const deleteToken = useDeleteApiToken()
+  const [pendingToken, setPendingToken] = useState<ApiToken | null>(null)
   const [newToken, setNewToken] = useState<string | null>(null)
   const [name, setName] = useState('')
 
@@ -184,9 +215,7 @@ function ApiTokensSection() {
                   <TableCell className="font-mono text-xs text-text-muted">{tok.token_hint}</TableCell>
                   <TableCell className="text-xs text-text-muted">{new Date(tok.created_at).toLocaleString()}</TableCell>
                   <TableCell>
-                    <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs text-danger hover:text-danger" onClick={() => {
-                      if (window.confirm(t('tokens.deleteConfirm'))) deleteToken.mutate(tok.id, { onSuccess: () => toast.success(t('tokens.deleted')), onError: (err) => toast.error(err.message) })
-                    }}>
+                    <Button size="sm" variant="ghost" aria-label={`${t('common.delete')} ${tok.name}`} className="h-7 px-2 text-xs text-danger hover:text-danger" onClick={() => setPendingToken(tok)}>
                       <Trash2 className="h-3 w-3" />
                     </Button>
                   </TableCell>
@@ -196,6 +225,16 @@ function ApiTokensSection() {
           </Table>
         </Card>
       )}
+
+      <ConfirmDialog
+        open={pendingToken !== null}
+        title={t('tokens.deleteConfirm')}
+        onCancel={() => setPendingToken(null)}
+        onConfirm={() => {
+          if (pendingToken) deleteToken.mutate(pendingToken.id, { onSuccess: () => toast.success(t('tokens.deleted')), onError: (err: Error) => toast.error(err.message) })
+          setPendingToken(null)
+        }}
+      />
     </div>
   )
 }
