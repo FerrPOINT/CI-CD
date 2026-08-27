@@ -185,12 +185,12 @@ CI сравнивает текущий bundled contract с contract из default
 ```json
 {
   "error": {
-    "code": "VALIDATION_FAILED",
+    "code": "validation_failed",
     "message": "Некоторые поля не прошли проверку.",
     "details": [
       {
         "field": "repository_url",
-        "code": "INVALID_FORMAT",
+        "code": "invalid_format",
         "message": "Укажите допустимый Git URL."
       }
     ]

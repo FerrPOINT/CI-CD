@@ -297,12 +297,12 @@ Job становится eligible, когда:
 Runner не получает произвольный job push-запросом. Он вызывает poll endpoint с capacity, tags и capability digest:
 
 ```text
-runner -> POST /api/v1/runner/v1/work:poll
+runner -> POST /api/v1/runner/work:poll
 Forge  -> 204 No Content
    или 200 LeaseOffer
-runner -> POST /api/v1/runner/v1/leases/{lease_id}/ack
-runner -> POST /api/v1/runner/v1/leases/{lease_id}/renew
-runner -> POST /api/v1/runner/v1/leases/{lease_id}/complete
+runner -> POST /api/v1/runner/leases/{lease_id}/ack
+runner -> POST /api/v1/runner/leases/{lease_id}/renew
+runner -> POST /api/v1/runner/leases/{lease_id}/complete
 ```
 
 Long polling допустим до короткого server deadline, например 20-30 секунд. Runner обязан делать exponential backoff с jitter на сетевых/5xx ошибках.
@@ -382,7 +382,7 @@ forge-runner register \
   --name "builder-a-01"
 ```
 
-`POST /api/v1/runner/v1/register` возвращает:
+`POST /api/v1/runner/register` возвращает:
 
 - `runner_id`;
 - долгоживущий credential, хранимый runner-ом с правами `0600`;
@@ -587,7 +587,7 @@ Docker и Kubernetes должны выдавать одинаковые норм
 Assignment не должен содержать secret values. После успешного `ack` owner runner вызывает endpoint наподобие:
 
 ```text
-POST /api/v1/runner/v1/leases/{lease_id}/secrets:resolve
+POST /api/v1/runner/leases/{lease_id}/secrets:resolve
 ```
 
 Проверяются runner credential, lease token, expiry, fencing token, project scope и факт, что attempt ещё active. Ответ:
@@ -752,11 +752,11 @@ Reconciler должен быть идемпотентен, работать lock
 | Таблица | Назначение |
 |---|---|
 | `pipeline_definitions` | Config source, commit SHA, raw YAML, parser version, config hash |
-| `pipeline_runs` | Экземпляр запуска и агрегированный status |
+| `pipelines` | Экземпляр запуска и агрегированный status |
 | `execution_plans` | Canonical normalized plan JSON и plan hash |
 | `planned_jobs` | Immutable job nodes, requirements, policy snapshot |
 | `planned_job_dependencies` | DAG edges |
-| `job_runs` | Mutable runtime projection logical job |
+| `jobs` | Mutable runtime projection logical job |
 | `job_queue` | Durable eligible work |
 | `execution_attempts` | Неизменяемая история каждого запуска job |
 | `job_leases` | Current/historical lease, fencing, ack/expiry |
@@ -769,7 +769,7 @@ Reconciler должен быть идемпотентен, работать lock
 | `artifact_uploads` | Staged sessions |
 | `attempt_secret_refs` | Только secret keys/version refs, без plaintext |
 | `cancel_requests` | Durable intent и delivery status |
-| `outbox_events` | Transactional domain events |
+| `outbox_messages` | Transactional outbox |
 | `audit_log` | Security and operator actions |
 
 ### Ключевые constraints
@@ -788,7 +788,7 @@ Reconciler должен быть идемпотентен, работать lock
 
 ## 14. API и runner protocol
 
-Версия runner protocol отделяется от user-facing REST: `/api/v1/runner/v1/...`. Все тела документируются OpenAPI/JSON schema и имеют explicit `protocolVersion`.
+Версия runner protocol отделяется от user-facing REST: `/api/v1/runner/...`. Все тела документируются OpenAPI/JSON schema и имеют explicit `protocolVersion`.
 
 ### Control-plane API
 
@@ -807,18 +807,18 @@ Reconciler должен быть идемпотентен, работать lock
 
 | Метод | Путь | Назначение |
 |---|---|---|
-| `POST` | `/api/v1/runner/v1/register` | Одноразовая registration |
-| `POST` | `/api/v1/runner/v1/credentials:rotate` | Credential rotation |
-| `POST` | `/api/v1/runner/v1/heartbeat` | Liveness, capacity, inventory |
-| `POST` | `/api/v1/runner/v1/work:poll` | Long-poll for compatible LeaseOffer |
-| `POST` | `/api/v1/runner/v1/leases/{id}/ack` | Подтвердить lease |
-| `POST` | `/api/v1/runner/v1/leases/{id}/renew` | Продлить active lease |
-| `POST` | `/api/v1/runner/v1/leases/{id}/secrets:resolve` | Получить short-lived secret bundle |
-| `POST` | `/api/v1/runner/v1/leases/{id}/logs` | Idempotent log chunks |
-| `POST` | `/api/v1/runner/v1/leases/{id}/artifacts:init` | Создать artifact upload |
-| `POST` | `/api/v1/runner/v1/leases/{id}/artifacts:finalize` | Подтвердить artifact |
-| `POST` | `/api/v1/runner/v1/leases/{id}/complete` | Подтверждённый result attempt |
-| `GET` | `/api/v1/runner/v1/leases/{id}/control` | Cancel/drain control signal |
+| `POST` | `/api/v1/runner/register` | Одноразовая registration |
+| `POST` | `/api/v1/runner/credentials:rotate` | Credential rotation |
+| `POST` | `/api/v1/runner/heartbeat` | Liveness, capacity, inventory |
+| `POST` | `/api/v1/runner/work:poll` | Long-poll for compatible LeaseOffer |
+| `POST` | `/api/v1/runner/leases/{id}/ack` | Подтвердить lease |
+| `POST` | `/api/v1/runner/leases/{id}/renew` | Продлить active lease |
+| `POST` | `/api/v1/runner/leases/{id}/secrets:resolve` | Получить short-lived secret bundle |
+| `POST` | `/api/v1/runner/leases/{id}/logs` | Idempotent log chunks |
+| `POST` | `/api/v1/runner/leases/{id}/artifacts:init` | Создать artifact upload |
+| `POST` | `/api/v1/runner/leases/{id}/artifacts:finalize` | Подтвердить artifact |
+| `POST` | `/api/v1/runner/leases/{id}/complete` | Подтверждённый result attempt |
+| `GET` | `/api/v1/runner/leases/{id}/control` | Cancel/drain control signal |
 
 ### Пример LeaseOffer
 
@@ -993,7 +993,7 @@ Kubernetes, при наличии test cluster:
 
 ## Фаза 2 - durable queue, attempts и leases
 
-- Ввести `job_runs`, `job_queue`, `execution_attempts`, `job_leases`.
+- Ввести `jobs`, `job_queue`, `execution_attempts`, `job_leases`.
 - Реализовать lease offer/ack/renew/expiry и fencing token.
 - Перевести retry с mutation job/logs на создание новой attempt.
 - Добавить reconciliation/outbox workers.

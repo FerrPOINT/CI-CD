@@ -333,6 +333,7 @@ CI-CD/
 - [Переменные окружения](docs/ENV.md)
 - [CLI](docs/CLI.md)
 - [Нормативные контракты реализации](docs/IMPLEMENTATION_CONTRACTS.md)
+- [Governance документации](docs/DOCUMENTATION_GOVERNANCE.md)
 - [Spec: migrations/OpenAPI/test DB](docs/MIGRATION_EXECUTION_SPEC.md)
 - [Spec: Auth/policy](docs/AUTH_IMPLEMENTATION_SPEC.md)
 - [Spec: runner/scheduler/outbox](docs/EXECUTION_AUTOMATION_IMPLEMENTATION_SPEC.md)

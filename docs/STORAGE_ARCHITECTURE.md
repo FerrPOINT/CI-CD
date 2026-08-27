@@ -167,7 +167,7 @@ ALTER DEFAULT PRIVILEGES FOR ROLE forge_owner IN SCHEMA forge
 
 ## 5.2 SQLx migrations
 
-Миграции находятся в `backend/migration/migrations/`:
+Миграции находятся в `backend/migrations/`:
 
 ```text
 20260826090000_bootstrap_schema.sql
@@ -221,12 +221,12 @@ ALTER DEFAULT PRIVILEGES FOR ROLE forge_owner IN SCHEMA forge
 
 ## 6.1 Границы владения
 
-В перспективе все project-scoped сущности принадлежат `organization`:
+В перспективе все project-scoped сущности принадлежат `tenant`:
 
 ```mermaid
 erDiagram
-  organizations ||--o{ project_members : contains
-  organizations ||--o{ projects : owns
+  tenants ||--o{ project_members : contains
+  tenants ||--o{ projects : owns
   projects ||--|| repositories : maps
   projects ||--o{ pipelines : runs
   pipelines ||--o{ stages : has
@@ -235,19 +235,19 @@ erDiagram
   artifacts }o--|| artifact_objects : references
   projects ||--o{ project_secrets : owns
   project_secrets ||--o{ secret_versions : versions
-  organizations ||--o{ storage_quotas : limits
-  organizations ||--o{ audit_events : records
+  tenants ||--o{ storage_quotas : limits
+  tenants ||--o{ audit_events : records
 ```
 
-`organization` в первой фазе может иметь единственную системную строку для переноса текущих данных. Это сохраняет путь к multi-project/multi-team ownership без немедленной перестройки UI.
+`tenant` в первой фазе может иметь единственную системную строку для переноса текущих данных. Это сохраняет путь к multi-project/multi-team ownership без немедленной перестройки UI.
 
 ## 6.2 Основные таблицы
 
 | Таблица | Назначение и существенные поля |
 |---|---|
-| `organizations` | `id`, `slug`, `name`, `status`, `created_at`, `deleted_at` |
-| `users`, `project_members` | Пользователь, роль в проекте/организации, `enabled`, timestamps; доступ не определяется URL или UUID |
-| `projects` | `id`, `organization_id`, `name`, `repository_url`, `default_branch`, `artifact_retention_days`, `deleted_at` |
+| `tenants` | `id`, `slug`, `name`, `status`, `created_at`, `deleted_at` |
+| `users`, `project_members` | Пользователь, роль в проекте/тенанти, `enabled`, timestamps; доступ не определяется URL или UUID |
+| `projects` | `id`, `tenant_id`, `name`, `repository_url`, `default_branch`, `artifact_retention_days`, `deleted_at` |
 | `repositories` | `id`, `project_id UNIQUE`, `slug`, `storage_key UNIQUE`, `state`, `hook_version`, `provisioned_at`, `delete_after`, `last_verified_at`, `deleted_at` |
 | `pipelines` | `id`, `project_id`, `repository_id`, `git_ref`, `commit_sha`, `source`, `idempotency_key`, status/timestamps |
 | `stages`, `jobs` | Существующая модель исполнения; `jobs` получает `next_log_sequence`, `retention_until`, optional `deleted_at` |
@@ -257,10 +257,10 @@ erDiagram
 | `storage_quotas`, `storage_usage`, `quota_reservations` | Лимиты org/project, фактическое использование, активные резервы upload |
 | `project_secrets` | Метаданные секрета: `id`, `project_id`, `key`, `active_version`, `deleted_at`; plaintext отсутствует |
 | `secret_versions` | Ciphertext, encrypted DEK, `kek_key_id`, algorithm, AAD version, `created_by`, `superseded_at`, `destroyed_at` |
-| `outbox_events` | Транзакционно записанные события: artifact promotion/purge, repository provision/purge, audit, webhook |
+| `outbox_messages` | Транзакционно записанные события: artifact promotion/purge, repository provision/purge, audit, webhook |
 | `deletion_jobs` | `resource_type`, `resource_id`, `state`, attempts, `not_before`, error code; повторяемое физическое удаление |
 | `backup_catalog` | Backup manifest, scope, PG LSN, object/Git snapshot IDs, checksum, encryption key ID, restore verification result |
-| `audit_events` | Append-only: actor, organization/project scope, action, resource, request/correlation ID, redacted metadata, timestamp |
+| `audit_events` | Append-only: actor, tenant/project scope, action, resource, request/correlation ID, redacted metadata, timestamp |
 
 Не хранить в PostgreSQL:
 
@@ -290,7 +290,7 @@ erDiagram
 
 ```sql
 CREATE UNIQUE INDEX projects_org_name_uq
-  ON forge.projects (organization_id, name)
+  ON forge.projects (tenant_id, name)
   WHERE deleted_at IS NULL;
 
 CREATE INDEX pipelines_project_created_idx
@@ -331,11 +331,11 @@ CREATE INDEX deletion_jobs_due_idx
   WHERE state IN ('queued', 'retry');
 
 CREATE INDEX outbox_dispatch_idx
-  ON forge.outbox_events (state, available_at, id)
+  ON forge.outbox_messages (state, available_at, id)
   WHERE state IN ('pending', 'retry');
 
 CREATE INDEX audit_events_scope_created_idx
-  ON forge.audit_events (organization_id, created_at DESC, id DESC);
+  ON forge.audit_events (tenant_id, created_at DESC, id DESC);
 ```
 
 Индексы FK добавляются для всех frequently joined child keys: `pipeline.project_id`, `stage.pipeline_id`, `job.stage_id`, `artifact.job_id`, `secret.project_id`, `repository.project_id`, `project_member.project_id`.
@@ -377,7 +377,7 @@ GET /api/v1/projects/{project_id}/pipelines?limit=50&cursor=<opaque>&status=fail
 Внешнее имя репозитория — `slug`, но файловая идентичность не зависит от имени:
 
 ```text
-<git-root>/org/<organization-id>/repo/<repository-id>.git
+<git-root>/org/<tenant-id>/repo/<repository-id>.git
 ```
 
 `repositories.storage_key` содержит логический идентификатор, а не абсолютный path. Переименование slug не двигает repository directory и не ломает clone URLs.
@@ -447,10 +447,10 @@ CICD_S3_ENDPOINT=...
 Ключ immutable object:
 
 ```text
-org/<organization-id>/project/<project-id>/sha256/<first-2>/<digest>
+org/<tenant-id>/project/<project-id>/sha256/<first-2>/<digest>
 ```
 
-При включённой дедупликации object делится только в рамках организации и только при одинаковом digest/size. Межорганизационная дедупликация отключена: она усложняет изоляцию, квоты и доказательство удаления.
+При включённой дедупликации object делится только в рамках тенанти и только при одинаковом digest/size. Межтенантонная дедупликация отключена: она усложняет изоляцию, квоты и доказательство удаления.
 
 ## 9.2 Upload protocol
 
@@ -524,7 +524,7 @@ Signed URL не кешируется как bearer credential, не отобра
 | Secret versions | active + superseded пока нужна rollback политика | crypto erasure после window |
 | Backups | daily 35 дней, monthly 12 месяцев — пример | backup retention policy, immutable copy |
 
-Конкретные сроки конфигурируются по окружению и требованиям организации; они не должны быть hard-coded в handler.
+Конкретные сроки конфигурируются по окружению и требованиям тенанти; они не должны быть hard-coded в handler.
 
 ## 10.2 Retention worker
 
@@ -541,7 +541,7 @@ Worker запускается по расписанию и выбирает due 
 
 Retention никогда не удаляет shared `artifact_object`, пока существуют активные references.
 
-## 10.3 Удаление project/organization
+## 10.3 Удаление project/tenant
 
 Удаление — asynchronous operation с состояниями:
 
@@ -596,7 +596,7 @@ superseded_at, destroyed_at
 Additional authenticated data:
 
 ```text
-forge:secret:v1:<organization_id>:<project_id>:<secret_id>:<version>
+forge:secret:v1:<tenant_id>:<project_id>:<secret_id>:<version>
 ```
 
 AAD связывает ciphertext с конкретным scope и не позволяет подменить ciphertext между проектами или ключами.

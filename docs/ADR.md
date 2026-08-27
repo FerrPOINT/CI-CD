@@ -52,13 +52,14 @@ Proposed / Accepted / Deprecated / Superseded by ADR-NNNN
 | ADR-0006 | PostgreSQL outbox для асинхронных эффектов | Accepted | 2026-08-26 |
 | ADR-0007 | Исполнение отделено от control plane | Accepted | 2026-08-26 |
 | ADR-0008 | Версионные SQLx migrations | Accepted | 2026-08-26 |
+| ADR-0009 | Канонический реестр имён и приоритет источников | Accepted | 2026-08-27 |
 
 ---
 
 ## 4. Creating New ADRs
 
-1. Взять следующий свободный номер (сейчас: 0009, затем 0010, ...).
-2. Создать `docs/adr/NNNN-title.md` по формату из раздела 2.
+1. Взять следующий свободный номер (сейчас: 0010, затем 0011, ...); следующий ADR о auth/tenancy должен занять зарезервированный 0010.
+2. Создать `docs/adr/NNNN-title.md` (шаблон имени) по формату из раздела 2.
 3. Обновить индекс в этом файле (раздел 3) — добавить строку с номером, названием, статусом и датой.
 4. Открыть PR с описанием решения и ссылкой на связанную issue/task.
 5. После review и merge — статус `Accepted`.
@@ -129,5 +130,6 @@ Proposed / Accepted / Deprecated / Superseded by ADR-NNNN
 - `docs/adr/0006-postgresql-outbox.md` — надёжные асинхронные эффекты.
 - `docs/adr/0007-runner-security-boundary.md` — граница control plane/execution.
 - `docs/adr/0008-versioned-sqlx-migrations.md` — versioned migrations.
+- `docs/adr/0009-canonical-registry.md` — канонический реестр имён и authority matrix.
 - `docs/ROADMAP.md` — план разработки.
 - `docs/CODE_STYLE.md` — конвенции кода.

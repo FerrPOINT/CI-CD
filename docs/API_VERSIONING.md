@@ -115,7 +115,7 @@ Accept: application/json
 
 При выпуске `v2` (когда потребуется):
 
-1. Создать `docs/API_V2_MIGRATION.md` с mapping endpoint/field (появится при планировании v2).
+1. Создать `docs/API_V2_MIGRATION.md (планируемый, будет создан при v2)` с mapping endpoint/field (появится при планировании v2).
 2. Breaking changes changelog в `CHANGELOG.md`.
 3. Обе версии (`v1` и `v2`) работают параллельно минимум 6 месяцев.
 4. CLI `cicd-cli` переключается на `v2` через env var `CICD_API_VERSION` (default — `v1`).

@@ -1,4 +1,6 @@
-# ADR-0008: Versioned SQLx migrations вместо startup schema bootstrap
+# ADR-0008: Versioned SQLx migrations
+
+> **Уточнено ADR-0009:** канонический каталог SQL-файлов — `backend/migrations/*.sql`; crate инструмента — `backend/migration` (`cicd-migrate`). вместо startup schema bootstrap
 
 ## Status
 
