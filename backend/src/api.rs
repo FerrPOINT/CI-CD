@@ -40,13 +40,14 @@ type ApiResult<T> = Result<Json<T>, ApiError>;
 #[openapi(
     info(title = "Forge CI/CD API", version = "0.1.0", description = "Self-hosted CI/CD control plane. Array responses and error envelope follow docs/contracts/API_CONTRACT.md current compatibility mode."),
     paths(
-        health, list_projects, create_project, get_project, update_project, delete_project,
+        health, auth_login, auth_refresh, list_projects, create_project, get_project, update_project, delete_project,
         trigger_pipeline, list_pipelines, get_pipeline, cancel_pipeline, retry_pipeline,
         change_job_status, retry_job, list_logs, append_log,
     ),
-    components(schemas(Project, CreateProject, UpdateProject, TriggerPipeline, Pipeline, Stage, Job, PipelineDetail, StageDetail, JobLog, ChangeStatus)),
+    components(schemas(crate::auth::LoginRequest, crate::auth::TokenPair, Project, CreateProject, UpdateProject, TriggerPipeline, Pipeline, Stage, Job, PipelineDetail, StageDetail, JobLog, ChangeStatus)),
     tags(
         (name = "health", description = "Liveness/readiness"),
+        (name = "auth", description = "Login and token refresh"),
         (name = "projects", description = "Project registry"),
         (name = "pipelines", description = "Pipeline lifecycle"),
         (name = "jobs", description = "Jobs, logs and retries"),
@@ -108,6 +109,18 @@ impl ApiError {
         }
     }
 }
+impl From<crate::auth::AuthError> for ApiError {
+    fn from(error: crate::auth::AuthError) -> Self {
+        match error {
+            crate::auth::AuthError::InvalidCredentials
+            | crate::auth::AuthError::Expired
+            | crate::auth::AuthError::Invalid
+            | crate::auth::AuthError::NotConfigured => ApiError::unauthorized(),
+            crate::auth::AuthError::Db(e) => ApiError::internal(e),
+        }
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
         (
@@ -139,6 +152,48 @@ fn app_with(pool: Option<PgPool>, running: Option<crate::runner::RunningJobs>) -
     build_router(pool, crate::git_host::GitConfig::default(), running)
 }
 
+/// AUTHZ_CONTRACT Phase 1: when CICD_AUTH_SECRET is configured, every
+/// /api/v1 route except the public allowlist requires a valid Bearer JWT.
+/// Without the secret the API stays in trusted-network mode (open), matching
+/// CURRENT_STATE.
+async fn require_auth(
+    State(state): State<Arc<AppState>>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Result<axum::response::Response, ApiError> {
+    const PUBLIC: &[&str] = &[
+        "/api/v1/health",
+        "/api/v1/openapi.json",
+        "/api/v1/auth/login",
+        "/api/v1/auth/refresh",
+    ];
+    let path = req.uri().path();
+    if PUBLIC.contains(&path) || path.starts_with("/git/") {
+        return Ok(next.run(req).await);
+    }
+    if std::env::var("CICD_AUTH_SECRET").is_err() {
+        return Ok(next.run(req).await); // trusted-network mode: no enforcement
+    }
+    let claims = crate::auth::bearer_claims(req.headers()).map_err(|_| ApiError::unauthorized())?;
+    if !user_enabled(&state, claims.sub).await? {
+        return Err(ApiError::unauthorized());
+    }
+    Ok(next.run(req).await)
+}
+
+async fn user_enabled(state: &AppState, user_id: uuid::Uuid) -> Result<bool, ApiError> {
+    let Some(pool) = state.pool.as_ref() else {
+        return Err(ApiError::unavailable());
+    };
+    let enabled = sqlx::query_scalar::<_, bool>("SELECT enabled FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(ApiError::internal)?
+        .unwrap_or(false);
+    Ok(enabled)
+}
+
 fn build_router(
     pool: Option<PgPool>,
     git: crate::git_host::GitConfig,
@@ -147,6 +202,8 @@ fn build_router(
     Router::new()
         .route("/api/v1/health", get(health))
         .route("/api/v1/openapi.json", get(serve_openapi_json))
+        .route("/api/v1/auth/login", post(auth_login))
+        .route("/api/v1/auth/refresh", post(auth_refresh))
         .merge(crate::platform::routes())
         .route("/api/v1/projects", get(list_projects).post(create_project))
         .route(
@@ -197,6 +254,14 @@ fn build_router(
             "/api/v1/repos/{repo}/pulls/{number}/action",
             post(pr_action),
         )
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::new(AppState {
+                pool: pool.clone(),
+                git: git.clone(),
+                running_jobs: running.clone(),
+            }),
+            require_auth,
+        ))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(Arc::new(AppState {
@@ -204,6 +269,59 @@ fn build_router(
             git,
             running_jobs: running,
         }))
+}
+
+#[utoipa::path(post, path="/api/v1/auth/login", tag="auth", request_body=crate::auth::LoginRequest, responses((status=200, body=crate::auth::TokenPair), (status=401)))]
+async fn auth_login(
+    State(state): State<Arc<AppState>>,
+    Json(input): Json<crate::auth::LoginRequest>,
+) -> Result<Json<crate::auth::TokenPair>, ApiError> {
+    use crate::auth::*;
+    let pool = pool(&state)?;
+    let row = sqlx::query_as::<_, (Uuid, String, bool, String)>(
+        "SELECT u.id, u.role, u.enabled, c.password_hash FROM users u \
+         JOIN user_credentials c ON c.user_id = u.id WHERE u.username = $1",
+    )
+    .bind(input.username.trim())
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::unauthorized)?;
+    let (user_id, role, enabled, password_hash) = row;
+    if !enabled || !verify_password(&password_hash, &input.password) {
+        return Err(ApiError::unauthorized());
+    }
+    let refresh = new_refresh_token();
+    create_session(pool, user_id, &hash_token(&refresh))
+        .await
+        .map_err(ApiError::from)?;
+    let mut pair = issue_access(user_id, &role).map_err(|_| ApiError::unauthorized())?;
+    pair.refresh_token = refresh;
+    Ok(Json(pair))
+}
+
+#[utoipa::path(post, path="/api/v1/auth/refresh", tag="auth", request_body=crate::auth::LoginRequest, responses((status=200, body=crate::auth::TokenPair), (status=401)))]
+async fn auth_refresh(
+    State(state): State<Arc<AppState>>,
+    Json(input): Json<crate::auth::LoginRequest>,
+) -> Result<Json<crate::auth::TokenPair>, ApiError> {
+    // Reuses LoginRequest shape; only refresh_token matters here.
+    use crate::auth::*;
+    let pool = pool(&state)?;
+    if input.refresh_token.is_empty() {
+        return Err(ApiError::unauthorized());
+    }
+    let (user_id, new_refresh) = rotate_session(pool, &hash_token(&input.refresh_token))
+        .await
+        .map_err(|_| ApiError::unauthorized())?;
+    let role = sqlx::query_scalar::<_, String>("SELECT role FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
+        .map_err(ApiError::internal)?;
+    let mut pair = issue_access(user_id, &role).map_err(|_| ApiError::unauthorized())?;
+    pair.refresh_token = new_refresh;
+    Ok(Json(pair))
 }
 
 #[utoipa::path(get, path="/api/v1/health", tag="health", responses((status=200, description="Liveness and readiness")))]

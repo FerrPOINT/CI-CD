@@ -606,6 +606,8 @@ struct UserInput {
     username: String,
     role: String,
     enabled: Option<bool>,
+    /// Optional argon2id password; enables interactive login (AUTHZ_CONTRACT).
+    password: Option<String>,
 }
 async fn list_users(State(state): State<Arc<AppState>>) -> ApiResult<Vec<User>> {
     Ok(Json(
@@ -626,7 +628,19 @@ async fn create_user(
             "username and role (admin, maintainer, developer, viewer) are required",
         ));
     }
-    Ok(Json(sqlx::query_as("INSERT INTO users (id, username, role, enabled) VALUES ($1, $2, $3, $4) RETURNING id, username, role, enabled, created_at").bind(Uuid::new_v4()).bind(input.username.trim()).bind(input.role).bind(input.enabled.unwrap_or(true)).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?))
+    let pool = pool(&state)?;
+    let user: User = sqlx::query_as("INSERT INTO users (id, username, role, enabled) VALUES ($1, $2, $3, $4) RETURNING id, username, role, enabled, created_at").bind(Uuid::new_v4()).bind(input.username.trim()).bind(input.role).bind(input.enabled.unwrap_or(true)).fetch_one(pool).await.map_err(ApiError::internal)?;
+    if let Some(password) = input.password.as_deref().filter(|p| !p.is_empty()) {
+        let hash = crate::auth::hash_password(password)
+            .map_err(|_| ApiError::bad_request("password hashing failed"))?;
+        sqlx::query("INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2)")
+            .bind(user.id)
+            .bind(hash)
+            .execute(pool)
+            .await
+            .map_err(ApiError::internal)?;
+    }
+    Ok(Json(user))
 }
 async fn update_user(
     State(state): State<Arc<AppState>>,
@@ -636,7 +650,18 @@ async fn update_user(
     if input.username.trim().is_empty() || !valid_role(&input.role) {
         return Err(ApiError::bad_request("username and role are required"));
     }
-    Ok(Json(sqlx::query_as("UPDATE users SET username = $2, role = $3, enabled = $4 WHERE id = $1 RETURNING id, username, role, enabled, created_at").bind(id).bind(input.username.trim()).bind(input.role).bind(input.enabled.unwrap_or(true)).fetch_optional(pool(&state)?).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?))
+    let pool = pool(&state)?;
+    if let Some(password) = input.password.as_deref().filter(|p| !p.is_empty()) {
+        let hash = crate::auth::hash_password(password)
+            .map_err(|_| ApiError::bad_request("password hashing failed"))?;
+        sqlx::query("INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET password_hash = EXCLUDED.password_hash, updated_at = now()")
+            .bind(id)
+            .bind(hash)
+            .execute(pool)
+            .await
+            .map_err(ApiError::internal)?;
+    }
+    Ok(Json(sqlx::query_as("UPDATE users SET username = $2, role = $3, enabled = $4 WHERE id = $1 RETURNING id, username, role, enabled, created_at").bind(id).bind(input.username.trim()).bind(input.role).bind(input.enabled.unwrap_or(true)).fetch_optional(pool).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?))
 }
 
 #[derive(Debug, Serialize, FromRow)]

@@ -1,4 +1,5 @@
 pub mod api;
+pub mod auth;
 pub mod domain;
 pub mod git_host;
 pub mod platform;
