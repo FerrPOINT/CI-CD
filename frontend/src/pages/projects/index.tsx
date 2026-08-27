@@ -23,10 +23,7 @@ export function ProjectsPage() {
   const [editing, setEditing] = useState<Project | null>(null)
 
   function handleDelete(project: Project) {
-    deleteProject.mutate(project.id, {
-      onSuccess: () => toast.success(t('projects.deleted')),
-      onError: (err) => toast.error(err.message),
-    })
+    setPendingDelete(project) // confirm via ConfirmDialog, no direct mutate
   }
 
   function handleSubmit(e: React.FormEvent) {

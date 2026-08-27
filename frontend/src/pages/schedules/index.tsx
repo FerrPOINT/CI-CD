@@ -31,7 +31,7 @@ export function SchedulesPage() {
   }
 
   function handleDelete(s: Schedule) {
-    deleteSchedule.mutate(s.id, { onSuccess: () => toast.success(t('schedules.deleted')), onError: (err) => toast.error(err.message) })
+    setPendingDelete(s) // confirm via ConfirmDialog, no direct mutate
   }
 
   return (

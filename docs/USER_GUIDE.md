@@ -166,6 +166,16 @@ Retention/TTL, S3 и multipart upload - **Target approved**.
 
 ![Артефакты](screenshots/21-artifacts.png)
 
+### Diff из pull-запроса
+
+Кнопка «Посмотреть изменения» в pull-запросе открывает сравнение веток с merge-base и патчем.
+
+![Diff из pull-запроса](screenshots/22-pr-diff.png)
+
+### Логи джоба
+
+![Логи джоба](screenshots/33-job-logs.png)
+
 ## 6. Секреты
 
 **Статус процедуры: Current verified.**

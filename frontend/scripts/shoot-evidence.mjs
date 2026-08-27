@@ -45,6 +45,20 @@ const shots = [
   { name: '19-audit-log.png', path: '/audit-log', desktop: true },
   { name: '20-users.png', path: '/users', desktop: true },
   { name: '21-artifacts.png', path: `/jobs/${jobId}/artifacts`, desktop: true, wait: 800 },
+  // --- Состояния действий: диалоги, диффы, логи, формы ---
+  { name: '22-pr-diff.png', path: '/repositories/platform-core/pulls/8', desktop: true, wait: 1200, click: 'a:has-text("Посмотреть изменения")', settle: 1500 },
+  { name: '23-project-create.png', path: '/projects', desktop: true, click: 'button:has-text("Создать проект")' },
+  { name: '24-project-delete-confirm.png', path: '/projects', desktop: true, click: 'button:has-text("Удалить")', settle: 600 },
+  { name: '25-repo-create.png', path: '/repositories', desktop: true, click: 'button:has-text("Создать репозиторий")' },
+  { name: '26-runner-register.png', path: '/runners', desktop: true, click: 'button:has-text("Зарегистрировать runner")' },
+  { name: '27-secret-add.png', path: `/projects/${platform.id}/secrets`, desktop: true, click: 'button:has-text("Добавить секрет")' },
+  { name: '28-env-create.png', path: `/projects/${platform.id}/environments`, desktop: true, wait: 800, click: 'button:has-text("Создать окружение")' },
+  { name: '29-schedule-create.png', path: `/projects/${platform.id}/schedules`, desktop: true, click: 'button:has-text("Создать расписание")' },
+  { name: '30-webhook-add.png', path: `/projects/${platform.id}/webhooks`, desktop: true, click: 'button:has-text("Добавить webhook")' },
+  { name: '31-pr-create.png', path: '/repositories/platform-core/pulls', desktop: true, wait: 1000, click: 'button:has-text("Создать pull-запрос")' },
+  { name: '32-user-create.png', path: '/users', desktop: true, click: 'button:has-text("Создать пользователя")' },
+  { name: '33-job-logs.png', path: `/pipelines/${pipeline.id}`, desktop: true, wait: 1500, click: 'button:has-text("Логи")', settle: 1200 },
+  { name: '34-pipeline-run-form.png', path: `/projects/${platform.id}/pipelines`, desktop: true, wait: 800, click: 'button:has-text("Запустить пайплайн")', settle: 400 },
   { name: 'm-dashboard.png', path: '/', mobile: true, wait: 1200 },
   { name: 'm-projects.png', path: '/projects', mobile: true },
   { name: 'm-pipeline-detail.png', path: `/pipelines/${pipeline.id}`, mobile: true, wait: 1500 },
@@ -67,6 +81,14 @@ async function shoot(shot) {
   try {
     await page.goto(BASE + shot.path, { waitUntil: 'networkidle', timeout: 30000 })
     if (shot.wait) await page.waitForTimeout(shot.wait)
+    if (shot.click) {
+      await page.locator(shot.click).first().click({ timeout: 10000 })
+      await page.waitForTimeout(shot.settle ?? 800)
+    }
+    if (shot.click2) {
+      await page.locator(shot.click2).first().click({ timeout: 10000 })
+      await page.waitForTimeout(shot.settle ?? 800)
+    }
     await page.screenshot({ path: join(OUT, shot.name), fullPage: true })
     console.log('shot', shot.name)
   } catch (err) {

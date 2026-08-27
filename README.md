@@ -73,11 +73,23 @@ git push                       # → post-receive → пайплайн созд�
 
 ![Секреты проекта](docs/screenshots/14-secrets.png)
 
+### Diff из pull-запроса
+
+![Diff из pull-запроса](docs/screenshots/22-pr-diff.png)
+
+### Логи джоба
+
+![Логи джоба](docs/screenshots/33-job-logs.png)
+
+### Подтверждение удаления
+
+![Подтверждение удаления проекта](docs/screenshots/24-project-delete-confirm.png)
+
 ### Мобильная версия (375×812)
 
 ![Дашборд — мобильная версия](docs/screenshots/m-dashboard.png)
 
-Полный визуальный реестр (26 скринов, все экраны, маршруты и параметры съёмки): [docs/assets/screens/manifest.md](docs/assets/screens/manifest.md).
+Полный визуальный реестр (39 скринов: 21 страница + 13 состояний действий + 5 мобильных): [docs/assets/screens/manifest.md](docs/assets/screens/manifest.md).
 
 ## Документация
 

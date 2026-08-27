@@ -31,7 +31,7 @@ export function SecretsPage() {
   }
 
   function handleDelete(s: SecretMetadata) {
-    del.mutate(s.id, { onSuccess: () => toast.success(t('secrets.deleted')), onError: (err) => toast.error(err.message) })
+    setPendingDelete(s) // confirm via ConfirmDialog, no direct mutate
   }
 
   return (
