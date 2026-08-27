@@ -11,6 +11,8 @@ This index is the entry point for architecture decisions. It separates **current
 3. `docs/DOMAIN_MODEL.md` — domain invariants and pipeline status model.
 4. `docs/DATA_MODEL.md` — physical database representation and indexes.
 5. `docs/ADR.md` — accepted structural choices.
+6. `docs/TECH_CHOICES.md` — зафиксированный стек и крейты по фазам; `docs/ENV.md` — справочник переменных окружения.
+7. `docs/IMPLEMENTATION_CONTRACTS.md` — общие нормативные contracts; затем нужный implementer spec: `MIGRATION_EXECUTION_SPEC.md`, `AUTH_IMPLEMENTATION_SPEC.md`, `EXECUTION_AUTOMATION_IMPLEMENTATION_SPEC.md`.
 
 ## Bounded contexts
 

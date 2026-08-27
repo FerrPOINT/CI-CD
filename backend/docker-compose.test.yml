@@ -1,0 +1,16 @@
+services:
+  postgres-test:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: forge_owner
+      POSTGRES_PASSWORD: forge_test_owner
+      POSTGRES_DB: forge_test_cicd
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U forge_owner -d forge_test_cicd"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+    volumes:
+      - ./tests/sql/init-roles.sql:/docker-entrypoint-initdb.d/10-init-roles.sql:ro
