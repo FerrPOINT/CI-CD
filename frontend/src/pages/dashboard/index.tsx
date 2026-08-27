@@ -1,6 +1,7 @@
 import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
-import { useProjects, usePipelines } from '@/api/hooks'
+import { useProjects } from '@/api/hooks'
+import { useProjectPipelines } from '@/shared/lib/use-project-pipelines'
 import { Card } from '@/shared/ui/card'
 import { Button } from '@/shared/ui/button'
 import { FolderGit2, Play, CheckCircle2, XCircle, Clock } from 'lucide-react'
@@ -8,6 +9,10 @@ import { FolderGit2, Play, CheckCircle2, XCircle, Clock } from 'lucide-react'
 export function DashboardPage() {
   const { t } = useTranslation()
   const { data: projects = [], isLoading } = useProjects()
+
+  // Aggregate CI metrics from recent pipelines across all visible projects.
+  // Page is a summary, not an exhaustive report (see /reports for per-project stats).
+  const pipelineLists = useProjectPipelines(projects)
 
   return (
     <div className="space-y-6">
@@ -23,20 +28,20 @@ export function DashboardPage() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card className="p-4">
-          <div className="flex items-center gap-2 text-text-muted"><FolderGit2 className="h-4 w-4" /><span className="text-sm">Projects</span></div>
+          <div className="flex items-center gap-2 text-text-muted"><FolderGit2 className="h-4 w-4" /><span className="text-sm">{t('dashboard.projects')}</span></div>
           <p className="mt-2 text-2xl font-bold">{projects.length}</p>
         </Card>
         <Card className="p-4">
-          <div className="flex items-center gap-2 text-text-muted"><Play className="h-4 w-4" /><span className="text-sm">Total runs</span></div>
-          <p className="mt-2 text-2xl font-bold">—</p>
+          <div className="flex items-center gap-2 text-text-muted"><Play className="h-4 w-4" /><span className="text-sm">{t('dashboard.totalRuns')}</span></div>
+          <p className="mt-2 text-2xl font-bold">{pipelineLists.flat().length}</p>
         </Card>
         <Card className="p-4">
-          <div className="flex items-center gap-2 text-success"><CheckCircle2 className="h-4 w-4" /><span className="text-sm">Success</span></div>
-          <p className="mt-2 text-2xl font-bold">—</p>
+          <div className="flex items-center gap-2 text-success"><CheckCircle2 className="h-4 w-4" /><span className="text-sm">{t('dashboard.success')}</span></div>
+          <p className="mt-2 text-2xl font-bold">{pipelineLists.flat().filter(p => p.status === 'success').length}</p>
         </Card>
         <Card className="p-4">
-          <div className="flex items-center gap-2 text-danger"><XCircle className="h-4 w-4" /><span className="text-sm">Failed</span></div>
-          <p className="mt-2 text-2xl font-bold">—</p>
+          <div className="flex items-center gap-2 text-danger"><XCircle className="h-4 w-4" /><span className="text-sm">{t('dashboard.failed')}</span></div>
+          <p className="mt-2 text-2xl font-bold">{pipelineLists.flat().filter(p => p.status === 'failed').length}</p>
         </Card>
       </div>
 

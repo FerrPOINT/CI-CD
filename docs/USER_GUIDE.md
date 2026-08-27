@@ -164,7 +164,7 @@ curl -fsS "http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/artifacts"
 
 Retention/TTL, S3 и multipart upload - **Target approved**.
 
-![Артефакты](screenshots/15-artifacts.png)
+![Артефакты](screenshots/21-artifacts.png)
 
 ## 6. Секреты
 
@@ -196,7 +196,7 @@ Retention/TTL, S3 и multipart upload - **Target approved**.
 
 > Forge не выполняет deployment автоматически только из создания environment/deployment. Развёртывание должно быть частью job или внешней процедуры; protected environments, approvals и policy checks - **Target approved**.
 
-![Окружения](screenshots/16-environments.png)
+![Окружения](screenshots/15-environments.png)
 
 ## 8. Расписания, webhooks и уведомления
 
@@ -228,9 +228,9 @@ Retention/TTL, S3 и multipart upload - **Target approved**.
 
 Входящие webhooks от GitHub/GitLab/Gitea также являются **Target approved**; текущий Git auto-trigger работает через локальный `post-receive` hook, а не через public inbound webhook.
 
-![Расписания](screenshots/17-schedules.png)
+![Расписания](screenshots/16-schedules.png)
 
-![Webhooks и уведомления](screenshots/18-webhooks.png)
+![Webhooks и уведомления](screenshots/17-webhooks.png)
 
 ## 9. Отчёты
 
@@ -243,7 +243,7 @@ Retention/TTL, S3 и multipart upload - **Target approved**.
 
 Фильтры периода, графики, percentiles, failure trends, DORA-агрегаты и export - **Target approved**. Не интерпретируйте текущую summary как отчёт за выбранный период: такого фильтра ещё нет.
 
-![Отчёты](screenshots/19-reports.png)
+![Отчёты](screenshots/18-reports.png)
 
 ## 10. Аудит
 
@@ -256,7 +256,7 @@ Retention/TTL, S3 и multipart upload - **Target approved**.
 
 Аудит append-only для текущих mutation-операций, включая runner, secret, artifact и token. Полный authorisation context, фильтры, pagination и export - **Target approved**. Он не заменяет историю delivery webhooks или execution attempts.
 
-![Журнал аудита](screenshots/20-audit-log.png)
+![Журнал аудита](screenshots/19-audit-log.png)
 
 ## 11. Пользователи и API-токены
 
@@ -282,7 +282,7 @@ Retention/TTL, S3 и multipart upload - **Target approved**.
 
 Токены хранятся как SHA-256 hash, но **не проверяются на API-запросах**. Передавать их как действующий credential можно только после внедрения auth middleware - **Target approved**.
 
-![Пользователи и API-токены](screenshots/21-users.png)
+![Пользователи и API-токены](screenshots/20-users.png)
 
 ## 12. CLI-команды
 

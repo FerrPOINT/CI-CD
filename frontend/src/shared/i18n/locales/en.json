@@ -278,5 +278,11 @@
     "copied": "Copied to clipboard",
     "copyWarning": "Copy this token now — it will not be shown again.",
     "empty": "No API tokens."
+  },
+  "dashboard": {
+    "projects": "Projects",
+    "totalRuns": "Total runs",
+    "success": "Success",
+    "failed": "Failed"
   }
 }

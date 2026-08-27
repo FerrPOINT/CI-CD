@@ -34,7 +34,7 @@ function NavigationList({ onNavigate, isActive }: { onNavigate: () => void; isAc
           }`}
         >
           <Icon className="h-4 w-4 shrink-0" />
-          <span className="truncate">{label}</span>
+          <span className="break-words">{label}</span>
         </Link>
       ))}
     </nav>

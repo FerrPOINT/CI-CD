@@ -36,7 +36,7 @@ export function RunnersPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <Server className="h-5 w-5 shrink-0 text-accent" />
-          <h1 className="truncate text-2xl font-bold">{t('runners.title')}</h1>
+          <h1 className="text-xl font-bold sm:text-2xl">{t('runners.title')}</h1>
         </div>
         <Button size="sm" className="shrink-0" onClick={() => setShowForm(v => !v)}>
           <Plus className="h-4 w-4" />

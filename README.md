@@ -77,7 +77,7 @@ git push                       # → post-receive → пайплайн созд�
 
 ![Дашборд — мобильная версия](docs/screenshots/m-dashboard.png)
 
-Полный визуальный реестр (25 скринов, все экраны, параметры съёмки): [docs/assets/screens/manifest.md](docs/assets/screens/manifest.md).
+Полный визуальный реестр (26 скринов, все экраны, маршруты и параметры съёмки): [docs/assets/screens/manifest.md](docs/assets/screens/manifest.md).
 
 ## Документация
 

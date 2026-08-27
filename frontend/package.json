@@ -7,7 +7,9 @@
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "seed:evidence": "node scripts/seed-evidence.mjs",
+    "shoot:evidence": "node scripts/shoot-evidence.mjs"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.1.13",

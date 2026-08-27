@@ -27,6 +27,7 @@ services:
       CICD_GIT_INTERNAL_TOKEN: ${CICD_GIT_INTERNAL_TOKEN:-forge-internal-dev-token}
       CICD_SECRETS_KEY: ${CICD_SECRETS_KEY:-}
       CICD_ARTIFACTS_DIR: /var/lib/forge/artifacts
+      CICD_RUNNER_MODE: ${CICD_RUNNER_MODE:-docker}
       RUST_LOG: info
     ports:
       - "${CICD_API_PORT:-22801}:22801"
