@@ -10,6 +10,8 @@ import {
   useRepositoryRefs,
 } from '@/api/hooks'
 import { Button } from '@/shared/ui/button'
+import { UserAvatar } from '@/shared/ui/user-avatar'
+import { currentSession } from '@/api/auth'
 import { Card } from '@/shared/ui/card'
 import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
@@ -42,6 +44,7 @@ function CreatePullRequestForm({ repo, onClose }: { repo: string; onClose: () =>
         description: form.description.trim() || undefined,
         source_branch: form.source_branch.trim(),
         target_branch: form.target_branch.trim(),
+        author: currentSession()?.username,
       },
       {
         onSuccess: () => {
@@ -139,6 +142,11 @@ function PullRequestCard({ repo, pullRequest, locale }: { repo: string; pullRequ
             <code className="rounded bg-surface-raised px-1.5 py-0.5">{pullRequest.source_branch}</code>
             <span>→</span>
             <code className="rounded bg-surface-raised px-1.5 py-0.5">{pullRequest.target_branch}</code>
+            <span aria-hidden="true">·</span>
+            <span className="inline-flex items-center gap-1.5">
+              <UserAvatar name={pullRequest.created_by} size="xs" />
+              <span>{pullRequest.created_by || 'unknown'}</span>
+            </span>
             <span>· {formatDate(pullRequest.created_at, locale)}</span>
           </p>
           {pullRequest.description && (

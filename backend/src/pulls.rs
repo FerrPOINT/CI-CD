@@ -267,6 +267,9 @@ pub struct CreatePullRequest {
     pub description: Option<String>,
     pub source_branch: String,
     pub target_branch: String,
+    /// Optional author label; overridden by the authenticated identity.
+    #[serde(default)]
+    pub author: Option<String>,
 }
 
 #[utoipa::path(
@@ -301,6 +304,7 @@ pub async fn list_pull_requests(
 )]
 pub async fn create_pull_request(
     State(state): State<std::sync::Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
     Json(input): Json<CreatePullRequest>,
 ) -> Result<Json<PullRequest>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
@@ -324,8 +328,22 @@ pub async fn create_pull_request(
     .fetch_one(pool)
     .await
     .map_err(ApiError::internal)?;
+    // Author: authenticated identity wins; explicit input is a fallback for
+    // trusted-network mode where no claims exist.
+    let author = match claims.as_ref().map(|c| c.0.sub) {
+        Some(user_id) => {
+            sqlx::query_scalar::<_, String>("SELECT username FROM users WHERE id = $1")
+                .bind(user_id)
+                .fetch_optional(pool)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default()
+        }
+        None => input.author.clone().unwrap_or_default(),
+    };
     let pr = sqlx::query_as::<_, PullRequest>(
-        "INSERT INTO pull_requests (id, repository_name, number, title, description, source_branch, target_branch, status, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, 'open', '') RETURNING id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",
+        "INSERT INTO pull_requests (id, repository_name, number, title, description, source_branch, target_branch, status, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, 'open', $8) RETURNING id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",
     )
     .bind(Uuid::new_v4())
     .bind(&input.repository_name)
@@ -334,6 +352,7 @@ pub async fn create_pull_request(
     .bind(input.description.unwrap_or_default())
     .bind(input.source_branch.trim())
     .bind(input.target_branch.trim())
+    .bind(&author)
     .fetch_one(pool)
     .await
     .map_err(ApiError::internal)?;

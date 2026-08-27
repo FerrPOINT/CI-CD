@@ -90,6 +90,7 @@ export interface CreatePullRequestInput {
   description?: string
   source_branch: string
   target_branch: string
+  author?: string
 }
 
 // --- Platform: runners / secrets / artifacts / environments / schedules / webhooks / reports / audit / users / tokens ---

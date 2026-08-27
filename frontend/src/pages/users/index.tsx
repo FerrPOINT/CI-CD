@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Users as UsersIcon, Plus, KeyRound, Trash2, Copy } from 'lucide-react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
+import { UserAvatar } from '@/shared/ui/user-avatar'
 import type { UserRole, ApiToken } from '@/api/types'
 
 const ROLES: UserRole[] = ['admin', 'maintainer', 'developer', 'viewer']
@@ -75,7 +76,10 @@ export function UsersPage() {
               <Card className="p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="truncate font-medium">{u.username}</p>
+                    <div className="flex items-center gap-2.5">
+                      <UserAvatar name={u.username} size="md" />
+                      <p className="truncate font-medium">{u.username}</p>
+                    </div>
                     <span className="mt-1 inline-block rounded-md bg-surface-raised px-2 py-0.5 text-xs font-medium">{u.role}</span>
                   </div>
                   <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${u.enabled ? 'bg-emerald-500/15 text-emerald-500' : 'bg-surface-raised text-text-muted'}`}>
@@ -110,7 +114,9 @@ export function UsersPage() {
             <TableBody>
               {users.map(u => (
                 <TableRow key={u.id}>
-                  <TableCell className="font-medium">{u.username}</TableCell>
+                  <TableCell className="font-medium">
+                    <UserAvatar name={u.username} size="sm" withName />
+                  </TableCell>
                   <TableCell>
                     <span className="rounded-md bg-surface-raised px-2 py-0.5 text-xs font-medium">{u.role}</span>
                   </TableCell>

@@ -7,6 +7,7 @@ const REFRESH_KEY = 'forge.refresh_token'
 export type Session = {
   access_token: string
   expires_at: number
+  username?: string
 }
 
 let session: Session | null = null
@@ -48,7 +49,7 @@ export async function login(username: string, password: string): Promise<Session
   })
   if (!res.ok) throw new Error('invalid credentials')
   const pair = await res.json()
-  session = { access_token: pair.access_token, expires_at: pair.expires_at }
+  session = { access_token: pair.access_token, expires_at: pair.expires_at, username }
   saveRefresh(pair.refresh_token)
   return session
 }

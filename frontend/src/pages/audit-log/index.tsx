@@ -4,6 +4,8 @@ import { Card } from '@/shared/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
 import { History } from 'lucide-react'
 
+import { UserAvatar } from '@/shared/ui/user-avatar'
+
 export function AuditLogPage() {
   const { t } = useTranslation()
   const { data: events = [], isLoading } = useAuditLog()
@@ -38,7 +40,14 @@ export function AuditLogPage() {
                     <span className="text-text-muted">{e.resource_type}</span>
                     {e.resource_id && <span className="ml-2 font-mono text-text-muted">{e.resource_id.slice(0, 8)}</span>}
                   </TableCell>
-                  <TableCell className="text-xs text-text-muted">{e.actor || '—'}</TableCell>
+                  <TableCell className="text-xs text-text-muted">
+                    {e.actor ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <UserAvatar name={e.actor} size="xs" />
+                        <span>{e.actor}</span>
+                      </span>
+                    ) : ('—')}
+                  </TableCell>
                   <TableCell className="text-xs text-text-muted">{new Date(e.created_at).toLocaleString()}</TableCell>
                 </TableRow>
               ))}

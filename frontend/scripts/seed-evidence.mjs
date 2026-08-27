@@ -114,6 +114,16 @@ async function main() {
     await api('POST', `/projects/${project}/pipelines`, { git_ref: ref })
   }
 
+  // Users (idempotent, trusted-network mode)
+  for (const u of [
+    { username: 'a.zhukov', role: 'admin' },
+    { username: 'm.petrova', role: 'maintainer' },
+    { username: 'd.orlov', role: 'developer' },
+  ]) {
+    const users = await api('GET', '/users')
+    if (!users.some(x => x.username === u.username)) await api('POST', '/users', u)
+  }
+
   // Pull request on platform-core (idempotent)
   const pulls = await api('GET', '/repos/platform-core/pulls')
   if (!pulls.some(pr => pr.title === 'Add cache layer for registry lookups')) await api('POST', '/repos/platform-core/pulls', {
@@ -122,6 +132,7 @@ async function main() {
     description: 'Кеширует резолвы образов, снижает время холодного старта job на ~40%.',
     source_branch: 'feature/cache-layer',
     target_branch: 'main',
+    author: 'a.zhukov',
   })
 
   // Runners

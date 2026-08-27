@@ -18,6 +18,8 @@ const statusStyles: Record<PullRequestStatus, string> = {
   merged: 'bg-success/15 text-success',
 }
 
+import { UserAvatar } from '@/shared/ui/user-avatar'
+
 export function PullRequestDetailPage() {
   const { t, i18n } = useTranslation()
   const { repo, number } = useParams<{ repo: string; number: string }>()
@@ -69,7 +71,9 @@ export function PullRequestDetailPage() {
             <dt className="text-text-muted">{t('pulls.targetBranch')}</dt>
             <dd><code className="break-all rounded bg-surface-raised px-1.5 py-0.5">{pr.target_branch}</code></dd>
             <dt className="text-text-muted">{t('pulls.createdBy')}</dt>
-            <dd className="break-all">{pr.created_by}</dd>
+            <dd className="break-all">
+              <UserAvatar name={pr.created_by} size="sm" withName />
+            </dd>
             <dt className="text-text-muted">{t('pulls.createdAt')}</dt>
             <dd>{formatDate(pr.created_at, i18n.language)}</dd>
             {pr.merged_at && (
