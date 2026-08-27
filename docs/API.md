@@ -762,10 +762,72 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 
 > Токены хранятся как SHA-256 хэш. Полное значение возвращается только при создании. Проверка токенов при запросах не реализована в MVP.
 
+## Дополнительные реализованные endpoint-ы
+
+### Pipeline и job actions
+
+| Метод | Путь | Body | Результат |
+|---|---|---|---|
+| POST | `/pipelines/{pipeline_id}/cancel` | — | Каскадно отменяет нетерминальные stages/jobs и возвращает pipeline |
+| POST | `/pipelines/{pipeline_id}/retry` | — | Создаёт повторный запуск pipeline для исходного project/ref |
+| POST | `/jobs/{job_id}/retry` | — | Сбрасывает terminal job в новый execution path согласно текущему pipeline |
+
+Ошибки: `404` — ресурс не найден; `400/409` — недопустимая операция/состояние; `503` — БД недоступна.
+
+### Runner registry
+
+| Метод | Путь | Body / результат |
+|---|---|---|
+| GET | `/runners` | Список `{id,name,tags,status,last_seen_at,created_at}` |
+| POST | `/runners` | `{name, tags?}` → зарегистрированный runner |
+| POST | `/runners/{runner_id}/heartbeat` | Обновляет `last_seen_at`/status |
+| DELETE | `/runners/{runner_id}` | Удаляет registry-запись |
+
+> Сейчас registry/heartbeat — inventory для embedded runner. Registration token, lease и dispatch на внешний runner пока не реализованы: `docs/RUNNER_ARCHITECTURE.md`.
+
+### Secrets и artifacts
+
+| Метод | Путь | Body / результат |
+|---|---|---|
+| GET/POST | `/projects/{project_id}/secrets` | Метаданные / `{key,value}`; значение никогда не возвращается |
+| DELETE | `/secrets/{secret_id}` | Удаляет секрет |
+| GET/POST | `/jobs/{job_id}/artifacts` | Метаданные / raw body с `X-Artifact-Name` |
+| GET | `/artifacts/{artifact_id}/download` | Файл с сохранённым content type/name |
+
+### Git repositories и Smart HTTP
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET/POST | `/repositories` | Список / создание bare repository (`{name}`) |
+| DELETE | `/repositories/{name}` | Удаление repository и bare storage |
+| GET | `/repos/{repo}/refs` | Branch/tag refs с SHA |
+| GET | `/repos/{repo}/commits?branch=&limit=` | Commit history; default 50, maximum 200 |
+| GET | `/repos/{repo}/compare?from=&to=` | Merge-base, file stats и unified patch |
+| GET/POST | `/repos/{repo}/pulls` | Список / создание pull request |
+| POST | `/repos/{repo}/pulls/{number}/action` | `{action:"merge"|"close"|"reopen"}` |
+| GET | `/git/{repo}/info/refs?service=git-upload-pack` | Git Smart HTTP discovery |
+| POST | `/git/{repo}/git-upload-pack` | Smart HTTP fetch/clone service |
+| POST | `/git/{repo}/git-receive-pack` | Smart HTTP push service |
+
+Git Smart HTTP проверяет `CICD_GIT_TOKEN`, если он задан. Полный lifecycle — `docs/GIT_HOSTING.md`; PR merge semantics — `docs/PULL_REQUESTS.md`.
+
+### Internal Git hook
+
+`POST /api/v1/internal/git-push` вызывается generated `post-receive` hook. Заголовок `X-Internal-Token` обязан совпадать с `CICD_GIT_INTERNAL_TOKEN`, когда токен сконфигурирован.
+
+```json
+{"repository":"my-service","ref_name":"refs/heads/main"}
+```
+
+Ответ: `{"triggered":true,"pipeline_id":"..."}` либо `{"triggered":false,"pipeline_id":null}`, если project с данным local Git URL не найден. Ошибочная hook-доставка не откатывает Git push.
+
 ## References
 
 - `docs/ARCHITECTURE.md` — архитектура приложения.
 - `docs/DATA_MODEL.md` — схема БД.
-- `backend/src/api.rs` — реализация endpoint.
-- `backend/src/domain.rs` — правила переходов статусов.
+- `docs/GIT_HOSTING.md` — Smart HTTP и hooks.
+- `docs/PULL_REQUESTS.md` — compare и pull requests.
+- `docs/RUNNER_ARCHITECTURE.md` — target runner protocol.
+- `backend/src/api.rs`, `backend/src/platform.rs`, `backend/src/git_host.rs`, `backend/src/pulls.rs` — реализация endpoint-ов.
+- `backend/domain/src/lib.rs` — правила переходов статусов.
 - `docs/TESTING.md` — curl-проверки.

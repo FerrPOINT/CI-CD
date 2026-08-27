@@ -4,7 +4,7 @@
 
 В MVP единственное постоянное хранилище — PostgreSQL 17. В нём находятся проекты, пайплайны, стадии, задачи и append-only логи задач. Данные PostgreSQL сохраняются Docker volume `cicd_postgres_data`; доступ с хоста опубликован на порту `22543` по умолчанию.
 
-PostgreSQL — источник правды для control plane. Dashboard и CLI не хранят копию состояния, а получают его через REST API. Артефакты, cache, удалённое исполнение и долговременное хранилище логов пока не реализованы и не должны имитироваться локальными файлами контейнера.
+PostgreSQL — источник правды для control plane. Dashboard и CLI не хранят копию состояния, а получают его через REST API. Артефакты уже сохраняются в локальном `CICD_ARTIFACTS_DIR` (отдельный Docker volume, 50 MiB на файл); PostgreSQL хранит их metadata. Cache, object storage/S3, checksum, retention worker и distributed execution пока не реализованы.
 
 ## Данные и границы ответственности
 

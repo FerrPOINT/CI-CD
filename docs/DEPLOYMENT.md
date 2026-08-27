@@ -4,7 +4,7 @@
 
 Self-hosted CI/CD control plane. MVP поставляется как Docker Compose: backend (Rust / Axum), frontend (Vite static, раздаётся через nginx), PostgreSQL 17. Reverse proxy — по желанию.
 
-Это control plane, а не remote-execution system: запуск задач производится вручную через UI / API / CLI. Runner-агенты отложены (см. `docs/ROADMAP.md`).
+Это control plane с текущим embedded runner: сервер забирает queued jobs, выполняет Docker/shell команды, стримит stdout в job logs и поддерживает cancel/retry. Это не безопасный distributed runner pool: API/container не должен получать Docker socket в production; внешний runner protocol, leases и sandbox boundary описаны в `docs/RUNNER_ARCHITECTURE.md`.
 
 ## 2. System Requirements
 

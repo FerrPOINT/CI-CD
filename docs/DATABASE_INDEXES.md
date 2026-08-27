@@ -10,7 +10,7 @@
 
 ### 2.1 Реализованные индексы
 
-Индексы создаются автоматически через `CREATE TABLE` constraints в `store::migrate()`.
+Primary/unique indexes создаются через `CREATE TABLE` constraints. Явные supporting indexes создаются отдельными `CREATE INDEX IF NOT EXISTS` в `store::migrate()`.
 
 | Table | Index / Constraint | Type | Columns | Purpose |
 |-------|-------------------|------|---------|---------|
@@ -23,6 +23,14 @@
 | `jobs` | `jobs_stage_id_position_key` | B-tree UNIQUE | `(stage_id, position)` | Уникальность позиции задачи в стадии |
 | `job_logs` | `job_logs_pkey` | B-tree PRIMARY KEY | `id` | PK lookup (BIGSERIAL) |
 | `job_logs` | `job_logs_job_id_sequence_key` | B-tree UNIQUE | `(job_id, sequence)` | Уникальность sequence лога в рамках job |
+| `runners` | `idx_runners_status` | B-tree | `status` | Выборка registry по статусу |
+| `project_secrets` | `idx_project_secrets_project` | B-tree | `project_id` | Секреты проекта |
+| `artifacts` | `idx_artifacts_job` | B-tree | `job_id` | Артефакты job |
+| `deployments` | `idx_deployments_environment` | B-tree | `environment_id` | История окружения |
+| `schedules` | `idx_schedules_project` | B-tree | `project_id` | Расписания проекта |
+| `webhooks` | `idx_webhooks_project` | B-tree | `project_id` | Webhook-конфигурации проекта |
+| `audit_log` | `idx_audit_log_created` | B-tree DESC | `created_at` | Последние события аудита |
+| `pipelines` | `idx_pipelines_project_id` | B-tree | `project_id` | Список pipeline проекта |
 
 ### 2.2 Карта индексов по таблицам
 
@@ -87,7 +95,7 @@ CREATE UNIQUE INDEX job_logs_job_id_sequence_key ON job_logs (job_id, sequence);
 
 | Table | Index | Type | Columns | Query | Priority |
 |-------|-------|------|---------|-------|----------|
-| `pipelines` | `idx_pipelines_project_id` | B-tree | `project_id` | `GET /projects/{id}/pipelines` | High |
+| `pipelines` | `idx_pipelines_project_id` | B-tree | `project_id` | `GET /projects/{id}/pipelines` | ✅ Реализован |
 | `pipelines` | `idx_pipelines_project_created` | B-tree | `(project_id, created_at DESC)` | `GET /projects/{id}/pipelines` LIMIT 50 | Medium |
 | `pipelines` | `idx_pipelines_status` | B-tree | `status` | Фильтр по статусу (Phase 2) | Low |
 | `stages` | `idx_stages_pipeline_id` | B-tree | `pipeline_id` | `GET /pipelines/{id}` (pipeline_detail) | High |

@@ -57,9 +57,9 @@ Self-hosted CI/CD control plane (GitLab CI / Jenkins-like). Хранит сос�
 |-------|------|-----------|--------|
 | `GET` | `/api/v1/projects` | Список всех проектов | ✅ Phase 0 |
 | `POST` | `/api/v1/projects` | Создание проекта | ✅ Phase 0 |
-| `GET` | `/api/v1/projects/{id}` | Детали проекта | Planned Phase 2 |
-| `PATCH` | `/api/v1/projects/{id}` | Редактирование | Planned Phase 2 |
-| `DELETE` | `/api/v1/projects/{id}` | Удаление (CASCADE) | Planned Phase 2 |
+| `GET` | `/api/v1/projects/{id}` | Детали проекта | ✅ Реализовано |
+| `PATCH` | `/api/v1/projects/{id}` | Редактирование | ✅ Реализовано |
+| `DELETE` | `/api/v1/projects/{id}` | Удаление (CASCADE) | ✅ Реализовано |
 
 ### 3.3. Валидация
 

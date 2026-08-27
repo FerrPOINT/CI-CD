@@ -38,17 +38,17 @@ Pipeline → Stage 1 (build) → Stage 2 (test) → Stage 3 (deploy)
 
 ### Runner
 
-**Раннер.** Агент, выполняющий задачи (jobs) в изолированных контейнерах. Регистрируется на control plane через token. Забирает задачи из очереди (`SELECT FOR UPDATE SKIP LOCKED`), запрашивает Docker-образ, выполняет команду, стримит stdout/stderr в логи, сообщает статус.
+**Раннер.** Текущий embedded executor в `cicd-server` claim-ит queued jobs (`SELECT FOR UPDATE SKIP LOCKED`), запускает Docker/shell команду, стримит stdout/stderr в `job_logs` и фиксирует status. Таблица `runners` хранит registry/heartbeat inventory.
 
-> Planned: Phase 5 (Real Runner). В MVP задачи переводятся вручную.
+> Внешний агент с registration token, lease, capability matching и sandbox boundary — target architecture, не текущая функция: `docs/RUNNER_ARCHITECTURE.md`.
 
 ---
 
 ### Artifact
 
-**Артефакт.** Файл, произведённый задачей (бинарник, архив, отчёт, coverage). Загружается через API, хранится в storage backend (local FS или S3-compatible), имеет TTL для автоматической очистки.
+**Артефакт.** Файл, произведённый задачей (бинарник, архив, отчёт, coverage). В MVP загружается через API и хранится в локальном `CICD_ARTIFACTS_DIR` (50 MiB на файл); metadata — в `artifacts`.
 
-> Planned: Phase 8 (Artifacts).
+> S3-compatible storage, checksum, quota и retention worker — target architecture: `docs/STORAGE_ARCHITECTURE.md`.
 
 ---
 
@@ -56,10 +56,8 @@ Pipeline → Stage 1 (build) → Stage 2 (test) → Stage 3 (deploy)
 
 **Вебхук.** HTTP-вызов между системами.
 
-- **Incoming webhook** — Git-провайдер (GitHub/GitLab/Gitea) вызывает Forge CI/CD при push/PR/tag. Forge проверяет подпись и запускает пайплайн.
-- **Outgoing webhook** — Forge CI/CD вызывает внешний URL при смене статуса пайплайна/job. Payload подписывается HMAC-SHA256.
-
-> Planned: Phase 6 (Webhooks).
+- **Current Git ingress** — локальный generated `post-receive` hook вызывает internal endpoint с token и запускает pipeline.
+- **Outgoing webhook** — в MVP только конфигурация URL/events. Delivery, HMAC-SHA256, retries и history — target architecture.
 
 ---
 
@@ -123,7 +121,7 @@ Pipeline → Stage 1 (build) → Stage 2 (test) → Stage 3 (deploy)
 
 ### Control Plane
 
-**Плоскость управления.** Центральный компонент CI/CD системы. Управляет проектами, пайплайнами, статусами, логами. Не выполняет задачи напрямую — делегирует runner'ам. Forge CI/CD — это control plane, а не remote-execution system.
+**Плоскость управления.** Центральный компонент CI/CD системы. Управляет проектами, пайплайнами, статусами и логами; текущий embedded executor расположен в том же server process. Цель — вынести user-code execution за границу API/control plane.
 
 ---
 
@@ -131,7 +129,7 @@ Pipeline → Stage 1 (build) → Stage 2 (test) → Stage 3 (deploy)
 
 **Агент.** Синоним runner'а в контексте системы. Процесс, подключающийся к control plane, забирающий задачи из очереди и выполняющий их в изолированных контейнерах. Передаёт логи и статусы обратно в control plane.
 
-> В текущей архитектуре (MVP) агентов нет — задачи переводятся вручную через UI/API/CLI. Planned: Phase 5.
+> В MVP есть embedded executor; отдельного external agent/runner protocol пока нет.
 
 ---
 
@@ -142,12 +140,12 @@ Pipeline → Stage 1 (build) → Stage 2 (test) → Stage 3 (deploy)
 | Pipeline | `pipelines` | Верхний | Phase 0 (done) |
 | Stage | `stages` | Средний | Phase 0 (done) |
 | Job | `jobs` | Нижний | Phase 0 (done) |
-| Runner | `runners` (plan) | Infrastructure | Phase 5 |
-| Artifact | `artifacts` (plan) | Storage | Phase 8 |
-| Webhook | `webhooks` (plan) | Integration | Phase 6 |
-| Secret | `secrets` (plan) | Security | Phase 7 |
-| Notification | `notifications` (plan) | Integration | Phase 6 |
-| Report | SQL queries | Analytics | Phase 9 |
+| Runner | `runners` | Infrastructure | Registry/heartbeat MVP; external protocol target |
+| Artifact | `artifacts` | Storage | Local FS MVP; retention/S3 target |
+| Webhook | `webhooks` | Integration | Configuration MVP; delivery target |
+| Secret | `project_secrets` | Security | AES-GCM storage MVP; injection target |
+| Notification | `notification_configs` | Integration | Configuration MVP; sender target |
+| Report | SQL aggregates | Analytics | Summary MVP; charts target |
 
 ---
 
@@ -159,7 +157,7 @@ Project
         └── Stage (1 pipeline → N stages, упорядочены по position)
               └── Job (1 stage → N jobs, упорядочены по position)
                     └── JobLog (1 job → N log lines, append-only)
-                    └── Artifact (1 job → N artifacts, planned)
+                    └── Artifact (1 job → N artifacts)
 ```
 
 ---

@@ -82,7 +82,9 @@ Tailwind utility classes: `bg-background`, `text-text-primary`, `bg-accent`, `bo
 
 ---
 
-## 3. Login (Phase 1 — planned)
+## 3. Login
+
+Реализована как UI-заглушка (без auth-запроса): кнопка Sign in ведёт на `/`. Реальная аутентификация (email/password, сессии) — target architecture `docs/AUTHORIZATION.md`.
 
 ```
 +-----------------------------------------------------------+
@@ -321,7 +323,9 @@ Tailwind utility classes: `bg-background`, `text-text-primary`, `bg-accent`, `bo
 
 ---
 
-## 8. Admin (Phase 9 — planned)
+## 8. Admin
+
+Текущий `/admin` — статическая справочная страница (версия/порты). Управление users/tokens вынесено на `/users`, audit — на `/audit-log`, отчёты — на `/projects/{id}/reports`. Wireframe ниже — целевой layout после auth/RBAC.
 
 ```
 +-----------------------------------------------------------+
@@ -331,11 +335,11 @@ Tailwind utility classes: `bg-background`, `text-text-primary`, `bg-accent`, `bo
 |  [ Users ] [ Settings ] [ Audit Log ]                      |
 |                                                             |
 |  ┌──────────────────────────────────────────────────────┐ |
-|  │ Username    │ Role    │ Status   │ Created  │ Actions│ |
-|  │─────────────┼─────────┼──────────┼──────────┼────────│ |
-|  │ admin       │ admin   │ active   │ 26.08    │ [Edit] │ |
-|  │ ci-runner   │ runner  │ active   │ 26.08    │ [Edit] │ |
-|  │ dev         │ user    │ inactive │ 27.08    │ [Edit] │ |
+|  │ Username    │ Role    │ Status   │ Created  │ Actions│ │
+|  │─────────────┼─────────┼──────────┼──────────┼────────│ │
+|  │ admin       │ admin   │ active   │ 26.08    │ [Edit] │ │
+|  │ ci-runner   │ runner  │ active   │ 26.08    │ [Edit] │ │
+|  │ dev         │ user    │ inactive │ 27.08    │ [Edit] │ │
 |  └──────────────────────────────────────────────────────┘ |
 |                                                             |
 |  [+ Create user ]                                          |

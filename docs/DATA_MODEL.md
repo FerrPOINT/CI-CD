@@ -2,7 +2,7 @@
 
 ## 0. Фактическая схема реализованных таблиц
 
-Схема создаётся при старте приложения через `store::migrate()` (`backend/src/store.rs`). Все таблицы — `CREATE TABLE IF NOT EXISTS`. При расхождении приоритет у исходного кода `store.rs`.
+Схема создаётся при старте приложения через `store::migrate()` (`backend/src/store.rs`): `CREATE TABLE IF NOT EXISTS` и явные `CREATE INDEX IF NOT EXISTS`. Целевой переход на versioned SQLx migrations — `docs/STORAGE_ARCHITECTURE.md`. При расхождении приоритет у исходного кода `store.rs`.
 
 ### ER-диаграмма (логическая)
 

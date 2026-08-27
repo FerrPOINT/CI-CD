@@ -90,6 +90,26 @@ Forge CI/CD хранит bare Git-репозитории, отдаёт Smart HTT
 
 ![Пользователи и API-токены](docs/screenshots/21-users.png)
 
+### Мобильная версия
+
+Дашборд (375×812):
+
+![Дашборд — мобильная версия](docs/screenshots/m-dashboard.png)
+
+Проекты:
+
+![Проекты — мобильная версия](docs/screenshots/m-projects.png)
+
+Детали пайплайна:
+
+![Детали пайплайна — мобильная версия](docs/screenshots/m-pipeline-detail.png)
+
+Runners:
+
+![Runners — мобильная версия](docs/screenshots/m-runners.png)
+
+> Мобильный layout работоспособен, но широкие таблицы (runners) тесноваты на 375px — адаптация таблиц в mobile-режиме в целевой архитектуре (`docs/DELIVERY_ARCHITECTURE.md`).
+
 ## Порты по умолчанию
 
 | Сервис | Внешний порт | Описание |

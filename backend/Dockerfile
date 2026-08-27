@@ -1,9 +1,19 @@
 FROM rust:1.86-slim AS build
 WORKDIR /app
 COPY Cargo.toml Cargo.lock* ./
-RUN mkdir src && printf 'fn main() {}\n' > src/main.rs && printf '' > src/lib.rs && /usr/local/cargo/bin/cargo build --release && rm -rf src
+COPY domain/Cargo.toml domain/Cargo.toml
+COPY cli/Cargo.toml cli/Cargo.toml
+RUN mkdir -p src domain/src cli/src \
+ && printf 'fn main() {}\n' > src/main.rs && printf '' > src/lib.rs \
+ && printf '\n' > domain/src/lib.rs \
+ && printf 'fn main() {}\n' > cli/src/main.rs \
+ && /usr/local/cargo/bin/cargo build --release \
+ && /usr/local/cargo/bin/cargo clean -p cicd-server -p cicd-domain -p cicd-cli
 COPY src ./src
-RUN /usr/local/cargo/bin/cargo clean && /usr/local/cargo/bin/cargo build --release
+COPY domain/src domain/src
+COPY cli/src cli/src
+RUN find src domain cli -name '*.rs' -exec touch {} + \
+ && /usr/local/cargo/bin/cargo build --release -p cicd-server -p cicd-cli
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends curl git git-lfs && rm -rf /var/lib/apt/lists/* && useradd --create-home --uid 10001 cicd

@@ -2,7 +2,7 @@
 
 ## Назначение
 
-Пока Forge CI/CD развивается, проект использует GitHub Actions для собственной непрерывной интеграции. Workflow расположен в `.github/workflows/ci.yml` и запускается на `push` и `pull_request` в ветку `main`. Это временный внешний контур доверия: текущий продукт ещё не исполняет job реальными runner-ами.
+Пока Forge CI/CD развивается, проект использует GitHub Actions для собственной непрерывной интеграции. Workflow расположен в `.github/workflows/ci.yml` и запускается на `push` и `pull_request` в ветку `main`. Это временный внешний контур доверия: продукт уже имеет embedded Docker/shell executor, но ещё не использует изолированный self-hosted runner pool с registration tokens, leases и sandboxing.
 
 ## Текущий workflow
 

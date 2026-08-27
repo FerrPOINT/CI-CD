@@ -5,7 +5,7 @@
 - Каждый тест проверяет значимый путь и конкретное поведение.
 - Backend: unit-тесты для domain-логики, интеграционные тесты для API contract и CLI.
 - Frontend: unit-тесты на Vitest; E2E на Playwright (целевое).
-- После изменений UI — скриншоты в 375×812, 1920×1080, 2560×1440 (целевое).
+- После изменений UI — скриншоты: desktop 1920×1080 (текущий стандарт), mobile 375×812 и 2K 2560×1440 — целевое.
 - Все новые endpoint — curl-проверка.
 - Docker compose smoke: `docker compose up --build -d` + `curl /api/v1/health`.
 

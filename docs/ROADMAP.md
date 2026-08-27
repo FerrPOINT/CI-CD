@@ -54,13 +54,13 @@
 
 ---
 
-## 4. Phase 2: Projects (M2)
+## 4. Phase 2: Projects (M2) — ✅ Done (частично)
 
 **Цель**: полноценное управление проектами.
 
-- [ ] Endpoints: `GET /projects/{id}`, `PATCH /projects/{id}`, `DELETE /projects/{id}`.
-- [ ] Валидация `name` (unique, slug-pattern), `repository_url` (Git URL format).
-- [ ] Frontend: отдельная страница Projects (card grid), форма редактирования, удаление с подтверждением.
+- [x] Endpoints: `GET /projects/{id}`, `PATCH /projects/{id}`, `DELETE /projects/{id}`.
+- [x] Frontend: страница Projects, форма редактирования, удаление с подтверждением.
+- [ ] Валидация `name` (slug-pattern), `repository_url` (Git URL format).
 - [ ] Pagination для `GET /projects` (`?page=0&size=20`).
 - [ ] Verification: CRUD curl-проверки, frontend unit + e2e.
 

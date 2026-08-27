@@ -61,8 +61,12 @@ frontend/src/
 │   ├── projects/               # Список проектов
 │   ├── pipelines/              # Список пайплайнов проекта
 │   ├── pipeline-detail/        # Детали пайплайна (stages/jobs/logs)
-│   ├── admin/                  # Админ-панель
-│   └── login/                  # Страница входа
+│   ├── admin/                  # Справочная системная страница (статическая)
+│   ├── login/                  # Страница входа (UI-заглушка до auth Phase 1)
+│   ├── runners/ secrets/ artifacts/ environments/
+│   ├── schedules/ webhooks/ reports/ audit-log/ users/
+│   ├── repositories/ repository-browser/ compare/ pull-requests/
+│   └── settings/               # Настройки (статическая заглушка)
 ├── widgets/                    # Самостоятельные UI-блоки
 │   └── app-shell.tsx           # Каркас приложения (header + sidebar + outlet)
 ├── shared/                     # Переиспользуемый код

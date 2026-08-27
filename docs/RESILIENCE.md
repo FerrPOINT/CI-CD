@@ -2,7 +2,7 @@
 
 ## Назначение
 
-Forge CI/CD — self-hosted control plane. В MVP он хранит состояние пайплайнов и задач, но не выполняет команды на удалённых машинах: статусы задач переводятся через API, CLI или Dashboard. Поэтому механизмы взаимодействия с runner-агентами описаны как целевая архитектура, а не как уже реализованная функция.
+Forge CI/CD — self-hosted control plane с embedded Docker/shell executor: текущий server забирает queued jobs, фиксирует lifecycle и логи. Внешний runner protocol, leases/heartbeats, sandbox policy и reconciliation остаются target architecture; см. `docs/RUNNER_ARCHITECTURE.md`.
 
 ## Таймауты
 
