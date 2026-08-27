@@ -9,6 +9,22 @@
 
 ## [Unreleased]
 
+### Added
+
+- Канонический реестр имён и authority matrix: ADR-0009; устранены конфликты migration path, outbox-имён и runner namespace.
+- Нормативные контракты `docs/contracts/` (API, AUTHZ, RUNNER_PROTOCOL, PIPELINE_DSL, EVENT, DATA_LIFECYCLE, MIGRATION, UI_API) и narrative-слой `docs/architecture/` с sequence-флоу и transition map.
+- Документация по аудиториям: USER_GUIDE, DEVELOPMENT_GUIDE, OPERATIONS, PRODUCT_REQUIREMENTS; CURRENT_STATE и DOCUMENTATION_GOVERNANCE; `scripts/verify_docs.py` (ссылки/канон/статусы/дубликаты скринов).
+- Public repo surface: LICENSE (MIT), CONTRIBUTING, SECURITY (NOT production-safe предупреждение), SUPPORT, issue/PR-шаблоны, Dependabot.
+- UI: мобильная навигация-drawer, карточные layout-ы (runners/users/tokens/environments), доступные confirm-диалоги вместо `window.confirm`, страница pull-запроса с «Посмотреть изменения», живые метрики дашборда.
+- Evidence pipeline: deterministic seed (`pnpm seed:evidence`) и воспроизводимые скриншоты (`pnpm shoot:evidence`), реестр `docs/assets/screens/manifest.md` (26 скринов на живых данных).
+
+### Changed
+
+- README переписан: статус/границы доверия, capability matrix, тур по аудиториям.
+- 44 legacy-дока консолидированы в гайды/контракты; оставлены redirect-stub-ы на один release-цикл.
+- PostgreSQL в docker-compose публикуется только на 127.0.0.1; `CICD_RUNNER_MODE` пробрасывается в backend.
+- Скриншоты пересняты единым прогоном: desktop 1920×1080, mobile 375×812, реальные пайплайны/PR/артефакты.
+
 ### Planned
 
 - Auth: сессии/JWT, RBAC-проверки и enforcement API-токенов (сейчас users/tokens хранятся, но middleware не проверяется).
