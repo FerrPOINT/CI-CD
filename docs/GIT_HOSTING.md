@@ -137,7 +137,7 @@ curl -fsS -X DELETE http://127.0.0.1:22801/api/v1/repositories/smoke-repo
 ## References
 
 - [API](API.md)
-- [Workflow](WORKFLOW.md)
-- [Webhooks](WEBHOOKS.md)
+- [Workflow](FUNCTIONAL_ARCHITECTURE.md)
+- [Webhooks](contracts/EVENT_CONTRACT.md)
 - [Security](SECURITY.md)
-- [Storage](STORAGE.md)
+- [Storage](contracts/DATA_LIFECYCLE.md)

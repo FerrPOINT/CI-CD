@@ -220,9 +220,9 @@ python3 scripts/verify_docs.py --all
 
 ## Стиль, review и зависимости
 
-Код и комментарии пишутся на английском; документация и пользовательские строки -- на русском. Rust форматируется `rustfmt`; production Rust не использует `unwrap()`/`expect()` и обращается к PostgreSQL только parameterized SQL. TypeScript не использует `any`; React использует function components, typed API boundary, Tailwind/shadcn UI и i18n. Полные правила именования, import order, errors, SQL и accessibility -- в [CODE STYLE](CODE_STYLE.md).
+Код и комментарии пишутся на английском; документация и пользовательские строки -- на русском. Rust форматируется `rustfmt`; production Rust не использует `unwrap()`/`expect()` и обращается к PostgreSQL только parameterized SQL. TypeScript не использует `any`; React использует function components, typed API boundary, Tailwind/shadcn UI и i18n. Полные правила именования, import order, errors, SQL и accessibility -- в [CODE STYLE](DEVELOPMENT_GUIDE.md).
 
-Перед PR выполните self-review, добавьте tests для изменённого поведения и проверьте, что нет secrets в diff. Один PR содержит одну логическую задачу; обычный предел -- 400--500 строк без tests и generated files. Коммиты следуют Conventional Commits (`feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`). Процесс, роли, SLA и escalation принадлежат `docs/REVIEW.md`, а проверяемый checklist -- [CODE REVIEW](CODE_REVIEW.md).
+Перед PR выполните self-review, добавьте tests для изменённого поведения и проверьте, что нет secrets в diff. Один PR содержит одну логическую задачу; обычный предел -- 400--500 строк без tests и generated files. Коммиты следуют Conventional Commits (`feat`, `fix`, `docs`, `refactor`, `test`, `chore`, `perf`). Процесс, роли, SLA и escalation принадлежат `docs/REVIEW.md`, а проверяемый checklist -- [CODE REVIEW](DEVELOPMENT_GUIDE.md).
 
 Фактические версии зависимостей находятся в `backend/Cargo.toml`, `backend/Cargo.lock`, `frontend/package.json` и `frontend/pnpm-lock.yaml`. Не добавляйте crate/package без обоснования, license/security review и отдельного reviewable изменения. Выборы и разрешённые будущие crates (включая `utoipa`, auth, metrics и object storage) принадлежат `docs/TECH_CHOICES.md` и ADR: [ADR-0001](adr/0001-rust-axum-sqlx.md), [ADR-0002](adr/0002-react-vite-tailwind.md), [ADR-0004](adr/0004-postgresql-only.md), [ADR-0005](adr/0005-workspace-layered-architecture.md), [ADR-0008](adr/0008-versioned-sqlx-migrations.md) и [ADR-0009](adr/0009-canonical-registry.md). Текущая dependency policy и команды `cargo tree` / `pnpm why` описаны в `docs/LIBRARIES.md`.
 
@@ -249,5 +249,5 @@ git diff --exit-code
 
 - [ARCHITECTURE](ARCHITECTURE.md) и [CURRENT STATE](CURRENT_STATE.md) -- runtime boundaries и verified capability inventory.
 - [ENV](ENV.md), `docker-compose.yml`, `.env.example` и `justfile` -- local configuration and executable commands.
-- [TESTING](TESTING.md) и [CI/CD](CI_CD.md) -- historical/detail references; current CI source is `.github/workflows/ci.yml`.
+- [TESTING](DEVELOPMENT_GUIDE.md) и [CI/CD](DEVELOPMENT_GUIDE.md) -- historical/detail references; current CI source is `.github/workflows/ci.yml`.
 - [DOCUMENTATION GOVERNANCE](DOCUMENTATION_GOVERNANCE.md) -- authority matrix, status taxonomy and documentation checks.

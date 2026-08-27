@@ -414,4 +414,4 @@ Production release добавляет migration test job, clean/prior-schema upg
 - [Контракт runner protocol](contracts/RUNNER_PROTOCOL.md) -- target leases, heartbeats и fencing.
 - [Контракт событий и доставок](contracts/EVENT_CONTRACT.md) -- target outbox, deliveries и replay.
 - [GIT_HOSTING.md](GIT_HOSTING.md) -- storage и Smart HTTP Git.
-- [CI_CD.md](CI_CD.md) -- текущие CI gates.
+- [DEVELOPMENT_GUIDE.md](DEVELOPMENT_GUIDE.md) -- текущие CI gates.

@@ -108,7 +108,7 @@ Dependency flow is one-way: `api → app → domain`, `infra → app/domain`, `s
 | `AUTOMATION_ARCHITECTURE.md` | Schedules, Git events, outbox, webhooks, notifications and SSE |
 | `STORAGE_ARCHITECTURE.md` | Migrations, Postgres, Git, artifacts, secrets, backup/restore |
 | `DELIVERY_ARCHITECTURE.md` | OpenAPI, Dashboard, CLI, observability and quality gates |
-| `DOMAIN_MODEL.md` | Aggregate invariants and state machines |
+| `FUNCTIONAL_ARCHITECTURE.md` | Aggregate invariants and state machines |
 | `DATA_MODEL.md` | Physical schema and indexes; current vs target |
 | `ROADMAP.md` | Sequenced implementation milestones and definition of done |
 

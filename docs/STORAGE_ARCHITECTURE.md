@@ -898,7 +898,7 @@ Audit event фиксирует actor, scope, action, resource ID, result, reques
 - удаление project/repository/artifact/secret выполняется через managed lifecycle, а не неявный CASCADE;
 - backup manifest покрывает PostgreSQL, Git и artifacts;
 - последний restore drill успешен и содержит измеренные RPO/RTO;
-- документация `ARCHITECTURE.md`, `DATA_MODEL.md`, `GIT_HOSTING.md`, `TESTING.md`, `SECURITY.md`, `DEPLOYMENT.md` и runbooks соответствует фактической реализации.
+- документация `ARCHITECTURE.md`, `DATA_MODEL.md`, `GIT_HOSTING.md`, `DEVELOPMENT_GUIDE.md`, `SECURITY.md`, `OPERATIONS.md` и runbooks соответствует фактической реализации.
 
 ---
 

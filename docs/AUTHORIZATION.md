@@ -777,5 +777,5 @@ Route inventory test обязан сверять все `/api/v1/**` routes с d
 - токены, sessions, runner credentials и leases поддерживают expiry и revoke;
 - sensitive mutation имеет transactionally persisted audit event;
 - cross-tenant, expired credential, revoked credential и runner lease abuse покрыты автоматическими negative tests;
-- документация `API.md`, `DATA_MODEL.md`, `SECURITY.md`, `SECRETS_MGMT.md`, `GIT_HOSTING.md`, `TESTING.md`, `ARCHITECTURE.md` и runbooks синхронизирована с реализацией;
+- документация `API.md`, `DATA_MODEL.md`, `SECURITY.md`, `contracts/DATA_LIFECYCLE.md`, `GIT_HOSTING.md`, `DEVELOPMENT_GUIDE.md`, `ARCHITECTURE.md` и runbooks синхронизирована с реализацией;
 - production deployment использует TLS, non-permissive CORS, configured secrets/key provider и не экспонирует PostgreSQL или unauthenticated control-plane API.
