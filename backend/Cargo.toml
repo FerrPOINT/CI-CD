@@ -52,6 +52,7 @@ path = "src/bin/openapi-dump.rs"
 integration = []
 
 [dependencies]
+reqwest.workspace = true
 utoipa = { workspace = true }
 argon2 = { workspace = true }
 rand_core = { workspace = true }

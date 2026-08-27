@@ -15,12 +15,12 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use uuid::Uuid;
 
 use crate::{
-    platform::audit,
     domain::JobStatus,
     git_host::{
         create_repository, delete_repository, git_info_refs, git_service_endpoint,
         internal_git_push, list_repositories,
     },
+    platform::audit,
     pulls::{
         compare_refs, create_pull_request, list_commits, list_pull_requests, list_refs, pr_action,
     },
@@ -28,6 +28,9 @@ use crate::{
 };
 
 static STATE_POOL: std::sync::OnceLock<sqlx::PgPool> = std::sync::OnceLock::new();
+tokio::task_local! {
+    static REQUEST_ID: uuid::Uuid;
+}
 
 pub struct AppState {
     pub pool: Option<PgPool>,
@@ -42,17 +45,67 @@ type ApiResult<T> = Result<Json<T>, ApiError>;
 #[openapi(
     info(title = "Forge CI/CD API", version = "0.1.0", description = "Self-hosted CI/CD control plane. Array responses and error envelope follow docs/contracts/API_CONTRACT.md current compatibility mode."),
     paths(
-        health, auth_login, auth_refresh, list_projects, create_project, get_project, update_project, delete_project,
+        health, auth_login, auth_refresh,
+        list_projects, create_project, get_project, update_project, delete_project,
         trigger_pipeline, list_pipelines, get_pipeline, cancel_pipeline, retry_pipeline,
         change_job_status, retry_job, list_logs, append_log,
+        crate::platform::list_runners, crate::platform::register_runner,
+        crate::platform::runner_heartbeat, crate::platform::delete_runner,
+        crate::platform::list_secrets, crate::platform::create_secret, crate::platform::delete_secret,
+        crate::platform::list_artifacts, crate::platform::upload_artifact, crate::platform::download_artifact,
+        crate::platform::list_environments, crate::platform::create_environment,
+        crate::platform::update_environment, crate::platform::delete_environment,
+        crate::platform::list_deployments, crate::platform::create_deployment,
+        crate::platform::list_schedules, crate::platform::create_schedule,
+        crate::platform::update_schedule, crate::platform::delete_schedule,
+        crate::platform::list_webhooks, crate::platform::create_webhook, crate::platform::delete_webhook,
+        crate::platform::list_notifications, crate::platform::replace_notifications,
+        crate::platform::project_report, crate::platform::list_audit_log,
+        crate::platform::list_users, crate::platform::create_user, crate::platform::update_user,
+        crate::platform::list_tokens, crate::platform::create_token, crate::platform::delete_token,
+        crate::git_host::git_info_refs, crate::git_host::git_service_endpoint, crate::git_host::internal_git_push,
+        crate::pulls::list_refs, crate::pulls::list_commits, crate::pulls::compare_refs,
+        crate::pulls::list_pull_requests, crate::pulls::create_pull_request, crate::pulls::pr_action,
     ),
-    components(schemas(crate::auth::LoginRequest, crate::auth::TokenPair, Project, CreateProject, UpdateProject, TriggerPipeline, Pipeline, Stage, Job, PipelineDetail, StageDetail, JobLog, ChangeStatus)),
+    components(schemas(
+        crate::auth::LoginRequest, crate::auth::TokenPair,
+        Project, CreateProject, UpdateProject, TriggerPipeline, Pipeline, Stage, Job,
+        PipelineDetail, StageDetail, JobLog, ChangeStatus,
+        crate::platform::Runner, crate::platform::RegisterRunner, crate::platform::RunnerHeartbeat,
+        crate::platform::SecretMetadata, crate::platform::CreateSecret,
+        crate::platform::Artifact,
+        crate::platform::Environment, crate::platform::CreateEnvironment, crate::platform::UpdateEnvironment,
+        crate::platform::Deployment, crate::platform::CreateDeployment,
+        crate::platform::Schedule, crate::platform::ScheduleInput,
+        crate::platform::Webhook, crate::platform::CreateWebhook,
+        crate::platform::Notification, crate::platform::NotificationInput,
+        crate::platform::Report, crate::platform::AuditEvent,
+        crate::platform::User, crate::platform::UserInput,
+        crate::platform::ApiToken, crate::platform::CreatedToken, crate::platform::CreateToken,
+        crate::git_host::Repository, crate::git_host::GitPushEvent,
+        crate::pulls::RefInfo, crate::pulls::CommitInfo, crate::pulls::DiffResult, crate::pulls::DiffFile,
+        crate::pulls::PullRequest, crate::pulls::CreatePullRequest, crate::pulls::PrAction,
+    )),
     tags(
         (name = "health", description = "Liveness/readiness"),
         (name = "auth", description = "Login and token refresh"),
         (name = "projects", description = "Project registry"),
         (name = "pipelines", description = "Pipeline lifecycle"),
         (name = "jobs", description = "Jobs, logs and retries"),
+        (name = "runners", description = "Runner registration and heartbeats"),
+        (name = "secrets", description = "Encrypted project secrets"),
+        (name = "artifacts", description = "Job artifact upload and download"),
+        (name = "environments", description = "Environments and deployments"),
+        (name = "schedules", description = "Cron-style pipeline schedules"),
+        (name = "webhooks", description = "Outgoing project webhooks"),
+        (name = "notifications", description = "Notification channel configuration"),
+        (name = "reports", description = "Project delivery reports"),
+        (name = "audit", description = "Audit log"),
+        (name = "users", description = "User management"),
+        (name = "tokens", description = "Personal API tokens"),
+        (name = "git", description = "Git Smart HTTP and internal push events"),
+        (name = "repos", description = "Repository refs, commits and diff"),
+        (name = "pulls", description = "Pull requests"),
     )
 )]
 pub struct ApiDoc;
@@ -70,8 +123,8 @@ pub fn openapi_yaml() -> Result<String, serde_yaml::Error> {
 
 #[derive(Debug)]
 pub struct ApiError {
-    status: StatusCode,
-    message: String,
+    pub(crate) status: StatusCode,
+    pub(crate) message: String,
 }
 impl ApiError {
     pub(crate) fn unavailable() -> Self {
@@ -92,6 +145,12 @@ impl ApiError {
             message: "resource not found".into(),
         }
     }
+    pub(crate) fn too_many_requests() -> Self {
+        Self {
+            status: StatusCode::TOO_MANY_REQUESTS,
+            message: "rate limit exceeded".into(),
+        }
+    }
     pub(crate) fn forbidden() -> Self {
         Self {
             status: StatusCode::FORBIDDEN,
@@ -108,6 +167,17 @@ impl ApiError {
         Self {
             status: StatusCode::CONFLICT,
             message: message.into(),
+        }
+    }
+    fn code(&self) -> &'static str {
+        match self.status {
+            StatusCode::BAD_REQUEST => "invalid_request",
+            StatusCode::UNAUTHORIZED => "unauthorized",
+            StatusCode::FORBIDDEN => "permission_denied",
+            StatusCode::NOT_FOUND => "not_found",
+            StatusCode::CONFLICT => "conflict",
+            StatusCode::SERVICE_UNAVAILABLE => "unavailable",
+            _ => "internal_error",
         }
     }
     pub(crate) fn internal(error: sqlx::Error) -> Self {
@@ -131,9 +201,23 @@ impl From<crate::auth::AuthError> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> axum::response::Response {
+        // API_CONTRACT error envelope: request_id is required; code is stable snake_case.
+        let request_id = REQUEST_ID
+            .try_with(|u| u.to_string())
+            .unwrap_or_else(|_| uuid::Uuid::nil().to_string());
         (
             self.status,
-            Json(serde_json::json!({"error": self.message})),
+            [(
+                axum::http::header::HeaderName::from_static("x-request-id"),
+                request_id.clone(),
+            )],
+            Json(serde_json::json!({
+                "error": {
+                    "code": self.code(),
+                    "message": self.message,
+                    "request_id": request_id,
+                }
+            })),
         )
             .into_response()
     }
@@ -164,6 +248,25 @@ fn app_with(pool: Option<PgPool>, running: Option<crate::runner::RunningJobs>) -
 /// /api/v1 route except the public allowlist requires a valid Bearer JWT.
 /// Without the secret the API stays in trusted-network mode (open), matching
 /// CURRENT_STATE.
+async fn request_id_mw(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::HeaderName;
+    let id = req
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| uuid::Uuid::parse_str(v).ok())
+        .unwrap_or_else(uuid::Uuid::new_v4);
+    let mut response = REQUEST_ID.scope(id, next.run(req)).await;
+    response.headers_mut().insert(
+        HeaderName::from_static("x-request-id"),
+        id.to_string().parse().unwrap(),
+    );
+    response
+}
+
 async fn require_auth(
     State(state): State<Arc<AppState>>,
     req: axum::extract::Request,
@@ -174,6 +277,7 @@ async fn require_auth(
         "/api/v1/openapi.json",
         "/api/v1/auth/login",
         "/api/v1/auth/refresh",
+        "/metrics",
     ];
     let path = req.uri().path();
     if PUBLIC.contains(&path) || path.starts_with("/git/") {
@@ -182,7 +286,9 @@ async fn require_auth(
     if std::env::var("CICD_AUTH_SECRET").is_err() {
         return Ok(next.run(req).await); // trusted-network mode: no enforcement
     }
-    let claims = bearer_identity(req.headers()).await.map_err(|_| ApiError::unauthorized())?;
+    let claims = bearer_identity(req.headers())
+        .await
+        .map_err(|_| ApiError::unauthorized())?;
     let role = crate::authz::Role::parse(&claims.role).ok_or_else(ApiError::unauthorized)?;
     if !user_enabled(&state, claims.sub).await? {
         return Err(ApiError::unauthorized());
@@ -210,25 +316,24 @@ async fn require_auth(
 
 /// JWT access tokens carry the role at issue time; PATs (`cicd_…`) are
 /// resolved against api_tokens and assume the owner's role.
-async fn bearer_identity(headers: &axum::http::HeaderMap) -> Result<crate::auth::AccessClaims, ApiError> {
+async fn bearer_identity(
+    headers: &axum::http::HeaderMap,
+) -> Result<crate::auth::AccessClaims, ApiError> {
     let value = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .ok_or_else(ApiError::unauthorized)?;
-    let token = value.strip_prefix("Bearer ").ok_or_else(ApiError::unauthorized)?;
+    let token = value
+        .strip_prefix("Bearer ")
+        .ok_or_else(ApiError::unauthorized)?;
     if token.starts_with("cicd_") {
         let hash = crate::auth::hash_token(token);
-        let hash2 = hash.clone();
         let row = sqlx::query_as::<_, (Uuid, String)>(
             "SELECT u.id, u.role FROM api_tokens t JOIN users u ON u.id = t.user_id \
              WHERE t.token_hash = $1 AND u.enabled",
         )
         .bind(&hash)
-        .fetch_optional(
-            STATE_POOL
-                .get()
-                .ok_or_else(ApiError::unavailable)?,
-        )
+        .fetch_optional(STATE_POOL.get().ok_or_else(ApiError::unavailable)?)
         .await
         .map_err(ApiError::internal)?;
         let (sub, role) = row.ok_or_else(ApiError::unauthorized)?;
@@ -272,6 +377,18 @@ fn build_router(
     }
     Router::new()
         .route("/api/v1/health", get(health))
+        .route(
+            "/metrics",
+            get(|| async {
+                (
+                    [(
+                        axum::http::header::CONTENT_TYPE,
+                        "text/plain; version=0.0.4",
+                    )],
+                    crate::metrics::render(),
+                )
+            }),
+        )
         .route("/api/v1/openapi.json", get(serve_openapi_json))
         .route("/api/v1/auth/login", post(auth_login))
         .route("/api/v1/auth/refresh", post(auth_refresh))
@@ -333,6 +450,7 @@ fn build_router(
             }),
             require_auth,
         ))
+        .layer(axum::middleware::from_fn(request_id_mw))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(Arc::new(AppState {
@@ -348,6 +466,16 @@ async fn auth_login(
     Json(input): Json<crate::auth::LoginRequest>,
 ) -> Result<Json<crate::auth::TokenPair>, ApiError> {
     use crate::auth::*;
+    crate::metrics::LOGIN_ATTEMPTS_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    {
+        static LIMITER: std::sync::OnceLock<crate::rate_limit::RateLimiter> =
+            std::sync::OnceLock::new();
+        let limiter = LIMITER.get_or_init(crate::rate_limit::RateLimiter::default);
+        limiter.prune(60);
+        if !limiter.allow("login:global", 30, 60) {
+            return Err(ApiError::too_many_requests());
+        }
+    }
     let pool = pool(&state)?;
     let row = sqlx::query_as::<_, (Uuid, String, bool, String)>(
         "SELECT u.id, u.role, u.enabled, c.password_hash FROM users u \
@@ -360,10 +488,24 @@ async fn auth_login(
     .ok_or_else(ApiError::unauthorized)?;
     let (user_id, role, enabled, password_hash) = row;
     if !enabled || !verify_password(&password_hash, &input.password) {
-        let _ = audit(pool, "auth.login_failed", "user", user_id, Some(input.username.trim())).await;
+        let _ = audit(
+            pool,
+            "auth.login_failed",
+            "user",
+            user_id,
+            Some(input.username.trim()),
+        )
+        .await;
         return Err(ApiError::unauthorized());
     }
-    let _ = audit(pool, "auth.login_success", "user", user_id, Some(input.username.trim())).await;
+    let _ = audit(
+        pool,
+        "auth.login_success",
+        "user",
+        user_id,
+        Some(input.username.trim()),
+    )
+    .await;
     let refresh = new_refresh_token();
     create_session(pool, user_id, &hash_token(&refresh))
         .await
@@ -417,6 +559,24 @@ struct CreateProject {
     default_branch: Option<String>,
 }
 
+#[derive(serde::Deserialize, utoipa::IntoParams)]
+struct PageParams {
+    /// Max items (1..=200, default 50).
+    #[serde(default)]
+    limit: Option<i64>,
+    /// Offset (default 0).
+    #[serde(default)]
+    offset: Option<i64>,
+}
+
+impl PageParams {
+    fn bounded(&self) -> (i64, i64) {
+        let limit = self.limit.unwrap_or(50).clamp(1, 200);
+        let offset = self.offset.unwrap_or(0).max(0);
+        (limit, offset)
+    }
+}
+
 #[utoipa::path(post, path="/api/v1/projects", tag="projects", request_body=CreateProject, responses((status=200, body=Project), (status=400, description="validation error")))]
 async fn create_project(
     State(state): State<Arc<AppState>>,
@@ -433,9 +593,18 @@ async fn create_project(
     Ok(Json(project))
 }
 
-#[utoipa::path(get, path="/api/v1/projects", tag="projects", responses((status=200, body=[Project])))]
-async fn list_projects(State(state): State<Arc<AppState>>) -> ApiResult<Vec<Project>> {
-    let projects = sqlx::query_as::<_, Project>("SELECT id, name, repository_url, default_branch, created_at FROM projects ORDER BY created_at DESC").fetch_all(pool(&state)?).await.map_err(ApiError::internal)?;
+#[utoipa::path(get, path="/api/v1/projects", tag="projects", params(PageParams), responses((status=200, body=[Project])))]
+async fn list_projects(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(page): axum::extract::Query<PageParams>,
+) -> ApiResult<Vec<Project>> {
+    let (limit, offset) = page.bounded();
+    let projects = sqlx::query_as::<_, Project>("SELECT id, name, repository_url, default_branch, created_at FROM projects ORDER BY created_at DESC LIMIT $1 OFFSET $2")
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool(&state)?)
+        .await
+        .map_err(ApiError::internal)?;
     Ok(Json(projects))
 }
 
@@ -838,8 +1007,16 @@ stages:
 async fn list_pipelines(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
+    axum::extract::Query(page): axum::extract::Query<PageParams>,
 ) -> ApiResult<Vec<Pipeline>> {
-    let pipelines = sqlx::query_as::<_, Pipeline>("SELECT id, project_id, git_ref, status, created_at, started_at, finished_at FROM pipelines WHERE project_id = $1 ORDER BY created_at DESC LIMIT 50").bind(project_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?;
+    let (limit, offset) = page.bounded();
+    let pipelines = sqlx::query_as::<_, Pipeline>("SELECT id, project_id, git_ref, status, created_at, started_at, finished_at FROM pipelines WHERE project_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3")
+        .bind(project_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool(&state)?)
+        .await
+        .map_err(ApiError::internal)?;
     Ok(Json(pipelines))
 }
 #[utoipa::path(get, path="/api/v1/pipelines/{pipeline_id}", tag="pipelines", params(("pipeline_id"=Uuid, Path)), responses((status=200, body=PipelineDetail), (status=404)))]

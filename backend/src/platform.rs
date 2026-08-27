@@ -98,8 +98,8 @@ pub fn routes() -> Router<Arc<AppState>> {
         )
 }
 
-#[derive(Debug, Serialize, FromRow)]
-struct Runner {
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct Runner {
     id: Uuid,
     name: String,
     tags: Vec<String>,
@@ -107,21 +107,23 @@ struct Runner {
     last_seen_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
 }
-#[derive(Debug, Deserialize)]
-struct RegisterRunner {
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct RegisterRunner {
     name: String,
     #[serde(default)]
     tags: Vec<String>,
 }
-#[derive(Debug, Deserialize)]
-struct RunnerHeartbeat {
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct RunnerHeartbeat {
     status: Option<String>,
 }
 
+#[utoipa::path(get, path = "/api/v1/runners", tag = "runners", responses((status = 200, body = [Runner])))]
 async fn list_runners(State(state): State<Arc<AppState>>) -> ApiResult<Vec<Runner>> {
     Ok(Json(sqlx::query_as("SELECT id, name, tags, status, last_seen_at, created_at FROM runners ORDER BY created_at DESC")
         .fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
+#[utoipa::path(post, path = "/api/v1/runners", tag = "runners", request_body = RegisterRunner, responses((status = 200, body = Runner), (status = 400)))]
 async fn register_runner(
     State(state): State<Arc<AppState>>,
     Json(input): Json<RegisterRunner>,
@@ -141,6 +143,7 @@ async fn register_runner(
     .await?;
     Ok(Json(runner))
 }
+#[utoipa::path(post, path = "/api/v1/runners/{runner_id}/heartbeat", tag = "runners", request_body = RunnerHeartbeat, params(("runner_id" = Uuid, Path)), responses((status = 200, body = Runner), (status = 404)))]
 async fn runner_heartbeat(
     State(state): State<Arc<AppState>>,
     Path(runner_id): Path<Uuid>,
@@ -155,6 +158,7 @@ async fn runner_heartbeat(
     audit(pool(&state)?, "runner.heartbeat", "runner", runner_id, None).await?;
     Ok(Json(runner))
 }
+#[utoipa::path(delete, path = "/api/v1/runners/{runner_id}", tag = "runners", params(("runner_id" = Uuid, Path)), responses((status = 200), (status = 404)))]
 async fn delete_runner(
     State(state): State<Arc<AppState>>,
     Path(runner_id): Path<Uuid>,
@@ -169,19 +173,20 @@ async fn delete_runner(
     Ok(Json(serde_json::json!({"deleted": id})))
 }
 
-#[derive(Debug, Serialize, FromRow)]
-struct SecretMetadata {
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct SecretMetadata {
     id: Uuid,
     project_id: Uuid,
     key: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
-#[derive(Debug, Deserialize)]
-struct CreateSecret {
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct CreateSecret {
     key: String,
     value: String,
 }
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/secrets", tag = "secrets", params(("project_id" = Uuid, Path)), responses((status = 200, body = [SecretMetadata])))]
 async fn list_secrets(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
@@ -189,6 +194,7 @@ async fn list_secrets(
     Ok(Json(sqlx::query_as("SELECT id, project_id, key, created_at, updated_at FROM project_secrets WHERE project_id = $1 ORDER BY key")
         .bind(project_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
+#[utoipa::path(post, path = "/api/v1/projects/{project_id}/secrets", tag = "secrets", request_body = CreateSecret, params(("project_id" = Uuid, Path)), responses((status = 200, body = SecretMetadata), (status = 400)))]
 async fn create_secret(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
@@ -210,6 +216,7 @@ async fn create_secret(
     .await?;
     Ok(Json(secret))
 }
+#[utoipa::path(delete, path = "/api/v1/secrets/{secret_id}", tag = "secrets", params(("secret_id" = Uuid, Path)), responses((status = 200), (status = 404)))]
 async fn delete_secret(
     State(state): State<Arc<AppState>>,
     Path(secret_id): Path<Uuid>,
@@ -224,8 +231,8 @@ async fn delete_secret(
     Ok(Json(serde_json::json!({"deleted": id})))
 }
 
-#[derive(Debug, Serialize, FromRow)]
-struct Artifact {
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct Artifact {
     id: Uuid,
     job_id: Uuid,
     name: String,
@@ -233,6 +240,7 @@ struct Artifact {
     size_bytes: i64,
     created_at: DateTime<Utc>,
 }
+#[utoipa::path(get, path = "/api/v1/jobs/{job_id}/artifacts", tag = "artifacts", params(("job_id" = Uuid, Path)), responses((status = 200, body = [Artifact])))]
 async fn list_artifacts(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
@@ -240,6 +248,8 @@ async fn list_artifacts(
     Ok(Json(sqlx::query_as("SELECT id, job_id, name, content_type, size_bytes, created_at FROM artifacts WHERE job_id = $1 ORDER BY created_at DESC")
         .bind(job_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
+#[utoipa::path(post, path = "/api/v1/jobs/{job_id}/artifacts", tag = "artifacts", params(("job_id" = Uuid, Path), ("X-Artifact-Name" = String, Header)), request_body = Vec<u8>, responses((status = 200, body = Artifact), (status = 400)))]
+#[allow(clippy::too_many_arguments)]
 async fn upload_artifact(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
@@ -272,6 +282,7 @@ async fn upload_artifact(
     audit(pool(&state)?, "artifact.uploaded", "artifact", id, None).await?;
     Ok(Json(artifact))
 }
+#[utoipa::path(get, path = "/api/v1/artifacts/{artifact_id}/download", tag = "artifacts", params(("artifact_id" = Uuid, Path)), responses((status = 200, description = "Artifact download"), (status = 404)))]
 async fn download_artifact(
     State(state): State<Arc<AppState>>,
     Path(artifact_id): Path<Uuid>,
@@ -297,8 +308,8 @@ async fn download_artifact(
         .into_response())
 }
 
-#[derive(Debug, Serialize, FromRow)]
-struct Environment {
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct Environment {
     id: Uuid,
     project_id: Uuid,
     name: String,
@@ -306,23 +317,25 @@ struct Environment {
     status: String,
     created_at: DateTime<Utc>,
 }
-#[derive(Debug, Deserialize)]
-struct CreateEnvironment {
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct CreateEnvironment {
     name: String,
     url: Option<String>,
 }
-#[derive(Debug, Deserialize)]
-struct UpdateEnvironment {
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct UpdateEnvironment {
     name: Option<String>,
     url: Option<String>,
     status: Option<String>,
 }
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/environments", tag = "environments", params(("project_id" = Uuid, Path)), responses((status = 200, body = [Environment])))]
 async fn list_environments(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
 ) -> ApiResult<Vec<Environment>> {
     Ok(Json(sqlx::query_as("SELECT id, project_id, name, url, status, created_at FROM environments WHERE project_id = $1 ORDER BY name").bind(project_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
+#[utoipa::path(post, path = "/api/v1/projects/{project_id}/environments", tag = "environments", request_body = CreateEnvironment, params(("project_id" = Uuid, Path)), responses((status = 200, body = Environment), (status = 400)))]
 async fn create_environment(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
@@ -334,6 +347,7 @@ async fn create_environment(
     let value = sqlx::query_as("INSERT INTO environments (id, project_id, name, url) VALUES ($1, $2, $3, $4) RETURNING id, project_id, name, url, status, created_at").bind(Uuid::new_v4()).bind(project_id).bind(input.name.trim()).bind(input.url).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
     Ok(Json(value))
 }
+#[utoipa::path(patch, path = "/api/v1/environments/{environment_id}", tag = "environments", request_body = UpdateEnvironment, params(("environment_id" = Uuid, Path)), responses((status = 200, body = Environment), (status = 404)))]
 async fn update_environment(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
@@ -347,6 +361,7 @@ async fn update_environment(
     let value = sqlx::query_as("UPDATE environments SET name = COALESCE($2, name), url = COALESCE($3, url), status = COALESCE($4, status) WHERE id = $1 RETURNING id, project_id, name, url, status, created_at").bind(id).bind(input.name.as_deref().map(str::trim)).bind(input.url).bind(input.status).fetch_optional(pool(&state)?).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?;
     Ok(Json(value))
 }
+#[utoipa::path(delete, path = "/api/v1/environments/{environment_id}", tag = "environments", params(("environment_id" = Uuid, Path)), responses((status = 200), (status = 404)))]
 async fn delete_environment(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
@@ -360,8 +375,8 @@ async fn delete_environment(
     Ok(Json(serde_json::json!({"deleted": id})))
 }
 
-#[derive(Debug, Serialize, FromRow)]
-struct Deployment {
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct Deployment {
     id: Uuid,
     environment_id: Uuid,
     pipeline_id: Option<Uuid>,
@@ -369,18 +384,20 @@ struct Deployment {
     status: String,
     created_at: DateTime<Utc>,
 }
-#[derive(Debug, Deserialize)]
-struct CreateDeployment {
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct CreateDeployment {
     git_ref: String,
     pipeline_id: Option<Uuid>,
     status: Option<String>,
 }
+#[utoipa::path(get, path = "/api/v1/environments/{environment_id}/deployments", tag = "environments", params(("environment_id" = Uuid, Path)), responses((status = 200, body = [Deployment])))]
 async fn list_deployments(
     State(state): State<Arc<AppState>>,
     Path(environment_id): Path<Uuid>,
 ) -> ApiResult<Vec<Deployment>> {
     Ok(Json(sqlx::query_as("SELECT id, environment_id, pipeline_id, git_ref, status, created_at FROM deployments WHERE environment_id = $1 ORDER BY created_at DESC LIMIT 50").bind(environment_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
+#[utoipa::path(post, path = "/api/v1/environments/{environment_id}/deployments", tag = "environments", request_body = CreateDeployment, params(("environment_id" = Uuid, Path)), responses((status = 200, body = Deployment), (status = 400)))]
 async fn create_deployment(
     State(state): State<Arc<AppState>>,
     Path(environment_id): Path<Uuid>,
@@ -400,8 +417,8 @@ async fn create_deployment(
     Ok(Json(value))
 }
 
-#[derive(Debug, Serialize, FromRow)]
-struct Schedule {
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct Schedule {
     id: Uuid,
     project_id: Uuid,
     cron: String,
@@ -409,18 +426,20 @@ struct Schedule {
     enabled: bool,
     created_at: DateTime<Utc>,
 }
-#[derive(Debug, Deserialize)]
-struct ScheduleInput {
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct ScheduleInput {
     cron: String,
     git_ref: String,
     enabled: Option<bool>,
 }
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/schedules", tag = "schedules", params(("project_id" = Uuid, Path)), responses((status = 200, body = [Schedule])))]
 async fn list_schedules(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
 ) -> ApiResult<Vec<Schedule>> {
     Ok(Json(sqlx::query_as("SELECT id, project_id, cron, git_ref, enabled, created_at FROM schedules WHERE project_id = $1 ORDER BY created_at DESC").bind(project_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
+#[utoipa::path(post, path = "/api/v1/projects/{project_id}/schedules", tag = "schedules", request_body = ScheduleInput, params(("project_id" = Uuid, Path)), responses((status = 200, body = Schedule), (status = 400)))]
 async fn create_schedule(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
@@ -433,6 +452,7 @@ async fn create_schedule(
     }
     Ok(Json(sqlx::query_as("INSERT INTO schedules (id, project_id, cron, git_ref, enabled) VALUES ($1, $2, $3, $4, $5) RETURNING id, project_id, cron, git_ref, enabled, created_at").bind(Uuid::new_v4()).bind(project_id).bind(input.cron.trim()).bind(input.git_ref.trim()).bind(input.enabled.unwrap_or(true)).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?))
 }
+#[utoipa::path(patch, path = "/api/v1/schedules/{schedule_id}", tag = "schedules", request_body = ScheduleInput, params(("schedule_id" = Uuid, Path)), responses((status = 200, body = Schedule), (status = 400), (status = 404)))]
 async fn update_schedule(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
@@ -445,6 +465,7 @@ async fn update_schedule(
     }
     Ok(Json(sqlx::query_as("UPDATE schedules SET cron = $2, git_ref = $3, enabled = $4 WHERE id = $1 RETURNING id, project_id, cron, git_ref, enabled, created_at").bind(id).bind(input.cron.trim()).bind(input.git_ref.trim()).bind(input.enabled.unwrap_or(true)).fetch_optional(pool(&state)?).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?))
 }
+#[utoipa::path(delete, path = "/api/v1/schedules/{schedule_id}", tag = "schedules", params(("schedule_id" = Uuid, Path)), responses((status = 200), (status = 404)))]
 async fn delete_schedule(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
@@ -458,8 +479,8 @@ async fn delete_schedule(
     Ok(Json(serde_json::json!({"deleted": id})))
 }
 
-#[derive(Debug, Serialize, FromRow)]
-struct Webhook {
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct Webhook {
     id: Uuid,
     project_id: Uuid,
     url: String,
@@ -467,19 +488,21 @@ struct Webhook {
     enabled: bool,
     created_at: DateTime<Utc>,
 }
-#[derive(Debug, Deserialize)]
-struct CreateWebhook {
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct CreateWebhook {
     url: String,
     #[serde(default)]
     events: Vec<String>,
     enabled: Option<bool>,
 }
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/webhooks", tag = "webhooks", params(("project_id" = Uuid, Path)), responses((status = 200, body = [Webhook])))]
 async fn list_webhooks(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
 ) -> ApiResult<Vec<Webhook>> {
     Ok(Json(sqlx::query_as("SELECT id, project_id, url, events, enabled, created_at FROM webhooks WHERE project_id = $1 ORDER BY created_at DESC").bind(project_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
+#[utoipa::path(post, path = "/api/v1/projects/{project_id}/webhooks", tag = "webhooks", request_body = CreateWebhook, params(("project_id" = Uuid, Path)), responses((status = 200, body = Webhook), (status = 400)))]
 async fn create_webhook(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
@@ -490,6 +513,7 @@ async fn create_webhook(
     }
     Ok(Json(sqlx::query_as("INSERT INTO webhooks (id, project_id, url, events, enabled) VALUES ($1, $2, $3, $4, $5) RETURNING id, project_id, url, events, enabled, created_at").bind(Uuid::new_v4()).bind(project_id).bind(input.url.trim()).bind(input.events).bind(input.enabled.unwrap_or(true)).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?))
 }
+#[utoipa::path(delete, path = "/api/v1/webhooks/{webhook_id}", tag = "webhooks", params(("webhook_id" = Uuid, Path)), responses((status = 200), (status = 404)))]
 async fn delete_webhook(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
@@ -503,8 +527,8 @@ async fn delete_webhook(
     Ok(Json(serde_json::json!({"deleted": id})))
 }
 
-#[derive(Debug, Serialize, FromRow)]
-struct Notification {
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct Notification {
     id: Uuid,
     project_id: Uuid,
     channel: String,
@@ -512,18 +536,20 @@ struct Notification {
     enabled: bool,
     created_at: DateTime<Utc>,
 }
-#[derive(Debug, Deserialize)]
-struct NotificationInput {
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct NotificationInput {
     channel: String,
     target: String,
     enabled: Option<bool>,
 }
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/notifications", tag = "notifications", params(("project_id" = Uuid, Path)), responses((status = 200, body = [Notification])))]
 async fn list_notifications(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
 ) -> ApiResult<Vec<Notification>> {
     Ok(Json(sqlx::query_as("SELECT id, project_id, channel, target, enabled, created_at FROM notification_configs WHERE project_id = $1 ORDER BY channel").bind(project_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
+#[utoipa::path(put, path = "/api/v1/projects/{project_id}/notifications", tag = "notifications", request_body = [NotificationInput], params(("project_id" = Uuid, Path)), responses((status = 200, body = [Notification]), (status = 400)))]
 async fn replace_notifications(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
@@ -546,14 +572,15 @@ async fn replace_notifications(
     list_notifications(State(state), Path(project_id)).await
 }
 
-#[derive(Debug, Serialize, FromRow)]
-struct Report {
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct Report {
     total_pipelines: i64,
     successful_pipelines: i64,
     failed_pipelines: i64,
     success_rate: f64,
     average_duration_seconds: f64,
 }
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/reports/summary", tag = "reports", params(("project_id" = Uuid, Path)), responses((status = 200, body = Report)))]
 async fn project_report(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
@@ -561,8 +588,8 @@ async fn project_report(
     Ok(Json(sqlx::query_as("SELECT count(*)::bigint AS total_pipelines, count(*) FILTER (WHERE status = 'success')::bigint AS successful_pipelines, count(*) FILTER (WHERE status = 'failed')::bigint AS failed_pipelines, COALESCE(count(*) FILTER (WHERE status = 'success')::float8 / NULLIF(count(*) FILTER (WHERE status IN ('success', 'failed', 'canceled')), 0), 0)::float8 AS success_rate, COALESCE(avg(EXTRACT(EPOCH FROM (finished_at - started_at))) FILTER (WHERE finished_at IS NOT NULL AND started_at IS NOT NULL), 0)::float8 AS average_duration_seconds FROM pipelines WHERE project_id = $1").bind(project_id).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?))
 }
 
-#[derive(Debug, Serialize, FromRow)]
-struct AuditEvent {
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct AuditEvent {
     id: i64,
     action: String,
     resource_type: String,
@@ -570,6 +597,7 @@ struct AuditEvent {
     actor: Option<String>,
     created_at: DateTime<Utc>,
 }
+#[utoipa::path(get, path = "/api/v1/audit-log", tag = "audit", responses((status = 200, body = [AuditEvent])))]
 async fn list_audit_log(State(state): State<Arc<AppState>>) -> ApiResult<Vec<AuditEvent>> {
     Ok(Json(sqlx::query_as("SELECT id, action, resource_type, resource_id, actor, created_at FROM audit_log ORDER BY created_at DESC LIMIT 200").fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
@@ -593,22 +621,23 @@ pub(crate) async fn audit(
     Ok(())
 }
 
-#[derive(Debug, Serialize, FromRow)]
-struct User {
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct User {
     id: Uuid,
     username: String,
     role: String,
     enabled: bool,
     created_at: DateTime<Utc>,
 }
-#[derive(Debug, Deserialize)]
-struct UserInput {
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct UserInput {
     username: String,
     role: String,
     enabled: Option<bool>,
     /// Optional argon2id password; enables interactive login (AUTHZ_CONTRACT).
     password: Option<String>,
 }
+#[utoipa::path(get, path = "/api/v1/users", tag = "users", responses((status = 200, body = [User])))]
 async fn list_users(State(state): State<Arc<AppState>>) -> ApiResult<Vec<User>> {
     Ok(Json(
         sqlx::query_as(
@@ -619,6 +648,7 @@ async fn list_users(State(state): State<Arc<AppState>>) -> ApiResult<Vec<User>> 
         .map_err(ApiError::internal)?,
     ))
 }
+#[utoipa::path(post, path = "/api/v1/users", tag = "users", request_body = UserInput, responses((status = 200, body = User), (status = 400)))]
 async fn create_user(
     State(state): State<Arc<AppState>>,
     Json(input): Json<UserInput>,
@@ -642,6 +672,7 @@ async fn create_user(
     }
     Ok(Json(user))
 }
+#[utoipa::path(patch, path = "/api/v1/users/{user_id}", tag = "users", request_body = UserInput, params(("user_id" = Uuid, Path)), responses((status = 200, body = User), (status = 400), (status = 404)))]
 async fn update_user(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
@@ -664,8 +695,8 @@ async fn update_user(
     Ok(Json(sqlx::query_as("UPDATE users SET username = $2, role = $3, enabled = $4 WHERE id = $1 RETURNING id, username, role, enabled, created_at").bind(id).bind(input.username.trim()).bind(input.role).bind(input.enabled.unwrap_or(true)).fetch_optional(pool).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?))
 }
 
-#[derive(Debug, Serialize, FromRow)]
-struct ApiToken {
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct ApiToken {
     id: Uuid,
     name: String,
     token_hint: String,
@@ -673,20 +704,22 @@ struct ApiToken {
     created_at: DateTime<Utc>,
     last_used_at: Option<DateTime<Utc>>,
 }
-#[derive(Debug, Serialize)]
-struct CreatedToken {
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct CreatedToken {
     #[serde(flatten)]
     token: ApiToken,
     value: String,
 }
-#[derive(Debug, Deserialize)]
-struct CreateToken {
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct CreateToken {
     name: String,
     user_id: Option<Uuid>,
 }
+#[utoipa::path(get, path = "/api/v1/api-tokens", tag = "tokens", responses((status = 200, body = [ApiToken])))]
 async fn list_tokens(State(state): State<Arc<AppState>>) -> ApiResult<Vec<ApiToken>> {
     Ok(Json(sqlx::query_as("SELECT id, name, token_hint, user_id, created_at, last_used_at FROM api_tokens ORDER BY created_at DESC").fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
+#[utoipa::path(post, path = "/api/v1/api-tokens", tag = "tokens", request_body = CreateToken, responses((status = 200, body = CreatedToken), (status = 400)))]
 async fn create_token(
     State(state): State<Arc<AppState>>,
     claims: Option<axum::Extension<crate::auth::AccessClaims>>,
@@ -707,6 +740,7 @@ async fn create_token(
     audit(pool(&state)?, "token.created", "api_token", token.id, None).await?;
     Ok(Json(CreatedToken { token, value }))
 }
+#[utoipa::path(delete, path = "/api/v1/api-tokens/{token_id}", tag = "tokens", params(("token_id" = Uuid, Path)), responses((status = 200), (status = 404)))]
 async fn delete_token(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
@@ -733,6 +767,51 @@ fn io_error(error: std::io::Error) -> ApiError {
 fn sha256(value: &str) -> String {
     format!("{:x}", Sha256::digest(value.as_bytes()))
 }
+
+fn decrypt_secret(stored: &str) -> Result<String, String> {
+    let key = secret_key()?;
+    let cipher =
+        Aes256Gcm::new_from_slice(&key).map_err(|_| "invalid CICD_SECRETS_KEY".to_owned())?;
+    let parts: Vec<&str> = stored.splitn(3, ':').collect();
+    if parts.len() != 3 || parts[0] != "v1" {
+        return Err("unsupported secret format".to_owned());
+    }
+    let nonce_bytes = BASE64
+        .decode(parts[1])
+        .map_err(|_| "corrupt secret nonce".to_owned())?;
+    let ciphertext = BASE64
+        .decode(parts[2])
+        .map_err(|_| "corrupt secret payload".to_owned())?;
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let plain = cipher
+        .decrypt(nonce, ciphertext.as_ref())
+        .map_err(|_| "unable to decrypt secret".to_owned())?;
+    String::from_utf8(plain).map_err(|_| "secret is not valid utf-8".to_owned())
+}
+
+/// Project secrets resolved for a job environment (runner injection).
+pub(crate) async fn project_secret_pairs(
+    pool: &PgPool,
+    project_id: Uuid,
+) -> Result<Vec<(String, String)>, ApiError> {
+    let rows = sqlx::query_as::<_, (String, String)>(
+        "SELECT name, value FROM project_secrets WHERE project_id = $1",
+    )
+    .bind(project_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    let mut pairs = Vec::with_capacity(rows.len());
+    for (name, stored) in rows {
+        let value = decrypt_secret(&stored).map_err(|msg| ApiError {
+            status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            message: msg,
+        })?;
+        pairs.push((name, value));
+    }
+    Ok(pairs)
+}
+
 fn valid_role(role: &str) -> bool {
     matches!(role, "admin" | "maintainer" | "developer" | "viewer")
 }

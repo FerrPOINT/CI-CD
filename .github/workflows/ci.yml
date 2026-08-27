@@ -12,21 +12,42 @@ jobs:
     defaults:
       run:
         working-directory: backend
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: forge_owner
+          POSTGRES_PASSWORD: forge_test_owner
+          POSTGRES_DB: forge_test_cicd
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U forge_owner"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CICD_TEST_DATABASE_URL: postgres://forge_owner:forge_test_owner@localhost:5432/forge_test_cicd
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.86
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: backend
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test
-      - run: cargo build --release
-      # API_CONTRACT: committed openapi.yaml must match controllers (no drift).
-      - run: cargo run --bin openapi-dump -- /tmp/openapi.yaml
-      - run: diff -u ../openapi/openapi.yaml /tmp/openapi.yaml
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: "1.86"
+        components: clippy, rustfmt
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: backend
+    - name: fmt
+      run: cargo fmt --all -- --check
+    - name: clippy
+      run: cargo clippy --workspace --all-targets -- -D warnings
+    - name: unit tests
+      run: cargo test --workspace
+    - name: integration tests (real PostgreSQL)
+      run: cargo test --features integration --test integration_db
+    - name: openapi drift gate
+      run: |
+        cargo run --bin openapi-dump -- /tmp/openapi.yaml
+        diff -u ../openapi/openapi.yaml /tmp/openapi.yaml
 
   frontend:
     runs-on: ubuntu-latest
@@ -34,24 +55,29 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 11
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm test
-      - run: pnpm build
-      # UI_API_CONTRACT: generated client must match openapi.yaml.
-      - run: pnpm openapi:check
+    - uses: actions/checkout@v4
+    - uses: pnpm/action-setup@v4
+      with:
+        version: 11
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: pnpm
+        cache-dependency-path: frontend/pnpm-lock.yaml
+    - run: pnpm install --frozen-lockfile
+    - name: generated client up to date
+      run: |
+        pnpm openapi:generate
+        git diff --exit-code -- src/api/schema.d.ts || (echo "schema.d.ts is stale; run pnpm openapi:generate" && exit 1)
+    - run: pnpm test
+    - run: pnpm build
 
-  containers:
+  docs:
     runs-on: ubuntu-latest
-    needs: [backend, frontend]
     steps:
-      - uses: actions/checkout@v4
-      - run: docker compose build
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - name: documentation checks
+      run: python3 scripts/verify_docs.py --all

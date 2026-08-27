@@ -35,7 +35,7 @@ impl Default for GitConfig {
     }
 }
 
-#[derive(Debug, serde::Serialize, FromRow)]
+#[derive(Debug, serde::Serialize, FromRow, utoipa::ToSchema)]
 pub struct Repository {
     pub id: Uuid,
     pub name: String,
@@ -204,11 +204,27 @@ fn pkt_line(payload: &str) -> Vec<u8> {
     format!("{:04x}{}", payload.len() + 4, payload).into_bytes()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct InfoRefsParams {
     service: Option<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/git/{repo}/info/refs",
+    tag = "git",
+    params(
+        ("repo" = String, Path, description = "Repository name"),
+        ("service" = Option<String>, Query, description = "git-upload-pack or git-receive-pack"),
+    ),
+    responses(
+        (status = 200, description = "Git Smart HTTP ref advertisement"),
+        (status = 400, description = "Missing or unsupported service"),
+        (status = 401),
+        (status = 404),
+    ),
+)]
 pub async fn git_info_refs(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath(repo): AxumPath<String>,
@@ -317,6 +333,19 @@ async fn run_git_service(
     Ok(output.stdout)
 }
 
+#[utoipa::path(
+    post,
+    path = "/git/{repo}/git-upload-pack",
+    tag = "git",
+    request_body = Vec<u8>,
+    params(("repo" = String, Path, description = "Repository name")),
+    responses(
+        (status = 200, description = "git-upload-pack or git-receive-pack result payload"),
+        (status = 400, description = "Unsupported git service"),
+        (status = 401),
+        (status = 404),
+    ),
+)]
 pub async fn git_service_endpoint(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath(repo): AxumPath<String>,
@@ -380,7 +409,7 @@ async fn resolve_repo_path(
     Ok(repo_path(&config.root, &name))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct GitPushEvent {
     pub repository: String,
     pub ref_name: String,
@@ -388,6 +417,17 @@ pub struct GitPushEvent {
 
 /// Internal endpoint called by the generated `post-receive` hook.
 /// Finds a project whose repository_url points at this repo and triggers a pipeline.
+#[utoipa::path(
+    post,
+    path = "/api/v1/internal/git-push",
+    tag = "git",
+    request_body = GitPushEvent,
+    responses(
+        (status = 200, description = "Pipeline trigger decision"),
+        (status = 400),
+        (status = 401),
+    ),
+)]
 pub async fn internal_git_push(
     State(state): State<std::sync::Arc<AppState>>,
     headers: HeaderMap,

@@ -11,6 +11,19 @@
 
 ### Added
 
+- RBAC (AUTHZ_CONTRACT §RBAC): role-политики на всех роутах (`viewer`→read, `developer`→write, `maintainer`→secrets/tokens-read/runners-read, `admin`→users/tokens/runners manage); 403 с `auth.denied` audit-событием; PAT (`cicd_…`) принимаются enforcement-слоем с ролью владельца, `last_used_at` обновляется.
+- Frontend auth: страница /login (i18n ru/en), Bearer в api-клиенте, прозрачный refresh на 401, гард-редирект при включённом auth-режиме; login/logout аудит (`auth.login_success`/`auth.login_failed`).
+- Error envelope по API_CONTRACT: `{error:{code,message,request_id}}` + `x-request-id` header (принимается входящий, генерится при отсутствии).
+- Pagination (NFR-PERF-02): `limit`/`offset` (cap 200) на GET /projects и /projects/{id}/pipelines.
+- Rate limiting (THREAT_MODEL brute-force): 30 login-попыток/мин (429 после), фиксированное окно.
+- Outbox/scheduler (ADR-0006, REQ-AUTO-003): миграция 0004 (`domain_events`, `outbox_messages`, `schedules.last_fired_at`), воркер доставки webhooks с retry/backoff (15s..1h, 8 попыток, dead-letter), cron-scheduler с атомарным claim (без double-fire), счётчики метрик.
+- Secret injection (REQ-SEC-002): project secrets расшифровываются и подаются в job как env-переменные; значения маскируются `***` в job-логах.
+- Observability floor (SLO/METRICS): `GET /metrics` (Prometheus text: http_requests, 5xx, login attempts/failures, pipelines_created, outbox delivered/dead), request_id-пропагация.
+- CI: PostgreSQL service в backend-джобе — integration-тесты гоняются в CI; гейт `schema.d.ts` up-to-date; docs-джоба verify_docs.
+- SBOM: `scripts/generate_sbom.py` → docs/assets/sbom.json (CycloneDX-lite, 344 компонента; CISA Minimum Elements).
+
+### Added
+
 - Auth foundation (AUTHZ_CONTRACT Phase 1, REQ-AUTH-002 частично): миграция `0003_auth_foundation` (user_credentials/sessions), argon2id + JWT access 15m (HS256, CICD_AUTH_SECRET) + refresh-ротация 30d, `POST /auth/login|refresh`, Bearer-enforcement middleware (allowlist: health/openapi/login/refresh/git; без секрета — trusted-network режим), users create/update принимают password; e2e проверено на живой БД (401 без токена, 200 с токеном, 401 неверный пароль).
 - Real-DB integration-уровень (TEST_PLAN): `backend/tests/integration_db.rs` (feature `integration`): идемпотентность миграций, project CRUD, auth сессии+ротация+disable — 3/3 зелёные на test-compose PostgreSQL.
 - Strangler ADR-0005 шаг: `PipelineStatus` + `aggregate_status` перенесены в `cicd-domain` (4 unit-теста), реэкспорт через shim.

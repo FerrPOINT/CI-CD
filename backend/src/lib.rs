@@ -1,6 +1,9 @@
 pub mod api;
 pub mod auth;
 pub mod authz;
+pub mod metrics;
+pub mod outbox;
+pub mod rate_limit;
 
 /// Versioned migrations shared by the server binary and integration tests (ADR-0008).
 pub fn migrations() -> sqlx::migrate::Migrator {

@@ -13,14 +13,14 @@ use crate::api::{ApiError, AppState};
 
 // ─── refs & commits ───
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct RefInfo {
     pub name: String,
     pub sha: String,
     pub target: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct CommitInfo {
     pub sha: String,
     pub short_sha: String,
@@ -30,6 +30,13 @@ pub struct CommitInfo {
     pub date: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/repos/{repo}/refs",
+    tag = "repos",
+    params(("repo" = String, Path, description = "Repository name")),
+    responses((status = 200, body = [RefInfo]), (status = 404)),
+)]
 pub async fn list_refs(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath(repo): AxumPath<String>,
@@ -69,6 +76,13 @@ pub async fn list_refs(
     Ok(Json(refs))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/repos/{repo}/commits",
+    tag = "repos",
+    params(CommitParams, ("repo" = String, Path, description = "Repository name")),
+    responses((status = 200, body = [CommitInfo]), (status = 400), (status = 404)),
+)]
 pub async fn list_commits(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath(repo): AxumPath<String>,
@@ -112,7 +126,8 @@ pub async fn list_commits(
     Ok(Json(commits))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct CommitParams {
     pub branch: Option<String>,
     pub limit: Option<u32>,
@@ -120,13 +135,14 @@ pub struct CommitParams {
 
 // ─── compare (diff) ───
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct CompareParams {
     pub from: String,
     pub to: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct DiffResult {
     pub from: String,
     pub to: String,
@@ -135,7 +151,7 @@ pub struct DiffResult {
     pub patch: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct DiffFile {
     pub path: String,
     pub status: String,
@@ -143,6 +159,13 @@ pub struct DiffFile {
     pub deletions: u32,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/repos/{repo}/compare",
+    tag = "repos",
+    params(CompareParams, ("repo" = String, Path, description = "Repository name")),
+    responses((status = 200, body = DiffResult), (status = 400), (status = 404)),
+)]
 pub async fn compare_refs(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath(repo): AxumPath<String>,
@@ -220,7 +243,7 @@ pub async fn compare_refs(
 
 // ─── pull requests ───
 
-#[derive(Debug, Serialize, FromRow)]
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
 pub struct PullRequest {
     pub id: Uuid,
     pub repository_name: String,
@@ -237,7 +260,7 @@ pub struct PullRequest {
     pub merge_commit_sha: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreatePullRequest {
     pub repository_name: String,
     pub title: String,
@@ -246,6 +269,13 @@ pub struct CreatePullRequest {
     pub target_branch: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/repos/{repo}/pulls",
+    tag = "pulls",
+    params(("repo" = String, Path, description = "Repository name")),
+    responses((status = 200, body = [PullRequest]), (status = 404)),
+)]
 pub async fn list_pull_requests(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath(repo): AxumPath<String>,
@@ -261,6 +291,14 @@ pub async fn list_pull_requests(
     Ok(Json(prs))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/repos/{repo}/pulls",
+    tag = "pulls",
+    request_body = CreatePullRequest,
+    params(("repo" = String, Path, description = "Repository name")),
+    responses((status = 200, body = PullRequest), (status = 400)),
+)]
 pub async fn create_pull_request(
     State(state): State<std::sync::Arc<AppState>>,
     Json(input): Json<CreatePullRequest>,
@@ -302,11 +340,22 @@ pub async fn create_pull_request(
     Ok(Json(pr))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct PrAction {
     pub action: String, // "merge" | "close" | "reopen"
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/v1/repos/{repo}/pulls/{number}/action",
+    tag = "pulls",
+    request_body = PrAction,
+    params(
+        ("repo" = String, Path, description = "Repository name"),
+        ("number" = i32, Path, description = "Pull request number"),
+    ),
+    responses((status = 200, body = PullRequest), (status = 400), (status = 404), (status = 409)),
+)]
 pub async fn pr_action(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath((repo, number)): AxumPath<(String, i32)>,

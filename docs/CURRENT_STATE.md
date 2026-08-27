@@ -18,12 +18,18 @@
 | Reports | ✅ | агрегаты success rate/duration |
 | Users/roles + API-токены | ✅ хранение | enforcement middleware отсутствует |
 | Audit log | ✅ | append-only, последние 200 |
-| Schedules/webhooks/notifications | ⚙️ конфигурация | execution/delivery не реализованы |
-| Login UI | ⚙️ заглушка | без auth-запроса |
+| Schedules/webhooks | ✅ | outbox-доставка + cron-scheduler (миграция 0004) |
+| Login UI | ✅ | /login + refresh + гард (вкл. при CICD_AUTH_SECRET) |
+| Auth/RBAC | ✅ | argon2id+JWT+PAT, role-политики, аудит login/denied |
+| Secret injection | ✅ | env в job + маскирование в логах |
+| Error envelope + request_id | ✅ | {error:{code,message,request_id}} + x-request-id |
+| Pagination | ✅ | limit/offset (cap 200) на проектах/пайплайнах |
+| Rate limiting | ✅ | login 30/min → 429 |
+| Metrics | ✅ | /metrics Prometheus text |
 
 ## Не реализовано (Target approved — см. ADR + contracts)
 
-Auth/RBAC/JWT-сессии, API-token enforcement, runner protocol/leases/dispatch, scheduler/outbox delivery, webhook delivery, secret injection+маскирование в job, versioned migrations (`backend/migrations/`), pagination envelope, error envelope, idempotency keys, S3 artifacts, backup scripts, metrics.
+Runner protocol/leases/dispatch (внешний runner, ADR-0007), idempotency keys, S3 artifacts, backup scripts, SSE-события, project-membership RBAC, per-IP rate limiting (сейчас per-process окно).
 
 ## Текущее runtime-дерево backend
 
@@ -35,7 +41,11 @@ backend/
 │   ├── platform.rs     # runners/secrets/artifacts/… /users/tokens
 │   ├── git_host.rs     # bare repos, Smart HTTP, post-receive
 │   ├── pulls.rs        # refs/commits/compare/pull requests
-│   ├── runner.rs       # embedded executor
+│   ├── runner.rs       # embedded executor (+secret injection, маскирование)
+│   ├── outbox.rs       # ADR-0006: domain_events/outbox + scheduler worker
+│   ├── authz.rs        # role-политики роутов (AUTHZ_CONTRACT)
+│   ├── rate_limit.rs   # login rate limiting
+│   ├── metrics.rs      # /metrics Prometheus exposition
 │   ├── migrations/     # versioned SQLx migrations (ADR-0008, applied at startup + cicd-migrate)
 │   └── domain.rs       # re-export shim → cicd-domain
 ├── domain/             # cicd-domain: чистые типы + JobStatus

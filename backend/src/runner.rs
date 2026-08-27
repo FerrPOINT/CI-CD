@@ -83,6 +83,16 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
         }
     }
 
+    // REQ-SEC-002: inject project secrets as env vars; mask them in logs.
+    let secrets = crate::platform::project_secret_pairs(&pool, job.project_id)
+        .await
+        .unwrap_or_default();
+    let masks: Vec<String> = secrets
+        .iter()
+        .filter(|(_, v)| !v.is_empty())
+        .map(|(_, v)| v.clone())
+        .collect();
+
     append_log(&pool, job_id, &format!("runner: starting job {}", job.name)).await?;
     refresh_stage(pool.clone(), job.id).await?;
 
@@ -101,6 +111,9 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
             "forge_runner_workspaces",
             &workspace_volume.display().to_string(),
         ));
+        for (k, v) in &secrets {
+            cmd.env(k, v);
+        }
         cmd.current_dir(&workspace)
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -114,6 +127,9 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true);
+        for (k, v) in &secrets {
+            cmd.env(k, v);
+        }
         cmd
     };
 
@@ -140,7 +156,7 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
             if n == 0 {
                 break;
             }
-            append_log(&pool, job_id, line.trim_end()).await?;
+            append_log(&pool, job_id, &mask_secrets(line.trim_end(), &masks)).await?;
         }
     }
 
@@ -294,6 +310,17 @@ async fn refresh_stage(pool: PgPool, job_id: Uuid) -> Result<(), ApiError> {
         crate::api::refresh_statuses(&pool, stage_id).await?;
     }
     Ok(())
+}
+
+fn mask_secrets(line: &str, masks: &[String]) -> String {
+    let mut out = line.to_string();
+    for secret in masks {
+        if !out.contains(secret.as_str()) {
+            continue;
+        }
+        out = out.replace(secret.as_str(), "***");
+    }
+    out
 }
 
 async fn append_log(pool: &PgPool, job_id: Uuid, message: &str) -> Result<(), ApiError> {

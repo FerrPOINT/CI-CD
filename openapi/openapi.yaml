@@ -7,6 +7,217 @@ info:
     identifier: MIT
   version: 0.1.0
 paths:
+  /api/v1/api-tokens:
+    get:
+      tags:
+      - tokens
+      operationId: list_tokens
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ApiToken'
+    post:
+      tags:
+      - tokens
+      operationId: create_token
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateToken'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreatedToken'
+        '400':
+          description: ''
+  /api/v1/api-tokens/{token_id}:
+    delete:
+      tags:
+      - tokens
+      operationId: delete_token
+      parameters:
+      - name: token_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+        '404':
+          description: ''
+  /api/v1/artifacts/{artifact_id}/download:
+    get:
+      tags:
+      - artifacts
+      operationId: download_artifact
+      parameters:
+      - name: artifact_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Artifact download
+        '404':
+          description: ''
+  /api/v1/audit-log:
+    get:
+      tags:
+      - audit
+      operationId: list_audit_log
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditEvent'
+  /api/v1/auth/login:
+    post:
+      tags:
+      - auth
+      operationId: auth_login
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '401':
+          description: ''
+  /api/v1/auth/refresh:
+    post:
+      tags:
+      - auth
+      operationId: auth_refresh
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+        '401':
+          description: ''
+  /api/v1/environments/{environment_id}:
+    delete:
+      tags:
+      - environments
+      operationId: delete_environment
+      parameters:
+      - name: environment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+        '404':
+          description: ''
+    patch:
+      tags:
+      - environments
+      operationId: update_environment
+      parameters:
+      - name: environment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateEnvironment'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Environment'
+        '404':
+          description: ''
+  /api/v1/environments/{environment_id}/deployments:
+    get:
+      tags:
+      - environments
+      operationId: list_deployments
+      parameters:
+      - name: environment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Deployment'
+    post:
+      tags:
+      - environments
+      operationId: create_deployment
+      parameters:
+      - name: environment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDeployment'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+        '400':
+          description: ''
   /api/v1/health:
     get:
       tags:
@@ -15,6 +226,83 @@ paths:
       responses:
         '200':
           description: Liveness and readiness
+  /api/v1/internal/git-push:
+    post:
+      tags:
+      - git
+      summary: |-
+        Internal endpoint called by the generated `post-receive` hook.
+        Finds a project whose repository_url points at this repo and triggers a pipeline.
+      operationId: internal_git_push
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GitPushEvent'
+        required: true
+      responses:
+        '200':
+          description: Pipeline trigger decision
+        '400':
+          description: ''
+        '401':
+          description: ''
+  /api/v1/jobs/{job_id}/artifacts:
+    get:
+      tags:
+      - artifacts
+      operationId: list_artifacts
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Artifact'
+    post:
+      tags:
+      - artifacts
+      operationId: upload_artifact
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Artifact-Name
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/octet-stream:
+            schema:
+              type: array
+              items:
+                type: integer
+                format: int32
+                minimum: 0
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Artifact'
+        '400':
+          description: ''
   /api/v1/jobs/{job_id}/logs:
     get:
       tags:
@@ -178,6 +466,25 @@ paths:
       tags:
       - projects
       operationId: list_projects
+      parameters:
+      - name: limit
+        in: query
+        description: Max items (1..=200, default 50).
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        description: Offset (default 0).
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
       responses:
         '200':
           description: ''
@@ -269,6 +576,104 @@ paths:
                 $ref: '#/components/schemas/Project'
         '404':
           description: ''
+  /api/v1/projects/{project_id}/environments:
+    get:
+      tags:
+      - environments
+      operationId: list_environments
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Environment'
+    post:
+      tags:
+      - environments
+      operationId: create_environment
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEnvironment'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Environment'
+        '400':
+          description: ''
+  /api/v1/projects/{project_id}/notifications:
+    get:
+      tags:
+      - notifications
+      operationId: list_notifications
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Notification'
+    put:
+      tags:
+      - notifications
+      operationId: replace_notifications
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/NotificationInput'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Notification'
+        '400':
+          description: ''
   /api/v1/projects/{project_id}/pipelines:
     get:
       tags:
@@ -316,14 +721,711 @@ paths:
                 $ref: '#/components/schemas/Pipeline'
         '404':
           description: ''
+  /api/v1/projects/{project_id}/reports/summary:
+    get:
+      tags:
+      - reports
+      operationId: project_report
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Report'
+  /api/v1/projects/{project_id}/schedules:
+    get:
+      tags:
+      - schedules
+      operationId: list_schedules
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Schedule'
+    post:
+      tags:
+      - schedules
+      operationId: create_schedule
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduleInput'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+        '400':
+          description: ''
+  /api/v1/projects/{project_id}/secrets:
+    get:
+      tags:
+      - secrets
+      operationId: list_secrets
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SecretMetadata'
+    post:
+      tags:
+      - secrets
+      operationId: create_secret
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSecret'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecretMetadata'
+        '400':
+          description: ''
+  /api/v1/projects/{project_id}/webhooks:
+    get:
+      tags:
+      - webhooks
+      operationId: list_webhooks
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Webhook'
+    post:
+      tags:
+      - webhooks
+      operationId: create_webhook
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWebhook'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Webhook'
+        '400':
+          description: ''
+  /api/v1/repos/{repo}/commits:
+    get:
+      tags:
+      - repos
+      operationId: list_commits
+      parameters:
+      - name: branch
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          minimum: 0
+      - name: repo
+        in: path
+        description: Repository name
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CommitInfo'
+        '400':
+          description: ''
+        '404':
+          description: ''
+  /api/v1/repos/{repo}/compare:
+    get:
+      tags:
+      - repos
+      operationId: compare_refs
+      parameters:
+      - name: from
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: to
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: repo
+        in: path
+        description: Repository name
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DiffResult'
+        '400':
+          description: ''
+        '404':
+          description: ''
+  /api/v1/repos/{repo}/pulls:
+    get:
+      tags:
+      - pulls
+      operationId: list_pull_requests
+      parameters:
+      - name: repo
+        in: path
+        description: Repository name
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PullRequest'
+        '404':
+          description: ''
+    post:
+      tags:
+      - pulls
+      operationId: create_pull_request
+      parameters:
+      - name: repo
+        in: path
+        description: Repository name
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePullRequest'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullRequest'
+        '400':
+          description: ''
+  /api/v1/repos/{repo}/pulls/{number}/action:
+    post:
+      tags:
+      - pulls
+      operationId: pr_action
+      parameters:
+      - name: repo
+        in: path
+        description: Repository name
+        required: true
+        schema:
+          type: string
+      - name: number
+        in: path
+        description: Pull request number
+        required: true
+        schema:
+          type: integer
+          format: int32
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrAction'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullRequest'
+        '400':
+          description: ''
+        '404':
+          description: ''
+        '409':
+          description: ''
+  /api/v1/repos/{repo}/refs:
+    get:
+      tags:
+      - repos
+      operationId: list_refs
+      parameters:
+      - name: repo
+        in: path
+        description: Repository name
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RefInfo'
+        '404':
+          description: ''
+  /api/v1/runners:
+    get:
+      tags:
+      - runners
+      operationId: list_runners
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Runner'
+    post:
+      tags:
+      - runners
+      operationId: register_runner
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRunner'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Runner'
+        '400':
+          description: ''
+  /api/v1/runners/{runner_id}:
+    delete:
+      tags:
+      - runners
+      operationId: delete_runner
+      parameters:
+      - name: runner_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+        '404':
+          description: ''
+  /api/v1/runners/{runner_id}/heartbeat:
+    post:
+      tags:
+      - runners
+      operationId: runner_heartbeat
+      parameters:
+      - name: runner_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunnerHeartbeat'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Runner'
+        '404':
+          description: ''
+  /api/v1/schedules/{schedule_id}:
+    delete:
+      tags:
+      - schedules
+      operationId: delete_schedule
+      parameters:
+      - name: schedule_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+        '404':
+          description: ''
+    patch:
+      tags:
+      - schedules
+      operationId: update_schedule
+      parameters:
+      - name: schedule_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScheduleInput'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Schedule'
+        '400':
+          description: ''
+        '404':
+          description: ''
+  /api/v1/secrets/{secret_id}:
+    delete:
+      tags:
+      - secrets
+      operationId: delete_secret
+      parameters:
+      - name: secret_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+        '404':
+          description: ''
+  /api/v1/users:
+    get:
+      tags:
+      - users
+      operationId: list_users
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+    post:
+      tags:
+      - users
+      operationId: create_user
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserInput'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: ''
+  /api/v1/users/{user_id}:
+    patch:
+      tags:
+      - users
+      operationId: update_user
+      parameters:
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserInput'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: ''
+        '404':
+          description: ''
+  /api/v1/webhooks/{webhook_id}:
+    delete:
+      tags:
+      - webhooks
+      operationId: delete_webhook
+      parameters:
+      - name: webhook_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+        '404':
+          description: ''
+  /git/{repo}/git-upload-pack:
+    post:
+      tags:
+      - git
+      operationId: git_service_endpoint
+      parameters:
+      - name: repo
+        in: path
+        description: Repository name
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/octet-stream:
+            schema:
+              type: array
+              items:
+                type: integer
+                format: int32
+                minimum: 0
+        required: true
+      responses:
+        '200':
+          description: git-upload-pack or git-receive-pack result payload
+        '400':
+          description: Unsupported git service
+        '401':
+          description: ''
+        '404':
+          description: ''
+  /git/{repo}/info/refs:
+    get:
+      tags:
+      - git
+      operationId: git_info_refs
+      parameters:
+      - name: repo
+        in: path
+        description: Repository name
+        required: true
+        schema:
+          type: string
+      - name: service
+        in: query
+        description: git-upload-pack or git-receive-pack
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Git Smart HTTP ref advertisement
+        '400':
+          description: Missing or unsupported service
+        '401':
+          description: ''
+        '404':
+          description: ''
 components:
   schemas:
+    ApiToken:
+      type: object
+      required:
+      - id
+      - name
+      - token_hint
+      - created_at
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        last_used_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        name:
+          type: string
+        token_hint:
+          type: string
+        user_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
     AppendLog:
       type: object
       required:
       - message
       properties:
         message:
+          type: string
+    Artifact:
+      type: object
+      required:
+      - id
+      - job_id
+      - name
+      - content_type
+      - size_bytes
+      - created_at
+      properties:
+        content_type:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        job_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        size_bytes:
+          type: integer
+          format: int64
+    AuditEvent:
+      type: object
+      required:
+      - id
+      - action
+      - resource_type
+      - created_at
+      properties:
+        action:
+          type: string
+        actor:
+          type:
+          - string
+          - 'null'
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: integer
+          format: int64
+        resource_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        resource_type:
           type: string
     ChangeStatus:
       type: object
@@ -332,6 +1434,55 @@ components:
       properties:
         status:
           $ref: '#/components/schemas/JobStatus'
+    CommitInfo:
+      type: object
+      required:
+      - sha
+      - short_sha
+      - author
+      - email
+      - message
+      - date
+      properties:
+        author:
+          type: string
+        date:
+          type: string
+        email:
+          type: string
+        message:
+          type: string
+        sha:
+          type: string
+        short_sha:
+          type: string
+    CreateDeployment:
+      type: object
+      required:
+      - git_ref
+      properties:
+        git_ref:
+          type: string
+        pipeline_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        status:
+          type:
+          - string
+          - 'null'
+    CreateEnvironment:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+        url:
+          type:
+          - string
+          - 'null'
     CreateProject:
       type: object
       required:
@@ -345,6 +1496,176 @@ components:
         name:
           type: string
         repository_url:
+          type: string
+    CreatePullRequest:
+      type: object
+      required:
+      - repository_name
+      - title
+      - source_branch
+      - target_branch
+      properties:
+        description:
+          type:
+          - string
+          - 'null'
+        repository_name:
+          type: string
+        source_branch:
+          type: string
+        target_branch:
+          type: string
+        title:
+          type: string
+    CreateSecret:
+      type: object
+      required:
+      - key
+      - value
+      properties:
+        key:
+          type: string
+        value:
+          type: string
+    CreateToken:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+        user_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+    CreateWebhook:
+      type: object
+      required:
+      - url
+      properties:
+        enabled:
+          type:
+          - boolean
+          - 'null'
+        events:
+          type: array
+          items:
+            type: string
+        url:
+          type: string
+    CreatedToken:
+      allOf:
+      - $ref: '#/components/schemas/ApiToken'
+      - type: object
+        required:
+        - value
+        properties:
+          value:
+            type: string
+    Deployment:
+      type: object
+      required:
+      - id
+      - environment_id
+      - git_ref
+      - status
+      - created_at
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        environment_id:
+          type: string
+          format: uuid
+        git_ref:
+          type: string
+        id:
+          type: string
+          format: uuid
+        pipeline_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        status:
+          type: string
+    DiffFile:
+      type: object
+      required:
+      - path
+      - status
+      - additions
+      - deletions
+      properties:
+        additions:
+          type: integer
+          format: int32
+          minimum: 0
+        deletions:
+          type: integer
+          format: int32
+          minimum: 0
+        path:
+          type: string
+        status:
+          type: string
+    DiffResult:
+      type: object
+      required:
+      - from
+      - to
+      - merge_base
+      - files
+      - patch
+      properties:
+        files:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiffFile'
+        from:
+          type: string
+        merge_base:
+          type: string
+        patch:
+          type: string
+        to:
+          type: string
+    Environment:
+      type: object
+      required:
+      - id
+      - project_id
+      - name
+      - status
+      - created_at
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        project_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+        url:
+          type:
+          - string
+          - 'null'
+    GitPushEvent:
+      type: object
+      required:
+      - repository
+      - ref_name
+      properties:
+        ref_name:
+          type: string
+        repository:
           type: string
     Job:
       type: object
@@ -415,6 +1736,58 @@ components:
       - success
       - failed
       - canceled
+    LoginRequest:
+      type: object
+      required:
+      - username
+      - password
+      properties:
+        password:
+          type: string
+        refresh_token:
+          type: string
+          description: 'Only for /auth/refresh: the previously issued refresh token.'
+        username:
+          type: string
+    Notification:
+      type: object
+      required:
+      - id
+      - project_id
+      - channel
+      - target
+      - enabled
+      - created_at
+      properties:
+        channel:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        enabled:
+          type: boolean
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        target:
+          type: string
+    NotificationInput:
+      type: object
+      required:
+      - channel
+      - target
+      properties:
+        channel:
+          type: string
+        enabled:
+          type:
+          - boolean
+          - 'null'
+        target:
+          type: string
     Pipeline:
       type: object
       required:
@@ -459,6 +1832,13 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/StageDetail'
+    PrAction:
+      type: object
+      required:
+      - action
+      properties:
+        action:
+          type: string
     Project:
       type: object
       required:
@@ -480,6 +1860,216 @@ components:
           type: string
         repository_url:
           type: string
+    PullRequest:
+      type: object
+      required:
+      - id
+      - repository_name
+      - number
+      - title
+      - description
+      - source_branch
+      - target_branch
+      - status
+      - created_by
+      - created_at
+      - updated_at
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        created_by:
+          type: string
+        description:
+          type: string
+        id:
+          type: string
+          format: uuid
+        merge_commit_sha:
+          type:
+          - string
+          - 'null'
+        merged_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        number:
+          type: integer
+          format: int32
+        repository_name:
+          type: string
+        source_branch:
+          type: string
+        status:
+          type: string
+        target_branch:
+          type: string
+        title:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+    RefInfo:
+      type: object
+      required:
+      - name
+      - sha
+      - target
+      properties:
+        name:
+          type: string
+        sha:
+          type: string
+        target:
+          type: string
+    RegisterRunner:
+      type: object
+      required:
+      - name
+      properties:
+        name:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+    Report:
+      type: object
+      required:
+      - total_pipelines
+      - successful_pipelines
+      - failed_pipelines
+      - success_rate
+      - average_duration_seconds
+      properties:
+        average_duration_seconds:
+          type: number
+          format: double
+        failed_pipelines:
+          type: integer
+          format: int64
+        success_rate:
+          type: number
+          format: double
+        successful_pipelines:
+          type: integer
+          format: int64
+        total_pipelines:
+          type: integer
+          format: int64
+    Repository:
+      type: object
+      required:
+      - id
+      - name
+      - created_at
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+    Runner:
+      type: object
+      required:
+      - id
+      - name
+      - tags
+      - status
+      - created_at
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        last_seen_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        name:
+          type: string
+        status:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+    RunnerHeartbeat:
+      type: object
+      properties:
+        status:
+          type:
+          - string
+          - 'null'
+    Schedule:
+      type: object
+      required:
+      - id
+      - project_id
+      - cron
+      - git_ref
+      - enabled
+      - created_at
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        cron:
+          type: string
+        enabled:
+          type: boolean
+        git_ref:
+          type: string
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+    ScheduleInput:
+      type: object
+      required:
+      - cron
+      - git_ref
+      properties:
+        cron:
+          type: string
+        enabled:
+          type:
+          - boolean
+          - 'null'
+        git_ref:
+          type: string
+    SecretMetadata:
+      type: object
+      required:
+      - id
+      - project_id
+      - key
+      - created_at
+      - updated_at
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        key:
+          type: string
+        project_id:
+          type: string
+          format: uuid
+        updated_at:
+          type: string
+          format: date-time
     Stage:
       type: object
       required:
@@ -513,10 +2103,40 @@ components:
             type: array
             items:
               $ref: '#/components/schemas/Job'
+    TokenPair:
+      type: object
+      required:
+      - access_token
+      - expires_at
+      - refresh_token
+      properties:
+        access_token:
+          type: string
+        expires_at:
+          type: integer
+          format: int64
+          description: unix seconds
+        refresh_token:
+          type: string
     TriggerPipeline:
       type: object
       properties:
         git_ref:
+          type:
+          - string
+          - 'null'
+    UpdateEnvironment:
+      type: object
+      properties:
+        name:
+          type:
+          - string
+          - 'null'
+        status:
+          type:
+          - string
+          - 'null'
+        url:
           type:
           - string
           - 'null'
@@ -535,12 +2155,109 @@ components:
           type:
           - string
           - 'null'
+    User:
+      type: object
+      required:
+      - id
+      - username
+      - role
+      - enabled
+      - created_at
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        enabled:
+          type: boolean
+        id:
+          type: string
+          format: uuid
+        role:
+          type: string
+        username:
+          type: string
+    UserInput:
+      type: object
+      required:
+      - username
+      - role
+      properties:
+        enabled:
+          type:
+          - boolean
+          - 'null'
+        password:
+          type:
+          - string
+          - 'null'
+          description: Optional argon2id password; enables interactive login (AUTHZ_CONTRACT).
+        role:
+          type: string
+        username:
+          type: string
+    Webhook:
+      type: object
+      required:
+      - id
+      - project_id
+      - url
+      - events
+      - enabled
+      - created_at
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        enabled:
+          type: boolean
+        events:
+          type: array
+          items:
+            type: string
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        url:
+          type: string
 tags:
 - name: health
   description: Liveness/readiness
+- name: auth
+  description: Login and token refresh
 - name: projects
   description: Project registry
 - name: pipelines
   description: Pipeline lifecycle
 - name: jobs
   description: Jobs, logs and retries
+- name: runners
+  description: Runner registration and heartbeats
+- name: secrets
+  description: Encrypted project secrets
+- name: artifacts
+  description: Job artifact upload and download
+- name: environments
+  description: Environments and deployments
+- name: schedules
+  description: Cron-style pipeline schedules
+- name: webhooks
+  description: Outgoing project webhooks
+- name: notifications
+  description: Notification channel configuration
+- name: reports
+  description: Project delivery reports
+- name: audit
+  description: Audit log
+- name: users
+  description: User management
+- name: tokens
+  description: Personal API tokens
+- name: git
+  description: Git Smart HTTP and internal push events
+- name: repos
+  description: Repository refs, commits and diff
+- name: pulls
+  description: Pull requests
