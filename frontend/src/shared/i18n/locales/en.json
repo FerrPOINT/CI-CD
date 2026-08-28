@@ -73,7 +73,13 @@
     "noCommits": "No commits on this branch yet.",
     "noBranches": "No branches found.",
     "loadError": "Failed to load repository data",
-    "tip": "Commit and branch views are refreshed from the repository Git API."
+    "tip": "Commit and branch views are refreshed from the repository Git API.",
+    "code": "Code",
+    "tags": "Tags",
+    "releases": "Releases",
+    "emptyTree": "Empty",
+    "noTags": "No tags",
+    "binaryFile": "Binary file — preview unavailable"
   },
   "compare": {
     "title": "Compare branches",
@@ -124,7 +130,11 @@
     "cancel": "Cancel",
     "logs": "Logs",
     "image": "Image",
-    "command": "Command"
+    "command": "Command",
+    "testReport": "Test reports",
+    "suite": "Suite",
+    "total": "Total",
+    "duration": "Duration"
   },
   "stages": {
     "build": "Build",
@@ -141,7 +151,8 @@
     "error": "Error",
     "retry": "Retry",
     "search": "Search",
-    "dismiss": "Dismiss"
+    "dismiss": "Dismiss",
+    "create": "Create"
   },
   "runners": {
     "title": "Runners",
@@ -293,5 +304,16 @@
     "submit": "Sign in",
     "signingIn": "Signing in…",
     "invalidCredentials": "Invalid username or password"
+  },
+  "releases": {
+    "created": "Release created",
+    "create": "Create release",
+    "none": "No releases",
+    "prerelease": "pre-release",
+    "tag": "Tag",
+    "name": "Name",
+    "description": "Description",
+    "deleteTitle": "Delete release?",
+    "deleteConfirm": "The release will be deleted. The git tag stays."
   }
 }

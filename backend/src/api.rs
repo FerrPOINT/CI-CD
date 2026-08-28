@@ -139,6 +139,12 @@ impl ApiError {
             message: message.into(),
         }
     }
+    pub(crate) fn not_found_named(what: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            message: what.into(),
+        }
+    }
     pub(crate) fn not_found() -> Self {
         Self {
             status: StatusCode::NOT_FOUND,
@@ -283,7 +289,11 @@ async fn require_auth(
     if PUBLIC.contains(&path) || path.starts_with("/git/") {
         return Ok(next.run(req).await);
     }
-    if std::env::var("CICD_AUTH_SECRET").is_err() {
+    if std::env::var("CICD_AUTH_SECRET")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .is_none()
+    {
         return Ok(next.run(req).await); // trusted-network mode: no enforcement
     }
     let claims = bearer_identity(req.headers())
@@ -435,6 +445,29 @@ fn build_router(
         .route("/git/{repo}/git-receive-pack", post(git_service_endpoint))
         .route("/api/v1/internal/git-push", post(internal_git_push))
         .route("/api/v1/repos/{repo}/refs", get(list_refs))
+        .route("/api/v1/repos/{repo}/tree", get(crate::pulls::list_tree))
+        .route("/api/v1/repos/{repo}/blob", get(crate::pulls::get_blob))
+        .route("/api/v1/repos/{repo}/tags", get(crate::pulls::list_tags))
+        .route(
+            "/api/v1/repos/{repo}/releases",
+            get(list_releases).post(create_release),
+        )
+        .route(
+            "/api/v1/repos/{repo}/releases/{tag}",
+            get(get_release).delete(delete_release),
+        )
+        .route(
+            "/api/v1/pipelines/{pipeline_id}/badge.svg",
+            get(pipeline_badge),
+        )
+        .route(
+            "/api/v1/jobs/{job_id}/test-report",
+            get(get_test_report).post(upload_test_report),
+        )
+        .route(
+            "/api/v1/pipelines/{pipeline_id}/variables",
+            get(pipeline_variables),
+        )
         .route("/api/v1/repos/{repo}/commits", get(list_commits))
         .route("/api/v1/repos/{repo}/compare", get(compare_refs))
         .route(
@@ -684,6 +717,9 @@ async fn delete_project(
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 struct TriggerPipeline {
     git_ref: Option<String>,
+    /// Optional run variables; exposed to every job as CICD_VAR_<KEY>.
+    #[serde(default)]
+    variables: Option<std::collections::BTreeMap<String, String>>,
 }
 #[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
 pub(crate) struct Pipeline {
@@ -744,7 +780,14 @@ async fn trigger_pipeline(
         return Err(ApiError::not_found());
     }
     let git_ref = input.git_ref.unwrap_or_else(|| "main".into());
-    let pipeline = create_pipeline(pool, project_id, git_ref).await?;
+    let pipeline = create_pipeline_with_vars(
+        pool,
+        project_id,
+        git_ref,
+        serde_json::to_value(input.variables.clone().unwrap_or_default())
+            .unwrap_or_else(|_| serde_json::json!({})),
+    )
+    .await?;
     pipeline_detail(pool, pipeline.id).await.map(Json)
 }
 
@@ -755,6 +798,15 @@ pub(crate) async fn create_pipeline(
     pool: &PgPool,
     project_id: Uuid,
     git_ref: String,
+) -> Result<Pipeline, ApiError> {
+    create_pipeline_with_vars(pool, project_id, git_ref, serde_json::json!({})).await
+}
+
+pub(crate) async fn create_pipeline_with_vars(
+    pool: &PgPool,
+    project_id: Uuid,
+    git_ref: String,
+    variables: serde_json::Value,
 ) -> Result<Pipeline, ApiError> {
     let repository_url: Option<String> =
         sqlx::query_scalar("SELECT repository_url FROM projects WHERE id = $1")
@@ -770,12 +822,13 @@ pub(crate) async fn create_pipeline(
     let commit_sha = resolve_commit_sha(repository_url.as_deref(), &git_ref).await;
 
     let pipeline = sqlx::query_as::<_, Pipeline>(
-        "INSERT INTO pipelines (id, project_id, git_ref, commit_sha, status) VALUES ($1, $2, $3, $4, 'queued') RETURNING id, project_id, git_ref, status, created_at, started_at, finished_at",
+        "INSERT INTO pipelines (id, project_id, git_ref, commit_sha, variables, status) VALUES ($1, $2, $3, $4, $5, 'queued') RETURNING id, project_id, git_ref, status, created_at, started_at, finished_at",
     )
     .bind(Uuid::new_v4())
     .bind(project_id)
     .bind(&git_ref)
     .bind(&commit_sha)
+    .bind(&variables)
     .fetch_one(pool)
     .await
     .map_err(ApiError::internal)?;
@@ -1009,8 +1062,354 @@ fn is_safe_image_reference(image: &str) -> bool {
         })
 }
 
+// ---- Releases (P1 git-server parity) ----
+
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+struct Release {
+    id: Uuid,
+    repository_name: String,
+    tag_name: String,
+    name: String,
+    description: String,
+    prerelease: bool,
+    created_by: Option<String>,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+struct CreateRelease {
+    tag_name: String,
+    name: String,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    prerelease: bool,
+}
+
+#[utoipa::path(get, path="/api/v1/repos/{repo}/releases", tag="releases", params(("repo"=String, Path)), responses((status=200, body=[Release])))]
+async fn list_releases(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(repo): axum::extract::Path<String>,
+) -> ApiResult<Vec<Release>> {
+    let rows = sqlx::query_as::<_, Release>(
+        "SELECT id, repository_name, tag_name, name, description, prerelease, created_by, created_at \
+         FROM releases WHERE repository_name = $1 ORDER BY created_at DESC",
+    )
+    .bind(repo)
+    .fetch_all(pool(&state)?)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(Json(rows))
+}
+
+#[utoipa::path(post, path="/api/v1/repos/{repo}/releases", tag="releases", params(("repo"=String, Path)), request_body=CreateRelease, responses((status=200, body=Release)))]
+async fn create_release(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(repo): axum::extract::Path<String>,
+    headers: axum::http::HeaderMap,
+    Json(input): Json<CreateRelease>,
+) -> ApiResult<Release> {
+    let created_by = bearer_identity(&headers)
+        .await
+        .ok()
+        .map(|c| c.sub.to_string());
+    if input.tag_name.trim().is_empty() || input.name.trim().is_empty() {
+        return Err(ApiError::bad_request("tag_name and name are required"));
+    }
+    let row = sqlx::query_as::<_, Release>(
+        "INSERT INTO releases (id, repository_name, tag_name, name, description, prerelease, created_by) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7) \
+         ON CONFLICT (repository_name, tag_name) DO UPDATE SET \
+           name = EXCLUDED.name, description = EXCLUDED.description, prerelease = EXCLUDED.prerelease \
+         RETURNING id, repository_name, tag_name, name, description, prerelease, created_by, created_at",
+    )
+    .bind(Uuid::new_v4())
+    .bind(repo.trim())
+    .bind(input.tag_name.trim())
+    .bind(input.name.trim())
+    .bind(input.description)
+    .bind(input.prerelease)
+    .bind(created_by)
+    .fetch_one(pool(&state)?)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(Json(row))
+}
+
+#[utoipa::path(get, path="/api/v1/repos/{repo}/releases/{tag}", tag="releases", params(("repo"=String, Path), ("tag"=String, Path)), responses((status=200, body=Release), (status=404)))]
+async fn get_release(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path((repo, tag)): axum::extract::Path<(String, String)>,
+) -> ApiResult<Release> {
+    let row = sqlx::query_as::<_, Release>(
+        "SELECT id, repository_name, tag_name, name, description, prerelease, created_by, created_at \
+         FROM releases WHERE repository_name = $1 AND tag_name = $2",
+    )
+    .bind(repo)
+    .bind(tag)
+    .fetch_optional(pool(&state)?)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)?;
+    Ok(Json(row))
+}
+
+#[utoipa::path(delete, path="/api/v1/repos/{repo}/releases/{tag}", tag="releases", params(("repo"=String, Path), ("tag"=String, Path)), responses((status=200), (status=404)))]
+async fn delete_release(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path((repo, tag)): axum::extract::Path<(String, String)>,
+) -> ApiResult<serde_json::Value> {
+    let deleted = sqlx::query_scalar::<_, Uuid>(
+        "DELETE FROM releases WHERE repository_name = $1 AND tag_name = $2 RETURNING id",
+    )
+    .bind(repo)
+    .bind(tag)
+    .fetch_optional(pool(&state)?)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)?;
+    Ok(Json(serde_json::json!({ "deleted": deleted.to_string() })))
+}
+
+// ---- Pipeline badge (P1, public read-only) ----
+
+#[utoipa::path(get, path="/api/v1/pipelines/{pipeline_id}/badge.svg", tag="pipelines", params(("pipeline_id"=Uuid, Path)), responses((status=200, description="SVG badge")))]
+async fn pipeline_badge(
+    State(state): State<Arc<AppState>>,
+    Path(pipeline_id): Path<Uuid>,
+) -> axum::response::Response {
+    let status: String = match state.pool.as_ref() {
+        Some(pool) => sqlx::query_scalar("SELECT status FROM pipelines WHERE id = $1")
+            .bind(pipeline_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or_else(|_| "unknown".into()),
+        None => "unknown".into(),
+    };
+    let (label, color) = match status.as_str() {
+        "success" => ("passing", "#2ea44f"),
+        "failed" => ("failed", "#d73a4a"),
+        "running" | "queued" => ("running", "#dfb317"),
+        "canceled" => ("canceled", "#959da5"),
+        _ => ("unknown", "#959da5"),
+    };
+    let width = 60 + label.len() * 7;
+    let svg = format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"20\">\
+<linearGradient id=\"s\" x2=\"0\" y2=\"100%\"><stop offset=\"0\" stop-color=\"#bbb\" stop-opacity=\".1\"/><stop offset=\"1\" stop-opacity=\".1\"/></linearGradient>\
+<clipPath id=\"r\"><rect width=\"{width}\" height=\"20\" rx=\"3\" fill=\"#fff\"/></clipPath>\
+<g clip-path=\"url(#r)\"><rect width=\"46\" height=\"20\" fill=\"#555\"/><rect x=\"46\" width=\"{rw}\" height=\"20\" fill=\"{color}\"/><rect width=\"{width}\" height=\"20\" fill=\"url(#s)\"/></g>\
+<g fill=\"#fff\" text-anchor=\"middle\" font-family=\"Verdana,sans-serif\" font-size=\"11\">\
+<text x=\"23\" y=\"15\">build</text><text x=\"{tx}\" y=\"15\">{label}</text></g></svg>",
+        width = width,
+        rw = width - 46,
+        tx = 46 + (width - 46) / 2,
+        color = color,
+        label = label,
+    );
+    axum::response::Response::builder()
+        .status(200)
+        .header("content-type", "image/svg+xml")
+        .header("cache-control", "no-cache")
+        .body(axum::body::Body::from(svg))
+        .unwrap()
+}
+
+// ---- Pipeline variables (P1) ----
+
+#[utoipa::path(get, path="/api/v1/pipelines/{pipeline_id}/variables", tag="pipelines", params(("pipeline_id"=Uuid, Path)), responses((status=200)))]
+async fn pipeline_variables(
+    State(state): State<Arc<AppState>>,
+    Path(pipeline_id): Path<Uuid>,
+) -> ApiResult<serde_json::Value> {
+    let vars: Option<serde_json::Value> =
+        sqlx::query_scalar("SELECT variables FROM pipelines WHERE id = $1")
+            .bind(pipeline_id)
+            .fetch_optional(pool(&state)?)
+            .await
+            .map_err(ApiError::internal)?
+            .ok_or_else(ApiError::not_found)?;
+    Ok(Json(vars.unwrap_or_else(|| serde_json::json!({}))))
+}
+
+// ---- JUnit test reports (P1) ----
+
+#[derive(Debug, Serialize, sqlx::FromRow, utoipa::ToSchema)]
+struct TestReport {
+    id: Uuid,
+    job_id: Uuid,
+    suite_name: String,
+    tests_total: i32,
+    tests_passed: i32,
+    tests_failed: i32,
+    tests_skipped: i32,
+    duration_ms: Option<i32>,
+    created_at: DateTime<Utc>,
+}
+
+#[utoipa::path(get, path="/api/v1/jobs/{job_id}/test-report", tag="jobs", params(("job_id"=Uuid, Path)), responses((status=200, body=[TestReport])))]
+async fn get_test_report(
+    State(state): State<Arc<AppState>>,
+    Path(job_id): Path<Uuid>,
+) -> ApiResult<Vec<TestReport>> {
+    let rows = sqlx::query_as::<_, TestReport>(
+        "SELECT id, job_id, suite_name, tests_total, tests_passed, tests_failed, tests_skipped, duration_ms, created_at \
+         FROM test_reports WHERE job_id = $1 ORDER BY suite_name",
+    )
+    .bind(job_id)
+    .fetch_all(pool(&state)?)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(Json(rows))
+}
+
+/// Minimal JUnit XML parser: sums testsuite/testcase counts and failures.
+#[utoipa::path(post, path="/api/v1/jobs/{job_id}/test-report", tag="jobs", params(("job_id"=Uuid, Path)), request_body=String, responses((status=200, body=[TestReport])))]
+async fn upload_test_report(
+    State(state): State<Arc<AppState>>,
+    Path(job_id): Path<Uuid>,
+    Json(body): Json<String>,
+) -> ApiResult<Vec<TestReport>> {
+    // Delete previous reports for the job (idempotent re-upload).
+    sqlx::query("DELETE FROM test_reports WHERE job_id = $1")
+        .bind(job_id)
+        .execute(pool(&state)?)
+        .await
+        .map_err(ApiError::internal)?;
+    let mut reports = Vec::new();
+    for suite in parse_junit(&body) {
+        let row = sqlx::query_as::<_, TestReport>(
+            "INSERT INTO test_reports (id, job_id, suite_name, tests_total, tests_passed, tests_failed, tests_skipped, duration_ms) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+             RETURNING id, job_id, suite_name, tests_total, tests_passed, tests_failed, tests_skipped, duration_ms, created_at",
+        )
+        .bind(Uuid::new_v4())
+        .bind(job_id)
+        .bind(&suite.name)
+        .bind(suite.total)
+        .bind(suite.passed)
+        .bind(suite.failed)
+        .bind(suite.skipped)
+        .bind(suite.duration_ms)
+        .fetch_one(pool(&state)?)
+        .await
+        .map_err(ApiError::internal)?;
+        reports.push(row);
+    }
+    Ok(Json(reports))
+}
+
+#[derive(Debug)]
+struct JunitSuite {
+    name: String,
+    total: i32,
+    passed: i32,
+    failed: i32,
+    skipped: i32,
+    duration_ms: Option<i32>,
+}
+
+/// Extracts `<testsuite ...>` attributes and counts `<testcase>` children with
+/// failure/skipped children. String-scanning keeps the parser allocation-light
+/// and dependency-free.
+fn parse_junit(xml: &str) -> Vec<JunitSuite> {
+    let mut out = Vec::new();
+    // Iterate over each <testsuite ...> ... </testsuite> block by scanning
+    // opening tags and slicing to the matching close.
+    let mut search_from = 0usize;
+    let mut suite_idx = 0;
+    while let Some(open_rel) = xml[search_from..]
+        .find("<testsuite ")
+        .or_else(|| xml[search_from..].find("<testsuite>"))
+    {
+        let open_at = search_from + open_rel;
+        let attrs_start = open_at
+            + if xml[open_at..].starts_with("<testsuite ") {
+                "<testsuite ".len()
+            } else {
+                "<testsuite>".len()
+            };
+        let attrs_end = xml[attrs_start..]
+            .find('>')
+            .map(|e| attrs_start + e)
+            .unwrap_or(xml.len());
+        let attrs = &xml[attrs_start..attrs_end];
+        let body_start = (attrs_end + 1).min(xml.len());
+        let close_at = xml[body_start..]
+            .find("</testsuite>")
+            .map(|e| body_start + e)
+            .unwrap_or(xml.len());
+        let body = &xml[body_start..close_at];
+        suite_idx += 1;
+
+        let get_int = |key: &str| -> Option<i32> {
+            let pat = format!("{key}=\"");
+            let start = attrs.find(&pat)? + pat.len();
+            let rest = &attrs[start..];
+            let end = rest.find('"')?;
+            rest[..end].parse().ok()
+        };
+        let get_float = |key: &str| -> Option<f64> {
+            let pat = format!("{key}=\"");
+            let start = attrs.find(&pat)? + pat.len();
+            let rest = &attrs[start..];
+            let end = rest.find('"')?;
+            rest[..end].parse().ok()
+        };
+        let name = {
+            let pat = "name=\"";
+            attrs.find(pat).and_then(|p| {
+                let rest = &attrs[p + pat.len()..];
+                rest.find('"').map(|e| rest[..e].to_string())
+            })
+        }
+        .unwrap_or_else(|| format!("suite-{suite_idx}"));
+
+        let total_cases = body.matches("<testcase").count() as i32;
+        let failed = (body.matches("<failure").count() + body.matches("<error").count()) as i32;
+        let skipped = body.matches("<skipped").count() as i32;
+        let total = get_int("tests").unwrap_or(total_cases);
+        out.push(JunitSuite {
+            name,
+            total,
+            passed: (total - failed - skipped).max(0),
+            failed,
+            skipped,
+            duration_ms: get_float("time").map(|s| (s * 1000.0) as i32),
+        });
+        search_from = (close_at + "</testsuite>".len()).min(xml.len());
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn parse_junit_extracts_suite_names_and_counts() {
+        let xml = r#"<?xml version="1.0"?>
+<testsuites>
+  <testsuite name="unit::core" tests="4" time="0.845">
+    <testcase name="a"/><testcase name="b"/>
+    <testcase name="c"><failure message="x"/></testcase>
+    <testcase name="d"><skipped/></testcase>
+  </testsuite>
+  <testsuite name="integration::api" tests="2" time="1.9">
+    <testcase name="e"/><testcase name="f"><error message="y"/></testcase>
+  </testsuite>
+</testsuites>"#;
+        let suites = parse_junit(xml);
+        assert_eq!(suites.len(), 2, "expected 2 suites, got {suites:?}");
+        assert_eq!(suites[0].name, "unit::core");
+        assert_eq!(suites[0].total, 4);
+        assert_eq!(suites[0].failed, 1);
+        assert_eq!(suites[0].skipped, 1);
+        assert_eq!(suites[0].passed, 2);
+        assert_eq!(suites[0].duration_ms, Some(845));
+        assert_eq!(suites[1].name, "integration::api");
+        assert_eq!(suites[1].failed, 1);
+        assert_eq!(suites[1].duration_ms, Some(1900));
+    }
+
     use super::*;
 
     #[test]

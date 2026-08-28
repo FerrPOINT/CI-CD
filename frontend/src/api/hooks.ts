@@ -1,6 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, apiRetry } from './client'
 import type {
+  TreeEntry,
+  BlobContent,
+  TagInfo,
+  Release,
+  TestReport,
+
   ApiToken,
   Artifact,
   AuditEvent,
@@ -40,6 +46,11 @@ const KEYS = {
   commits: (repo: string, branch: string) => ['repository-commits', repo, branch] as const,
   comparison: (repo: string, from: string, to: string) => ['repository-comparison', repo, from, to] as const,
   pullRequests: (repo: string) => ['pull-requests', repo] as const,
+  repositoryTree: (repo: string, gitRef: string, path: string) => ['repository-tree', repo, gitRef, path] as const,
+  repositoryBlob: (repo: string, gitRef: string, path: string) => ['repository-blob', repo, gitRef, path] as const,
+  repositoryTags: (repo: string) => ['repository-tags', repo] as const,
+  releases: (repo: string) => ['releases', repo] as const,
+  testReport: (jobId: string) => ['test-report', jobId] as const,
 }
 
 export function useProjects() {
@@ -207,6 +218,72 @@ export function usePullRequests(repo: string | undefined) {
     queryFn: () => api<PullRequest[]>(`/repos/${repositoryPath(repo ?? '')}/pulls`),
     enabled: Boolean(repo),
     retry: apiRetry,
+  })
+}
+
+export function useRepositoryTree(repo: string | undefined, gitRef: string | undefined, path: string | undefined) {
+  return useQuery({
+    queryKey: KEYS.repositoryTree(repo ?? '', gitRef ?? '', path ?? ''),
+    queryFn: () =>
+      api<TreeEntry[]>(`/repos/${repositoryPath(repo ?? '')}/tree?${new URLSearchParams({
+        ...(gitRef ? { ref: gitRef } : {}),
+        ...(path ? { path } : {}),
+      })}`),
+    enabled: !!repo,
+  })
+}
+
+export function useRepositoryBlob(repo: string | undefined, gitRef: string | undefined, path: string) {
+  return useQuery({
+    queryKey: KEYS.repositoryBlob(repo ?? '', gitRef ?? '', path),
+    queryFn: () =>
+      api<BlobContent>(`/repos/${repositoryPath(repo ?? '')}/blob?${new URLSearchParams({
+        ...(gitRef ? { ref: gitRef } : {}),
+        path,
+      })}`),
+    enabled: !!repo && !!path,
+  })
+}
+
+export function useRepositoryTags(repo: string | undefined) {
+  return useQuery({
+    queryKey: KEYS.repositoryTags(repo ?? ''),
+    queryFn: () => api<TagInfo[]>(`/repos/${repositoryPath(repo ?? '')}/tags`),
+    enabled: !!repo,
+  })
+}
+
+export function useReleases(repo: string | undefined) {
+  return useQuery({
+    queryKey: KEYS.releases(repo ?? ''),
+    queryFn: () => api<Release[]>(`/repos/${repositoryPath(repo ?? '')}/releases`),
+    enabled: !!repo,
+  })
+}
+
+export function useCreateRelease(repo: string | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { tag_name: string; name: string; description?: string; prerelease?: boolean }) =>
+      api<Release>(`/repos/${repositoryPath(repo ?? '')}/releases`, { method: 'POST', body: JSON.stringify(input) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.releases(repo ?? '') }),
+  })
+}
+
+export function useDeleteRelease(repo: string | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (tag: string) =>
+      api<{ deleted: string }>(`/repos/${repositoryPath(repo ?? '')}/releases/${encodeURIComponent(tag)}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEYS.releases(repo ?? '') }),
+  })
+}
+
+export function useTestReport(jobId: string | undefined) {
+  return useQuery({
+    queryKey: KEYS.testReport(jobId ?? ''),
+    queryFn: () => api<TestReport[]>(`/jobs/${jobId}/test-report`),
+    enabled: !!jobId,
   })
 }
 

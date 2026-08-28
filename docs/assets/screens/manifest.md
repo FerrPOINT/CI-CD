@@ -45,6 +45,11 @@
 | [32-user-create.png](../../screenshots/32-user-create.png) | Пользователи → «Создать пользователя» | Форма создания пользователя | 1920×1080 |
 | [33-job-logs.png](../../screenshots/33-job-logs.png) | Пайплайн → «Логи» | Панель логов джоба с реальным выводом | 1920×1080 |
 | [34-pipeline-run-form.png](../../screenshots/34-pipeline-run-form.png) | Пайплайны → «Запустить пайплайн» | Форма запуска (git ref) | 1920×1080 |
+| [35-repo-code-tree.png](../../screenshots/35-repo-code-tree.png) | Репозиторий → «Код» | Дерево bare Git-репозитория | 1920×1080 |
+| [36-repo-code-blob.png](../../screenshots/36-repo-code-blob.png) | Репозиторий → Код → `.forge-ci.yml` | Просмотр YAML файла CI | 1920×1080 |
+| [37-repo-tags.png](../../screenshots/37-repo-tags.png) | Репозиторий → «Теги» | Список Git tags | 1920×1080 |
+| [38-releases-create.png](../../screenshots/38-releases-create.png) | Репозиторий → Релизы → «Создать релиз» | Диалог release metadata | 1920×1080 |
+| [39-repo-code-src.png](../../screenshots/39-repo-code-src.png) | Репозиторий → Код → `src` | Навигация по подкаталогу | 1920×1080 |
 
 ## Мобильные версии
 
@@ -55,3 +60,4 @@
 | [m-pipeline-detail.png](../../screenshots/m-pipeline-detail.png) | `/pipelines/:id` | Детали пайплайна — мобильная версия | 375×855 |
 | [m-runners.png](../../screenshots/m-runners.png) | `/runners` | Runners — мобильная версия (карточный layout) | 375×812 |
 | [m-pull-request.png](../../screenshots/m-pull-request.png) | `/repositories/:repo/pulls/:number` | Pull-запрос — мобильная версия | 375×812 |
+| [m-repo-code.png](../../screenshots/m-repo-code.png) | `/repositories/:repo` → Код | Git-дерево на mobile | 375×812 |

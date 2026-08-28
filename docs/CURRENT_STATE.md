@@ -8,7 +8,7 @@
 | Capability | Статус | Границы |
 |---|---|---|
 | Проекты CRUD | ✅ | name/repository_url/default_branch; удаление CASCADE |
-| Git hosting (bare + Smart HTTP) | ✅ | token-auth опционален; push → post-receive → pipeline |
+| Git hosting (bare + Smart HTTP) | ✅ | public/private fetch ACL, token-protected push, code tree/blob, tags/releases; push → post-receive → pipeline |
 | Pipeline/стадии/джобы | ✅ | `.forge-ci.yml` (stages/jobs/image/command) или fallback-шаблон; отмена/повтор |
 | Embedded runner | ✅ | Docker (`forge-job-<id>`) или host shell; стриминг stdout → `job_logs`; cancel через PID-map |
 | Логи | ✅ | append-only, sequence, поллинг |

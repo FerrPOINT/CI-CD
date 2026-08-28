@@ -11,6 +11,10 @@
 
 ### Added
 
+- Git-server parity: code browsing `GET /api/v1/repos/{repo}/tree|blob` (safe bare-repository ref fallback and binary/512 KiB preview guard), tags read API, release CRUD, repository `public`/`private` visibility and Smart HTTP read access control.
+- CI parity: trigger-time pipeline variables stored in `pipelines.variables` and injected into jobs only as `CICD_VAR_<KEY>`; public SVG pipeline badge; JUnit XML report ingest/read API and dashboard summary.
+- Migration `0006_git_ci_details`: `repositories.visibility`, `releases`, `pipelines.variables`, `test_reports`.
+
 - P0 (GitLab/Jenkins parity): `CICD_*` CI variables in every job (`PIPELINE_ID`, `JOB_ID/NAME`, `STAGE_NAME`, `PROJECT_ID/NAME`, `COMMIT_REF/SHA`, `ARTIFACTS_DIR`), shared per-pipeline artifacts directory passed between jobs/stages, job `timeout` DSL (default 1h, kill on expiry), merge gate on protected branches (`projects.protected_branches`, 409 without a success pipeline on the PR head).
 - P1: webhook HMAC-SHA256 signing (`webhooks.secret` → `X-Forge-Signature`), PAT expiry (`api_tokens.expires_at`, `expires_in_days`), SSE live logs `GET /api/v1/jobs/{id}/logs/stream`, DSL `allow_failure` / `when: manual` + `POST /api/v1/jobs/{id}/start` approval gate.
 - Migration 0005_execution_gaps; outbox now emits real domain events on pipeline terminal transitions (fixes dead webhook fan-out); compose passes `CICD_AUTH_SECRET` through to the backend.

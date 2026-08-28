@@ -80,4 +80,9 @@ export {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
+}
+
+function DialogFooter({ className, ...props }: React.ComponentProps<'div'>) {
+  return <div className={'flex flex-col-reverse gap-2 sm:flex-row sm:justify-end ' + (className ?? '')} {...props} />
 }

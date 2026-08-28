@@ -33,7 +33,33 @@ repositories (1) ──── (N) pull_requests (по repository_name)
 |---|---|---|---|---|
 | id | UUID PK | нет | `gen_random_uuid()` | Идентификатор |
 | name | TEXT UNIQUE | нет | — | Имя репозитория (совпадает с именем bare-репо в `CICD_GIT_ROOT`) |
+| visibility | TEXT CHECK | нет | `private` | `private` или `public`; public разрешает Smart HTTP fetch/clone без token, push не разрешает |
 | created_at | TIMESTAMPTZ | нет | `now()` | Время создания |
+
+
+## 0.1a releases
+
+Метаданные релиза поверх существующего Git tag. Удаление release не удаляет Git tag.
+
+| Колонка | Тип | Nullable | Описание |
+|---|---|---|---|
+| id | UUID PK | нет | Идентификатор релиза |
+| repository_name + tag_name | TEXT | нет | Уникальная пара репозитория и Git tag |
+| name / description | TEXT | нет | Публичное название и release notes |
+| prerelease | BOOLEAN | нет | Маркер предрелиза |
+| created_by / created_at | TEXT / TIMESTAMPTZ | да / нет | Аудит автора и времени |
+
+## 0.1b test_reports
+
+Нормализованные агрегаты JUnit XML: один или больше suite на job. Сырые XML-артефакты остаются в artifact storage; таблица содержит только безопасные сводные счётчики.
+
+| Колонка | Тип | Описание |
+|---|---|---|
+| job_id | UUID FK | Job-владелец, `ON DELETE CASCADE` |
+| suite_name | TEXT | Имя `<testsuite>` |
+| tests_total / tests_passed / tests_failed / tests_skipped | INTEGER | Итоги suite |
+| duration_ms | INTEGER NULL | Время из JUnit `time` (секунды → миллисекунды) |
+
 
 ## 0.2 pull_requests
 
@@ -130,6 +156,7 @@ Referenced by:
 | `project_id` | UUID | NOT NULL | — | FK → `projects.id`, CASCADE |
 | `git_ref` | TEXT | NOT NULL | — | Git-реф (ветка, тег, SHA) |
 | `status` | TEXT | NOT NULL | — | Статус: `queued` / `running` / `success` / `failed` / `canceled` |
+| `variables` | JSONB | NOT NULL | `{}` | Значения ручного запуска; runner проецирует только в `CICD_VAR_<UPPER_SNAKE_KEY>` |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | Время создания |
 | `started_at` | TIMESTAMPTZ | NULL | — | Время начала выполнения (при `running`) |
 | `finished_at` | TIMESTAMPTZ | NULL | — | Время завершения (терминальный статус) |

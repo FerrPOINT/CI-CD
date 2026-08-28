@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { useParams, Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
-import { usePipeline, useUpdateJobStatus, useJobLogs, useAppendLog, useCancelPipeline, useRetryPipeline } from '@/api/hooks'
+import { usePipeline, useUpdateJobStatus, useJobLogs, useAppendLog, useCancelPipeline, useRetryPipeline, useTestReport } from '@/api/hooks'
 import { Card } from '@/shared/ui/card'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
+import type { TestReport } from '@/api/types'
 import { Button } from '@/shared/ui/button'
 import { Input } from '@/shared/ui/input'
-import { ChevronRight, Terminal, Play, CheckCircle2, XCircle, Square, Ban, RotateCcw, Package } from 'lucide-react'
+import { ChevronRight, Terminal, ClipboardCheck, Play, CheckCircle2, XCircle, Square, Ban, RotateCcw, Package } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Status } from '@/api/types'
 
@@ -134,6 +136,7 @@ export function PipelineDetailPage() {
           <JobLogPanel jobId={selectedJob.id} logMessage={logMessage} setLogMessage={setLogMessage} />
         </Card>
       )}
+      {selectedJob && <JobTestReportPanel jobId={selectedJob.id} />}
     </div>
   )
 }
@@ -160,4 +163,62 @@ function JobLogPanel({ jobId, logMessage, setLogMessage }: { jobId: string; logM
       </form>
     </div>
   )
+}
+
+
+function JobTestReportPanel({ jobId }: { jobId: string }) {
+  const { t } = useTranslation()
+  const { data: reports = [], isLoading } = useTestReport(jobId)
+  if (isLoading) return null
+  if (reports.length === 0) return null
+  const total = reports.reduce<{ total: number; passed: number; failed: number; skipped: number }>((acc, r) => ({ total: acc.total + r.tests_total, passed: acc.passed + r.tests_passed, failed: acc.failed + r.tests_failed, skipped: acc.skipped + r.tests_skipped }), { total: 0, passed: 0, failed: 0, skipped: 0 })
+  return (
+    <Card className="p-4">
+      <div className="flex items-center gap-2 border-b border-border pb-3">
+        <ClipboardCheck className="h-4 w-4 text-accent" />
+        <h3 className="text-sm font-semibold">{t('jobs.testReport', 'Тест-отчёты')} — {selectedLabel(total)}</h3>
+      </div>
+      <div className="mt-3 grid gap-3 md:hidden">
+        {reports.map((r: TestReport) => (
+          <Card key={r.id} className="p-3 text-sm">
+            <p className="font-medium">{r.suite_name}</p>
+            <p className="mt-1 text-xs text-text-muted">
+              ✓{r.tests_passed} ✗{r.tests_failed} ⇒{r.tests_skipped} / {r.tests_total}
+              {r.duration_ms != null && ` · ${r.duration_ms}ms`}
+            </p>
+          </Card>
+        ))}
+      </div>
+      <div className="mt-3 hidden overflow-hidden md:block">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t('jobs.suite', 'Набор')}</TableHead>
+              <TableHead>✓</TableHead>
+              <TableHead>✗</TableHead>
+              <TableHead>⇢</TableHead>
+              <TableHead>{t('jobs.total', 'Всего')}</TableHead>
+              <TableHead>{t('jobs.duration', 'Время')}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {reports.map((r: TestReport) => (
+              <TableRow key={r.id}>
+                <TableCell className="font-medium">{r.suite_name}</TableCell>
+                <TableCell className="text-emerald-500">{r.tests_passed}</TableCell>
+                <TableCell className={r.tests_failed > 0 ? 'text-destructive' : ''}>{r.tests_failed}</TableCell>
+                <TableCell className="text-text-muted">{r.tests_skipped}</TableCell>
+                <TableCell>{r.tests_total}</TableCell>
+                <TableCell className="text-text-muted">{r.duration_ms != null ? `${r.duration_ms}ms` : '-'}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </Card>
+  )
+
+  function selectedLabel(sum: { total: number; passed: number; failed: number; skipped: number }): string {
+    return `${sum.passed}/${sum.total}`
+  }
 }

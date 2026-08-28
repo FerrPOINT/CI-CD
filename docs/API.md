@@ -367,6 +367,30 @@ curl -sS http://127.0.0.1:22801/api/v1/pipelines/$PIPELINE_ID
 
 ---
 
+
+### Git-код, теги и релизы
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/repos/{repo}/tree?ref=&path=` | Содержимое каталога bare-репозитория |
+| GET | `/repos/{repo}/blob?ref=&path=` | Текст файла, до 512 KiB; binary возвращает флаг без content |
+| GET | `/repos/{repo}/tags` | Git tags, отсортированные по дате |
+| GET/POST | `/repos/{repo}/releases` | Список / создание или обновление release metadata |
+| GET/DELETE | `/repos/{repo}/releases/{tag}` | Один release / удаление metadata (Git tag сохраняется) |
+
+`ref` проходит только в Git через уже валидированный bare repository; пустой `HEAD` автоматически берёт `main`, затем `master`. Для Smart HTTP fetch public repository доступен без `CICD_GIT_TOKEN`; private repository требует token. `git-receive-pack` требует token всегда, если token сконфигурирован.
+
+### Дополнительные CI-результаты
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/pipelines/{pipeline_id}/badge.svg` | Public read-only SVG status badge |
+| GET | `/pipelines/{pipeline_id}/variables` | Сохранённые variables запуска |
+| GET/POST | `/jobs/{job_id}/test-report` | JUnit suite summaries / загрузка XML JSON-строкой |
+
+`POST /projects/{project_id}/pipelines` дополнительно принимает `{ "variables": { "deploy_env": "staging" } }`. Runner преобразует только в `CICD_VAR_DEPLOY_ENV`; исходные ключи не становятся произвольными process env. JUnit endpoint принимает JSON string с XML и сохраняет только имя suite, счётчики и длительность.
+
+
 ### Jobs
 
 | Метод | Путь | Назначение |

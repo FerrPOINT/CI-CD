@@ -39,6 +39,52 @@ export interface RepositoryRef {
   target: string
 }
 
+export interface TreeEntry {
+  path: string
+  name: string
+  kind: 'blob' | 'tree' | string
+  size: number | null
+  sha: string
+}
+
+export interface BlobContent {
+  path: string
+  sha: string
+  size: number
+  content: string
+  binary: boolean
+  truncated: boolean
+}
+
+export interface TagInfo {
+  name: string
+  sha: string
+  message: string
+}
+
+export interface Release {
+  id: string
+  repository_name: string
+  tag_name: string
+  name: string
+  description: string
+  prerelease: boolean
+  created_by: string | null
+  created_at: string
+}
+
+export interface TestReport {
+  id: string
+  job_id: string
+  suite_name: string
+  tests_total: number
+  tests_passed: number
+  tests_failed: number
+  tests_skipped: number
+  duration_ms: number | null
+  created_at: string
+}
+
 export interface Commit {
   sha: string
   short_sha: string

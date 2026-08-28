@@ -21,6 +21,32 @@ pub struct RefInfo {
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
+pub struct TreeEntry {
+    pub path: String,
+    pub name: String,
+    pub kind: String, // "blob" | "tree"
+    pub size: Option<i64>,
+    pub sha: String,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct BlobContent {
+    pub path: String,
+    pub sha: String,
+    pub size: i64,
+    pub content: String,
+    pub binary: bool,
+    pub truncated: bool,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct TagInfo {
+    pub name: String,
+    pub sha: String,
+    pub message: String,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
 pub struct CommitInfo {
     pub sha: String,
     pub short_sha: String,
@@ -566,4 +592,181 @@ async fn resolve_repo_path(state: &AppState, raw: &str) -> Result<PathBuf, ApiEr
         return Err(ApiError::not_found());
     }
     Ok(state.git.root.join(format!("{name}.git")))
+}
+
+/// Resolves a user ref for bare repos: HEAD may be unset after fresh pushes,
+/// so fall back to main, then master.
+async fn resolve_view_ref(path: &std::path::Path, raw: &str) -> String {
+    for candidate in [raw, "main", "master"] {
+        let ok = tokio::process::Command::new("git")
+            .arg(format!("--git-dir={}", path.display()))
+            .args(["rev-parse", "--verify", &format!("{candidate}^{{commit}}")])
+            .output()
+            .await
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if ok {
+            return candidate.to_string();
+        }
+    }
+    raw.to_string()
+}
+
+// ---- Code browsing: tree + blob (P0 git-server parity) ----
+
+#[utoipa::path(get, path = "/api/v1/repos/{repo}/tree", tag = "git", params(("repo" = String, Path), ("ref" = Option<String>, Query), ("path" = Option<String>, Query)), responses((status = 200, body = [TreeEntry])))]
+pub async fn list_tree(
+    State(state): State<std::sync::Arc<AppState>>,
+    AxumPath(repo): AxumPath<String>,
+    axum::extract::Query(params): axum::extract::Query<TreeQuery>,
+) -> Result<Json<Vec<TreeEntry>>, ApiError> {
+    let path = resolve_repo_path(&state, &repo).await?;
+    let git_ref = params
+        .git_ref
+        .as_deref()
+        .filter(|r| !r.is_empty())
+        .unwrap_or("HEAD");
+    let git_ref = resolve_view_ref(&path, git_ref).await;
+    let subpath = params.path.as_deref().unwrap_or("");
+    let spec = if subpath.is_empty() {
+        git_ref.to_string()
+    } else {
+        format!("{git_ref}:{subpath}")
+    };
+    let output = tokio::process::Command::new("git")
+        .arg(format!("--git-dir={}", path.display()))
+        .args(["ls-tree", "-l", "--", &spec])
+        .output()
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        return Err(ApiError::not_found_named(format!(
+            "tree not found: {}",
+            err.trim()
+        )));
+    }
+    let entries: Vec<TreeEntry> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            // "<mode> <type> <sha> <size>\t<path>"
+            let (meta, name) = line.split_once('\t')?;
+            let mut parts = meta.split_whitespace();
+            let _mode = parts.next()?;
+            let kind = parts.next()?;
+            let sha = parts.next()?.to_string();
+            let size = match parts.next()? {
+                "-" => None,
+                s => s.parse().ok(),
+            };
+            let name = name.to_string();
+            Some(TreeEntry {
+                path: name.clone(),
+                name: name.rsplit('/').next().unwrap_or(&name).to_string(),
+                kind: kind.to_string(),
+                size,
+                sha,
+            })
+        })
+        .collect();
+    Ok(Json(entries))
+}
+
+#[derive(serde::Deserialize, utoipa::IntoParams)]
+pub struct TreeQuery {
+    #[serde(rename = "ref")]
+    git_ref: Option<String>,
+    path: Option<String>,
+}
+
+#[utoipa::path(get, path = "/api/v1/repos/{repo}/blob", tag = "git", params(("repo" = String, Path), ("ref" = Option<String>, Query), ("path" = String, Query)), responses((status = 200, body = BlobContent)))]
+pub async fn get_blob(
+    State(state): State<std::sync::Arc<AppState>>,
+    AxumPath(repo): AxumPath<String>,
+    axum::extract::Query(params): axum::extract::Query<BlobQuery>,
+) -> Result<Json<BlobContent>, ApiError> {
+    let path = resolve_repo_path(&state, &repo).await?;
+    let git_ref = params
+        .git_ref
+        .as_deref()
+        .filter(|r| !r.is_empty())
+        .unwrap_or("HEAD");
+    let git_ref = resolve_view_ref(&path, git_ref).await;
+    let spec = format!("{git_ref}:{}", params.path);
+    let output = tokio::process::Command::new("git")
+        .arg(format!("--git-dir={}", path.display()))
+        .args(["show", &spec])
+        .output()
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if !output.status.success() {
+        return Err(ApiError::not_found_named("blob not found"));
+    }
+    let bytes = output.stdout;
+    let binary = bytes.iter().take(8000).any(|b| *b == 0);
+    const MAX_LEN: usize = 512 * 1024;
+    let truncated = bytes.len() > MAX_LEN;
+    let content = if binary {
+        String::new()
+    } else {
+        String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_LEN)]).into_owned()
+    };
+    // Resolve blob sha for the response.
+    let sha_output = tokio::process::Command::new("git")
+        .arg(format!("--git-dir={}", path.display()))
+        .args(["rev-parse", &spec])
+        .output()
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    let sha = String::from_utf8_lossy(&sha_output.stdout)
+        .trim()
+        .to_string();
+    Ok(Json(BlobContent {
+        path: params.path,
+        sha,
+        size: bytes.len() as i64,
+        content,
+        binary,
+        truncated,
+    }))
+}
+
+#[derive(serde::Deserialize, utoipa::IntoParams)]
+pub struct BlobQuery {
+    #[serde(rename = "ref")]
+    git_ref: Option<String>,
+    path: String,
+}
+
+#[utoipa::path(get, path = "/api/v1/repos/{repo}/tags", tag = "git", params(("repo" = String, Path)), responses((status = 200, body = [TagInfo])))]
+pub async fn list_tags(
+    State(state): State<std::sync::Arc<AppState>>,
+    AxumPath(repo): AxumPath<String>,
+) -> Result<Json<Vec<TagInfo>>, ApiError> {
+    let path = resolve_repo_path(&state, &repo).await?;
+    let output = tokio::process::Command::new("git")
+        .arg(format!("--git-dir={}", path.display()))
+        .args([
+            "for-each-ref",
+            "--sort=-creatordate",
+            "--format=%(refname:short) %(objectname) %(contents:subject)",
+            "refs/tags",
+        ])
+        .output()
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if !output.status.success() {
+        return Err(ApiError::bad_request("git for-each-ref failed"));
+    }
+    let tags: Vec<TagInfo> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.splitn(3, ' ');
+            let name = parts.next()?.to_string();
+            let sha = parts.next()?.to_string();
+            let message = parts.next().unwrap_or("").to_string();
+            Some(TagInfo { name, sha, message })
+        })
+        .collect();
+    Ok(Json(tags))
 }

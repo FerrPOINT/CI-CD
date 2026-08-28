@@ -59,6 +59,13 @@ const shots = [
   { name: '32-user-create.png', path: '/users', desktop: true, click: 'button:has-text("Создать пользователя")' },
   { name: '33-job-logs.png', path: `/pipelines/${pipeline.id}`, desktop: true, wait: 1500, click: 'button:has-text("Логи")', settle: 1200 },
   { name: '34-pipeline-run-form.png', path: `/projects/${platform.id}/pipelines`, desktop: true, wait: 800, click: 'button:has-text("Запустить пайплайн")', settle: 400 },
+  // --- Git-server/CI parity: code, tags, releases, JUnit results ---
+  { name: '35-repo-code-tree.png', path: '/repositories/platform-core', desktop: true, wait: 1200, click: 'button:has-text("Код")', settle: 500 },
+  { name: '36-repo-code-blob.png', path: '/repositories/platform-core', desktop: true, wait: 1200, click: 'button:has-text("Код")', click2: 'button:has-text(".forge-ci.yml")', settle: 700 },
+  { name: '37-repo-tags.png', path: '/repositories/platform-core', desktop: true, wait: 1200, click: 'button:has-text("Теги")', settle: 500 },
+  { name: '38-releases-create.png', path: '/repositories/platform-core', desktop: true, wait: 1200, click: 'button:has-text("Релизы")', click2: 'button:has-text("Создать релиз")', settle: 500 },
+  { name: '39-repo-code-src.png', path: '/repositories/platform-core', desktop: true, wait: 1200, click: 'button:has-text("Код")', click2: 'button:has-text("src")', settle: 500 },
+  { name: 'm-repo-code.png', path: '/repositories/platform-core', mobile: true, wait: 1200, click: 'button:has-text("Код")', settle: 400 },
   { name: 'm-dashboard.png', path: '/', mobile: true, wait: 1200 },
   { name: 'm-projects.png', path: '/projects', mobile: true },
   { name: 'm-pipeline-detail.png', path: `/pipelines/${pipeline.id}`, mobile: true, wait: 1500 },

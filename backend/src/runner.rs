@@ -121,6 +121,19 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
 
     let command_shell = format!("{} 2>&1", job.command);
 
+    // P1-8: pipeline run variables -> CICD_VAR_<KEY>.
+    let run_vars: serde_json::Map<String, serde_json::Value> =
+        sqlx::query_scalar::<_, Option<serde_json::Value>>(
+            "SELECT variables FROM pipelines WHERE id = $1",
+        )
+        .bind(job.pipeline_id)
+        .fetch_one(&pool)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+
     // P0-1: GitLab/Jenkins-style CI variables, CICD_-prefixed.
     let mut envs: Vec<(String, String)> = vec![
         ("CICD_PIPELINE_ID".into(), job.pipeline_id.to_string()),
@@ -143,6 +156,15 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
             pipeline_artifacts.display().to_string(),
         ),
     ];
+    for (key, value) in &run_vars {
+        if let Ok(s) = serde_json::to_string(value) {
+            let trimmed = s.trim_matches('"').to_string();
+            envs.push((
+                format!("CICD_VAR_{}", key.to_uppercase().replace('-', "_")),
+                trimmed,
+            ));
+        }
+    }
     envs.extend(secrets.iter().cloned());
 
     let mut child = if runner_mode() == RunnerMode::Docker {

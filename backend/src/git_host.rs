@@ -39,6 +39,7 @@ impl Default for GitConfig {
 pub struct Repository {
     pub id: Uuid,
     pub name: String,
+    pub visibility: String,
     pub created_at: DateTime<Utc>,
 }
 
@@ -86,7 +87,12 @@ pub async fn create_repository_core(
     pool: &PgPool,
     config: &GitConfig,
     raw_name: &str,
+    visibility: Option<&str>,
 ) -> Result<Repository, ApiError> {
+    let visibility = match visibility.unwrap_or("private") {
+        "public" => "public".to_string(),
+        _ => "private".to_string(),
+    };
     let name = validate_repo_name(raw_name).map_err(ApiError::bad_request)?;
     let path = repo_path(&config.root, &name);
     if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM repositories WHERE name = $1)")
@@ -128,10 +134,11 @@ pub async fn create_repository_core(
         }
     }
     let repo = sqlx::query_as::<_, Repository>(
-        "INSERT INTO repositories (id, name) VALUES ($1, $2) RETURNING id, name, created_at",
+        "INSERT INTO repositories (id, name, visibility) VALUES ($1, $2, $3) RETURNING id, name, visibility, created_at",
     )
     .bind(Uuid::new_v4())
     .bind(&name)
+    .bind(&visibility)
     .fetch_one(pool)
     .await
     .map_err(ApiError::internal)?;
@@ -140,7 +147,7 @@ pub async fn create_repository_core(
 
 pub async fn list_repositories_core(pool: &PgPool) -> Result<Vec<Repository>, ApiError> {
     sqlx::query_as::<_, Repository>(
-        "SELECT id, name, created_at FROM repositories ORDER BY created_at DESC",
+        "SELECT id, name, visibility, created_at FROM repositories ORDER BY created_at DESC",
     )
     .fetch_all(pool)
     .await
@@ -167,6 +174,46 @@ pub async fn delete_repository_core(
 }
 
 /// Checks basic-auth (any username + token as password) or `x-git-token`.
+/// Clone/fetch is open for public repos; private repos keep the token gate.
+/// Push (receive-pack) always requires the token.
+pub async fn check_repo_access(
+    state: &std::sync::Arc<AppState>,
+    repo: &str,
+    headers: &HeaderMap,
+) -> Result<(), ApiError> {
+    let is_push = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.contains("git-receive-pack"))
+        .unwrap_or(false)
+        || headers
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.contains("git-receive-pack"))
+            .unwrap_or(false);
+    if is_push {
+        return check_git_auth(&state.git, headers);
+    }
+    // Public read check (best-effort, falls back to token gate on any error).
+    let visibility = async {
+        match state.pool.as_ref() {
+            Some(pool) => sqlx::query_scalar::<_, String>(
+                "SELECT visibility FROM repositories WHERE name = $1",
+            )
+            .bind(repo.trim_end_matches(".git"))
+            .fetch_one(pool)
+            .await
+            .ok(),
+            None => None,
+        }
+    }
+    .await;
+    match visibility.as_deref() {
+        Some("public") => Ok(()),
+        _ => check_git_auth(&state.git, headers),
+    }
+}
+
 pub fn check_git_auth(config: &GitConfig, headers: &HeaderMap) -> Result<(), ApiError> {
     let Some(expected) = config.token.as_deref() else {
         return Ok(());
@@ -231,7 +278,7 @@ pub async fn git_info_refs(
     Query(params): Query<InfoRefsParams>,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(e) = check_git_auth(&state.git, &headers) {
+    if let Err(e) = check_repo_access(&state, &repo, &headers).await {
         return e.into_response();
     }
     let service = match params.service.as_deref() {
@@ -352,7 +399,7 @@ pub async fn git_service_endpoint(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    if let Err(e) = check_git_auth(&state.git, &headers) {
+    if let Err(e) = check_repo_access(&state, &repo, &headers).await {
         return e.into_response();
     }
     let service = headers
@@ -478,6 +525,8 @@ pub async fn internal_git_push(
 #[derive(Deserialize)]
 pub struct CreateRepositoryBody {
     pub name: String,
+    #[serde(default)]
+    pub visibility: Option<String>,
 }
 
 pub async fn create_repository(
@@ -485,7 +534,8 @@ pub async fn create_repository(
     axum::Json(body): axum::Json<CreateRepositoryBody>,
 ) -> Result<axum::Json<Repository>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
-    let repo = create_repository_core(pool, &state.git, &body.name).await?;
+    let repo =
+        create_repository_core(pool, &state.git, &body.name, body.visibility.as_deref()).await?;
     Ok(axum::Json(repo))
 }
 
