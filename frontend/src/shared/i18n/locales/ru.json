@@ -7,7 +7,6 @@
     "projects": "Проекты",
     "pipelines": "Пайплайны",
     "repositories": "Репозитории",
-    "admin": "Администрирование",
     "settings": "Настройки",
     "runners": "Runner-ы",
     "users": "Пользователи",
@@ -154,8 +153,16 @@
     "dismiss": "Закрыть",
     "create": "Создать"
   },
+  "capability": {
+    "currentVerified": "Проверено сейчас",
+    "currentMvp": "Проверенный MVP",
+    "configurationOnly": "Только конфигурация",
+    "targetApproved": "Target утверждён"
+  },
   "runners": {
     "title": "Runner-ы",
+    "capabilityTitle": "Реестр runner-ов",
+    "capabilityDescription": "Сейчас экран хранит runner-ы, теги, статус и heartbeat для операционного инвентаря. Выдача job по lease и внешний runner protocol остаются target; выполнение делает встроенный runner.",
     "register": "Зарегистрировать runner",
     "name": "Имя",
     "tags": "Теги (через запятую)",
@@ -170,7 +177,7 @@
     "status_online": "Онлайн",
     "status_offline": "Оффлайн",
     "status_paused": "Пауза",
-    "deleteWarning": "Runner будет удалён из реестра. Активные lease завершатся с ошибкой."
+    "deleteWarning": "Runner будет удалён из реестра. В текущем MVP это не останавливает embedded runner; lease-based dispatch остаётся target."
   },
   "secrets": {
     "title": "Секреты проекта",
@@ -214,6 +221,8 @@
   },
   "schedules": {
     "title": "Расписания",
+    "capabilityTitle": "Плановые запуски MVP",
+    "capabilityDescription": "Включённые расписания проверяются backend worker-ом примерно раз в минуту. Полная cron-семантика, восстановление пропущенных запусков и история доставок остаются target.",
     "create": "Создать расписание",
     "cron": "Cron-выражение",
     "gitRef": "Git ref",
@@ -227,6 +236,8 @@
   },
   "webhooks": {
     "title": "Webhook-и",
+    "capabilityTitle": "Исходящие webhook-и MVP",
+    "capabilityDescription": "Финальные события pipeline доставляются через outbox с базовыми повторами и опциональным HMAC. Replay, dead letters и полная история доставок остаются target.",
     "create": "Добавить webhook",
     "url": "URL",
     "events": "События (через запятую)",
@@ -240,6 +251,8 @@
   },
   "notifications": {
     "title": "Уведомления",
+    "capabilityTitle": "Каналы уведомлений",
+    "capabilityDescription": "Сейчас сохраняется только конфигурация каналов. Email/Slack/SSE sender и история доставок ещё не реализованы.",
     "add": "Добавить канал",
     "channelPlaceholder": "slack",
     "targetPlaceholder": "https://hooks.slack.com/...",
@@ -289,6 +302,32 @@
     "copied": "Скопировано",
     "copyWarning": "Скопируйте токен сейчас — он больше не будет показан.",
     "empty": "API-токенов нет."
+  },
+  "settings": {
+    "title": "Настройки",
+    "description": "Системный срез runtime-конфигурации Forge CI/CD.",
+    "api": "API",
+    "git": "Git",
+    "database": "База данных",
+    "envVars": "Переменные окружения CICD_",
+    "version": "Версия",
+    "apiPort": "API и Git Smart HTTP",
+    "dashboardPort": "Dashboard",
+    "storagePath": "Путь хранилища",
+    "httpPort": "HTTP-порт Git",
+    "engine": "Движок",
+    "port": "Порт",
+    "env": {
+      "databaseUrl": "Строка подключения PostgreSQL",
+      "bind": "Адрес API/Git, по умолчанию 0.0.0.0:22801",
+      "authSecret": "Включает JWT/PAT auth; без него trusted-network режим",
+      "secretsKey": "Base64 AES-ключ для секретов проектов",
+      "gitRoot": "Путь к bare-репозиториям",
+      "gitToken": "Опциональный токен Git Smart HTTP",
+      "gitInternalToken": "Внутренний токен post-receive hook",
+      "artifactsDir": "Локальное хранилище артефактов",
+      "runnerMode": "Режим embedded runner: docker или host"
+    }
   },
   "dashboard": {
     "projects": "Проекты",

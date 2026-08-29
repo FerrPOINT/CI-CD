@@ -6,7 +6,6 @@ const DashboardPage = lazy(() => import('@/pages/dashboard').then(m => ({ defaul
 const ProjectsPage = lazy(() => import('@/pages/projects').then(m => ({ default: m.ProjectsPage })))
 const PipelinesPage = lazy(() => import('@/pages/pipelines').then(m => ({ default: m.PipelinesPage })))
 const PipelineDetailPage = lazy(() => import('@/pages/pipeline-detail').then(m => ({ default: m.PipelineDetailPage })))
-const AdminPage = lazy(() => import('@/pages/admin').then(m => ({ default: m.AdminPage })))
 const RepositoriesPage = lazy(() => import('@/pages/repositories').then(m => ({ default: m.RepositoriesPage })))
 const RepositoryBrowserPage = lazy(() => import('@/pages/repository-browser').then(m => ({ default: m.RepositoryBrowserPage })))
 const ComparePage = lazy(() => import('@/pages/compare').then(m => ({ default: m.ComparePage })))
@@ -38,7 +37,6 @@ export const router = createBrowserRouter([
       { path: '/projects', element: withSuspense(<ProjectsPage />) },
       { path: '/projects/:projectId/pipelines', element: withSuspense(<PipelinesPage />) },
       { path: '/pipelines/:pipelineId', element: withSuspense(<PipelineDetailPage />) },
-      { path: '/admin', element: withSuspense(<AdminPage />) },
       { path: '/repositories', element: withSuspense(<RepositoriesPage />) },
       { path: '/repositories/:repo', element: withSuspense(<RepositoryBrowserPage />) },
       { path: '/repositories/:repo/compare', element: withSuspense(<ComparePage />) },

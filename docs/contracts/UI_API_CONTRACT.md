@@ -8,9 +8,9 @@
 
 | Область | Правило |
 |---|---|
-| Источник DTO | Только `openapi/openapi.yaml`; generated output расположен в `frontend/src/shared/api/generated/`. |
+| Источник DTO | Только `openapi/openapi.yaml`; generated schema расположен в `frontend/src/api/schema.d.ts`. |
 | Generated code | Не редактируется вручную; regeneration и `git diff --exit-code` обязательны в CI. |
-| Handwritten transport | `frontend/src/shared/api/client.ts` оборачивает generated transport для headers, error decoding, binary upload/download и SSE. |
+| Handwritten transport | `frontend/src/api/client.ts` и feature-level wrappers оборачивают generated schema для headers, error decoding, binary upload/download и SSE. Generated transport остаётся target. |
 | UI policy | Query keys, cache invalidation, retry, redirect, toast и presentation errors не генерируются. |
 | Raw fetch | Page, widget и feature не вызывают raw `fetch`; используют entity/feature API поверх typed transport. |
 | DTO duplication | Для migrated operation запрещены ручные DTO и hand-written serialization. |

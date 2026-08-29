@@ -2,18 +2,18 @@
 
 ## Overview
 
-REST API первой версии Forge CI/CD. Все endpoint возвращают JSON. Контрольная плоскость: создание проектов, запуск пайплайнов, переходы статусов задач, append-only логи.
+REST API первой версии Forge CI/CD. Контрольная плоскость использует JSON; Git Smart HTTP, artifact download, SSE logs и `/metrics` имеют собственные content types. Основные группы: проекты, запуск пайплайнов, переходы статусов задач, append-only логи, platform resources, auth и Git hosting.
 
-> **Source of truth:** актуальная реализация в `backend/src/api.rs`. Документация ниже — для контекста, но при расхождении приоритет у исходного кода.
+> **Source of truth:** актуальная реализация и OpenAPI-аннотации в `backend/src/api.rs`, `backend/src/platform.rs`, `backend/src/git_host.rs`, `backend/src/pulls.rs`; committed contract — `openapi/openapi.yaml`.
 
 ## Базовая информация
 
 - Base URL: `http://{host}:22801/api/v1`
 - Content-Type: `application/json`
-- Auth: не реализована в текущей версии (Phase 1 — TODO).
+- Auth: conditional. Без непустого `CICD_AUTH_SECRET` API работает в trusted-network режиме; с секретом большинство endpoint-ов требует `Authorization: Bearer <JWT-or-PAT>`.
 - Версионирование: path-based `/api/v1`.
 - Сериализация: `serde_json`, `snake_case` для enum-значений статусов.
-- Ошибки: `{"error": "message"}` с соответствующим HTTP статусом.
+- Ошибки: `{"error":{"code":"...","message":"...","request_id":"..."}}` с соответствующим HTTP статусом и header `x-request-id`.
 
 ## Коды ответов
 
@@ -21,7 +21,11 @@ REST API первой версии Forge CI/CD. Все endpoint возвраща
 |---|---|
 | 200 OK | Успешный GET, успешный POST с результатом |
 | 400 Bad Request | Невалидный ввод, невалидный transition |
+| 401 Unauthorized | Отсутствует или невалиден Bearer token при включённом `CICD_AUTH_SECRET` |
+| 403 Forbidden | Роль principal не допускает route |
 | 404 Not Found | Ресурс не найден |
+| 409 Conflict | Недопустимое состояние операции |
+| 429 Too Many Requests | Login rate limit |
 | 500 Internal Server Error | Ошибка БД |
 | 503 Service Unavailable | БД недоступна |
 
@@ -34,6 +38,8 @@ REST API первой версии Forge CI/CD. Все endpoint возвраща
 | Метод | Путь | Назначение |
 |---|---|---|
 | GET | `/health` | Health-check сервиса |
+| GET | `/openapi.json` | OpenAPI JSON document |
+| GET | `/metrics` | Prometheus text exposition, полный путь без `/api/v1` |
 
 #### GET /api/v1/health
 
@@ -52,6 +58,48 @@ REST API первой версии Forge CI/CD. Все endpoint возвраща
 curl -sS http://127.0.0.1:22801/api/v1/health
 ```
 
+#### GET /api/v1/openapi.json
+
+Возвращает текущий OpenAPI document в JSON-формате. Не требует БД.
+
+#### GET /metrics
+
+Возвращает Prometheus text exposition. В MVP endpoint не имеет отдельной production-grade protection; используйте общую сетевую/auth boundary.
+
+---
+
+### Auth
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| POST | `/auth/login` | Выдать access/refresh tokens |
+| POST | `/auth/refresh` | Обновить пару токенов |
+
+Auth enforcement включается только если задан непустой `CICD_AUTH_SECRET`. Access token — JWT HS256 на 15 минут; refresh token хранится hash-ом в `sessions`. PAT `cicd_...` принимается как Bearer token при включённом enforcement.
+
+#### POST /api/v1/auth/login
+
+**Request body:**
+```json
+{"username":"admin","password":"..."}
+```
+
+**Response 200:**
+```json
+{"access_token":"...","expires_at":1787859000,"refresh_token":"..."}
+```
+
+**Errors:** `400` — пустой username/password; `401` — credential invalid или user disabled; `429` — login rate limit.
+
+#### POST /api/v1/auth/refresh
+
+**Request body:**
+```json
+{"username":"","password":"","refresh_token":"..."}
+```
+
+**Response 200:** структура `TokenPair`, как у login.
+
 ---
 
 ### Projects
@@ -66,7 +114,7 @@ curl -sS http://127.0.0.1:22801/api/v1/health
 
 #### GET /api/v1/projects
 
-Возвращает список всех проектов, отсортированных по `created_at DESC`.
+Возвращает список проектов, отсортированных по `created_at DESC`. Query params: `limit` и `offset`, лимит capped до 200.
 
 **Response 200:**
 ```json
@@ -83,7 +131,7 @@ curl -sS http://127.0.0.1:22801/api/v1/health
 
 **curl:**
 ```bash
-curl -sS http://127.0.0.1:22801/api/v1/projects
+curl -sS 'http://127.0.0.1:22801/api/v1/projects?limit=50&offset=0'
 ```
 
 #### POST /api/v1/projects
@@ -199,7 +247,7 @@ curl -sS -X DELETE http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID
 
 #### GET /api/v1/projects/{project_id}/pipelines
 
-Возвращает последние 50 пайплайнов проекта, отсортированные по `created_at DESC`.
+Возвращает пайплайны проекта, отсортированные по `created_at DESC`. Query params: `limit` и `offset`, лимит capped до 200.
 
 **Path params:**
 
@@ -233,7 +281,7 @@ curl -sS http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines
 
 #### POST /api/v1/projects/{project_id}/pipelines
 
-Запускает новый пайплайн для указанного Git-рефа. Создаёт 3 стадии (build/test/deploy) с одной задачей в каждой (template pipeline). Все задачи — в статусе `queued`.
+Запускает новый пайплайн для указанного Git-рефа. Backend пытается прочитать `.forge-ci.yml` из локального bare repository; если файл недоступен, создаёт fallback build/test/deploy template. Все задачи — в статусе `queued`.
 
 **Path params:**
 
@@ -396,7 +444,9 @@ curl -sS http://127.0.0.1:22801/api/v1/pipelines/$PIPELINE_ID
 | Метод | Путь | Назначение |
 |---|---|---|
 | POST | `/jobs/{job_id}/status` | Смена статуса задачи |
+| POST | `/jobs/{job_id}/start` | Старт manual job |
 | GET | `/jobs/{job_id}/logs` | Список логов задачи |
+| GET | `/jobs/{job_id}/logs/stream` | SSE stream логов |
 | POST | `/jobs/{job_id}/logs` | Добавление строки лога |
 
 #### POST /api/v1/jobs/{job_id}/status
@@ -505,6 +555,15 @@ curl -sS -X POST http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/status \
 curl -sS http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/logs
 ```
 
+#### GET /api/v1/jobs/{job_id}/logs/stream
+
+Возвращает `text/event-stream`: сначала существующие строки с `sequence > after`, затем новые строки при polling backend. Query param `after` опционален; default `-1`. При terminal status отправляется event `done`.
+
+**curl:**
+```bash
+curl -N 'http://127.0.0.1:22801/api/v1/jobs/'"$JOB_ID"'/logs/stream?after=0'
+```
+
 #### POST /api/v1/jobs/{job_id}/logs
 
 Добавляет строку лога. `sequence` вычисляется сервером: `COALESCE(MAX(sequence), 0) + 1`.
@@ -548,6 +607,16 @@ curl -sS -X POST http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/logs \
   -H 'content-type: application/json' \
   -d '{"message":"Build step completed"}'
 ```
+
+#### POST /api/v1/jobs/{job_id}/start
+
+Стартует manual job (`manual = true`) и возвращает:
+
+```json
+{"started": true}
+```
+
+**Errors:** `404` — job не найден; `409` — job не manual или уже стартовал.
 
 ---
 
@@ -684,7 +753,7 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 
 ## Platform endpoints (MVP)
 
-> **Security note:** auth/RBAC is not enforced yet (Phase 1 — TODO). All endpoints below are unauthenticated in the current MVP. Use a reverse proxy or network isolation to restrict access in shared environments.
+> **Security note:** auth/RBAC enforcement включается только при непустом `CICD_AUTH_SECRET`. Без него все endpoints ниже работают в trusted-network режиме; с ним применяются JWT/PAT и глобальные route roles. Project membership, scoped PAT и tenant isolation ещё target.
 
 ### Runners
 
@@ -735,7 +804,7 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 | PATCH | `/schedules/{schedule_id}` | Обновить |
 | DELETE | `/schedules/{schedule_id}` | Удалить |
 
-> Cron — стандартное 5-полей выражение (`*/5 * * * *`). Исполнение расписаний (cron-scheduler) не реализовано в MVP — только хранение и API.
+> Cron хранится как 5-польная строка (`*/5 * * * *`). Текущий scheduler — MVP: примерно раз в минуту запускает enabled записи, не реализуя полную cron-семантику.
 
 ### Webhooks
 
@@ -745,7 +814,7 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 | POST | `/projects/{project_id}/webhooks` | Создать (url, events[], enabled) |
 | DELETE | `/webhooks/{webhook_id}` | Удалить |
 
-> Отправка webhook-ов при событиях не реализована в MVP — только хранение конфигурации.
+> Outgoing webhook delivery реализована для terminal pipeline events через `domain_events`/`outbox_messages`, basic retry/backoff и optional HMAC secret. Delivery history/replay/dead letters остаются target.
 
 ### Notifications
 
@@ -774,7 +843,7 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 | POST | `/users` | Создать (username, role: admin/maintainer/developer/viewer, enabled) |
 | PATCH | `/users/{user_id}` | Обновить |
 
-> Auth не реализован — пользователи хранятся как модель для будущего RBAC. Пароли не хранятся.
+> Users, `user_credentials` и sessions используются текущим auth middleware при `CICD_AUTH_SECRET`; роли глобальные.
 
 ### API Tokens
 
@@ -784,7 +853,7 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 | POST | `/api-tokens` | Создать (name, user_id?) → возвращает `value` один раз |
 | DELETE | `/api-tokens/{token_id}` | Отозвать |
 
-> Токены хранятся как SHA-256 хэш. Полное значение возвращается только при создании. Проверка токенов при запросах не реализована в MVP.
+> Токены хранятся как SHA-256 хэш. Полное значение возвращается только при создании. Bearer PAT проверяется только при включённом `CICD_AUTH_SECRET`; scopes/pepper/rotation остаются target.
 
 ## Дополнительные реализованные endpoint-ы
 
@@ -792,9 +861,12 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 
 | Метод | Путь | Body | Результат |
 |---|---|---|---|
-| POST | `/pipelines/{pipeline_id}/cancel` | — | Каскадно отменяет нетерминальные stages/jobs и возвращает pipeline |
-| POST | `/pipelines/{pipeline_id}/retry` | — | Создаёт повторный запуск pipeline для исходного project/ref |
+| POST | `/pipelines/{pipeline_id}/cancel` | — | Каскадно отменяет нетерминальные stages/jobs и возвращает `{"canceled":"<uuid>"}` |
+| POST | `/pipelines/{pipeline_id}/retry` | — | Сбрасывает failed/canceled pipeline в queued и возвращает `{"retried":"<uuid>"}` |
 | POST | `/jobs/{job_id}/retry` | — | Сбрасывает terminal job в новый execution path согласно текущему pipeline |
+| POST | `/jobs/{job_id}/start` | — | Стартует manual job и возвращает `{"started":true}` |
+
+Current limitation: `POST /jobs/{job_id}/retry` переиспользует запись job и удаляет её старые `job_logs`; полноценная история retry появится вместе с `execution_attempts`.
 
 Ошибки: `404` — ресурс не найден; `400/409` — недопустимая операция/состояние; `503` — БД недоступна.
 

@@ -15,7 +15,7 @@
 - At-least-once доставка assignment и **at-most-one активная lease** на конкретный job execution.
 - Явные, проверяемые state machine для pipeline, job, execution attempt, lease и runner.
 - Неизменяемый execution plan: повторный запуск всегда воспроизводим относительно commit SHA и сохранённого plan snapshot.
-- Разделение control plane, runner agent и execution backend.
+- Разделение control plane, runner process и execution backend.
 - Docker как первый backend исполнения; Kubernetes - отдельный адаптер с тем же контрактом.
 - Секреты расшифровываются минимально необходимое время, не сохраняются в логах, событиях или metadata.
 - Логи и артефакты принадлежат конкретному execution attempt, а не перезаписывают историю job.
@@ -26,20 +26,20 @@
 
 | Область | Сейчас | Цель |
 |---|---|---|
-| Архитектура backend | Переходный monolith: `api.rs`, `platform.rs`, `runner.rs`, `store.rs`; `domain` и `cli` уже выделяются в workspace | Полный Cargo workspace `domain → app → infra → api`, отдельный `server` composition root и отдельный runner agent |
+| Архитектура backend | Переходный monolith: `api.rs`, `platform.rs`, `runner.rs`, `store.rs`; `domain` и `cli` уже выделяются в workspace | Полный Cargo workspace `domain → app → infra → api`, отдельный `server` composition root и отдельный runner process (`forge-runner`) |
 | Pipeline config | `.forge-ci.yml` уже читается из локального bare-репозитория; поддерживаются линейные `stages/jobs`, при отсутствии файла используется template | Версионированный parser, validation и immutable plan snapshot; зависимости задают DAG, а не порядок стадий |
 | Планирование | Linear stages; jobs одной стадии могут быть выбраны поллером, но model не хранит явные зависимости | Job-level DAG с `needs`, topological validation, матрицами, rules и неизменяемым plan |
-| Выполнение | Embedded supervisor в `cicd-server`; Docker или host shell; PID map в памяти | Внешние runner agents, pull protocol, leases, attempts, reconciliation; host shell отсутствует в production |
+| Выполнение | Embedded supervisor в `cicd-server`; Docker или host shell; PID map в памяти | Внешние runner-ы, pull protocol, leases, attempts, reconciliation; host shell отсутствует в production |
 | Runner registry | `POST /runners`, теги, heartbeat, status; registry не участвует в выборе и запуске job | Registration tokens, аутентификация, capability inventory, runner pools/tags, heartbeat, drain/disable, selection dispatcher |
 | Очередь | Polling queued jobs; атомарный `queued → running`, но без runner lease и durable delivery | PostgreSQL queue с `SKIP LOCKED`, scheduling eligibility, lease/ack/renew/expiry, outbox/event wakeup |
 | Retry | API повторно ставит job/pipeline в `queued`, очищая логи job | Новый immutable execution attempt; история предыдущих попыток и логов сохраняется |
 | Cancel | API меняет статусы и пытается остановить Docker/PID локального процесса | Cancel intent в БД, delivery к owner runner, grace period, forced backend termination, reconciliation |
 | Таймауты | Частично зависят от процесса; нет единой модели | Queue, startup, execution, idle-log, cancellation и lease deadlines - конфигурируемые и фиксируемые в attempt |
-| Secrets | AES-256-GCM at rest; API не возвращает значения; инжекции и redaction нет | Ограниченная выдача secret bundle только lease owner; env/file injection; redaction до записи логов |
-| Logs | Строки `job_logs`, последовательность через `MAX(sequence)+1` | Chunk protocol, idempotency, monotonic sequence per attempt, streaming и durable append |
+| Secrets | AES-256-GCM at rest; API не возвращает значения; embedded runner умеет env injection и stdout/stderr masking | Ограниченная выдача secret bundle только lease owner; env/file injection; redaction до записи логов |
+| Logs | Строки `job_logs`, sequence по job, REST polling и SSE stream по job | Chunk protocol, idempotency, monotonic sequence per attempt, streaming и durable append |
 | Artifacts | Local FS, metadata по `job_id`, лимит 50 MiB | Artifact manifest на attempt, checksum, staged upload, S3-compatible storage, retention, quarantine/cleanup |
 | Изоляция | API/backend может запускать Docker; есть host-shell fallback | Docker socket только у runner host; rootless/least privilege. Kubernetes runner создаёт ограниченный Job/Pod |
-| Тесты | Domain/API/CLI tests, часть API без реальной БД | Unit, property, real PostgreSQL integration, protocol compatibility, runner contract, Docker/K8s integration, chaos/e2e |
+| Тесты | Domain/API/CLI tests, real PostgreSQL integration для persistent paths, frontend unit/build gates | Unit, property, protocol compatibility, runner contract, Docker/K8s integration, chaos/e2e |
 
 В документации и пользовательском интерфейсе до завершения фаз следует называть текущий механизм **embedded execution prototype**, а не distributed runner platform.
 
@@ -69,7 +69,7 @@
       └───────────────┬──────────────┘
                       │ HTTPS pull + long poll / wakeup hint
       ┌───────────────▼──────────────────────────────────────────────┐
-      │ External Runner Agent                                         │
+      │ External Runner Process                                       │
       │ registration, heartbeat, claim, lease renewal, redaction      │
       └───────────────┬──────────────────────────────┬───────────────┘
                       │                              │
@@ -82,7 +82,7 @@
 ### Правило доверия
 
 - API/server доверяет только аутентифицированному runner identity и проверяет право runner-а владеть lease.
-- Runner agent доверяет только TLS endpoint Forge и assignment, подписанному либо полученному по действующей lease.
+- Runner process доверяет только TLS endpoint Forge и assignment, подписанному либо полученному по действующей lease.
 - Execution container/Pod считается недоверенным кодом проекта.
 - Пользовательский process не имеет DB credentials, control-plane token, Docker socket, service-account с широкими правами или master key секретов.
 - Runner не может читать assignment, secret bundle, logs или artifacts другого runner-а/attempt.
@@ -418,7 +418,7 @@ Runner отправляет heartbeat отдельно от lease renewal:
 
 ```json
 {
-  "agentVersion": "0.1.0",
+  "runnerVersion": "0.1.0",
   "status": "online",
   "draining": false,
   "capacity": { "totalSlots": 4, "busySlots": 1 },
@@ -519,7 +519,7 @@ queued/running -> success | failed
 
 ## 9.1 Общий контракт executor
 
-Runner agent получает `ExecutionSpec`, а backend возвращает `ExecutionHandle`:
+Runner process получает `ExecutionSpec`, а backend возвращает `ExecutionHandle`:
 
 ```rust
 trait ExecutionBackend {
@@ -747,7 +747,7 @@ Reconciler должен быть идемпотентен, работать lock
 
 ## 13. Целевая data model
 
-Новые таблицы вводятся SQLx versioned migrations; `store::migrate()` с inline `CREATE TABLE IF NOT EXISTS` должен быть выведен из production bootstrap после baseline migration.
+Новые таблицы вводятся SQLx versioned migrations; production bootstrap должен разделять apply/verify migration modes, а legacy `store::migrate()` adoption нужен только для старых инсталляций.
 
 ### Основные сущности
 
@@ -776,12 +776,12 @@ Reconciler должен быть идемпотентен, работать lock
 
 ### Ключевые constraints
 
-- `UNIQUE (pipeline_run_id, logical_job_key)` для planned job.
+- `UNIQUE (pipeline_id, logical_job_key)` для planned job.
 - `UNIQUE (attempt_id, sequence)` для logs.
 - Partial unique index: не более одной active lease на job:
-  `UNIQUE(job_run_id) WHERE lease_status IN ('offered','acknowledged','active')`.
+  `UNIQUE(job_id) WHERE lease_status IN ('offered','acknowledged','active')`.
 - `UNIQUE (runner_id, credential_hash)` и credential status/revocation.
-- FK artifact → attempt, attempt → job_run, job_run → pipeline_run.
+- FK artifact → attempt, attempt → job, job → pipeline через stage.
 - Queue item может быть только для non-terminal job.
 - Foreign key/validation запрещает attempt completion с lease другого runner-а.
 - Fencing token проверяется во всех mutating runner endpoints.
@@ -866,7 +866,7 @@ Reconciler должен быть идемпотентен, работать lock
 
 Обязательные structured fields:
 
-- `request_id`, `pipeline_id`, `job_run_id`, `attempt_id`, `lease_id`, `runner_id`;
+- `request_id`, `pipeline_id`, `job_id`, `attempt_id`, `lease_id`, `runner_id`;
 - `fencing_token`, `attempt_no`, `executor_kind`;
 - `duration_ms`, timeout/retry reason;
 - безопасные result category и exit code.
@@ -976,7 +976,7 @@ Kubernetes, при наличии test cluster:
 ## Фаза 0 - фиксация контрактов и baseline
 
 - Зафиксировать ADR: runner protocol, lease/fencing, execution sandbox, artifact ownership.
-- Добавить SQLx migration baseline вместо runtime schema bootstrap.
+- Сохранять SQLx migration baseline и не вводить schema changes без migration/verify gate.
 - Документировать current embedded runner как transitional/unsafe for production.
 - Добавить real-PostgreSQL harness.
 - Не менять публичные v1 routes без compatibility strategy.

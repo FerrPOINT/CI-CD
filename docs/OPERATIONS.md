@@ -4,11 +4,11 @@
 
 ## Статус и граница доверия
 
-- **Current verified:** локальный Docker Compose запускает PostgreSQL, backend и Dashboard; embedded runner выполняет jobs на том же узле. Health API, Docker healthcheck и структурированные логи доступны.
-- **Configuration only:** schedules, webhooks и notifications можно настроить, но их выполнение и гарантированная доставка отсутствуют.
-- **Target approved:** auth/RBAC, TLS-termination, versioned migrations, отдельные runner-ы с leases, transactional outbox, metrics/alerting, backup scripts и production DR.
+- **Current verified:** локальный Docker Compose запускает PostgreSQL, backend и Dashboard; versioned SQLx migrations применяются при старте; embedded runner выполняет jobs на том же узле; health, `/metrics`, structured logs, conditional auth, schedules и outgoing webhook worker доступны.
+- **Configuration only:** notifications и inbound provider webhooks можно настроить, но sender/handlers не исполняют доставку.
+- **Target approved:** TLS-termination, project-membership RBAC/tenant isolation, отдельные runner-ы с leases, production scheduler/outbox guarantees, alerting, backup scripts и production DR.
 
-> **Критическое ограничение MVP: только локальная или доверенная сеть.** API и Dashboard не защищены auth/RBAC, CORS permissive, TLS отсутствует, а PostgreSQL в `docker-compose.yml` опубликован на все интерфейсы хоста. Не публикуйте порты `22801`, `22802` или `22543` в недоверенную сеть и не используйте этот Compose как production-развёртывание. API-токены и Login UI сейчас не обеспечивают контроль доступа.
+> **Критическое ограничение MVP: только локальная или доверенная сеть.** Если `CICD_AUTH_SECRET` не задан или пустой, API и Dashboard работают open/trusted-network; при непустом секрете enforcement всё ещё coarse global-role. CORS permissive, TLS отсутствует. PostgreSQL в `docker-compose.yml` привязан к `127.0.0.1`, но API/Dashboard host ports нельзя публиковать в недоверенную сеть и нельзя считать этот Compose production-развёртыванием.
 
 Доступ к Docker daemon, хостовой файловой системе, `.env`, bare Git-томам и backup-файлам считается привилегированным. Не передавайте реальные секреты через командную строку, Git, логи или скриншоты.
 
@@ -135,7 +135,7 @@ docker compose up -d
 
 ### Current verified
 
-Версионируемых migration-файлов и бинарника `cicd-migrate` в репозитории сейчас нет. Backend создаёт/дополняет legacy schema при старте через bootstrap DDL. Поэтому оператор не должен выдавать bootstrap за проверяемую migration-систему и не должен вручную редактировать таблицы ради обхода ошибки запуска.
+Версионируемые SQLx migration-файлы находятся в `backend/migrations/`, а binary `cicd-migrate` входит в workspace. Backend применяет pending migrations при старте через `sqlx::migrate!("./migrations")`; это удобно для локального MVP, но ещё не равно production rollout с отдельной owner/runtime ролью и pre-deploy verification gate.
 
 Для проверки текущей базы используйте только read-only диагностику:
 
@@ -145,9 +145,9 @@ docker compose exec -T postgres \
 docker compose logs --tail=200 backend
 ```
 
-### Target approved: `cicd-migrate`
+### Target approved: controlled `cicd-migrate`
 
-После реализации единственный путь schema change -- immutable SQL-файлы в `backend/migrations/` и binary `cicd-migrate`. Server не применяет DDL: при pending migration или checksum mismatch он не становится ready.
+Production-путь schema change -- immutable SQL-файлы в `backend/migrations/` и pre-runtime запуск `cicd-migrate`. Целевой server не применяет DDL: при pending migration или checksum mismatch он не становится ready.
 
 Целевая последовательность для owner credential:
 
@@ -263,12 +263,13 @@ Target backup включает physical PostgreSQL base backup и continuous WAL
 
 ### Current verified
 
-Наблюдаемость MVP ограничена Docker status/healthchecks, `/api/v1/health` и backend `tracing` logs. Prometheus endpoint, readiness endpoint, business metrics, queue-age и alert routing отсутствуют.
+Наблюдаемость MVP включает Docker status/healthchecks, `/api/v1/health`, `/metrics` Prometheus text и backend `tracing` logs. DB-aware readiness, alert routing, queue-age/dead-letter dashboards и production log pipeline отсутствуют.
 
 | Проверка | Команда | Значение |
 |---|---|---|
 | Compose services | `docker compose ps` | PostgreSQL должен быть `healthy`; backend должен быть running/healthy. |
 | API liveness | `curl -fsS http://127.0.0.1:22801/api/v1/health` | Процесс backend отвечает; это не DB readiness. |
+| Metrics | `curl -fsS http://127.0.0.1:22801/metrics` | Prometheus text endpoint; в MVP не защищён отдельно от общей сетевой/auth границы. |
 | PostgreSQL | `docker compose exec -T postgres pg_isready -U "$CICD_DATABASE_USER" -d "$CICD_DATABASE_NAME"` | База принимает подключения. |
 | Dashboard | `curl -fsS http://127.0.0.1:22802/ >/dev/null` | nginx отвечает статическим приложением. |
 | Логи | `docker compose logs --since 30m backend` | Ошибки запуска, execution и API requests. |
@@ -278,7 +279,7 @@ Health endpoint не должен быть единственным сигнал
 
 ### Target approved
 
-Production monitoring добавляет liveness `/api/v1/health`, DB-aware readiness, защищённый `/api/v1/metrics`, централизованные structured logs и внешнюю uptime-проверку. Минимальные alert-и: API/DB unavailable, 5xx/error budget, disk pressure, backup age/failure, migration verify failure, runner offline, lease expiry/reconciliation, queue age, outbox retry lag/dead letters, Git/artifact integrity error и KMS/key availability. Labels не содержат tenant/project ID, URL, tokens, event/delivery IDs или secret data.
+Production monitoring добавляет DB-aware readiness, защищённый metrics endpoint, централизованные structured logs и внешнюю uptime-проверку. Минимальные alert-и: API/DB unavailable, 5xx/error budget, disk pressure, backup age/failure, migration verify failure, runner offline, lease expiry/reconciliation, queue age, outbox retry lag/dead letters, Git/artifact integrity error и KMS/key availability. Labels не содержат tenant/project ID, URL, tokens, event/delivery IDs или secret data.
 
 ## Инцидент-ранбуки
 
@@ -356,7 +357,16 @@ Runner считается unhealthy после отсутствия heartbeat б
 
 **Current verified: диагностика и действия**
 
-Transactional outbox, worker, `outbox_messages` и `outbox_deliveries` ещё не реализованы. Следовательно, в MVP нет очереди outbox, которую можно «разгрести». Configuration-only webhook/notification/schedule не имеет delivery backlog; диагностируйте фактический pipeline/Git flow и не создавайте фиктивные SQL-таблицы или ручные event-записи.
+Transactional outbox MVP реализован через `domain_events` и `outbox_messages`: terminal pipeline event создаёт сообщения для enabled outgoing webhooks, worker доставляет их с basic retry/backoff. Таблицы `outbox_deliveries`, audited replay, dead-letter workflow, notification/SSE sender и точные delivery guarantees ещё target.
+
+Для диагностики текущего backlog используйте read-only запросы к `outbox_messages` и backend logs; не редактируйте payload/attempts вручную:
+
+```bash
+docker compose exec -T postgres \
+  psql -U "$CICD_DATABASE_USER" -d "$CICD_DATABASE_NAME" \
+  -c "select channel, count(*), min(next_attempt_at) from outbox_messages where delivered_at is null group by channel"
+docker compose logs --tail=200 backend
+```
 
 **Target approved: процедура**
 

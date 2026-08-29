@@ -58,17 +58,17 @@ CI-CD/
 │   │   ├── git_host.rs       # bare-репо + Smart HTTP + post-receive
 │   │   ├── pulls.rs          # refs/commits/compare/pull requests
 │   │   ├── runner.rs         # embedded runner: Docker/shell, supervisor
-│   │   ├── store.rs          # schema bootstrap + next_log_sequence
+│   │   ├── store.rs          # shared DB helpers + next_log_sequence
 │   │   └── domain.rs         # re-export shim → cicd-domain
-│   ├── tests/                # integration: api_contract, cli_contract, domain
+│   ├── tests/                # integration: api_contract, domain, real-DB
 │   └── target/               # build artifacts (gitignored)
 ├── frontend/                 # React SPA (pages, widgets, typed hooks)
 │   └── src/{api,app,pages,shared,widgets}
-├── docs/                     # 54 документа + adr/ + screenshots/
+├── docs/                     # guides, contracts, adr/ + screenshots/
 ├── plans/                    # uncommitted implementation plans
 ├── docker-compose.yml        # postgres + backend + frontend
 ├── justfile                  # unified commands
-└── AGENTS.md                 # правила для AI-агентов
+└── AGENTS.md                 # правила работы с репозиторием
 ```
 
 Целевая структура backend (полностью — в ADR-0005 и `plans/architecture-rebuild-plan.md`):
@@ -144,22 +144,22 @@ Supervisor-полл queued-джобов, атомарный claim (`queued → r
 
 ### 6.4 Платформенные ресурсы (MVP)
 
-Runners (registry + heartbeat), secrets (AES-256-GCM at rest, значения не возвращаются), artifacts (upload/download + локальное хранилище, 50 MiB лимит), environments/deployments, schedules (валидация 5-полей cron; execution — TODO), webhooks/notifications (конфигурация; доставка — TODO), reports (агрегаты success rate/duration), audit log (последние 200 событий), users/roles (модель; auth enforcement — TODO), API tokens (SHA-256 hash, hint-only список; проверка — TODO).
+Runners (registry + heartbeat), secrets (AES-256-GCM at rest + embedded env injection/masking), artifacts (upload/download + локальное хранилище, 50 MiB лимит), environments/deployments, schedules MVP (enabled rows проверяются worker-ом примерно раз в минуту), outgoing webhooks MVP (terminal pipeline events через outbox/basic retry/HMAC), notifications config, reports (агрегаты success rate/duration), audit log (последние 200 событий), users/roles, argon2id credentials, sessions и PAT enforcement при `CICD_AUTH_SECRET`.
 
 ## 7. Frontend архитектура
 
-- **pages/** — 20 экранов: dashboard, projects, repositories/browser/compare/pulls, pipelines/detail, runners, secrets, artifacts, environments, schedules, webhooks, reports, audit-log, users, settings, admin, login.
+- **pages/** — 19 рабочих экранов + login: dashboard, projects, repositories/browser/compare/pulls, pipelines/detail, runners, secrets, artifacts, environments, schedules, webhooks, reports, audit-log, users, settings, login.
 - **shared/** — ui-kit (shadcn), i18n (ru/en), theme (dark/gray/light).
 - **widgets/** — AppShell (sidebar + header + Outlet).
-- **api/** — типизированный клиент + TanStack Query hooks.
-- Целевое: OpenAPI-first генерация клиента (как task-tracker) после миграции API-слоя.
+- **api/** — типизированный клиент/wrappers + generated OpenAPI schema `schema.d.ts`.
+- Целевое: generated transport boundary после стабилизации API-слоя; текущие DTO уже генерируются из `openapi/openapi.yaml`.
 
 ## 8. Testing
 
 - Domain: unit-тесты переходов статусов (`domain/src/lib.rs`, `tests/domain_transitions.rs`).
 - API contract: no-DB тесты health/503/валидации (`tests/api_contract.rs`).
-- CLI: contract-тест help-групп (`tests/cli_contract.rs`).
-- Целевое: real-PostgreSQL интеграционные тесты через `docker-compose.test.yml` (Phase B плана), Playwright E2E, coverage gate.
+- CLI: contract-тест help-групп (`cli/tests/cli_contract.rs`).
+- Real-PostgreSQL integration tests уже есть для migrations/project/auth paths; target остаётся для Playwright E2E, coverage gate и широких protocol tests.
 
 ## 9. Статус миграции (ADR-0005)
 
@@ -167,11 +167,11 @@ Runners (registry + heartbeat), secrets (AES-256-GCM at rest, значения �
 |---|---|
 | Workspace + `domain` пакет | ✅ готово |
 | `cli` отдельный пакет | ✅ готово |
-| typed config + `AppError` | ⬜ Phase B |
-| SQLx версионные миграции | ⬜ Phase B |
+| typed config + `AppError` | ◩ частично: `AppError`/error envelope current, full typed config target |
+| SQLx версионные миграции | ✅ current: `backend/migrations/*.sql` + `sqlx::migrate!`/`cicd-migrate` |
 | app/infra/api/server пакеты | ⬜ Phase C (strangler по вертикалям) |
-| OpenAPI + генерация клиента | ⬜ Phase C/D |
-| Auth/RBAC/token middleware | ⬜ Phase D |
+| OpenAPI + генерация клиента | ✅ current: `openapi/openapi.yaml` + `frontend/src/api/schema.d.ts` |
+| Auth/RBAC/token middleware | ◩ current conditional: JWT/PAT/global roles при `CICD_AUTH_SECRET`; project scope target |
 | Distributed runner protocol | ⬜ Phase D |
 
 ## 10. Dev workflow

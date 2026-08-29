@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, Outlet, useNavigate } from 'react-router'
-import { GitBranch, LayoutDashboard, FolderGit2, Settings, GitFork, Server, Menu, X, History, Users, Cpu } from 'lucide-react'
+import { GitBranch, LayoutDashboard, FolderGit2, Settings, GitFork, Menu, X, History, Users, Cpu } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/shared/ui/button'
 import { ThemeToggle } from '@/shared/ui/theme-toggle'
@@ -15,7 +15,6 @@ function NavigationList({ onNavigate, isActive }: { onNavigate: () => void; isAc
     { to: '/runners', icon: Cpu, label: t('navigation.runners') },
     { to: '/users', icon: Users, label: t('navigation.users') },
     { to: '/audit-log', icon: History, label: t('navigation.auditLog') },
-    { to: '/admin', icon: Server, label: t('navigation.admin') },
     { to: '/settings', icon: Settings, label: t('navigation.settings') },
   ]
 

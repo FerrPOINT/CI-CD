@@ -1,24 +1,24 @@
-# Transition map: legacy → target
+# Transition map: current compatibility → target
 
 > **Статус:** нормативная карта замен. Владелец изменений — phases в `docs/ROADMAP.md`; канон имён — ADR-0009.
 
 ## HTTP routes
 
-| Legacy (current) | Target | Механика перехода | Gate удаления |
+| Current compatibility surface | Target | Механика перехода | Gate удаления |
 |---|---|---|---|
 | `POST /api/v1/internal/git-push` | `POST /api/v1/internal/git-events/push` | new route + adapter, old route отвечает 308/deprecation header 1 release | usage=0 по метрикам |
 | `/api/v1/*` array responses | envelope `{items,next_cursor}` | аддитивно, `?limit&cursor`; array сохраняется до миграции UI/CLI (`contracts/API_CONTRACT.md`) | все клиенты на envelope |
 | `/git/*` token-auth `CICD_GIT_TOKEN` | per-repo authorization + signed events (reserved ADR-0013) | feature flag `git_auth_v2` | flag on by default |
-| unprotected platform routes | policy middleware (`contracts/AUTHZ_CONTRACT.md`) | flags `auth_required_*` по группам роутов | Phase D complete |
+| trusted-network fallback when `CICD_AUTH_SECRET` is unset | default-deny policy middleware (`contracts/AUTHZ_CONTRACT.md`) | flags `auth_required_*` по группам роутов + deployment gate for configured secret | Phase D complete |
 
 ## Schema
 
-| Legacy | Target | Переход |
+| Current compatibility surface | Target | Переход |
 |---|---|---|
-| `store::migrate()` bootstrap | `backend/migrations/` + `cicd-migrate` | baseline adoption (fingerprint), см. `contracts/MIGRATION_CONTRACT.md` |
+| runtime `sqlx::migrate!()` on startup | pre-start migration job + `cicd-migrate` verify/adopt tooling | split apply/verify modes; legacy `store::migrate()` adoption is only for pre-migration installations |
 | `runners` (CRUD registry) | + credentials/capacity/leases (`job_leases`) | аддитивные колонки + новые таблицы |
 | `schedules`/`webhooks`/`notification_channels` (config) | + `domain_events`/`outbox_messages`/`outbox_deliveries` | новые таблицы, конфиг не переносится |
-| `users`/`api_tokens` (storage) | + `tenants`/sessions/service_accounts | `0003_auth_foundation.sql` последовательность (`AUTH_IMPLEMENTATION_SPEC.md`) |
+| `users`/`api_tokens`/`sessions` (global auth) | + `tenants`/project memberships/service_accounts | additive tenant/project scope migrations (`AUTH_IMPLEMENTATION_SPEC.md`) |
 
 ## Execution model
 
@@ -32,8 +32,8 @@
 
 | Legacy | Target |
 |---|---|
-| hand-written типы `src/api` | generated `src/shared/api/generated/` |
-| login-заглушка | `/api/v1/auth/*` + RequireAuth |
+| generated DTO schema in `frontend/src/api/schema.d.ts`, hand-written transport wrappers | generated transport boundary |
+| conditional login flow (`/api/v1/auth/*` when `CICD_AUTH_SECRET` is set) | default RequireAuth + tenant/project-aware session policy |
 | `window.confirm` | AlertDialog |
 | tables на mobile | card/list layout |
 

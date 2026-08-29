@@ -2,76 +2,77 @@
 
 ## 1. Overview
 
-Forge CI/CD — self-hosted CI/CD control plane. В текущей версии (Phase 0) аутентификация и авторизация не реализованы — API открыт. Безопасность встроена на уровне SQL-запросов и валидации ввода. План внедрения защиты описан в этом документе и в `docs/ROADMAP.md`.
+Forge CI/CD — self-hosted CI/CD control plane. Текущая версия остаётся MVP и не является production-safe: без непустого `CICD_AUTH_SECRET` backend работает в trusted-network режиме, а при включённом секрете enforcement ограничен глобальными ролями без project membership/tenant isolation. Безопасность встроена на уровне SQL-запросов, валидации ввода, секретов at rest, условного auth middleware и audit.
 
 ## 2. Текущий статус
 
 | Механизм | Статус | Описание |
 |----------|--------|----------|
-| Auth (login/JWT) | ❌ не реализовано | Phase 1 (план) |
-| RBAC | ❌ не реализовано | Phase 1 (план) |
-| Secrets management | ✅ MVP | AES-256-GCM at-rest, `CICD_SECRETS_KEY`; значения не возвращаются через API |
-| API tokens | ✅ MVP (storage) | SHA-256 hash; проверка токенов при запросах не реализована |
-| Users & roles | ✅ MVP (storage) | Модель без auth enforcement; пароли не хранятся |
+| Auth (login/JWT) | ✅ conditional | Включается при непустом `CICD_AUTH_SECRET`; без него API остаётся open trusted-network |
+| RBAC | ✅ MVP | Глобальные роли `admin`/`maintainer`/`developer`/`viewer`; project membership и tenant scope — target |
+| Secrets management | ✅ MVP | AES-256-GCM at rest, `CICD_SECRETS_KEY`; env injection в embedded runner + masking stdout |
+| API tokens | ✅ conditional | PAT `cicd_...` проверяется middleware при непустом `CICD_AUTH_SECRET`; legacy SHA-256 hash без target scopes/pepper |
+| Users & roles | ✅ MVP | Users, argon2id credentials, sessions, enabled flag |
 | Audit log | ✅ MVP | Последние 200 событий |
 | Artifacts storage | ✅ MVP | Локальная ФС, 50 MiB лимит |
 | SQL injection prevention | ✅ реализовано | parameterized queries через SQLx |
 | Input validation | ✅ частично | проверка `trim().is_empty()` на входе |
 | CORS | ⚠️ permissive | `CorsLayer::permissive()` — ограничить в production |
-| Rate limiting | ❌ не реализовано | Phase 1+ (план) |
+| Rate limiting | ✅ частично | login endpoint 30/min в памяти процесса; general/per-IP policy — target |
 | HTTPS/TLS | ❌ нет | через reverse proxy (nginx/Caddy) |
 
-## 3. Authentication (Phase 1 — план)
+## 3. Authentication
 
 ### 3.1 JWT
 
-- Access token: JWT, срок жизни 15 минут.
-- Refresh token: httpOnly cookie, срок жизни 7 дней, ротация при каждом обновлении.
-- Алгоритм подписи: `HS256` (или `RS256` при появлении key management).
-- Секреты: `CICD_JWT_SECRET`, `CICD_REFRESH_SECRET` — минимум 32 байта, через env vars.
-- Хранение паролей: `argon2id`.
+- Current: access token — JWT HS256, срок жизни 15 минут, подпись через `CICD_AUTH_SECRET`.
+- Current: refresh token хранится в таблице `sessions`, возвращается клиенту и обновляется через `/api/v1/auth/refresh`; frontend MVP держит его в `localStorage`.
+- Current: пароли хранятся как `argon2id` hash в `user_credentials`.
+- Target: httpOnly/SameSite cookie для refresh, server-side logout/revocation UX, rotation policy, key management и bootstrap owner procedure.
 
-### 3.2 Эндпоинты (план)
+### 3.2 Эндпоинты
 
 ```
 POST /api/v1/auth/login     — вход, выдача access + refresh
-POST /api/v1/auth/logout    — выход, отзыв refresh
 POST /api/v1/auth/refresh   — обновление access-токена
+POST /api/v1/auth/logout    — target: выход, отзыв refresh
 ```
 
 ### 3.3 Login lockout
 
-- Блокировка после 5 неудачных попыток на 15 минут (per IP + per user).
-- Логирование попыток входа.
+- Current: in-process limit 30 login attempts/minute.
+- Current: login/denied события пишутся в audit.
+- Target: persistent per-IP + per-user lockout, alerting и admin unlock flow.
 
 ### 3.4 MFA
 
 - TOTP (RFC 6238) — future, интерфейс заложить в схему `users` при реализации.
 
-## 4. Authorization (Phase 1 — план)
+## 4. Authorization
 
 ### 4.1 RBAC
 
-Role-based access control на уровне проекта:
+Current middleware проверяет `Authorization: Bearer ...` при непустом `CICD_AUTH_SECRET`. Если секрет не задан или пустой, запросы пропускаются без principal. Роли пока глобальные:
 
 | Role | Permissions |
 |------|-------------|
-| `admin` | всё: управление проектами, пользователями, пайплайнами |
-| `maintainer` | управление проектом, запуск пайплайнов, управление задачами |
-| `developer` | просмотр, запуск пайплайнов, управление задачами |
-| `viewer` | только просмотр |
+| `admin` | users/tokens и все mutation routes |
+| `maintainer` | управление проектами, pipelines, platform resources |
+| `developer` | запуск/повтор jobs/pipelines и чтение ресурсов |
+| `viewer` | только чтение большинства API |
 
-- Проверка прав на service layer (повторно — на repository layer).
-- No data returned until permission verified.
+- Project membership, tenant boundary, scoped PAT, repository-level permissions и policy checks — **Target approved**.
+- `/git/*` использует отдельный `CICD_GIT_TOKEN` и не опирается на JWT/PAT.
 
 ### 4.2 Middleware
 
 ```rust
-// Планируемый middleware
-async fn require_auth(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Result<UserId, ApiError> {
-    // извлечь JWT из Authorization header
-    // проверить подпись и срок
-    // вернуть user_id
+// Current shape: simplified excerpt.
+async fn require_auth(req: Request, next: Next) -> Result<Response, ApiError> {
+    if !crate::auth::is_configured() {
+        return Ok(next.run(req).await); // trusted-network mode
+    }
+    // verify JWT/PAT, enabled user and route role policy
 }
 ```
 
@@ -79,20 +80,19 @@ async fn require_auth(State(state): State<Arc<AppState>>, headers: HeaderMap) ->
 
 ### 5.1 Текущее состояние
 
-Все секреты передаются через env vars с префиксом `CICD_`. `.env.example` содержит только плейсхолдеры. Секреты не коммитятся в git.
+Project secrets хранятся в `project_secrets`, encrypted at rest в формате `v1:nonce:payload`, ключ — `CICD_SECRETS_KEY` (base64 32 bytes). API/UI возвращают только metadata. Embedded runner расшифровывает секреты проекта перед выполнением job, добавляет их в env и маскирует значения в stdout/stderr logs.
 
 ### 5.2 Планируемое
 
-- Encrypted secrets для задач (build tokens, deploy keys, API keys).
-- Хранение: encrypted at rest в PostgreSQL (`cicd_secrets` таблица).
-- Шифрование: AES-256-GCM, мастер-ключ через `CICD_MASTER_KEY` env var.
-- Доступ: по RBAC-ролям, secrets не логируются, не возвращаются в API-ответах (только маска `***`).
+- Scoped secret selection в DSL, environment/project policy, rotation и audit trail.
+- Least-privilege runner lease вместо передачи всех project secrets.
+- Маскирование stderr/stdout уже есть как best-effort, но target требует edge-case suite, redaction в audit/error/trace и запрет secret-like output.
 - Интеграция с внешними vault (HashiCorp Vault, AWS Secrets Manager) — future.
 
 ### 5.3 Правила
 
 - Никогда не коммитить credentials, токены, пароли.
-- Все secrets — через env vars.
+- Runtime/config secrets — через env vars или secret manager; project secrets — через API/UI с `CICD_SECRETS_KEY`.
 - `.env.example` содержит только плейсхолдеры.
 - Перед push проверять, что в diff нет чувствительных данных.
 - Ротация JWT/refresh секретов периодически.
@@ -111,14 +111,14 @@ async fn require_auth(State(state): State<Arc<AppState>>, headers: HeaderMap) ->
 ### 6.2 Планируемое
 
 - Полная DTO-валидация через `validator` crate (email format, URL format, length limits).
-- Whitelist mime-types для загружаемых артефактов (при реализации artifacts).
+- Whitelist mime-types для загружаемых артефактов.
 - Filename sanitization.
 - Limit на размер лог-сообщения и количество строк.
 
 ### 6.3 Frontend
 
 - Валидация форм через `zod` (планируется при реализации форм создания).
-- Типобезопасные API-клиенты через TypeScript-интерфейсы (`frontend/src/api/types.ts`).
+- Типобезопасные API DTO генерируются из `openapi/openapi.yaml` в `frontend/src/api/schema.d.ts`; handwritten API wrapper отвечает за headers, errors, binary upload/download и SSE.
 
 ## 7. SQL Injection Prevention
 
@@ -202,16 +202,16 @@ let cors = CorsLayer::new()
 
 Конфигурация через `CICD_CORS_ALLOWED_ORIGINS` env var. No wildcard (`*`) в production.
 
-## 10. Rate Limiting (план)
+## 10. Rate Limiting
 
-- `tower_governator` per IP and per user.
-- Stricter limits для auth endpoints.
+- Current: login endpoint ограничен in-memory window 30/minute.
+- Target: general/per-IP/per-user policy и persistent lockout для auth endpoints.
 
-| Endpoint | Limit (план) |
+| Endpoint | Limit |
 |----------|-------------|
-| Login | 5/min |
-| API general | 100/min |
-| Pipeline trigger | 10/min |
+| Login | current 30/min per process; target stricter per IP + per user |
+| API general | target 100/min или deployment policy |
+| Pipeline trigger | target 10/min |
 
 ## 11. Dependency Security
 
@@ -244,14 +244,11 @@ let cors = CorsLayer::new()
 - Scan images with Trivy.
 - No secrets в image layers.
 
-## 13. Audit Logging (план)
+## 13. Audit Logging
 
-- Login/logout events.
-- Pipeline trigger / cancel.
-- Job status transitions.
-- Project create / delete.
-- Admin actions.
-- Хранение: `audit_log` таблица, retention 1 год.
+- Current: `audit_log` append-only table, API возвращает последние 200 событий.
+- Current: login, denied request, runner, secret, artifact, environment, deployment, schedule, webhook, notification, user/token и часть pipeline/job mutations пишут события.
+- Target: immutable authorisation context, filters/pagination/export, retention policy и alerting.
 
 ## References
 

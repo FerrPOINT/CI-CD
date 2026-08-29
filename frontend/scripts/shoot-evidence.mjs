@@ -12,16 +12,34 @@ mkdirSync(OUT, { recursive: true })
 
 const BASE = 'http://127.0.0.1:22802'
 const API = 'http://127.0.0.1:22801/api/v1'
+const THEME = process.env.EVIDENCE_THEME ?? 'dark'
 
-const projects = await (await fetch(`${API}/projects`)).json()
+async function getJson(path) {
+  const res = await fetch(`${API}${path}`)
+  const text = await res.text()
+  if (!res.ok) throw new Error(`GET ${path} -> ${res.status}: ${text.slice(0, 300)}`)
+  return text ? JSON.parse(text) : null
+}
+
+function pickProject(byName, names) {
+  for (const name of names) {
+    if (byName[name]) return byName[name]
+  }
+  throw new Error(`Evidence seed is missing project: expected one of ${names.join(', ')}`)
+}
+
+const projects = await getJson('/projects')
 const byName = Object.fromEntries(projects.map(p => [p.name, p]))
-const platform = byName['forge-demo-platform']
-const web = byName['forge-demo-web']
-const platformPipes = await (await fetch(`${API}/projects/${platform.id}/pipelines`)).json()
+const platform = pickProject(byName, ['forge-demo-platform', 'platform-core'])
+const platformPipes = await getJson(`/projects/${platform.id}/pipelines`)
 const pipeline = platformPipes.find(p => p.status === 'success') ?? platformPipes[0]
 const failedPipe = platformPipes.find(p => p.status === 'failed')
-const pipeDetail = await (await fetch(`${API}/pipelines/${pipeline.id}`)).json()
+const pipeDetail = await getJson(`/pipelines/${pipeline.id}`)
 const jobId = pipeDetail.stages.flatMap(s => s.jobs)[0]?.id
+const pullRequests = await getJson('/repos/platform-core/pulls')
+const pullRequest = pullRequests.find(pr => pr.title === 'Add cache layer for registry lookups') ?? pullRequests[0]
+if (!pullRequest) throw new Error('Evidence seed is missing a platform-core pull request')
+const pullRequestPath = `/repositories/platform-core/pulls/${pullRequest.number}`
 
 const shots = [
   { name: '01-login.png', path: '/login', desktop: true },
@@ -31,11 +49,10 @@ const shots = [
   { name: '05-pipelines.png', path: `/projects/${platform.id}/pipelines`, desktop: true },
   { name: '06-pipeline-detail.png', path: `/pipelines/${pipeline.id}`, desktop: true, wait: 1500 },
   { name: '07-settings.png', path: '/settings', desktop: true },
-  { name: '08-admin.png', path: '/admin', desktop: true },
   { name: '09-repository-browser.png', path: '/repositories/platform-core', desktop: true, wait: 1200 },
   { name: '10-compare.png', path: '/repositories/platform-core/compare?from=main&to=feature%2Fcache-layer', desktop: true, wait: 1200 },
   { name: '11-pull-requests.png', path: '/repositories/platform-core/pulls', desktop: true, wait: 1200 },
-  { name: '12-pull-request-detail.png', path: '/repositories/platform-core/pulls/8', desktop: true, wait: 1200 },
+  { name: '12-pull-request-detail.png', path: pullRequestPath, desktop: true, wait: 1200 },
   { name: '13-runners.png', path: '/runners', desktop: true },
   { name: '14-secrets.png', path: `/projects/${platform.id}/secrets`, desktop: true },
   { name: '15-environments.png', path: `/projects/${platform.id}/environments`, desktop: true, wait: 1200 },
@@ -46,7 +63,7 @@ const shots = [
   { name: '20-users.png', path: '/users', desktop: true },
   { name: '21-artifacts.png', path: `/jobs/${jobId}/artifacts`, desktop: true, wait: 800 },
   // --- Состояния действий: диалоги, диффы, логи, формы ---
-  { name: '22-pr-diff.png', path: '/repositories/platform-core/pulls/8', desktop: true, wait: 1200, click: 'a:has-text("Посмотреть изменения")', settle: 1500 },
+  { name: '22-pr-diff.png', path: pullRequestPath, desktop: true, wait: 1200, click: 'a[href*="/compare?from="]', settle: 1500 },
   { name: '23-project-create.png', path: '/projects', desktop: true, click: 'button:has-text("Создать проект")' },
   { name: '24-project-delete-confirm.png', path: '/projects', desktop: true, click: 'button:has-text("Удалить")', settle: 600 },
   { name: '25-repo-create.png', path: '/repositories', desktop: true, click: 'button:has-text("Создать репозиторий")' },
@@ -70,7 +87,7 @@ const shots = [
   { name: 'm-projects.png', path: '/projects', mobile: true },
   { name: 'm-pipeline-detail.png', path: `/pipelines/${pipeline.id}`, mobile: true, wait: 1500 },
   { name: 'm-runners.png', path: '/runners', mobile: true },
-  { name: 'm-pull-request.png', path: '/repositories/platform-core/pulls/8', mobile: true, wait: 1200 },
+  { name: 'm-pull-request.png', path: pullRequestPath, mobile: true, wait: 1200 },
 ]
 
 const browser = await chromium.launch()
@@ -82,7 +99,8 @@ async function shoot(shot) {
   })
   const page = await ctx.newPage()
   await page.addInitScript(() => {
-    localStorage.setItem('forge.theme', 'dark')
+    localStorage.setItem('theme', THEME)
+    localStorage.setItem('forge.theme', THEME)
     localStorage.setItem('i18nextLng', 'ru')
   })
   try {

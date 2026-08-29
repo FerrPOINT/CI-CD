@@ -22,7 +22,7 @@ Current: DORA считается вручную из reports/audit; автома
 | Pipeline queue depth (jobs `queued`) | SQL | Target (gauge в метриках) |
 | Job duration p50/p95 по проекту | reports | Current (агрегат в UI) |
 | Runner heartbeats / online count | runners registry | Current (UI); метрики — Target |
-| Outbox backlog / delivery latency / dead-letter count | outbox worker | Target |
+| Outbox backlog / delivery latency | outbox worker | MVP data exists; exported metrics — Target |
 | DB: connections, pool saturation, slow queries | sqlx/pg | Target |
 | Artifact storage usage / quota | filesystem | Target |
 | Git push rate / post-receive failures | git hooks | Target |
@@ -41,5 +41,5 @@ Current: DORA считается вручную из reports/audit; автома
 
 1. Все метрики выводятся из уже зафиксированных событий `contracts/EVENT_CONTRACT.md` или выделенного metrics-канала — без отдельной trace-БД (правило workspace).
 2. Никакие метрики не содержат значения секретов, имён токенов или содержимого исходников.
-3. Дашборд метрик не входит в Dashboard MVP; экспорт — Prometheus-совместимый endpoint (target).
+3. Дашборд метрик не входит в Dashboard MVP; Prometheus-совместимый `/metrics` уже опубликован, но покрытие runtime-метрик расширяется по мере появления production observability.
 4. Изменение порогов/метрик — правка этого файла в PR; автоматические алерты ссылаются на `SLO.md`.

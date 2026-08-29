@@ -50,7 +50,7 @@ cicd-cli job log   --job <JOB_UUID> --message "custom line"
 
 ## Контракт
 
-Группы команд и флаги зафиксированы тестом `backend/tests/cli_contract.rs` (`project`, `pipeline`, `job` в `--help`). Изменение набора команд требует обновления теста и этого документа.
+Группы команд и флаги зафиксированы тестом `backend/cli/tests/cli_contract.rs` (`project`, `pipeline`, `job` в `--help`). Изменение набора команд требует обновления теста и этого документа.
 
 ## Плановое (Phase C/D)
 

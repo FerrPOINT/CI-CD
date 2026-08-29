@@ -140,20 +140,20 @@ error: connection refused (os error 111)
 
 ### 2.2 Миграции не применяются
 
-Схема создаётся при старте backend через `store::migrate()`. Если таблицы отсутствуют:
+Схема применяется при старте backend через committed SQLx migrations из `backend/migrations/`. Если таблицы отсутствуют или `_sqlx_migrations` не обновляется:
 
 - Проверить логи backend:
   ```bash
-  docker compose logs backend | grep -i "migrate\|error\|panic"
+  docker compose logs backend | grep -i "migrate\|sqlx\|error\|panic"
   ```
 - Подключиться к БД и проверить таблицы:
   ```bash
   docker compose exec postgres psql -U cicd -d cicd -c "\dt"
   ```
-- Должны быть: `projects`, `pipelines`, `stages`, `jobs`, `job_logs`.
-- Если таблиц нет — перезапустить backend:
+- Должны быть как минимум: `projects`, `pipelines`, `stages`, `jobs`, `job_logs`, `user_credentials`, `sessions`, `domain_events`, `outbox_messages`.
+- Если таблиц нет — пересоздать backend-контейнер, чтобы заново пройти startup migrator:
   ```bash
-  docker compose restart backend
+  docker compose up -d --build backend
   docker compose logs -f backend
   ```
 

@@ -4,12 +4,12 @@
 
 - **Путь**: `/opt/dev/CI-CD`.
 - **GitHub**: `git@github.com:FerrPOINT/CI-CD.git`.
-- **Назначение**: self-hosted CI/CD control plane. В MVP задачи переводятся вручную через API, CLI или Dashboard; удалённые runner-ы ещё не реализованы.
+- **Назначение**: self-hosted CI/CD control plane. В MVP jobs выполняет embedded runner (Docker/shell), а внешний runner protocol с lease/dispatch остаётся target.
 - **Стек**: Rust 2024, Axum 0.8, SQLx 0.8, PostgreSQL 17; React 19, Vite 6, Tailwind CSS 4, shadcn/ui.
 - **Env prefix**: `CICD_`.
 - **Порты**: API `22801`, Dashboard `22802`, PostgreSQL `22543`.
 
-## Правила для AI-агентов
+## Правила работы с репозиторием
 
 1. Работать из `/opt/dev/CI-CD`; перед изменениями читать `docs/ARCHITECTURE.md`, `docs/DATA_MODEL.md`, `docs/API.md` и релевантный ADR.
 2. До начала проверять `git status`. Не отменять и не перезаписывать чужие изменения; при неожиданном изменении во время работы остановиться и запросить указания.

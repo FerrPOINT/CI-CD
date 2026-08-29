@@ -45,7 +45,6 @@ Forge отвечает за Git-источник в минимально нео�
 Forge **не является** и не должен развиваться как:
 
 - issue tracker: задачи, бэклоги, спринты, доски и workflow тикетов не входят в продукт;
-- wiki или система управления знаниями: статьи, пространства документации и совместное редактирование документации не входят в продукт;
 - package/container registry: публикация, проксирование и жизненный цикл образов или пакетов не входят в продукт;
 - IDE или web editor: редактирование исходного кода, интерактивная разработка и выполнение developer workspace в браузере не входят в продукт;
 - полноценная замена GitHub, GitLab или Gitea: Forge не обязан предоставлять полный интерфейс code review, обсуждения PR, комментарии, approvals, LFS, marketplace или организационное управление;
@@ -74,30 +73,32 @@ Forge **не является** и не должен развиваться ка
 | REQ-PIPE-002 | План pipeline как неизменяемое доказательство | P1 | **Target approved** | Перед запуском конфигурация валидируется и фиксируется как неизменяемый план с зависимостями, переменными и версией исходного ref; поддерживается DAG, а не только линейная последовательность. |
 | REQ-EXEC-001 | Выполнение задач | P0 | **Current verified** | Embedded runner выполняет задачи в Docker либо shell-режиме, отражает жизненный цикл job и позволяет отмену/повтор в доступных границах. Этот режим предназначен для доверенного локального контура. |
 | REQ-EXEC-002 | Изолированные внешние runner-ы | P1 | **Target approved** | Control plane выдаёт работу независимым runner-ам с аутентификацией, lease, reconciliation, лимитами конкурентности и изоляцией исполнения. API-процесс не становится исполнителем пользовательского кода. |
-| REQ-EXEC-003 | Статусы и попытки выполнения | P0 | **Current verified** | Пользователь видит согласованные статусы pipeline, стадий и задач; переходы валидируются, а итог агрегируется вверх. Повтор и отмена сохраняют понятную историю выполнения. |
+| REQ-EXEC-003 | Статусы выполнения | P0 | **Current verified** | Пользователь видит согласованные статусы pipeline, стадий и задач; переходы валидируются, а итог агрегируется вверх. Текущий retry переиспользует job и не является полноценной историей попыток. |
+| REQ-EXEC-004 | Execution attempts и retry history | P0 | **Target approved** | Каждый запуск или повтор job создаёт отдельную неизменяемую попытку с собственными timestamps, terminal result, логами и артефактами; retry не удаляет доказательства предыдущей попытки. |
 | REQ-OBS-001 | Логи | P0 | **Current verified** | Логи job append-only, упорядочены и доступны для диагностики. Текущий просмотр использует polling. |
-| REQ-OBS-002 | Realtime-логи, поиск и ограничение объёма | P1 | **Target approved** | Длинные логи передаются и хранятся ограниченно, безопасно доступны постранично или потоком и позволяют найти диагностически значимые записи. |
+| REQ-OBS-002 | Диагностические логи | P1 | **Target approved** | Длинные логи передаются и хранятся ограниченно, доступны постранично или потоком и позволяют найти диагностически значимые записи: command span, stream, exit code, timestamps и error tail. |
 | REQ-ART-001 | Артефакты | P0 | **Current verified** | Пользователь может сохранить и получить артефакт job из локального хранилища в рамках текущего лимита размера. |
 | REQ-ART-002 | Надёжное хранилище и retention артефактов | P1 | **Target approved** | Артефакты имеют проверяемую целостность, политику хранения и очистки; поддерживается совместимое object storage без раскрытия данных между проектами. |
-| REQ-SEC-001 | Secrets | P0 | **Current verified** | Проектные секреты шифруются при хранении и их значения не возвращаются пользователю после сохранения. |
-| REQ-SEC-002 | Инъекция и маскирование secrets | P1 | **Target approved** | Только авторизованный runner получает нужный секрет на время выполнения; plaintext не попадает в API, audit, ошибки или логи, а известные значения редактируются в выводе job. |
+| REQ-SEC-001 | Secrets | P0 | **Current verified** | Проектные секреты шифруются при хранении, их значения не возвращаются пользователю после сохранения, embedded runner передаёт их в env и маскирует известные значения в stdout/stderr best-effort. |
+| REQ-SEC-002 | Scoped secret delivery и full redaction | P1 | **Target approved** | Только авторизованный runner получает нужный секрет на время выполнения; plaintext не попадает в API, audit, ошибки, traces или логи, а выдача имеет scopes, lease и rotation policy. |
 | REQ-ENV-001 | Environments и deployments | P1 | **Current verified** | Пользователь ведёт metadata окружений и историю развёртываний для проекта. Текущий capability не означает автоматическую оркестрацию инфраструктуры, approvals или rollback. |
 | REQ-ENV-002 | Approval и rollback delivery | P2 | **Target approved** | Для чувствительных окружений доступны policy-controlled approval gates, неизменяемая история решений и управляемый rollback через pipeline. |
 | REQ-AUTO-001 | Git-события и автоматический trigger | P0 | **Current verified** | Push во встроенный Git может создать pipeline, связанный с изменённым ref. |
-| REQ-AUTO-002 | Schedules, webhooks и notifications | P1 | **Configuration only** | Пользователь может настроить расписание, webhook и канал уведомления, но их исполнение и доставка пока не работают и не должны обещаться как активные. |
+| REQ-AUTO-002 | Schedules и outgoing webhooks | P1 | **Current verified** | MVP scheduler запускает enabled schedules примерно раз в минуту, а terminal pipeline events доставляются в enabled outgoing webhooks через basic outbox/retry. Полная cron-семантика и delivery history остаются target. |
 | REQ-AUTO-003 | Надёжная automation delivery | P1 | **Target approved** | Расписания, входящие события, webhooks и уведомления исполняются асинхронно, наблюдаемо и идемпотентно; повторы не теряют зафиксированное событие и не создают недопустимый дубликат результата. |
-| REQ-AUTH-001 | Identity, роли и API-токены | P0 | **Current verified** | Пользователи, роли и API-токены хранятся и администрируются, но сами по себе не защищают доступ. |
-| REQ-AUTH-002 | Enforcement аутентификации и RBAC | P1 | **Target approved** | Все чувствительные действия требуют проверенной личности и policy-проверки в границе запроса или служебного протокола; права scoped по проекту, а токены имеют минимально необходимые scopes. |
+| REQ-AUTO-004 | Notifications и inbound provider webhooks | P1 | **Configuration only** | Пользователь может сохранить каналы уведомлений; email/Slack/SSE sender и public Git provider webhook handlers пока не исполняют доставку. |
+| REQ-AUTH-001 | Identity, роли и API-токены | P0 | **Current verified** | Пользователи, роли, argon2id credentials, sessions и PAT хранятся и применяются при непустом `CICD_AUTH_SECRET`; без секрета действует trusted-network режим. |
+| REQ-AUTH-002 | Project-scoped auth/RBAC enforcement | P1 | **Target approved** | Все чувствительные действия требуют проверенной личности и policy-проверки с project/tenant scope; токены имеют минимально необходимые scopes, revocation и session policy. |
 | REQ-AUD-001 | Audit и отчётность | P1 | **Current verified** | Forge хранит append-only audit entries и показывает базовые агрегаты по успешности и длительности pipeline. Эти данные не заменяют полноценную observability-платформу. |
 | REQ-OBS-003 | Операционная наблюдаемость и восстановление | P1 | **Target approved** | Оператор получает health/readiness, метрики, трассируемость критичных операций, проверяемые backup/restore для PostgreSQL, Git и артефактов, а также reconciliation после перезапуска. |
 | REQ-UI-001 | Dashboard, CLI и API | P0 | **Current verified** | Основные рабочие сценарии доступны через Dashboard, CLI и API; представления не должны объявлять target- или configuration-only функцию завершённой. |
-| REQ-API-001 | Versioned совместимые контракты | P1 | **Target approved** | Публичные контракты версионируются, имеют единый формат ошибок, детерминированное получение списков, совместимую эволюцию и генерируемые типизированные клиенты. |
+| REQ-API-001 | Versioned совместимые контракты | P1 | **Target approved** | Публичные контракты версионируются, имеют единый формат ошибок, детерминированное получение списков и генерируемые типизированные клиенты; backward compatibility diff и полный cursor/idempotency contract ещё target. |
 
 ## 7. Нефункциональные требования
 
 ### Безопасность и доверие
 
-- **NFR-SEC-01** До реализации enforcement Forge допускается только в доверенной локальной или изолированной сети; открытый доступ к API, Dashboard, Git transport и PostgreSQL недопустим для shared deployment.
+- **NFR-SEC-01** До production-grade auth boundary Forge допускается только в доверенной локальной или изолированной сети; для shared deployment обязателен непустой `CICD_AUTH_SECRET`, reverse proxy/network boundary, непустой Git token и закрытый PostgreSQL.
 - **NFR-SEC-02** Доступ к проектным данным, Git-операциям, артефактам, секретам и действиям доставки должен проверяться до загрузки или изменения данных.
 - **NFR-SEC-03** Секреты передаются только через выделенные секретные каналы и конфигурацию; plaintext не сохраняется в логах, audit trail, ответах API или UI.
 - **NFR-SEC-04** Credential classes пользователя, API automation, внутреннего worker и runner должны быть раздельны и иметь минимальные scopes.
@@ -105,7 +106,7 @@ Forge **не является** и не должен развиваться ка
 
 ### Надёжность и целостность
 
-- **NFR-REL-01** Pipeline plan, execution attempts, логи, metadata артефактов, deployment history и audit entries являются доказательствами и не переписываются задним числом; исправление создаёт новую запись.
+- **NFR-REL-01** Pipeline plan, execution attempts, логи, metadata артефактов, deployment history и audit entries являются доказательствами и не переписываются задним числом; исправление создаёт новую запись. В current MVP это требование выполнено частично: job retry всё ещё очищает старые job logs.
 - **NFR-REL-02** Асинхронные эффекты допускают повтор доставки, но наблюдаемый итог остаётся идемпотентным.
 - **NFR-REL-03** Статус pipeline должен быть согласован с состоянием дочерних сущностей и не может обходить доменные правила переходов.
 - **NFR-REL-04** Хранилища PostgreSQL, Git и артефактов имеют документированную и проверяемую процедуру backup/restore; запуск после сбоя восстанавливает согласованное рабочее состояние.
@@ -139,6 +140,7 @@ Forge **не является** и не должен развиваться ка
 - Cancel прекращает доступное выполнение и не позволяет ему позднее записать противоречивый terminal status.
 - Недопустимый переход статуса отклоняется; агрегированный статус стадии и pipeline соответствует результатам дочерних jobs.
 - Лог сохраняет порядок append-only записей. Целевой realtime-режим не пропускает либо не дублирует видимые записи при переподключении клиента.
+- После реализации `execution_attempts` повтор job или pipeline не удаляет старые логи и позволяет сравнить все попытки по времени, результату и диагностическому выводу.
 - Для внешнего runner-а потеря lease или heartbeat приводит к наблюдаемому восстановлению либо безопасному завершению попытки, а не к бесконечной неопределённости.
 
 ### Артефакты и secrets
@@ -152,7 +154,7 @@ Forge **не является** и не должен развиваться ка
 ### Delivery и automation
 
 - Пользователь может создать environment и зафиксировать deployment, связанный с pipeline; история не изменяется при последующих развёртываниях.
-- Конфигурации schedules, webhooks и notifications до появления delivery явно помечены **Configuration only** во всех пользовательских представлениях.
+- Schedules и outgoing webhooks помечены как **Current verified MVP** до появления полной cron/delivery history/replay/dead-letter семантики; notifications и inbound provider webhooks остаются **Configuration only**, пока sender/handlers не исполняют доставку.
 - После реализации automation событие или расписание создаёт ожидаемый результат, delivery имеет наблюдаемый outcome, а transient failure проходит ограниченные повторы без потери committed event.
 - Для protected delivery approval требуется до исполнения, а rollback создаёт отдельную traceable запись и не подменяет исходный deployment.
 
@@ -168,8 +170,8 @@ Forge **не является** и не должен развиваться ка
 
 Следующее не входит в утверждённый объём Forge, если отдельное решение продукта не изменит настоящие требования:
 
-- управление задачами, sprint planning, Kanban/Scrum-доски, issue templates и knowledge base;
-- wiki, документация с совместным редактированием и публикация статических сайтов как CMS;
+- управление задачами, sprint planning, Kanban/Scrum-доски и issue templates;
+- документация с совместным редактированием и публикация статических сайтов как CMS;
 - OCI, npm, Maven, PyPI или иной registry, mirror и dependency proxy;
 - браузерная IDE, редактор файлов, remote development environment, terminal для разработки и code intelligence как IDE-функция;
 - полный code review: threaded comments, review approvals, merge queues, protected-branch governance и social collaboration вокруг pull request;

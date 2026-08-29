@@ -200,6 +200,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/jobs/{job_id}/logs/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** SSE live log stream: emits existing lines, then polls for new ones. */
+        get: operations["job_log_stream"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/jobs/{job_id}/retry": {
         parameters: {
             query?: never;
@@ -216,6 +233,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/jobs/{job_id}/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Starts a manual (`when: manual`) job — approval gate (GitLab parity). */
+        post: operations["start_manual_job"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/jobs/{job_id}/status": {
         parameters: {
             query?: never;
@@ -226,6 +260,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["change_job_status"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/openapi.json": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["serve_openapi_json"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -504,6 +554,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_repositories"];
+        put?: never;
+        post: operations["create_repository"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/repositories/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["delete_repository"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runners": {
         parameters: {
             query?: never;
@@ -632,6 +714,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/git/{repo}/git-receive-pack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["git_receive_pack_openapi"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/git/{repo}/git-upload-pack": {
         parameters: {
             query?: never;
@@ -656,6 +754,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["git_info_refs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["metrics"];
         put?: never;
         post?: never;
         delete?: never;
@@ -706,6 +820,10 @@ export interface components {
             resource_id?: string | null;
             resource_type: string;
         };
+        CanceledPipelineResult: {
+            /** Format: uuid */
+            canceled: string;
+        };
         ChangeStatus: {
             status: components["schemas"]["JobStatus"];
         };
@@ -733,17 +851,27 @@ export interface components {
             repository_url: string;
         };
         CreatePullRequest: {
+            /** @description Optional author label; overridden by the authenticated identity. */
+            author?: string | null;
             description?: string | null;
             repository_name: string;
             source_branch: string;
             target_branch: string;
             title: string;
         };
+        CreateRepositoryBody: {
+            name: string;
+        };
         CreateSecret: {
             key: string;
             value: string;
         };
         CreateToken: {
+            /**
+             * Format: int32
+             * @description Optional lifetime in days; omit for a non-expiring token.
+             */
+            expires_in_days?: number | null;
             name: string;
             /** Format: uuid */
             user_id?: string | null;
@@ -751,10 +879,18 @@ export interface components {
         CreateWebhook: {
             enabled?: boolean | null;
             events?: string[];
+            /**
+             * @description Optional HMAC-SHA256 signing secret; deliveries carry
+             *     `X-Forge-Signature: sha256=<hex>`.
+             */
+            secret?: string | null;
             url: string;
         };
         CreatedToken: components["schemas"]["ApiToken"] & {
             value: string;
+        };
+        DeletedRepository: {
+            deleted: string;
         };
         Deployment: {
             /** Format: date-time */
@@ -832,6 +968,9 @@ export interface components {
             /** @description Only for /auth/refresh: the previously issued refresh token. */
             refresh_token?: string;
             username: string;
+        };
+        ManualJobStartResult: {
+            started: boolean;
         };
         Notification: {
             channel: string;
@@ -926,6 +1065,10 @@ export interface components {
             /** Format: uuid */
             id: string;
             name: string;
+        };
+        RetriedPipelineResult: {
+            /** Format: uuid */
+            retried: string;
         };
         Runner: {
             /** Format: date-time */
@@ -1470,8 +1613,30 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["JobLog"][];
+                    "application/json": components["schemas"]["JobLog"];
                 };
+            };
+        };
+    };
+    job_log_stream: {
+        parameters: {
+            query?: {
+                after?: number;
+            };
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description text/event-stream of job log lines */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -1495,6 +1660,40 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    start_manual_job: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManualJobStartResult"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description job is not a waiting manual job */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1526,6 +1725,24 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    serve_openapi_json: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OpenAPI JSON document */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1576,10 +1793,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Pipeline"];
+                    "application/json": components["schemas"]["CanceledPipelineResult"];
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1603,10 +1826,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Pipeline"];
+                    "application/json": components["schemas"]["RetriedPipelineResult"];
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1896,7 +2125,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Pipeline"];
+                    "application/json": components["schemas"]["PipelineDetail"];
                 };
             };
             404: {
@@ -2292,6 +2521,100 @@ export interface operations {
             };
         };
     };
+    list_repositories: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Repository"][];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    create_repository: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateRepositoryBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Repository"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    delete_repository: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repository name */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletedRepository"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     list_runners: {
         parameters: {
             query?: never;
@@ -2593,6 +2916,50 @@ export interface operations {
             };
         };
     };
+    git_receive_pack_openapi: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repository name */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": number[];
+            };
+        };
+        responses: {
+            /** @description git-receive-pack result payload */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unsupported git service */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     git_service_endpoint: {
         parameters: {
             query?: never;
@@ -2673,6 +3040,24 @@ export interface operations {
                 content?: never;
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    metrics: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Prometheus text exposition */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -438,6 +438,22 @@ pub async fn git_service_endpoint(
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/git/{repo}/git-receive-pack",
+    tag = "git",
+    request_body = Vec<u8>,
+    params(("repo" = String, Path, description = "Repository name")),
+    responses(
+        (status = 200, description = "git-receive-pack result payload"),
+        (status = 400, description = "Unsupported git service"),
+        (status = 401),
+        (status = 404),
+    ),
+)]
+#[allow(dead_code)]
+pub async fn git_receive_pack_openapi() {}
+
 async fn resolve_repo_path(
     pool: &PgPool,
     config: &GitConfig,
@@ -522,13 +538,29 @@ pub async fn internal_git_push(
 
 // --- Axum HTTP handlers (thin wrappers over the core functions) ---
 
-#[derive(Deserialize)]
+#[derive(Deserialize, utoipa::ToSchema)]
 pub struct CreateRepositoryBody {
     pub name: String,
     #[serde(default)]
     pub visibility: Option<String>,
 }
 
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct DeletedRepository {
+    pub deleted: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/repositories",
+    tag = "repos",
+    request_body = CreateRepositoryBody,
+    responses(
+        (status = 200, body = Repository),
+        (status = 400),
+        (status = 503),
+    ),
+)]
 pub async fn create_repository(
     State(state): State<std::sync::Arc<AppState>>,
     axum::Json(body): axum::Json<CreateRepositoryBody>,
@@ -539,6 +571,15 @@ pub async fn create_repository(
     Ok(axum::Json(repo))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/repositories",
+    tag = "repos",
+    responses(
+        (status = 200, body = [Repository]),
+        (status = 503),
+    ),
+)]
 pub async fn list_repositories(
     State(state): State<std::sync::Arc<AppState>>,
 ) -> Result<axum::Json<Vec<Repository>>, ApiError> {
@@ -547,15 +588,26 @@ pub async fn list_repositories(
     Ok(axum::Json(repos))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/v1/repositories/{name}",
+    tag = "repos",
+    params(("name" = String, Path, description = "Repository name")),
+    responses(
+        (status = 200, body = DeletedRepository),
+        (status = 404),
+        (status = 503),
+    ),
+)]
 pub async fn delete_repository(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath(name): AxumPath<String>,
-) -> Result<axum::Json<serde_json::Value>, ApiError> {
+) -> Result<axum::Json<DeletedRepository>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     delete_repository_core(pool, &state.git, &name).await?;
-    Ok(axum::Json(
-        serde_json::json!({"deleted": name.trim_end_matches(".git")}),
-    ))
+    Ok(axum::Json(DeletedRepository {
+        deleted: name.trim_end_matches(".git").to_string(),
+    }))
 }
 
 #[cfg(test)]

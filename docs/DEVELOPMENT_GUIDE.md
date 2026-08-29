@@ -49,7 +49,7 @@ just build-frontend  # TypeScript check и Vite build на хосте
 | Dashboard в Vite dev mode | `http://127.0.0.1:5173` | Vite | Current verified |
 | PostgreSQL 17 | `127.0.0.1:22543` | `CICD_DATABASE_PORT` | Current verified |
 
-Vite proxy направляет `/api` на `http://localhost:22801`; отдельная frontend env-переменная для API в текущем режиме не нужна. PostgreSQL Compose-профиля опубликован на host interface, а API и Dashboard пока не защищены auth/RBAC. Это допустимо только для изолированной локальной разработки; ограничения и известные риски перечислены в [CURRENT STATE](CURRENT_STATE.md).
+Vite proxy направляет `/api` на `http://localhost:22801`; отдельная frontend env-переменная для API в текущем режиме не нужна. PostgreSQL Compose-профиля привязан к `127.0.0.1`, а API и Dashboard защищены только при непустом `CICD_AUTH_SECRET` и всё ещё используют coarse global-role policy. Это допустимо только для изолированной локальной разработки или закрытого shared-контура; ограничения и известные риски перечислены в [CURRENT STATE](CURRENT_STATE.md).
 
 ### Переменные окружения
 
@@ -86,7 +86,7 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Текущий backend применяет bootstrap DDL на старте. Versioned SQL migrations, отдельный migration binary и запрет DDL в runtime -- **Target approved**, а не инструкция для текущего MVP; условия перехода задаёт [MIGRATION CONTRACT](contracts/MIGRATION_CONTRACT.md).
+Текущий backend применяет committed SQLx migrations из `backend/migrations/` при старте. `cicd-migrate` существует как отдельный migration binary; production target остаётся строже: pre-runtime migration under owner role, verify-only startup и runtime role без DDL.
 
 ## Карта workspace и пакетов
 
@@ -96,15 +96,16 @@ pnpm dev
 | `backend/` -- `cicd-server` | Axum control plane, HTTP routes, SQLx store, Git hosting, embedded runner и composition root | Current verified |
 | `backend/domain/` -- `cicd-domain` | Чистые доменные типы и state machine `JobStatus` | Current verified |
 | `backend/cli/` -- `cicd-cli` | HTTP-only CLI для `project`, `pipeline`, `job`; не линкует server code | Current verified |
-| `backend/tests/` | no-DB API/CLI contracts, domain tests; `tests/sql/init-roles.sql` для будущей DB fixture | Current verified |
-| `backend/docker-compose.test.yml` | Ephemeral PostgreSQL 17 fixture без host port | Current verified fixture; real-DB harness -- Target approved |
+| `backend/tests/` | no-DB API/domain contracts, `integration_db` real PostgreSQL suite; `tests/sql/init-roles.sql` для runtime role fixture | Current verified |
+| `backend/cli/tests/` | CLI contract tests для public command groups/help | Current verified |
+| `backend/docker-compose.test.yml` | Ephemeral PostgreSQL 17 fixture без host port | Current verified fixture |
 | `frontend/` -- `cicd-dashboard` | React SPA, Vite, Tailwind, i18n, pages/widgets/entities/shared UI | Current verified |
-| `frontend/src/api/` | Текущий typed handwritten client, types и hooks | Current verified |
-| `frontend/src/shared/api/generated/` | Generated OpenAPI DTO/transport | Target approved; каталога пока нет |
-| `backend/migrations/`, `backend/migration/` -- `cicd-migrate` | Immutable SQL migrations и migration tool | Target approved; пути пока не реализованы |
+| `frontend/src/api/` | Typed API wrapper/hooks + generated OpenAPI DTO `schema.d.ts` | Current verified |
+| `frontend/src/api/schema.d.ts` | Generated OpenAPI types from `openapi/openapi.yaml` | Current verified |
+| `backend/migrations/`, `backend/migration/` -- `cicd-migrate` | Immutable SQL migrations и migration tool | Current verified |
 | `backend/api/` -- `cicd-api` | Routes/DTO/OpenAPI annotations как отдельная граница | Target approved |
 
-Целевая декомпозиция `domain -> app -> infra -> api -> server` описана в [ADR-0005](adr/0005-workspace-layered-architecture.md) и [ARCHITECTURE](ARCHITECTURE.md). Не создавайте target package, migration directory или generated output только потому, что они упомянуты в документации: они появляются вместе с реализацией и тестами.
+Целевая декомпозиция `domain -> app -> infra -> api -> server` описана в [ADR-0005](adr/0005-workspace-layered-architecture.md) и [ARCHITECTURE](ARCHITECTURE.md). Не создавайте новые target package или generated outputs только потому, что они упомянуты в документации: они появляются вместе с реализацией и тестами.
 
 ## Проверки и тестовая матрица
 
@@ -112,10 +113,10 @@ pnpm dev
 |---|---|---|---|
 | Rust unit | `JobStatus::transition_to()` и чистые domain правила | `cargo test -p cicd-server --test domain_transitions` | Current verified |
 | API contract без БД | router wiring, health и extractor behavior через `app(None)` | `cargo test -p cicd-server --test api_contract` | Current verified; не заменяет persistence tests |
-| CLI contract | `cicd-cli --help`, public command groups | `cargo test -p cicd-server --test cli_contract` | Current verified |
+| CLI contract | `cicd-cli --help`, public command groups | `cargo test -p cicd-cli --test cli_contract` | Current verified |
 | Frontend unit | Components, pages и UI behavior через Vitest/Testing Library | `pnpm test` | Current verified |
 | Compose smoke | Запуск образов и `GET /api/v1/health` | `just up && just health` | Current verified локально; не является current CI gate |
-| API + PostgreSQL | CRUD, constraints, persisted side effects, headers/error envelope, auth/idempotency/cursor cases | test DB fixture + migrated per-test DB | Target approved; owner -- [MIGRATION CONTRACT](contracts/MIGRATION_CONTRACT.md) и [API CONTRACT](contracts/API_CONTRACT.md) |
+| API + PostgreSQL | CRUD, constraints, migrations, persisted side effects, headers/error envelope, auth/PAT и current pagination cases | `cargo test --features integration --test integration_db` с PostgreSQL service в CI | Current verified; isolated owner/runtime matrix всё ещё target |
 | CLI + real API | Automation flow, config precedence, JSON output, exit codes и redaction | CLI against real API/PostgreSQL stack | Target approved |
 | Browser E2E | Critical UI journeys against built frontend и real API/PostgreSQL | Playwright Chromium | Target approved; сценарии -- [UI API CONTRACT](contracts/UI_API_CONTRACT.md) |
 | Accessibility | Keyboard flow, semantic controls, colour contrast и serious/critical violations | Playwright + axe | Target approved; не установлен как current script/gate |
@@ -148,12 +149,11 @@ docker run --rm --entrypoint /bin/bash \
   -e CARGO_TARGET_DIR=/workspace/target \
   rust:1.86-bookworm \
   -lc '/usr/local/cargo/bin/cargo fmt --check && \
-       /usr/local/cargo/bin/cargo clippy --all-targets -- -D warnings && \
-       /usr/local/cargo/bin/cargo test && \
-       /usr/local/cargo/bin/cargo build --release'
+       /usr/local/cargo/bin/cargo clippy --workspace --all-targets -- -D warnings && \
+       /usr/local/cargo/bin/cargo test --workspace'
 ```
 
-Для полного целевого workspace gate после его введения используйте `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace` и `cargo build --workspace --release`. Не обозначайте эту расширенную последовательность как current CI до обновления workflow.
+Для real-DB проверки нужен PostgreSQL и `CICD_TEST_DATABASE_URL`; CI запускает `cargo test --features integration --test integration_db`. Release build остаётся локальной/release-проверкой, но не current CI step.
 
 ### Frontend через Node Docker image
 
@@ -195,11 +195,11 @@ python3 scripts/verify_docs.py --all
 
 | Job | Фактические проверки |
 |---|---|
-| `backend` | `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo build --release` в `backend/` на Rust 1.86 |
-| `frontend` | `pnpm install --frozen-lockfile`, `pnpm test`, `pnpm build` в `frontend/` на Node 22/pnpm 11 |
-| `containers` | `docker compose build` после successful `backend` и `frontend` |
+| `backend` | PostgreSQL 17 service; `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db`, OpenAPI drift gate |
+| `frontend` | `pnpm install --frozen-lockfile`, `pnpm openapi:generate` + clean diff для `src/api/schema.d.ts`, `pnpm test`, `pnpm build` |
+| `docs` | `python3 scripts/verify_docs.py --all` |
 
-В текущем workflow нет real-PostgreSQL integration suite, compose smoke, OpenAPI/codegen diff, Playwright, axe, Lighthouse, dependency/secret/container scans или coverage ratchet. Не утверждайте, что branch protection, approval policy или checks из устаревших narrative-доков фактически включены, пока это не подтверждено настройками GitHub.
+В текущем workflow нет compose startup/health smoke, release build, OpenAPI backward compatibility diff, Playwright, axe, Lighthouse, dependency/secret/container scans или coverage ratchet. Не утверждайте, что branch protection, approval policy или checks из устаревших narrative-доков фактически включены, пока это не подтверждено настройками GitHub.
 
 ### Target approved
 
@@ -207,8 +207,8 @@ python3 scripts/verify_docs.py --all
 
 | Gate | Требуемое evidence |
 |---|---|
-| `migration-test` | test PostgreSQL up, `cicd-migrate up/verify`, real-DB tests, `down -v` в unconditional cleanup |
-| `openapi-contract` | generate/validate OpenAPI, generate/check TS client, clean diff и backward compatibility diff с default branch |
+| `migration-test` | isolated test PostgreSQL, `cicd-migrate up/verify`, owner/runtime role matrix, prior-schema upgrade evidence, unconditional cleanup |
+| `openapi-contract` | current drift/codegen checks плюс backward compatibility diff с default branch |
 | Backend | workspace fmt/clippy/test/release build, domain/app/API contract tests |
 | CLI | help/config/output/exit-code contracts против real API |
 | Frontend | frozen lockfile, lint, Vitest, generated-client typecheck и production build |
@@ -230,22 +230,21 @@ PR, добавляющий или меняющий capability, NFR, публич
 
 ## OpenAPI и generated types
 
-OpenAPI-first pipeline -- **Target approved**. В текущем checkout нет `cicd-api`, `openapi/openapi.yaml`, `frontend/src/shared/api/generated/`, target recipes `just openapi-generate`/`just openapi-validate` и scripts `pnpm api:generate`/`pnpm api:check`; поэтому не запускайте и не имитируйте их как current commands.
+OpenAPI-first artifact уже current: Rust `utoipa` annotations генерируют committed `openapi/openapi.yaml`, а frontend генерирует DTO в `frontend/src/api/schema.d.ts`. Отдельный `cicd-api` crate, compatibility diff и generated transport boundary остаются target.
 
-После поставки target packages порядок будет строго таким:
+Текущий порядок при изменении API:
 
 ```bash
 cd /opt/dev/CI-CD
-just openapi-generate       # Rust annotations -> openapi/openapi.yaml
-just openapi-validate       # OpenAPI 3.1 и examples
+cd backend
+cargo run --bin openapi-dump -- ../openapi/openapi.yaml
 cd frontend
-pnpm api:generate           # bundled spec -> generated DTO/transport
-pnpm api:check              # generated transport compiles
+pnpm openapi:generate       # bundled spec -> src/api/schema.d.ts
 cd ..
 git diff --exit-code
 ```
 
-`openapi/openapi.yaml` будет единственным committed bundled OpenAPI 3.1 artifact и генерируется только из Rust annotations; ручное изменение YAML и generated frontend files запрещено. Handwritten `frontend/src/shared/api/client.ts` останется тонкой обёрткой для headers, structured errors, binary upload/download и SSE, но pages/features не будут делать raw `fetch`. Каждый API change начинается с OpenAPI change, implementation, generated client и tests в одном PR; breaking change в `/api/v1` не допускается. Нормативные правила generation, route coverage, security, errors и compatibility находятся в [API CONTRACT](contracts/API_CONTRACT.md) и [UI API CONTRACT](contracts/UI_API_CONTRACT.md).
+`openapi/openapi.yaml` — единственный committed bundled OpenAPI artifact и генерируется только из Rust annotations; ручное изменение YAML и generated frontend file запрещено. Handwritten frontend API wrapper остаётся тонким слоем для headers, structured errors, binary upload/download и SSE. Каждый API change включает annotations, implementation, generated client и tests в одном PR; breaking change в `/api/v1` не допускается без новой версии и compatibility evidence. Нормативные правила generation, route coverage, security, errors и compatibility находятся в [API CONTRACT](contracts/API_CONTRACT.md) и [UI API CONTRACT](contracts/UI_API_CONTRACT.md).
 
 ## Связанные документы
 

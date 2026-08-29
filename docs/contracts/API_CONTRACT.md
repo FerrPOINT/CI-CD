@@ -10,7 +10,7 @@
 |---|---|---|
 | Public HTTP API | `cicd-api` | Route, DTO, security, success и error responses описываются OpenAPI-аннотациями. |
 | Машиночитаемый контракт | `openapi/openapi.yaml` | Единственный bundled OpenAPI 3.1 артефакт, генерируемый из `cicd-api`, закоммиченный и reviewable. |
-| Генерируемые frontend-типы | `frontend/src/shared/api/generated/` | Производятся только из закоммиченного `openapi/openapi.yaml`; правила клиента определяет `UI_API_CONTRACT.md`. |
+| Генерируемые frontend-типы | `frontend/src/api/schema.d.ts` | Производятся только из закоммиченного `openapi/openapi.yaml`; правила клиента определяет `UI_API_CONTRACT.md`. |
 | Narrative-документация | `docs/API.md` и связанные документы | Описывает сценарии и текущее состояние, но не заменяет OpenAPI-схемы. |
 
 | Шаг | Команда | Обязательный результат |

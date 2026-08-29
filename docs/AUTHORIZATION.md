@@ -33,18 +33,18 @@ Forge CI/CD является multi-tenant control plane: один экземпл
 
 | Область | Реализовано сейчас | Риск / дефицит |
 |---|---|---|
-| HTTP API | API `/api/v1` открыт; auth middleware отсутствует | Любой сетевой клиент может управлять проектами, jobs, secrets, users и tokens |
-| Users | `users(id, username, role, enabled)` с глобальной ролью | Нет credential, сессий, membership и enforcement |
-| Roles | `admin`, `maintainer`, `developer`, `viewer` | Роль не привязана к tenant/project и не участвует в решениях |
-| API tokens | Случайный `cicd_...`, SHA-256 hash, hint, owner optional | Нет scope, срока действия, отзыва с причиной, middleware и проверки владельца |
+| HTTP API | Conditional auth middleware: без непустого `CICD_AUTH_SECRET` trusted-network/open, с секретом JWT/PAT enforcement | Нет production default-deny boundary, tenant/project scope и полноценной session policy |
+| Users | `users(id, username, role, enabled)`, `user_credentials`, `sessions` | Membership и tenant isolation отсутствуют |
+| Roles | `admin`, `maintainer`, `developer`, `viewer` участвуют в route-policy decisions | Роль глобальная, не привязана к tenant/project |
+| API tokens | Случайный `cicd_...`, SHA-256 hash, hint, owner optional, optional expiry; Bearer PAT работает при `CICD_AUTH_SECRET` | Нет scopes, pepper/HMAC storage, отзыва с причиной и project boundary |
 | Projects | Глобально уникальное `projects.name` | Нет tenant ownership и project membership |
-| Secrets | `project_secrets`, AES-256-GCM at rest, API не возвращает value | Нет авторизации, injection в job и masking логов; один глобальный ключ без key version |
+| Secrets | `project_secrets`, AES-256-GCM at rest, API не возвращает value; embedded runner injects env and masks stdout/stderr best-effort | Нет scoped lease, key version/rotation и full redaction coverage |
 | Runners | Registry + heartbeat; embedded supervisor выполняет jobs | Runner не обладает отдельной криптографической идентичностью; registry не является границей доступа |
 | Git | Опциональный общий `CICD_GIT_TOKEN`, hook token | Нет repository/project authorization, токены не subject-bound |
-| Audit | `audit_log` с action/resource/actor text | Не всегда записывается, actor не является нормализованным principal, endpoint открыт, нет tenant/project scope |
+| Audit | `audit_log` с action/resource/actor text, login/denied и многие mutation events | Actor не является нормализованным principal, нет tenant/project scope и фильтров/export |
 | CORS и transport | permissive CORS, HTTP в dev | Для production необходим TLS и allowlist origins |
 
-До внедрения целевой модели открытый API допустим только в изолированной локальной сети разработки. Публичный или shared deployment без auth middleware запрещён.
+До внедрения целевой модели open/trusted-network режим допустим только в изолированной локальной сети разработки. Публичный или shared deployment без непустого `CICD_AUTH_SECRET`, reverse proxy/network boundary и непустых Git/internal tokens запрещён.
 
 ## Термины
 
@@ -56,7 +56,7 @@ Forge CI/CD является multi-tenant control plane: один экземпл
 - **Membership** — связь пользователя с tenant или проектом и набор его ролей.
 - **Permission** — атомарное разрешение, например `pipeline.trigger` или `secret.manage`.
 - **Resource scope** — tenant, project, конкретный pipeline/job/secret/artifact либо instance.
-- **Runner principal** — machine identity runner-агента; не является user и не получает пользовательские права.
+- **Runner principal** — machine identity процесса runner-а; не является user и не получает пользовательские права.
 - **Lease** — ограниченное по времени право runner выполнить конкретный job.
 - **Break-glass** — временный привилегированный доступ платформенного администратора с обязательным обоснованием и аудитом.
 
@@ -139,7 +139,7 @@ Forge instance
 
 ## Целевая дата-модель
 
-Новые таблицы создаются только versioned SQLx migrations; `store::migrate()` не расширяется для новых security-сущностей.
+Новые таблицы создаются только versioned SQLx migrations. Исторический `store::migrate()` рассматривается только как источник legacy fingerprint для старых инсталляций.
 
 ### Identity и tenancy
 
@@ -605,13 +605,13 @@ Masking является дополнительной защитой, а не г
 
 ## Миграция из текущего MVP
 
-1. Создать immutable baseline SQLx migration из фактической `store::migrate()` схемы.
-2. Добавить `tenants`, `tenant_memberships`, `project_memberships`, sessions и target token tables без включения enforcement.
+1. Принять текущие `backend/migrations/*.sql` как MVP baseline; старые pre-migration базы проходят verified legacy adoption по `docs/STORAGE_ARCHITECTURE.md`.
+2. Добавить `tenants`, `tenant_memberships`, `project_memberships` и target service-token tables без включения tenant/project enforcement.
 3. Создать единственный bootstrap tenant для существующих данных.
 4. Привязать все текущие `projects` к bootstrap tenant; проверить отсутствие конфликтов перед заменой global unique name на `(tenant_id, name)`.
 5. Мигрировать существующих users в tenant membership. Для каждого tenant должен существовать хотя бы один owner; нельзя оставить tenant без owner.
 6. Добавить `tenant_id` или project-derived scope к runners, audit events, repository mapping и platform resources.
-7. Ввести identity/auth endpoint и shadow authorization mode: решение логируется как `would_allow`/`would_deny`, но ещё не блокирует действие.
+7. Расширить текущие `/auth/*`, session и PAT controls до tenant/project-aware модели; сначала включить shadow authorization mode: решение логируется как `would_allow`/`would_deny`, но ещё не блокирует действие.
 8. Перенести project/pipeline/job вертикаль в `app`/`infra`, включить enforcement для новых и migrated routes.
 9. Перевести secrets на application use-case и target encryption model до runner secret injection.
 10. Включить API token middleware, ограниченный compatibility window для legacy tokens и метрики их использования.
@@ -627,7 +627,7 @@ Masking является дополнительной защитой, а не г
 - [ADR-0001: Rust + Axum + SQLx](adr/0001-rust-axum-sqlx.md) — сохраняется как технологическая база.
 - [ADR-0004: Только PostgreSQL для постоянных данных](adr/0004-postgresql-only.md) — применяется к membership, token state, leases и audit.
 - [ADR-0005: Cargo workspace и слоистая архитектура](adr/0005-workspace-layered-architecture.md) — определяет dependency boundaries.
-- `ADR-0010 (reserved): Versioned SQLx migrations and security baseline` — отказ от расширения `store::migrate()` для новых схем.
+- `ADR-0010 (reserved): Versioned SQLx migrations and security baseline` — production migration gate, checksum policy и legacy adoption для старых инсталляций.
 - `ADR-0010 (reserved): Authentication, tenancy, RBAC and API-token model` — principal types, scopes, role mapping, session/token revocation.
 - `ADR-0013 (reserved): Runner protocol, mTLS identity and job lease` — регистрация, certificate lifecycle, claim/reconciliation и sandbox boundary.
 - `ADR-0011 (reserved): Envelope encryption and project-secret access` — key provider, encryption context, rotation и secret injection.

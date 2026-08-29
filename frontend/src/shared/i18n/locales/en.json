@@ -7,7 +7,6 @@
     "projects": "Projects",
     "pipelines": "Pipelines",
     "repositories": "Repositories",
-    "admin": "Admin",
     "settings": "Settings",
     "runners": "Runners",
     "users": "Users",
@@ -154,8 +153,16 @@
     "dismiss": "Dismiss",
     "create": "Create"
   },
+  "capability": {
+    "currentVerified": "Current verified",
+    "currentMvp": "Current verified MVP",
+    "configurationOnly": "Configuration only",
+    "targetApproved": "Target approved"
+  },
   "runners": {
     "title": "Runners",
+    "capabilityTitle": "Runner registry",
+    "capabilityDescription": "This screen currently stores runners, tags, status, and heartbeat as operational inventory. Lease-based job dispatch and the external runner protocol remain target; execution is handled by the embedded runner.",
     "register": "Register runner",
     "name": "Name",
     "tags": "Tags (comma-separated)",
@@ -170,7 +177,7 @@
     "status_online": "Online",
     "status_offline": "Offline",
     "status_paused": "Paused",
-    "deleteWarning": "The runner will be removed from the registry. Active leases will fail."
+    "deleteWarning": "The runner will be removed from the registry. In the current MVP this does not stop the embedded runner; lease-based dispatch remains target."
   },
   "secrets": {
     "title": "Project Secrets",
@@ -214,6 +221,8 @@
   },
   "schedules": {
     "title": "Schedules",
+    "capabilityTitle": "MVP scheduled runs",
+    "capabilityDescription": "Enabled schedules are checked by the backend worker about once per minute. Full cron semantics, missed-fire recovery, and delivery history remain target.",
     "create": "Create schedule",
     "cron": "Cron expression",
     "gitRef": "Git ref",
@@ -227,6 +236,8 @@
   },
   "webhooks": {
     "title": "Webhooks",
+    "capabilityTitle": "Outgoing webhooks MVP",
+    "capabilityDescription": "Terminal pipeline events are delivered through the outbox with basic retry and optional HMAC. Replay, dead letters, and full delivery history remain target.",
     "create": "Add webhook",
     "url": "URL",
     "events": "Events (comma-separated)",
@@ -240,6 +251,8 @@
   },
   "notifications": {
     "title": "Notifications",
+    "capabilityTitle": "Notification channels",
+    "capabilityDescription": "Only channel configuration is stored right now. Email/Slack/SSE sender and delivery history are not implemented yet.",
     "add": "Add channel",
     "channelPlaceholder": "slack",
     "targetPlaceholder": "https://hooks.slack.com/...",
@@ -289,6 +302,32 @@
     "copied": "Copied to clipboard",
     "copyWarning": "Copy this token now — it will not be shown again.",
     "empty": "No API tokens."
+  },
+  "settings": {
+    "title": "Settings",
+    "description": "Runtime configuration snapshot for Forge CI/CD.",
+    "api": "API",
+    "git": "Git",
+    "database": "Database",
+    "envVars": "CICD_ environment variables",
+    "version": "Version",
+    "apiPort": "API and Git Smart HTTP",
+    "dashboardPort": "Dashboard",
+    "storagePath": "Storage path",
+    "httpPort": "Git HTTP port",
+    "engine": "Engine",
+    "port": "Port",
+    "env": {
+      "databaseUrl": "PostgreSQL connection string",
+      "bind": "API/Git bind address, default 0.0.0.0:22801",
+      "authSecret": "Enables JWT/PAT auth; trusted-network mode when absent",
+      "secretsKey": "Base64 AES key for project secrets",
+      "gitRoot": "Bare repository storage path",
+      "gitToken": "Optional Git Smart HTTP token",
+      "gitInternalToken": "Internal post-receive hook token",
+      "artifactsDir": "Local artifact storage path",
+      "runnerMode": "Embedded runner mode: docker or host"
+    }
   },
   "dashboard": {
     "projects": "Projects",

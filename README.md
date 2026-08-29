@@ -6,10 +6,10 @@ Self-hosted control plane для Git-репозиториев и CI/CD: bare Git
 
 Продукт находится в стадии **MVP (0.1.x)** и **не готов к эксплуатации в недоверенных сетях**:
 
-- нет аутентификации/RBAC — API и Dashboard открыты (login-страница — заглушка);
-- нет TLS и rate limiting; CORS permissive;
-- API-токены хранятся, но не проверяются middleware;
-- schedules/webhooks/notifications — только конфигурация, доставка не реализована.
+- если `CICD_AUTH_SECRET` не задан или пустой, API и Dashboard работают в trusted-network режиме без auth enforcement;
+- при заданном `CICD_AUTH_SECRET` включаются login/JWT/PAT и coarse global roles, но project membership/tenant isolation ещё не реализованы;
+- нет TLS, CORS permissive, rate limiting есть только для login endpoint в памяти процесса;
+- schedules и outgoing webhooks работают как MVP worker; notifications, inbound provider webhooks и production-grade delivery guarantees ещё не реализованы.
 
 Полный честный срез: [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md) · политика: [SECURITY.md](SECURITY.md). До Phase D security запускайте только в доверенной сети / за reverse proxy.
 
@@ -20,11 +20,12 @@ Self-hosted control plane для Git-репозиториев и CI/CD: bare Git
 | Проекты, пайплайны, jobs, логи (embedded runner: Docker/shell) | ✅ Current verified |
 | Git-хостинг: bare + Smart HTTP + `post-receive` авто-триггер | ✅ Current verified |
 | Артефакты (≤50 MiB, локальное хранилище) | ✅ Current verified |
-| Секреты (AES-256-GCM at rest; без инъекции в job) | ✅ Current verified |
+| Секреты (AES-256-GCM at rest; env injection в embedded runner + masking stdout) | ✅ Current verified |
 | Окружения/деплои, отчёты, аудит (200 событий) | ✅ Current verified |
-| Schedules / webhooks / notifications | ⚙️ Configuration only |
-| Auth/RBAC/сессии, enforcement API-токенов | 🎯 Target approved |
-| Внешние runner-ы (lease/protocol), scheduler/outbox delivery | 🎯 Target approved |
+| Auth/RBAC/сессии/PAT enforcement при `CICD_AUTH_SECRET` | ✅ Current verified |
+| Schedules и outgoing webhooks | ✅ Current verified MVP |
+| Notifications и inbound provider webhooks | ⚙️ Configuration only |
+| Внешние runner-ы (lease/protocol), project-membership RBAC, production scheduler/outbox guarantees | 🎯 Target approved |
 
 Легенда: ✅ работает сейчас · ⚙️ конфигурация без исполнения · 🎯 принято в архитектуру ([ADR](docs/ADR.md), [контракты](docs/contracts/)).
 
@@ -89,7 +90,7 @@ git push                       # → post-receive → пайплайн созд�
 
 ![Дашборд — мобильная версия](docs/screenshots/m-dashboard.png)
 
-Полный визуальный реестр (39 скринов: 21 страница + 13 состояний действий + 5 мобильных): [docs/assets/screens/manifest.md](docs/assets/screens/manifest.md).
+Полный визуальный реестр (38 скринов: 20 страниц + 13 состояний действий + 5 мобильных): [docs/assets/screens/manifest.md](docs/assets/screens/manifest.md).
 
 ## Документация
 

@@ -2,7 +2,7 @@
 
 ## 0. Фактическая схема реализованных таблиц
 
-Схема создаётся при старте приложения через `store::migrate()` (`backend/src/store.rs`): `CREATE TABLE IF NOT EXISTS` и явные `CREATE INDEX IF NOT EXISTS`. Целевой переход на versioned SQLx migrations — `docs/STORAGE_ARCHITECTURE.md`. При расхождении приоритет у исходного кода `store.rs`.
+Фактическая схема задаётся committed SQLx migrations в `backend/migrations/*.sql` и применяется backend при старте через `sqlx::migrate!("./migrations")`; тот же набор использует `cicd-migrate`. `backend/src/store.rs` остаётся историческим baseline-источником для `0001_bootstrap_v1.sql`, но новые изменения схемы должны идти только отдельными immutable migration files.
 
 ### ER-диаграмма (логическая)
 
@@ -111,6 +111,7 @@ Referenced by:
 | `name` | TEXT | NOT NULL | — | Уникальное имя проекта |
 | `repository_url` | TEXT | NOT NULL | — | URL Git-репозитория |
 | `default_branch` | TEXT | NOT NULL | `'main'` | Ветка по умолчанию |
+| `protected_branches` | TEXT[] | NOT NULL | `'{}'` | Ветки, для которых PR merge gate требует successful pipeline на head |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | Время создания |
 
 **Индексы:**
@@ -155,6 +156,7 @@ Referenced by:
 | `id` | UUID | NOT NULL | — | Первичный ключ, `Uuid::new_v4()` |
 | `project_id` | UUID | NOT NULL | — | FK → `projects.id`, CASCADE |
 | `git_ref` | TEXT | NOT NULL | — | Git-реф (ветка, тег, SHA) |
+| `commit_sha` | TEXT | NULL | — | Best-effort resolved commit SHA для merge gate и CI env |
 | `status` | TEXT | NOT NULL | — | Статус: `queued` / `running` / `success` / `failed` / `canceled` |
 | `variables` | JSONB | NOT NULL | `{}` | Значения ручного запуска; runner проецирует только в `CICD_VAR_<UPPER_SNAKE_KEY>` |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | Время создания |
@@ -165,8 +167,7 @@ Referenced by:
 
 **Индексы:**
 - `pipelines_pkey` — PRIMARY KEY (id)
-
-> **TODO:** добавить индекс `idx_pipelines_project_id` на `project_id` для оптимизации `list_pipelines`.
+- `idx_pipelines_project_id` — lookup по project для `list_pipelines`.
 
 **FK:** `project_id` → `projects(id)` ON DELETE CASCADE.
 
@@ -239,6 +240,9 @@ Referenced by:
  command      | text                     | not null |
  position     | integer                  | not null |
  status       | text                     | not null |
+ timeout_seconds | integer               |          |
+ allow_failure | boolean                | not null | false
+ manual       | boolean                  | not null | false
  started_at   | timestamp with time zone |          |
  finished_at  | timestamp with time zone |          |
 Indexes:
@@ -263,6 +267,9 @@ Referenced by:
 | `command` | TEXT | NOT NULL | — | Команда выполнения (e.g. `cargo test`, `git fetch --all`) |
 | `position` | INTEGER | NOT NULL | — | Порядок выполнения внутри стадии |
 | `status` | TEXT | NOT NULL | — | Статус: `queued` / `running` / `success` / `failed` / `canceled` |
+| `timeout_seconds` | INTEGER | NULL | — | Optional timeout из `.forge-ci.yml` |
+| `allow_failure` | BOOLEAN | NOT NULL | `false` | Failed job не валит stage/pipeline, если true |
+| `manual` | BOOLEAN | NOT NULL | `false` | Manual job ожидает `POST /jobs/{job_id}/start` |
 | `started_at` | TIMESTAMPTZ | NULL | — | Время начала (при переходе в `running`) |
 | `finished_at` | TIMESTAMPTZ | NULL | — | Время завершения (терминальный статус) |
 
@@ -284,7 +291,7 @@ Referenced by:
 
 ## 5. job_logs
 
-Append-only логи выполнения задач.
+Append-only логи выполнения задач. В current-модели логи принадлежат `job_id`; `retry_job` удаляет старые строки этого job до повторного выполнения. Target `execution_attempts` переносит ownership логов на attempt и сохраняет историю retry.
 
 ```
                        Table "public.job_logs"
@@ -366,7 +373,7 @@ Foreign-key constraints:
 
 ## 7. Template pipeline
 
-При триггере пайплайна (`POST /projects/{id}/pipelines`) создаётся 3 стадии с одной задачей в каждой:
+При триггере пайплайна (`POST /projects/{id}/pipelines`) backend сначала пытается прочитать `.forge-ci.yml` из локального bare repository на указанном ref. Если файл недоступен или проект указывает внешний URL, используется fallback из 3 стадий с одной задачей в каждой:
 
 | Position | Stage | Job | Image | Command |
 |---|---|---|---|---|
@@ -374,13 +381,13 @@ Foreign-key constraints:
 | 1 | `test` | `unit-tests` | `rust:1.86` | `cargo test` |
 | 2 | `deploy` | `deploy` | `alpine:3.21` | `echo deploy` |
 
-Все задачи создаются в статусе `queued`. В будущем конфигурация будет загружаться из YAML-файла репозитория (Phase 5+).
+Все задачи создаются в статусе `queued`; `timeout_seconds`, `allow_failure` и `manual` берутся из YAML, если заданы.
 
 ---
 
 ## 8. Platform tables (MVP)
 
-Все таблицы создаются через `store::migrate()` (`CREATE TABLE IF NOT EXISTS`).
+Platform tables создаются и расширяются через `backend/migrations/*.sql`; `0001_bootstrap_v1.sql` содержит исторический baseline, последующие файлы добавляют auth, outbox и execution gaps.
 
 ### 8.1 runners
 
@@ -451,7 +458,11 @@ Foreign-key constraints:
 | `cron` | TEXT | NOT NULL | — | 5-полей cron-выражение |
 | `git_ref` | TEXT | NOT NULL | — | Git-реф для запуска |
 | `enabled` | BOOLEAN | NOT NULL | `TRUE` | Включено/выключено |
+| `last_fired_at` | TIMESTAMPTZ | NULL | — | Последний MVP fire claim |
+| `last_fire_error` | TEXT | NULL | — | Последняя ошибка scheduler |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
+
+Текущий scheduler проверяет enabled rows примерно раз в минуту. `cron` валидируется как пять полей и хранится, но full cron semantics остаётся target.
 
 ### 8.7 webhooks
 
@@ -462,7 +473,10 @@ Foreign-key constraints:
 | `url` | TEXT | NOT NULL | — | URL приёмника |
 | `events` | TEXT[] | NOT NULL | `'{}'` | Подписанные события |
 | `enabled` | BOOLEAN | NOT NULL | `TRUE` | — |
+| `secret` | TEXT | NULL | — | Optional HMAC signing secret для outgoing delivery |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
+
+Outgoing delivery создаёт `outbox_messages` на terminal pipeline events. Delivery history/replay/dead letters — target.
 
 ### 8.8 notification_configs
 
@@ -498,7 +512,7 @@ Foreign-key constraints:
 | `enabled` | BOOLEAN | NOT NULL | `TRUE` | — |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
 
-> Пароли не хранятся — модель для будущего RBAC.
+> Пароли хранятся отдельно в `user_credentials`; роли применяются middleware только при `CICD_AUTH_SECRET`.
 
 ### 8.11 api_tokens
 
@@ -511,10 +525,59 @@ Foreign-key constraints:
 | `user_id` | UUID | NULL | — | FK → `users(id)` SET NULL |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
 | `last_used_at` | TIMESTAMPTZ | NULL | — | — |
+| `expires_at` | TIMESTAMPTZ | NULL | — | Optional PAT expiry (`NULL` = без срока) |
 
-> Полное значение возвращается только при создании. Проверка токенов при запросах — TODO.
+> Полное значение возвращается только при создании. PAT проверяется как Bearer token при включённом `CICD_AUTH_SECRET`.
 
-### 8.12 Индексы
+### 8.12 user_credentials
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `user_id` | UUID PK | нет | — | FK → `users(id)` CASCADE |
+| `password_hash` | TEXT | нет | — | `argon2id` hash |
+| `updated_at` | TIMESTAMPTZ | нет | `now()` | Последнее изменение credential |
+
+### 8.13 sessions
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | UUID PK | нет | — | Session ID |
+| `user_id` | UUID | нет | — | FK → `users(id)` CASCADE |
+| `refresh_token_hash` | TEXT UNIQUE | нет | — | Hash refresh token |
+| `created_at` | TIMESTAMPTZ | нет | `now()` | Создана |
+| `expires_at` | TIMESTAMPTZ | нет | — | Истекает |
+| `revoked_at` | TIMESTAMPTZ | да | — | Отозвана |
+
+### 8.14 domain_events
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | UUID PK | нет | — | Event ID |
+| `occurred_at` | TIMESTAMPTZ | нет | `now()` | Время события |
+| `event_type` | TEXT | нет | — | Например `pipeline.success` |
+| `aggregate_type` | TEXT | нет | — | Тип aggregate |
+| `aggregate_id` | UUID | нет | — | ID aggregate |
+| `payload` | JSONB | нет | `'{}'` | Immutable payload |
+| `correlation_id` | UUID | да | — | Correlation |
+| `causation_id` | UUID | да | — | Causation |
+
+### 8.15 outbox_messages
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | UUID PK | нет | — | Message ID |
+| `event_id` | UUID | нет | — | FK → `domain_events(id)` CASCADE |
+| `subscription_id` | TEXT | нет | — | Webhook/notification/SSE subscription key |
+| `channel` | TEXT CHECK | нет | — | `webhook`, `notification`, `sse` |
+| `destination` | TEXT | нет | — | URL/target |
+| `payload` | JSONB | нет | `'{}'` | Delivery payload |
+| `attempts` | INTEGER | нет | `0` | Attempt count |
+| `next_attempt_at` | TIMESTAMPTZ | нет | `now()` | Следующая попытка |
+| `delivered_at` | TIMESTAMPTZ | да | — | Успешная доставка |
+| `last_error` | TEXT | да | — | Последняя ошибка |
+| `created_at` | TIMESTAMPTZ | нет | `now()` | Создано |
+
+### 8.16 Индексы
 
 ```
 idx_runners_status          ON runners(status)
@@ -525,19 +588,25 @@ idx_schedules_project        ON schedules(project_id)
 idx_webhooks_project         ON webhooks(project_id)
 idx_audit_log_created        ON audit_log(created_at DESC)
 idx_pipelines_project_id     ON pipelines(project_id)
+idx_sessions_user            ON sessions(user_id)
+idx_sessions_expires         ON sessions(expires_at)
+idx_domain_events_aggregate  ON domain_events(aggregate_type, aggregate_id, occurred_at DESC)
+idx_domain_events_type       ON domain_events(event_type, occurred_at DESC)
+idx_outbox_pending           ON outbox_messages(next_attempt_at) WHERE delivered_at IS NULL
 ```
 
 ## 9. Планируемые таблицы (Roadmap)
 
 | Фаза | Таблицы | Назначение |
 |---|---|---|
-| Phase 1 (Auth) | `sessions` | Аутентификация, JWT |
-| Phase 6 (Webhooks) | `webhook_deliveries` | Доставка webhook-уведомлений |
+| Runner protocol | `job_leases`, `execution_attempts` | External dispatch, fencing, retries |
+| Production outbox | `outbox_deliveries` | Delivery history, replay/dead letters, observed outcome |
+| Notifications/SSE | delivery-specific tables | Email/Slack/SSE sender state |
 
 ## References
 
 - `docs/ARCHITECTURE.md` — архитектура приложения.
 - `docs/API.md` — REST API спецификация.
-- `backend/src/store.rs` — исходный код схемы БД.
-- `backend/src/domain.rs` — доменные правила переходов статусов.
+- `backend/migrations/*.sql` — исходный код схемы БД.
+- `backend/domain/src/lib.rs` — доменные правила переходов статусов.
 - `docs/ROADMAP.md` — план разработки.

@@ -45,10 +45,10 @@ type ApiResult<T> = Result<Json<T>, ApiError>;
 #[openapi(
     info(title = "Forge CI/CD API", version = "0.1.0", description = "Self-hosted CI/CD control plane. Array responses and error envelope follow docs/contracts/API_CONTRACT.md current compatibility mode."),
     paths(
-        health, auth_login, auth_refresh,
+        health, metrics, serve_openapi_json, auth_login, auth_refresh,
         list_projects, create_project, get_project, update_project, delete_project,
         trigger_pipeline, list_pipelines, get_pipeline, cancel_pipeline, retry_pipeline,
-        change_job_status, retry_job, list_logs, append_log,
+        change_job_status, retry_job, start_manual_job, job_log_stream, list_logs, append_log,
         crate::platform::list_runners, crate::platform::register_runner,
         crate::platform::runner_heartbeat, crate::platform::delete_runner,
         crate::platform::list_secrets, crate::platform::create_secret, crate::platform::delete_secret,
@@ -63,14 +63,18 @@ type ApiResult<T> = Result<Json<T>, ApiError>;
         crate::platform::project_report, crate::platform::list_audit_log,
         crate::platform::list_users, crate::platform::create_user, crate::platform::update_user,
         crate::platform::list_tokens, crate::platform::create_token, crate::platform::delete_token,
-        crate::git_host::git_info_refs, crate::git_host::git_service_endpoint, crate::git_host::internal_git_push,
+        crate::git_host::list_repositories, crate::git_host::create_repository,
+        crate::git_host::delete_repository,
+        crate::git_host::git_info_refs, crate::git_host::git_service_endpoint,
+        crate::git_host::git_receive_pack_openapi, crate::git_host::internal_git_push,
         crate::pulls::list_refs, crate::pulls::list_commits, crate::pulls::compare_refs,
         crate::pulls::list_pull_requests, crate::pulls::create_pull_request, crate::pulls::pr_action,
     ),
     components(schemas(
         crate::auth::LoginRequest, crate::auth::TokenPair,
         Project, CreateProject, UpdateProject, TriggerPipeline, Pipeline, Stage, Job,
-        PipelineDetail, StageDetail, JobLog, ChangeStatus,
+        PipelineDetail, StageDetail, JobLog, ChangeStatus, AppendLog,
+        CanceledPipelineResult, RetriedPipelineResult, ManualJobStartResult,
         crate::platform::Runner, crate::platform::RegisterRunner, crate::platform::RunnerHeartbeat,
         crate::platform::SecretMetadata, crate::platform::CreateSecret,
         crate::platform::Artifact,
@@ -82,7 +86,8 @@ type ApiResult<T> = Result<Json<T>, ApiError>;
         crate::platform::Report, crate::platform::AuditEvent,
         crate::platform::User, crate::platform::UserInput,
         crate::platform::ApiToken, crate::platform::CreatedToken, crate::platform::CreateToken,
-        crate::git_host::Repository, crate::git_host::GitPushEvent,
+        crate::git_host::Repository, crate::git_host::CreateRepositoryBody,
+        crate::git_host::DeletedRepository, crate::git_host::GitPushEvent,
         crate::pulls::RefInfo, crate::pulls::CommitInfo, crate::pulls::DiffResult, crate::pulls::DiffFile,
         crate::pulls::PullRequest, crate::pulls::CreatePullRequest, crate::pulls::PrAction,
     )),
@@ -110,6 +115,12 @@ type ApiResult<T> = Result<Json<T>, ApiError>;
 )]
 pub struct ApiDoc;
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/openapi.json",
+    tag = "health",
+    responses((status = 200, description = "OpenAPI JSON document"))
+)]
 pub(crate) async fn serve_openapi_json() -> Json<serde_json::Value> {
     use utoipa::OpenApi as _;
     Json(serde_json::to_value(ApiDoc::openapi()).expect("serialize openapi"))
@@ -119,6 +130,22 @@ pub(crate) async fn serve_openapi_json() -> Json<serde_json::Value> {
 pub fn openapi_yaml() -> Result<String, serde_yaml::Error> {
     use utoipa::OpenApi as _;
     serde_yaml::to_string(&ApiDoc::openapi())
+}
+
+#[utoipa::path(
+    get,
+    path = "/metrics",
+    tag = "health",
+    responses((status = 200, description = "Prometheus text exposition"))
+)]
+async fn metrics() -> impl IntoResponse {
+    (
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4",
+        )],
+        crate::metrics::render(),
+    )
 }
 
 #[derive(Debug)]
@@ -289,11 +316,7 @@ async fn require_auth(
     if PUBLIC.contains(&path) || path.starts_with("/git/") {
         return Ok(next.run(req).await);
     }
-    if std::env::var("CICD_AUTH_SECRET")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .is_none()
-    {
+    if !crate::auth::is_configured() {
         return Ok(next.run(req).await); // trusted-network mode: no enforcement
     }
     let claims = bearer_identity(req.headers())
@@ -388,18 +411,7 @@ fn build_router(
     }
     Router::new()
         .route("/api/v1/health", get(health))
-        .route(
-            "/metrics",
-            get(|| async {
-                (
-                    [(
-                        axum::http::header::CONTENT_TYPE,
-                        "text/plain; version=0.0.4",
-                    )],
-                    crate::metrics::render(),
-                )
-            }),
-        )
+        .route("/metrics", get(metrics))
         .route("/api/v1/openapi.json", get(serve_openapi_json))
         .route("/api/v1/auth/login", post(auth_login))
         .route("/api/v1/auth/refresh", post(auth_refresh))
@@ -763,7 +775,7 @@ struct StageDetail {
     jobs: Vec<Job>,
 }
 
-#[utoipa::path(post, path="/api/v1/projects/{project_id}/pipelines", tag="pipelines", request_body=TriggerPipeline, params(("project_id"=Uuid, Path)), responses((status=200, body=Pipeline), (status=404)))]
+#[utoipa::path(post, path="/api/v1/projects/{project_id}/pipelines", tag="pipelines", request_body=TriggerPipeline, params(("project_id"=Uuid, Path)), responses((status=200, body=PipelineDetail), (status=404)))]
 async fn trigger_pipeline(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
@@ -1563,11 +1575,23 @@ async fn change_job_status(
     Ok(Json(updated))
 }
 
-#[utoipa::path(post, path="/api/v1/pipelines/{pipeline_id}/cancel", tag="pipelines", params(("pipeline_id"=Uuid, Path)), responses((status=200, body=Pipeline), (status=404)))]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct CanceledPipelineResult {
+    #[schema(value_type = String, format = Uuid)]
+    canceled: Uuid,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct RetriedPipelineResult {
+    #[schema(value_type = String, format = Uuid)]
+    retried: Uuid,
+}
+
+#[utoipa::path(post, path="/api/v1/pipelines/{pipeline_id}/cancel", tag="pipelines", params(("pipeline_id"=Uuid, Path)), responses((status=200, body=CanceledPipelineResult), (status=404), (status=409)))]
 async fn cancel_pipeline(
     State(state): State<Arc<AppState>>,
     Path(pipeline_id): Path<Uuid>,
-) -> ApiResult<serde_json::Value> {
+) -> ApiResult<CanceledPipelineResult> {
     let pool = pool(&state)?;
     let pipeline = sqlx::query_scalar::<_, String>("SELECT status FROM pipelines WHERE id = $1")
         .bind(pipeline_id)
@@ -1615,7 +1639,9 @@ async fn cancel_pipeline(
     .execute(pool)
     .await
     .map_err(ApiError::internal)?;
-    Ok(Json(serde_json::json!({"canceled": pipeline_id})))
+    Ok(Json(CanceledPipelineResult {
+        canceled: pipeline_id,
+    }))
 }
 
 /// Kill a running job process: try Docker container stop by name, then
@@ -1639,11 +1665,11 @@ async fn kill_running_job(job_id: Uuid, pid: u32) {
         .await;
 }
 
-#[utoipa::path(post, path="/api/v1/pipelines/{pipeline_id}/retry", tag="pipelines", params(("pipeline_id"=Uuid, Path)), responses((status=200, body=Pipeline), (status=404)))]
+#[utoipa::path(post, path="/api/v1/pipelines/{pipeline_id}/retry", tag="pipelines", params(("pipeline_id"=Uuid, Path)), responses((status=200, body=RetriedPipelineResult), (status=404), (status=409)))]
 async fn retry_pipeline(
     State(state): State<Arc<AppState>>,
     Path(pipeline_id): Path<Uuid>,
-) -> ApiResult<serde_json::Value> {
+) -> ApiResult<RetriedPipelineResult> {
     let pool = pool(&state)?;
     let status = sqlx::query_scalar::<_, String>("SELECT status FROM pipelines WHERE id = $1")
         .bind(pipeline_id)
@@ -1677,7 +1703,9 @@ async fn retry_pipeline(
     .execute(pool)
     .await
     .map_err(ApiError::internal)?;
-    Ok(Json(serde_json::json!({"retried": pipeline_id})))
+    Ok(Json(RetriedPipelineResult {
+        retried: pipeline_id,
+    }))
 }
 
 #[utoipa::path(post, path="/api/v1/jobs/{job_id}/retry", tag="jobs", params(("job_id"=Uuid, Path)), responses((status=200, body=Job), (status=404)))]
@@ -1773,12 +1801,17 @@ struct JobLog {
 struct AppendLog {
     message: String,
 }
-#[utoipa::path(post, path="/api/v1/jobs/{job_id}/start", tag="jobs", params(("job_id"=Uuid, Path)), responses((status=200), (status=409, description="job is not a waiting manual job")))]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct ManualJobStartResult {
+    started: bool,
+}
+
+#[utoipa::path(post, path="/api/v1/jobs/{job_id}/start", tag="jobs", params(("job_id"=Uuid, Path)), responses((status=200, body=ManualJobStartResult), (status=404), (status=409, description="job is not a waiting manual job")))]
 /// Starts a manual (`when: manual`) job — approval gate (GitLab parity).
 async fn start_manual_job(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> ApiResult<ManualJobStartResult> {
     let pool = pool(&state)?;
     let manual: Option<bool> = sqlx::query_scalar("SELECT manual FROM jobs WHERE id = $1")
         .bind(job_id)
@@ -1801,7 +1834,7 @@ async fn start_manual_job(
         return Err(ApiError::conflict("job already started"));
     }
     crate::metrics::PIPELINES_CREATED_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    Ok(Json(serde_json::json!({"started": true})))
+    Ok(Json(ManualJobStartResult { started: true }))
 }
 
 #[utoipa::path(get, path="/api/v1/jobs/{job_id}/logs/stream", tag="jobs", params(("job_id"=Uuid, Path), ("after"=Option<i32>, Query)), responses((status=200, description="text/event-stream of job log lines")))]
@@ -1872,7 +1905,7 @@ async fn list_logs(
     let logs = sqlx::query_as::<_, JobLog>("SELECT id, job_id, sequence, message, created_at FROM job_logs WHERE job_id = $1 ORDER BY sequence").bind(job_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?;
     Ok(Json(logs))
 }
-#[utoipa::path(post, path="/api/v1/jobs/{job_id}/logs", tag="jobs", params(("job_id"=Uuid, Path)), responses((status=200, body=[JobLog])))]
+#[utoipa::path(post, path="/api/v1/jobs/{job_id}/logs", tag="jobs", request_body=AppendLog, params(("job_id"=Uuid, Path)), responses((status=200, body=JobLog)))]
 async fn append_log(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,

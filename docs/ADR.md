@@ -124,7 +124,7 @@ Proposed / Accepted / Deprecated / Superseded by ADR-NNNN
 - `docs/ARCHITECTURE.md` — общая архитектура.
 - `docs/adr/0001-rust-axum-sqlx.md` — Rust + Axum + SQLx.
 - `docs/adr/0002-react-vite-tailwind.md` — React + Vite + Tailwind.
-- `docs/adr/0003-manual-job-transitions.md` — Ручные переходы статусов.
+- `docs/adr/0003-manual-job-transitions.md` — исторический baseline ручных переходов; current execution частично superseded embedded runner-ом.
 - `docs/adr/0004-postgresql-only.md` — Только PostgreSQL.
 - `docs/adr/0005-workspace-layered-architecture.md` — Cargo workspace и слоистая архитектура.
 - `docs/adr/0006-postgresql-outbox.md` — надёжные асинхронные эффекты.

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Documentation verification for Forge CI/CD.
 
-Checks: markdown link integrity, canonical naming (ADR-0009), status taxonomy,
-orphan docs, current-state cross-check, screenshot manifest.
+Checks: markdown link/anchor integrity, canonical naming (ADR-0009),
+status taxonomy, orphan docs, current-state cross-check, screenshot manifest,
+and router/OpenAPI path drift.
 
-Usage: python3 scripts/verify_docs.py [--all | --links --canonical --status-labels --orphan-docs --current-state --screenshots --manifest]
+Usage: python3 scripts/verify_docs.py [--all | --links --anchors --canonical --status-labels --orphan-docs --current-state --screenshots --manifest --openapi-routes]
 Exit code 0 = clean; non-zero with a report otherwise.
 """
 from __future__ import annotations
@@ -15,6 +16,7 @@ import json
 import re
 import struct
 import sys
+from urllib.parse import unquote
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -27,6 +29,11 @@ FORBIDDEN_CANONICAL = [
     (r"/api/v1/runner/v1/", "use /api/v1/runner/* (ADR-0009)"),
     (r"backend/migration/migrations", "use backend/migrations (ADR-0009)"),
     (r"openapi/openapi\.json", "use openapi/openapi.yaml (ADR-0009)"),
+    (r"frontend/src/shared/api/generated", "use frontend/src/api/schema.d.ts (ADR-0009)"),
+    (r"\brunner_leases\b", "use job_leases (ADR-0009)"),
+    (r"\bpipeline_run_id\b", "use pipeline_id (ADR-0009)"),
+    (r"\bjob_run_id\b", "use job_id + execution_attempts (ADR-0009)"),
+    (r"shared/api/generated", "use frontend/src/api/schema.d.ts for current frontend contract"),
 ]
 # Docs where historic mentions are allowed (they document the deprecation itself)
 CANONICAL_ALLOWLIST = {
@@ -37,6 +44,14 @@ CANONICAL_ALLOWLIST = {
 }
 
 STATUS_TOKENS = ("Current verified", "Configuration only", "Target approved", "Deprecated/historical")
+FORBIDDEN_STALE_STATUS = [
+    (r"В MVP задачи переводятся вручную через API, CLI или Dashboard", "current execution uses embedded runner; manual transitions are historical/manual-job only"),
+    (r"Automation — configuration only", "schedules/outgoing webhooks are Current verified MVP; only notifications/inbound handlers are configuration-only"),
+    (r"Identity — storage only", "identity has conditional auth/RBAC enforcement when CICD_AUTH_SECRET is non-empty"),
+    (r"Outbox worker и runner API -- Target", "outbox worker is current MVP; only external runner API is target"),
+    (r"Нет auth/RBAC: Spoofing на всех API", "auth/RBAC is conditional, not absent"),
+    (r"Отсутствует rate limiting", "login rate limiting exists; broader rate limiting remains target"),
+]
 
 problems: list[str] = []
 
@@ -52,9 +67,13 @@ def md_files() -> list[Path]:
     return files
 
 
+def read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
 def check_links() -> None:
     for p in md_files():
-        text = p.read_text(errors="ignore")
+        text = read_text(p)
         rel = p.relative_to(ROOT).as_posix()
         for target in re.findall(r"\]\(([^)#]+?)(?:#[^)]*)?\)", text):
             if target.startswith(("http://", "https://", "mailto:")):
@@ -70,12 +89,66 @@ def check_links() -> None:
                 fail(f"broken doc ref: {rel} -> {ref}")
 
 
+def slugify_heading(raw: str) -> str:
+    raw = re.sub(r"\s+\{#[^}]+}\s*$", "", raw)
+    raw = re.sub(r"`([^`]*)`", r"\1", raw)
+    raw = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", raw)
+    raw = raw.strip().lower()
+    out: list[str] = []
+    for ch in raw:
+        if ch.isalnum() or ch == "_":
+            out.append(ch)
+        elif ch.isspace() or ch == "-":
+            out.append("-")
+    return "".join(out).strip("-")
+
+
+def heading_anchors(path: Path) -> set[str]:
+    anchors: set[str] = set()
+    counts: dict[str, int] = {}
+    for line in read_text(path).splitlines():
+        m = re.match(r"^(#{1,6})\s+(.+?)\s*#*$", line)
+        if not m:
+            continue
+        explicit = re.search(r"\s+\{#([^}]+)}\s*$", m.group(2))
+        base = explicit.group(1) if explicit else slugify_heading(m.group(2))
+        if not base:
+            continue
+        count = counts.get(base, 0)
+        counts[base] = count + 1
+        anchors.add(base if count == 0 else f"{base}-{count}")
+    return anchors
+
+
+def check_anchors() -> None:
+    cache: dict[Path, set[str]] = {}
+    for p in md_files():
+        text = read_text(p)
+        rel = p.relative_to(ROOT).as_posix()
+        for target in re.findall(r"\]\(([^)]+)\)", text):
+            before_hash, sep, fragment = target.partition("#")
+            if not sep or not fragment:
+                continue
+            if before_hash.startswith(("http://", "https://", "mailto:")):
+                continue
+            dest = p if before_hash == "" else (p.parent / before_hash).resolve()
+            if dest.suffix.lower() != ".md":
+                continue
+            if not dest.exists():
+                continue  # reported by check_links
+            anchors = cache.setdefault(dest, heading_anchors(dest))
+            decoded = unquote(fragment)
+            candidates = {decoded, decoded.lower(), slugify_heading(decoded)}
+            if anchors.isdisjoint(candidates):
+                fail(f"broken anchor: {rel} -> {target}")
+
+
 def check_canonical() -> None:
     for p in md_files():
         rel = p.relative_to(ROOT).as_posix()
         if rel in CANONICAL_ALLOWLIST or "/plans/" in rel:
             continue
-        text = p.read_text(errors="ignore")
+        text = read_text(p)
         for pattern, hint in FORBIDDEN_CANONICAL:
             for m in re.finditer(pattern, text):
                 line = text.count("\n", 0, m.start()) + 1
@@ -91,16 +164,23 @@ def check_status_labels() -> None:
     for p in key:
         if not p.exists():
             fail(f"missing {p.name}")
-    readme = (ROOT / "README.md").read_text()
+    readme = read_text(ROOT / "README.md")
     for token in STATUS_TOKENS[:3]:
         if token not in readme and "Current verified" not in readme:
             fail("README lacks capability status legend")
+    for p in md_files():
+        rel = p.relative_to(ROOT).as_posix()
+        text = read_text(p)
+        for pattern, hint in FORBIDDEN_STALE_STATUS:
+            for m in re.finditer(pattern, text):
+                line = text.count("\n", 0, m.start()) + 1
+                fail(f"stale status phrase at {rel}:{line} ({hint})")
 
 
 def check_orphans() -> None:
     indexed = set()
     for p in md_files():
-        text = p.read_text(errors="ignore")
+        text = read_text(p)
         for ref in re.findall(r"docs/[A-Za-z0-9_./-]+\.md", text):
             indexed.add((ROOT / ref).resolve())
     stubs = 0
@@ -108,7 +188,8 @@ def check_orphans() -> None:
         if p.name in {"AGENTS.md"}:
             continue
         if p.resolve() not in indexed:
-            if p.read_text(errors="ignore").startswith("# Moved") or "Redirect" in p.read_text(errors="ignore")[:200]:
+            text = read_text(p)
+            if text.startswith("# Moved") or "Redirect" in text[:200]:
                 stubs += 1
                 continue
             fail(f"orphan doc (not referenced anywhere): docs/{p.name}")
@@ -119,19 +200,22 @@ def check_current_state() -> None:
     if not p.exists():
         fail("docs/CURRENT_STATE.md missing")
         return
-    text = p.read_text()
-    if "2026-08-27" not in text:
-        fail("CURRENT_STATE.md lacks capture date")
-    # routes in router must be <= documented count marker
+    text = read_text(p)
+    if not re.search(r"Снято:\s*`20\d{2}-\d{2}-\d{2}`", text):
+        fail("CURRENT_STATE.md lacks ISO capture date")
+    # routes in router must match documented current-state marker
     router = ROOT / "frontend/src/app/router.tsx"
     if router.exists():
-        n = len(re.findall(r"path: '/", router.read_text()))
-        if "21 маршрут" not in text and n:
-            fail(f"CURRENT_STATE route count drift: router has {n} paths")
+        n = len(re.findall(r"path: '/", read_text(router)))
+        documented = re.search(r"Frontend:\s*(\d+)\s+маршрут", text)
+        if not documented and n:
+            fail(f"CURRENT_STATE route count missing: router has {n} paths")
+        elif documented and int(documented.group(1)) != n:
+            fail(f"CURRENT_STATE route count drift: documented {documented.group(1)}, router has {n}")
 
 
 def check_screenshots() -> None:
-    readme = (ROOT / "README.md").read_text()
+    readme = read_text(ROOT / "README.md")
     shots = re.findall(r"\(docs/screenshots/([^)]+\.png)\)", readme)
     seen = set()
     for s in shots:
@@ -152,26 +236,76 @@ def check_manifest() -> None:
     manifest = DOCS / "assets/screens/manifest.md"
     if not manifest.exists():
         return  # manifest arrives at Gate 5
-    text = manifest.read_text()
+    text = read_text(manifest)
     for m in re.finditer(r"\((\.\./)+screenshots/([^)]+\.png)\)", text):
         if not (DOCS / "screenshots" / m.group(2)).exists():
             fail(f"manifest references missing file: {m.group(2)}")
 
 
+def extract_router_paths() -> set[str]:
+    paths: set[str] = set()
+    for src in [ROOT / "backend/src/api.rs", ROOT / "backend/src/platform.rs"]:
+        if not src.exists():
+            continue
+        text = read_text(src)
+        paths.update(re.findall(r"\.route\(\s*\"([^\"]+)\"", text))
+    return paths
+
+
+def extract_openapi_paths() -> set[str]:
+    spec = ROOT / "openapi/openapi.yaml"
+    if not spec.exists():
+        fail("openapi/openapi.yaml missing")
+        return set()
+    paths: set[str] = set()
+    in_paths = False
+    for line in read_text(spec).splitlines():
+        if line == "paths:":
+            in_paths = True
+            continue
+        if in_paths and line and not line.startswith((" ", "/")):
+            break
+        if not in_paths:
+            continue
+        m = re.match(r"^  (/[^:]+):\s*$", line)
+        if m:
+            paths.add(m.group(1))
+    return paths
+
+
+def check_openapi_routes() -> None:
+    router_paths = extract_router_paths()
+    openapi_paths = extract_openapi_paths()
+    for path in sorted(router_paths - openapi_paths):
+        fail(f"router path missing from OpenAPI: {path}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--all", action="store_true")
-    for name in ("links", "canonical", "status-labels", "orphan-docs", "current-state", "screenshots", "manifest"):
+    for name in (
+        "links",
+        "anchors",
+        "canonical",
+        "status-labels",
+        "orphan-docs",
+        "current-state",
+        "screenshots",
+        "manifest",
+        "openapi-routes",
+    ):
         ap.add_argument(f"--{name}", action="store_true")
     args = ap.parse_args()
     checks = {
         "links": check_links,
+        "anchors": check_anchors,
         "canonical": check_canonical,
         "status-labels": check_status_labels,
         "orphan-docs": check_orphans,
         "current-state": check_current_state,
         "screenshots": check_screenshots,
         "manifest": check_manifest,
+        "openapi-routes": check_openapi_routes,
     }
     selected = [fn for name, fn in checks.items() if args.all or getattr(args, name.replace("-", "_"))]
     if not selected:

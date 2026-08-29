@@ -2,11 +2,11 @@
 
 ## Status
 
-Accepted
+Accepted; current screen set expanded beyond the original manual-transition MVP.
 
 ## Context
 
-Dashboard отображает проекты, пайплайны, стадии, задачи и логи, а также управляет ручными переходами статусов MVP. Нужен быстрый frontend без тяжёлого server runtime, с типизированными компонентами, доступными базовыми UI-примитивами и предсказуемой сборкой для self-hosted Docker deployment.
+Dashboard отображает проекты, пайплайны, стадии, задачи и логи. В момент принятия ADR он также управлял ручными переходами статусов MVP; текущий Dashboard уже покрывает embedded runner, Git, secrets, artifacts, schedules/webhooks MVP, users/tokens и settings. Нужен быстрый frontend без тяжёлого server runtime, с типизированными компонентами, доступными базовыми UI-примитивами и предсказуемой сборкой для self-hosted Docker deployment.
 
 ## Alternatives Considered
 

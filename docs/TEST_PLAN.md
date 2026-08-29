@@ -19,23 +19,23 @@
 |---|---|---|---|
 | Domain unit | Чистые доменные правила, прежде всего `JobStatus::transition_to()` | `cargo test -p cicd-server --test domain_transitions` | **Current verified** |
 | API contract | Router, HTTP method/path, status, extractor и поведение без pool через `app(None)` | `cargo test -p cicd-server --test api_contract` | **Current verified** |
-| CLI contract | Public command groups, help, стабильное пользовательское поведение CLI | `cargo test -p cicd-server --test cli_contract` | **Current verified** |
+| CLI contract | Public command groups, help, стабильное пользовательское поведение CLI | `cargo test -p cicd-cli --test cli_contract` | **Current verified** |
 | Frontend unit | Компоненты, pure helpers и доступность UI в Vitest/Testing Library | `cd frontend && pnpm test` | **Current verified** |
 | Compose smoke | Собранные образы, startup сервисов и `GET /api/v1/health` | `docker compose up --build -d && just health`; после проверки `docker compose down` | **Current verified** локально; не current CI-gate |
-| Real-DB integration | PostgreSQL constraints, migrations, CRUD, persisted effects, runtime-role denial, transaction boundaries | Isolated `backend/docker-compose.test.yml`, migrated DB и real-DB suite | **Target approved** |
+| Real-DB integration | PostgreSQL constraints, migrations, CRUD, persisted effects, auth/PAT и current API boundaries | GitHub Actions PostgreSQL service + `cargo test --features integration --test integration_db`; local fixture `backend/docker-compose.test.yml` | **Current verified** |
 | Playwright E2E | Критические пользовательские journeys на собранном frontend и real API/PostgreSQL stack | Playwright Chromium; trace, screenshot и video для failed/retried flow | **Target approved** |
 | Accessibility | Keyboard journey, accessible names/roles, focus, contrast и серьёзные нарушения | Playwright + axe; без `serious`/`critical` violations | **Target approved** |
 | Performance | Бюджеты ключевых routes и регрессии production build | Lighthouse CI с сохранённым report | **Target approved** |
 
 ### 2.1. Фактический реестр существующих тестов
 
-Ниже приведён реестр по текущим `backend/tests/` и `frontend/src/**/*.test.*`; он не выдаёт target-покрытие за реализованное.
+Ниже приведён реестр по текущим `backend/tests/`, `backend/cli/tests/` и `frontend/src/**/*.test.*`; он не выдаёт target-покрытие за реализованное.
 
 | Область | Файл | Проверяемое поведение |
 |---|---|---|
 | Domain unit | `backend/tests/domain_transitions.rs` | `queued -> running -> success`; terminal `failed` не перезапускается; `queued -> success` отклоняется. |
 | API contract без БД | `backend/tests/api_contract.rs` | Health возвращает `200`; project CRUD без pool возвращает `503`; пустой body PATCH отклоняется. |
-| CLI contract | `backend/tests/cli_contract.rs` | `cicd-cli --help` содержит command groups `project`, `pipeline`, `job`. |
+| CLI contract | `backend/cli/tests/cli_contract.rs` | `cicd-cli --help` содержит command groups `project`, `pipeline`, `job`. |
 | Dashboard unit | `frontend/src/pages/dashboard/dashboard.test.ts` | `statusLabel` форматирует known status и `success`. |
 | Pull request detail unit | `frontend/src/pages/pull-request-detail/pull-request-detail.test.ts` | `buildCompareHref` формирует направление compare и URL-encoding имени repository. |
 | Shared UI unit | `frontend/src/shared/ui/confirm-dialog.test.tsx` | `ConfirmDialog` скрыт до открытия, подтверждает действие и не подтверждает при cancel. |
@@ -50,7 +50,7 @@
 | Local unit/contract | Rust 1.86 и Node 22/pnpm 11 согласно `.github/workflows/ci.yml`; тест не использует production URL, токен или DB. | **Current verified** |
 | Main Compose smoke | Disposable local Compose stack; проверяются health и состояние сервисов, затем stack останавливается. Реальные shared data и secrets запрещены. | **Current verified** |
 | Test Compose PostgreSQL | `backend/docker-compose.test.yml`: `postgres:17-alpine`, `forge_test_cicd`, tmpfs, без host port, healthcheck. Owner fixture -- `forge_owner`; `backend/tests/sql/init-roles.sql` создаёт runtime fixture `forge_runtime`. | **Current verified fixture** |
-| Real-DB harness | Migration выполняется owner credential; runtime-проверки -- отдельно под `forge_runtime`. Harness допускает destructive setup только для DB с префиксом `forge_test_`; parallel tests получают независимый migrated database/schema. | **Target approved** |
+| Real-DB harness | Current CI применяет migrations к disposable PostgreSQL service под `forge_owner`. Полная owner/runtime role matrix, prior-schema upgrade и parallel isolated DB/schema остаются target. | **Current verified; target расширение** |
 | Evidence seed | `frontend/scripts/seed-evidence.mjs` создаёт детерминированные demo repositories, projects, pipelines, runners, secrets metadata, environments, deployments, users и tokens для disposable local evidence stack. Запуск: `cd frontend && pnpm seed:evidence`. | **Current verified** |
 | Screenshot evidence | `frontend/scripts/shoot-evidence.mjs` снимает predefined маршруты на `1920x1080` и `375x812`; это visual evidence, а не E2E assertion. | **Current verified** |
 
@@ -79,9 +79,9 @@ Coverage измеряет поведение и риск, а не только l
 | Обязательная область | Минимальное доказательство |
 |---|---|
 | Status transitions | Domain test для всех допустимых и недопустимых переходов, terminal states и aggregation; real-DB/API test для persisted transition, concurrent/retry boundary и согласованности pipeline/stage/job. Единственный источник правил -- `JobStatus::transition_to()`. |
-| Auth и RBAC | После поставки enforcement: unauthenticated `401`, forbidden `403`, tenant/project scope, role boundary, token/session revoke и audit event. До этого capability остаётся **Target approved** и тесты не могут маркировать открытый MVP как защищённый. |
-| Secrets | Создание/metadata допускаются только через safe contract; plaintext не возвращается API/UI, не попадает в error, audit, log, trace, fixture и screenshot. Target injection дополнительно проверяет least privilege и masking output. |
-| Outbox и идемпотентность | После поставки `domain_events`, `outbox_messages` и `outbox_deliveries`: atomic aggregate/event/outbox commit, duplicate ingress, unique idempotency key, lease recovery, retry после crash и отсутствие недопустимого duplicate observed result. Канонические имена определяет ADR-0009. |
+| Auth и RBAC | Current enforcement требует `401`/`403`, enabled user, JWT/PAT и audit event при заданном `CICD_AUTH_SECRET`; tenant/project scope, scoped PAT, revoke UX и persistent lockout остаются target. |
+| Secrets | Создание/metadata допускаются только через safe contract; plaintext не возвращается API/UI. Current embedded runner injection и masking нуждаются в focused regression tests; target дополнительно проверяет least privilege lease и redaction во всех error/audit/trace каналах. |
+| Outbox и идемпотентность | Current `domain_events`/`outbox_messages` должны доказывать atomic terminal pipeline event и basic webhook retry. `outbox_deliveries`, duplicate ingress, unique idempotency key, lease recovery, crash retry и single observed outcome остаются target. |
 | Public contracts | Изменение API, CLI или generated client имеет focused contract test; breaking change в active `/api/v1` запрещён без новой версии и compatibility evidence. |
 | UI | Изменённый critical flow имеет component/feature test; после E2E rollout -- real-flow assertion, mobile `375 px` где применимо, и axe check. Скриншот сам по себе недостаточен. |
 
@@ -100,7 +100,7 @@ Coverage измеряет поведение и риск, а не только l
 
 ## 7. Traceability
 
-Целевой реестр требований и доказательств — TRACEABILITY-документ в `docs/` (файл TRACEABILITY.md); на момент создания этого плана он является **Target approved** и должен быть создан до включения traceability gate. До появления реестра источник requirement остаётся в `docs/PRODUCT_REQUIREMENTS.md`, ADR и `docs/contracts/` согласно ADR-0009.
+Реестр требований и доказательств — [TRACEABILITY.md](TRACEABILITY.md). Для нового нормативного поведения источник requirement остаётся в `docs/PRODUCT_REQUIREMENTS.md`, ADR и `docs/contracts/` согласно ADR-0009, а RTM-строка связывает requirement с проверкой и evidence.
 
 Каждый test case, spec или test description, который проверяет нормативное требование, содержит REQ-ID в имени либо в непосредственном описании в формате `REQ-<area>-<number>`, например `REQ-AUTH-001 viewer_cannot_mutate_project` или `it('[REQ-UI-014] ...')`. Один REQ-ID может иметь несколько уровней доказательства; изменение requirement обязано обновить связанные тесты и запись traceability.
 
@@ -114,18 +114,18 @@ Coverage измеряет поведение и риск, а не только l
 
 | Job | Обязательная проверка |
 |---|---|
-| `backend` | Rust 1.86: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo build --release` в `backend/`. |
-| `frontend` | Node 22/pnpm 11: `pnpm install --frozen-lockfile`, `pnpm test`, `pnpm build` в `frontend/`. |
-| `containers` | После backend/frontend: `docker compose build`. |
+| `backend` | Rust 1.86 + PostgreSQL 17 service: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db`, OpenAPI drift gate. |
+| `frontend` | Node 22/pnpm 11: `pnpm install --frozen-lockfile`, `pnpm openapi:generate` + clean diff для `src/api/schema.d.ts`, `pnpm test`, `pnpm build`. |
+| `docs` | Python 3.12: `python3 scripts/verify_docs.py --all`. |
 
-Current CI не запускает real-PostgreSQL integration, Compose startup/health smoke, migration verification, Playwright, axe, Lighthouse, OpenAPI compatibility, secret/dependency/container scan или coverage ratchet.
+Current CI не запускает compose startup/health smoke, release build, isolated owner/runtime migration matrix, prior-schema upgrade, Playwright, axe, Lighthouse, OpenAPI backward compatibility, secret/dependency/container scan или coverage ratchet.
 
 ### Target approved
 
 | Gate | Required evidence |
 |---|---|
-| `migration-test` | Test Compose up/wait, migrations up/verify, real-DB suite под owner/runtime roles, unconditional `down -v`, logs и applied version/checksum. |
-| `openapi-contract` | Generate/validate bundled `openapi/openapi.yaml`, generated TypeScript client check, clean diff и compatibility diff с default branch. |
+| `migration-test` | Current real-DB suite плюс isolated PostgreSQL lifecycle, owner/runtime roles, prior-schema upgrade, unconditional cleanup, logs и applied version/checksum. |
+| `openapi-contract` | Current generation/drift/codegen checks плюс validate/examples и compatibility diff с default branch. |
 | `backend` | Workspace fmt/clippy/test/release build, domain/app/API contract tests и coverage artifact. |
 | `cli-contract` | Help, config precedence, JSON output, exit codes, redaction и real API/PostgreSQL automation flow. |
 | `frontend` | Frozen lockfile, lint, Vitest, generated-client typecheck, production build и coverage artifact. |

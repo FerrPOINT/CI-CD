@@ -6,6 +6,7 @@ import { Button } from '@/shared/ui/button'
 import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
+import { CapabilityCallout } from '@/shared/ui/capability-callout'
 import { Server, Plus, Activity, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { Runner } from '@/api/types'
@@ -43,6 +44,13 @@ export function RunnersPage() {
           {t('runners.register')}
         </Button>
       </div>
+
+      <CapabilityCallout
+        tone="mvp"
+        title={t('runners.capabilityTitle')}
+        label={t('capability.currentMvp')}
+        description={t('runners.capabilityDescription')}
+      />
 
       {showForm && (
         <Card className="p-4">

@@ -17,11 +17,11 @@
 
 ### 2. Код
 
-- Backend: слои `api → domain → store` (HTTP-хендлеры, доменные правила переходов статусов, SQLx-хранилище).
+- Backend: текущий runtime ещё монолитен, но новые изменения двигаются к `api → app/domain → infra/store` по ADR-0005.
 - Состояние приложения — `AppState` с `Option<PgPool>` (бездБ режим для health-check).
-- SQL-схема управляется через `store::migrate()` — `CREATE TABLE IF NOT EXISTS` при старте.
+- SQL-схема управляется committed SQLx migrations в `backend/migrations/*.sql`; backend применяет их при старте, `cicd-migrate` использует тот же набор.
 - Доменные статусы и transition-правила — `JobStatus` enum с `transition_to()`, единственный источник правды для валидации переходов.
-- Frontend: компоненты на shadcn/ui + Tailwind, типизированные API-клиенты.
+- Frontend: компоненты на shadcn/ui + Tailwind, typed API wrapper и generated OpenAPI DTO `frontend/src/api/schema.d.ts`.
 - Серверное состояние: `@tanstack/react-query` (целевое), клиентское — `useState`/`zustand`.
 - Vite dev proxy: `/api` → `http://localhost:22801`.
 
@@ -34,7 +34,7 @@
 
 ### 4. Тестирование
 
-- Backend: `cargo test` — unit-тесты domain transitions, интеграционные тесты API contract, CLI contract.
+- Backend: `cargo test --workspace`, `cargo test --features integration --test integration_db`, API/CLI/domain contract tests.
 - Frontend: Vitest для unit-тестов компонентов, Playwright для E2E (целевое).
 - После UI-изменений — скриншоты full-page (375 / 1920 / 2560).
 - Все новые endpoint — curl-проверка.
@@ -42,8 +42,8 @@
 
 ### 5. Документация
 
-- При изменении API обновлять `docs/API.md`.
-- При изменении дата-модели обновлять `docs/DATA_MODEL.md`.
+- При изменении API обновлять Rust OpenAPI annotations, регенерировать `openapi/openapi.yaml` и `frontend/src/api/schema.d.ts`, затем обновлять `docs/API.md`.
+- При изменении дата-модели добавлять SQLx migration и обновлять `docs/DATA_MODEL.md`.
 - При новом функционале добавлять/обновлять `docs/ROADMAP.md`.
 - Любые неочевидные решения фиксировать в `docs/ARCHITECTURE.md`.
 
@@ -67,7 +67,7 @@
 - [ ] Все тесты проходят (`cargo test`, `pnpm test`).
 - [ ] Линтеры (`cargo clippy`, `cargo fmt --check`) чистые.
 - [ ] Документация актуальна.
-- [ ] Коммиты запушены в `origin/main`.
+- [ ] OpenAPI/generated client актуальны, если менялся API.
 - [ ] Пользователь увидел результат (скриншот / curl / лог).
 
 ## Контакты

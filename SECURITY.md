@@ -7,10 +7,11 @@
 
 Что отсутствует на данный момент (см. `docs/CURRENT_STATE.md`):
 
-- **Нет аутентификации и RBAC**: API (`:22801`) и Dashboard (`:22802`) полностью открыты; users/roles и API-токены хранятся, но enforcement middleware не реализован.
+- **Auth/RBAC условны**: если `CICD_AUTH_SECRET` не задан или пустой, API (`:22801`) и Dashboard (`:22802`) открыты в trusted-network режиме. Если секрет непустой, включаются login/JWT/PAT и coarse global roles, но project membership, tenant isolation и production session policy ещё не завершены.
 - **Нет TLS**: весь трафик (включая Git push/fetch и логи джобов) идёт в открытом виде.
-- **CORS permissive**, PostgreSQL из Docker Compose опубликован на все интерфейсы (`:22543`).
-- Login — UI-заглушка без auth-запроса.
+- **CORS permissive**. PostgreSQL в `docker-compose.yml` привязан к `127.0.0.1:${CICD_DATABASE_PORT:-22543}`, но API/Dashboard по умолчанию публикуются на host port и должны быть закрыты сетью или reverse proxy.
+- **API/PAT не являются production IAM**: legacy `cicd_...` tokens проверяются только при включённом auth-secret и пока не имеют target scopes/pepper/rotation guarantees.
+- **Automation delivery — MVP**: scheduler/outgoing webhooks есть, но без полной target-модели leases, delivery history, replay и dead-letter runbook.
 
 Минимум до любого shared-деплоя: сменить `CICD_GIT_INTERNAL_TOKEN` и пароль PostgreSQL (`CICD_DATABASE_PASSWORD`), ограничить доступ файрволом, не открывать порты наружу.
 

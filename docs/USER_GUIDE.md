@@ -14,27 +14,28 @@ Forge CI/CD - self-hosted control plane для Git-репозиториев и C
 
 | Возможность | Статус | Практическая граница |
 |---|---|---|
-| Проекты, pipelines, jobs, логи | **Current verified** | Создание, просмотр, отмена и повтор; embedded runner выполняет jobs в Docker или host shell. |
+| Проекты, pipelines, jobs, логи | **Current verified** | Создание, просмотр, отмена и повтор в текущей job-модели; embedded runner выполняет jobs в Docker или host shell. |
 | Git Smart HTTP и auto-trigger | **Current verified** | Локальный bare-репозиторий, `clone`/`fetch`/`push`; push создаёт pipeline у связанного проекта. |
 | Артефакты | **Current verified** | Локальное хранение, upload/download, до 50 MiB на файл. |
-| Секреты проекта | **Current verified** | AES-256-GCM at rest; нет инъекции в job и маскирования логов. |
+| Секреты проекта | **Current verified** | AES-256-GCM at rest; embedded runner передаёт их в env и маскирует значения в stdout/stderr logs. |
 | Окружения и записи деплоев | **Current verified** | Метаданные окружения и история деплоев; выполнение деплоя определяется job. |
 | Отчёты и аудит | **Current verified** | Сводка по проекту и последние 200 событий аудита. |
-| Пользователи и API-токены | **Current verified** | Хранение ролей и токенов; проверка токенов/RBAC ещё не включена. |
-| Расписания, webhooks, уведомления | **Configuration only** | Конфигурация сохраняется, но cron, доставка webhooks и отправка уведомлений не выполняются. |
-| Вход, сессии, RBAC | **Target approved** | UI входа - заглушка; API и Dashboard сейчас не защищены middleware. |
+| Пользователи и API-токены | **Current verified** | Хранение, argon2id credentials, sessions и PAT enforcement при `CICD_AUTH_SECRET`; роли пока глобальные. |
+| Расписания и outgoing webhooks | **Current verified MVP** | Worker запускает enabled schedules примерно раз в минуту и доставляет terminal pipeline webhooks с basic retry. |
+| Уведомления и inbound provider webhooks | **Configuration only** | Конфигурация сохраняется, но email/Slack/SSE sender и public provider webhook handlers ещё не реализованы. |
+| Вход, сессии, RBAC | **Current verified conditional** | `/login` работает при непустом `CICD_AUTH_SECRET`; без секрета API и Dashboard остаются trusted-network/open. |
 
-> **Безопасность:** до внедрения auth/RBAC изолируйте API и Dashboard сетью или reverse proxy. Не публикуйте Git endpoint с пустым `CICD_GIT_TOKEN`; обязательно замените dev-значение `CICD_GIT_INTERNAL_TOKEN` в общем окружении.
+> **Безопасность:** для общего окружения задайте `CICD_AUTH_SECRET`, закройте API/Dashboard reverse proxy или сетью и не публикуйте Git endpoint с пустым `CICD_GIT_TOKEN`; обязательно замените dev-значение `CICD_GIT_INTERNAL_TOKEN`.
 
 ![Дашборд](screenshots/02-dashboard.png)
 
 ## 2. Вход
 
-**Статус процедуры: Target approved.**
+**Статус процедуры: Current verified conditional.**
 
 1. Откройте `/login`.
-2. В текущей версии поля email и password не отправляют auth-запрос: кнопка **Sign in** ведёт на главную страницу.
-3. Не считайте эту страницу контролем доступа. Ограничьте сетевой доступ к инстансу до реализации сессий и RBAC.
+2. Если backend запущен с `CICD_AUTH_SECRET`, форма отправляет `POST /api/v1/auth/login`, сохраняет access/refresh token и переводит в Dashboard.
+3. Если `CICD_AUTH_SECRET` не задан или пустой, backend не требует principal, а UI не будет воспринимать `/login` как boundary доступа. Для shared-инстанса задайте секрет и закройте сервис reverse proxy/сетью.
 
 ![Страница входа](screenshots/01-login.png)
 
@@ -99,7 +100,7 @@ git push -u origin main
 git clone http://any-user:<TOKEN>@<host>/git/my-service.git
 ```
 
-Pipeline читает текущий legacy-файл `.forge-ci.yml`, если он доступен; иначе используется шаблон build/test/deploy. Поддерживаемая сейчас форма - `stages` с jobs и одиночным `command`. DSL v1 с `version`, DAG, `on`, secrets и declared artifacts - **Target approved**, см. `docs/contracts/PIPELINE_DSL.md`.
+Pipeline читает `.forge-ci.yml`, если он доступен в локальном bare repository; иначе используется шаблон build/test/deploy. Поддерживаемая сейчас форма - `stages` с jobs, `image`, одиночным `command`, а также basic `timeout_seconds`, `allow_failure` и `manual`. Полный DSL v1 с `version`, DAG, `on`, scoped secrets и declared artifacts - **Target approved**, см. `docs/contracts/PIPELINE_DSL.md`.
 
 ```yaml
 stages:
@@ -128,6 +129,8 @@ stages:
 
 Embedded runner каждые две секунды выбирает доступные queued jobs, выполняет их последовательно по stages, пишет stdout/stderr в append-only log и устанавливает результат по exit code. Статусы stage и pipeline агрегируются автоматически. Для диагностики можно вручную менять статус job через UI, API или CLI, но это не заменяет фактическое выполнение.
 
+Ограничение current-модели: retry отдельной job переиспользует запись job и удаляет её старые строки `job_logs`. Полноценная история попыток (`execution_attempts`) — ближайший обязательный baseline roadmap.
+
 ![Список pipelines](screenshots/05-pipelines.png)
 
 ![Детали pipeline](screenshots/06-pipeline-detail.png)
@@ -138,10 +141,10 @@ Embedded runner каждые две секунды выбирает доступ
 
 1. В деталях pipeline выберите job и откройте **Logs**.
 2. Лог отображается в порядке `sequence`; новая строка добавляется только в конец.
-3. Для API используйте `GET /api/v1/jobs/{job_id}/logs`.
-4. При анализе ошибки сопоставьте exit code/последнюю строку лога с image и command job.
+3. Для API используйте `GET /api/v1/jobs/{job_id}/logs`; для live-tail доступен `GET /api/v1/jobs/{job_id}/logs/stream?after=<sequence>`.
+4. При анализе ошибки сопоставьте последнюю строку лога с image и command job; отдельные command spans, exit code summary и error tail пока относятся к target diagnostic logs.
 
-> Значения секретов пока не инъецируются и не маскируются. Не выводите секреты в команды или логи.
+> Значения project secrets передаются embedded runner в env и маскируются в stdout/stderr logs best-effort. Всё равно не выводите секреты намеренно: target redaction во всех audit/error/trace каналах ещё не завершён.
 
 ### Артефакты
 
@@ -189,7 +192,7 @@ Retention/TTL, S3 и multipart upload - **Target approved**.
 
 Для автоматизации используйте защищённый API-клиент, который отправляет JSON вида `{"key":"DEPLOY_TOKEN","value":"..."}` без записи значения в shell history или CI log.
 
-**Ограничение:** injection значений в окружение runner, маскирование логов, master-key rotation и выборочные secrets из DSL - **Target approved**. До их реализации секрет существует только как безопасно хранимая запись, а не как credential, доступный job.
+**Ограничение:** embedded runner получает project secrets целиком; master-key rotation, scoped secret selection из DSL, per-environment policy и lease-based выдача секретов внешним runner-ам - **Target approved**.
 
 ![Секреты проекта](screenshots/14-secrets.png)
 
@@ -212,25 +215,25 @@ Retention/TTL, S3 и multipart upload - **Target approved**.
 
 ### Расписания
 
-**Статус процедуры: Configuration only.**
+**Статус процедуры: Current verified MVP.**
 
 1. Откройте **Schedules** (`/projects/{projectId}/schedules`).
 2. Создайте запись с пяти-польным cron-выражением, `git_ref` и флагом enabled, например `0 2 * * *` для `main`.
 3. Редактируйте, отключайте или удаляйте запись при изменении политики запуска.
-4. Не ожидайте появления pipeline по времени: scheduler ещё не исполняет эти записи.
+4. Scheduler проверяет enabled rows примерно раз в минуту и создаёт pipeline, если запись не запускалась в последние ~55 секунд. Cron-строка сейчас валидируется как пять полей и хранится, но не даёт полной cron-семантики.
 
 ### Исходящие webhooks
 
-**Статус процедуры: Configuration only.**
+**Статус процедуры: Current verified MVP.**
 
 1. Откройте **Webhooks** (`/projects/{projectId}/webhooks`).
 2. Укажите HTTPS URL получателя, список событий и enabled.
 3. Сохраните конфигурацию и документируйте владельца получателя.
-4. Не используйте эту запись как подтверждение интеграции: delivery worker, HMAC signature, retries и delivery history отсутствуют.
+4. Worker создаёт outbox-message на terminal pipeline event и отправляет JSON в enabled webhook. Если задан secret, добавляется HMAC header; retry/backoff есть, но delivery history, audited replay и dead-letter workflow ещё target.
 
 ### Уведомления
 
-**Статус процедуры: Configuration only.**
+**Статус процедуры: Current verified для schedule; Configuration only для Slack/email.**
 
 1. На странице **Webhooks** добавьте каналы уведомлений с полями channel, target и enabled.
 2. Проверьте сохранённую конфигурацию через список каналов проекта.
@@ -277,9 +280,9 @@ Retention/TTL, S3 и multipart upload - **Target approved**.
 1. Откройте **Users** (`/users`).
 2. Создайте или измените пользователя с username, ролью `admin`, `maintainer`, `developer` или `viewer` и флагом enabled.
 3. Используйте данные как подготовку к будущей policy-модели.
-4. Не полагайтесь на роль для ограничения доступа в текущей версии: middleware auth/RBAC отсутствует.
+4. Роль ограничивает API только когда backend запущен с `CICD_AUTH_SECRET`; без него действует trusted-network режим.
 
-Пароли сейчас не хранятся, а project membership и scope-policy относятся к **Target approved**.
+Пароли хранятся как `argon2id` credentials. Project membership, tenant boundary, scoped PAT и production session/logout policy относятся к **Target approved**.
 
 ### API-токены
 
@@ -290,7 +293,7 @@ Retention/TTL, S3 и multipart upload - **Target approved**.
 3. В дальнейшем сверяйте только hint в списке токенов.
 4. Отзовите токен через UI или `DELETE /api/v1/api-tokens/{token_id}`, если владелец/интеграция больше не нуждается в нём.
 
-Токены хранятся как SHA-256 hash, но **не проверяются на API-запросах**. Передавать их как действующий credential можно только после внедрения auth middleware - **Target approved**.
+Токены хранятся как SHA-256 hash и проверяются как Bearer PAT только при включённом `CICD_AUTH_SECRET`. Scoped tokens, pepper/HMAC storage, rotation policy и tenant/project permissions - **Target approved**.
 
 ![Пользователи и API-токены](screenshots/20-users.png)
 
@@ -355,31 +358,31 @@ curl -fsS -X POST "http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines"
 
 **Статус процедуры: Current verified.**
 
-В деталях pipeline используйте **Cancel** для каскадной отмены нетерминальных jobs или **Retry** для нового запуска того же project/ref. Отдельную terminal job можно повторить её кнопкой **Retry**. Убедитесь, что не используете повтор для исправления секретов: injection/маскирование пока отсутствуют.
+В деталях pipeline используйте **Cancel** для каскадной отмены нетерминальных jobs или **Retry** для нового запуска того же project/ref. Отдельную terminal job можно повторить её кнопкой **Retry**. Учитывайте, что secret injection работает только для текущего embedded runner и не заменяет target scoped leases.
 
 ### Где найти логи и почему они не меняются?
 
 **Статус процедуры: Current verified.**
 
-Откройте job и **Logs** или вызовите `GET /api/v1/jobs/{job_id}/logs`. Логи append-only; у queued job может ещё не быть строк. Проверьте status job, image, command и доступность Docker/host shell для embedded runner.
+Откройте job и **Logs** или вызовите `GET /api/v1/jobs/{job_id}/logs`. Логи append-only в рамках текущей попытки job; у queued job может ещё не быть строк, а retry отдельной job сейчас очищает старые строки. Проверьте status job, image, command и доступность Docker/host shell для embedded runner.
 
 ### Как безопасно передать credential в job?
 
-**Статус процедуры: Target approved.**
+**Статус процедуры: Current verified for embedded runner.**
 
-Сейчас безопасно доступно только encrypted-at-rest хранение секрета. Не помещайте credential в `.forge-ci.yml`, command, переменные shell, URL репозитория или логи. Используйте внешний механизм исполнения/secret manager до реализации secret injection и log masking.
+Сохраните secret в разделе **Secrets** проекта и обращайтесь к нему из command как к env-переменной с тем же key. Не помещайте credential в `.forge-ci.yml`, URL репозитория или логи; masking — best-effort и не является полноценной DLP-системой.
 
 ### Можно ли запланировать ночной запуск или получить Slack-уведомление?
 
 **Статус процедуры: Configuration only.**
 
-Можно сохранить cron/ref и канал уведомления в UI/API. Pipeline по времени и доставка сообщения не произойдут, пока не будут реализованы scheduler и delivery worker.
+Ночной запуск можно настроить как MVP schedule: backend проверяет enabled rows примерно раз в минуту, но пока без полной cron-семантики. Slack/email-уведомление можно только сохранить как конфигурацию; sender ещё не реализован.
 
 ### Почему роль пользователя или API-токен не запрещают доступ?
 
 **Статус процедуры: Current verified.**
 
-Это ожидаемое ограничение MVP: роли и токены хранятся, но auth/RBAC/token middleware ещё отсутствуют. Закройте сервис сетевыми средствами и не выдавайте внешним пользователям прямой API/Dashboard доступ.
+Проверьте, задан ли непустой `CICD_AUTH_SECRET`. Без него API и Dashboard намеренно работают в trusted-network режиме; с ним JWT/PAT и глобальные роли применяются middleware. Project membership и scoped PAT пока target, поэтому shared-доступ всё равно закрывайте reverse proxy/сетью.
 
 ## Связанные документы
 

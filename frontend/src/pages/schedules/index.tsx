@@ -6,6 +6,7 @@ import { Card } from '@/shared/ui/card'
 import { Button } from '@/shared/ui/button'
 import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
+import { CapabilityCallout } from '@/shared/ui/capability-callout'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
 import { Clock, Plus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -46,6 +47,13 @@ export function SchedulesPage() {
           {t('schedules.create')}
         </Button>
       </div>
+
+      <CapabilityCallout
+        tone="mvp"
+        title={t('schedules.capabilityTitle')}
+        label={t('capability.currentMvp')}
+        description={t('schedules.capabilityDescription')}
+      />
 
       {showForm && (
         <Card className="p-4">

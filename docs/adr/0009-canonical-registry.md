@@ -22,7 +22,7 @@
 | Очередь / выдача | `job_queue`, `job_leases` | — |
 | Runner API | `/api/v1/runner/*` + поле `protocolVersion` в payload | `/api/v1/runner/v1/*` (двойное версионирование пути) |
 | OpenAPI артефакт | `openapi/openapi.yaml` (YAML, генерируемый) | `openapi/openapi.json` |
-| Generated frontend types | `frontend/src/shared/api/generated/` | — |
+| Generated frontend types | `frontend/src/api/schema.d.ts` | — |
 | Tenancy vocabulary | `tenant` (`tenants`, `tenant_id`) | `organization`, `workspace` (в модели данных) |
 | Error codes | `snake_case` (`validation_failed`) | UPPER_CASE (`VALIDATION_FAILED`) |
 | `request_id` | внутри объекта `error` | вне envelope |

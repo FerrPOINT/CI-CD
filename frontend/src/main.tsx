@@ -5,11 +5,16 @@ import { I18nextProvider } from 'react-i18next'
 import { RouterProvider } from 'react-router'
 import { Toaster } from 'sonner'
 import i18n from './shared/i18n/config'
-import { ThemeProvider } from './shared/lib/theme'
+import { ThemeProvider, useTheme } from './shared/lib/theme'
 import { router } from './app/router'
 import './index.css'
 
 const queryClient = new QueryClient()
+
+function AppToaster() {
+  const { theme } = useTheme()
+  return <Toaster theme={theme === 'light' ? 'light' : 'dark'} />
+}
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -17,7 +22,7 @@ createRoot(document.getElementById('root')!).render(
       <QueryClientProvider client={queryClient}>
         <ThemeProvider>
           <RouterProvider router={router} />
-          <Toaster theme="dark" />
+          <AppToaster />
         </ThemeProvider>
       </QueryClientProvider>
     </I18nextProvider>

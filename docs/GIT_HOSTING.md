@@ -4,7 +4,7 @@
 
 Forge CI/CD включает минимальный self-hosted Git-сервер. Он хранит bare-репозитории, реализует Git Smart HTTP и создаёт CI/CD-пайплайн после каждого push.
 
-Это не замена GitLab или Gitea: в текущем объёме нет pull requests, issues, web editor, LFS API, пользователей или прав на уровне репозитория. Цель MVP — замкнуть локальный цикл `git push -> pipeline` без внешнего Git-провайдера.
+Это не замена GitLab или Gitea: в текущем объёме есть минимальные pull requests/compare, но нет issues, web editor, LFS API, пользователей или прав на уровне репозитория. Цель MVP — замкнуть локальный цикл `git push -> pipeline` без внешнего Git-провайдера.
 
 ## 2. Реализованный поток
 
@@ -117,9 +117,9 @@ curl -H "x-git-token: <TOKEN>" ...
 - Нет Git LFS HTTP endpoints несмотря на наличие `git-lfs` в образе.
 - Нет SSH transport: только Smart HTTP.
 - Hook делает best-effort запрос; он не блокирует push при временном сбое CI/CD API.
-- Runner пока не клонирует репозиторий для фактического выполнения job; pipeline создаётся как control-plane запись.
+- Embedded runner клонирует project repository в workspace перед выполнением job, но без внешнего runner lease/protocol и без repository-level identity boundary.
 
-Следующая фаза: Auth/RBAC, per-project repository mapping вместо URL suffix lookup, signed internal events, Git LFS, SSH transport и Docker runner с checkout commit SHA.
+Следующая фаза: project-membership Auth/RBAC, per-project repository mapping вместо URL suffix lookup, signed internal events, Git LFS, SSH transport, external runner protocol и stricter checkout/commit identity guarantees.
 
 ## 9. Проверка
 

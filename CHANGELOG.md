@@ -30,6 +30,7 @@
 - Observability floor (SLO/METRICS): `GET /metrics` (Prometheus text: http_requests, 5xx, login attempts/failures, pipelines_created, outbox delivered/dead), request_id-пропагация.
 - CI: PostgreSQL service в backend-джобе — integration-тесты гоняются в CI; гейт `schema.d.ts` up-to-date; docs-джоба verify_docs.
 - SBOM: `scripts/generate_sbom.py` → docs/assets/sbom.json (CycloneDX-lite, 344 компонента; CISA Minimum Elements).
+- Пустой `CICD_AUTH_SECRET` теперь трактуется как не настроенный secret, поэтому compose default корректно оставляет локальный trusted-network mode.
 
 ### Added
 
@@ -64,23 +65,22 @@
 - Документация по аудиториям: USER_GUIDE, DEVELOPMENT_GUIDE, OPERATIONS, PRODUCT_REQUIREMENTS; CURRENT_STATE и DOCUMENTATION_GOVERNANCE; `scripts/verify_docs.py` (ссылки/канон/статусы/дубликаты скринов).
 - Public repo surface: LICENSE (MIT), CONTRIBUTING, SECURITY (NOT production-safe предупреждение), SUPPORT, issue/PR-шаблоны, Dependabot.
 - UI: мобильная навигация-drawer, карточные layout-ы (runners/users/tokens/environments), доступные confirm-диалоги вместо `window.confirm`, страница pull-запроса с «Посмотреть изменения», живые метрики дашборда.
-- Evidence pipeline: deterministic seed (`pnpm seed:evidence`) и воспроизводимые скриншоты (`pnpm shoot:evidence`), реестр `docs/assets/screens/manifest.md` (26 скринов на живых данных).
+- Evidence pipeline: deterministic seed (`pnpm seed:evidence`) и воспроизводимые скриншоты (`pnpm shoot:evidence`), реестр `docs/assets/screens/manifest.md` (38 скринов: страницы, действия и mobile states).
+- `docs/TECH_CHOICES.md` и `docs/LIBRARIES.md` восстановлены как рабочие справочники: current stack, target Rust candidates, dependency policy и список готовых CI/CD решений на Rust для reference.
 
 ### Changed
 
 - README переписан: статус/границы доверия, capability matrix, тур по аудиториям.
 - 44 legacy-дока консолидированы в гайды/контракты; оставлены redirect-stub-ы на один release-цикл.
 - PostgreSQL в docker-compose публикуется только на 127.0.0.1; `CICD_RUNNER_MODE` пробрасывается в backend.
+- Из текущего frontend baseline убран статичный `/admin`; системная справка и `CICD_` переменные остались в `/settings`.
 - Скриншоты пересняты единым прогоном: desktop 1920×1080, mobile 375×812, реальные пайплайны/PR/артефакты.
+- `RUNNER_ARCHITECTURE.md` больше не использует старую терминологию для runner-а: целевая граница названа `runner process` / `forge-runner`.
+- На страницах Runners, Schedules, Webhooks и Notifications добавлены статусные capability-callout блоки, чтобы MVP/configuration-only/target возможности не выглядели завершёнными.
 
 ### Planned
 
-- Auth: сессии/JWT, RBAC-проверки и enforcement API-токенов (сейчас users/tokens хранятся, но middleware не проверяется).
-- Runner: протокол удалённых runner-ов, leases/dispatch вместо embedded-исполнителя.
-- Scheduler/outbox: доставка schedules и webhooks (сейчас — только конфигурация, execution/delivery не реализованы).
-- Versioned SQLx migrations вместо `CREATE TABLE IF NOT EXISTS` bootstrap.
-- Стабилизация API-контрактов: pagination/error envelope, idempotency keys.
-- S3-совместимое хранилище артефактов, backup-скрипты, метрики.
+- Baseline roadmap: `execution_attempts` и attempt-owned logs/artifacts; диагностические command spans/error tails; project-level RBAC, scoped PAT и session revoke; delivery history/replay/dead-letter для webhooks/notifications; full cron semantics; проверяемый backup/restore; external runner + durable queue/leases; artifact retention/S3.
 
 ## [0.1.0] — 2026-08-26
 

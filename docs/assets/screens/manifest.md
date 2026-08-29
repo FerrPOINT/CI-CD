@@ -12,8 +12,7 @@
 | [04-repositories.png](../../screenshots/04-repositories.png) | `/repositories` | Репозитории | 1920×1080 |
 | [05-pipelines.png](../../screenshots/05-pipelines.png) | `/projects/:id/pipelines` | Пайплайны проекта | 1920×1080 |
 | [06-pipeline-detail.png](../../screenshots/06-pipeline-detail.png) | `/pipelines/:id` | Детали пайплайна: стадии, jobs, команды | 1920×1080 |
-| [07-settings.png](../../screenshots/07-settings.png) | `/settings` | Настройки (тема/язык) | 1920×1080 |
-| [08-admin.png](../../screenshots/08-admin.png) | `/admin` | Администрирование (справка) | 1920×1080 |
+| [07-settings.png](../../screenshots/07-settings.png) | `/settings` | Системные настройки и `CICD_` окружение | 1920×1080 |
 | [09-repository-browser.png](../../screenshots/09-repository-browser.png) | `/repositories/:repo` | Коммиты и ветки | 1920×1080 |
 | [10-compare.png](../../screenshots/10-compare.png) | `/repositories/:repo/compare` | Сравнение веток: diff + статистика | 1920×1080 |
 | [11-pull-requests.png](../../screenshots/11-pull-requests.png) | `/repositories/:repo/pulls` | Pull-запросы | 1920×1408 |

@@ -26,7 +26,7 @@ pub enum AuthError {
     Expired,
     #[error("invalid token")]
     Invalid,
-    #[error("auth is not configured (CICD_AUTH_SECRET missing)")]
+    #[error("auth is not configured (CICD_AUTH_SECRET missing or empty)")]
     NotConfigured,
     #[error(transparent)]
     Db(#[from] sqlx::Error),
@@ -59,13 +59,24 @@ pub struct TokenPair {
     pub refresh_token: String,
 }
 
+fn configured_secret_from(value: Option<String>) -> Result<String, AuthError> {
+    match value {
+        Some(secret) if !secret.trim().is_empty() => Ok(secret),
+        _ => Err(AuthError::NotConfigured),
+    }
+}
+
+pub(crate) fn is_configured() -> bool {
+    configured_secret_from(std::env::var("CICD_AUTH_SECRET").ok()).is_ok()
+}
+
 fn encoding_secret() -> Result<EncodingKey, AuthError> {
-    let secret = std::env::var("CICD_AUTH_SECRET").map_err(|_| AuthError::NotConfigured)?;
+    let secret = configured_secret_from(std::env::var("CICD_AUTH_SECRET").ok())?;
     Ok(EncodingKey::from_secret(secret.as_bytes()))
 }
 
 fn decoding_secret() -> Result<DecodingKey, AuthError> {
-    let secret = std::env::var("CICD_AUTH_SECRET").map_err(|_| AuthError::NotConfigured)?;
+    let secret = configured_secret_from(std::env::var("CICD_AUTH_SECRET").ok())?;
     Ok(DecodingKey::from_secret(secret.as_bytes()))
 }
 
@@ -216,5 +227,11 @@ mod tests {
             Err(AuthError::NotConfigured) => {}
             _ => panic!("expected NotConfigured when secret is unset"),
         }
+    }
+
+    #[test]
+    fn blank_secret_is_not_configured() {
+        let res = configured_secret_from(Some("  ".to_string()));
+        assert!(matches!(res, Err(AuthError::NotConfigured)));
     }
 }

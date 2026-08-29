@@ -1,6 +1,6 @@
 # Целевая архитектура delivery-контура Forge CI/CD
 
-> **Статус:** объяснительный narrative. Нормативные контракты — `contracts/API_CONTRACT.md и contracts/UI_API_CONTRACT.md`; при конфликте прав контракт (ADR-0009). Текущее состояние — `docs/CURRENT_STATE.md`.
+> **Статус:** объяснительный narrative. Нормативные контракты — `contracts/API_CONTRACT.md` и `contracts/UI_API_CONTRACT.md`; при конфликте прав контракт (ADR-0009). Текущее состояние — `docs/CURRENT_STATE.md`.
 
 > Документ предназначен для размещения в `docs/DELIVERY_ARCHITECTURE.md`.
 >
@@ -24,16 +24,16 @@ Forge CI/CD развивается из MVP control plane в безопасну�
 | Область | Текущее состояние |
 |---|---|
 | Backend | Cargo workspace содержит server crate, `domain` и выделенный `cli`; основная HTTP/SQL-логика пока находится в `backend/src/api.rs` и смежных модулях. |
-| API | REST доступен по `/api/v1`; есть health, projects, pipelines, jobs, Git и platform endpoints. OpenAPI-спецификация не генерируется и не проверяется в CI. |
-| Ошибки | В основном используется плоский формат `{"error":"..."}`; часть инфраструктурных ошибок может попасть в текст ответа. |
+| API | REST доступен по `/api/v1`; есть health, auth, projects, pipelines, jobs, Git и platform endpoints. OpenAPI генерируется из Rust annotations в `openapi/openapi.yaml` и проверяется drift gate в CI. |
+| Ошибки | Current API возвращает structured envelope `{"error":{"code","message","request_id"}}` и header `x-request-id`; compatibility/error taxonomy ещё не полностью покрыта target contract tests. |
 | Версионирование | Path-versioning `/api/v1` документирован, но нет автоматической проверки breaking changes между контрактами. |
-| Пагинация | `projects` возвращаются без ограничений, pipelines ограничены `LIMIT 50`, job logs возвращаются целиком. Унифицированный response envelope отсутствует. |
+| Пагинация | `projects` и `pipelines` поддерживают `limit/offset` с cap 200; job logs возвращаются целиком. Унифицированный response envelope/cursor model остаётся target. |
 | Идемпотентность | Для mutating POST-операций `Idempotency-Key` и хранилище результатов отсутствуют. Повтор trigger pipeline способен создать дубликат. |
-| Auth/RBAC | Модель users, roles и API tokens существует, но enforcement для control-plane API отсутствует. Login route во frontend существует как экран-заглушка. |
-| Frontend | React 19/Vite/TanStack Query; около 20 маршрутов. Типы DTO и hooks написаны вручную в `frontend/src/api`, query keys смешаны в одном модуле. |
+| Auth/RBAC | При `CICD_AUTH_SECRET` включены login/JWT/PAT, argon2id credentials, sessions и route-level global roles; без секрета остаётся trusted-network mode. Project membership/tenant scope target. |
+| Frontend | React 19/Vite/TanStack Query; около 20 маршрутов + `/login`. DTO генерируются в `frontend/src/api/schema.d.ts`, API wrapper/hooks остаются handwritten. |
 | CLI | `backend/cli` уже отдельный package и работает через HTTP; реализованы группы `project`, `pipeline`, `job`. Конфигурация ограничена `CICD_API_URL`, stdout всегда pretty JSON, нет auth/profile/output policy. |
-| Observability | Есть `/api/v1/health`, `TraceLayer` и `tracing`. Readiness, Prometheus metrics, OTLP, alerting и корреляция API--CLI не реализованы. |
-| Quality | GitHub Actions запускает Rust fmt/clippy/test/release build, frontend test/build и `docker compose build`. Реальные PostgreSQL integration tests, Playwright E2E, OpenAPI compatibility gate и evidence bundle отсутствуют. |
+| Observability | Есть `/api/v1/health`, `/metrics`, `TraceLayer` и `tracing`. DB-aware readiness, OTLP, alerting и корреляция API--CLI не реализованы. |
+| Quality | GitHub Actions запускает backend fmt/clippy/workspace tests, real PostgreSQL integration, OpenAPI drift gate, frontend generated-client check/test/build и docs checks. Compose smoke, Playwright E2E, OpenAPI compatibility gate и evidence bundle отсутствуют. |
 
 ## 3. Целевые принципы
 
@@ -430,7 +430,7 @@ frontend/src/
 - `entities` не импортируют `features`, `widgets` или `pages`.
 - `features` не импортируют друг друга напрямую; общие модели переносятся в `entities`.
 - `pages` композиционно собирают widgets/features, но не делают raw fetch.
-- generated client из `shared/api/generated` не редактируется вручную.
+- generated schema/client из `frontend/src/api/schema.d.ts` не редактируется вручную.
 - Запрещены дублирующие DTO в `frontend/src/api/types.ts` после миграции соответствующего endpoint.
 
 ### 7.2 Generated client, transport и query keys
@@ -929,7 +929,7 @@ Evidence requirements:
 - UI имеет loading, empty, error, validation, 403 и mobile states.
 - CLI имеет documented config precedence, deterministic output и tested exit codes.
 - Metrics/logs/traces не содержат sensitive data и позволяют сопоставить request.
-- Backend, frontend, containers, real-DB integration и E2E gates green.
+- Current backend/frontend/docs gates green; target container smoke, real-DB role matrix и E2E gates green для capabilities, которые их вводят.
 - CI artifacts содержат contract diff, test reports, screenshots и traces/logs при failure.
 - Документация обновлена: `docs/API.md`, `docs/API_VERSIONING.md`, `docs/CLI.md`, `docs/MONITORING.md`, `docs/TESTING.md`, `docs/CI_CD.md` и соответствующий ADR при архитектурном решении.
 

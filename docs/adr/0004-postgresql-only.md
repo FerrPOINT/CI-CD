@@ -19,7 +19,7 @@ Control plane требует согласованно хранить проек�
 
 ## Decision
 
-Использовать PostgreSQL 17 как единственное постоянное хранилище Forge CI/CD. Backend использует SQLx 0.8 и `PgPool`; схема MVP создаётся идемпотентно при старте через `store::migrate()`. SQLite, MySQL, Redis и файловое хранение состояния не поддерживаются.
+Использовать PostgreSQL 17 как единственное постоянное хранилище Forge CI/CD. Backend использует SQLx 0.8 и `PgPool`; схема задаётся committed SQLx migrations в `backend/migrations/*.sql` и в current MVP применяется при старте backend. SQLite, MySQL, Redis и файловое хранение состояния не поддерживаются.
 
 PostgreSQL хранит исходное состояние и координационные данные. Когда появится S3-совместимое artifact storage, оно будет хранить только бинарные объекты, а метаданные и ссылки останутся в PostgreSQL.
 

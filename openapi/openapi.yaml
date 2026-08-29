@@ -347,9 +347,29 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/JobLog'
+                $ref: '#/components/schemas/JobLog'
+  /api/v1/jobs/{job_id}/logs/stream:
+    get:
+      tags:
+      - jobs
+      summary: 'SSE live log stream: emits existing lines, then polls for new ones.'
+      operationId: job_log_stream
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: after
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+      responses:
+        '200':
+          description: text/event-stream of job log lines
   /api/v1/jobs/{job_id}/retry:
     post:
       tags:
@@ -371,6 +391,30 @@ paths:
                 $ref: '#/components/schemas/Job'
         '404':
           description: ''
+  /api/v1/jobs/{job_id}/start:
+    post:
+      tags:
+      - jobs
+      summary: 'Starts a manual (`when: manual`) job — approval gate (GitLab parity).'
+      operationId: start_manual_job
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ManualJobStartResult'
+        '404':
+          description: ''
+        '409':
+          description: job is not a waiting manual job
   /api/v1/jobs/{job_id}/status:
     post:
       tags:
@@ -398,6 +442,14 @@ paths:
                 $ref: '#/components/schemas/Job'
         '404':
           description: ''
+  /api/v1/openapi.json:
+    get:
+      tags:
+      - health
+      operationId: serve_openapi_json
+      responses:
+        '200':
+          description: OpenAPI JSON document
   /api/v1/pipelines/{pipeline_id}:
     get:
       tags:
@@ -437,8 +489,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Pipeline'
+                $ref: '#/components/schemas/CanceledPipelineResult'
         '404':
+          description: ''
+        '409':
           description: ''
   /api/v1/pipelines/{pipeline_id}/retry:
     post:
@@ -458,8 +512,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Pipeline'
+                $ref: '#/components/schemas/RetriedPipelineResult'
         '404':
+          description: ''
+        '409':
           description: ''
   /api/v1/projects:
     get:
@@ -718,7 +774,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Pipeline'
+                $ref: '#/components/schemas/PipelineDetail'
         '404':
           description: ''
   /api/v1/projects/{project_id}/reports/summary:
@@ -1061,6 +1117,66 @@ paths:
                   $ref: '#/components/schemas/RefInfo'
         '404':
           description: ''
+  /api/v1/repositories:
+    get:
+      tags:
+      - repos
+      operationId: list_repositories
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Repository'
+        '503':
+          description: ''
+    post:
+      tags:
+      - repos
+      operationId: create_repository
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRepositoryBody'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Repository'
+        '400':
+          description: ''
+        '503':
+          description: ''
+  /api/v1/repositories/{name}:
+    delete:
+      tags:
+      - repos
+      operationId: delete_repository
+      parameters:
+      - name: name
+        in: path
+        description: Repository name
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeletedRepository'
+        '404':
+          description: ''
+        '503':
+          description: ''
   /api/v1/runners:
     get:
       tags:
@@ -1279,6 +1395,37 @@ paths:
           description: ''
         '404':
           description: ''
+  /git/{repo}/git-receive-pack:
+    post:
+      tags:
+      - git
+      operationId: git_receive_pack_openapi
+      parameters:
+      - name: repo
+        in: path
+        description: Repository name
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/octet-stream:
+            schema:
+              type: array
+              items:
+                type: integer
+                format: int32
+                minimum: 0
+        required: true
+      responses:
+        '200':
+          description: git-receive-pack result payload
+        '400':
+          description: Unsupported git service
+        '401':
+          description: ''
+        '404':
+          description: ''
   /git/{repo}/git-upload-pack:
     post:
       tags:
@@ -1337,6 +1484,14 @@ paths:
           description: ''
         '404':
           description: ''
+  /metrics:
+    get:
+      tags:
+      - health
+      operationId: metrics
+      responses:
+        '200':
+          description: Prometheus text exposition
 components:
   schemas:
     ApiToken:
@@ -1427,6 +1582,14 @@ components:
           format: uuid
         resource_type:
           type: string
+    CanceledPipelineResult:
+      type: object
+      required:
+      - canceled
+      properties:
+        canceled:
+          type: string
+          format: uuid
     ChangeStatus:
       type: object
       required:
@@ -1505,6 +1668,11 @@ components:
       - source_branch
       - target_branch
       properties:
+        author:
+          type:
+          - string
+          - 'null'
+          description: Optional author label; overridden by the authenticated identity.
         description:
           type:
           - string
@@ -1516,6 +1684,13 @@ components:
         target_branch:
           type: string
         title:
+          type: string
+    CreateRepositoryBody:
+      type: object
+      required:
+      - name
+      properties:
+        name:
           type: string
     CreateSecret:
       type: object
@@ -1532,6 +1707,12 @@ components:
       required:
       - name
       properties:
+        expires_in_days:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          description: Optional lifetime in days; omit for a non-expiring token.
         name:
           type: string
         user_id:
@@ -1552,6 +1733,13 @@ components:
           type: array
           items:
             type: string
+        secret:
+          type:
+          - string
+          - 'null'
+          description: |-
+            Optional HMAC-SHA256 signing secret; deliveries carry
+            `X-Forge-Signature: sha256=<hex>`.
         url:
           type: string
     CreatedToken:
@@ -1563,6 +1751,13 @@ components:
         properties:
           value:
             type: string
+    DeletedRepository:
+      type: object
+      required:
+      - deleted
+      properties:
+        deleted:
+          type: string
     Deployment:
       type: object
       required:
@@ -1749,6 +1944,13 @@ components:
           description: 'Only for /auth/refresh: the previously issued refresh token.'
         username:
           type: string
+    ManualJobStartResult:
+      type: object
+      required:
+      - started
+      properties:
+        started:
+          type: boolean
     Notification:
       type: object
       required:
@@ -1973,6 +2175,14 @@ components:
           format: uuid
         name:
           type: string
+    RetriedPipelineResult:
+      type: object
+      required:
+      - retried
+      properties:
+        retried:
+          type: string
+          format: uuid
     Runner:
       type: object
       required:

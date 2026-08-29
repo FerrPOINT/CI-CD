@@ -10,13 +10,13 @@ Pipeline execution, Git push, schedule, deployment and administration созда
 
 ## Decision
 
-Каждая application-команда в своей PostgreSQL-транзакции записывает изменение aggregate, append-only audit entry и `outbox_events` с immutable payload. Background workers claim events через `FOR UPDATE SKIP LOCKED`, доставляют идемпотентно и фиксируют attempt/result. Consumer обязан выдерживать at-least-once delivery; внешние requests получают stable idempotency key `event_id`.
+Каждая application-команда в своей PostgreSQL-транзакции записывает изменение aggregate, append-only audit entry, `domain_events` и `outbox_messages` с immutable payload. Background workers claim due messages, доставляют идемпотентно и фиксируют attempt/result; target delivery history хранится в `outbox_deliveries`. Consumer обязан выдерживать at-least-once delivery; внешние requests получают stable idempotency key `event_id`.
 
 Outbox является источником для webhook/notification delivery, runner dispatch projection, SSE projection, schedule processing and report projection. Он не заменяет business tables и не используется для синхронного HTTP response.
 
 ## Consequences
 
-- Нужны versioned migrations: `outbox_events`, `outbox_attempts`/delivery tables и индексы pending events.
+- Нужны versioned migrations: `domain_events`, `outbox_messages`, target `outbox_deliveries` и индексы pending events.
 - Нужны worker lifecycle, backoff, dead-letter/retry policy, metrics и reconciliation.
 - Появляется небольшая eventual consistency, которую UI показывает как pending/delivery state.
 - До реализации старые configuration-only webhooks/schedules не считаются активной automation capability.

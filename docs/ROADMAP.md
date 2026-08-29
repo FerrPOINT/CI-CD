@@ -1,213 +1,201 @@
 # Roadmap — Forge CI/CD
 
-## 1. Overview
+## 1. Назначение
 
-План разработки от каркаса до production-ready self-hosted CI/CD control plane. Каждая фаза — отдельный milestone, заканчивается рабочим коммитом и проверкой.
+Roadmap фиксирует порядок доведения Forge до базового self-hosted CI/CD control plane. Он не является списком всех возможных идей: в базовый продукт попадает только то, без чего система небезопасна, непонятна в диагностике или ненадёжна в эксплуатации.
 
-## Статус (обновлено 2026-08-26)
+Фактическое состояние возможностей хранится в `docs/CURRENT_STATE.md`, требования — в `docs/PRODUCT_REQUIREMENTS.md`, доказательства и проверки — в `docs/TRACEABILITY.md`.
 
-**Phase 0 завершена.** Реализован каркас: Rust backend (Axum + SQLx), React frontend (Vite + Tailwind), Docker Compose, CLI, базовые CRUD-операции.
+## 2. Принципы приоритизации
 
-Реализовано в Phase 0:
-- Rust workspace: `cicd-server` (API) + `cicd-cli` (CLI).
-- PostgreSQL schema: `projects`, `pipelines`, `stages`, `jobs`, `job_logs`.
-- REST API v1: health, projects CRUD, pipelines (list/trigger/show), jobs (status/logs).
-- Доменная валидация переходов статусов (`JobStatus::transition_to`).
-- Каскадная агрегация статусов job → stage → pipeline.
-- React Dashboard: список проектов, пайплайнов, детали с stages/jobs/logs.
-- Docker Compose: PostgreSQL 17.6 + backend + frontend.
-- CLI: `project`, `pipeline`, `job` command groups.
-- CI: GitHub Actions (fmt, clippy, test, build).
-- Тесты: domain transitions, API contract, CLI contract, frontend unit.
+1. Сначала сохраняем доказательства выполнения: попытки, логи, артефакты, статусы и аудит не должны затираться при retry или restart.
+2. Затем закрываем доступ: auth, project-level RBAC, token/session revoke и безопасные defaults важнее новых интеграций.
+3. Потом делаем доставку наблюдаемой: webhooks, notifications, scheduler и deployments должны иметь history, retry и понятный outcome.
+4. Любая capability считается готовой только после кода, миграций, тестов, UI/API/CLI обновлений и документации.
+5. Configuration-only экраны не выдаются за рабочую automation.
 
-Это control plane с embedded runner (Docker/shell) и platform-MVP: runners registry + heartbeat, encrypted secrets, artifacts, environments/deployments, schedules, webhooks/notifications config, reports, audit log, users/roles model, API tokens. Отложены: auth/RBAC enforcement, доставка webhook-ов, cron-scheduler execution, secret injection в runner-окружение.
+## 3. Current baseline
 
----
+На 2026-08-28 в коде уже есть:
 
-## 2. Phase 0: Bootstrap (M0) — ✅ Done
+- проекты, встроенный bare Git hosting, Smart HTTP и auto-trigger pipeline на push;
+- pipeline из `.forge-ci.yml` с линейными stages/jobs, fallback-шаблон, manual jobs, basic timeout и `allow_failure`;
+- embedded runner в `cicd-server`: Docker/host shell, stdout/stderr в `job_logs`, cancel/retry в текущей модели;
+- REST logs и SSE stream логов job;
+- local artifacts до 50 MiB;
+- project secrets: AES-256-GCM at rest, env injection в embedded runner, best-effort masking stdout/stderr;
+- environments/deployments metadata, reports, audit log;
+- users, roles, argon2id credentials, sessions и PAT enforcement при `CICD_AUTH_SECRET`;
+- schedules MVP и outgoing webhooks через outbox с basic retry/HMAC;
+- OpenAPI generation/drift gate и generated frontend schema.
 
-**Цель**: рабочий каркас, CI, локальный запуск.
+Ключевые ограничения current baseline:
 
-- [x] Rust workspace: `Cargo.toml`, edition 2024, crates `api/domain/store` (+ CLI bin).
-- [x] Frontend: Vite 6 + React 19 + TypeScript + Tailwind CSS 4 + shadcn/ui.
-- [x] Docker Compose: PostgreSQL 17.6-alpine, backend (rust:1.86-slim → debian), frontend (node:22 → nginx).
-- [x] `.env.example` с `CICD_*` env vars, health endpoint.
-- [x] CI (GitHub Actions): `cargo fmt --check`, `cargo clippy`, `cargo test`, `pnpm test`, `pnpm build`, `docker compose build`.
-- [x] `README.md` с командами запуска и API workflow.
-- [x] `justfile` с командами: `up`, `down`, `logs`, `test-backend`, `test-frontend`, `build-frontend`, `health`.
-- [x] Verification: `docker compose up`, `curl /api/v1/health`.
+- retry job удаляет старые `job_logs`, потому полноценной истории попыток ещё нет;
+- auth/RBAC глобальный, без project membership и scoped PAT;
+- execution встроен в backend process, поэтому shared/prod режим требует external runner boundary;
+- webhooks не имеют полной delivery history/replay/dead-letter UI, notifications sender не реализован;
+- backup/restore пока процедура, а не проверяемый автоматизированный product gate.
 
----
+## 4. Базовый roadmap
 
-## 3. Phase 1: Auth (M1)
+### Phase 1 — Execution attempts и диагностические логи
 
-**Цель**: аутентификация, пользователи, сессии.
+**Цель:** retry не затирает историю, а пользователь понимает причину падения без чтения неструктурированной простыни.
 
-- [ ] DB migrations: `users`, `sessions` таблицы.
-- [ ] Argon2id password hashing.
-- [ ] JWT access token (Bearer) + httpOnly refresh cookie.
-- [ ] Endpoints: `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`.
-- [ ] Middleware: JWT-валидация на защищённых маршрутах.
-- [ ] Frontend: Login page, auth store, protected routes, user menu в topbar.
-- [ ] CLI: `auth login`, `auth register` с сохранением токена.
-- [ ] Verification: e2e login flow, token refresh, logout, protected route redirect.
+Deliverables:
 
----
+- таблицы `execution_attempts` и attempt-owned log/artifact metadata;
+- retry pipeline/job создаёт новую attempt, старые логи и timestamps остаются доступными;
+- API и UI показывают список attempts, активную attempt и terminal result;
+- лог делится минимум на command span, stream, exit code, started/finished timestamps и error tail;
+- CLI умеет читать attempts и логи выбранной attempt.
 
-## 4. Phase 2: Projects (M2) — ✅ Done (частично)
+Gate:
 
-**Цель**: полноценное управление проектами.
+- real PostgreSQL migration test для retry без удаления старых логов;
+- API contract test на attempts/log ordering;
+- UI test для переключения attempts и empty/error states;
+- документация `API.md`, `DATA_MODEL.md`, `USER_GUIDE.md`, `CURRENT_STATE.md`.
 
-- [x] Endpoints: `GET /projects/{id}`, `PATCH /projects/{id}`, `DELETE /projects/{id}`.
-- [x] Frontend: страница Projects, форма редактирования, удаление с подтверждением.
-- [ ] Валидация `name` (slug-pattern), `repository_url` (Git URL format).
-- [ ] Pagination для `GET /projects` (`?page=0&size=20`).
-- [ ] Verification: CRUD curl-проверки, frontend unit + e2e.
+### Phase 2 — Production auth и project RBAC
 
----
+**Цель:** shared-инстанс можно отдавать команде без trusted-network допущения.
 
-## 5. Phase 3: Pipelines + Stages + Jobs (M3)
+Deliverables:
 
-**Цель**: гибкая конфигурация пайплайнов вместо template.
+- project membership и роли на уровне проекта;
+- scoped PAT с expiry/revoke/last-used, без глобального доступа по умолчанию;
+- logout/revoke policy для sessions;
+- deny-before-load для project, secret, artifact, Git и delivery routes;
+- CORS/CSRF policy для production deployment.
 
-- [ ] YAML-конфиг пайплайна (`.forge-ci.yml` или аналог) — парсинг stages/jobs из репозитория.
-- [ ] Endpoint `POST /projects/{id}/pipelines` принимает конфигурацию вместо template.
-- [ ] Custom stages: произвольное количество, произвольные имена, произвольные jobs.
-- [ ] Параллельные jobs внутри стадии (current: один job на stage).
-- [ ] Зависимости между stages (DAG вместо линейной последовательности).
-- [ ] Frontend: визуализация DAG stages, collapsible job details.
-- [ ] Verification: YAML-парсинг тесты, API integration, frontend e2e.
+Gate:
 
----
+- negative auth/RBAC suite: viewer не меняет project, secret, pipeline, deploy и policy;
+- disabled user/revoked token не проходит ни один protected route;
+- route-policy inventory test не позволяет добавить endpoint без политики;
+- UI скрывает или блокирует forbidden actions и показывает понятный 403.
 
-## 6. Phase 4: Logs (M4)
+### Phase 3 — Надёжные webhooks, notifications и scheduler
 
-**Цель**: полноценная работа с логами.
+**Цель:** автоматизация либо реально доставляет результат, либо честно показывает failure.
 
-- [ ] Streaming логов через SSE (`GET /jobs/{id}/logs/stream`).
-- [ ] Pagination для `GET /jobs/{id}/logs` (`?since_sequence=N`).
-- [ ] Truncation для длинных логов (chunked storage).
-- [ ] Frontend: real-time log viewer с авто-скроллом, search по логам, фильтрация по уровню.
-- [ ] CLI: `job logs --follow` (streaming).
-- [ ] Verification: SSE connection test, pagination test, frontend e2e.
+Deliverables:
 
----
+- delivery history для outgoing webhooks: attempts, status, response code/body summary, next retry;
+- replay и dead-letter workflow;
+- notifications sender для выбранных каналов первого релиза;
+- full cron semantics с timezone и next-run preview;
+- incoming provider webhook handlers только после auth/signature validation.
 
-## 7. Phase 5: Real Runner (M5)
+Gate:
 
-**Цель**: выполнение задач в реальных контейнерах.
+- outbox integration tests на retry, dead-letter, replay и idempotency;
+- scheduler tests на cron/timezone/no-double-fire;
+- UI показывает последний outcome и ошибку доставки;
+- metrics и runbook для stuck deliveries.
 
-- [x] Runner registration: `runners` таблица, `POST /runners` + heartbeat + delete.
-- [x] Embedded runner: supervisor loop внутри cicd-server, забирает jobs из очереди (`SELECT FOR UPDATE SKIP LOCKED`).
-- [x] Job execution: `docker run` с указанным `image` и `command` (или shell-режим), стриминг stdout в `job_logs`.
-- [x] Job lifecycle: `queued → running → success/failed` автоматически через runner.
-- [x] Runner heartbeat: `POST /runners/{id}/heartbeat`.
-- [x] `.forge-ci.yml` парсинг stages/jobs из репозитория.
-- [ ] Отдельный runner-агент (external process) и multi-runner пулы с tags.
-- [ ] Frontend: real-time job progress.
-- [ ] Verification: runner e2e test (запуск реального `alpine:3.21 echo hello`).
+### Phase 4 — Backup/restore и operational recovery
 
----
+**Цель:** self-hosted установка не теряет PostgreSQL, Git repositories и artifacts без проверяемого восстановления.
 
-## 8. Phase 6: Webhooks (M6)
+Deliverables:
 
-**Цель**: уведомление внешних систем о событиях.
+- backup scripts для PostgreSQL, Git storage и artifacts;
+- restore script с consistency checks;
+- documented RPO/RTO и restore drill;
+- startup/reconciliation checks после restart.
 
-- [x] `webhooks` таблица: URL, events, project_id.
-- [x] `notification_configs` таблица: каналы уведомлений (channel + target).
-- [x] Endpoint `GET/POST/DELETE /projects/{id}/webhooks` — конфигурация webhook-ов.
-- [x] Endpoint `GET/PUT /projects/{id}/notifications` — конфигурация уведомлений.
-- [x] Frontend: страница Webhooks (webhook-и + notifications).
-- [ ] `webhook_deliveries` таблица: попытки доставки, статус, response code.
-- [ ] Events: `pipeline.started`, `pipeline.finished`, `job.started`, `job.finished`, `job.failed`.
-- [ ] Delivery: async background task, retry с exponential backoff (3 attempts).
-- [ ] HMAC-SHA256 подпись payload'а.
-- [ ] Frontend: delivery history.
-- [ ] Verification: webhook delivery test, retry test, signature verification.
+Gate:
 
----
+- automated restore drill на disposable окружении;
+- post-restore проверка проектов, pipeline history, Git refs и artifact metadata;
+- runbook в `OPERATIONS.md` и troubleshooting для типовых failures.
 
-## 9. Phase 7: Secrets (M7)
+### Phase 5 — External runner, durable queue и leases
 
-**Цель**: безопасное хранение секретов проектов.
+**Цель:** пользовательский код не выполняется внутри control plane.
 
-- [x] `project_secrets` таблица: `project_id`, `key`, `encrypted_value`, timestamps.
-- [x] Шифрование: AES-256-GCM, ключ из `CICD_SECRETS_KEY` env var.
-- [x] Endpoints: `GET/POST/DELETE` (`/projects/{id}/secrets`, `/secrets/{id}`).
-- [x] Frontend: страница Secrets (значения не отображаются никогда).
-- [ ] Secrets доступны runner'ам через env vars при выполнении job.
-- [ ] Маскирование секретов в логах (replace на `***`).
-- [ ] Rotation ключа (re-encrypt при смене `CICD_SECRETS_KEY`).
-- [ ] Verification: encryption/decryption unit tests, masking test, API integration.
+Deliverables:
 
----
+- отдельный runner binary/process;
+- durable `job_queue`, claim/ack/renew/expire leases и fencing token;
+- runner registration credentials, heartbeat, tags/capacity/drain;
+- cancel/timeout/reconciliation для потерянного runner-а;
+- secret delivery только owner-у lease.
 
-## 10. Phase 8: Artifacts (M8)
+Gate:
 
-**Цель**: хранение артефактов сборки.
+- lost heartbeat/lease expiry/cancel race tests;
+- no duplicate active execution invariant;
+- Docker smoke на isolated runner host;
+- API container не требует Docker socket.
 
-- [x] `artifacts` таблица: `job_id`, `name`, `size_bytes`, `storage_path`, `created_at`.
-- [x] Storage: локальная файловая система (`CICD_ARTIFACTS_DIR`), volume в docker-compose.
-- [x] Endpoints: `GET/POST /jobs/{id}/artifacts` (raw body + `X-Artifact-Name`), `GET /artifacts/{id}/download`.
-- [x] Лимит размера: 50 MiB на файл.
-- [x] Frontend: страница Artifacts со скачиванием.
-- [ ] TTL для автоматической очистки.
-- [ ] S3-compatible storage.
-- [ ] Verification: upload/download test, size limit test, cleanup test.
+### Phase 6 — Artifact retention и object storage
 
----
+**Цель:** артефакты управляемы по сроку, размеру и месту хранения.
 
-## 11. Phase 9: Admin + Reports (M9)
+Deliverables:
 
-**Цель**: системная админка и отчёты.
+- retention/TTL policies и cleanup worker;
+- checksum/integrity verification;
+- S3-compatible storage adapter;
+- project-scoped access checks для metadata и bytes.
 
-- [x] `audit_log` таблица: события (runners, secrets, tokens, артефакты).
-- [x] `users` таблица: username, role (admin/maintainer/developer/viewer), enabled.
-- [x] `api_tokens` таблица: SHA-256 hash, hint, привязка к user.
-- [x] Admin API: `GET /audit-log`, `GET/POST/PATCH /users`, `GET/POST/DELETE /api-tokens`.
-- [x] Reports: `GET /projects/{id}/reports/summary` (total, success rate, avg duration).
-- [x] Frontend: страницы Audit Log, Users & Tokens, Reports.
-- [ ] `system_settings` таблица: key-value конфигурация инстанса.
-- [ ] Charts: `recharts` для визуализации (success rate, duration histogram).
-- [ ] Auth enforcement: вход по паролю, проверка ролей и токенов на запросах.
-- [ ] Verification: admin API integration, frontend component tests, report accuracy.
+Gate:
 
----
+- upload/download/size/retention integration tests;
+- object-storage adapter smoke;
+- restore drill учитывает artifacts.
 
-## 12. Future (v1.x)
+### Phase 7 — Delivery environments
 
-- RBAC enforcement: роли (admin, maintainer, developer, viewer), per-project permissions.
-- Git integration: auto-trigger на push (GitHub/GitLab webhook listener).
-- YAML pipeline editor в UI с валидацией.
-- Matrix builds (параллельные jobs с параметрами).
-- Manual approval gates между stages.
-- Scheduled pipelines execution (cron-scheduler; хранение расписаний уже реализовано).
-- Self-hosted runner pools с метками (tags).
-- OIDC/OAuth SSO.
-- Prometheus metrics endpoint (`/metrics`).
-- Rate limiting (tower-governor).
-- API token enforcement для CLI/automation (хранение уже реализовано).
-- Multi-arch runner support (amd64/arm64).
+**Цель:** Forge поддерживает CD-сценарии без превращения в инфраструктурный orchestrator.
 
----
+Deliverables:
 
-## 13. Definitions of Done
+- protected environments;
+- approval gates для production-like окружений;
+- deploy history с actor, pipeline/ref, status и evidence;
+- rollback запускается как отдельный traceable pipeline/action.
 
-Каждая фаза считается завершённой, когда:
+Gate:
 
-- Код покрыт тестами: unit + integration + critical e2e.
-- `cargo test` green, `pnpm test` green.
-- `cargo clippy` и `cargo fmt --check` чистые.
-- CI (GitHub Actions) green.
-- Документация обновлена (`docs/API.md`, `docs/DATA_MODEL.md`, `docs/ROADMAP.md`).
-- Скриншоты UI (если применимо) приложены.
-- Ручная проверка через curl/UI пройдена.
+- approval policy tests;
+- audit trail для approval/deploy/rollback;
+- UI не позволяет обойти required approval.
 
-## 14. References
+## 5. Later, не базовый слой
 
-- `docs/ARCHITECTURE.md` — архитектура и стек.
-- `docs/DATA_MODEL.md` — дата-модель.
-- `docs/API.md` — REST API спецификация.
-- `docs/UI_UX.md` — UI/UX спецификация.
-- `docs/TESTING.md` — стратегия тестирования.
-- `docs/CODE_STYLE.md` — конвенции кода.
+Эти функции полезны, но не должны раздувать текущий baseline:
+
+- flaky test tracking и quarantine;
+- dependency/security scans, SBOM и license gates;
+- DORA/advanced reports, percentiles, dashboards и exports;
+- matrix builds и сложный DAG planner сверх базового immutable plan;
+- SSO/OIDC;
+- Kubernetes runner adapter;
+- full code-review platform, threaded comments, merge queues;
+- package/container registry;
+- issue tracker, IDE или browser terminal.
+
+## 6. Definition of Done
+
+Фаза считается завершённой только если:
+
+- код и миграции реализованы без сохранения legacy-обмана в UI/API;
+- `cargo fmt`, `cargo clippy`, backend tests и relevant integration tests зелёные;
+- `pnpm test`, `pnpm build` и затронутые UI tests зелёные;
+- OpenAPI и generated frontend schema обновлены при изменении API;
+- `docs/PRODUCT_REQUIREMENTS.md`, `docs/TRACEABILITY.md`, `docs/API.md`, `docs/DATA_MODEL.md`, `docs/USER_GUIDE.md` и `docs/CURRENT_STATE.md` синхронизированы;
+- для UI-изменений обновлены screenshots/evidence;
+- `python3 scripts/verify_docs.py --all` проходит.
+
+## 7. References
+
+- `docs/CURRENT_STATE.md` — фактические возможности и ограничения.
+- `docs/PRODUCT_REQUIREMENTS.md` — требования и out-of-scope.
+- `docs/TRACEABILITY.md` — REQ-ID, проверки и evidence.
+- `docs/ARCHITECTURE_INDEX.md` — карта архитектурных документов.
+- `docs/contracts/` — нормативные целевые контракты.

@@ -2,11 +2,15 @@
 
 ## Status
 
-Accepted
+Accepted as historical MVP baseline; partially superseded by current embedded runner execution and ADR-0007 target runner boundary.
 
 ## Context
 
-Полноценное выполнение CI-задач требует runner-ов, регистрации и аутентификации агентов, очереди, lease/heartbeat, sandboxing, работы с Git и secrets, потоковых логов, артефактов, retries и восстановления после отказов. Эта инфраструктура существенно больше, чем базовая ценность MVP: проверить модель pipeline/stage/job, правила переходов и Dashboard.
+Полноценное выполнение CI-задач требует runner-ов, их регистрации и аутентификации, очереди, lease/heartbeat, sandboxing, работы с Git и secrets, потоковых логов, артефактов, retries и восстановления после отказов. На момент принятия ADR эта инфраструктура была существенно больше, чем базовая ценность раннего MVP: проверить модель pipeline/stage/job, правила переходов и Dashboard.
+
+## Current Status
+
+Current baseline уже не manual-only: embedded runner в `cicd-server` выполняет jobs в Docker или host shell, пишет stdout/stderr в `job_logs`, поддерживает cancel/retry в текущей модели и inject/mask project secrets. Ручный status API остаётся диагностическим и legacy-compatible механизмом, но не является основным исполнителем job. Target-граница external runner с lease/fencing описана в ADR-0007 и `docs/RUNNER_ARCHITECTURE.md`.
 
 ## Alternatives Considered
 
@@ -18,13 +22,13 @@ Accepted
 
 ## Decision
 
-В MVP job переводятся вручную через API, CLI и Dashboard. Разрешённые переходы определяет `JobStatus::transition_to()` в domain-слое: terminal job нельзя перезапустить, а недопустимый переход отклоняется. После изменения job backend агрегирует состояния вверх от job к stage и pipeline. Логи job сохраняются append-only через публичный API.
+В раннем MVP job переводились вручную через API, CLI и Dashboard. Разрешённые переходы определяет `JobStatus::transition_to()` в domain-слое: terminal job нельзя перезапустить, а недопустимый переход отклоняется. После изменения job backend агрегирует состояния вверх от job к stage и pipeline. Логи job сохраняются append-only через публичный API.
 
 ## Consequences
 
 - Можно проверить API contract, модель данных, UX и правила жизненного цикла без запуска недоверенного кода.
 - Система честно позиционируется как control plane, а не как готовая execution platform; UI и документация не должны создавать обратное впечатление.
-- Нет автоматического checkout, выполнения shell-команд, retries, runner health, artifacts или интеграции secrets.
+- Исторически не было автоматического checkout, выполнения shell-команд, retries, runner health, artifacts или интеграции secrets; current baseline это частично закрыл embedded runner-ом, но без production-safe external runner boundary.
 - Все клиенты используют одинаковую доменную валидацию через API, что упрощает дальнейшую замену ручного механизма на dispatcher.
 
 ## Migration Path

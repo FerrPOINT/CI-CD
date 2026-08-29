@@ -44,9 +44,9 @@ This index is the entry point for architecture decisions. It separates **current
 | Schema change | SQLx migration, `DATA_MODEL.md`, `contracts/MIGRATION_CONTRACT.md`, integration tests |
 | Authorization boundary | `AUTHORIZATION.md`, `SECURITY.md`, audit event catalog, policy tests |
 | Runner/execution behavior | `RUNNER_ARCHITECTURE.md`, `FUNCTIONAL_ARCHITECTURE.md`, `OPERATIONS.md`, threat model/tests |
-| Async event or external delivery | `AUTOMATION_ARCHITECTURE.md`, `contracts/EVENT_CONTRACT.md`, `contracts/EVENT_CONTRACT.md`, metrics/tests |
-| Storage/retention/key handling | `STORAGE_ARCHITECTURE.md`, `contracts/DATA_LIFECYCLE.md`, `OPERATIONS.md`, `contracts/DATA_LIFECYCLE.md` |
-| User-visible change | `USER_GUIDE.md`, `USER_GUIDE.md`, screenshots and Playwright evidence |
+| Async event or external delivery | `AUTOMATION_ARCHITECTURE.md`, `contracts/EVENT_CONTRACT.md`, metrics/tests |
+| Storage/retention/key handling | `STORAGE_ARCHITECTURE.md`, `contracts/DATA_LIFECYCLE.md`, `OPERATIONS.md` |
+| User-visible change | `USER_GUIDE.md`, screenshots and Playwright evidence |
 | New material architectural choice | new ADR + `ADR.md` index |
 
 ## Accepted target decisions
@@ -54,7 +54,7 @@ This index is the entry point for architecture decisions. It separates **current
 - `ADR-0005`: Cargo workspace and ports/adapters migration.
 - `ADR-0006`: PostgreSQL transactional outbox for reliable async effects.
 - `ADR-0007`: execution is separated from the API control plane.
-- `ADR-0008`: versioned SQLx migrations replace startup schema bootstrap.
+- `ADR-0008`: versioned SQLx migrations are the current schema mechanism; production apply/verify split remains target hardening.
 
 ## Delivery plan
 

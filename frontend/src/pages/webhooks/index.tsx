@@ -6,7 +6,7 @@ import { Card } from '@/shared/ui/card'
 import { Button } from '@/shared/ui/button'
 import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
-import { Textarea } from '@/shared/ui/textarea'
+import { CapabilityCallout } from '@/shared/ui/capability-callout'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
 import { Webhook, Plus, Trash2, Bell } from 'lucide-react'
 import { toast } from 'sonner'
@@ -50,6 +50,13 @@ export function WebhooksPage() {
           {t('webhooks.create')}
         </Button>
       </div>
+
+      <CapabilityCallout
+        tone="mvp"
+        title={t('webhooks.capabilityTitle')}
+        label={t('capability.currentMvp')}
+        description={t('webhooks.capabilityDescription')}
+      />
 
       {showForm && (
         <Card className="p-4">
@@ -148,6 +155,12 @@ function NotificationsSection() {
         <Bell className="h-5 w-5 text-accent" />
         <h2 className="text-lg font-semibold">{t('notifications.title')}</h2>
       </div>
+      <CapabilityCallout
+        tone="configuration"
+        title={t('notifications.capabilityTitle')}
+        label={t('capability.configurationOnly')}
+        description={t('notifications.capabilityDescription')}
+      />
       <Card className="p-4">
         <form onSubmit={handleSubmit} className="space-y-3">
           {isLoading ? (

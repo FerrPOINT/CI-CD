@@ -20,4 +20,4 @@ sequenceDiagram
     U->>API: POST /logout → session revoked
 ```
 
-Контракты: `contracts/AUTHZ_CONTRACT.md` + `AUTH_IMPLEMENTATION_SPEC.md`. Сейчас login — заглушка.
+Контракты: `contracts/AUTHZ_CONTRACT.md` + `AUTH_IMPLEMENTATION_SPEC.md`. Текущий MVP уже реализует conditional `/auth/login` и `/auth/refresh` при заданном `CICD_AUTH_SECRET`; tenant/project-aware policy остаётся целевым расширением.

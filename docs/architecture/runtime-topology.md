@@ -9,7 +9,8 @@
 │  frontend (nginx:1.27) :22802                                           │
 │      │ /api proxy                                                       │
 │  backend (cicd-server, axum) :22801                                     │
-│      ├── public REST /api/v1/* (open, CORS permissive — dev-only)       │
+│      ├── public REST /api/v1/* (conditional auth; open trusted-network  │
+│      │   mode when CICD_AUTH_SECRET is unset/empty; CORS permissive)     │
 │      ├── Git Smart HTTP /git/<name>.git (optional bearer)               │
 │      ├── internal POST /api/v1/internal/git-push (X-Internal-Token)     │
 │      └── embedded runner: Docker API / host shell                       │
@@ -38,4 +39,4 @@ git clients ── Smart HTTP ── git ingress ── domain_events ── sch
 ## Наблюдаемость
 
 - Health: `GET /api/v1/health` (без БД), readiness — target (`dependency_unavailable`).
-- Логи: tracing stdout; metrics `/metrics` — target (`contracts/API_CONTRACT.md`).
+- Логи: tracing stdout; metrics `/metrics` — current Prometheus exposition с target-расширением набора метрик (`contracts/API_CONTRACT.md`).

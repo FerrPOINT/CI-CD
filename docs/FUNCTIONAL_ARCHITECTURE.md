@@ -4,19 +4,19 @@
 
 Forge CI/CD — self-hosted control plane для жизненного цикла доставки исходного кода: Git-репозиторий → определение pipeline → безопасное выполнение → логи и artifacts → deployment/окружения → automation/integrations → audit/reporting.
 
-Это **не GitLab/GitHub replacement** и не registry/IDE/issue tracker. Внешние GitHub/GitLab-репозитории могут быть зарегистрированы как проекты; встроенный bare Git hosting остаётся минимальным transport-слоем. Границы продукта фиксируют, что Forge не реализует issues, wiki, code review UI полного уровня, package registry или cluster management.
+Это **не GitLab/GitHub replacement** и не registry/IDE/issue tracker. Внешние GitHub/GitLab-репозитории могут быть зарегистрированы как проекты; встроенный bare Git hosting остаётся минимальным transport-слоем. Границы продукта фиксируют, что Forge не реализует issues, code review UI полного уровня, package registry или cluster management.
 
 ## 2. Capability map
 
 | Контекст | Ответственность | MVP сейчас | Целевая v1 |
 |---|---|---:|---:|
-| Identity & Access | Личности, сессии, membership, роли, токены, policy | Частично: users/roles/tokens storage | Да |
+| Identity & Access | Личности, сессии, membership, роли, токены, policy | Частично: users/roles/tokens + conditional auth/RBAC при непустом `CICD_AUTH_SECRET` | Да |
 | Project & Source | Project, repository connection, bare Git, refs, PR metadata | Да | Да |
 | Pipeline Definition | `.forge-ci.yml`, validation, plan/DAG, variables | Частично: parser и линейный plan | Да |
 | Execution | Queue, attempts, dispatch, runner protocol, sandbox | Частично: embedded runner | Да |
 | Logs & Artifacts | Append-only logs, upload/download, integrity, retention | Частично | Да |
 | Environments & Deployments | Environment state, deploy history, approvals, rollback | Частично: metadata | Да |
-| Automation | Schedules, push events, webhooks, notifications, outbox | Configuration only | Да |
+| Automation | Schedules, push events, webhooks, notifications, outbox | Частично: Git push, schedules MVP и outgoing webhooks MVP; notifications/inbound handlers configuration-only | Да |
 | Observability & Governance | Audit, reports, metrics, traces, operations, DR | Частично | Да |
 | API & Clients | REST/OpenAPI, Dashboard, CLI, realtime | Частично | Да |
 

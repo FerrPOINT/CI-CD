@@ -1,6 +1,6 @@
 # Целевая архитектура хранения и жизненного цикла данных Forge CI/CD
 
-> **Статус:** объяснительный narrative. Нормативные контракты — `contracts/DATA_LIFECYCLE.md и contracts/MIGRATION_CONTRACT.md`; при конфликте прав контракт (ADR-0009). Текущее состояние — `docs/CURRENT_STATE.md`.
+> **Статус:** объяснительный narrative. Нормативные контракты — `contracts/DATA_LIFECYCLE.md` и `contracts/MIGRATION_CONTRACT.md`; при конфликте прав контракт (ADR-0009). Текущее состояние — `docs/CURRENT_STATE.md`.
 
 ## 1. Назначение и границы
 
@@ -23,20 +23,20 @@
 
 | Область | Сейчас | Целевое состояние |
 |---|---|---|
-| Схема PostgreSQL | `store::migrate()` выполняет единый `CREATE TABLE IF NOT EXISTS` при старте | Неизменяемые versioned SQLx migrations, отдельный migration runner, запрет DDL для runtime-роли |
-| Тестовая БД | API contract-тесты в основном используют `app(None)` | Изолированная PostgreSQL для integration-тестов, миграции применяются до теста, параллельные тесты не делят данные |
+| Схема PostgreSQL | Committed SQLx migrations в `backend/migrations/*.sql`; backend применяет их при старте, `cicd-migrate` использует тот же набор | Pre-runtime migration runner, verify-only startup и запрет DDL для runtime-роли |
+| Тестовая БД | GitHub Actions PostgreSQL service + `cargo test --features integration --test integration_db`; local `backend/docker-compose.test.yml` fixture | Изолированная PostgreSQL lifecycle/roles для integration-тестов, prior-schema upgrade, параллельные тесты не делят данные |
 | Репозитории | Строка `repositories` и bare-directory в volume; удаление сначала удаляет строку, затем best-effort директорию | Реестр с состояниями provision/delete, стабильным `storage_key`, saga/reconciler, проверка `git fsck`, backup-aware purge |
 | Связь project/repository | Поиск проекта по URL suffix `LIKE '%name.git'` | Явный `repositories.project_id`, уникальная связь и Git push event с repository ID/commit SHA |
 | Артефакты | Локальная ФС, лимит одного upload 50 MiB, DB-row после записи файла, checksum отсутствует | Порт object storage; потоковая загрузка, SHA-256, временный объект, квоты/резервы, retention worker, авторизованная загрузка |
 | Секреты | AES-256-GCM под единым `CICD_SECRETS_KEY`; формат `v1:nonce:ciphertext` | Envelope encryption: per-secret DEK, KMS/KEK key ID, AAD, версии, rewrap и безопасная ротация |
-| Пагинация | Часть списков без limit, часть с `LIMIT 50`, offset/cursor-контракт отсутствует | Единый bounded keyset pagination и составные индексы под каждый список |
-| Backup | Ручной `pg_dump`; Git/artifact volumes в backup-процессе не учтены | Координированный backup manifest для PG, Git, objects и ключевых версий; регулярный restore drill |
+| Пагинация | Projects и pipelines имеют `limit/offset` с cap 200; часть списков всё ещё без unified cursor/envelope | Единый bounded keyset pagination и составные индексы под каждый список |
+| Backup | Ручной runbook в `OPERATIONS.md`: `pg_dump` + копирование Git/artifact volumes; автоматических scripts/verify нет | Координированный backup manifest для PG, Git, objects и ключевых версий; регулярный restore drill |
 | Retention/удаление | CASCADE удаляет DB-строки; файлы артефактов и Git могут остаться | Политики хранения, soft-delete/tombstone, outbox/reconciler, криптографическое и физическое удаление |
 | DR | RPO/RTO и процедура восстановления не определены | Документированные RPO/RTO, off-site копия, immutable backup, проверка восстановления по расписанию |
 
 ### Выявленные ограничения текущей реализации
 
-- `CREATE TABLE IF NOT EXISTS` не выражает изменения существующих колонок, индексов, ограничений и данных; успешный старт не означает соответствие ожидаемой схеме.
+- Startup migration в current MVP применяет DDL из runtime-процесса; production target требует отдельную owner-role migration job и verify-only startup.
 - `next_log_sequence()` вычисляет `MAX(sequence) + 1`; конкурентная запись логов одного job может получить один sequence.
 - Артефакт сначала пишется в локальный файл, затем создаётся DB-строка. Ошибка INSERT оставляет orphan file; ошибка удаления строки не удаляет файл.
 - Для artifact download нет RBAC-проверки; наличие UUID является фактическим доступом.
@@ -172,24 +172,22 @@ ALTER DEFAULT PRIVILEGES FOR ROLE forge_owner IN SCHEMA forge
 Миграции находятся в `backend/migrations/`:
 
 ```text
-20260826090000_bootstrap_schema.sql
-20260826091000_projects_and_repository_mapping.sql
-20260826092000_pipeline_indexes_and_keyset.sql
-20260826093000_artifact_objects_and_quotas.sql
-20260826094000_secret_envelopes.sql
-20260826095000_outbox_and_deletion_jobs.sql
-20260826100000_audit_retention_and_backup_catalog.sql
+0001_bootstrap_v1.sql
+0002_runtime_role.sql
+0003_auth_foundation.sql
+0004_outbox_delivery.sql
+0005_execution_gaps.sql
 ```
 
 Правила:
 
-- имя: UTC timestamp + краткое snake_case описание;
+- current имя: monotonic numeric prefix + краткое snake_case описание; target может перейти на timestamp prefix только отдельным ADR/compatibility plan;
 - migration после merge **не редактируется и не переименовывается**;
 - любая корректировка создаётся следующей migration;
 - SQLx сохраняет checksum и историю в `_sqlx_migrations` в schema `forge`;
-- migration job запускается до запуска новых app pods;
-- runtime запускает `sqlx::migrate!()` только в режиме verify: проверяет, что pending migration отсутствуют, и завершает startup с ошибкой при несоответствии;
-- `store::migrate()` удаляется после полного перехода и не остаётся fallback-механизмом.
+- current MVP применяет `sqlx::migrate!()` при старте backend;
+- production target: migration job запускается до запуска новых app pods;
+- production target: runtime запускает `sqlx::migrate!()` только в режиме verify и завершает startup с ошибкой при pending migration/checksum mismatch.
 
 ### Bootstrap и существующие инсталляции
 

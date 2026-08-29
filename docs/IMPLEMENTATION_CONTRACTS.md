@@ -10,7 +10,7 @@
 | Internal/runner API | отдельные OpenAPI tags в том же spec, `x-forge-internal: true` |
 | Async payload | типы Rust в `backend/domain`; JSON Schema snapshots в `contracts/events/` |
 | Схема БД | `backend/migrations/*.sql`, применённые `cicd-migrate` |
-| Frontend transport types | `frontend/src/shared/api/generated/` — только generation |
+| Frontend transport types | `frontend/src/api/schema.d.ts` — только generation |
 | Domain lifecycle | `cicd-domain` state transition types |
 
 Существующие `/api/v1` array responses не меняются breakingly. Pagination добавляется аддитивно с `?limit=&cursor=` и envelope **только** после OpenAPI operation/versioning PR; до этого endpoint сохраняет array response.
