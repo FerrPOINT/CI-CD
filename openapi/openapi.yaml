@@ -442,6 +442,54 @@ paths:
                 $ref: '#/components/schemas/Job'
         '404':
           description: ''
+  /api/v1/jobs/{job_id}/test-report:
+    get:
+      tags:
+      - jobs
+      operationId: get_test_report
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TestReport'
+    post:
+      tags:
+      - jobs
+      summary: 'Minimal JUnit XML parser: sums testsuite/testcase counts and failures.'
+      operationId: upload_test_report
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          text/plain:
+            schema:
+              type: string
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TestReport'
   /api/v1/openapi.json:
     get:
       tags:
@@ -471,6 +519,21 @@ paths:
                 $ref: '#/components/schemas/PipelineDetail'
         '404':
           description: ''
+  /api/v1/pipelines/{pipeline_id}/badge.svg:
+    get:
+      tags:
+      - pipelines
+      operationId: pipeline_badge
+      parameters:
+      - name: pipeline_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: SVG badge
   /api/v1/pipelines/{pipeline_id}/cancel:
     post:
       tags:
@@ -516,6 +579,21 @@ paths:
         '404':
           description: ''
         '409':
+          description: ''
+  /api/v1/pipelines/{pipeline_id}/variables:
+    get:
+      tags:
+      - pipelines
+      operationId: pipeline_variables
+      parameters:
+      - name: pipeline_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
           description: ''
   /api/v1/projects:
     get:
@@ -937,6 +1015,34 @@ paths:
                 $ref: '#/components/schemas/Webhook'
         '400':
           description: ''
+  /api/v1/repos/{repo}/blob:
+    get:
+      tags:
+      - git
+      operationId: get_blob
+      parameters:
+      - name: repo
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: ref
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: path
+        in: query
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlobContent'
   /api/v1/repos/{repo}/commits:
     get:
       tags:
@@ -1117,6 +1223,144 @@ paths:
                   $ref: '#/components/schemas/RefInfo'
         '404':
           description: ''
+  /api/v1/repos/{repo}/releases:
+    get:
+      tags:
+      - releases
+      operationId: list_releases
+      parameters:
+      - name: repo
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Release'
+    post:
+      tags:
+      - releases
+      operationId: create_release
+      parameters:
+      - name: repo
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRelease'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Release'
+  /api/v1/repos/{repo}/releases/{tag}:
+    get:
+      tags:
+      - releases
+      operationId: get_release
+      parameters:
+      - name: repo
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: tag
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Release'
+        '404':
+          description: ''
+    delete:
+      tags:
+      - releases
+      operationId: delete_release
+      parameters:
+      - name: repo
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: tag
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: ''
+        '404':
+          description: ''
+  /api/v1/repos/{repo}/tags:
+    get:
+      tags:
+      - git
+      operationId: list_tags
+      parameters:
+      - name: repo
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TagInfo'
+  /api/v1/repos/{repo}/tree:
+    get:
+      tags:
+      - git
+      operationId: list_tree
+      parameters:
+      - name: repo
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: ref
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: path
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TreeEntry'
   /api/v1/repositories:
     get:
       tags:
@@ -1582,6 +1826,29 @@ components:
           format: uuid
         resource_type:
           type: string
+    BlobContent:
+      type: object
+      required:
+      - path
+      - sha
+      - size
+      - content
+      - binary
+      - truncated
+      properties:
+        binary:
+          type: boolean
+        content:
+          type: string
+        path:
+          type: string
+        sha:
+          type: string
+        size:
+          type: integer
+          format: int64
+        truncated:
+          type: boolean
     CanceledPipelineResult:
       type: object
       required:
@@ -1685,6 +1952,20 @@ components:
           type: string
         title:
           type: string
+    CreateRelease:
+      type: object
+      required:
+      - tag_name
+      - name
+      properties:
+        description:
+          type: string
+        name:
+          type: string
+        prerelease:
+          type: boolean
+        tag_name:
+          type: string
     CreateRepositoryBody:
       type: object
       required:
@@ -1692,6 +1973,10 @@ components:
       properties:
         name:
           type: string
+        visibility:
+          type:
+          - string
+          - 'null'
     CreateSecret:
       type: object
       required:
@@ -2136,6 +2421,37 @@ components:
           type: array
           items:
             type: string
+    Release:
+      type: object
+      required:
+      - id
+      - repository_name
+      - tag_name
+      - name
+      - description
+      - prerelease
+      - created_at
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        created_by:
+          type:
+          - string
+          - 'null'
+        description:
+          type: string
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        prerelease:
+          type: boolean
+        repository_name:
+          type: string
+        tag_name:
+          type: string
     Report:
       type: object
       required:
@@ -2165,6 +2481,7 @@ components:
       required:
       - id
       - name
+      - visibility
       - created_at
       properties:
         created_at:
@@ -2174,6 +2491,8 @@ components:
           type: string
           format: uuid
         name:
+          type: string
+        visibility:
           type: string
     RetriedPipelineResult:
       type: object
@@ -2313,6 +2632,59 @@ components:
             type: array
             items:
               $ref: '#/components/schemas/Job'
+    TagInfo:
+      type: object
+      required:
+      - name
+      - sha
+      - message
+      properties:
+        message:
+          type: string
+        name:
+          type: string
+        sha:
+          type: string
+    TestReport:
+      type: object
+      required:
+      - id
+      - job_id
+      - suite_name
+      - tests_total
+      - tests_passed
+      - tests_failed
+      - tests_skipped
+      - created_at
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        duration_ms:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        id:
+          type: string
+          format: uuid
+        job_id:
+          type: string
+          format: uuid
+        suite_name:
+          type: string
+        tests_failed:
+          type: integer
+          format: int32
+        tests_passed:
+          type: integer
+          format: int32
+        tests_skipped:
+          type: integer
+          format: int32
+        tests_total:
+          type: integer
+          format: int32
     TokenPair:
       type: object
       required:
@@ -2328,6 +2700,27 @@ components:
           description: unix seconds
         refresh_token:
           type: string
+    TreeEntry:
+      type: object
+      required:
+      - path
+      - name
+      - kind
+      - sha
+      properties:
+        kind:
+          type: string
+        name:
+          type: string
+        path:
+          type: string
+        sha:
+          type: string
+        size:
+          type:
+          - integer
+          - 'null'
+          format: int64
     TriggerPipeline:
       type: object
       properties:
@@ -2335,6 +2728,15 @@ components:
           type:
           - string
           - 'null'
+        variables:
+          type:
+          - object
+          - 'null'
+          description: Optional run variables; exposed to every job as CICD_VAR_<KEY>.
+          additionalProperties:
+            type: string
+          propertyNames:
+            type: string
     UpdateEnvironment:
       type: object
       properties:
@@ -2469,5 +2871,7 @@ tags:
   description: Git Smart HTTP and internal push events
 - name: repos
   description: Repository refs, commits and diff
+- name: releases
+  description: Repository release metadata
 - name: pulls
   description: Pull requests

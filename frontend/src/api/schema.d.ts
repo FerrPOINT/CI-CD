@@ -266,6 +266,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/jobs/{job_id}/test-report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_test_report"];
+        put?: never;
+        /** Minimal JUnit XML parser: sums testsuite/testcase counts and failures. */
+        post: operations["upload_test_report"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/openapi.json": {
         parameters: {
             query?: never;
@@ -290,6 +307,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["get_pipeline"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pipelines/{pipeline_id}/badge.svg": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["pipeline_badge"];
         put?: never;
         post?: never;
         delete?: never;
@@ -324,6 +357,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["retry_pipeline"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/pipelines/{pipeline_id}/variables": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["pipeline_variables"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -474,6 +523,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/repos/{repo}/blob": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_blob"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/repos/{repo}/commits": {
         parameters: {
             query?: never;
@@ -546,6 +611,70 @@ export interface paths {
             cookie?: never;
         };
         get: operations["list_refs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/repos/{repo}/releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_releases"];
+        put?: never;
+        post: operations["create_release"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/repos/{repo}/releases/{tag}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_release"];
+        put?: never;
+        post?: never;
+        delete: operations["delete_release"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/repos/{repo}/tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_tags"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/repos/{repo}/tree": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_tree"];
         put?: never;
         post?: never;
         delete?: never;
@@ -820,6 +949,15 @@ export interface components {
             resource_id?: string | null;
             resource_type: string;
         };
+        BlobContent: {
+            binary: boolean;
+            content: string;
+            path: string;
+            sha: string;
+            /** Format: int64 */
+            size: number;
+            truncated: boolean;
+        };
         CanceledPipelineResult: {
             /** Format: uuid */
             canceled: string;
@@ -859,8 +997,15 @@ export interface components {
             target_branch: string;
             title: string;
         };
+        CreateRelease: {
+            description?: string;
+            name: string;
+            prerelease?: boolean;
+            tag_name: string;
+        };
         CreateRepositoryBody: {
             name: string;
+            visibility?: string | null;
         };
         CreateSecret: {
             key: string;
@@ -1047,6 +1192,18 @@ export interface components {
             name: string;
             tags?: string[];
         };
+        Release: {
+            /** Format: date-time */
+            created_at: string;
+            created_by?: string | null;
+            description: string;
+            /** Format: uuid */
+            id: string;
+            name: string;
+            prerelease: boolean;
+            repository_name: string;
+            tag_name: string;
+        };
         Report: {
             /** Format: double */
             average_duration_seconds: number;
@@ -1065,6 +1222,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             name: string;
+            visibility: string;
         };
         RetriedPipelineResult: {
             /** Format: uuid */
@@ -1124,6 +1282,30 @@ export interface components {
         StageDetail: components["schemas"]["Stage"] & {
             jobs: components["schemas"]["Job"][];
         };
+        TagInfo: {
+            message: string;
+            name: string;
+            sha: string;
+        };
+        TestReport: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int32 */
+            duration_ms?: number | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            job_id: string;
+            suite_name: string;
+            /** Format: int32 */
+            tests_failed: number;
+            /** Format: int32 */
+            tests_passed: number;
+            /** Format: int32 */
+            tests_skipped: number;
+            /** Format: int32 */
+            tests_total: number;
+        };
         TokenPair: {
             access_token: string;
             /**
@@ -1133,8 +1315,20 @@ export interface components {
             expires_at: number;
             refresh_token: string;
         };
+        TreeEntry: {
+            kind: string;
+            name: string;
+            path: string;
+            sha: string;
+            /** Format: int64 */
+            size?: number | null;
+        };
         TriggerPipeline: {
             git_ref?: string | null;
+            /** @description Optional run variables; exposed to every job as CICD_VAR_<KEY>. */
+            variables?: {
+                [key: string]: string;
+            } | null;
         };
         UpdateEnvironment: {
             name?: string | null;
@@ -1732,6 +1926,52 @@ export interface operations {
             };
         };
     };
+    get_test_report: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestReport"][];
+                };
+            };
+        };
+    };
+    upload_test_report: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "text/plain": string;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestReport"][];
+                };
+            };
+        };
+    };
     serve_openapi_json: {
         parameters: {
             query?: never;
@@ -1770,6 +2010,26 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    pipeline_badge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pipeline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description SVG badge */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1836,6 +2096,25 @@ export interface operations {
                 content?: never;
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    pipeline_variables: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pipeline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2313,6 +2592,30 @@ export interface operations {
             };
         };
     };
+    get_blob: {
+        parameters: {
+            query: {
+                ref?: string;
+                path: string;
+            };
+            header?: never;
+            path: {
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BlobContent"];
+                };
+            };
+        };
+    };
     list_commits: {
         parameters: {
             query?: {
@@ -2518,6 +2821,151 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    list_releases: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Release"][];
+                };
+            };
+        };
+    };
+    create_release: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateRelease"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Release"];
+                };
+            };
+        };
+    };
+    get_release: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                repo: string;
+                tag: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Release"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    delete_release: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                repo: string;
+                tag: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_tags: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TagInfo"][];
+                };
+            };
+        };
+    };
+    list_tree: {
+        parameters: {
+            query?: {
+                ref?: string;
+                path?: string;
+            };
+            header?: never;
+            path: {
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TreeEntry"][];
+                };
             };
         };
     };

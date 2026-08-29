@@ -11,7 +11,7 @@
     "seed:evidence": "node scripts/seed-evidence.mjs",
     "shoot:evidence": "node scripts/shoot-evidence.mjs",
     "openapi:generate": "openapi-typescript ../openapi/openapi.yaml -o src/api/schema.d.ts",
-    "openapi:check": "openapi-typescript ../openapi/openapi.yaml -o /tmp/schema-check.d.ts && diff -q src/api/schema.d.ts /tmp/schema-check.d.ts"
+    "openapi:check": "node scripts/check-openapi.mjs"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.1.13",

@@ -67,14 +67,18 @@ type ApiResult<T> = Result<Json<T>, ApiError>;
         crate::git_host::delete_repository,
         crate::git_host::git_info_refs, crate::git_host::git_service_endpoint,
         crate::git_host::git_receive_pack_openapi, crate::git_host::internal_git_push,
-        crate::pulls::list_refs, crate::pulls::list_commits, crate::pulls::compare_refs,
+        crate::pulls::list_refs, crate::pulls::list_tree, crate::pulls::get_blob,
+        crate::pulls::list_tags, crate::pulls::list_commits, crate::pulls::compare_refs,
         crate::pulls::list_pull_requests, crate::pulls::create_pull_request, crate::pulls::pr_action,
+        list_releases, create_release, get_release, delete_release,
+        pipeline_badge, pipeline_variables, get_test_report, upload_test_report,
     ),
     components(schemas(
         crate::auth::LoginRequest, crate::auth::TokenPair,
         Project, CreateProject, UpdateProject, TriggerPipeline, Pipeline, Stage, Job,
         PipelineDetail, StageDetail, JobLog, ChangeStatus, AppendLog,
         CanceledPipelineResult, RetriedPipelineResult, ManualJobStartResult,
+        Release, CreateRelease, TestReport,
         crate::platform::Runner, crate::platform::RegisterRunner, crate::platform::RunnerHeartbeat,
         crate::platform::SecretMetadata, crate::platform::CreateSecret,
         crate::platform::Artifact,
@@ -88,7 +92,8 @@ type ApiResult<T> = Result<Json<T>, ApiError>;
         crate::platform::ApiToken, crate::platform::CreatedToken, crate::platform::CreateToken,
         crate::git_host::Repository, crate::git_host::CreateRepositoryBody,
         crate::git_host::DeletedRepository, crate::git_host::GitPushEvent,
-        crate::pulls::RefInfo, crate::pulls::CommitInfo, crate::pulls::DiffResult, crate::pulls::DiffFile,
+        crate::pulls::RefInfo, crate::pulls::TreeEntry, crate::pulls::BlobContent,
+        crate::pulls::TagInfo, crate::pulls::CommitInfo, crate::pulls::DiffResult, crate::pulls::DiffFile,
         crate::pulls::PullRequest, crate::pulls::CreatePullRequest, crate::pulls::PrAction,
     )),
     tags(
@@ -110,6 +115,7 @@ type ApiResult<T> = Result<Json<T>, ApiError>;
         (name = "tokens", description = "Personal API tokens"),
         (name = "git", description = "Git Smart HTTP and internal push events"),
         (name = "repos", description = "Repository refs, commits and diff"),
+        (name = "releases", description = "Repository release metadata"),
         (name = "pulls", description = "Pull requests"),
     )
 )]
