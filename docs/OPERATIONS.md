@@ -372,7 +372,7 @@ docker compose logs --tail=200 backend
 **Target approved: процедура**
 
 1. Alert содержит queue age, pending/leased/failed counts, retry lag и worker version; зафиксировать их до изменений.
-2. Проверить worker health, PostgreSQL capacity/locks, oldest `outbox_messages`, lease expiry и safe failure class в `outbox_deliveries`.
+2. Проверить worker health, PostgreSQL capacity/locks, oldest `outbox_messages`, `next_attempt_at`/`failed_at` и safe failure classes в `outbox_delivery_attempts`; target-инциденты дополнительно проверяют lease expiry в `outbox_deliveries`.
 3. Восстановить worker или зависимость, не меняя immutable payload и не удаляя pending rows вручную.
 4. Просроченные lease должны быть reclaimed idempotently; delivery retry следует backoff policy. В current MVP terminal failed row повторяется только явным `POST /api/v1/outbox-deliveries/{delivery_id}/requeue`, который создаёт новую generation; target dead letter дополнительно требует alert и full audited operator workflow.
 5. После восстановления подтвердить уменьшение queue age, отсутствие duplicate side effects у consumer и отсутствие secret в logs/history.

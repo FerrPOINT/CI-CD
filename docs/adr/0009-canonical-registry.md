@@ -17,7 +17,9 @@
 | Crate инструмента миграций | `backend/migration` (`cicd-migrate`) | — |
 | Событийный журнал | `domain_events` | — |
 | Transactional outbox | `outbox_messages` | `outbox_events` |
-| Попытки доставки | `outbox_deliveries` | `outbox_attempts` |
+| Delivery row / requeue generation (current MVP) | `outbox_messages.generation`, `outbox_messages.replay_of_id` | `outbox_events` |
+| Attempt history (current MVP) | `outbox_delivery_attempts` | `outbox_attempts` |
+| Delivery snapshots / leases (target) | `outbox_deliveries` | `outbox_attempts` |
 | Выполнение job | `execution_attempts` | `pipeline_runs`, `job_runs` |
 | Очередь / выдача | `job_queue`, `job_leases` | — |
 | Runner API | `/api/v1/runner/*` + поле `protocolVersion` в payload | `/api/v1/runner/v1/*` (двойное версионирование пути) |

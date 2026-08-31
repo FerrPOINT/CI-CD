@@ -19,7 +19,7 @@
 
 - Runtime pipeline остаётся `pipelines`; job остаётся `jobs`.
 - Каждое выполнение job — `execution_attempts`; очередь — `job_queue`; активная или завершённая выдача — `job_leases`.
-- Event journal — `domain_events`; transactional outbox — `outbox_messages`; внешняя попытка доставки — `outbox_deliveries`.
+- Event journal — `domain_events`; transactional outbox/current delivery row — `outbox_messages`; current attempt history — `outbox_delivery_attempts`; target delivery snapshots/leases — `outbox_deliveries`.
 - Нельзя вводить `outbox_events`, `pipeline_runs` или `job_runs` как дубликаты этих сущностей.
 
 ## 3. Error envelope
@@ -64,7 +64,7 @@
 
 Mutation requests that may be retried accept `Idempotency-Key` UUID. Table `idempotency_keys` has `(principal_id, route, key)` unique, SHA-256 request hash, status and stored response for 24 hours. Same key + different request hash → 409 `idempotency_conflict`.
 
-Scheduler uses `(schedule_id, scheduled_for)`; Git ingress uses `(source, delivery_id)`; original webhook fan-out uses `(subscription_id, event_id, generation=0)`; replay creates incremented `generation` and references `replay_of_delivery_id`.
+Scheduler uses `(schedule_id, scheduled_for)`; Git ingress uses `(source, delivery_id)`; original webhook fan-out uses `(subscription_id, event_id, generation=0)`. Current outbox requeue creates a new `outbox_messages` row with incremented `generation` and `replay_of_id`; target delivery snapshots may additionally reference `replay_of_delivery_id`.
 
 ## 6. Required checks before a feature flag is enabled
 

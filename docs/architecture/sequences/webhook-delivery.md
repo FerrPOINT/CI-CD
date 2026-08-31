@@ -23,4 +23,4 @@ sequenceDiagram
     OB->>OB: metrics + audit
 ```
 
-Контракты: `contracts/EVENT_CONTRACT.md`. Сейчас webhook-ы — только CRUD-конфигурация.
+Контракты: `contracts/EVENT_CONTRACT.md`. Сейчас реализован bounded MVP: terminal pipeline events создают `domain_events`/`outbox_messages`, worker делает webhook retry/HMAC, фиксирует attempts и позволяет requeue failed delivery; diagram выше описывает target-добавки leases/reconciliation/full dead-letter.

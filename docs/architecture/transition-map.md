@@ -17,7 +17,7 @@
 |---|---|---|
 | runtime `sqlx::migrate!()` on startup | pre-start migration job + `cicd-migrate` verify/adopt tooling | split apply/verify modes; legacy `store::migrate()` adoption is only for pre-migration installations |
 | `runners` (CRUD registry) | + credentials/capacity/leases (`job_leases`) | аддитивные колонки + новые таблицы |
-| `schedules`/`webhooks`/`notification_channels` (config) | + `domain_events`/`outbox_messages`/`outbox_deliveries` | новые таблицы, конфиг не переносится |
+| `schedules`/`webhooks`/`notification_configs` (config) + current outbox delivery rows | current `domain_events`/`outbox_messages`/`outbox_delivery_attempts`; target `outbox_deliveries` leases/snapshots | add target tables/columns without rewriting immutable current history |
 | `users`/`api_tokens`/`sessions` (global auth) | + `tenants`/project memberships/service_accounts | additive tenant/project scope migrations (`AUTH_IMPLEMENTATION_SPEC.md`) |
 
 ## Execution model

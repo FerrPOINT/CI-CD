@@ -6,7 +6,7 @@
 
 ## 1. Границы и хранение
 
-- Все межконтекстные сообщения проходят только через immutable `domain_events` и transactional `outbox_messages`; внешние попытки и их результаты хранятся в `outbox_deliveries`.
+- Все межконтекстные сообщения проходят только через immutable `domain_events` и transactional `outbox_messages`. Current MVP хранит delivery state на `outbox_messages` и попытки в `outbox_delivery_attempts`; target full snapshots/leases/results выделяются в `outbox_deliveries`.
 - Изменение агрегата, audit event, `domain_events` и `outbox_messages` фиксируются одной PostgreSQL-транзакцией. Внешний I/O внутри этой транзакции запрещён.
 - `pg_notify` и in-process broadcast допустимы только как ускорители; после restart worker обязан читать pending записи из БД.
 - Payload, event type, occurred time и причинные идентификаторы после commit не изменяются. Исправление создаёт новое событие.

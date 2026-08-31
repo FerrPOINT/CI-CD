@@ -29,6 +29,7 @@
 - Outbox/scheduler (ADR-0006, REQ-AUTO-003): миграция 0004 (`domain_events`, `outbox_messages`, `schedules.last_fired_at`), воркер доставки webhooks с retry/backoff (15s..1h, 8 попыток, dead-letter), cron-scheduler с атомарным claim (без double-fire), счётчики метрик.
 - Secret injection (REQ-SEC-002): project secrets расшифровываются и подаются в job как env-переменные; значения маскируются `***` в job-логах.
 - Observability floor (SLO/METRICS): `GET /metrics` (Prometheus text: http_requests, 5xx, login attempts/failures, pipelines_created, outbox delivered/dead), request_id-пропагация.
+- Outbox delivery history/requeue (REQ-AUTO-003): migration `0012_outbox_delivery_history` (`project_id`, `generation`, `replay_of_id`, `failed_at`, `outbox_delivery_attempts`), project-scoped delivery API/OpenAPI, Webhooks dashboard panel, failed delivery requeue, backend/frontend tests.
 - CI: PostgreSQL service в backend-джобе — integration-тесты гоняются в CI; гейт `schema.d.ts` up-to-date; docs-джоба verify_docs.
 - SBOM: `scripts/generate_sbom.py` → docs/assets/sbom.json (CycloneDX-lite, 344 компонента; CISA Minimum Elements).
 - Пустой `CICD_AUTH_SECRET` теперь трактуется как не настроенный secret, поэтому compose default корректно оставляет локальный trusted-network mode.
@@ -72,7 +73,7 @@
 - Документация по аудиториям: USER_GUIDE, DEVELOPMENT_GUIDE, OPERATIONS, PRODUCT_REQUIREMENTS; CURRENT_STATE и DOCUMENTATION_GOVERNANCE; `scripts/verify_docs.py` (ссылки/канон/статусы/дубликаты скринов).
 - Public repo surface: LICENSE (FerrPOINT proprietary source-available), CONTRIBUTING, SECURITY (NOT production-safe предупреждение), SUPPORT, issue/PR-шаблоны, Dependabot.
 - UI: мобильная навигация-drawer, карточные layout-ы (runners/users/tokens/environments), доступные confirm-диалоги вместо `window.confirm`, страница pull-запроса с «Посмотреть изменения», живые метрики дашборда.
-- Evidence pipeline: deterministic seed (`pnpm seed:evidence`) и воспроизводимые скриншоты (`pnpm shoot:evidence`), реестр `docs/assets/screens/manifest.md` (44 скрина: 20 базовых страниц, 18 состояний действий и 6 mobile states).
+- Evidence pipeline: deterministic seed (`pnpm seed:evidence`) и воспроизводимые скриншоты (`pnpm shoot:evidence`), реестр `docs/assets/screens/manifest.md` (45 скринов: 20 базовых страниц, 19 состояний действий и 6 mobile states).
 - `docs/TECH_CHOICES.md` и `docs/LIBRARIES.md` восстановлены как рабочие справочники: current stack, target Rust candidates, dependency policy и список готовых CI/CD решений на Rust для reference.
 
 ### Changed
@@ -87,7 +88,7 @@
 
 ### Planned
 
-- Baseline roadmap: диагностические command spans/error tails; project-level RBAC, scoped PAT и session revoke; delivery history/replay/dead-letter для webhooks/notifications; full cron semantics; проверяемый backup/restore; external runner + durable queue/leases; artifact retention/S3.
+- Baseline roadmap: immutable pipeline plan/DAG; diagnostic command spans/stream classification; external runner + durable queue/leases/fencing; full cron semantics/timezones; production outbox lease/reconciliation/full dead-letter policy/metrics; external notification adapters/inbound provider webhooks; проверяемый backup/restore; artifact retention/S3; tenant isolation/service accounts/scoped Git credentials/production session hardening.
 
 ## [0.1.0] — 2026-08-26
 

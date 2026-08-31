@@ -2,7 +2,7 @@
 
 Статус: Accepted target contract. Основание: [ADR-0009](../adr/0009-canonical-registry.md).
 
-Этот контракт определяет хранение, ownership, retention, восстановление и ротацию. Текущий MVP не считается реализующим его без проверяемых миграций, workers и restore drill.
+Этот контракт определяет хранение, ownership, retention, восстановление и ротацию. Current MVP покрывает только часть модели (`domain_events`/`outbox_messages`/`outbox_delivery_attempts`, local artifacts, encrypted project secrets); полный контракт не считается production-ready без retention workers, backup/restore drill и target storage/key policy.
 
 ## 1. Границы владения и размещение
 
@@ -11,7 +11,7 @@
 - `forge_owner` владеет database, schema, tables, sequences и DDL; `forge_runtime` имеет только `CONNECT`, `USAGE`, разрешённые DML и sequence usage. Runtime не может `CREATE`, `ALTER`, `DROP`, `TRUNCATE` или выполнять migrations.
 - PostgreSQL хранит метаданные, состояния и намерения; Git object contents, artifact bytes, plaintext secrets, raw keys, absolute filesystem paths и credential-bearing URLs в ней запрещены.
 - Bare Git и artifacts используют логические immutable storage keys. Artifact object key содержит tenant/project scope; межтенантная deduplication запрещена.
-- `domain_events`, `outbox_messages`, `outbox_deliveries` и `audit_events` append-only относительно факта события. Изменяются только delivery/read/retention состояния, а не исходный payload.
+- `domain_events`, `outbox_messages`, current `outbox_delivery_attempts`, target `outbox_deliveries` и `audit_events` append-only относительно факта события. Изменяются только delivery/read/retention состояния, а не исходный payload.
 
 ## 2. Ownership data sets
 

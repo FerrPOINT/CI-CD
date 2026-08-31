@@ -4,9 +4,11 @@
 
 ## 1. Первая поставка и границы
 
-Включено: внешний Docker-only runner, registration token, poll/ack/renew/complete, attempt/lease/reconciliation, schedule-only pipeline trigger, `domain_events` + `outbox_messages`.
+Этот документ описывает target-срез external runner/production scheduler/outbox. Current MVP уже имеет embedded runner, scheduler/outgoing webhook/local notification worker, bounded `outbox_delivery_attempts` history и explicit requeue failed delivery.
 
-Исключено: Kubernetes, runner secret injection, artifact streaming, webhook/notification delivery. Они остаются feature-flagged до отдельного contract PR.
+Включено в target external-runner поставку: внешний Docker-only runner, registration token, poll/ack/renew/complete, attempt/lease/reconciliation, schedule fire store, `domain_events` + `outbox_messages`.
+
+Исключено из этого target-среза: Kubernetes, external-runner secret injection, artifact streaming, email/Slack adapters и inbound provider webhooks. Они остаются feature-flagged до отдельного contract PR.
 
 ## 2. Фиксированные параметры
 
@@ -41,7 +43,8 @@ Required versioned migrations create these tables (UUID id unless noted):
 | `job_leases` | attempt_id, runner_id, generation, status, offered/ack/expires timestamps, lease_token_hmac; unique `(attempt_id,generation)` and partial unique active lease per attempt |
 | `domain_events` | aggregate_type/id, event_type, version, payload JSONB, occurred_at, causation/idempotency key |
 | `outbox_messages` | event_id unique, topic, payload JSONB, state, attempts, next_attempt_at, worker_generation, lease_expires_at, last_error |
-| `outbox_deliveries` | message_id, consumer, generation default 0, replay_of_delivery_id?, status, attempts; unique `(message_id,consumer,generation)` |
+| `outbox_delivery_attempts` | current bounded history: message_id, attempt_number, started/finished, outcome, http_status?, safe error class, duration; unique `(message_id,attempt_number)` |
+| `outbox_deliveries` | target snapshots/leases: message_id, consumer, generation default 0, replay_of_delivery_id?, status, attempts; unique `(message_id,consumer,generation)` |
 | `schedule_fires` | schedule_id, scheduled_for, pipeline_id?, status; unique `(schedule_id,scheduled_for)` |
 | `idempotency_keys` | as specified by IMPLEMENTATION_CONTRACTS |
 
@@ -84,7 +87,7 @@ Scheduler uses `tokio-cron-scheduler` only to parse/evaluate 5-field cron in IAN
 
 A Postgres advisory lock (`forge_scheduler_leader`) elects one scheduler; loss stops claims. For each due slot transaction: insert schedule_fire → create pipeline → append domain_event/outbox message. Unique fire prevents duplicate restart/multi-instance trigger.
 
-Outbox claim uses `FOR UPDATE SKIP LOCKED`, sets `state=processing`, `worker_generation=old+1`, lease 30s. Completion uses generation CAS. Retryable: transport timeout, 408, 429, 5xx. Permanent: validation/auth most 4xx. Backoff full jitter base 15s/cap 1h/max 5; exhausted is `dead`; manual requeue increments delivery generation. Webhook replay uses a new `outbox_deliveries.generation`, never violates original unique key.
+Outbox claim uses `FOR UPDATE SKIP LOCKED`, sets `state=processing`, `worker_generation=old+1`, lease 30s. Completion uses generation CAS. Retryable: transport timeout, 408, 429, 5xx. Permanent: validation/auth most 4xx. Backoff full jitter base 15s/cap 1h/max 5; exhausted is `dead`. Current MVP requeue creates a new `outbox_messages` generation and logs attempts in `outbox_delivery_attempts`; target webhook replay may additionally use `outbox_deliveries.generation`, never violating the original unique key.
 
 ## 7. First acceptance suite
 
