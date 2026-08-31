@@ -2,7 +2,7 @@
 
 > **Назначение:** этот runbook описывает восстановление persistent data после потери хоста, тома, повреждения данных или неудачного изменения. Он не заменяет процедуру incident response: incident commander принимает решение о maintenance, восстановлении и возврате трафика.
 >
-> **Статус:** текущая manual-процедура ниже — **Current verified** для локального Docker Compose; автоматизированная production-схема — **Target approved**. SLO не должны считаться достигнутыми до появления проверяемых backup/restore evidence.
+> **Статус:** текущий scripted local helper — **Current verified MVP** для Docker Compose backup/restore; автоматизированная production-схема с off-site/PITR/immutable manifest и регулярным drill — **Target approved**. SLO не должны считаться достигнутыми до появления проверяемого restore drill evidence.
 >
 > **Нормативный источник retention, RPO/RTO, состава manifest и требований к target backup:** [контракт жизненного цикла данных](contracts/DATA_LIFECYCLE.md). Этот документ не переопределяет его.
 
@@ -42,48 +42,18 @@
 
 ## 3. Backup
 
-### Current verified: ручной согласованный набор
+### Current verified MVP: scripted local согласованный набор
 
-В текущем MVP отсутствуют scripts backup/restore/verify и off-site automation. Manual backup должен содержать один каталог с `postgres.dump`, копиями Git/artifacts, `files.txt` и `SHA256SUMS`. Выполняйте его в maintenance window: дождитесь terminal jobs, остановите новые mutations и backend. Это прерывает embedded runner и не является online snapshot.
+В текущем MVP есть `scripts/forge_backup.py` и wrappers `scripts/backup.sh`, `scripts/restore.sh`, `scripts/verify-backup.sh`. Backup создаёт один каталог с `postgres.dump`, копиями Git/artifacts, `files.txt`, `SHA256SUMS` и `manifest.json`. Выполняйте его в maintenance window: дождитесь terminal jobs, остановите новые mutations и backend/frontend. Это прерывает embedded runner и не является online snapshot.
 
 ```bash
 cd /opt/dev/CI-CD
-set -eu
-set -a; . ./.env; set +a
-
-STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-BACKUP_DIR="${BACKUP_DIR:-$PWD/backups/$STAMP}"
-mkdir -p "$BACKUP_DIR"
-
-# Сохранить ID до остановки backend: он остаётся пригоден для docker cp.
-BACKEND_CID="$(docker compose ps -q backend)"
-test -n "$BACKEND_CID"
-
-docker compose stop backend
-
-docker compose exec -T postgres \
-  pg_dump -U "$CICD_DATABASE_USER" -d "$CICD_DATABASE_NAME" \
-  --format=custom --no-owner > "$BACKUP_DIR/postgres.dump"
-
-# Копируются contents mounted volumes, а не metadata Docker volume.
-docker cp "$BACKEND_CID:/var/lib/forge/git/." "$BACKUP_DIR/git"
-docker cp "$BACKEND_CID:/var/lib/forge/artifacts/." "$BACKUP_DIR/artifacts"
-
-pg_restore --list "$BACKUP_DIR/postgres.dump" >/dev/null
-(
-  cd "$BACKUP_DIR"
-  find git artifacts -type f -print 2>/dev/null | LC_ALL=C sort > files.txt
-  sha256sum postgres.dump > SHA256SUMS
-  find git artifacts -type f -print0 2>/dev/null \
-    | LC_ALL=C sort -z \
-    | xargs -0r sha256sum >> SHA256SUMS
-)
-
-docker compose up -d backend frontend
+scripts/backup.sh --backup-dir "$PWD/backups/$(date -u +%Y%m%dT%H%M%SZ)"
+scripts/verify-backup.sh "$PWD/backups/<backup-id>"
 curl -fsS http://127.0.0.1:22801/api/v1/health
 ```
 
-После backup зафиксируйте UTC timestamp, operator, release/commit, результат `pg_restore --list`, checksum manifest, путь к off-site copy и результат последнего drill. Локальный backup внутри Docker volume или на том же единственном хосте не является аварийной копией.
+После backup зафиксируйте UTC timestamp, operator, release/commit, checksum manifest, путь к off-site copy и результат последнего drill. Для дополнительной проверки структуры дампа можно запустить `scripts/verify-backup.sh <backup-dir> --pg-restore-list`, если `pg_restore` доступен локально. Локальный backup внутри Docker volume или на том же единственном хосте не является аварийной копией.
 
 ### Target approved: автоматизированный backup
 
@@ -95,7 +65,7 @@ curl -fsS http://127.0.0.1:22801/api/v1/health
 4. Публикует encrypted immutable manifest лишь после verification: PostgreSQL backup ID, WAL/LSN boundary, migration version/checksum, Git snapshot/bundle IDs and SHA-256, artifact object versions/checksums, KMS/key IDs, application/schema version и digest manifest.
 5. Отмечает backup в catalog как `verified` только после проверки checksums, manifest и доступности ключей; failure/превышение backup age alert-ится.
 
-Целевые `scripts/backup.sh`, `scripts/restore.sh` и `scripts/verify-backup.sh` утверждены как направление, но пока не существуют. Не выдавайте описанную target automation за действующую Current verified capability.
+Локальные `scripts/backup.sh`, `scripts/restore.sh` и `scripts/verify-backup.sh` уже существуют как MVP helper. Не выдавайте их за target production automation: они не обеспечивают PITR/WAL, immutable/off-site storage, scheduled retention, KMS/key availability checks или ежемесячный drill.
 
 ## 4. Restore
 
@@ -109,83 +79,25 @@ curl -fsS http://127.0.0.1:22801/api/v1/health
 
 ### Tier 1: PostgreSQL и control plane
 
-Для Current verified restore используйте custom dump. Команды ниже заменяют database contents, поэтому выполняются только после общих требований.
+Для Current verified MVP restore используйте helper и custom dump. Команды ниже заменяют database, Git и artifact contents, поэтому выполняются только после общих требований.
 
 ```bash
 cd /opt/dev/CI-CD
-set -eu
-set -a; . ./.env; set +a
-BACKUP_DIR="/absolute/path/to/<backup-dir>"
-test -f "$BACKUP_DIR/postgres.dump"
-sha256sum -c "$BACKUP_DIR/SHA256SUMS"
-
-docker compose stop frontend backend
-
-docker compose exec -T postgres \
-  pg_restore -U "$CICD_DATABASE_USER" -d "$CICD_DATABASE_NAME" \
-  --clean --if-exists --no-owner < "$BACKUP_DIR/postgres.dump"
-
-docker compose up -d backend frontend
+scripts/verify-backup.sh "/absolute/path/to/<backup-dir>"
+scripts/restore.sh "/absolute/path/to/<backup-dir>" --confirm-restore
 ```
 
 **Target approved:** создать roles/schema под owner credential, восстановить PostgreSQL до manifest boundary через PITR или approved logical restore, затем выполнить `cicd-migrate verify --database-url "$CICD_OWNER_DATABASE_URL"` без DDL. Pending migration, checksum mismatch или недоступный key блокируют возврат трафика. Автоматический down migration и ручное изменение `forge._sqlx_migrations` запрещены.
 
 ### Tier 2: bare Git repositories
 
-Current verified restore файлов Git запускайте после database restore, пока backend остановлен. Сохраняйте до начала ID backend container: его volumes должны быть подключены до остановки.
-
-```bash
-cd /opt/dev/CI-CD
-set -eu
-BACKUP_DIR="/absolute/path/to/<backup-dir>"
-BACKEND_CID="$(docker compose ps -q backend)"
-test -n "$BACKEND_CID"
-test -d "$BACKUP_DIR/git"
-
-docker compose stop frontend backend
-
-docker run --rm --user root --volumes-from "$BACKEND_CID" \
-  -v "$BACKUP_DIR:/backup:ro" alpine:3.21 sh -ceu '
-    rm -rf /var/lib/forge/git/*
-    mkdir -p /var/lib/forge/git
-    tar -C /backup/git -cf - . | tar -C /var/lib/forge/git -xf -
-  '
-
-# Проверить каждый bare repository до запуска writers.
-docker run --rm --user root --volumes-from "$BACKEND_CID" alpine:3.21 sh -ceu '
-  find /var/lib/forge/git -type d -name "*.git" -print0 |
-    xargs -0r -n1 -I{} git --git-dir={} fsck --no-dangling
-'
-```
+Current verified MVP restore файлов Git выполняет `scripts/restore.sh` после database restore, пока backend/frontend остановлены. Он заменяет содержимое `/var/lib/forge/git` из backup и выполняет `git fsck`, если не задан `--skip-git-fsck`.
 
 Если Git repository повреждён либо отсутствует, не открывайте clone/push для него. В target восстановите snapshot/bundle, подтвердите SHA-256 manifest и `git fsck`, затем зафиксируйте repository-level finding для reconciler.
 
 ### Tier 3: artifacts
 
-Artifact metadata уже восстановлена из PostgreSQL; затем замените bytes и сверьте checksum manifest.
-
-```bash
-cd /opt/dev/CI-CD
-set -eu
-BACKUP_DIR="/absolute/path/to/<backup-dir>"
-BACKEND_CID="$(docker compose ps -q backend)"
-test -n "$BACKEND_CID"
-test -d "$BACKUP_DIR/artifacts"
-
-docker compose stop frontend backend
-
-docker run --rm --user root --volumes-from "$BACKEND_CID" \
-  -v "$BACKUP_DIR:/backup:ro" alpine:3.21 sh -ceu '
-    rm -rf /var/lib/forge/artifacts/*
-    mkdir -p /var/lib/forge/artifacts
-    tar -C /backup/artifacts -cf - . | tar -C /var/lib/forge/artifacts -xf -
-  '
-
-(
-  cd "$BACKUP_DIR"
-  sha256sum -c SHA256SUMS
-)
-```
+Artifact metadata уже восстановлена из PostgreSQL; `scripts/restore.sh` затем заменяет bytes из `artifacts/` и предварительно сверяет checksum manifest.
 
 В target восстановите exact versioned object versions из immutable manifest и проверьте object checksum. Несовпадение metadata/bytes, checksum error или missing object блокирует download этого ресурса, создаёт incident/audit evidence и не исправляется удалением DB rows.
 
@@ -225,7 +137,7 @@ curl -fsS http://127.0.0.1:22802/ >/dev/null
 
 ### Cadence
 
-- **Current verified operating control:** quarterly tabletop + isolated manual restore drill, пока automation отсутствует.
+- **Current verified operating control:** quarterly tabletop + isolated scripted restore drill через MVP helper; production off-site/PITR automation ещё отсутствует.
 - **Target approved requirement:** isolated restore drill не реже monthly и после изменения migration, storage или key policy, как определено в [DATA_LIFECYCLE.md](contracts/DATA_LIFECYCLE.md#5-backup-restore-и-dr).
 - После real incident провести post-incident drill/review до закрытия corrective actions.
 

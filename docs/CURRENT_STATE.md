@@ -32,10 +32,11 @@
 | Pagination | ✅ | limit/offset (cap 200) на проектах/пайплайнах |
 | Rate limiting | ✅ MVP | in-process per-client fixed-window: auth, API read/write, Git Smart HTTP, internal hook и artifact upload возвращают `429` при превышении |
 | Metrics | ✅ | /metrics Prometheus text |
+| Backup/restore helper | ✅ MVP | `scripts/forge_backup.py` + wrappers создают/проверяют/restoring local Docker Compose backup: PostgreSQL custom dump, Git/artifact volume copy, `SHA256SUMS`, `manifest.json`; off-site/PITR/monthly drill остаются target |
 
 ## Не реализовано (Target approved — см. ADR + contracts)
 
-Runner protocol/leases/dispatch (внешний runner, ADR-0007), immutable pipeline plan/DAG, general idempotency storage for all retryable mutations, command spans/stream classification для диагностических логов, S3 artifacts, backup scripts, external notification channel adapters (email/Slack), inbound provider webhook handlers, tenant isolation, service-account tokens, scoped Git credentials, production cookie/CSRF/session-family policy, full cron semantics, outbox lease/fencing/crash recovery, full dead-letter operator policy/metrics и distributed/proxy rate limiting (сейчас in-process окно по forwarded client key).
+Runner protocol/leases/dispatch (внешний runner, ADR-0007), immutable pipeline plan/DAG, general idempotency storage for all retryable mutations, command spans/stream classification для диагностических логов, S3 artifacts/retention, off-site/PITR backup platform и verified restore drill, external notification channel adapters (email/Slack), inbound provider webhook handlers, tenant isolation, service-account tokens, scoped Git credentials, production cookie/CSRF/session-family policy, full cron semantics, outbox lease/fencing/crash recovery, full dead-letter operator policy/metrics и distributed/proxy rate limiting (сейчас in-process окно по forwarded client key).
 
 ## Текущее runtime-дерево backend
 

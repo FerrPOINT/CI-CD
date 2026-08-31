@@ -36,7 +36,7 @@ Roadmap фиксирует порядок доведения Forge до базо
 - auth/RBAC имеет project membership, scoped PAT, Git Smart HTTP read/write checks, session-bound access invalidation и refresh rotate/logout/revoke MVP, но без tenant isolation, service-account tokens, scoped Git credentials и production cookie/CSRF/session-family policy;
 - execution встроен в backend process, поэтому shared/prod режим требует external runner boundary;
 - webhooks/notifications имеют bounded delivery history/requeue MVP, но без production leases/fencing, full dead-letter policy/metrics и external adapters; email/Slack notification adapters не реализованы;
-- backup/restore пока процедура, а не проверяемый автоматизированный product gate.
+- backup/restore имеет local scripted MVP helper и CI self-test/dry-run, но ещё не является off-site/PITR production platform или verified restore drill gate.
 
 ## 4. Базовый roadmap
 
@@ -107,14 +107,14 @@ Gate:
 
 Deliverables:
 
-- backup scripts для PostgreSQL, Git storage и artifacts;
-- restore script с consistency checks;
-- documented RPO/RTO и restore drill;
+- Current MVP: `scripts/backup.sh`/`scripts/verify-backup.sh` для PostgreSQL, Git storage и artifacts;
+- Current MVP: `scripts/restore.sh` с checksum consistency checks и guarded `--confirm-restore`;
+- Target follow-up: documented RPO/RTO measurement и restore drill evidence;
 - startup/reconciliation checks после restart.
 
 Gate:
 
-- automated restore drill на disposable окружении;
+- Current gate: backup helper self-test/dry-run в CI; target gate: automated restore drill на disposable окружении;
 - post-restore проверка проектов, pipeline history, Git refs и artifact metadata;
 - runbook в `OPERATIONS.md` и troubleshooting для типовых failures.
 

@@ -188,7 +188,7 @@ Backend-проверки без cargo на хосте — через Docker (с�
 
 ## 11. Deployment
 
-Docker Compose: postgres + backend + frontend (nginx static + `/api`,`/git` proxy). Restart-policy, monitoring, backup scripts — Phase E (см. `docs/ROADMAP.md`, `docs/DEPLOYMENT.md`).
+Docker Compose: postgres + backend + frontend (nginx static + `/api`,`/git` proxy). Current MVP включает local backup/verify/restore helper для PostgreSQL, Git storage и artifacts. Restart-policy, monitoring, off-site/PITR backups и full restore drill — Phase E (см. `docs/ROADMAP.md`, `docs/DEPLOYMENT.md`).
 
 ## References
 

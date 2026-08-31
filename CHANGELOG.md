@@ -30,6 +30,7 @@
 - Secret injection (REQ-SEC-002): project secrets расшифровываются и подаются в job как env-переменные; значения маскируются `***` в job-логах.
 - Observability floor (SLO/METRICS): `GET /metrics` (Prometheus text: http_requests, 5xx, login attempts/failures, pipelines_created, outbox delivered/dead), request_id-пропагация.
 - Outbox delivery history/requeue (REQ-AUTO-003): migration `0012_outbox_delivery_history` (`project_id`, `generation`, `replay_of_id`, `failed_at`, `outbox_delivery_attempts`), project-scoped delivery API/OpenAPI, Webhooks dashboard panel, failed delivery requeue, backend/frontend tests.
+- Backup/restore helper (NFR-REL-04): `scripts/forge_backup.py` plus `backup.sh`/`restore.sh`/`verify-backup.sh` create, verify and guarded-restore local Docker Compose backups for PostgreSQL, Git and artifact volumes; CI checks syntax, self-test and dry-run.
 - CI: PostgreSQL service в backend-джобе — integration-тесты гоняются в CI; гейт `schema.d.ts` up-to-date; docs-джоба verify_docs.
 - SBOM: `scripts/generate_sbom.py` → docs/assets/sbom.json (CycloneDX-lite, 344 компонента; CISA Minimum Elements).
 - Пустой `CICD_AUTH_SECRET` теперь трактуется как не настроенный secret, поэтому compose default корректно оставляет локальный trusted-network mode.
@@ -88,7 +89,7 @@
 
 ### Planned
 
-- Baseline roadmap: immutable pipeline plan/DAG; diagnostic command spans/stream classification; external runner + durable queue/leases/fencing; full cron semantics/timezones; production outbox lease/reconciliation/full dead-letter policy/metrics; external notification adapters/inbound provider webhooks; проверяемый backup/restore; artifact retention/S3; tenant isolation/service accounts/scoped Git credentials/production session hardening.
+- Baseline roadmap: immutable pipeline plan/DAG; diagnostic command spans/stream classification; external runner + durable queue/leases/fencing; full cron semantics/timezones; production outbox lease/reconciliation/full dead-letter policy/metrics; external notification adapters/inbound provider webhooks; off-site/PITR backup platform with verified restore drill; artifact retention/S3; tenant isolation/service accounts/scoped Git credentials/production session hardening.
 
 ## [0.1.0] — 2026-08-26
 

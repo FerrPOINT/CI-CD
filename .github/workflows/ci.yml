@@ -80,5 +80,12 @@ jobs:
     - uses: actions/setup-python@v5
       with:
         python-version: "3.12"
+    - name: script checks
+      run: |
+        python3 -m py_compile scripts/verify_docs.py scripts/forge_backup.py
+        python3 scripts/forge_backup.py self-test
+        python3 scripts/forge_backup.py backup --dry-run --skip-git-fsck --backup-dir /tmp/forge-backup-smoke
+        python3 scripts/forge_backup.py restore --dry-run --confirm-restore --skip-git-fsck /tmp/forge-backup-smoke
+        bash -n scripts/backup.sh scripts/restore.sh scripts/verify-backup.sh
     - name: documentation checks
       run: python3 scripts/verify_docs.py --all
