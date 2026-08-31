@@ -136,6 +136,8 @@
     "exitCode": "Код выхода",
     "startedAt": "Старт",
     "finishedAt": "Финиш",
+    "searchLogs": "Поиск по логам",
+    "loadMoreLogs": "Загрузить ещё",
     "logMessage": "Строка лога…",
     "append": "Добавить",
     "testReport": "Тест-отчёты",
@@ -158,6 +160,7 @@
     "error": "Ошибка",
     "retry": "Повторить",
     "search": "Поиск",
+    "clear": "Очистить",
     "dismiss": "Закрыть",
     "create": "Создать"
   },

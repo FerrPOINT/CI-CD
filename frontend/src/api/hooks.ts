@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useRef } from 'react'
 import { api, apiRetry } from './client'
 import type {
@@ -21,6 +21,7 @@ import type {
   Job,
   JobAttempt,
   JobLog,
+  JobLogPage,
   NotificationConfig,
   Pipeline,
   PipelineDetail,
@@ -48,6 +49,7 @@ const KEYS = {
   logs: (jobId: string) => ['logs', jobId] as const,
   attempts: (jobId: string) => ['attempts', jobId] as const,
   attemptLogs: (jobId: string, attemptId: string) => ['logs', jobId, attemptId] as const,
+  attemptLogPages: (jobId: string, attemptId: string, search: string) => ['logs', jobId, attemptId, 'page', search] as const,
   repositories: ['repositories'] as const,
   refs: (repo: string) => ['repository-refs', repo] as const,
   commits: (repo: string, branch: string) => ['repository-commits', repo, branch] as const,
@@ -170,6 +172,21 @@ export function useJobLogs(jobId: string | undefined, attemptId?: string) {
         ? api<JobLog[]>(`/jobs/${jobId}/attempts/${attemptId}/logs`)
         : api<JobLog[]>(`/jobs/${jobId}/logs`),
     enabled: !!jobId,
+  })
+}
+
+export function useJobLogPages(jobId: string | undefined, attemptId: string | undefined, search = '') {
+  const q = search.trim()
+  return useInfiniteQuery({
+    queryKey: KEYS.attemptLogPages(jobId ?? '', attemptId ?? '', q),
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) => {
+      const params = new URLSearchParams({ limit: '200', after: String(pageParam) })
+      if (q) params.set('q', q)
+      return api<JobLogPage>(`/jobs/${jobId}/attempts/${attemptId}/logs/page?${params.toString()}`)
+    },
+    getNextPageParam: (lastPage) => lastPage.next_after ?? undefined,
+    enabled: !!jobId && !!attemptId,
   })
 }
 

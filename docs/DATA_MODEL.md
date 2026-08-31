@@ -363,7 +363,7 @@ Foreign-key constraints:
 
 ## 6. job_logs
 
-Append-only логи выполнения задач. Логи принадлежат `attempt_id`, а `job_id` сохранён как совместимый lookup. `GET /jobs/{job_id}/logs` возвращает текущую или последнюю attempt; полный retry history читается через `/jobs/{job_id}/attempts/{attempt_id}/logs`.
+Append-only логи выполнения задач. Логи принадлежат `attempt_id`, а `job_id` сохранён как совместимый lookup. `GET /jobs/{job_id}/logs` возвращает текущую или последнюю attempt; bounded page/search читается через `/jobs/{job_id}/logs/page` и `/jobs/{job_id}/attempts/{attempt_id}/logs/page`; полный retry history читается через `/jobs/{job_id}/attempts/{attempt_id}/logs`.
 
 ```
                        Table "public.job_logs"

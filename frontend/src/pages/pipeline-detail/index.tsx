@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
-import { usePipeline, useUpdateJobStatus, useJobLogs, useAppendLog, useCancelPipeline, useRetryPipeline, useTestReport, useJobAttempts } from '@/api/hooks'
+import { usePipeline, useUpdateJobStatus, useJobLogPages, useAppendLog, useCancelPipeline, useRetryPipeline, useTestReport, useJobAttempts } from '@/api/hooks'
 import { Card } from '@/shared/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
 import type { TestReport } from '@/api/types'
@@ -145,8 +145,10 @@ function JobLogPanel({ jobId, logMessage, setLogMessage }: { jobId: string; logM
   const { t } = useTranslation()
   const { data: attempts = [] } = useJobAttempts(jobId)
   const [selectedAttemptId, setSelectedAttemptId] = useState<string | null>(null)
+  const [logSearch, setLogSearch] = useState('')
   const selectedAttempt = attempts.find(a => a.id === selectedAttemptId) ?? attempts[0]
-  const { data: logs = [] } = useJobLogs(jobId, selectedAttempt?.id)
+  const logPages = useJobLogPages(jobId, selectedAttempt?.id, logSearch)
+  const logs = logPages.data?.pages.flatMap(page => page.items) ?? []
   const appendLog = useAppendLog()
   const activeAttemptId = attempts[0]?.id
   const canAppend = !selectedAttempt || selectedAttempt.id === activeAttemptId
@@ -193,9 +195,33 @@ function JobLogPanel({ jobId, logMessage, setLogMessage }: { jobId: string; logM
           )}
         </div>
       )}
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Input
+          value={logSearch}
+          onChange={e => setLogSearch(e.target.value)}
+          placeholder={t('jobs.searchLogs')}
+          className="font-mono text-sm"
+        />
+        {logSearch && (
+          <Button type="button" size="sm" variant="outline" onClick={() => setLogSearch('')}>
+            {t('common.clear')}
+          </Button>
+        )}
+      </div>
       <pre className="max-h-80 overflow-auto rounded-md bg-zinc-950 p-3 text-xs text-green-400">
-        {logs.length === 0 ? '<no logs>' : logs.map(l => `${String(l.sequence).padStart(3, '0')}  ${l.message}`).join('\n')}
+        {logPages.isLoading ? t('common.loading') : logs.length === 0 ? '<no logs>' : logs.map(l => `${String(l.sequence).padStart(3, '0')}  ${l.message}`).join('\n')}
       </pre>
+      {logPages.hasNextPage && (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={logPages.isFetchingNextPage}
+          onClick={() => logPages.fetchNextPage()}
+        >
+          {logPages.isFetchingNextPage ? t('common.loading') : t('jobs.loadMoreLogs')}
+        </Button>
+      )}
       {canAppend && (
         <form
           className="flex gap-2"

@@ -129,6 +129,8 @@ GET /api/v1/<collection>?limit=50&cursor=<opaque>
 
 Для каждой paginated operation OpenAPI фиксирует parameters, default, maximum, сортировку, `items` schema и `next_cursor`. Cursor включает version и поля fixed sort; сервер не принимает cursor, созданный для другого порядка или filter scope.
 
+Исключение для append-only логов: `/api/v1/jobs/{job_id}/logs/page` и `/api/v1/jobs/{job_id}/attempts/{attempt_id}/logs/page` используют монотонный `after` checkpoint по `job_logs.sequence` и возвращают `next_after`. Это сохраняет совместимость с SSE `after` и не переносится на обычные collection endpoints.
+
 ## 6. Совместимость текущих array responses
 
 Ни один существующий `v1` endpoint не меняет успешный JSON array на envelope молча, в том числе при добавлении `limit` или `cursor`. До отдельного OpenAPI/versioning решения сохраняются следующие current responses:
@@ -137,7 +139,7 @@ GET /api/v1/<collection>?limit=50&cursor=<opaque>
 |---|---|---|---|
 | `GET /api/v1/projects` | `Project[]` | `created_at DESC`, без limit | Сохранять array; новый cursor contract вводить отдельной operation или явно объявленной additive-миграцией. |
 | `GET /api/v1/projects/{project_id}/pipelines` | `Pipeline[]` | `created_at DESC`, последние 50 | Сохранять array и limit 50 до переключения всех UI/CLI consumers. |
-| `GET /api/v1/jobs/{job_id}/logs` | `JobLog[]` | `sequence ASC`, без limit | Сохранять array до отдельной migration operation; не подменять shape через query parameter. |
+| `GET /api/v1/jobs/{job_id}/logs` | `JobLog[]` | `sequence ASC`, без limit | Сохранять array для совместимости; bounded чтение добавлено отдельными `/logs/page` operations без подмены shape через query parameter. |
 
 Migration array response допускается только так: OpenAPI PR вводит новый совместимый способ получения paged response, UI/CLI migration и contract tests подтверждают его, затем deprecation имеет replacement и срок. Удаление array response возможно лишь в новой API major version.
 

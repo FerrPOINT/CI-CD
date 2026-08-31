@@ -28,6 +28,11 @@ export interface JobLog {
   created_at: string
 }
 
+export interface JobLogPage {
+  items: JobLog[]
+  next_after: number | null
+}
+
 export interface JobAttempt {
   id: string
   job_id: string

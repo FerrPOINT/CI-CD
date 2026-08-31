@@ -232,6 +232,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/jobs/{job_id}/attempts/{attempt_id}/logs/page": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Bounded page of logs for a concrete attempt. Preserves the legacy array endpoint. */
+        get: operations["list_attempt_logs_page"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/jobs/{job_id}/logs": {
         parameters: {
             query?: never;
@@ -242,6 +259,23 @@ export interface paths {
         get: operations["list_logs"];
         put?: never;
         post: operations["append_log"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/jobs/{job_id}/logs/page": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Bounded page of logs for the active or latest attempt. */
+        get: operations["list_logs_page"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1225,6 +1259,11 @@ export interface components {
             /** Format: int32 */
             sequence: number;
         };
+        JobLogPage: {
+            items: components["schemas"]["JobLog"][];
+            /** Format: int32 */
+            next_after?: number | null;
+        };
         /** @enum {string} */
         JobStatus: "queued" | "running" | "success" | "failed" | "canceled";
         LoginRequest: {
@@ -1990,6 +2029,47 @@ export interface operations {
             };
         };
     };
+    list_attempt_logs_page: {
+        parameters: {
+            query?: {
+                /** @description Return log rows with sequence greater than this value. */
+                after?: number | null;
+                /** @description Page size. Default and maximum are 200 rows. */
+                limit?: number | null;
+                /** @description Optional case-insensitive substring filter for message text. */
+                q?: string | null;
+            };
+            header?: never;
+            path: {
+                job_id: string;
+                attempt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobLogPage"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     list_logs: {
         parameters: {
             query?: never;
@@ -2033,6 +2113,46 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["JobLog"];
                 };
+            };
+        };
+    };
+    list_logs_page: {
+        parameters: {
+            query?: {
+                /** @description Return log rows with sequence greater than this value. */
+                after?: number | null;
+                /** @description Page size. Default and maximum are 200 rows. */
+                limit?: number | null;
+                /** @description Optional case-insensitive substring filter for message text. */
+                q?: string | null;
+            };
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobLogPage"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

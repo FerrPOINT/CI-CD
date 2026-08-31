@@ -36,7 +36,7 @@
 | Cancel | API меняет статусы и пытается остановить Docker/PID локального процесса | Cancel intent в БД, delivery к owner runner, grace period, forced backend termination, reconciliation |
 | Таймауты | Частично зависят от процесса; нет единой модели | Queue, startup, execution, idle-log, cancellation и lease deadlines - конфигурируемые и фиксируемые в attempt |
 | Secrets | AES-256-GCM at rest; API не возвращает значения; embedded runner умеет env injection и stdout/stderr masking | Ограниченная выдача secret bundle только lease owner; env/file injection; redaction до записи логов |
-| Logs | Строки `job_logs`, sequence по attempt, REST polling и SSE stream по current/latest attempt | Chunk protocol, idempotency, monotonic sequence per attempt, streaming и durable append |
+| Logs | Строки `job_logs`, sequence по attempt, bounded page/search API, REST compatibility polling и SSE stream по current/latest attempt | Chunk protocol, idempotency, stream classification, monotonic sequence per attempt и durable append |
 | Artifacts | Local FS, metadata по `job_id` и active/latest `attempt_id`, лимит 50 MiB | Artifact manifest на attempt, checksum, staged upload, S3-compatible storage, retention, quarantine/cleanup |
 | Изоляция | API/backend может запускать Docker; есть host-shell fallback | Docker socket только у runner host; rootless/least privilege. Kubernetes runner создаёт ограниченный Job/Pod |
 | Тесты | Domain/API/CLI tests, real PostgreSQL integration для persistent paths, frontend unit/build gates | Unit, property, protocol compatibility, runner contract, Docker/K8s integration, chaos/e2e |

@@ -156,7 +156,7 @@ Embedded runner каждые две секунды выбирает доступ
 2. При наличии retry выберите нужную attempt: каждая attempt хранит собственные timestamps, terminal result и sequence логов.
 3. Для API используйте `GET /api/v1/jobs/{job_id}/attempts`, затем `GET /api/v1/jobs/{job_id}/attempts/{attempt_id}/logs`. Совместимый `GET /api/v1/jobs/{job_id}/logs` возвращает текущую open attempt, а если её нет — последнюю.
 4. Для live-tail доступен `GET /api/v1/jobs/{job_id}/logs/stream?after=<sequence>` по текущей/последней attempt.
-5. При анализе ошибки сопоставьте последнюю строку лога с image и command job; более богатые command spans и pagination/search остаются target diagnostic logs.
+5. При анализе ошибки сопоставьте последнюю строку лога с image и command job; панель логов читает строки страницами и поддерживает поиск, а более богатые command spans и stream classification остаются target diagnostic logs.
 
 > Значения project secrets передаются embedded runner в env и маскируются в stdout/stderr logs best-effort. Всё равно не выводите секреты намеренно: target redaction во всех audit/error/trace каналах ещё не завершён.
 

@@ -493,7 +493,9 @@ curl -sS http://127.0.0.1:22801/api/v1/pipelines/$PIPELINE_ID
 | POST | `/jobs/{job_id}/start` | Старт manual job |
 | GET | `/jobs/{job_id}/attempts` | История execution attempts задачи |
 | GET | `/jobs/{job_id}/attempts/{attempt_id}/logs` | Логи конкретной attempt |
+| GET | `/jobs/{job_id}/attempts/{attempt_id}/logs/page` | Ограниченная страница логов конкретной attempt |
 | GET | `/jobs/{job_id}/logs` | Логи текущей или последней attempt задачи |
+| GET | `/jobs/{job_id}/logs/page` | Ограниченная страница логов текущей или последней attempt |
 | GET | `/jobs/{job_id}/logs/stream` | SSE stream логов текущей/последней attempt |
 | POST | `/jobs/{job_id}/logs` | Добавление строки лога в текущую/последнюю attempt |
 
@@ -629,6 +631,42 @@ curl -sS http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/attempts
 curl -sS http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/attempts/$ATTEMPT_ID/logs
 ```
 
+#### GET /api/v1/jobs/{job_id}/attempts/{attempt_id}/logs/page
+
+Ограниченная страница логов конкретной attempt. Endpoint сохраняет совместимость старого array response и используется UI для длинных логов.
+
+**Query params:**
+
+| Параметр | Тип | Default | Описание |
+|---|---|---:|---|
+| `after` | integer | `0` | Вернуть строки с `sequence > after` |
+| `limit` | integer | `200` | Размер страницы, `1..200` |
+| `q` | string | — | Case-insensitive substring search по `message`, максимум 128 символов |
+
+**Response 200:**
+```json
+{
+  "items": [
+    {
+      "id": 2,
+      "job_id": "job-uuid-1",
+      "attempt_id": "attempt-uuid-1",
+      "sequence": 2,
+      "message": "Fetching remotes",
+      "created_at": "2026-08-26T10:06:02Z"
+    }
+  ],
+  "next_after": null
+}
+```
+
+Если есть следующая страница, `next_after` содержит `sequence` последней строки текущей страницы; следующий запрос передаёт это значение в `after`. Невалидные `after`, `limit` или слишком длинный `q` возвращают `400`.
+
+**curl:**
+```bash
+curl -sS 'http://127.0.0.1:22801/api/v1/jobs/'"$JOB_ID"'/attempts/'"$ATTEMPT_ID"'/logs/page?limit=200&after=0&q=error'
+```
+
 #### GET /api/v1/jobs/{job_id}/logs
 
 Совместимый shortcut: возвращает логи текущей open attempt (`queued`/`running`), а если open attempt нет — последней по `attempt_no`. Для полного retry history используйте endpoint-ы attempts выше.
@@ -636,6 +674,15 @@ curl -sS http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/attempts/$ATTEMPT_ID/logs
 **curl:**
 ```bash
 curl -sS http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/logs
+```
+
+#### GET /api/v1/jobs/{job_id}/logs/page
+
+Shortcut для ограниченной страницы логов текущей open attempt или последней attempt. Query/response совпадают с `/attempts/{attempt_id}/logs/page`.
+
+**curl:**
+```bash
+curl -sS 'http://127.0.0.1:22801/api/v1/jobs/'"$JOB_ID"'/logs/page?limit=200&after=0'
 ```
 
 #### GET /api/v1/jobs/{job_id}/logs/stream
@@ -773,6 +820,13 @@ curl -sS -X POST http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/logs \
 | `sequence` | integer | Порядковый номер внутри attempt |
 | `message` | string | Текст лога |
 | `created_at` | datetime | Время записи |
+
+### JobLogPage
+
+| Поле | Тип | Описание |
+|---|---|---|
+| `items` | JobLog[] | Строки страницы в порядке `sequence ASC` |
+| `next_after` | integer\|null | Значение для следующего query `after`; `null`, если следующей страницы нет |
 
 ### JobAttempt
 
@@ -1005,7 +1059,7 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 | POST | `/jobs/{job_id}/retry` | — | Сбрасывает terminal job в queued и создаёт новую `execution_attempt` без удаления старых логов |
 | POST | `/jobs/{job_id}/start` | — | Стартует manual job и возвращает `{"started":true}` |
 
-История попыток хранится в `execution_attempts`. Логическая запись `jobs` остаётся текущей проекцией для pipeline/stage aggregation, а terminal evidence каждой попытки читается через `/jobs/{job_id}/attempts` и `/jobs/{job_id}/attempts/{attempt_id}/logs`.
+История попыток хранится в `execution_attempts`. Логическая запись `jobs` остаётся текущей проекцией для pipeline/stage aggregation, а terminal evidence каждой попытки читается через `/jobs/{job_id}/attempts` и `/jobs/{job_id}/attempts/{attempt_id}/logs`; для длинных логов UI/API используют bounded `/logs/page`.
 
 Ошибки: `404` — ресурс не найден; `400/409` — недопустимая операция/состояние; `503` — БД недоступна.
 
@@ -1083,7 +1137,9 @@ Git Smart HTTP допускает unauthenticated read только для `repo
 | `/api/v1/jobs/{job_id}/artifacts` | Artifacts |
 | `/api/v1/jobs/{job_id}/attempts` | Jobs |
 | `/api/v1/jobs/{job_id}/attempts/{attempt_id}/logs` | Jobs |
+| `/api/v1/jobs/{job_id}/attempts/{attempt_id}/logs/page` | Jobs |
 | `/api/v1/jobs/{job_id}/logs` | Jobs |
+| `/api/v1/jobs/{job_id}/logs/page` | Jobs |
 | `/api/v1/jobs/{job_id}/logs/stream` | Jobs |
 | `/api/v1/jobs/{job_id}/retry` | Jobs |
 | `/api/v1/jobs/{job_id}/start` | Jobs |

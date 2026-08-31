@@ -132,7 +132,7 @@ Composition root: чтение конфига, создание `PgPool`, реп
 
 ### 6.1 Pipeline lifecycle
 
-`projects → pipelines → stages → jobs → job_logs` (CASCADE). Статусы `queued → running → success/failed/canceled`; правила — `JobStatus::transition_to()`. Агрегация job → stage → pipeline (`refresh_statuses`). Ручной trigger pipeline поддерживает `Idempotency-Key`, а `pipeline_triggers` хранит replay/fingerprint для защиты от duplicate run при повторе запроса.
+`projects → pipelines → stages → jobs → execution_attempts → job_logs` (CASCADE). Статусы `queued → running → success/failed/canceled`; правила — `JobStatus::transition_to()`. Агрегация job → stage → pipeline (`refresh_statuses`). Ручной trigger pipeline поддерживает `Idempotency-Key`, а `pipeline_triggers` хранит replay/fingerprint для защиты от duplicate run при повторе запроса.
 
 ### 6.2 Git-хостинг
 
@@ -140,7 +140,7 @@ Bare-репозитории в `CICD_GIT_ROOT`, Smart HTTP (`/git/<name>.git`), 
 
 ### 6.3 Embedded runner
 
-Supervisor-полл queued-джобов, атомарный claim (`queued → running`), создание/обновление active `execution_attempt`, клонирование репо в workspace, выполнение в Docker (имя контейнера `forge-job-<id>`, volume workspace) или host shell, построчный стриминг stdout в attempt-owned `job_logs`, kill-on-cancel через PID-map, cleanup workspace (кроме `CICD_RUNNER_KEEP_WORKSPACE=1`).
+Supervisor-полл queued-джобов, атомарный claim (`queued → running`), создание/обновление active `execution_attempt`, клонирование репо в workspace, выполнение в Docker (имя контейнера `forge-job-<id>`, volume workspace) или host shell, построчный стриминг stdout в attempt-owned `job_logs`, bounded page/search API для длинных логов, kill-on-cancel через PID-map, cleanup workspace (кроме `CICD_RUNNER_KEEP_WORKSPACE=1`).
 
 ### 6.4 Платформенные ресурсы (MVP)
 

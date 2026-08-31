@@ -373,6 +373,62 @@ paths:
                   $ref: '#/components/schemas/JobLog'
         '404':
           description: ''
+  /api/v1/jobs/{job_id}/attempts/{attempt_id}/logs/page:
+    get:
+      tags:
+      - jobs
+      summary: Bounded page of logs for a concrete attempt. Preserves the legacy array endpoint.
+      operationId: list_attempt_logs_page
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: attempt_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: after
+        in: query
+        description: Return log rows with sequence greater than this value.
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int32
+      - name: limit
+        in: query
+        description: Page size. Default and maximum are 200 rows.
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: q
+        in: query
+        description: Optional case-insensitive substring filter for message text.
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobLogPage'
+        '400':
+          description: ''
+        '404':
+          description: ''
   /api/v1/jobs/{job_id}/logs:
     get:
       tags:
@@ -418,6 +474,56 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/JobLog'
+  /api/v1/jobs/{job_id}/logs/page:
+    get:
+      tags:
+      - jobs
+      summary: Bounded page of logs for the active or latest attempt.
+      operationId: list_logs_page
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: after
+        in: query
+        description: Return log rows with sequence greater than this value.
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int32
+      - name: limit
+        in: query
+        description: Page size. Default and maximum are 200 rows.
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: q
+        in: query
+        description: Optional case-insensitive substring filter for message text.
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobLogPage'
+        '400':
+          description: ''
+        '404':
+          description: ''
   /api/v1/jobs/{job_id}/logs/stream:
     get:
       tags:
@@ -2459,6 +2565,20 @@ components:
           type: string
         sequence:
           type: integer
+          format: int32
+    JobLogPage:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/JobLog'
+        next_after:
+          type:
+          - integer
+          - 'null'
           format: int32
     JobStatus:
       type: string

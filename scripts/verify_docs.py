@@ -88,6 +88,9 @@ FORBIDDEN_STALE_STATUS = [
     (r"retry отдельной job[^.\n]*удаляет[^.\n]*job_logs", "job retry now creates execution_attempts and preserves old logs"),
     (r"retry отдельной job[^.\n]*очищает старые", "job retry now preserves previous attempt logs"),
     (r"полноценной истории попыток ещё нет", "execution_attempts are current MVP"),
+    (r"log pagination/search и [^.\n]*оста[её]тся", "bounded log pagination/search is current MVP; command spans remain target"),
+    (r"pagination/search оста[её]тся target", "bounded log pagination/search is current MVP; command spans remain target"),
+    (r"pagination/search.*target diagnostic logs", "bounded log pagination/search is current MVP; command spans remain target"),
 ]
 
 problems: list[str] = []

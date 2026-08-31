@@ -12,7 +12,7 @@
 | Pipeline/стадии/джобы | ✅ | `.forge-ci.yml` (stages/jobs/image/command) или fallback-шаблон; ручной trigger поддерживает `Idempotency-Key`; отмена/повтор в текущей job-модели |
 | Embedded runner | ✅ | Docker (`forge-job-<id>`) или host shell; стриминг stdout → attempt-owned `job_logs`; cancel через PID-map |
 | Execution attempts | ✅ MVP | `execution_attempts` создаются для каждой job; retry job/pipeline создаёт новую attempt и не удаляет старые логи |
-| Логи | ✅ | append-only внутри attempt, sequence per attempt, REST polling и SSE stream текущей/последней attempt |
+| Логи | ✅ | append-only внутри attempt, sequence per attempt, совместимый REST array shortcut, bounded `/logs/page` с `limit/after/q` и SSE stream текущей/последней attempt |
 | Артефакты | ✅ | upload/download ≤50 MiB, локальный `CICD_ARTIFACTS_DIR`; новые metadata привязаны к active/latest attempt; download проверяет canonical path containment внутри artifact root |
 | Секреты проектов | ✅ | AES-256-GCM at rest; значение не возвращается API |
 | Environments/deployments | ✅ | metadata + history |
@@ -34,7 +34,7 @@
 
 ## Не реализовано (Target approved — см. ADR + contracts)
 
-Runner protocol/leases/dispatch (внешний runner, ADR-0007), immutable pipeline plan/DAG, general idempotency storage for all retryable mutations, S3 artifacts, backup scripts, notifications sender/SSE delivery, tenant isolation, service-account tokens, scoped Git credentials, production cookie/CSRF/session-family policy, full cron semantics, delivery history/replay/dead letters, log pagination/search и distributed/proxy rate limiting (сейчас in-process окно по forwarded client key).
+Runner protocol/leases/dispatch (внешний runner, ADR-0007), immutable pipeline plan/DAG, general idempotency storage for all retryable mutations, command spans/stream classification для диагностических логов, S3 artifacts, backup scripts, notifications sender/SSE delivery, tenant isolation, service-account tokens, scoped Git credentials, production cookie/CSRF/session-family policy, full cron semantics, delivery history/replay/dead letters и distributed/proxy rate limiting (сейчас in-process окно по forwarded client key).
 
 ## Текущее runtime-дерево backend
 
@@ -66,7 +66,7 @@ backend/
 - PostgreSQL в compose опубликован только на `127.0.0.1`, но API/Dashboard host ports нельзя открывать в недоверенную сеть.
 - `CICD_GIT_INTERNAL_TOKEN` пустой по умолчанию только для isolated local development; shared-деплой обязан задать уникальный токен, а legacy `forge-internal-dev-token` отклоняется при старте.
 - Auth/RBAC пока без tenant isolation, service-account tokens, scoped Git credentials и production-grade cookie/CSRF/session-family policy; session-bound access invalidation, refresh rotate/logout/revoke, project membership, scoped PAT и Git read/write checks реализованы как MVP-слой поверх глобальных ролей.
-- Execution attempts — MVP-слой без внешних leases/fencing: old `/jobs/{id}/logs` читает текущую или последнюю attempt, а полный аудит попыток доступен через `/jobs/{id}/attempts`.
+- Execution attempts — MVP-слой без внешних leases/fencing: old `/jobs/{id}/logs` читает текущую или последнюю attempt, bounded `/jobs/{id}/logs/page` поддерживает `limit/after/q`, а полный аудит попыток доступен через `/jobs/{id}/attempts`.
 - Scheduler/outbox — MVP: нет точной cron-семантики, delivery history, audited replay/dead letters и notification/SSE sender.
 
 ## Верификационные команды

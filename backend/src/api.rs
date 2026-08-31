@@ -62,7 +62,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_GIT_PUSH: &str = "git-push";
         list_project_memberships, upsert_project_membership, delete_project_membership,
         trigger_pipeline, list_pipelines, get_pipeline, cancel_pipeline, retry_pipeline,
         change_job_status, retry_job, start_manual_job, list_job_attempts, list_attempt_logs,
-        job_log_stream, list_logs, append_log,
+        list_attempt_logs_page, job_log_stream, list_logs, list_logs_page, append_log,
         crate::platform::list_runners, crate::platform::register_runner,
         crate::platform::runner_heartbeat, crate::platform::delete_runner,
         crate::platform::list_secrets, crate::platform::create_secret, crate::platform::delete_secret,
@@ -91,7 +91,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_GIT_PUSH: &str = "git-push";
         crate::auth::LoginRequest, crate::auth::LogoutRequest, crate::auth::LogoutResponse, crate::auth::RefreshRequest, crate::auth::TokenPair,
         Project, CreateProject, UpdateProject, ProjectMembership, ProjectMembershipInput,
         TriggerPipeline, Pipeline, Stage, Job,
-        PipelineDetail, StageDetail, JobAttempt, JobLog, ChangeStatus, AppendLog,
+        PipelineDetail, StageDetail, JobAttempt, JobLog, JobLogPage, ChangeStatus, AppendLog,
         CanceledPipelineResult, RetriedPipelineResult, ManualJobStartResult,
         Release, CreateRelease, TestReport,
         crate::platform::Runner, crate::platform::RegisterRunner, crate::platform::RunnerHeartbeat,
@@ -963,9 +963,14 @@ fn build_router_with_auth_secret(
             get(list_attempt_logs),
         )
         .route(
+            "/api/v1/jobs/{job_id}/attempts/{attempt_id}/logs/page",
+            get(list_attempt_logs_page),
+        )
+        .route(
             "/api/v1/jobs/{job_id}/logs",
             get(list_logs).post(append_log),
         )
+        .route("/api/v1/jobs/{job_id}/logs/page", get(list_logs_page))
         .route("/api/v1/jobs/{job_id}/start", post(start_manual_job))
         .route("/api/v1/jobs/{job_id}/logs/stream", get(job_log_stream))
         .route(
@@ -2362,6 +2367,49 @@ mod tests {
     }
 
     #[test]
+    fn log_page_params_are_bounded_and_search_is_escaped() {
+        let params = LogPageParams {
+            after: Some(0),
+            limit: Some(200),
+            q: Some("100%_ok\\done".to_string()),
+        };
+        assert_eq!(params.after_sequence().unwrap(), 0);
+        assert_eq!(params.bounded_limit().unwrap(), 200);
+        assert_eq!(
+            params.search_pattern().unwrap(),
+            Some("%100\\%\\_ok\\\\done%".to_string())
+        );
+
+        assert!(
+            LogPageParams {
+                after: Some(-1),
+                limit: Some(50),
+                q: None,
+            }
+            .after_sequence()
+            .is_err()
+        );
+        assert!(
+            LogPageParams {
+                after: None,
+                limit: Some(201),
+                q: None,
+            }
+            .bounded_limit()
+            .is_err()
+        );
+        assert!(
+            LogPageParams {
+                after: None,
+                limit: Some(50),
+                q: Some("x".repeat(129)),
+            }
+            .search_pattern()
+            .is_err()
+        );
+    }
+
+    #[test]
     fn project_membership_roles_exclude_instance_admin() {
         assert!(valid_project_role("maintainer"));
         assert!(valid_project_role("developer"));
@@ -2921,6 +2969,49 @@ struct JobLog {
     message: String,
     created_at: DateTime<Utc>,
 }
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct JobLogPage {
+    items: Vec<JobLog>,
+    next_after: Option<i32>,
+}
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+struct LogPageParams {
+    /// Return log rows with sequence greater than this value.
+    after: Option<i32>,
+    /// Page size. Default and maximum are 200 rows.
+    limit: Option<i64>,
+    /// Optional case-insensitive substring filter for message text.
+    q: Option<String>,
+}
+impl LogPageParams {
+    fn after_sequence(&self) -> Result<i32, ApiError> {
+        let after = self.after.unwrap_or(0);
+        if after < 0 {
+            return Err(ApiError::bad_request(
+                "after must be greater than or equal to 0",
+            ));
+        }
+        Ok(after)
+    }
+
+    fn bounded_limit(&self) -> Result<i64, ApiError> {
+        let limit = self.limit.unwrap_or(200);
+        if !(1..=200).contains(&limit) {
+            return Err(ApiError::bad_request("limit must be between 1 and 200"));
+        }
+        Ok(limit)
+    }
+
+    fn search_pattern(&self) -> Result<Option<String>, ApiError> {
+        let Some(raw) = self.q.as_deref().map(str::trim).filter(|q| !q.is_empty()) else {
+            return Ok(None);
+        };
+        if raw.chars().count() > 128 {
+            return Err(ApiError::bad_request("q must be at most 128 characters"));
+        }
+        Ok(Some(like_contains_pattern(raw)))
+    }
+}
 #[derive(Deserialize, utoipa::ToSchema)]
 struct AppendLog {
     message: String,
@@ -3059,17 +3150,7 @@ async fn list_attempt_logs(
     State(state): State<Arc<AppState>>,
     Path((job_id, attempt_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Vec<JobLog>> {
-    let attempt_belongs_to_job: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE id = $1 AND job_id = $2)",
-    )
-    .bind(attempt_id)
-    .bind(job_id)
-    .fetch_one(pool(&state)?)
-    .await
-    .map_err(ApiError::internal)?;
-    if !attempt_belongs_to_job {
-        return Err(ApiError::not_found());
-    }
+    ensure_attempt_belongs_to_job(pool(&state)?, job_id, attempt_id).await?;
     let logs = sqlx::query_as::<_, JobLog>(
         "SELECT id, job_id, attempt_id, sequence, message, created_at \
          FROM job_logs WHERE job_id = $1 AND attempt_id = $2 ORDER BY sequence",
@@ -3082,6 +3163,18 @@ async fn list_attempt_logs(
     Ok(Json(logs))
 }
 
+#[utoipa::path(get, path="/api/v1/jobs/{job_id}/attempts/{attempt_id}/logs/page", tag="jobs", params(("job_id"=Uuid, Path), ("attempt_id"=Uuid, Path), LogPageParams), responses((status=200, body=JobLogPage), (status=400), (status=404)))]
+/// Bounded page of logs for a concrete attempt. Preserves the legacy array endpoint.
+async fn list_attempt_logs_page(
+    State(state): State<Arc<AppState>>,
+    Path((job_id, attempt_id)): Path<(Uuid, Uuid)>,
+    axum::extract::Query(params): axum::extract::Query<LogPageParams>,
+) -> ApiResult<JobLogPage> {
+    let db = pool(&state)?;
+    ensure_attempt_belongs_to_job(db, job_id, attempt_id).await?;
+    Ok(Json(log_page(db, job_id, attempt_id, params).await?))
+}
+
 #[utoipa::path(get, path="/api/v1/jobs/{job_id}/logs", tag="jobs", params(("job_id"=Uuid, Path)), responses((status=200, body=[JobLog])))]
 async fn list_logs(
     State(state): State<Arc<AppState>>,
@@ -3092,6 +3185,20 @@ async fn list_logs(
         .map_err(attempt_lookup_error)?;
     let logs = sqlx::query_as::<_, JobLog>("SELECT id, job_id, attempt_id, sequence, message, created_at FROM job_logs WHERE job_id = $1 AND attempt_id = $2 ORDER BY sequence").bind(job_id).bind(attempt_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?;
     Ok(Json(logs))
+}
+
+#[utoipa::path(get, path="/api/v1/jobs/{job_id}/logs/page", tag="jobs", params(("job_id"=Uuid, Path), LogPageParams), responses((status=200, body=JobLogPage), (status=400), (status=404)))]
+/// Bounded page of logs for the active or latest attempt.
+async fn list_logs_page(
+    State(state): State<Arc<AppState>>,
+    Path(job_id): Path<Uuid>,
+    axum::extract::Query(params): axum::extract::Query<LogPageParams>,
+) -> ApiResult<JobLogPage> {
+    let db = pool(&state)?;
+    let attempt_id = active_or_latest_attempt_id(db, job_id)
+        .await
+        .map_err(attempt_lookup_error)?;
+    Ok(Json(log_page(db, job_id, attempt_id, params).await?))
 }
 #[utoipa::path(post, path="/api/v1/jobs/{job_id}/logs", tag="jobs", request_body=AppendLog, params(("job_id"=Uuid, Path)), responses((status=200, body=JobLog)))]
 async fn append_log(
@@ -3118,4 +3225,87 @@ async fn append_log(
         created_at: record.created_at,
     };
     Ok(Json(log))
+}
+
+async fn ensure_attempt_belongs_to_job(
+    pool: &PgPool,
+    job_id: Uuid,
+    attempt_id: Uuid,
+) -> Result<(), ApiError> {
+    let attempt_belongs_to_job: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE id = $1 AND job_id = $2)",
+    )
+    .bind(attempt_id)
+    .bind(job_id)
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    if attempt_belongs_to_job {
+        Ok(())
+    } else {
+        Err(ApiError::not_found())
+    }
+}
+
+async fn log_page(
+    pool: &PgPool,
+    job_id: Uuid,
+    attempt_id: Uuid,
+    params: LogPageParams,
+) -> Result<JobLogPage, ApiError> {
+    let limit = params.bounded_limit()?;
+    let fetch_limit = limit + 1;
+    let after = params.after_sequence()?;
+    let search_pattern = params.search_pattern()?;
+    let mut items = if let Some(pattern) = search_pattern {
+        sqlx::query_as::<_, JobLog>(
+            "SELECT id, job_id, attempt_id, sequence, message, created_at \
+             FROM job_logs \
+             WHERE job_id = $1 AND attempt_id = $2 AND sequence > $3 \
+               AND message ILIKE $4 ESCAPE '\\' \
+             ORDER BY sequence LIMIT $5",
+        )
+        .bind(job_id)
+        .bind(attempt_id)
+        .bind(after)
+        .bind(pattern)
+        .bind(fetch_limit)
+        .fetch_all(pool)
+        .await
+        .map_err(ApiError::internal)?
+    } else {
+        sqlx::query_as::<_, JobLog>(
+            "SELECT id, job_id, attempt_id, sequence, message, created_at \
+             FROM job_logs \
+             WHERE job_id = $1 AND attempt_id = $2 AND sequence > $3 \
+             ORDER BY sequence LIMIT $4",
+        )
+        .bind(job_id)
+        .bind(attempt_id)
+        .bind(after)
+        .bind(fetch_limit)
+        .fetch_all(pool)
+        .await
+        .map_err(ApiError::internal)?
+    };
+    let next_after = if items.len() as i64 > limit {
+        items.pop();
+        items.last().map(|log| log.sequence)
+    } else {
+        None
+    };
+    Ok(JobLogPage { items, next_after })
+}
+
+fn like_contains_pattern(value: &str) -> String {
+    let mut pattern = String::with_capacity(value.len() + 2);
+    pattern.push('%');
+    for ch in value.chars() {
+        if matches!(ch, '%' | '_' | '\\') {
+            pattern.push('\\');
+        }
+        pattern.push(ch);
+    }
+    pattern.push('%');
+    pattern
 }

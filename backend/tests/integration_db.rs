@@ -1315,6 +1315,148 @@ async fn job_retry_preserves_attempt_logs_and_appends_to_new_attempt() {
 }
 
 #[tokio::test]
+async fn job_log_page_is_bounded_and_searchable() {
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let stage_id = Uuid::new_v4();
+    let job_id = Uuid::new_v4();
+    let attempt_id = Uuid::new_v4();
+    let other_attempt_id = Uuid::new_v4();
+    let project_name = format!("it-log-page-{}", project_id.simple());
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/log-page.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status) VALUES ($1, $2, 'main', 'running')",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert pipeline");
+    sqlx::query(
+        "INSERT INTO stages (id, pipeline_id, name, position, status) \
+         VALUES ($1, $2, 'build', 0, 'running')",
+    )
+    .bind(stage_id)
+    .bind(pipeline_id)
+    .execute(&pool)
+    .await
+    .expect("insert stage");
+    sqlx::query(
+        "INSERT INTO jobs (id, stage_id, name, image, command, position, status) \
+         VALUES ($1, $2, 'compile', 'alpine:3.21', 'echo test', 0, 'running')",
+    )
+    .bind(job_id)
+    .bind(stage_id)
+    .execute(&pool)
+    .await
+    .expect("insert job");
+    sqlx::query(
+        "INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger, started_at) \
+         VALUES ($1, $2, 1, 'running', 'initial', now())",
+    )
+    .bind(attempt_id)
+    .bind(job_id)
+    .execute(&pool)
+    .await
+    .expect("insert attempt");
+    for (sequence, message) in [
+        (1, "compile started"),
+        (2, "unit error: expected status"),
+        (3, "compile finished"),
+    ] {
+        sqlx::query(
+            "INSERT INTO job_logs (job_id, attempt_id, sequence, message) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(job_id)
+        .bind(attempt_id)
+        .bind(sequence)
+        .bind(message)
+        .execute(&pool)
+        .await
+        .expect("insert log");
+    }
+
+    let app = cicd::api::app(Some(pool.clone()));
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/jobs/{job_id}/attempts/{attempt_id}/logs/page?limit=2"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let first_page = response_json(response).await;
+    assert_eq!(first_page["items"].as_array().unwrap().len(), 2);
+    assert_eq!(first_page["items"][0]["sequence"], 1);
+    assert_eq!(first_page["items"][1]["sequence"], 2);
+    assert_eq!(first_page["next_after"], 2);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/jobs/{job_id}/attempts/{attempt_id}/logs/page?limit=2&after=2"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let second_page = response_json(response).await;
+    assert_eq!(second_page["items"].as_array().unwrap().len(), 1);
+    assert_eq!(second_page["items"][0]["sequence"], 3);
+    assert!(second_page["next_after"].is_null());
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/jobs/{job_id}/logs/page?limit=10&q=ERROR"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let search_page = response_json(response).await;
+    assert_eq!(search_page["items"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        search_page["items"][0]["message"],
+        "unit error: expected status"
+    );
+
+    let response = app
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/jobs/{job_id}/attempts/{other_attempt_id}/logs/page?limit=2"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup project");
+}
+
+#[tokio::test]
 async fn cancel_pipeline_marks_open_attempts_canceled() {
     let pool = test_pool().await;
     let project_id = Uuid::new_v4();

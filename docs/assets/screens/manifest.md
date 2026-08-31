@@ -2,7 +2,7 @@
 
 > Скриншоты сняты Playwright (Chromium) с живого стенда и deterministic seed (`frontend/scripts/seed-evidence.mjs`). Viewport: desktop 1920×1080, mobile 375×812; итоговая высота full-page PNG указана в таблице. Локаль ru, тема dark, DPR 1. Пересъёмка: `node frontend/scripts/shoot-evidence.mjs`.
 >
-> Исключение текущего прохода: `20-users.png` и `32-user-create.png` пересняты через local Vite + мокированные `/users`, `/projects`, `/api-tokens`, потому что локальный Docker/API на машине недоступен; полный live evidence переснимается командой выше при доступном стенде.
+> Исключение текущего прохода: `20-users.png`, `32-user-create.png` и `33-job-logs.png` пересняты через local Vite + мокированные API-ответы, потому что локальный Docker/API на машине недоступен; полный live evidence переснимается командой выше при доступном стенде.
 >
 > Номер `08` зарезервирован за удалённым статичным `/admin` screen. Отдельный `/admin` не входит в текущий baseline; системный срез находится в `/settings`.
 
@@ -47,7 +47,7 @@
 | [30-webhook-add.png](../../screenshots/30-webhook-add.png) | Webhooks → «Добавить webhook» | Форма добавления webhook | 1920×1080 |
 | [31-pr-create.png](../../screenshots/31-pr-create.png) | PR → «Создать pull-запрос» | Форма создания PR (ветки/заголовок/описание) | 1920×1612 |
 | [32-user-create.png](../../screenshots/32-user-create.png) | Пользователи → «Создать пользователя» | Форма создания пользователя | 1920×1080 |
-| [33-job-logs.png](../../screenshots/33-job-logs.png) | Пайплайн → «Логи» | Панель логов джоба с реальным выводом | 1920×1080 |
+| [33-job-logs.png](../../screenshots/33-job-logs.png) | Пайплайн → «Логи» | Панель логов джоба с выводом и поиском | 1920×1080 |
 | [34-pipeline-run-form.png](../../screenshots/34-pipeline-run-form.png) | Пайплайны → «Запустить пайплайн» | Форма запуска (git ref) | 1920×1080 |
 | [35-releases-list.png](../../screenshots/35-releases-list.png) | Репозиторий → «Релизы» | Список release metadata и Git tags | 1920×1080 |
 | [36-repo-code-blob.png](../../screenshots/36-repo-code-blob.png) | Репозиторий → Код → `.forge-ci.yml` | Просмотр YAML файла CI | 1920×1080 |

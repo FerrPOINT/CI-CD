@@ -136,6 +136,8 @@
     "exitCode": "Exit code",
     "startedAt": "Started",
     "finishedAt": "Finished",
+    "searchLogs": "Search logs",
+    "loadMoreLogs": "Load more",
     "logMessage": "Log message…",
     "append": "Append",
     "testReport": "Test reports",
@@ -158,6 +160,7 @@
     "error": "Error",
     "retry": "Retry",
     "search": "Search",
+    "clear": "Clear",
     "dismiss": "Dismiss",
     "create": "Create"
   },

@@ -32,7 +32,7 @@ Roadmap фиксирует порядок доведения Forge до базо
 
 Ключевые ограничения current baseline:
 
-- execution attempts реализованы как MVP-слой без внешних leases/fencing; command spans, log pagination/search и richer error diagnostics остаются Phase 1 follow-up;
+- execution attempts реализованы как MVP-слой без внешних leases/fencing; bounded log pagination/search уже есть, command spans и richer error diagnostics остаются Phase 1 follow-up;
 - auth/RBAC имеет project membership, scoped PAT, Git Smart HTTP read/write checks, session-bound access invalidation и refresh rotate/logout/revoke MVP, но без tenant isolation, service-account tokens, scoped Git credentials и production cookie/CSRF/session-family policy;
 - execution встроен в backend process, поэтому shared/prod режим требует external runner boundary;
 - webhooks не имеют полной delivery history/replay/dead-letter UI, notifications sender не реализован;
@@ -49,13 +49,14 @@ Deliverables:
 - Current MVP: таблицы `execution_attempts` и attempt-owned log/artifact metadata;
 - Current MVP: retry pipeline/job создаёт новую attempt, старые логи и timestamps остаются доступными;
 - Current MVP: API, UI и CLI показывают attempts и логи выбранной attempt;
+- Current MVP: bounded `/logs/page` для current/latest и concrete attempt с `limit/after/q`; UI читает логи страницами и поддерживает поиск;
 - Target follow-up: лог делится минимум на command span, stream, exit code, started/finished timestamps и error tail;
-- Target follow-up: pagination/search, richer empty/error states и отдельные UI tests переключения attempts.
+- Target follow-up: richer empty/error states и отдельные UI tests переключения attempts.
 
 Gate:
 
 - real PostgreSQL migration test для retry без удаления старых логов;
-- API/OpenAPI/CLI contract test на attempts/log ordering;
+- API/OpenAPI/CLI contract test на attempts/log ordering и bounded log page/search;
 - UI screenshot smoke для переключения attempts; dedicated component/e2e test остаётся follow-up;
 - документация `API.md`, `DATA_MODEL.md`, `USER_GUIDE.md`, `CURRENT_STATE.md`.
 
