@@ -10,7 +10,7 @@
 | `CICD_BIND` | `0.0.0.0:22801` | Адрес API + Git Smart HTTP |
 | `CICD_GIT_ROOT` | `./.forge/git` вне compose | Корень bare-репозиториев при локальном запуске |
 | `CICD_GIT_TOKEN` | — | Bearer для Git Smart HTTP (пусто = без auth) |
-| `CICD_GIT_INTERNAL_TOKEN` | `forge-internal-dev-token` (dev) | `X-Internal-Token` для post-receive hook |
+| `CICD_GIT_INTERNAL_TOKEN` | — | `X-Internal-Token` для post-receive hook; пусто допустимо только для изолированного local development |
 | `CICD_SECRETS_KEY` | — | Base64 32-byte ключ AES-256-GCM (обязателен для secrets) |
 | `CICD_ARTIFACTS_DIR` | `/var/lib/forge/artifacts` | Локальное хранилище артефактов |
 | `CICD_RUNNER_MODE` | `host` в compose | Режим embedded runner: `host` для локального evidence/dev; `docker` только если Docker executor/socket подключены явно |
@@ -40,5 +40,7 @@
 openssl rand -base64 32   # CICD_SECRETS_KEY
 openssl rand -hex 16      # CICD_GIT_TOKEN / CICD_GIT_INTERNAL_TOKEN
 ```
+
+> Удалённое legacy-значение `forge-internal-dev-token` отклоняется при старте backend. Для shared deployment задайте уникальный `CICD_GIT_INTERNAL_TOKEN`; пустое значение означает trusted-local режим без проверки internal hook token.
 
 > Ротация `CICD_SECRETS_KEY` без перешифровки секретов сделает их нечитаемыми — см. `docs/STORAGE_ARCHITECTURE.md` (key rotation).

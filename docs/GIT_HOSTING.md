@@ -95,7 +95,7 @@ curl -fsS -X POST http://127.0.0.1:22801/api/v1/projects \
 |---|---|---|
 | `CICD_GIT_ROOT` | `/var/lib/forge/git` | Корень bare-репозиториев в backend container |
 | `CICD_GIT_TOKEN` | empty | Токен Smart HTTP. Empty допустим только для local development |
-| `CICD_GIT_INTERNAL_TOKEN` | dev token | Токен для `post-receive -> internal endpoint` |
+| `CICD_GIT_INTERNAL_TOKEN` | empty | Токен для `post-receive -> internal endpoint`; empty допустим только для isolated local development |
 
 Данные репозиториев находятся в named volume `cicd_git_repos`, независимом от PostgreSQL volume. Удаление проекта не удаляет репозиторий; удаление репозитория через API удаляет и строку БД, и bare directory.
 
@@ -112,6 +112,8 @@ curl -H "x-git-token: <TOKEN>" ...
 ```
 
 В local development пустой `CICD_GIT_TOKEN` отключает проверку. Нельзя запускать публичный Git endpoint с пустым токеном.
+
+`CICD_GIT_INTERNAL_TOKEN` ведёт себя так же строго по границе окружения: пустое значение отключает проверку только для trusted-local hook traffic, shared deployment обязан задать уникальный токен. Устаревшее значение `forge-internal-dev-token` отклоняется при старте backend.
 
 ## 8. Ограничения MVP и следующий этап
 

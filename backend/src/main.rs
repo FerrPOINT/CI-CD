@@ -5,6 +5,8 @@ const MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 use sqlx::postgres::PgPoolOptions;
 use tracing_subscriber::EnvFilter;
 
+const INSECURE_GIT_INTERNAL_TOKEN: &str = "forge-internal-dev-token";
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -16,9 +18,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         root: std::path::PathBuf::from(
             std::env::var("CICD_GIT_ROOT").unwrap_or_else(|_| "/var/lib/forge/git".into()),
         ),
-        token: std::env::var("CICD_GIT_TOKEN").ok(),
-        internal_token: std::env::var("CICD_GIT_INTERNAL_TOKEN").ok(),
+        token: optional_secret_env("CICD_GIT_TOKEN"),
+        internal_token: git_internal_token_from_env()?,
     };
+    if git.internal_token.is_none() {
+        tracing::warn!(
+            "CICD_GIT_INTERNAL_TOKEN is not set; post-receive ingress is trusted-local only"
+        );
+    }
     let pool = PgPoolOptions::new()
         .max_connections(10)
         .connect(&database_url)
@@ -46,4 +53,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!(%bind, "CI/CD API listening");
     axum::serve(listener, app_with_git(Some(pool), git, Some(running))).await?;
     Ok(())
+}
+
+fn optional_secret_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
+fn git_internal_token_from_env() -> Result<Option<String>, std::io::Error> {
+    normalize_git_internal_token(std::env::var("CICD_GIT_INTERNAL_TOKEN").ok())
+}
+
+fn normalize_git_internal_token(raw: Option<String>) -> Result<Option<String>, std::io::Error> {
+    let token = raw
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    if token.as_deref() == Some(INSECURE_GIT_INTERNAL_TOKEN) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "CICD_GIT_INTERNAL_TOKEN uses the removed insecure development default; generate a unique value or leave it blank only for isolated local development",
+        ));
+    }
+    Ok(token)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{INSECURE_GIT_INTERNAL_TOKEN, normalize_git_internal_token};
+
+    #[test]
+    fn git_internal_token_normalization_rejects_known_insecure_default() {
+        assert!(normalize_git_internal_token(None).unwrap().is_none());
+        assert!(
+            normalize_git_internal_token(Some(" \t ".to_string()))
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            normalize_git_internal_token(Some(" unique-token ".to_string())).unwrap(),
+            Some("unique-token".to_string())
+        );
+        assert!(
+            normalize_git_internal_token(Some(INSECURE_GIT_INTERNAL_TOKEN.to_string())).is_err()
+        );
+    }
 }

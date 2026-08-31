@@ -24,7 +24,7 @@ cd /opt/dev/CI-CD
 cp .env.example .env
 ```
 
-В `.env` до любого совместно используемого развёртывания замените как минимум `CICD_DATABASE_PASSWORD` и `CICD_GIT_INTERNAL_TOKEN`; при использовании project secrets задайте уникальный `CICD_SECRETS_KEY`. Файл `.env` не коммитится. Порты по умолчанию: API `22801`, Dashboard `22802`, PostgreSQL `22543`.
+В `.env` до любого совместно используемого развёртывания задайте как минимум уникальные `CICD_DATABASE_PASSWORD` и `CICD_GIT_INTERNAL_TOKEN`; при использовании project secrets задайте уникальный `CICD_SECRETS_KEY`. Пустой `CICD_GIT_INTERNAL_TOKEN` допустим только для isolated local development, а legacy `forge-internal-dev-token` отклоняется при старте backend. Файл `.env` не коммитится. Порты по умолчанию: API `22801`, Dashboard `22802`, PostgreSQL `22543`.
 
 Примеры ниже с `"$CICD_DATABASE_USER"`/`"$CICD_DATABASE_NAME"` предполагают, что значения загружены из `.env` в текущую shell:
 

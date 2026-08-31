@@ -63,7 +63,7 @@ backend/
 
 - Без непустого `CICD_AUTH_SECRET` API и Dashboard полностью открыты в trusted-network режиме; CORS permissive.
 - PostgreSQL в compose опубликован только на `127.0.0.1`, но API/Dashboard host ports нельзя открывать в недоверенную сеть.
-- Токен `CICD_GIT_INTERNAL_TOKEN` обязателен к смене для shared-деплоя.
+- `CICD_GIT_INTERNAL_TOKEN` пустой по умолчанию только для isolated local development; shared-деплой обязан задать уникальный токен, а legacy `forge-internal-dev-token` отклоняется при старте.
 - Auth/RBAC пока без tenant isolation, scoped PAT и production-grade session/logout policy; project membership реализован как MVP-слой поверх глобальных ролей.
 - Execution attempts — MVP-слой без внешних leases/fencing: old `/jobs/{id}/logs` читает текущую или последнюю attempt, а полный аудит попыток доступен через `/jobs/{id}/attempts`.
 - Scheduler/outbox — MVP: нет точной cron-семантики, delivery history, audited replay/dead letters и notification/SSE sender.

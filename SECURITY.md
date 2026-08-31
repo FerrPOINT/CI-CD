@@ -13,7 +13,7 @@
 - **API/PAT не являются production IAM**: legacy `cicd_...` tokens проверяются только при включённом auth-secret и пока не имеют target scopes/pepper/rotation guarantees.
 - **Automation delivery — MVP**: scheduler/outgoing webhooks есть, но без полной target-модели leases, delivery history, replay и dead-letter runbook.
 
-Минимум до любого shared-деплоя: сменить `CICD_GIT_INTERNAL_TOKEN` и пароль PostgreSQL (`CICD_DATABASE_PASSWORD`), ограничить доступ файрволом, не открывать порты наружу.
+Минимум до любого shared-деплоя: задать уникальный `CICD_GIT_INTERNAL_TOKEN` и пароль PostgreSQL (`CICD_DATABASE_PASSWORD`), ограничить доступ файрволом, не открывать порты наружу. Пустой `CICD_GIT_INTERNAL_TOKEN` допустим только в isolated local development; legacy `forge-internal-dev-token` отклоняется при старте backend.
 
 ## Поддерживаемые версии
 

@@ -66,8 +66,14 @@ fn repo_path(root: &Path, name: &str) -> PathBuf {
     root.join(format!("{name}.git"))
 }
 
+fn configured_internal_token(internal_token: Option<&str>) -> Option<&str> {
+    internal_token
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+}
+
 fn post_receive_hook(name: &str, internal_token: Option<&str>) -> String {
-    let token_header = internal_token
+    let token_header = configured_internal_token(internal_token)
         .map(|t| format!("  -H 'x-internal-token: {t}' \\"))
         .unwrap_or_default();
     format!(
@@ -500,15 +506,13 @@ pub async fn internal_git_push(
     headers: HeaderMap,
     axum::Json(event): axum::Json<GitPushEvent>,
 ) -> Result<axum::Json<serde_json::Value>, ApiError> {
-    if let Some(expected) = state.git.internal_token.as_deref() {
-        if !expected.is_empty() {
-            let provided = headers
-                .get("x-internal-token")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("");
-            if provided != expected {
-                return Err(ApiError::unauthorized());
-            }
+    if let Some(expected) = configured_internal_token(state.git.internal_token.as_deref()) {
+        let provided = headers
+            .get("x-internal-token")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        if provided != expected {
+            return Err(ApiError::unauthorized());
         }
     }
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
@@ -716,5 +720,12 @@ mod tests {
             )
         );
         let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[test]
+    fn post_receive_hook_omits_blank_internal_token() {
+        let hook = post_receive_hook("demo", Some(" \t "));
+        assert!(!hook.contains("x-internal-token"));
+        assert!(hook.contains("/api/v1/internal/git-push"));
     }
 }

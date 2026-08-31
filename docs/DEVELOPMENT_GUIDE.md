@@ -64,7 +64,7 @@ Vite proxy направляет `/api` на `http://localhost:22801`; отдел
 | Secrets и artifacts | `CICD_SECRETS_KEY`, `CICD_ARTIFACTS_DIR` | Project secrets и локальные artifacts |
 | CLI | `CICD_API_URL` | `cicd-cli` вне контейнера |
 
-Не передавайте пароль БД, bearer token, `CICD_SECRETS_KEY` или production URL в команды shell history, fixture, screenshot либо PR. Для общего deployment обязательно замените development default `CICD_GIT_INTERNAL_TOKEN`; генерация ключей и политика ротации описаны в [ENV](ENV.md).
+Не передавайте пароль БД, bearer token, `CICD_SECRETS_KEY` или production URL в команды shell history, fixture, screenshot либо PR. Для общего deployment обязательно задайте уникальный `CICD_GIT_INTERNAL_TOKEN`; пустое значение оставляйте только для isolated local development, а legacy `forge-internal-dev-token` backend отклоняет при старте. Генерация ключей и политика ротации описаны в [ENV](ENV.md).
 
 ### Локальный режим без контейнеров приложения
 
