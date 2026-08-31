@@ -65,7 +65,7 @@ CI-CD/
 ├── frontend/                 # React SPA (pages, widgets, typed hooks)
 │   └── src/{api,app,pages,shared,widgets}
 ├── docs/                     # guides, contracts, adr/ + screenshots/
-├── plans/                    # uncommitted implementation plans
+├── plans/                    # committed working plans; non-normative
 ├── docker-compose.yml        # postgres + backend + frontend
 ├── justfile                  # unified commands
 └── AGENTS.md                 # правила работы с репозиторием

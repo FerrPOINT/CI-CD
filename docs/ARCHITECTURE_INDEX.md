@@ -11,8 +11,10 @@ This index is the entry point for architecture decisions. It separates **current
 3. `docs/DOMAIN_MODEL.md` — domain invariants and pipeline status model.
 4. `docs/DATA_MODEL.md` — physical database representation and indexes.
 5. `docs/ADR.md` — accepted structural choices.
-6. `docs/TECH_CHOICES.md` — зафиксированный стек и крейты по фазам; `docs/ENV.md` — справочник переменных окружения.
-7. `docs/IMPLEMENTATION_CONTRACTS.md` — общие нормативные contracts; затем нужный implementer spec: `MIGRATION_EXECUTION_SPEC.md`, `AUTH_IMPLEMENTATION_SPEC.md`, `EXECUTION_AUTOMATION_IMPLEMENTATION_SPEC.md`.
+6. `docs/README.md` — полная локальная карта документов и evidence.
+7. `docs/TECH_CHOICES.md` и `docs/LIBRARIES.md` — зафиксированный стек, dependency policy и reference-решения; `docs/ENV.md` — справочник переменных окружения.
+8. `docs/DOCUMENTATION_GOVERNANCE.md` — authority matrix и правила изменения документации.
+9. `docs/IMPLEMENTATION_CONTRACTS.md` — общие нормативные contracts; затем нужный implementer spec: `MIGRATION_EXECUTION_SPEC.md`, `AUTH_IMPLEMENTATION_SPEC.md`, `EXECUTION_AUTOMATION_IMPLEMENTATION_SPEC.md`.
 
 ## Bounded contexts
 
@@ -58,4 +60,4 @@ This index is the entry point for architecture decisions. It separates **current
 
 ## Delivery plan
 
-`plans/architecture-rebuild-plan.md` is the detailed, uncommitted implementation plan. `docs/ROADMAP.md` remains the public, versioned milestone view.
+`plans/architecture-rebuild-plan.md` is a committed working implementation plan and is non-normative. `docs/ROADMAP.md` remains the public, versioned milestone view.

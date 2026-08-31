@@ -26,4 +26,4 @@
 
 ## Переход к target
 
-Последовательность и strangler-порядок: `plans/architecture-rebuild-plan.md` (некоммитный) + `docs/ROADMAP.md`. Полная карта замен — `docs/architecture/transition-map.md`.
+Последовательность и strangler-порядок: `plans/architecture-rebuild-plan.md` (рабочий non-normative план) + `docs/ROADMAP.md`. Полная карта замен — `docs/architecture/transition-map.md`.

@@ -65,7 +65,7 @@
 - Документация по аудиториям: USER_GUIDE, DEVELOPMENT_GUIDE, OPERATIONS, PRODUCT_REQUIREMENTS; CURRENT_STATE и DOCUMENTATION_GOVERNANCE; `scripts/verify_docs.py` (ссылки/канон/статусы/дубликаты скринов).
 - Public repo surface: LICENSE (MIT), CONTRIBUTING, SECURITY (NOT production-safe предупреждение), SUPPORT, issue/PR-шаблоны, Dependabot.
 - UI: мобильная навигация-drawer, карточные layout-ы (runners/users/tokens/environments), доступные confirm-диалоги вместо `window.confirm`, страница pull-запроса с «Посмотреть изменения», живые метрики дашборда.
-- Evidence pipeline: deterministic seed (`pnpm seed:evidence`) и воспроизводимые скриншоты (`pnpm shoot:evidence`), реестр `docs/assets/screens/manifest.md` (38 скринов: страницы, действия и mobile states).
+- Evidence pipeline: deterministic seed (`pnpm seed:evidence`) и воспроизводимые скриншоты (`pnpm shoot:evidence`), реестр `docs/assets/screens/manifest.md` (44 скрина: 20 базовых страниц, 18 состояний действий и 6 mobile states).
 - `docs/TECH_CHOICES.md` и `docs/LIBRARIES.md` восстановлены как рабочие справочники: current stack, target Rust candidates, dependency policy и список готовых CI/CD решений на Rust для reference.
 
 ### Changed

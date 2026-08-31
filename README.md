@@ -90,12 +90,13 @@ git push                       # → post-receive → пайплайн созд�
 
 ![Дашборд — мобильная версия](docs/screenshots/m-dashboard.png)
 
-Полный визуальный реестр (38 скринов: 20 страниц + 13 состояний действий + 5 мобильных): [docs/assets/screens/manifest.md](docs/assets/screens/manifest.md).
+Полный визуальный реестр (44 скрина: 20 базовых страниц + 18 состояний действий + 6 мобильных): [docs/assets/screens/manifest.md](docs/assets/screens/manifest.md).
 
 ## Документация
 
 **По аудитории:**
 
+- Полная карта документации — [docs/README](docs/README.md)
 - Пользователь/владелец проекта — [USER_GUIDE](docs/USER_GUIDE.md)
 - Разработчик — [DEVELOPMENT_GUIDE](docs/DEVELOPMENT_GUIDE.md)
 - Оператор — [OPERATIONS](docs/OPERATIONS.md), [TROUBLESHOOTING](docs/TROUBLESHOOTING.md)
@@ -106,12 +107,12 @@ git push                       # → post-receive → пайплайн созд�
 
 - Целевые контракты (нормативные): [contracts/](docs/contracts/) — API, AUTHZ, RUNNER_PROTOCOL, PIPELINE_DSL, EVENT, DATA_LIFECYCLE, MIGRATION, UI_API
 - Narrative: [ARCHITECTURE](docs/ARCHITECTURE.md), [FUNCTIONAL_ARCHITECTURE](docs/FUNCTIONAL_ARCHITECTURE.md), [AUTHORIZATION](docs/AUTHORIZATION.md), [RUNNER](docs/RUNNER_ARCHITECTURE.md), [AUTOMATION](docs/AUTOMATION_ARCHITECTURE.md), [STORAGE](docs/STORAGE_ARCHITECTURE.md), [DELIVERY](docs/DELIVERY_ARCHITECTURE.md), [architecture/](docs/architecture/) (границы, topology, transition map, sequence-флоу)
-- Справочники: [API](docs/API.md), [DATA_MODEL](docs/DATA_MODEL.md), [GIT_HOSTING](docs/GIT_HOSTING.md), [ENV](docs/ENV.md), [CLI](docs/CLI.md)
+- Справочники: [API](docs/API.md), [DATA_MODEL](docs/DATA_MODEL.md), [GIT_HOSTING](docs/GIT_HOSTING.md), [ENV](docs/ENV.md), [CLI](docs/CLI.md), [REPORTS](docs/REPORTS.md), [LIBRARIES](docs/LIBRARIES.md)
 - Реализация (исполнимые спецификации): [IMPLEMENTATION_CONTRACTS](docs/IMPLEMENTATION_CONTRACTS.md) · [MIGRATION_SPEC](docs/MIGRATION_EXECUTION_SPEC.md) · [AUTH_SPEC](docs/AUTH_IMPLEMENTATION_SPEC.md) · [EXECUTION_SPEC](docs/EXECUTION_AUTOMATION_IMPLEMENTATION_SPEC.md) · [ADR 0001–0009](docs/ADR.md)
 
 **Качество, безопасность и SDLC:** [TEST_PLAN](docs/TEST_PLAN.md) · [TRACEABILITY](docs/TRACEABILITY.md) · [THREAT_MODEL](docs/THREAT_MODEL.md) · [RISK_REGISTER](docs/RISK_REGISTER.md) · [ACCESSIBILITY](docs/ACCESSIBILITY.md) · [THIRD_PARTY/SBOM](docs/THIRD_PARTY.md) · [SLO](docs/SLO.md) · [METRICS](docs/METRICS.md) · [DISASTER_RECOVERY](docs/DISASTER_RECOVERY.md) · [INCIDENT_RESPONSE](docs/INCIDENT_RESPONSE.md)
 
-**Участие и политика:** [CONTRIBUTING](CONTRIBUTING.md) · [SECURITY](SECURITY.md) · [SUPPORT](SUPPORT.md) · [CHANGELOG](CHANGELOG.md) · лицензия [MIT](LICENSE)
+**Участие и политика:** [DOCUMENTATION_GOVERNANCE](docs/DOCUMENTATION_GOVERNANCE.md) · [CONTRIBUTING](CONTRIBUTING.md) · [SECURITY](SECURITY.md) · [SUPPORT](SUPPORT.md) · [CHANGELOG](CHANGELOG.md) · лицензия [MIT](LICENSE)
 
 ## Структура
 

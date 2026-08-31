@@ -27,7 +27,7 @@
    - ADR = architectural decision only;
    - `docs/contracts/*` = normative target observable contract;
    - architecture docs = explanatory narrative;
-   - `plans/*` = uncommitted/non-normative schedule.
+   - `plans/*` = committed working plans; non-normative schedule.
 3. Сверить и принять canonical names/paths с отдельным superseding ADR: migration directory, OpenAPI output, outbox tables, runner namespace, Git ingress path, tenant/workspace/organization vocabulary.
 4. Исправить действующие conflicts, а не оставлять competing choices:
    - `docs/adr/0006-postgresql-outbox.md` vs `docs/IMPLEMENTATION_CONTRACTS.md` (`outbox_events` vs `domain_events/outbox_messages`);

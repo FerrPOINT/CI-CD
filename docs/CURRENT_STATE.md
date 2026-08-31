@@ -1,7 +1,7 @@
 # CURRENT STATE — Forge CI/CD
 
 > **Производный снимок текущего состояния.** Сгенерирован из кода; authority — код и коммит, не этот файл. Обновлять при каждом изменении capability.
-> Снято: `2026-08-28`, ветка `main` (после `cbbf930`).
+> Снято: `2026-08-31`, ветка `main`; visual evidence: 44 screenshots в `docs/assets/screens/manifest.md`.
 
 ## Что работает сейчас (Current verified)
 

@@ -2,7 +2,7 @@
 
 ## 1. Обзор
 
-План Phase 9: сбор и визуализация CI/CD метрик — success rate, средняя длительность, история пайплайнов, частота деплоев. Отчёты доступны через API и в админ-панели Dashboard.
+План Phase 9: сбор и визуализация CI/CD метрик — success rate, средняя длительность, история пайплайнов, частота деплоев. Текущий MVP отдаёт отчёты через project-scoped API и страницу Dashboard `/projects/:id/reports`.
 
 > **Статус:** MVP реализован (`GET /projects/{id}/reports/summary`: total/successful/failed, success_rate, average_duration + страница Reports). Не реализовано: фильтры по периоду, графики, failure trends. См. `docs/ROADMAP.md` Phase 9.
 
@@ -96,48 +96,42 @@ mttr = avg(time_between_failed_and_next_success)
 
 ---
 
-## 3. API (план)
+## 3. API: current и target
 
 ### 3.1. Endpoints
 
 | Метод | Путь | Назначение |
 |---|---|---|
-| `GET` | `/api/v1/reports/summary` | Сводка: success rate, avg duration, deployments |
-| `GET` | `/api/v1/reports/pipeline-history` | История пайплайнов (с фильтрами) |
-| `GET` | `/api/v1/reports/success-rate` | Success rate по дням/неделям |
-| `GET` | `/api/v1/reports/duration` | Duration stats (p50, p90, p95, p99) |
-| `GET` | `/api/v1/reports/deployment-frequency` | Частота деплоев по дням |
-| `GET` | `/api/v1/reports/failure-breakdown` | Breakdown неудач по стадиям |
-| `GET` | `/api/v1/projects/{id}/reports/summary` | Сводка по конкретному проекту |
+| `GET` | `/api/v1/projects/{id}/reports/summary` | Current verified: total/successful/failed, success_rate, average_duration_seconds |
+| `GET` | `/api/v1/projects/{id}/reports/pipeline-history` | Target approved: история пайплайнов проекта с фильтрами |
+| `GET` | `/api/v1/projects/{id}/reports/success-rate` | Target approved: success rate по дням/неделям |
+| `GET` | `/api/v1/projects/{id}/reports/duration` | Target approved: duration stats (p50, p90, p95, p99) |
+| `GET` | `/api/v1/projects/{id}/reports/deployment-frequency` | Target approved: частота деплоев по дням |
+| `GET` | `/api/v1/projects/{id}/reports/failure-breakdown` | Target approved: breakdown неудач по стадиям |
+| `GET` | `/api/v1/reports/summary` | Target approved: cross-project aggregate только после scoped RBAC/tenant policy |
 
-### 3.2. GET /api/v1/reports/summary
+### 3.2. Current: GET /api/v1/projects/{id}/reports/summary
 
 ```bash
-curl -sS "http://127.0.0.1:22801/api/v1/reports/summary?from=2026-08-01&to=2026-08-26"
+curl -sS "http://127.0.0.1:22801/api/v1/projects/{id}/reports/summary"
 ```
 
 ```json
 {
-  "from": "2026-08-01T00:00:00Z",
-  "to": "2026-08-26T23:59:59Z",
-  "totalPipelines": 342,
-  "successfulPipelines": 298,
-  "failedPipelines": 35,
-  "canceledPipelines": 9,
-  "successRate": 87.13,
-  "avgDurationSecs": 187,
-  "p50DurationSecs": 142,
-  "p90DurationSecs": 312,
-  "p95DurationSecs": 398,
-  "deployments": 87,
-  "mttrSecs": 1203
+  "total_pipelines": 42,
+  "successful_pipelines": 34,
+  "failed_pipelines": 6,
+  "success_rate": 0.8095,
+  "average_duration_seconds": 187.4
 }
 ```
 
-### 3.3. GET /api/v1/reports/success-rate
+`success_rate` — доля `0..1`; frontend отображает её как процент.
+
+### 3.3. Target: GET /api/v1/projects/{id}/reports/success-rate
 
 ```bash
-curl -sS "http://127.0.0.1:22801/api/v1/reports/success-rate?period=30d&group_by=day"
+curl -sS "http://127.0.0.1:22801/api/v1/projects/{id}/reports/success-rate?period=30d&group_by=day"
 ```
 
 ```json
@@ -148,10 +142,10 @@ curl -sS "http://127.0.0.1:22801/api/v1/reports/success-rate?period=30d&group_by
 ]
 ```
 
-### 3.4. GET /api/v1/reports/pipeline-history
+### 3.4. Target: GET /api/v1/projects/{id}/reports/pipeline-history
 
 ```bash
-curl -sS "http://127.0.0.1:22801/api/v1/reports/pipeline-history?project_id={id}&limit=50&status=failed"
+curl -sS "http://127.0.0.1:22801/api/v1/projects/{id}/reports/pipeline-history?limit=50&status=failed"
 ```
 
 ```json
@@ -176,7 +170,6 @@ curl -sS "http://127.0.0.1:22801/api/v1/reports/pipeline-history?project_id={id}
 |---|---|---|
 | `from` | ISO 8601 | Начало периода |
 | `to` | ISO 8601 | Конец периода |
-| `project_id` | UUID | Фильтр по проекту |
 | `status` | string | Фильтр по статусу |
 | `group_by` | `day` / `week` / `month` | Группировка |
 | `period` | `7d` / `30d` / `90d` | Быстрый выбор периода |
@@ -197,11 +190,14 @@ Forge CI/CD частично покрывает DORA (DevOps Research and Assess
 
 ---
 
-## 5. Frontend (план)
+## 5. Frontend
 
-### 5.1. Admin Reports Page
+### 5.1. Project Reports Page
 
-- Раздел `/admin/reports` с вкладками: Overview, Pipelines, Deployments, Failures.
+- Текущий маршрут: `/projects/:id/reports`.
+- MVP показывает summary cards из `GET /api/v1/projects/{id}/reports/summary`.
+- Target-графики и вкладки Overview, Pipelines, Deployments, Failures остаются в project-scoped workflow.
+- Cross-project admin reports требуют отдельного scoped RBAC/tenant решения и не входят в текущий `/admin` baseline.
 - Период-селектор: 7d / 30d / 90d / custom range.
 - Проект-селектор: all / конкретный проект.
 
@@ -293,7 +289,7 @@ LIMIT 10;
 
 Кэш инвалидируется при:
 - Новом завершённом пайплайне (pipeline → terminal status).
-- Ручном запросе `POST /api/v1/reports/refresh`.
+- Target-ручном запросе `POST /api/v1/reports/refresh`.
 
 ---
 
@@ -310,10 +306,10 @@ LIMIT 10;
 
 ## 9. План реализации
 
-- [ ] API endpoints: summary, success-rate, duration, deployment-frequency, failure-breakdown, pipeline-history.
+- [ ] API endpoints: project-scoped success-rate, duration, deployment-frequency, failure-breakdown, pipeline-history.
 - [ ] SQL-запросы с агрегациями и percentile_cont.
 - [ ] In-memory кэш с TTL.
-- [ ] Frontend: `/admin/reports` страница с графиками (recharts).
+- [ ] Frontend: расширить `/projects/:id/reports` страницу графиками (recharts).
 - [ ] Период-селектор, проект-селектор.
 - [ ] Тесты: корректность агрегаций, кэширование, API contract.
 
@@ -321,7 +317,7 @@ LIMIT 10;
 
 ## References
 
-- `docs/ROADMAP.md` — Phase 9: Admin + Reports
+- `docs/ROADMAP.md` — Phase 9: Reports
 - `docs/DATA_MODEL.md` — таблицы `pipelines`, `stages`, `jobs`
 - `docs/WORKFLOW.md` — статусы и терминальные состояния
 - `docs/API.md` — REST API спецификация

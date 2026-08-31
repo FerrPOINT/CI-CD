@@ -11,7 +11,7 @@
 | 3 | `docs/contracts/*.md` | нормативные целевые контракты (наблюдаемые требования) |
 | 4 | narrative-доки (`AUTHORIZATION.md`, `RUNNER_ARCHITECTURE.md`, …) | объяснения; не вводят канонических имён |
 | 5 | `docs/CURRENT_STATE.md` | производный снимок текущего состояния |
-| 6 | `plans/*.md` | некоммитные расписания; не нормативны |
+| 6 | `plans/*.md` | закоммиченные рабочие планы; не нормативны |
 
 ## Статусная таксономия
 
@@ -48,6 +48,8 @@ docs/
 ├── DEVELOPMENT_GUIDE.md
 ├── TECH_CHOICES.md
 ├── LIBRARIES.md
+├── REPORTS.md
+├── DOCUMENTATION_GOVERNANCE.md
 ├── OPERATIONS.md
 ├── ENV.md
 ├── TROUBLESHOOTING.md

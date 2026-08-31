@@ -179,8 +179,15 @@ def check_status_labels() -> None:
 
 def check_orphans() -> None:
     indexed = set()
+    docs_root = DOCS.resolve()
     for p in md_files():
         text = read_text(p)
+        for target in re.findall(r"\]\(([^)#]+?)(?:#[^)]*)?\)", text):
+            if target.startswith(("http://", "https://", "mailto:")):
+                continue
+            dest = (p.parent / target).resolve()
+            if dest.suffix.lower() == ".md" and (dest == docs_root or docs_root in dest.parents):
+                indexed.add(dest)
         for ref in re.findall(r"docs/[A-Za-z0-9_./-]+\.md", text):
             indexed.add((ROOT / ref).resolve())
     stubs = 0
@@ -232,14 +239,68 @@ def check_screenshots() -> None:
         hashes[h] = p.name
 
 
+def manifest_screenshot_entries() -> list[str]:
+    manifest = DOCS / "assets/screens/manifest.md"
+    if not manifest.exists():
+        return []
+    text = read_text(manifest)
+    return [m.group(2) for m in re.finditer(r"\((\.\./)+screenshots/([^)]+\.png)\)", text)]
+
+
+def png_dimensions(path: Path) -> tuple[int, int] | None:
+    with path.open("rb") as f:
+        if f.read(8) != b"\x89PNG\r\n\x1a\n":
+            fail(f"not a PNG file: {path.relative_to(ROOT).as_posix()}")
+            return None
+        header = f.read(8)
+        if len(header) != 8:
+            fail(f"truncated PNG header: {path.relative_to(ROOT).as_posix()}")
+            return None
+        length, chunk_type = struct.unpack(">I4s", header)
+        if chunk_type != b"IHDR" or length < 8:
+            fail(f"PNG missing IHDR: {path.relative_to(ROOT).as_posix()}")
+            return None
+        data = f.read(8)
+        if len(data) != 8:
+            fail(f"truncated PNG IHDR: {path.relative_to(ROOT).as_posix()}")
+            return None
+        width, height = struct.unpack(">II", data)
+        return width, height
+
+
 def check_manifest() -> None:
     manifest = DOCS / "assets/screens/manifest.md"
     if not manifest.exists():
         return  # manifest arrives at Gate 5
     text = read_text(manifest)
-    for m in re.finditer(r"\((\.\./)+screenshots/([^)]+\.png)\)", text):
-        if not (DOCS / "screenshots" / m.group(2)).exists():
-            fail(f"manifest references missing file: {m.group(2)}")
+    entries = manifest_screenshot_entries()
+    seen: set[str] = set()
+    for name in entries:
+        if name in seen:
+            fail(f"duplicate manifest screenshot reference: {name}")
+        seen.add(name)
+        if not (DOCS / "screenshots" / name).exists():
+            fail(f"manifest references missing file: {name}")
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        m = re.match(r"\|\s*\[[^\]]+\]\((?:\.\./)+screenshots/([^)]+\.png)\)\s*\|.*\|\s*(\d+)[×x](\d+)\s*\|\s*$", line)
+        if not m:
+            continue
+        name = m.group(1)
+        expected = (int(m.group(2)), int(m.group(3)))
+        path = DOCS / "screenshots" / name
+        if not path.exists():
+            continue
+        actual = png_dimensions(path)
+        if actual and actual != expected:
+            fail(
+                f"manifest dimension drift at {manifest.relative_to(ROOT).as_posix()}:{line_no}: "
+                f"{name} says {expected[0]}x{expected[1]}, actual {actual[0]}x{actual[1]}"
+            )
+    count = len(seen)
+    readme = read_text(ROOT / "README.md")
+    m = re.search(r"Полный визуальный реестр\s*\((\d+)\s+скрин", readme)
+    if m and int(m.group(1)) != count:
+        fail(f"README visual registry count drift: documented {m.group(1)}, manifest has {count}")
 
 
 def extract_router_paths() -> set[str]:
