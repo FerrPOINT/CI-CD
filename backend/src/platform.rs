@@ -1,4 +1,7 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::{Path as FsPath, PathBuf},
+    sync::Arc,
+};
 
 use aes_gcm::{
     Aes256Gcm, Nonce,
@@ -275,8 +278,7 @@ async fn upload_artifact(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("application/octet-stream");
     let id = Uuid::new_v4();
-    let path = artifact_path(id);
-    std::fs::create_dir_all(path.parent().expect("artifact parent")).map_err(io_error)?;
+    let path = new_artifact_path(id)?;
     std::fs::write(&path, &body).map_err(io_error)?;
     let attempt_id = crate::store::active_or_latest_attempt_id(pool(&state)?, job_id)
         .await
@@ -301,7 +303,8 @@ async fn download_artifact(
             .await
             .map_err(ApiError::internal)?
             .ok_or_else(ApiError::not_found)?;
-    let bytes = std::fs::read(&row.0).map_err(|_| ApiError::not_found())?;
+    let path = contained_artifact_path(&row.0)?;
+    let bytes = std::fs::read(path).map_err(|_| ApiError::not_found())?;
     Ok((
         [
             ("content-type", row.2),
@@ -773,11 +776,34 @@ async fn delete_token(
     Ok(Json(serde_json::json!({"deleted": id})))
 }
 
-fn artifact_path(id: Uuid) -> PathBuf {
+fn artifacts_root() -> PathBuf {
     std::env::var("CICD_ARTIFACTS_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("/var/lib/forge/artifacts"))
-        .join(format!("{id}.bin"))
+}
+
+fn new_artifact_path(id: Uuid) -> Result<PathBuf, ApiError> {
+    let root = artifacts_root();
+    std::fs::create_dir_all(&root).map_err(io_error)?;
+    let root = root.canonicalize().map_err(io_error)?;
+    Ok(root.join(format!("{id}.bin")))
+}
+
+fn contained_artifact_path(raw_path: &str) -> Result<PathBuf, ApiError> {
+    let root = canonical_artifacts_root()?;
+    let path = FsPath::new(raw_path)
+        .canonicalize()
+        .map_err(|_| ApiError::not_found())?;
+    if !path.starts_with(&root) {
+        return Err(ApiError::not_found());
+    }
+    Ok(path)
+}
+
+fn canonical_artifacts_root() -> Result<PathBuf, ApiError> {
+    artifacts_root()
+        .canonicalize()
+        .map_err(|_| ApiError::not_found())
 }
 fn io_error(error: std::io::Error) -> ApiError {
     ApiError::internal(sqlx::Error::Io(error))

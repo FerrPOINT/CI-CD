@@ -13,7 +13,7 @@
 | Embedded runner | ✅ | Docker (`forge-job-<id>`) или host shell; стриминг stdout → attempt-owned `job_logs`; cancel через PID-map |
 | Execution attempts | ✅ MVP | `execution_attempts` создаются для каждой job; retry job/pipeline создаёт новую attempt и не удаляет старые логи |
 | Логи | ✅ | append-only внутри attempt, sequence per attempt, REST polling и SSE stream текущей/последней attempt |
-| Артефакты | ✅ | upload/download ≤50 MiB, локальный `CICD_ARTIFACTS_DIR`; новые metadata привязаны к active/latest attempt |
+| Артефакты | ✅ | upload/download ≤50 MiB, локальный `CICD_ARTIFACTS_DIR`; новые metadata привязаны к active/latest attempt; download проверяет canonical path containment внутри artifact root |
 | Секреты проектов | ✅ | AES-256-GCM at rest; значение не возвращается API |
 | Environments/deployments | ✅ | metadata + history |
 | Reports | ✅ | агрегаты success rate/duration |

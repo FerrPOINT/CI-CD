@@ -859,7 +859,7 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 | POST | `/jobs/{job_id}/artifacts` | Загрузить артефакт (raw body, `X-Artifact-Name`) |
 | GET | `/artifacts/{artifact_id}/download` | Скачать артефакт |
 
-> Артефакты хранятся в локальной ФС (`CICD_ARTIFACTS_DIR`, default `/var/lib/forge/artifacts`). Лимит — 50 MiB на файл.
+> Артефакты хранятся в локальной ФС (`CICD_ARTIFACTS_DIR`, default `/var/lib/forge/artifacts`). Лимит — 50 MiB на файл. Download перед чтением canonicalize-ит `storage_path` и возвращает `404`, если файл не находится внутри artifact root.
 
 ### Environments & Deployments
 

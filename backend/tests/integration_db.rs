@@ -213,6 +213,124 @@ async fn pipeline_trigger_replays_same_idempotency_key() {
 }
 
 #[tokio::test]
+async fn artifact_download_rejects_storage_paths_outside_artifact_root() {
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let stage_id = Uuid::new_v4();
+    let job_id = Uuid::new_v4();
+    let attempt_id = Uuid::new_v4();
+    let artifact_id = Uuid::new_v4();
+    let project_name = format!("it-artifact-containment-{}", project_id.simple());
+    let artifact_root = std::env::temp_dir().join(format!("forge-artifacts-{}", project_id));
+    let inside_path = artifact_root.join(format!("{artifact_id}.bin"));
+    let outside_path = std::env::temp_dir().join(format!("forge-outside-{artifact_id}.txt"));
+
+    std::fs::create_dir_all(&artifact_root).expect("create artifact root");
+    std::fs::write(&inside_path, b"inside artifact").expect("write inside artifact");
+    std::fs::write(&outside_path, b"outside artifact root").expect("write outside artifact");
+    // SAFETY: this integration test is the only artifact-route test and uses
+    // a unique directory; other integration tests do not read this variable.
+    unsafe {
+        std::env::set_var("CICD_ARTIFACTS_DIR", &artifact_root);
+    }
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/repo.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status) VALUES ($1, $2, 'main', 'queued')",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert pipeline");
+    sqlx::query(
+        "INSERT INTO stages (id, pipeline_id, name, position, status) VALUES ($1, $2, 'build', 0, 'queued')",
+    )
+    .bind(stage_id)
+    .bind(pipeline_id)
+    .execute(&pool)
+    .await
+    .expect("insert stage");
+    sqlx::query(
+        "INSERT INTO jobs (id, stage_id, name, image, command, position, status) VALUES \
+         ($1, $2, 'compile', 'alpine:3.21', 'echo ok', 0, 'queued')",
+    )
+    .bind(job_id)
+    .bind(stage_id)
+    .execute(&pool)
+    .await
+    .expect("insert job");
+    sqlx::query(
+        "INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) \
+         VALUES ($1, $2, 1, 'queued', 'initial')",
+    )
+    .bind(attempt_id)
+    .bind(job_id)
+    .execute(&pool)
+    .await
+    .expect("insert attempt");
+    sqlx::query(
+        "INSERT INTO artifacts \
+         (id, job_id, attempt_id, name, storage_path, content_type, size_bytes) \
+         VALUES ($1, $2, $3, 'report.txt', $4, 'text/plain', 15)",
+    )
+    .bind(artifact_id)
+    .bind(job_id)
+    .bind(attempt_id)
+    .bind(inside_path.to_string_lossy().as_ref())
+    .execute(&pool)
+    .await
+    .expect("insert artifact");
+
+    let app = cicd::api::app(Some(pool.clone()));
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/artifacts/{artifact_id}/download"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("read artifact body");
+    assert_eq!(bytes.as_ref(), b"inside artifact");
+
+    sqlx::query("UPDATE artifacts SET storage_path = $2 WHERE id = $1")
+        .bind(artifact_id)
+        .bind(outside_path.to_string_lossy().as_ref())
+        .execute(&pool)
+        .await
+        .expect("forge artifact metadata");
+    let response = app
+        .oneshot(
+            Request::get(format!("/api/v1/artifacts/{artifact_id}/download"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup project");
+    let _ = std::fs::remove_dir_all(&artifact_root);
+    let _ = std::fs::remove_file(&outside_path);
+}
+
+#[tokio::test]
 async fn project_memberships_enforce_project_roles_and_cascade() {
     let pool = test_pool().await;
     let project_id = Uuid::new_v4();

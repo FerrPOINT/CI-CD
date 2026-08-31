@@ -497,12 +497,12 @@ Platform tables создаются и расширяются через `backend
 | `job_id` | UUID | NOT NULL | — | FK → `jobs(id)` CASCADE |
 | `attempt_id` | UUID | NULL | — | FK → `execution_attempts(id)` SET NULL; новые uploads привязаны к active/latest attempt |
 | `name` | TEXT | NOT NULL | — | Имя файла |
-| `storage_path` | TEXT | NOT NULL | — | Путь в локальной ФС |
+| `storage_path` | TEXT | NOT NULL | — | Canonical path в локальной ФС внутри `CICD_ARTIFACTS_DIR`; download отвергает пути вне root |
 | `content_type` | TEXT | NOT NULL | `'application/octet-stream'` | MIME |
 | `size_bytes` | BIGINT | NOT NULL | — | Размер в байтах |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
 
-> Хранилище: `CICD_ARTIFACTS_DIR` (default `/var/lib/forge/artifacts`). Лимит — 50 MiB.
+> Хранилище: `CICD_ARTIFACTS_DIR` (default `/var/lib/forge/artifacts`). Лимит — 50 MiB. Runtime не считает `storage_path` доверенным: перед чтением путь и root canonicalize-ятся, а нарушение containment возвращает `404`.
 
 ### 9.4 environments
 
