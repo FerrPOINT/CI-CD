@@ -12,7 +12,7 @@ Forge CI/CD — self-hosted control plane для жизненного цикла
 |---|---|---:|---:|
 | Identity & Access | Личности, сессии, membership, роли, токены, policy | Частично: users/roles/tokens + conditional auth/RBAC при непустом `CICD_AUTH_SECRET` | Да |
 | Project & Source | Project, repository connection, bare Git, refs, PR metadata | Да | Да |
-| Pipeline Definition | `.forge-ci.yml`, validation, plan/DAG, variables | Частично: parser, линейный stages/jobs и immutable `pipeline_plans` snapshot; full v1 DAG/variables target | Да |
+| Pipeline Definition | `.forge-ci.yml`, validation, plan/DAG, variables | Частично: legacy parser + v1 DAG MVP (`jobs.needs`) и immutable `pipeline_plans` snapshot; policy diagnostics/variables in plan target | Да |
 | Execution | Queue, attempts, dispatch, runner protocol, sandbox | Частично: embedded runner | Да |
 | Logs & Artifacts | Append-only logs, upload/download, integrity, retention | Частично | Да |
 | Environments & Deployments | Environment state, deploy history, approvals, rollback | Частично: metadata | Да |

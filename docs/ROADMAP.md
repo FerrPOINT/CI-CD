@@ -19,7 +19,7 @@ Roadmap фиксирует порядок доведения Forge до базо
 На 2026-09-01 в коде уже есть:
 
 - проекты, встроенный bare Git hosting, Smart HTTP и auto-trigger pipeline на push;
-- pipeline из `.forge-ci.yml` с линейными stages/jobs, fallback-шаблон, immutable `pipeline_plans` legacy-linear snapshot, manual jobs, basic timeout и `allow_failure`;
+- pipeline из `.forge-ci.yml` с legacy линейными stages/jobs и v1 DAG MVP (`version: 1`, top-level `jobs.commands/needs`), fallback-шаблон, immutable `pipeline_plans` snapshot (`legacy-linear`/`v1-dag`), manual legacy jobs, basic timeout и `allow_failure`;
 - embedded runner в `cicd-server`: Docker/host shell, stdout/stderr в attempt-owned `job_logs`, cancel/retry, embedded `job_leases` claim/close/expiry reconciliation;
 - `execution_attempts`: каждая job получает initial attempt, retry job/pipeline создаёт новую attempt и сохраняет старые логи;
 - REST logs, attempts API и SSE stream логов job;
@@ -32,7 +32,7 @@ Roadmap фиксирует порядок доведения Forge до базо
 
 Ключевые ограничения current baseline:
 
-- execution attempts и embedded `job_leases` реализованы как MVP-слой без внешнего runner protocol/fencing; bounded log pagination/search уже есть, command spans и richer error diagnostics остаются Phase 1 follow-up;
+- execution attempts, v1 DAG projection и embedded `job_leases` реализованы как MVP-слой без внешнего runner protocol/fencing; bounded log pagination/search уже есть, command spans, line/column parser diagnostics и richer error diagnostics остаются Phase 1 follow-up;
 - auth/RBAC имеет project membership, scoped PAT, Git Smart HTTP read/write checks, session-bound access invalidation и refresh rotate/logout/revoke MVP, но без tenant isolation, service-account tokens, scoped Git credentials и production cookie/CSRF/session-family policy;
 - execution встроен в backend process, поэтому shared/prod режим требует external runner boundary;
 - webhooks/notifications имеют bounded delivery history/requeue MVP, но без production leases/fencing, full dead-letter policy/metrics и external adapters; email/Slack notification adapters не реализованы;
@@ -46,13 +46,13 @@ Roadmap фиксирует порядок доведения Forge до базо
 
 Deliverables:
 
-- Current MVP: `pipeline_plans` immutable snapshot с raw config/fallback template, parser version, config/plan SHA-256 и legacy-linear dependency edges;
+- Current MVP: `pipeline_plans` immutable snapshot с raw config/fallback template, parser version, config/plan SHA-256, legacy-linear dependency edges и v1 `jobs.needs` DAG plan;
 - Current MVP: таблицы `execution_attempts` и attempt-owned log/artifact metadata;
 - Current MVP: таблица `job_leases` для embedded claim, terminal close, cancel close и expiry reconciliation;
 - Current MVP: retry pipeline/job создаёт новую attempt, старые логи и timestamps остаются доступными;
 - Current MVP: API, UI и CLI показывают attempts и логи выбранной attempt;
 - Current MVP: bounded `/logs/page` для current/latest и concrete attempt с `limit/after/q`; UI читает логи страницами и поддерживает поиск;
-- Target follow-up: лог делится минимум на command span, stream, exit code, started/finished timestamps и error tail;
+- Target follow-up: v1 policy diagnostics/job-level dispatch; лог делится минимум на command span, stream, exit code, started/finished timestamps и error tail;
 - Target follow-up: richer empty/error states и отдельные UI tests переключения attempts.
 
 Gate:
@@ -180,7 +180,7 @@ Gate:
 - flaky test tracking и quarantine;
 - dependency/security scans, SBOM и license gates;
 - DORA/advanced reports, percentiles, dashboards и exports;
-- matrix builds и сложный DAG planner сверх текущего `legacy-linear` immutable plan;
+- matrix builds и сложный policy/DAG planner сверх текущего `v1-dag` MVP;
 - SSO/OIDC;
 - Kubernetes runner adapter;
 - full code-review platform, threaded comments, merge queues;

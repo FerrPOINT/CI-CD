@@ -71,8 +71,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 15,
-    "latest_required_version": 15,
+    "latest_applied_version": 16,
+    "latest_required_version": 16,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],
@@ -344,7 +344,7 @@ curl -sS http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines
 
 #### POST /api/v1/projects/{project_id}/pipelines
 
-Запускает новый пайплайн для указанного Git-рефа. Backend пытается разрешить ref в commit SHA, прочитать `.forge-ci.yml` из локального bare repository на этом commit; если файл недоступен, создаёт fallback `legacy_template` build/test/deploy. Все задачи — в статусе `queued`. `PipelineDetail.plan` содержит immutable `legacy-linear` snapshot с raw config, config/plan SHA-256, node keys и dependency edges между стадиями.
+Запускает новый пайплайн для указанного Git-рефа. Backend пытается разрешить ref в commit SHA, прочитать `.forge-ci.yml` из локального bare repository на этом commit; если файл недоступен, создаёт fallback `legacy_template` build/test/deploy. Все задачи — в статусе `queued`. `PipelineDetail.plan` содержит immutable snapshot с raw config, config/plan SHA-256, parser version, node keys и dependency edges. Поддерживаются два current формата plan: `legacy-linear` для unversioned `stages/jobs` и `v1-dag` для `.forge-ci.yml` с `version: 1`, top-level `jobs`, `commands`, `needs`, defaults `image/timeout` и `allow_failure`; current runner исполняет v1 DAG через топологические стадии `dag-*`.
 
 **Path params:**
 
@@ -489,6 +489,8 @@ curl -sS http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines
   ]
 }
 ```
+
+Для v1 `.forge-ci.yml` plan имеет `format: "v1-dag"`, `version: 1`, `parser_version: "forge-dsl/1.0.0"`, массив `jobs[]` с `key`, исходными `commands[]`, runtime `command` (`set -e` script), `needs[]`, resolved runtime stage/position и массив `dependencies[]` вида `{from,to}`. Unsupported v1 ключи (`on`, `tags`, `retry`, `artifacts`, `secrets`) пока отклоняются `400`, а не игнорируются.
 
 **Errors:**
 - `400` — некорректный `Idempotency-Key` или pipeline config.

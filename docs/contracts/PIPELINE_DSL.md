@@ -1,6 +1,6 @@
 # Pipeline DSL
 
-**Статус:** Target approved. Нормативный контракт `.forge-ci.yml`; текущее runtime-поведение приведено только для миграции. Канонические правила контрактов закреплены [ADR-0009](../adr/0009-canonical-registry.md).
+**Статус:** Target approved + current v1 DAG MVP. Нормативный контракт `.forge-ci.yml`; текущее runtime-поведение приведено отдельно от целевого, чтобы не выдавать совместимость за завершённый production planner. Канонические правила контрактов закреплены [ADR-0009](../adr/0009-canonical-registry.md).
 
 ## 1. Источник и модель
 
@@ -12,14 +12,14 @@ Forge читает `.forge-ci.yml` только из полного immutable `r
 
 | Область | Current verified | Target approved |
 |---|---|---|
-| Формат | unversioned `stages`/`jobs` | обязательный `version: 1`, job-level DAG |
-| Job | `name`, optional `image`, один `command` | mapping `jobs.<key>` с `commands`, `needs`, policy и metadata |
-| Порядок | порядок stages; snapshot хранит legacy-linear dependency edges между стадиями; jobs одной стадии параллельны | `needs` определяет DAG; stages не задают зависимости |
+| Формат | unversioned `stages`/`jobs` + v1 subset `version: 1`/top-level `jobs` | обязательный `version: 1`, job-level DAG |
+| Job | legacy `name`/`image`/один `command`; v1 `jobs.<key>` с `commands`, `needs`, `defaults.image/timeout`, `allow_failure` | mapping `jobs.<key>` с `commands`, `needs`, policy и metadata |
+| Порядок | legacy порядок stages; v1 `needs` валидируется и проецируется в топологические runtime-стадии `dag-*`; snapshot хранит dependency edges | `needs` определяет DAG; stages не задают зависимости |
 | Trigger | pipeline создаётся manual или текущим Git push hook | `on.push`, `on.pull_request`, `on.schedule` |
-| Parser | `serde_yaml`, durable `pipeline_plans` snapshot с parser version `forge-legacy-linear/1`, config/plan SHA-256 | safe parser, diagnostics, full v1 immutable plan |
+| Parser | `serde_yaml`, durable `pipeline_plans` snapshot с parser version `forge-legacy-linear/1` или `forge-dsl/1.0.0`, config/plan SHA-256 | safe parser, line/column diagnostics, full policy-aware immutable plan |
 | Fallback | если локальный config не прочитан, сохраняется `legacy_template` source и template YAML snapshot | только явный `legacy_template` source для migration/demo |
 
-Текущий parser принимает только следующий legacy shape и не принимает `version`, `on`, `defaults`, top-level `jobs`, `needs`, secrets или artifacts:
+Текущий parser принимает два совместимых режима. Legacy shape остаётся для существующих проектов:
 
 ```yaml
 stages:
@@ -30,7 +30,27 @@ stages:
         command: cargo build --release
 ```
 
-Пустые stages отбрасываются; после этого нужен хотя бы один job. `image` по умолчанию `alpine:3.21`. Текущий режим сохраняет immutable `legacy-linear` snapshot, но остаётся compatibility behaviour, не реализацией target DSL.
+Пустые stages отбрасываются; после этого нужен хотя бы один job. `image` по умолчанию `alpine:3.21`. Legacy режим сохраняет immutable `legacy-linear` snapshot и остаётся compatibility behaviour.
+
+Текущий v1 MVP принимает `version: 1`, `defaults.image`, `defaults.timeout`, top-level `jobs`, `jobs.*.needs`, `jobs.*.image`, `jobs.*.commands`, `jobs.*.timeout` и `jobs.*.allow_failure`:
+
+```yaml
+version: 1
+defaults:
+  image: alpine:3.21
+  timeout: 20m
+jobs:
+  build:
+    commands: ["cargo build --release"]
+  test:
+    needs: [build]
+    image: rust:1.86
+    commands:
+      - cargo test
+      - cargo clippy --all-targets
+```
+
+V1 MVP валидирует job keys, `needs`, циклы, unsafe image reference, число jobs/edges/commands и timeout до 24h. Runtime пока использует embedded stage-barrier runner, поэтому DAG проецируется в топологические стадии `dag-0`, `dag-1`, ...; `commands[]` собираются в shell script с `set -e`, чтобы выполнение останавливалось на первой ошибке. Сохранённый `pipeline_plans.plan` содержит исходные job keys, `commands[]`, `needs[]`, runtime command и dependency edges. Ключи `on`, `tags`, `retry`, `artifacts`, `secrets` и policy diagnostics пока не исполняются и не игнорируются молча: такой config отклоняется как unsupported/unknown.
 
 ## 3. Грамматика target v1
 
@@ -88,6 +108,8 @@ jobs:
 
 Job наследует scalar/object defaults только если ключ отсутствует; list `tags` не объединяется, а заменяет defaults. `commands` обязателен после inheritance, содержит 1..64 непустых строк и выполняется в порядке списка. `needs: []` означает source node. Цикл, self-dependency, ссылка на отсутствующий job или дублирующий key - planning error без queue row.
 
+Current v1 MVP поддерживает только `version`, `defaults.image`, `defaults.timeout`, `jobs`, `needs`, `image`, `commands`, `timeout` и `allow_failure`. Остальные ключи из target table включаются только вместе с соответствующими execution/storage/secret/policy механизмами.
+
 `retry.max_attempts` от 1 до 5. Default: `1`; для deploy/protected pools default и maximum могут быть дополнительно уменьшены policy. Допустимые `retry_on`: `runner_lost`, `infrastructure`, `timeout`; project exit code, parser/policy error, cancellation и stale lease не повторяются без отдельной policy.
 
 ## 5. Future triggers
@@ -119,7 +141,7 @@ on:
 - Patch parser releases могут исправлять diagnostics/implementation, но не меняют normalised semantics уже сохранённого plan.
 - Добавление ключа, изменение default, типа, precedence, trigger или state semantics требует новую semantic version либо explicit migration rule; старый parser отвергает неизвестный ключ.
 - Обратная совместимость реализуется отдельным parser adapter-ом, не неявным преобразованием пользовательского YAML. Поддерживаемые versions и срок удаления объявляются release policy.
-- Parser выдаёт line/column diagnostic без secret values; invalid config создаёт `failed_planning`/`invalid` pipeline и никогда не enqueue-ит job.
+- Target parser выдаёт line/column diagnostic без secret values; invalid config создаёт `failed_planning`/`invalid` pipeline и никогда не enqueue-ит job. Current MVP отклоняет invalid config HTTP `400` до создания pipeline row.
 
 ## 7. Лимиты и validation
 

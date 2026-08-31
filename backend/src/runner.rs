@@ -482,7 +482,7 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
     .await?;
     refresh_stage(pool.clone(), job.id).await?;
 
-    let command_shell = format!("{} 2>&1", job.command);
+    let command_shell = shell_capture_command(&job.command);
 
     // P1-8: pipeline run variables -> CICD_VAR_<KEY>.
     let run_vars: serde_json::Map<String, serde_json::Value> =
@@ -1093,6 +1093,10 @@ fn docker_run_args(
     ]
 }
 
+fn shell_capture_command(command: &str) -> String {
+    format!("{{\n{command}\n}} 2>&1")
+}
+
 /// Mirrors the SQL `CASE WHEN` aggregation used in `refresh_statuses` so it
 /// can be unit-tested without a database. Priority: failed > running >
 /// canceled > queued; success only when everything succeeded.
@@ -1169,6 +1173,14 @@ mod tests {
                 .any(|pair| pair == ["sh", "-lc", "cargo test"])
         );
         assert!(!args.iter().any(|arg| arg == "cargo"));
+    }
+
+    #[test]
+    fn shell_capture_wraps_multiline_commands_as_one_redirected_group() {
+        assert_eq!(
+            shell_capture_command("set -e\ncargo test\ncargo clippy"),
+            "{\nset -e\ncargo test\ncargo clippy\n} 2>&1"
+        );
     }
 
     #[test]

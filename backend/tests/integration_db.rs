@@ -1047,6 +1047,218 @@ async fn pipeline_trigger_replays_same_idempotency_key() {
 }
 
 #[tokio::test]
+async fn pipeline_trigger_reads_v1_dag_config_from_bare_repository() {
+    let pool = test_pool().await;
+    let namespace = Uuid::new_v4();
+    let repo_name = format!("it_v1_dag_{}", namespace.simple());
+    let root = std::env::temp_dir().join(format!("forge-v1-dag-{namespace}"));
+    let bare_repo = root.join(format!("{repo_name}.git"));
+    let worktree = root.join("worktree");
+    tokio::fs::create_dir_all(&root)
+        .await
+        .expect("create git root");
+
+    run_git(&["init", "--bare", "--quiet"], Some(&bare_repo)).await;
+    run_git(&["init", "--quiet"], Some(&worktree)).await;
+    run_git(
+        &[
+            "-C",
+            worktree.to_str().unwrap(),
+            "config",
+            "user.email",
+            "ci@example.invalid",
+        ],
+        None,
+    )
+    .await;
+    run_git(
+        &[
+            "-C",
+            worktree.to_str().unwrap(),
+            "config",
+            "user.name",
+            "Forge CI",
+        ],
+        None,
+    )
+    .await;
+    tokio::fs::write(
+        worktree.join(".forge-ci.yml"),
+        r#"
+version: 1
+defaults:
+  image: alpine:3.21
+jobs:
+  build:
+    commands: ["cargo build --release"]
+  lint:
+    commands: ["cargo fmt --check"]
+    allow_failure: true
+  test:
+    needs: [build, lint]
+    image: rust:1.86
+    timeout: 45m
+    commands:
+      - cargo test
+      - cargo clippy --all-targets
+"#,
+    )
+    .await
+    .expect("write v1 pipeline config");
+    run_git(
+        &["-C", worktree.to_str().unwrap(), "add", ".forge-ci.yml"],
+        None,
+    )
+    .await;
+    run_git(
+        &[
+            "-C",
+            worktree.to_str().unwrap(),
+            "commit",
+            "--quiet",
+            "-m",
+            "initial",
+        ],
+        None,
+    )
+    .await;
+    run_git(
+        &["-C", worktree.to_str().unwrap(), "branch", "-M", "main"],
+        None,
+    )
+    .await;
+    run_git(
+        &[
+            "-C",
+            worktree.to_str().unwrap(),
+            "remote",
+            "add",
+            "origin",
+            bare_repo.to_str().unwrap(),
+        ],
+        None,
+    )
+    .await;
+    run_git(
+        &[
+            "-C",
+            worktree.to_str().unwrap(),
+            "push",
+            "--quiet",
+            "origin",
+            "main",
+        ],
+        None,
+    )
+    .await;
+
+    // SAFETY: trigger config lookup currently reads CICD_GIT_ROOT directly.
+    // This test uses a unique repo name/root; other trigger tests still fall
+    // back to the legacy template when their repo is absent under this root.
+    unsafe {
+        std::env::set_var("CICD_GIT_ROOT", &root);
+    }
+
+    let project_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(format!("it-v1-dag-{}", namespace.simple()))
+        .bind(format!("http://127.0.0.1/git/{repo_name}.git"))
+        .execute(&pool)
+        .await
+        .expect("insert project");
+
+    let app = cicd::api::app(Some(pool.clone()));
+    let response = app
+        .oneshot(
+            Request::post(format!("/api/v1/projects/{project_id}/pipelines"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"git_ref":"main"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response_json(response).await;
+    let pipeline_id = Uuid::parse_str(body["pipeline"]["id"].as_str().unwrap()).unwrap();
+
+    let plan = &body["plan"];
+    assert_eq!(plan["config_source"], "repository");
+    assert_eq!(plan["parser_version"], "forge-dsl/1.0.0");
+    assert_eq!(plan["git_ref"], "main");
+    assert_eq!(plan["resolved_commit_sha"].as_str().unwrap().len(), 40);
+    assert_eq!(plan["plan"]["format"], "v1-dag");
+    assert_eq!(plan["plan"]["version"], 1);
+    assert_eq!(plan["plan"]["jobs"].as_array().unwrap().len(), 3);
+    assert_eq!(plan["plan"]["dependencies"].as_array().unwrap().len(), 2);
+    assert_eq!(plan["plan"]["dependencies"][0]["from"], "build");
+    assert_eq!(plan["plan"]["dependencies"][0]["to"], "test");
+    assert_eq!(plan["plan"]["dependencies"][1]["from"], "lint");
+    assert_eq!(plan["plan"]["dependencies"][1]["to"], "test");
+    assert_eq!(plan["plan_sha256"].as_str().unwrap().len(), 64);
+    assert_eq!(plan["config_sha256"].as_str().unwrap().len(), 64);
+
+    let stages = body["stages"].as_array().unwrap();
+    assert_eq!(stages.len(), 2);
+    assert_eq!(stages[0]["name"], "dag-0");
+    assert_eq!(stages[1]["name"], "dag-1");
+    assert_eq!(
+        stages[0]["jobs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|job| job["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["build", "lint"]
+    );
+    assert_eq!(stages[1]["jobs"][0]["name"], "test");
+
+    let persisted_jobs = sqlx::query_as::<_, (String, Option<i32>, bool, String)>(
+        "SELECT j.name, j.timeout_seconds, j.allow_failure, j.command \
+         FROM jobs j JOIN stages s ON s.id = j.stage_id \
+         WHERE s.pipeline_id = $1 ORDER BY s.position, j.position",
+    )
+    .bind(pipeline_id)
+    .fetch_all(&pool)
+    .await
+    .expect("select persisted v1 jobs");
+    assert_eq!(persisted_jobs[0].0, "build");
+    assert_eq!(persisted_jobs[0].1, None);
+    assert!(!persisted_jobs[0].2);
+    assert_eq!(persisted_jobs[1].0, "lint");
+    assert!(persisted_jobs[1].2);
+    assert_eq!(persisted_jobs[2].0, "test");
+    assert_eq!(persisted_jobs[2].1, Some(2700));
+    assert_eq!(
+        persisted_jobs[2].3,
+        "set -e\ncargo test\ncargo clippy --all-targets"
+    );
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup v1 project");
+    let _ = tokio::fs::remove_dir_all(&root).await;
+}
+
+async fn run_git(args: &[&str], path_arg: Option<&std::path::Path>) {
+    let mut command = tokio::process::Command::new("git");
+    command.args(args);
+    if let Some(path) = path_arg {
+        command.arg(path);
+    }
+    let output = command.output().await.expect("run git command");
+    assert!(
+        output.status.success(),
+        "git {:?} failed: {}{}",
+        args,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
 async fn artifact_download_rejects_storage_paths_outside_artifact_root() {
     let pool = test_pool().await;
     let project_id = Uuid::new_v4();

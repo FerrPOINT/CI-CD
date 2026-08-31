@@ -211,13 +211,13 @@ Referenced by:
 
 ## 2.2 pipeline_plans
 
-Неизменяемый snapshot execution plan для созданного pipeline. Текущий MVP сохраняет normalised `legacy-linear` plan из current `stages/jobs` DSL или из fallback `legacy_template`; full v1 `jobs.needs` DAG, policy snapshot и parser diagnostics остаются target.
+Неизменяемый snapshot execution plan для созданного pipeline. Текущий MVP сохраняет normalised `legacy-linear` plan из compatibility `stages/jobs` DSL или fallback `legacy_template`, а также `v1-dag` plan из `.forge-ci.yml` с `version: 1`, top-level `jobs`, `commands` и `needs`. V1 DAG пока проецируется в runtime-стадии `dag-*`; policy snapshot, line/column parser diagnostics, triggers и job-level dispatcher остаются target.
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
 | `pipeline_id` | UUID | NOT NULL | — | Primary key и FK → `pipelines.id`, CASCADE |
 | `config_source` | TEXT | NOT NULL | — | `repository` или `legacy_template` |
-| `parser_version` | TEXT | NOT NULL | — | Current `forge-legacy-linear/1` |
+| `parser_version` | TEXT | NOT NULL | — | Current `forge-legacy-linear/1` или `forge-dsl/1.0.0` |
 | `git_ref` | TEXT | NOT NULL | — | Исходный ref trigger-а |
 | `resolved_commit_sha` | TEXT | NULL | — | Best-effort immutable commit SHA, если ref удалось разрешить |
 | `config_sha256` | TEXT | NOT NULL | — | SHA-256 raw `.forge-ci.yml` или fallback template YAML |
@@ -517,7 +517,7 @@ Foreign-key constraints:
 | 1 | `test` | `unit-tests` | `rust:1.86` | `cargo test` |
 | 2 | `deploy` | `deploy` | `alpine:3.21` | `echo deploy` |
 
-Все задачи создаются в статусе `queued`; `timeout_seconds`, `allow_failure` и `manual` берутся из YAML, если заданы. Одновременно создаётся `pipeline_plans` snapshot с raw config, `config_sha256`, normalised `legacy-linear` JSON plan и `plan_sha256`.
+Все задачи создаются в статусе `queued`; `timeout_seconds`, `allow_failure` и `manual` берутся из YAML, если заданы. Одновременно создаётся `pipeline_plans` snapshot с raw config, `config_sha256`, normalised JSON plan (`legacy-linear` или `v1-dag`) и `plan_sha256`.
 
 ---
 

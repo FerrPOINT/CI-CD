@@ -9,8 +9,8 @@
 |---|---|---|
 | Проекты CRUD | ✅ | name/repository_url/default_branch; удаление CASCADE |
 | Git hosting (bare + Smart HTTP) | ✅ | public/private fetch ACL, optional token-protected push, code tree/blob, tags/releases; push → post-receive(old/new SHA) → idempotent pipeline per pushed object |
-| Pipeline/стадии/джобы | ✅ | `.forge-ci.yml` (stages/jobs/image/command) или fallback-шаблон; trigger пытается читать config по resolved commit SHA; ручной trigger поддерживает `Idempotency-Key`; отмена/повтор в текущей job-модели |
-| Pipeline plan snapshot | ✅ MVP | `pipeline_plans` хранит immutable `legacy-linear` snapshot: raw config/fallback template, `config_sha256`, parser version, normalised plan JSON, `plan_sha256` и dependency edges между стадиями; full v1 `jobs.needs` DAG/policy diagnostics остаётся target |
+| Pipeline/стадии/джобы | ✅ | `.forge-ci.yml` legacy `stages/jobs/image/command` или v1 `version: 1` + top-level `jobs.commands/needs`; fallback-шаблон при отсутствии config; trigger пытается читать config по resolved commit SHA; ручной trigger поддерживает `Idempotency-Key`; отмена/повтор в текущей job-модели |
+| Pipeline plan snapshot | ✅ MVP | `pipeline_plans` хранит immutable snapshot: raw config/fallback template, `config_sha256`, parser version, normalised plan JSON, `plan_sha256` и dependency edges. Current форматы: `legacy-linear` (`forge-legacy-linear/1`) и `v1-dag` (`forge-dsl/1.0.0`); v1 DAG исполняется через топологические `dag-*` стадии, а policy diagnostics/job-level dispatcher остаются target |
 | Embedded runner | ✅ | Docker (`forge-job-<id>`) или host shell; lease-aware claim, стриминг stdout → attempt-owned `job_logs`; cancel через PID-map |
 | Execution attempts | ✅ MVP | `execution_attempts` создаются для каждой job; retry job/pipeline создаёт новую attempt и не удаляет старые логи |
 | Job leases | ✅ MVP | embedded runner создаёт active `job_leases` при claim, закрывает lease при terminal result/cancel и reconciler переводит expired/missing lease в failed; внешний runner protocol/ack/renew/fencing ещё target |
@@ -38,7 +38,7 @@
 
 ## Не реализовано (Target approved — см. ADR + contracts)
 
-External runner protocol/dispatch (отдельный runner process, registration token, poll/ack/renew API, fencing на mutating endpoints; ADR-0007), full v1 pipeline DAG (`version`, top-level `jobs`, `needs`, policy diagnostics), general idempotency storage for all retryable mutations, command spans/stream classification для диагностических логов, artifact retention/object storage, off-site/PITR backup platform и verified restore drill, external notification channel adapters (email/Slack), inbound provider webhook handlers, tenant isolation, service-account tokens, scoped Git credentials, production cookie/CSRF/session-family policy, schedule IANA timezone/DST/misfire и multi-replica leases, outbox lease/fencing/crash recovery, full dead-letter operator policy/metrics и distributed/proxy rate limiting (сейчас in-process окно по forwarded client key).
+External runner protocol/dispatch (отдельный runner process, registration token, poll/ack/renew API, fencing на mutating endpoints; ADR-0007), policy-aware pipeline planner поверх v1 DAG (`on`, tags/retry/artifacts/secrets, line/column diagnostics, job-level dispatcher), general idempotency storage for all retryable mutations, command spans/stream classification для диагностических логов, artifact retention/object storage, off-site/PITR backup platform и verified restore drill, external notification channel adapters (email/Slack), inbound provider webhook handlers, tenant isolation, service-account tokens, scoped Git credentials, production cookie/CSRF/session-family policy, schedule IANA timezone/DST/misfire и multi-replica leases, outbox lease/fencing/crash recovery, full dead-letter operator policy/metrics и distributed/proxy rate limiting (сейчас in-process окно по forwarded client key).
 
 ## Текущее runtime-дерево backend
 

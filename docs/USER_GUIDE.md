@@ -116,7 +116,7 @@ git push -u origin main
 git clone http://any-user:<TOKEN>@<host>/git/my-service.git
 ```
 
-Pipeline читает `.forge-ci.yml`, если он доступен в локальном bare repository; иначе используется шаблон build/test/deploy. Поддерживаемая сейчас форма - `stages` с jobs, `image`, одиночным `command`, а также basic `timeout_seconds`, `allow_failure` и `manual`. Полный DSL v1 с `version`, DAG, `on`, scoped secrets и declared artifacts - **Target approved**, см. `docs/contracts/PIPELINE_DSL.md`.
+Pipeline читает `.forge-ci.yml`, если он доступен в локальном bare repository; иначе используется шаблон build/test/deploy. Поддерживаются две формы: legacy `stages` с jobs, `image`, одиночным `command`, basic `timeout`, `allow_failure` и `manual`; а также v1 DAG MVP с `version: 1`, top-level `jobs`, `commands`, `needs`, defaults `image/timeout` и `allow_failure`. Ключи `on`, tags/retry, scoped secrets и declared artifacts остаются **Target approved**, см. `docs/contracts/PIPELINE_DSL.md`.
 
 ```yaml
 stages:
@@ -143,7 +143,7 @@ stages:
 3. Следите за статусом: `queued`, `running`, `success`, `failed`, `canceled`.
 4. При необходимости отмените pipeline; повторите весь pipeline или отдельную terminal job доступной кнопкой **Retry**.
 
-Детали pipeline также показывают **План запуска**: источник config (`repository` или `legacy_template`), parser version, resolved commit SHA, количество dependency edges и SHA-256 для raw config/normalised plan. Это evidence текущего запуска; full v1 DAG с `jobs.needs`, policy snapshot и parser diagnostics остаётся target.
+Детали pipeline также показывают **План запуска**: источник config (`repository` или `legacy_template`), parser version, resolved commit SHA, количество dependency edges и SHA-256 для raw config/normalised plan. Для v1 plan snapshot хранит `jobs.needs` и dependency edges, но current runner исполняет их через топологические стадии `dag-*`; policy snapshot, line/column parser diagnostics и job-level dispatcher остаются target.
 
 Embedded runner каждые две секунды выбирает доступные queued jobs, выполняет их последовательно по stages, пишет stdout/stderr в append-only log текущей `execution_attempt` и устанавливает результат по exit code. Статусы stage и pipeline агрегируются автоматически. Retry pipeline или отдельной terminal job создаёт новую attempt и сохраняет логи предыдущих attempts. Для диагностики можно вручную менять статус job через UI, API или CLI, но это не заменяет фактическое выполнение.
 

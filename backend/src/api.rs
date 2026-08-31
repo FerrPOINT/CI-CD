@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -43,7 +43,8 @@ pub struct AppState {
 type ApiResult<T> = Result<Json<T>, ApiError>;
 const IDEMPOTENCY_KEY_HEADER: &str = "idempotency-key";
 const READINESS_TIMEOUT: Duration = Duration::from_secs(2);
-const PIPELINE_PLAN_PARSER_VERSION: &str = "forge-legacy-linear/1";
+const LEGACY_PIPELINE_PLAN_PARSER_VERSION: &str = "forge-legacy-linear/1";
+const V1_PIPELINE_PLAN_PARSER_VERSION: &str = "forge-dsl/1.0.0";
 const LEGACY_TEMPLATE_CONFIG: &str = r#"stages:
   - name: build
     jobs:
@@ -1845,13 +1846,13 @@ pub(crate) async fn create_pipeline_with_vars_idempotent(
         Some(raw_config) => ("repository", raw_config),
         None => ("legacy_template", LEGACY_TEMPLATE_CONFIG.to_string()),
     };
-    let stages = parse_forge_ci(Some(&raw_config)).map_err(ApiError::bad_request)?;
+    let parsed_config = parse_pipeline_config(Some(&raw_config)).map_err(ApiError::bad_request)?;
     let plan_snapshot = build_pipeline_plan_snapshot(
         &git_ref,
         commit_sha.as_deref(),
         config_source,
         raw_config,
-        &stages,
+        &parsed_config,
     );
     let fingerprint = pipeline_trigger_fingerprint(&git_ref, &variables);
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
@@ -1925,7 +1926,7 @@ pub(crate) async fn create_pipeline_with_vars_idempotent(
     .execute(&mut *tx)
     .await
     .map_err(ApiError::internal)?;
-    for (position, stage) in stages.iter().enumerate() {
+    for (position, stage) in parsed_config.stages.iter().enumerate() {
         let stage_id = Uuid::new_v4();
         sqlx::query("INSERT INTO stages (id, pipeline_id, name, position, status) VALUES ($1, $2, $3, $4, 'queued')")
             .bind(stage_id).bind(pipeline.id).bind(&stage.name).bind(position as i32).execute(&mut *tx).await.map_err(ApiError::internal)?;
@@ -1992,6 +1993,27 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 #[derive(Debug)]
+struct ParsedPipelineConfig {
+    stages: Vec<CiStage>,
+    plan: ParsedPipelinePlan,
+}
+
+#[derive(Debug)]
+enum ParsedPipelinePlan {
+    Legacy,
+    V1(V1PlanData),
+}
+
+impl ParsedPipelineConfig {
+    fn parser_version(&self) -> &'static str {
+        match self.plan {
+            ParsedPipelinePlan::Legacy => LEGACY_PIPELINE_PLAN_PARSER_VERSION,
+            ParsedPipelinePlan::V1(_) => V1_PIPELINE_PLAN_PARSER_VERSION,
+        }
+    }
+}
+
+#[derive(Debug)]
 struct PipelinePlanSnapshot {
     config_source: &'static str,
     parser_version: &'static str,
@@ -2036,10 +2058,42 @@ struct LegacyPlanJob {
     needs: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 struct LegacyPlanDependency {
     from: String,
     to: String,
+}
+
+#[derive(Debug)]
+struct V1PlanData {
+    jobs: Vec<V1PlanJob>,
+    dependencies: Vec<LegacyPlanDependency>,
+}
+
+#[derive(Debug, Serialize)]
+struct V1ExecutionPlan {
+    format: &'static str,
+    version: u8,
+    parser_version: &'static str,
+    config_source: &'static str,
+    git_ref: String,
+    resolved_commit_sha: Option<String>,
+    jobs: Vec<V1PlanJob>,
+    dependencies: Vec<LegacyPlanDependency>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct V1PlanJob {
+    key: String,
+    stage: String,
+    stage_position: i32,
+    position: i32,
+    image: String,
+    commands: Vec<String>,
+    command: String,
+    timeout_seconds: Option<i32>,
+    allow_failure: bool,
+    needs: Vec<String>,
 }
 
 fn build_pipeline_plan_snapshot(
@@ -2047,19 +2101,35 @@ fn build_pipeline_plan_snapshot(
     resolved_commit_sha: Option<&str>,
     config_source: &'static str,
     raw_config: String,
-    stages: &[CiStage],
+    parsed_config: &ParsedPipelineConfig,
 ) -> PipelinePlanSnapshot {
-    let plan = build_legacy_execution_plan(git_ref, resolved_commit_sha, config_source, stages);
-    let plan_bytes = serde_json::to_vec(&plan).expect("serialize legacy execution plan");
+    let parser_version = parsed_config.parser_version();
+    let plan = match &parsed_config.plan {
+        ParsedPipelinePlan::Legacy => serde_json::to_value(build_legacy_execution_plan(
+            git_ref,
+            resolved_commit_sha,
+            config_source,
+            &parsed_config.stages,
+        ))
+        .expect("serialize legacy execution plan"),
+        ParsedPipelinePlan::V1(v1_plan) => serde_json::to_value(build_v1_execution_plan(
+            git_ref,
+            resolved_commit_sha,
+            config_source,
+            v1_plan,
+        ))
+        .expect("serialize v1 execution plan"),
+    };
+    let plan_bytes = serde_json::to_vec(&plan).expect("serialize execution plan value");
     PipelinePlanSnapshot {
         config_source,
-        parser_version: PIPELINE_PLAN_PARSER_VERSION,
+        parser_version,
         git_ref: git_ref.to_string(),
         resolved_commit_sha: resolved_commit_sha.map(ToOwned::to_owned),
         config_sha256: sha256_hex(raw_config.as_bytes()),
         plan_sha256: sha256_hex(&plan_bytes),
         raw_config,
-        plan: serde_json::to_value(plan).expect("serialize legacy execution plan"),
+        plan,
     }
 }
 
@@ -2112,7 +2182,7 @@ fn build_legacy_execution_plan(
 
     LegacyExecutionPlan {
         format: "legacy-linear",
-        parser_version: PIPELINE_PLAN_PARSER_VERSION,
+        parser_version: LEGACY_PIPELINE_PLAN_PARSER_VERSION,
         config_source,
         git_ref: git_ref.to_string(),
         resolved_commit_sha: resolved_commit_sha.map(ToOwned::to_owned),
@@ -2121,12 +2191,30 @@ fn build_legacy_execution_plan(
     }
 }
 
-#[derive(Debug, Default)]
+fn build_v1_execution_plan(
+    git_ref: &str,
+    resolved_commit_sha: Option<&str>,
+    config_source: &'static str,
+    plan: &V1PlanData,
+) -> V1ExecutionPlan {
+    V1ExecutionPlan {
+        format: "v1-dag",
+        version: 1,
+        parser_version: V1_PIPELINE_PLAN_PARSER_VERSION,
+        config_source,
+        git_ref: git_ref.to_string(),
+        resolved_commit_sha: resolved_commit_sha.map(ToOwned::to_owned),
+        jobs: plan.jobs.clone(),
+        dependencies: plan.dependencies.clone(),
+    }
+}
+
+#[derive(Clone, Debug, Default)]
 struct CiStage {
     name: String,
     jobs: Vec<CiJob>,
 }
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct CiJob {
     name: String,
     image: String,
@@ -2195,7 +2283,38 @@ fn extract_repo_name_from_url(url: &str) -> Option<String> {
 ///         image: rust:1.86
 ///         command: cargo build --release
 /// ```
+#[cfg(test)]
 fn parse_forge_ci(raw: Option<&str>) -> Result<Vec<CiStage>, String> {
+    Ok(parse_pipeline_config(raw)?.stages)
+}
+
+fn parse_pipeline_config(raw: Option<&str>) -> Result<ParsedPipelineConfig, String> {
+    let Some(raw) = raw else {
+        return Ok(ParsedPipelineConfig {
+            stages: default_pipeline(),
+            plan: ParsedPipelinePlan::Legacy,
+        });
+    };
+    if raw.len() > 1024 * 1024 {
+        return Err(".forge-ci.yml must be no larger than 1 MiB".into());
+    }
+
+    let root: serde_yaml::Value =
+        serde_yaml::from_str(raw).map_err(|error| format!("invalid .forge-ci.yml: {error}"))?;
+    let has_version = match root {
+        serde_yaml::Value::Mapping(mapping) => {
+            mapping.contains_key(serde_yaml::Value::String("version".into()))
+        }
+        _ => return Err(".forge-ci.yml must be a YAML object".into()),
+    };
+    if has_version {
+        parse_v1_pipeline_config(raw)
+    } else {
+        parse_legacy_pipeline_config(raw)
+    }
+}
+
+fn parse_legacy_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
     #[derive(serde::Deserialize)]
     struct YamlJob {
         name: String,
@@ -2227,22 +2346,6 @@ fn parse_forge_ci(raw: Option<&str>) -> Result<Vec<CiStage>, String> {
         "alpine:3.21".into()
     }
 
-    fn parse_timeout(raw: Option<&str>) -> Option<i32> {
-        let raw = raw?.trim();
-        let (value, unit) =
-            raw.split_at(raw.find(|c: char| !c.is_ascii_digit()).unwrap_or(raw.len()));
-        let value: i32 = value.parse().ok()?;
-        match unit.trim() {
-            "s" | "sec" | "secs" | "" => Some(value),
-            "m" | "min" | "mins" => value.checked_mul(60),
-            "h" | "hour" | "hours" => value.checked_mul(3600),
-            _ => None,
-        }
-    }
-
-    let Some(raw) = raw else {
-        return Ok(default_pipeline());
-    };
     let parsed: YamlConfig =
         serde_yaml::from_str(raw).map_err(|error| format!("invalid .forge-ci.yml: {error}"))?;
     let mut stages: Vec<CiStage> = parsed
@@ -2267,7 +2370,336 @@ fn parse_forge_ci(raw: Option<&str>) -> Result<Vec<CiStage>, String> {
     // Drop stages without jobs (nothing to execute).
     stages.retain(|stage| !stage.jobs.is_empty());
     validate_ci_stages(&stages)?;
-    Ok(stages)
+    Ok(ParsedPipelineConfig {
+        stages,
+        plan: ParsedPipelinePlan::Legacy,
+    })
+}
+
+#[derive(Clone, Debug)]
+struct NormalizedV1Job {
+    key: String,
+    image: String,
+    commands: Vec<String>,
+    timeout_seconds: Option<i32>,
+    allow_failure: bool,
+    needs: Vec<String>,
+}
+
+fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct YamlV1Config {
+        version: u8,
+        #[serde(default)]
+        defaults: YamlV1Defaults,
+        jobs: BTreeMap<String, YamlV1Job>,
+    }
+
+    #[derive(Default, serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct YamlV1Defaults {
+        image: Option<String>,
+        timeout: Option<String>,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct YamlV1Job {
+        #[serde(default)]
+        needs: Vec<String>,
+        image: Option<String>,
+        commands: Vec<String>,
+        timeout: Option<String>,
+        #[serde(default)]
+        allow_failure: bool,
+    }
+
+    let parsed: YamlV1Config =
+        serde_yaml::from_str(raw).map_err(|error| format!("invalid .forge-ci.yml v1: {error}"))?;
+    if parsed.version != 1 {
+        return Err("unsupported .forge-ci.yml version; only version: 1 is supported".into());
+    }
+    if parsed.jobs.is_empty() {
+        return Err(".forge-ci.yml v1 must define at least one job".into());
+    }
+    if parsed.jobs.len() > 500 {
+        return Err(".forge-ci.yml v1 supports at most 500 jobs".into());
+    }
+
+    let default_image = parsed
+        .defaults
+        .image
+        .unwrap_or_else(|| "alpine:3.21".into());
+    if !is_safe_image_reference(&default_image) {
+        return Err(".forge-ci.yml v1 defaults.image must be a safe image reference".into());
+    }
+    let default_timeout = parse_v1_timeout("defaults.timeout", parsed.defaults.timeout.as_deref())?;
+
+    let mut jobs = BTreeMap::new();
+    let mut edge_count = 0usize;
+    for (key, job) in parsed.jobs {
+        if !is_valid_v1_job_key(&key) {
+            return Err(format!(
+                ".forge-ci.yml v1 job key '{key}' must match ^[a-zA-Z][a-zA-Z0-9_.-]{{0,62}}$"
+            ));
+        }
+        if job.commands.is_empty() || job.commands.len() > 64 {
+            return Err(format!(
+                ".forge-ci.yml v1 job '{key}' must define 1..64 commands"
+            ));
+        }
+        for command in &job.commands {
+            if command.trim().is_empty() || command.len() > 16 * 1024 || command.contains('\0') {
+                return Err(format!(
+                    ".forge-ci.yml v1 job '{key}' has an empty or oversized command"
+                ));
+            }
+        }
+
+        let image = job.image.unwrap_or_else(|| default_image.clone());
+        if !is_safe_image_reference(&image) {
+            return Err(format!(
+                ".forge-ci.yml v1 job '{key}' image must be a safe image reference"
+            ));
+        }
+        let timeout_seconds = match job.timeout.as_deref() {
+            Some(raw) => parse_v1_timeout(&format!("jobs.{key}.timeout"), Some(raw))?,
+            None => default_timeout,
+        };
+
+        if job.needs.len() > 64 {
+            return Err(format!(
+                ".forge-ci.yml v1 job '{key}' can depend on at most 64 jobs"
+            ));
+        }
+        let mut unique_needs = BTreeSet::new();
+        let mut needs = Vec::with_capacity(job.needs.len());
+        for need in job.needs {
+            if !is_valid_v1_job_key(&need) {
+                return Err(format!(
+                    ".forge-ci.yml v1 job '{key}' has invalid need key '{need}'"
+                ));
+            }
+            if !unique_needs.insert(need.clone()) {
+                return Err(format!(
+                    ".forge-ci.yml v1 job '{key}' lists dependency '{need}' more than once"
+                ));
+            }
+            needs.push(need);
+        }
+        needs.sort();
+        edge_count += needs.len();
+        if edge_count > 10_000 {
+            return Err(".forge-ci.yml v1 supports at most 10000 DAG edges".into());
+        }
+
+        jobs.insert(
+            key.clone(),
+            NormalizedV1Job {
+                key,
+                image,
+                commands: job.commands,
+                timeout_seconds,
+                allow_failure: job.allow_failure,
+                needs,
+            },
+        );
+    }
+
+    for job in jobs.values() {
+        for need in &job.needs {
+            if need == &job.key {
+                return Err(format!(
+                    ".forge-ci.yml v1 job '{}' cannot depend on itself",
+                    job.key
+                ));
+            }
+            if !jobs.contains_key(need) {
+                return Err(format!(
+                    ".forge-ci.yml v1 job '{}' depends on missing job '{need}'",
+                    job.key
+                ));
+            }
+        }
+    }
+
+    let levels = compute_v1_job_levels(&jobs)?;
+    let mut grouped: BTreeMap<i32, Vec<NormalizedV1Job>> = BTreeMap::new();
+    for (key, job) in jobs {
+        let level = *levels
+            .get(&key)
+            .expect("every v1 job must have a computed topological level");
+        grouped.entry(level).or_default().push(job);
+    }
+
+    let mut stages = Vec::with_capacity(grouped.len());
+    let mut plan_jobs = Vec::new();
+    for (stage_position, jobs) in grouped.into_values().enumerate() {
+        let stage_position = stage_position as i32;
+        let stage_name = format!("dag-{stage_position}");
+        let mut ci_jobs = Vec::with_capacity(jobs.len());
+        for (job_position, job) in jobs.into_iter().enumerate() {
+            let job_position = job_position as i32;
+            let command = v1_runtime_command(&job.commands);
+            ci_jobs.push(CiJob {
+                name: job.key.clone(),
+                image: job.image.clone(),
+                command: command.clone(),
+                timeout_seconds: job.timeout_seconds,
+                allow_failure: job.allow_failure,
+                manual: false,
+            });
+            plan_jobs.push(V1PlanJob {
+                key: job.key,
+                stage: stage_name.clone(),
+                stage_position,
+                position: job_position,
+                image: job.image,
+                commands: job.commands,
+                command,
+                timeout_seconds: job.timeout_seconds,
+                allow_failure: job.allow_failure,
+                needs: job.needs,
+            });
+        }
+        stages.push(CiStage {
+            name: stage_name,
+            jobs: ci_jobs,
+        });
+    }
+    validate_ci_stages(&stages)?;
+
+    let mut dependencies = Vec::with_capacity(edge_count);
+    for job in &plan_jobs {
+        for need in &job.needs {
+            dependencies.push(LegacyPlanDependency {
+                from: need.clone(),
+                to: job.key.clone(),
+            });
+        }
+    }
+
+    Ok(ParsedPipelineConfig {
+        stages,
+        plan: ParsedPipelinePlan::V1(V1PlanData {
+            jobs: plan_jobs,
+            dependencies,
+        }),
+    })
+}
+
+fn v1_runtime_command(commands: &[String]) -> String {
+    format!("set -e\n{}", commands.join("\n"))
+}
+
+fn compute_v1_job_levels(
+    jobs: &BTreeMap<String, NormalizedV1Job>,
+) -> Result<BTreeMap<String, i32>, String> {
+    fn visit(
+        key: &str,
+        jobs: &BTreeMap<String, NormalizedV1Job>,
+        levels: &mut BTreeMap<String, i32>,
+        visiting: &mut BTreeSet<String>,
+    ) -> Result<i32, String> {
+        if let Some(level) = levels.get(key) {
+            return Ok(*level);
+        }
+        if !visiting.insert(key.to_string()) {
+            return Err(format!(
+                ".forge-ci.yml v1 jobs.needs contains a dependency cycle at '{key}'"
+            ));
+        }
+        let job = jobs
+            .get(key)
+            .ok_or_else(|| format!(".forge-ci.yml v1 references missing job '{key}'"))?;
+        let mut level = 0;
+        for need in &job.needs {
+            level = level.max(visit(need, jobs, levels, visiting)? + 1);
+        }
+        visiting.remove(key);
+        levels.insert(key.to_string(), level);
+        Ok(level)
+    }
+
+    let mut levels = BTreeMap::new();
+    let mut visiting = BTreeSet::new();
+    for key in jobs.keys() {
+        visit(key, jobs, &mut levels, &mut visiting)?;
+    }
+    Ok(levels)
+}
+
+fn parse_timeout(raw: Option<&str>) -> Option<i32> {
+    let raw = raw?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let (value, unit) = raw.split_at(raw.find(|c: char| !c.is_ascii_digit()).unwrap_or(raw.len()));
+    let value: i32 = value.parse().ok()?;
+    match unit.trim() {
+        "s" | "sec" | "secs" | "" => Some(value),
+        "m" | "min" | "mins" => value.checked_mul(60),
+        "h" | "hour" | "hours" => value.checked_mul(3600),
+        _ => None,
+    }
+}
+
+fn parse_v1_timeout(field: &str, raw: Option<&str>) -> Result<Option<i32>, String> {
+    let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let digit_count = raw
+        .char_indices()
+        .find(|(_, character)| !character.is_ascii_digit())
+        .map(|(index, _)| index)
+        .unwrap_or(raw.len());
+    if digit_count == 0 || digit_count == raw.len() {
+        return Err(format!(
+            ".forge-ci.yml v1 {field} must use a positive duration with unit s, m, h, or d"
+        ));
+    }
+    let value: i32 = raw[..digit_count]
+        .parse()
+        .map_err(|_| format!(".forge-ci.yml v1 {field} duration is too large"))?;
+    if value <= 0 {
+        return Err(format!(
+            ".forge-ci.yml v1 {field} must use a positive duration"
+        ));
+    }
+    let seconds = match &raw[digit_count..] {
+        "s" => value,
+        "m" => value
+            .checked_mul(60)
+            .ok_or_else(|| format!(".forge-ci.yml v1 {field} duration is too large"))?,
+        "h" => value
+            .checked_mul(3600)
+            .ok_or_else(|| format!(".forge-ci.yml v1 {field} duration is too large"))?,
+        "d" => value
+            .checked_mul(86_400)
+            .ok_or_else(|| format!(".forge-ci.yml v1 {field} duration is too large"))?,
+        _ => {
+            return Err(format!(
+                ".forge-ci.yml v1 {field} must use duration unit s, m, h, or d"
+            ));
+        }
+    };
+    if seconds > 86_400 {
+        return Err(format!(".forge-ci.yml v1 {field} must not exceed 24h"));
+    }
+    Ok(Some(seconds))
+}
+
+fn is_valid_v1_job_key(key: &str) -> bool {
+    let mut chars = key.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    key.len() <= 63
+        && first.is_ascii_alphabetic()
+        && chars.all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '_' | '.' | '-')
+        })
 }
 
 fn default_pipeline() -> Vec<CiStage> {
@@ -3035,21 +3467,137 @@ stages:
     }
 
     #[test]
+    fn parses_v1_dag_into_topological_stages() {
+        let parsed = parse_pipeline_config(Some(
+            r#"
+version: 1
+defaults:
+  image: alpine:3.21
+  timeout: 20m
+jobs:
+  build:
+    commands:
+      - cargo build --release
+  lint:
+    commands:
+      - cargo fmt --check
+    allow_failure: true
+  test:
+    needs: [build, lint]
+    image: rust:1.86
+    timeout: 45m
+    commands:
+      - cargo test
+      - cargo clippy --all-targets
+"#,
+        ))
+        .expect("valid v1 configuration");
+
+        assert_eq!(parsed.parser_version(), "forge-dsl/1.0.0");
+        assert_eq!(
+            parsed
+                .stages
+                .iter()
+                .map(|stage| stage.name.as_str())
+                .collect::<Vec<_>>(),
+            ["dag-0", "dag-1"]
+        );
+        assert_eq!(
+            parsed.stages[0]
+                .jobs
+                .iter()
+                .map(|job| job.name.as_str())
+                .collect::<Vec<_>>(),
+            ["build", "lint"]
+        );
+        assert_eq!(parsed.stages[0].jobs[0].timeout_seconds, Some(1200));
+        assert!(parsed.stages[0].jobs[1].allow_failure);
+        assert_eq!(parsed.stages[1].jobs[0].name, "test");
+        assert_eq!(parsed.stages[1].jobs[0].image, "rust:1.86");
+        assert_eq!(parsed.stages[1].jobs[0].timeout_seconds, Some(2700));
+        assert_eq!(
+            parsed.stages[1].jobs[0].command,
+            "set -e\ncargo test\ncargo clippy --all-targets"
+        );
+    }
+
+    #[test]
+    fn v1_pipeline_plan_is_deterministic_and_records_needs() {
+        let raw_config = r#"
+version: 1
+jobs:
+  package:
+    needs: [test]
+    commands: ["tar -cf app.tar target/release/app"]
+  build:
+    commands: ["cargo build --release"]
+  test:
+    needs: [build]
+    commands: ["cargo test"]
+"#;
+        let parsed = parse_pipeline_config(Some(raw_config)).expect("valid v1");
+        let first = build_pipeline_plan_snapshot(
+            "main",
+            Some("abc123"),
+            "repository",
+            raw_config.into(),
+            &parsed,
+        );
+        let second = build_pipeline_plan_snapshot(
+            "main",
+            Some("abc123"),
+            "repository",
+            raw_config.into(),
+            &parsed,
+        );
+
+        assert_eq!(first.parser_version, "forge-dsl/1.0.0");
+        assert_eq!(first.plan_sha256, second.plan_sha256);
+        assert_eq!(first.config_sha256, second.config_sha256);
+        assert_eq!(first.plan["format"], "v1-dag");
+        assert_eq!(first.plan["version"], 1);
+        assert_eq!(first.plan["jobs"].as_array().unwrap().len(), 3);
+        assert_eq!(first.plan["dependencies"].as_array().unwrap().len(), 2);
+        assert_eq!(first.plan["dependencies"][0]["from"], "build");
+        assert_eq!(first.plan["dependencies"][0]["to"], "test");
+        assert_eq!(first.plan["dependencies"][1]["from"], "test");
+        assert_eq!(first.plan["dependencies"][1]["to"], "package");
+    }
+
+    #[test]
+    fn rejects_invalid_v1_dag_configuration() {
+        for source in [
+            "version: 1\njobs: {}\n",
+            "version: 2\njobs:\n  build:\n    commands: [echo build]\n",
+            "version: 1\njobs:\n  build:\n    needs: [missing]\n    commands: [echo build]\n",
+            "version: 1\njobs:\n  build:\n    needs: [test]\n    commands: [echo build]\n  test:\n    needs: [build]\n    commands: [echo test]\n",
+            "version: 1\njobs:\n  build:\n    commands: []\n",
+            "version: 1\njobs:\n  build:\n    timeout: 25h\n    commands: [echo build]\n",
+            "version: 1\njobs:\n  build:\n    artifacts:\n      paths: [target]\n    commands: [echo build]\n",
+        ] {
+            assert!(parse_pipeline_config(Some(source)).is_err(), "{source}");
+        }
+    }
+
+    #[test]
     fn legacy_pipeline_plan_is_deterministic_and_records_stage_edges() {
-        let stages = default_pipeline();
+        let parsed = ParsedPipelineConfig {
+            stages: default_pipeline(),
+            plan: ParsedPipelinePlan::Legacy,
+        };
         let first = build_pipeline_plan_snapshot(
             "main",
             Some("abc123"),
             "legacy_template",
             LEGACY_TEMPLATE_CONFIG.to_string(),
-            &stages,
+            &parsed,
         );
         let second = build_pipeline_plan_snapshot(
             "main",
             Some("abc123"),
             "legacy_template",
             LEGACY_TEMPLATE_CONFIG.to_string(),
-            &stages,
+            &parsed,
         );
 
         assert_eq!(first.plan_sha256, second.plan_sha256);

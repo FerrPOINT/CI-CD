@@ -148,7 +148,7 @@ flowchart TD
 - Tenant isolation, service-account tokens, scoped Git credentials and production cookie/CSRF/session-family policy remain target hardening.
 - TLS is not bundled, CORS is permissive by default, and in-process rate limiting is not a replacement for a reverse proxy or distributed limiter.
 - Embedded runner records job ownership in `job_leases` and reconciles expired leases, but a separate external runner process/protocol remains target hardening.
-- Pipeline trigger stores immutable `pipeline_plans` snapshots for current `legacy-linear` plans; full v1 DAG/policy planning remains target hardening.
+- Pipeline trigger stores immutable `pipeline_plans` snapshots for current `legacy-linear` and v1 `jobs.needs` DAG plans; policy diagnostics/job-level dispatch remain target hardening.
 - Schedules, outgoing webhooks and `in_app`/`sse` notifications work as MVP local delivery.
 - Outbox delivery history, attempt log and failed-delivery requeue are bounded MVP features; inbound provider webhooks, external notification adapters and crash-safe distributed delivery guarantees are not complete.
 
