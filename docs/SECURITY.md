@@ -2,14 +2,14 @@
 
 ## 1. Overview
 
-Forge CI/CD — self-hosted CI/CD control plane. Текущая версия остаётся MVP и не является production-safe: без непустого `CICD_AUTH_SECRET` backend работает в trusted-network режиме, а при включённом секрете enforcement ограничен глобальными ролями без project membership/tenant isolation. Безопасность встроена на уровне SQL-запросов, валидации ввода, секретов at rest, условного auth middleware и audit.
+Forge CI/CD — self-hosted CI/CD control plane. Текущая версия остаётся MVP и не является production-safe: без непустого `CICD_AUTH_SECRET` backend работает в trusted-network режиме; при включённом секрете уже применяются route roles и project memberships, но tenant isolation, scoped PAT и production session/logout policy остаются target. Безопасность встроена на уровне SQL-запросов, валидации ввода, секретов at rest, условного auth middleware и audit.
 
 ## 2. Текущий статус
 
 | Механизм | Статус | Описание |
 |----------|--------|----------|
 | Auth (login/JWT) | ✅ conditional | Включается при непустом `CICD_AUTH_SECRET`; без него API остаётся open trusted-network |
-| RBAC | ✅ MVP | Глобальные роли `admin`/`maintainer`/`developer`/`viewer`; project membership и tenant scope — target |
+| RBAC | ✅ MVP | Глобальные роли `admin`/`maintainer`/`developer`/`viewer` + `project_memberships`; tenant scope и scoped tokens — target |
 | Secrets management | ✅ MVP | AES-256-GCM at rest, `CICD_SECRETS_KEY`; env injection в embedded runner + masking stdout |
 | API tokens | ✅ conditional | PAT `cicd_...` проверяется middleware при непустом `CICD_AUTH_SECRET`; legacy SHA-256 hash без target scopes/pepper |
 | Users & roles | ✅ MVP | Users, argon2id credentials, sessions, enabled flag |
@@ -52,16 +52,16 @@ POST /api/v1/auth/logout    — target: выход, отзыв refresh
 
 ### 4.1 RBAC
 
-Current middleware проверяет `Authorization: Bearer ...` при непустом `CICD_AUTH_SECRET`. Если секрет не задан или пустой, запросы пропускаются без principal. Роли пока глобальные:
+Current middleware проверяет `Authorization: Bearer ...` при непустом `CICD_AUTH_SECRET`. Если секрет не задан или пустой, запросы пропускаются без principal. Глобальная роль задаёт максимум прав:
 
 | Role | Permissions |
 |------|-------------|
 | `admin` | users/tokens и все mutation routes |
-| `maintainer` | управление проектами, pipelines, platform resources |
+| `maintainer` | управление проектами, pipelines, platform resources в рамках project membership |
 | `developer` | запуск/повтор jobs/pipelines и чтение ресурсов |
 | `viewer` | только чтение большинства API |
 
-- Project membership, tenant boundary, scoped PAT, repository-level permissions и policy checks — **Target approved**.
+- Project-owned routes дополнительно требуют `project_memberships`; `admin` имеет instance-wide bypass. Tenant boundary, scoped PAT, repository-level permissions и Git policy checks — **Target approved**.
 - `/git/*` использует отдельный `CICD_GIT_TOKEN` и не опирается на JWT/PAT.
 
 ### 4.2 Middleware
@@ -72,7 +72,7 @@ async fn require_auth(req: Request, next: Next) -> Result<Response, ApiError> {
     if !crate::auth::is_configured() {
         return Ok(next.run(req).await); // trusted-network mode
     }
-    // verify JWT/PAT, enabled user and route role policy
+    // verify JWT/PAT, enabled user, route role policy and project membership
 }
 ```
 

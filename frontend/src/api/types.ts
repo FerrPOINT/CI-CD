@@ -249,6 +249,7 @@ export interface AuditEvent {
 }
 
 export type UserRole = 'admin' | 'maintainer' | 'developer' | 'viewer'
+export type ProjectRole = 'maintainer' | 'developer' | 'viewer'
 
 export interface User {
   id: string
@@ -270,3 +271,5 @@ export interface ApiToken {
 export interface CreatedApiToken extends ApiToken {
   value: string
 }
+
+export type ProjectMembership = components['schemas']['ProjectMembership']

@@ -123,6 +123,87 @@ async fn auth_tables_and_sessions_work() {
 }
 
 #[tokio::test]
+async fn project_memberships_enforce_project_roles_and_cascade() {
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let maintainer_id = Uuid::new_v4();
+    let viewer_id = Uuid::new_v4();
+    let project_name = format!("it-rbac-{}", project_id.simple());
+    let maintainer_name = format!("it-maintainer-{}", maintainer_id.simple());
+    let viewer_name = format!("it-viewer-{}", viewer_id.simple());
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/repo.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO users (id, username, role) VALUES \
+         ($1, $2, 'maintainer'), ($3, $4, 'viewer')",
+    )
+    .bind(maintainer_id)
+    .bind(&maintainer_name)
+    .bind(viewer_id)
+    .bind(&viewer_name)
+    .execute(&pool)
+    .await
+    .expect("insert users");
+
+    sqlx::query(
+        "INSERT INTO project_memberships (project_id, user_id, role) VALUES \
+         ($1, $2, 'maintainer'), ($1, $3, 'viewer')",
+    )
+    .bind(project_id)
+    .bind(maintainer_id)
+    .bind(viewer_id)
+    .execute(&pool)
+    .await
+    .expect("insert memberships");
+
+    let invalid_role = sqlx::query(
+        "INSERT INTO project_memberships (project_id, user_id, role) VALUES ($1, $2, 'admin')",
+    )
+    .bind(project_id)
+    .bind(maintainer_id)
+    .execute(&pool)
+    .await;
+    assert!(invalid_role.is_err(), "admin is not a project role");
+
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(viewer_id)
+        .execute(&pool)
+        .await
+        .expect("delete viewer");
+    let viewer_memberships: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM project_memberships WHERE user_id = $1")
+            .bind(viewer_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count viewer memberships");
+    assert_eq!(viewer_memberships, 0);
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("delete project");
+    let remaining_memberships: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM project_memberships WHERE project_id = $1")
+            .bind(project_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count project memberships");
+    assert_eq!(remaining_memberships, 0);
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(maintainer_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup maintainer");
+}
+
+#[tokio::test]
 async fn job_retry_preserves_attempt_logs_and_appends_to_new_attempt() {
     let pool = test_pool().await;
     let project_id = Uuid::new_v4();

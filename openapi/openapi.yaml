@@ -809,6 +809,82 @@ paths:
                 $ref: '#/components/schemas/Environment'
         '400':
           description: ''
+  /api/v1/projects/{project_id}/memberships:
+    get:
+      tags:
+      - memberships
+      operationId: list_project_memberships
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ProjectMembership'
+        '404':
+          description: ''
+    post:
+      tags:
+      - memberships
+      operationId: upsert_project_membership
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProjectMembershipInput'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectMembership'
+        '400':
+          description: ''
+        '404':
+          description: ''
+  /api/v1/projects/{project_id}/memberships/{user_id}:
+    delete:
+      tags:
+      - memberships
+      operationId: delete_project_membership
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+        '404':
+          description: ''
+        '409':
+          description: ''
   /api/v1/projects/{project_id}/notifications:
     get:
       tags:
@@ -2453,6 +2529,46 @@ components:
           type: string
         repository_url:
           type: string
+    ProjectMembership:
+      type: object
+      required:
+      - project_id
+      - user_id
+      - username
+      - user_enabled
+      - role
+      - created_at
+      - updated_at
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        project_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+        user_enabled:
+          type: boolean
+        user_id:
+          type: string
+          format: uuid
+        username:
+          type: string
+    ProjectMembershipInput:
+      type: object
+      required:
+      - user_id
+      - role
+      properties:
+        role:
+          type: string
+        user_id:
+          type: string
+          format: uuid
     PullRequest:
       type: object
       required:
@@ -2947,6 +3063,8 @@ tags:
   description: Login and token refresh
 - name: projects
   description: Project registry
+- name: memberships
+  description: Project-scoped user roles
 - name: pipelines
   description: Pipeline lifecycle
 - name: jobs

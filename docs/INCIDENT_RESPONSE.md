@@ -131,7 +131,7 @@ IC фиксирует UTC-время resolution, фактический impact, 
 5. Найти и удалить секрет из Git history, логов, artifacts, тикетов и кэшей по утверждённой процедуре; удаление не заменяет revocation.
 6. Проверить audit/log evidence на использование секрета, определить scope, уведомить владельца и зафиксировать rotation в postmortem.
 
-Current verified хранит project secrets шифрованными AES-256-GCM, инъецирует их в env embedded runner и маскирует stdout/stderr best-effort. Однако auth/RBAC условен (`CICD_AUTH_SECRET`), project membership/tenant isolation и target redaction/rotation ещё не завершены; shared deployment с текущим MVP не считается безопасной production-конфигурацией.
+Current verified хранит project secrets шифрованными AES-256-GCM, инъецирует их в env embedded runner, маскирует stdout/stderr best-effort и применяет project memberships при включённом `CICD_AUTH_SECRET`. Однако auth/RBAC остаётся условным, tenant isolation, scoped credentials и target redaction/rotation ещё не завершены; shared deployment с текущим MVP не считается безопасной production-конфигурацией.
 
 ### Компрометация runner-а
 

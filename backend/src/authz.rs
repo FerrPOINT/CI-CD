@@ -1,8 +1,8 @@
 //! Authorization policy layer (AUTHZ_CONTRACT §RBAC, route inventory).
 //!
-//! Roles: admin > maintainer > developer > viewer. Project membership is not
-//! modelled yet (Phase 1 = global roles); the policy table below is the single
-//! source of route-level truth used by the enforcement middleware.
+//! Roles: admin > maintainer > developer > viewer. The route policy table is
+//! the single source of coarse role truth; project-scoped resources are further
+//! checked against `project_memberships` by the API middleware.
 
 /// Coarse action classes derived from method + path shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +39,10 @@ impl Role {
             _ => None,
         }
     }
+
+    pub fn is_project_role(self) -> bool {
+        !matches!(self, Self::Admin)
+    }
 }
 
 /// Route policy table (AUTHZ_CONTRACT §6 inventory, condensed).
@@ -60,8 +64,17 @@ pub fn required_role(method: &str, path: &str) -> (Action, Role) {
             (Action::Admin, Role::Admin)
         };
     }
-    // Destructive operations on delivery metadata
-    if path.starts_with("/api/v1/secrets") && !read_only {
+    // Project membership is a project-maintainer operation.
+    if path.contains("/memberships") {
+        return if read_only {
+            (Action::Read, Role::Maintainer)
+        } else {
+            (Action::Admin, Role::Maintainer)
+        };
+    }
+    // Destructive operations on delivery secrets require maintainer+ whether
+    // the route is project-nested or uses a secret id.
+    if path.contains("/secrets") && !read_only {
         return (Action::Admin, Role::Maintainer);
     }
     // Everything else: reads for viewer+, writes for developer+.
@@ -100,5 +113,16 @@ mod tests {
         assert!(allows(Role::Maintainer, "POST", "/api/v1/secrets"));
         assert!(!allows(Role::Maintainer, "POST", "/api/v1/users"));
         assert!(allows(Role::Admin, "POST", "/api/v1/users"));
+    }
+
+    #[test]
+    fn project_secrets_and_memberships_require_maintainer() {
+        let project_path = "/api/v1/projects/018f3c59-38f6-7c2a-bc55-081eb78cbf17/secrets";
+        assert!(!allows(Role::Developer, "POST", project_path));
+        assert!(allows(Role::Maintainer, "POST", project_path));
+
+        let membership_path = "/api/v1/projects/018f3c59-38f6-7c2a-bc55-081eb78cbf17/memberships";
+        assert!(!allows(Role::Developer, "GET", membership_path));
+        assert!(allows(Role::Maintainer, "GET", membership_path));
     }
 }

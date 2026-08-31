@@ -7,8 +7,8 @@
 ```text
 frontend/src/
 ├── api/          # typed wrapper/hooks + generated OpenAPI DTO schema.d.ts
-├── app/          # router.tsx (20 маршрутов), providers
-├── pages/        # 19 рабочих страниц + login (feature-папки)
+├── app/          # router.tsx (21 маршрут), providers
+├── pages/        # 20 рабочих страниц + login (feature-папки)
 ├── shared/       # ui-kit (shadcn), i18n (ru/en), theme
 └── widgets/      # AppShell (sidebar/header/Outlet)
 ```
@@ -30,7 +30,7 @@ frontend/src/
 |---|---|---|
 | Core CI | Dashboard, Projects, Pipelines, Pipeline detail, Job logs, Artifacts | Запуск, наблюдение, диагностика и evidence выполнения. |
 | Source | Repositories, Repository browser, Compare, Pull requests, Pull request detail | Минимальная поддержка Git-потока, не полноценная замена code-review платформы. |
-| Execution & security | Runners, Secrets, Users, Audit log, Login | Исполнение, доступ, секреты и расследование действий. |
+| Execution & security | Runners, Secrets, Project members, Users, Audit log, Login | Исполнение, доступ, секреты и расследование действий. |
 | Delivery | Environments, Schedules, Webhooks, Reports | Метаданные доставки, automation config/outcomes и базовая отчётность. |
 | Support | Settings | Системный срез портов и `CICD_` переменных без отдельного административного дубля. |
 

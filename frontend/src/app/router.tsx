@@ -15,6 +15,7 @@ const SettingsPage = lazy(() => import('@/pages/settings').then(m => ({ default:
 const LoginPage = lazy(() => import('@/pages/login').then(m => ({ default: m.LoginPage })))
 const RunnersPage = lazy(() => import('@/pages/runners').then(m => ({ default: m.RunnersPage })))
 const SecretsPage = lazy(() => import('@/pages/secrets').then(m => ({ default: m.SecretsPage })))
+const ProjectMembersPage = lazy(() => import('@/pages/project-members').then(m => ({ default: m.ProjectMembersPage })))
 const ArtifactsPage = lazy(() => import('@/pages/artifacts').then(m => ({ default: m.ArtifactsPage })))
 const EnvironmentsPage = lazy(() => import('@/pages/environments').then(m => ({ default: m.EnvironmentsPage })))
 const SchedulesPage = lazy(() => import('@/pages/schedules').then(m => ({ default: m.SchedulesPage })))
@@ -45,6 +46,7 @@ export const router = createBrowserRouter([
       { path: '/settings', element: withSuspense(<SettingsPage />) },
       { path: '/runners', element: withSuspense(<RunnersPage />) },
       { path: '/projects/:projectId/secrets', element: withSuspense(<SecretsPage />) },
+      { path: '/projects/:projectId/members', element: withSuspense(<ProjectMembersPage />) },
       { path: '/jobs/:jobId/artifacts', element: withSuspense(<ArtifactsPage />) },
       { path: '/projects/:projectId/environments', element: withSuspense(<EnvironmentsPage />) },
       { path: '/projects/:projectId/schedules', element: withSuspense(<SchedulesPage />) },

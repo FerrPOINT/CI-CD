@@ -8,7 +8,6 @@ import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
 import { Play, ChevronRight, Clock } from 'lucide-react'
 import { toast } from 'sonner'
-import type { Status } from '@/api/types'
 
 const statusColors: Record<string, string> = {
   queued: 'text-text-muted',

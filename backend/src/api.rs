@@ -47,6 +47,7 @@ type ApiResult<T> = Result<Json<T>, ApiError>;
     paths(
         health, metrics, serve_openapi_json, auth_login, auth_refresh,
         list_projects, create_project, get_project, update_project, delete_project,
+        list_project_memberships, upsert_project_membership, delete_project_membership,
         trigger_pipeline, list_pipelines, get_pipeline, cancel_pipeline, retry_pipeline,
         change_job_status, retry_job, start_manual_job, list_job_attempts, list_attempt_logs,
         job_log_stream, list_logs, append_log,
@@ -76,7 +77,8 @@ type ApiResult<T> = Result<Json<T>, ApiError>;
     ),
     components(schemas(
         crate::auth::LoginRequest, crate::auth::TokenPair,
-        Project, CreateProject, UpdateProject, TriggerPipeline, Pipeline, Stage, Job,
+        Project, CreateProject, UpdateProject, ProjectMembership, ProjectMembershipInput,
+        TriggerPipeline, Pipeline, Stage, Job,
         PipelineDetail, StageDetail, JobAttempt, JobLog, ChangeStatus, AppendLog,
         CanceledPipelineResult, RetriedPipelineResult, ManualJobStartResult,
         Release, CreateRelease, TestReport,
@@ -101,6 +103,7 @@ type ApiResult<T> = Result<Json<T>, ApiError>;
         (name = "health", description = "Liveness/readiness"),
         (name = "auth", description = "Login and token refresh"),
         (name = "projects", description = "Project registry"),
+        (name = "memberships", description = "Project-scoped user roles"),
         (name = "pipelines", description = "Pipeline lifecycle"),
         (name = "jobs", description = "Jobs, logs and retries"),
         (name = "runners", description = "Runner registration and heartbeats"),
@@ -292,10 +295,10 @@ fn app_with(pool: Option<PgPool>, running: Option<crate::runner::RunningJobs>) -
     build_router(pool, crate::git_host::GitConfig::default(), running)
 }
 
-/// AUTHZ_CONTRACT Phase 1: when CICD_AUTH_SECRET is configured, every
-/// /api/v1 route except the public allowlist requires a valid Bearer JWT.
-/// Without the secret the API stays in trusted-network mode (open), matching
-/// CURRENT_STATE.
+/// AUTHZ_CONTRACT current mode: when CICD_AUTH_SECRET is configured, every
+/// /api/v1 route except the public allowlist requires a valid Bearer JWT/PAT
+/// and project-scoped resources require `project_memberships`. Without the
+/// secret the API stays in trusted-network mode (open), matching CURRENT_STATE.
 async fn request_id_mw(
     req: axum::extract::Request,
     next: axum::middleware::Next,
@@ -325,6 +328,7 @@ async fn require_auth(
         "/api/v1/openapi.json",
         "/api/v1/auth/login",
         "/api/v1/auth/refresh",
+        "/api/v1/internal/git-push",
         "/metrics",
     ];
     let path = req.uri().path();
@@ -346,7 +350,9 @@ async fn require_auth(
     let (mut parts, body) = req.into_parts();
     parts.extensions.insert(claims.clone());
     let req = axum::extract::Request::from_parts(parts, body);
-    if !crate::authz::allows(role, &method, &path) {
+    let allowed = crate::authz::allows(role, &method, &path)
+        && project_scope_allows(&state, claims.sub, role, &method, &path).await?;
+    if !allowed {
         if let Some(pool) = state.pool.as_ref() {
             let _ = audit(
                 pool,
@@ -360,6 +366,145 @@ async fn require_auth(
         return Err(ApiError::forbidden());
     }
     Ok(next.run(req).await)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProjectScopeRef {
+    Project(Uuid),
+    Pipeline(Uuid),
+    Job(Uuid),
+    Artifact(Uuid),
+    Secret(Uuid),
+    Environment(Uuid),
+    Schedule(Uuid),
+    Webhook(Uuid),
+}
+
+async fn project_scope_allows(
+    state: &AppState,
+    user_id: Uuid,
+    global_role: crate::authz::Role,
+    method: &str,
+    path: &str,
+) -> Result<bool, ApiError> {
+    if global_role == crate::authz::Role::Admin {
+        return Ok(true);
+    }
+    let Some(scope_ref) = project_scope_ref(path) else {
+        return Ok(true);
+    };
+    let Some(pool) = state.pool.as_ref() else {
+        return Err(ApiError::unavailable());
+    };
+    let Some(project_id) = project_id_for_scope_ref(pool, scope_ref).await? else {
+        return Ok(true);
+    };
+    let (_, min_role) = crate::authz::required_role(method, path);
+    let Some(project_role) = project_membership_role(pool, user_id, project_id).await? else {
+        return Ok(false);
+    };
+    Ok(project_role >= min_role)
+}
+
+fn project_scope_ref(path: &str) -> Option<ProjectScopeRef> {
+    let mut segments = path.trim_start_matches('/').split('/');
+    if segments.next()? != "api" || segments.next()? != "v1" {
+        return None;
+    }
+    let resource = segments.next()?;
+    let id = segments.next().and_then(|raw| Uuid::parse_str(raw).ok())?;
+    match resource {
+        "projects" => Some(ProjectScopeRef::Project(id)),
+        "pipelines" => Some(ProjectScopeRef::Pipeline(id)),
+        "jobs" => Some(ProjectScopeRef::Job(id)),
+        "artifacts" => Some(ProjectScopeRef::Artifact(id)),
+        "secrets" => Some(ProjectScopeRef::Secret(id)),
+        "environments" => Some(ProjectScopeRef::Environment(id)),
+        "schedules" => Some(ProjectScopeRef::Schedule(id)),
+        "webhooks" => Some(ProjectScopeRef::Webhook(id)),
+        _ => None,
+    }
+}
+
+async fn project_id_for_scope_ref(
+    pool: &PgPool,
+    scope_ref: ProjectScopeRef,
+) -> Result<Option<Uuid>, ApiError> {
+    match scope_ref {
+        ProjectScopeRef::Project(id) => Ok(Some(id)),
+        ProjectScopeRef::Pipeline(id) => {
+            sqlx::query_scalar("SELECT project_id FROM pipelines WHERE id = $1")
+                .bind(id)
+                .fetch_optional(pool)
+                .await
+                .map_err(ApiError::internal)
+        }
+        ProjectScopeRef::Job(id) => sqlx::query_scalar(
+            "SELECT p.project_id FROM jobs j \
+             JOIN stages s ON s.id = j.stage_id \
+             JOIN pipelines p ON p.id = s.pipeline_id \
+             WHERE j.id = $1",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(ApiError::internal),
+        ProjectScopeRef::Artifact(id) => sqlx::query_scalar(
+            "SELECT p.project_id FROM artifacts a \
+             JOIN jobs j ON j.id = a.job_id \
+             JOIN stages s ON s.id = j.stage_id \
+             JOIN pipelines p ON p.id = s.pipeline_id \
+             WHERE a.id = $1",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(ApiError::internal),
+        ProjectScopeRef::Secret(id) => {
+            sqlx::query_scalar("SELECT project_id FROM project_secrets WHERE id = $1")
+                .bind(id)
+                .fetch_optional(pool)
+                .await
+                .map_err(ApiError::internal)
+        }
+        ProjectScopeRef::Environment(id) => {
+            sqlx::query_scalar("SELECT project_id FROM environments WHERE id = $1")
+                .bind(id)
+                .fetch_optional(pool)
+                .await
+                .map_err(ApiError::internal)
+        }
+        ProjectScopeRef::Schedule(id) => {
+            sqlx::query_scalar("SELECT project_id FROM schedules WHERE id = $1")
+                .bind(id)
+                .fetch_optional(pool)
+                .await
+                .map_err(ApiError::internal)
+        }
+        ProjectScopeRef::Webhook(id) => {
+            sqlx::query_scalar("SELECT project_id FROM webhooks WHERE id = $1")
+                .bind(id)
+                .fetch_optional(pool)
+                .await
+                .map_err(ApiError::internal)
+        }
+    }
+}
+
+async fn project_membership_role(
+    pool: &PgPool,
+    user_id: Uuid,
+    project_id: Uuid,
+) -> Result<Option<crate::authz::Role>, ApiError> {
+    let role = sqlx::query_scalar::<_, String>(
+        "SELECT role FROM project_memberships WHERE user_id = $1 AND project_id = $2",
+    )
+    .bind(user_id)
+    .bind(project_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(role.and_then(|value| crate::authz::Role::parse(&value)))
 }
 
 /// JWT access tokens carry the role at issue time; PATs (`cicd_…`) are
@@ -437,6 +582,14 @@ fn build_router(
             get(get_project)
                 .patch(update_project)
                 .delete(delete_project),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/memberships",
+            get(list_project_memberships).post(upsert_project_membership),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/memberships/{user_id}",
+            axum::routing::delete(delete_project_membership),
         )
         .route(
             "/api/v1/projects/{project_id}/pipelines",
@@ -626,6 +779,21 @@ struct CreateProject {
     repository_url: String,
     default_branch: Option<String>,
 }
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+struct ProjectMembership {
+    project_id: Uuid,
+    user_id: Uuid,
+    username: String,
+    user_enabled: bool,
+    role: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+struct ProjectMembershipInput {
+    user_id: Uuid,
+    role: String,
+}
 
 #[derive(serde::Deserialize, utoipa::IntoParams)]
 struct PageParams {
@@ -648,6 +816,7 @@ impl PageParams {
 #[utoipa::path(post, path="/api/v1/projects", tag="projects", request_body=CreateProject, responses((status=200, body=Project), (status=400, description="validation error")))]
 async fn create_project(
     State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
     Json(input): Json<CreateProject>,
 ) -> ApiResult<Project> {
     if input.name.trim().is_empty() || input.repository_url.trim().is_empty() {
@@ -655,25 +824,220 @@ async fn create_project(
             "name and repository_url are required",
         ));
     }
+    let db = pool(&state)?;
     let project = sqlx::query_as::<_, Project>(
         "INSERT INTO projects (id, name, repository_url, default_branch) VALUES ($1, $2, $3, $4) RETURNING id, name, repository_url, default_branch, created_at"
-    ).bind(Uuid::new_v4()).bind(input.name.trim()).bind(input.repository_url.trim()).bind(input.default_branch.unwrap_or_else(|| "main".into())).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
+    ).bind(Uuid::new_v4()).bind(input.name.trim()).bind(input.repository_url.trim()).bind(input.default_branch.unwrap_or_else(|| "main".into())).fetch_one(db).await.map_err(ApiError::internal)?;
+    if let Some(axum::Extension(claims)) = claims {
+        if let Some(role) = default_project_role(&claims.role) {
+            upsert_project_membership_record(db, project.id, claims.sub, role).await?;
+        }
+    }
     Ok(Json(project))
 }
 
 #[utoipa::path(get, path="/api/v1/projects", tag="projects", params(PageParams), responses((status=200, body=[Project])))]
 async fn list_projects(
     State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
     axum::extract::Query(page): axum::extract::Query<PageParams>,
 ) -> ApiResult<Vec<Project>> {
     let (limit, offset) = page.bounded();
-    let projects = sqlx::query_as::<_, Project>("SELECT id, name, repository_url, default_branch, created_at FROM projects ORDER BY created_at DESC LIMIT $1 OFFSET $2")
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(pool(&state)?)
+    let db = pool(&state)?;
+    let projects = if crate::auth::is_configured() {
+        let claims = claims.ok_or_else(ApiError::unauthorized)?.0;
+        let role = crate::authz::Role::parse(&claims.role).ok_or_else(ApiError::unauthorized)?;
+        if role == crate::authz::Role::Admin {
+            sqlx::query_as::<_, Project>("SELECT id, name, repository_url, default_branch, created_at FROM projects ORDER BY created_at DESC LIMIT $1 OFFSET $2")
+                .bind(limit)
+                .bind(offset)
+                .fetch_all(db)
+                .await
+                .map_err(ApiError::internal)?
+        } else {
+            sqlx::query_as::<_, Project>(
+                "SELECT p.id, p.name, p.repository_url, p.default_branch, p.created_at \
+                 FROM projects p \
+                 JOIN project_memberships m ON m.project_id = p.id \
+                 WHERE m.user_id = $3 \
+                 ORDER BY p.created_at DESC LIMIT $1 OFFSET $2",
+            )
+            .bind(limit)
+            .bind(offset)
+            .bind(claims.sub)
+            .fetch_all(db)
+            .await
+            .map_err(ApiError::internal)?
+        }
+    } else {
+        sqlx::query_as::<_, Project>("SELECT id, name, repository_url, default_branch, created_at FROM projects ORDER BY created_at DESC LIMIT $1 OFFSET $2")
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(db)
+            .await
+            .map_err(ApiError::internal)?
+    };
+    Ok(Json(projects))
+}
+
+#[utoipa::path(get, path="/api/v1/projects/{project_id}/memberships", tag="memberships", params(("project_id"=Uuid, Path)), responses((status=200, body=[ProjectMembership]), (status=404)))]
+async fn list_project_memberships(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+) -> ApiResult<Vec<ProjectMembership>> {
+    let db = pool(&state)?;
+    ensure_project_exists(db, project_id).await?;
+    let rows = sqlx::query_as::<_, ProjectMembership>(
+        "SELECT m.project_id, m.user_id, u.username, u.enabled AS user_enabled, \
+                m.role, m.created_at, m.updated_at \
+         FROM project_memberships m \
+         JOIN users u ON u.id = m.user_id \
+         WHERE m.project_id = $1 \
+         ORDER BY m.role, u.username",
+    )
+    .bind(project_id)
+    .fetch_all(db)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(Json(rows))
+}
+
+#[utoipa::path(post, path="/api/v1/projects/{project_id}/memberships", tag="memberships", request_body=ProjectMembershipInput, params(("project_id"=Uuid, Path)), responses((status=200, body=ProjectMembership), (status=400), (status=404)))]
+async fn upsert_project_membership(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+    Json(input): Json<ProjectMembershipInput>,
+) -> ApiResult<ProjectMembership> {
+    let role = input.role.trim();
+    if !valid_project_role(role) {
+        return Err(ApiError::bad_request(
+            "role (maintainer, developer, viewer) is required",
+        ));
+    }
+    let db = pool(&state)?;
+    ensure_project_exists(db, project_id).await?;
+    ensure_user_exists(db, input.user_id).await?;
+    let membership = upsert_project_membership_record(db, project_id, input.user_id, role).await?;
+    audit(
+        db,
+        "project_membership.upserted",
+        "project",
+        project_id,
+        Some(&format!("{}:{}", membership.user_id, membership.role)),
+    )
+    .await?;
+    Ok(Json(membership))
+}
+
+#[utoipa::path(delete, path="/api/v1/projects/{project_id}/memberships/{user_id}", tag="memberships", params(("project_id"=Uuid, Path), ("user_id"=Uuid, Path)), responses((status=200), (status=404), (status=409)))]
+async fn delete_project_membership(
+    State(state): State<Arc<AppState>>,
+    Path((project_id, user_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<serde_json::Value> {
+    let db = pool(&state)?;
+    ensure_project_exists(db, project_id).await?;
+    let Some(role) = sqlx::query_scalar::<_, String>(
+        "SELECT role FROM project_memberships WHERE project_id = $1 AND user_id = $2",
+    )
+    .bind(project_id)
+    .bind(user_id)
+    .fetch_optional(db)
+    .await
+    .map_err(ApiError::internal)?
+    else {
+        return Err(ApiError::not_found());
+    };
+    if role == "maintainer" {
+        let maintainer_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM project_memberships WHERE project_id = $1 AND role = 'maintainer'",
+        )
+        .bind(project_id)
+        .fetch_one(db)
         .await
         .map_err(ApiError::internal)?;
-    Ok(Json(projects))
+        if maintainer_count <= 1 {
+            return Err(ApiError::conflict(
+                "project must keep at least one maintainer",
+            ));
+        }
+    }
+    sqlx::query("DELETE FROM project_memberships WHERE project_id = $1 AND user_id = $2")
+        .bind(project_id)
+        .bind(user_id)
+        .execute(db)
+        .await
+        .map_err(ApiError::internal)?;
+    audit(
+        db,
+        "project_membership.deleted",
+        "project",
+        project_id,
+        Some(&user_id.to_string()),
+    )
+    .await?;
+    Ok(Json(
+        serde_json::json!({"deleted": user_id, "project_id": project_id}),
+    ))
+}
+
+async fn ensure_project_exists(db: &PgPool, project_id: Uuid) -> Result<(), ApiError> {
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects WHERE id = $1)")
+        .bind(project_id)
+        .fetch_one(db)
+        .await
+        .map_err(ApiError::internal)?;
+    if exists {
+        Ok(())
+    } else {
+        Err(ApiError::not_found())
+    }
+}
+
+async fn ensure_user_exists(db: &PgPool, user_id: Uuid) -> Result<(), ApiError> {
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)")
+        .bind(user_id)
+        .fetch_one(db)
+        .await
+        .map_err(ApiError::internal)?;
+    if exists {
+        Ok(())
+    } else {
+        Err(ApiError::not_found_named("user"))
+    }
+}
+
+async fn upsert_project_membership_record(
+    db: &PgPool,
+    project_id: Uuid,
+    user_id: Uuid,
+    role: &str,
+) -> Result<ProjectMembership, ApiError> {
+    sqlx::query_as::<_, ProjectMembership>(
+        "WITH upsert AS ( \
+             INSERT INTO project_memberships (project_id, user_id, role) \
+             VALUES ($1, $2, $3) \
+             ON CONFLICT (project_id, user_id) DO UPDATE \
+                 SET role = EXCLUDED.role, updated_at = now() \
+             RETURNING project_id, user_id, role, created_at, updated_at \
+         ) \
+         SELECT upsert.project_id, upsert.user_id, u.username, u.enabled AS user_enabled, \
+                upsert.role, upsert.created_at, upsert.updated_at \
+         FROM upsert JOIN users u ON u.id = upsert.user_id",
+    )
+    .bind(project_id)
+    .bind(user_id)
+    .bind(role)
+    .fetch_one(db)
+    .await
+    .map_err(ApiError::internal)
+}
+
+fn default_project_role(global_role: &str) -> Option<&'static str> {
+    match crate::authz::Role::parse(global_role)? {
+        crate::authz::Role::Admin | crate::authz::Role::Maintainer => Some("maintainer"),
+        crate::authz::Role::Developer => Some("developer"),
+        crate::authz::Role::Viewer => None,
+    }
 }
 
 #[utoipa::path(get, path="/api/v1/projects/{project_id}", tag="projects", params(("project_id"=Uuid, Path)), responses((status=200, body=Project), (status=404)))]
@@ -1417,6 +1781,10 @@ fn parse_junit(xml: &str) -> Vec<JunitSuite> {
     out
 }
 
+fn valid_project_role(role: &str) -> bool {
+    crate::authz::Role::parse(role).is_some_and(crate::authz::Role::is_project_role)
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -1446,6 +1814,70 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn project_scope_ref_maps_project_owned_routes() {
+        let project_id = Uuid::new_v4();
+        let pipeline_id = Uuid::new_v4();
+        let job_id = Uuid::new_v4();
+        let artifact_id = Uuid::new_v4();
+        let secret_id = Uuid::new_v4();
+        let environment_id = Uuid::new_v4();
+        let schedule_id = Uuid::new_v4();
+        let webhook_id = Uuid::new_v4();
+
+        assert_eq!(
+            project_scope_ref(&format!("/api/v1/projects/{project_id}/secrets")),
+            Some(ProjectScopeRef::Project(project_id))
+        );
+        assert_eq!(
+            project_scope_ref(&format!("/api/v1/projects/{project_id}/memberships")),
+            Some(ProjectScopeRef::Project(project_id))
+        );
+        assert_eq!(
+            project_scope_ref(&format!("/api/v1/pipelines/{pipeline_id}/retry")),
+            Some(ProjectScopeRef::Pipeline(pipeline_id))
+        );
+        assert_eq!(
+            project_scope_ref(&format!("/api/v1/jobs/{job_id}/attempts")),
+            Some(ProjectScopeRef::Job(job_id))
+        );
+        assert_eq!(
+            project_scope_ref(&format!("/api/v1/artifacts/{artifact_id}/download")),
+            Some(ProjectScopeRef::Artifact(artifact_id))
+        );
+        assert_eq!(
+            project_scope_ref(&format!("/api/v1/secrets/{secret_id}")),
+            Some(ProjectScopeRef::Secret(secret_id))
+        );
+        assert_eq!(
+            project_scope_ref(&format!(
+                "/api/v1/environments/{environment_id}/deployments"
+            )),
+            Some(ProjectScopeRef::Environment(environment_id))
+        );
+        assert_eq!(
+            project_scope_ref(&format!("/api/v1/schedules/{schedule_id}")),
+            Some(ProjectScopeRef::Schedule(schedule_id))
+        );
+        assert_eq!(
+            project_scope_ref(&format!("/api/v1/webhooks/{webhook_id}")),
+            Some(ProjectScopeRef::Webhook(webhook_id))
+        );
+        assert_eq!(project_scope_ref("/api/v1/projects"), None);
+        assert_eq!(project_scope_ref("/api/v1/repositories/demo"), None);
+    }
+
+    #[test]
+    fn project_membership_roles_exclude_instance_admin() {
+        assert!(valid_project_role("maintainer"));
+        assert!(valid_project_role("developer"));
+        assert!(valid_project_role("viewer"));
+        assert!(!valid_project_role("admin"));
+        assert_eq!(default_project_role("admin"), Some("maintainer"));
+        assert_eq!(default_project_role("developer"), Some("developer"));
+        assert_eq!(default_project_role("viewer"), None);
+    }
 
     #[test]
     fn parses_execution_controls() {

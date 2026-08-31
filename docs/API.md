@@ -807,7 +807,7 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 
 ## Platform endpoints (MVP)
 
-> **Security note:** auth/RBAC enforcement включается только при непустом `CICD_AUTH_SECRET`. Без него все endpoints ниже работают в trusted-network режиме; с ним применяются JWT/PAT и глобальные route roles. Project membership, scoped PAT и tenant isolation ещё target.
+> **Security note:** auth/RBAC enforcement включается только при непустом `CICD_AUTH_SECRET`. Без него все endpoints ниже работают в trusted-network режиме; с ним применяются JWT/PAT, route roles и project memberships для project-owned ресурсов. Scoped PAT, tenant isolation и production logout/session policy ещё target.
 
 ### Runners
 
@@ -827,6 +827,16 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 | DELETE | `/secrets/{secret_id}` | Удалить секрет |
 
 > Секреты шифруются at-rest (AES-256-GCM, `CICD_SECRETS_KEY`). Значения **никогда** не возвращаются через API — только метаданные (id, key, timestamps).
+
+### Project Memberships
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/projects/{project_id}/memberships` | Список участников проекта: user, enabled, role |
+| POST | `/projects/{project_id}/memberships` | Создать/обновить роль участника (`maintainer`, `developer`, `viewer`) |
+| DELETE | `/projects/{project_id}/memberships/{user_id}` | Удалить участника; последнего maintainer удалить нельзя |
+
+> При включённом `CICD_AUTH_SECRET` `admin` видит все проекты; остальные пользователи видят только проекты из `project_memberships`. Эффективный доступ ограничен и глобальной ролью, и project role. Mutation секретов и membership требуют maintainer+.
 
 ### Artifacts
 
@@ -897,7 +907,7 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 | POST | `/users` | Создать (username, role: admin/maintainer/developer/viewer, enabled) |
 | PATCH | `/users/{user_id}` | Обновить |
 
-> Users, `user_credentials` и sessions используются текущим auth middleware при `CICD_AUTH_SECRET`; роли глобальные.
+> Users, `user_credentials` и sessions используются текущим auth middleware при `CICD_AUTH_SECRET`; глобальная роль задаёт верхнюю границу, project membership задаёт доступ к конкретному проекту.
 
 ### API Tokens
 

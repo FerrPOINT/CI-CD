@@ -168,7 +168,7 @@ docker run --rm -it \
   bash -lc 'corepack enable && pnpm install --frozen-lockfile && pnpm test && pnpm build'
 ```
 
-Если меняются frontend dependencies, оставьте обновлённый `pnpm-lock.yaml` в diff; CI устанавливает его только с `--frozen-lockfile`. `pnpm lint` существует локально, но пока не запускается current GitHub Actions workflow.
+Если меняются frontend dependencies, оставьте обновлённый `pnpm-lock.yaml` в diff; CI устанавливает его только с `--frozen-lockfile`. Current GitHub Actions frontend job запускает generated-client drift gate, `pnpm lint`, `pnpm test` и `pnpm build`.
 
 ### Compose и документация
 
@@ -196,7 +196,7 @@ python3 scripts/verify_docs.py --all
 | Job | Фактические проверки |
 |---|---|
 | `backend` | PostgreSQL 17 service; `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db`, OpenAPI drift gate |
-| `frontend` | `pnpm install --frozen-lockfile`, `pnpm openapi:generate` + clean diff для `src/api/schema.d.ts`, `pnpm test`, `pnpm build` |
+| `frontend` | `pnpm install --frozen-lockfile`, `pnpm openapi:generate` + clean diff для `src/api/schema.d.ts`, `pnpm lint`, `pnpm test`, `pnpm build` |
 | `docs` | `python3 scripts/verify_docs.py --all` |
 
 В текущем workflow нет compose startup/health smoke, release build, OpenAPI backward compatibility diff, Playwright, axe, Lighthouse, dependency/secret/container scans или coverage ratchet. Не утверждайте, что branch protection, approval policy или checks из устаревших narrative-доков фактически включены, пока это не подтверждено настройками GitHub.

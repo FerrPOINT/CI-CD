@@ -144,11 +144,11 @@ Supervisor-полл queued-джобов, атомарный claim (`queued → r
 
 ### 6.4 Платформенные ресурсы (MVP)
 
-Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-256-GCM at rest + embedded env injection/masking), artifacts (upload/download + локальное хранилище, 50 MiB лимит), environments/deployments, schedules MVP (enabled rows проверяются worker-ом примерно раз в минуту), outgoing webhooks MVP (terminal pipeline events через outbox/basic retry/HMAC), notifications config, reports (агрегаты success rate/duration), audit log (последние 200 событий), users/roles, argon2id credentials, sessions и PAT enforcement при `CICD_AUTH_SECRET`.
+Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-256-GCM at rest + embedded env injection/masking), artifacts (upload/download + локальное хранилище, 50 MiB лимит), environments/deployments, schedules MVP (enabled rows проверяются worker-ом примерно раз в минуту), outgoing webhooks MVP (terminal pipeline events через outbox/basic retry/HMAC), notifications config, reports (агрегаты success rate/duration), audit log (последние 200 событий), users/roles, project memberships, argon2id credentials, sessions и PAT enforcement при `CICD_AUTH_SECRET`.
 
 ## 7. Frontend архитектура
 
-- **pages/** — 19 рабочих экранов + login: dashboard, projects, repositories/browser/compare/pulls, pipelines/detail, runners, secrets, artifacts, environments, schedules, webhooks, reports, audit-log, users, settings, login.
+- **pages/** — 20 рабочих экранов + login: dashboard, projects/project-members, repositories/browser/compare/pulls, pipelines/detail, runners, secrets, artifacts, environments, schedules, webhooks, reports, audit-log, users, settings, login.
 - **shared/** — ui-kit (shadcn), i18n (ru/en), theme (dark/gray/light).
 - **widgets/** — AppShell (sidebar + header + Outlet).
 - **api/** — типизированный клиент/wrappers + generated OpenAPI schema `schema.d.ts`.
@@ -171,7 +171,7 @@ Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-2
 | SQLx версионные миграции | ✅ current: `backend/migrations/*.sql` + `sqlx::migrate!`/`cicd-migrate` |
 | app/infra/api/server пакеты | ⬜ Phase C (strangler по вертикалям) |
 | OpenAPI + генерация клиента | ✅ current: `openapi/openapi.yaml` + `frontend/src/api/schema.d.ts` |
-| Auth/RBAC/token middleware | ◩ current conditional: JWT/PAT/global roles при `CICD_AUTH_SECRET`; project scope target |
+| Auth/RBAC/token middleware | ◩ current conditional: JWT/PAT/global roles + project memberships при `CICD_AUTH_SECRET`; tenant scope/scoped credentials target |
 | Distributed runner protocol | ⬜ Phase D |
 
 ## 10. Dev workflow

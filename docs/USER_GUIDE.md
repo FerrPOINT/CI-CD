@@ -20,10 +20,10 @@ Forge CI/CD - self-hosted control plane для Git-репозиториев и C
 | Секреты проекта | **Current verified** | AES-256-GCM at rest; embedded runner передаёт их в env и маскирует значения в stdout/stderr logs. |
 | Окружения и записи деплоев | **Current verified** | Метаданные окружения и история деплоев; выполнение деплоя определяется job. |
 | Отчёты и аудит | **Current verified** | Сводка по проекту и последние 200 событий аудита. |
-| Пользователи и API-токены | **Current verified** | Хранение, argon2id credentials, sessions и PAT enforcement при `CICD_AUTH_SECRET`; роли пока глобальные. |
+| Пользователи, участники проектов и API-токены | **Current verified MVP** | Хранение, argon2id credentials, sessions, PAT enforcement и project memberships при `CICD_AUTH_SECRET`. |
 | Расписания и outgoing webhooks | **Current verified MVP** | Worker запускает enabled schedules примерно раз в минуту и доставляет terminal pipeline webhooks с basic retry. |
 | Уведомления и inbound provider webhooks | **Configuration only** | Конфигурация сохраняется, но email/Slack/SSE sender и public provider webhook handlers ещё не реализованы. |
-| Вход, сессии, RBAC | **Current verified conditional** | `/login` работает при непустом `CICD_AUTH_SECRET`; без секрета API и Dashboard остаются trusted-network/open. |
+| Вход, сессии, RBAC | **Current verified conditional** | `/login` работает при непустом `CICD_AUTH_SECRET`; project-owned API проверяет membership, без секрета API и Dashboard остаются trusted-network/open. |
 
 > **Безопасность:** для общего окружения задайте `CICD_AUTH_SECRET`, закройте API/Dashboard reverse proxy или сетью и не публикуйте Git endpoint с пустым `CICD_GIT_TOKEN`; обязательно замените dev-значение `CICD_GIT_INTERNAL_TOKEN`.
 
@@ -71,6 +71,21 @@ curl -fsS -X POST http://127.0.0.1:22801/api/v1/projects \
 Удаление проекта каскадно удаляет его pipeline-данные и project-scoped записи, но не удаляет bare-репозиторий. Репозиторий удаляется отдельно через **Repositories** или `DELETE /api/v1/repositories/{name}`.
 
 ![Проекты](screenshots/03-projects.png)
+
+### Участники проекта
+
+**Статус процедуры: Current verified MVP.**
+
+При включённом `CICD_AUTH_SECRET` список проектов фильтруется по `project_memberships`: `admin` видит всё, остальные пользователи видят только назначенные проекты. Эффективные права ограничены и глобальной ролью пользователя, и ролью в проекте.
+
+1. Откройте **Projects** и выберите **Members** у нужного проекта.
+2. Назначьте пользователю роль `maintainer`, `developer` или `viewer`.
+3. Используйте `maintainer` для управления участниками и секретами проекта; `developer` — для запуска и изменения рабочих ресурсов; `viewer` — для чтения.
+4. Удаляйте ненужные memberships через список. Последнего maintainer удалить нельзя.
+
+Tenant isolation, scoped PAT/SAT, Git repository binding и production session/logout policy остаются **Target approved**.
+
+![Участники проекта](screenshots/40-project-members.png)
 
 ## 4. Push в репозиторий и авто-триггер pipeline
 
@@ -281,7 +296,7 @@ Retention/TTL, S3 и multipart upload - **Target approved**.
 3. Используйте данные как подготовку к будущей policy-модели.
 4. Роль ограничивает API только когда backend запущен с `CICD_AUTH_SECRET`; без него действует trusted-network режим.
 
-Пароли хранятся как `argon2id` credentials. Project membership, tenant boundary, scoped PAT и production session/logout policy относятся к **Target approved**.
+Пароли хранятся как `argon2id` credentials. Project membership уже используется для project-owned API при включённом `CICD_AUTH_SECRET`; tenant boundary, scoped PAT и production session/logout policy относятся к **Target approved**.
 
 ### API-токены
 
@@ -383,7 +398,7 @@ curl -fsS -X POST "http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines"
 
 **Статус процедуры: Current verified.**
 
-Проверьте, задан ли непустой `CICD_AUTH_SECRET`. Без него API и Dashboard намеренно работают в trusted-network режиме; с ним JWT/PAT и глобальные роли применяются middleware. Project membership и scoped PAT пока target, поэтому shared-доступ всё равно закрывайте reverse proxy/сетью.
+Проверьте, задан ли непустой `CICD_AUTH_SECRET`. Без него API и Dashboard намеренно работают в trusted-network режиме; с ним JWT/PAT, глобальные роли и project memberships применяются middleware. Scoped PAT, tenant isolation и Git-level RBAC пока target, поэтому shared-доступ всё равно закрывайте reverse proxy/сетью.
 
 ## Связанные документы
 

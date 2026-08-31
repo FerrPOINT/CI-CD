@@ -6,7 +6,7 @@ import { Card } from '@/shared/ui/card'
 import { Button } from '@/shared/ui/button'
 import { Input } from '@/shared/ui/input'
 import { Label } from '@/shared/ui/label'
-import { FolderGit2, Plus, ChevronRight, Pencil, Trash2, GitFork, KeyRound, Globe, Clock, Webhook, BarChart3 } from 'lucide-react'
+import { FolderGit2, Plus, ChevronRight, Pencil, Trash2, GitFork, KeyRound, Globe, Clock, Webhook, BarChart3, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
 import type { Project } from '@/api/types'
@@ -123,10 +123,15 @@ export function ProjectsPage() {
                   <code className="rounded bg-surface-raised px-1.5 py-0.5">{p.default_branch}</code>
                 </div>
               </Link>
-              <div className="mt-3 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 flex-wrap">
+              <div className="mt-3 flex flex-wrap gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
                 <Button asChild size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs">
                   <Link to={`/repositories?project=${encodeURIComponent(p.name)}`}>
                     <GitFork className="h-3 w-3" /> {t('projects.repositories')}
+                  </Link>
+                </Button>
+                <Button asChild size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs">
+                  <Link to={`/projects/${p.id}/members`}>
+                    <Users className="h-3 w-3" /> {t('projects.members')}
                   </Link>
                 </Button>
                 <Button asChild size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs">

@@ -432,7 +432,7 @@ Foreign-key constraints:
 
 ## 9. Platform tables (MVP)
 
-Platform tables создаются и расширяются через `backend/migrations/*.sql`; `0001_bootstrap_v1.sql` содержит исторический baseline, последующие файлы добавляют auth, outbox и execution gaps.
+Platform tables создаются и расширяются через `backend/migrations/*.sql`; `0001_bootstrap_v1.sql` содержит исторический baseline, последующие файлы добавляют auth, outbox, execution gaps и project memberships.
 
 ### 9.1 runners
 
@@ -575,7 +575,19 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 
 > Полное значение возвращается только при создании. PAT проверяется как Bearer token при включённом `CICD_AUTH_SECRET`.
 
-### 9.12 user_credentials
+### 9.12 project_memberships
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `project_id` | UUID | NOT NULL | — | FK → `projects(id)` CASCADE |
+| `user_id` | UUID | NOT NULL | — | FK → `users(id)` CASCADE |
+| `role` | TEXT | NOT NULL | — | CHECK: `maintainer`, `developer`, `viewer` |
+| `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | Время назначения |
+| `updated_at` | TIMESTAMPTZ | NOT NULL | `now()` | Последнее изменение роли |
+
+> PK: `(project_id, user_id)`. Existing user/project pairs backfill-ятся миграцией `0008_project_memberships.sql`; новые проекты получают creator membership при включённой auth.
+
+### 9.13 user_credentials
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -583,7 +595,7 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 | `password_hash` | TEXT | нет | — | `argon2id` hash |
 | `updated_at` | TIMESTAMPTZ | нет | `now()` | Последнее изменение credential |
 
-### 9.13 sessions
+### 9.14 sessions
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -594,7 +606,7 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 | `expires_at` | TIMESTAMPTZ | нет | — | Истекает |
 | `revoked_at` | TIMESTAMPTZ | да | — | Отозвана |
 
-### 9.14 domain_events
+### 9.15 domain_events
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -607,7 +619,7 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 | `correlation_id` | UUID | да | — | Correlation |
 | `causation_id` | UUID | да | — | Causation |
 
-### 9.15 outbox_messages
+### 9.16 outbox_messages
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -623,7 +635,7 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 | `last_error` | TEXT | да | — | Последняя ошибка |
 | `created_at` | TIMESTAMPTZ | нет | `now()` | Создано |
 
-### 9.16 Индексы
+### 9.17 Индексы
 
 ```
 idx_runners_status          ON runners(status)
@@ -643,6 +655,7 @@ idx_job_logs_job_id          ON job_logs(job_id)
 idx_artifacts_attempt        ON artifacts(attempt_id)
 idx_sessions_user            ON sessions(user_id)
 idx_sessions_expires         ON sessions(expires_at)
+idx_project_memberships_user ON project_memberships(user_id, project_id)
 idx_domain_events_aggregate  ON domain_events(aggregate_type, aggregate_id, occurred_at DESC)
 idx_domain_events_type       ON domain_events(event_type, occurred_at DESC)
 idx_outbox_pending           ON outbox_messages(next_attempt_at) WHERE delivered_at IS NULL

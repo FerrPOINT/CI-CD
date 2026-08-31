@@ -62,6 +62,7 @@ const shots = [
   { name: '19-audit-log.png', path: '/audit-log', desktop: true },
   { name: '20-users.png', path: '/users', desktop: true },
   { name: '21-artifacts.png', path: `/jobs/${jobId}/artifacts`, desktop: true, wait: 800 },
+  { name: '40-project-members.png', path: `/projects/${platform.id}/members`, desktop: true },
   // --- Состояния действий: диалоги, диффы, логи, формы ---
   { name: '22-pr-diff.png', path: pullRequestPath, desktop: true, wait: 1200, click: 'a[href*="/compare?from="]', settle: 1500 },
   { name: '23-project-create.png', path: '/projects', desktop: true, click: 'button:has-text("Создать проект")' },

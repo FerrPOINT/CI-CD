@@ -28,6 +28,7 @@
 | [19-audit-log.png](../../screenshots/19-audit-log.png) | `/audit-log` | Журнал аудита | 1920×1080 |
 | [20-users.png](../../screenshots/20-users.png) | `/users` | Пользователи и API-токены | 1920×1080 |
 | [21-artifacts.png](../../screenshots/21-artifacts.png) | `/jobs/:jobId/artifacts` | Артефакты | 1920×1080 |
+| [40-project-members.png](../../screenshots/40-project-members.png) | `/projects/:id/members` | Участники проекта | 1920×1080 |
 
 ## Состояния действий (диалоги, формы, панели)
 
@@ -57,7 +58,7 @@
 | Файл | Маршрут | Что показывает | Размер |
 |---|---|---|---|
 | [m-dashboard.png](../../screenshots/m-dashboard.png) | `/` | Дашборд — мобильная версия | 375×966 |
-| [m-projects.png](../../screenshots/m-projects.png) | `/projects` | Проекты — мобильная версия | 375×812 |
+| [m-projects.png](../../screenshots/m-projects.png) | `/projects` | Проекты — мобильная версия | 375×898 |
 | [m-pipeline-detail.png](../../screenshots/m-pipeline-detail.png) | `/pipelines/:id` | Детали пайплайна — мобильная версия | 375×846 |
 | [m-runners.png](../../screenshots/m-runners.png) | `/runners` | Runners — мобильная версия (карточный layout) | 375×812 |
 | [m-pull-request.png](../../screenshots/m-pull-request.png) | `/repositories/:repo/pulls/:number` | Pull-запрос — мобильная версия | 375×812 |

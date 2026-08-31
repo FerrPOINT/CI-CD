@@ -10,7 +10,6 @@ import { fileURLToPath } from 'node:url'
 const API = 'http://127.0.0.1:22801/api/v1'
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const demoRunnerNames = new Set(['docker-runner-01', 'shell-runner-02'])
-const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 async function api(method, path, body) {
   const res = await fetch(`${API}${path}`, {
@@ -27,11 +26,7 @@ function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' })
 }
 
-function pruneEvidenceAudit(resourceIds) {
-  const ids = [...resourceIds].filter(id => uuidRe.test(id))
-  if (ids.length === 0) return
-
-  const sql = `DELETE FROM audit_log WHERE resource_id IN (${ids.map(id => `'${id}'::uuid`).join(',')});`
+function resetEvidenceAudit() {
   execFileSync('docker', [
     'compose',
     'exec',
@@ -39,17 +34,8 @@ function pruneEvidenceAudit(resourceIds) {
     'postgres',
     'sh',
     '-lc',
-    `psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "${sql}"`,
+    'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "TRUNCATE TABLE audit_log RESTART IDENTITY;"',
   ], { cwd: ROOT })
-}
-
-async function collectSecretIds(projects) {
-  const ids = new Set()
-  for (const project of projects) {
-    const secrets = await api('GET', `/projects/${project.id}/secrets`)
-    for (const secret of secrets) ids.add(secret.id)
-  }
-  return ids
 }
 
 async function deleteDemoRunners(runners) {
@@ -119,14 +105,12 @@ async function main() {
   const demoProjects = projects.filter(p => p.name.startsWith('forge-demo-'))
   const existingRunners = await api('GET', '/runners')
   const demoRunners = existingRunners.filter(r => demoRunnerNames.has(r.name))
-  const oldAuditResourceIds = await collectSecretIds(demoProjects)
-  for (const runner of demoRunners) oldAuditResourceIds.add(runner.id)
 
   for (const p of demoProjects) {
     await api('DELETE', `/projects/${p.id}`)
   }
   await deleteDemoRunners(demoRunners)
-  pruneEvidenceAudit(oldAuditResourceIds)
+  resetEvidenceAudit()
 
   // Repositories with real content
   await seedRepository('platform-core', [
@@ -165,6 +149,19 @@ async function main() {
   ]) {
     const users = await api('GET', '/users')
     if (!users.some(x => x.username === u.username)) await api('POST', '/users', u)
+  }
+
+  const seedUsers = await api('GET', '/users')
+  const usersByName = Object.fromEntries(seedUsers.map(user => [user.username, user]))
+  for (const project of [core, web, gw]) {
+    for (const [username, role] of [
+      ['a.zhukov', 'maintainer'],
+      ['m.petrova', 'maintainer'],
+      ['d.orlov', 'developer'],
+    ]) {
+      const user = usersByName[username]
+      if (user) await api('POST', `/projects/${project.id}/memberships`, { user_id: user.id, role })
+    }
   }
 
   // Pull request on platform-core (idempotent)

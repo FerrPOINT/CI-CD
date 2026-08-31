@@ -29,7 +29,7 @@ Forge CI/CD развивается из MVP control plane в безопасну�
 | Версионирование | Path-versioning `/api/v1` документирован, но нет автоматической проверки breaking changes между контрактами. |
 | Пагинация | `projects` и `pipelines` поддерживают `limit/offset` с cap 200; job logs возвращаются целиком. Унифицированный response envelope/cursor model остаётся target. |
 | Идемпотентность | Для mutating POST-операций `Idempotency-Key` и хранилище результатов отсутствуют. Повтор trigger pipeline способен создать дубликат. |
-| Auth/RBAC | При `CICD_AUTH_SECRET` включены login/JWT/PAT, argon2id credentials, sessions и route-level global roles; без секрета остаётся trusted-network mode. Project membership/tenant scope target. |
+| Auth/RBAC | При `CICD_AUTH_SECRET` включены login/JWT/PAT, argon2id credentials, sessions, route-level global roles и project memberships; без секрета остаётся trusted-network mode. Tenant scope, scoped PAT и production session policy остаются target. |
 | Frontend | React 19/Vite/TanStack Query; около 20 маршрутов + `/login`. DTO генерируются в `frontend/src/api/schema.d.ts`, API wrapper/hooks остаются handwritten. |
 | CLI | `backend/cli` уже отдельный package и работает через HTTP; реализованы группы `project`, `pipeline`, `job`. Конфигурация ограничена `CICD_API_URL`, stdout всегда pretty JSON, нет auth/profile/output policy. |
 | Observability | Есть `/api/v1/health`, `/metrics`, `TraceLayer` и `tracing`. DB-aware readiness, OTLP, alerting и корреляция API--CLI не реализованы. |

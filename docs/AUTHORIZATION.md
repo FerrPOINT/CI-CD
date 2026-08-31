@@ -606,7 +606,7 @@ Masking является дополнительной защитой, а не г
 ## Миграция из текущего MVP
 
 1. Принять текущие `backend/migrations/*.sql` как MVP baseline; старые pre-migration базы проходят verified legacy adoption по `docs/STORAGE_ARCHITECTURE.md`.
-2. Добавить `tenants`, `tenant_memberships`, `project_memberships` и target service-token tables без включения tenant/project enforcement.
+2. Добавить `tenants`, `tenant_memberships` и target service-token tables; существующие MVP `project_memberships` расширить до tenant-aware модели без немедленного включения tenant enforcement.
 3. Создать единственный bootstrap tenant для существующих данных.
 4. Привязать все текущие `projects` к bootstrap tenant; проверить отсутствие конфликтов перед заменой global unique name на `(tenant_id, name)`.
 5. Мигрировать существующих users в tenant membership. Для каждого tenant должен существовать хотя бы один owner; нельзя оставить tenant без owner.

@@ -27,7 +27,7 @@
 | Тестовая БД | GitHub Actions PostgreSQL service + `cargo test --features integration --test integration_db`; local `backend/docker-compose.test.yml` fixture | Изолированная PostgreSQL lifecycle/roles для integration-тестов, prior-schema upgrade, параллельные тесты не делят данные |
 | Репозитории | Строка `repositories` и bare-directory в volume; удаление сначала удаляет строку, затем best-effort директорию | Реестр с состояниями provision/delete, стабильным `storage_key`, saga/reconciler, проверка `git fsck`, backup-aware purge |
 | Связь project/repository | Поиск проекта по URL suffix `LIKE '%name.git'` | Явный `repositories.project_id`, уникальная связь и Git push event с repository ID/commit SHA |
-| Артефакты | Локальная ФС, лимит одного upload 50 MiB, DB-row после записи файла, checksum отсутствует | Порт object storage; потоковая загрузка, SHA-256, временный объект, квоты/резервы, retention worker, авторизованная загрузка |
+| Артефакты | Локальная ФС, лимит одного upload 50 MiB, DB-row после записи файла, checksum отсутствует; download project-scoped при включённом `CICD_AUTH_SECRET` | Порт object storage; потоковая загрузка, SHA-256, временный объект, квоты/резервы, retention worker, авторизованная загрузка |
 | Секреты | AES-256-GCM под единым `CICD_SECRETS_KEY`; формат `v1:nonce:ciphertext` | Envelope encryption: per-secret DEK, KMS/KEK key ID, AAD, версии, rewrap и безопасная ротация |
 | Пагинация | Projects и pipelines имеют `limit/offset` с cap 200; часть списков всё ещё без unified cursor/envelope | Единый bounded keyset pagination и составные индексы под каждый список |
 | Backup | Ручной runbook в `OPERATIONS.md`: `pg_dump` + копирование Git/artifact volumes; автоматических scripts/verify нет | Координированный backup manifest для PG, Git, objects и ключевых версий; регулярный restore drill |
@@ -39,7 +39,7 @@
 - Startup migration в current MVP применяет DDL из runtime-процесса; production target требует отдельную owner-role migration job и verify-only startup.
 - `next_log_sequence()` вычисляет `MAX(sequence) + 1`; конкурентная запись логов одного job может получить один sequence.
 - Артефакт сначала пишется в локальный файл, затем создаётся DB-строка. Ошибка INSERT оставляет orphan file; ошибка удаления строки не удаляет файл.
-- Для artifact download нет RBAC-проверки; наличие UUID является фактическим доступом.
+- Artifact download уже проходит project membership RBAC при включённом `CICD_AUTH_SECRET`, но без него остаётся trusted-network; signed URLs, lease-bound runner access и object-storage policy ещё target.
 - `storage_path` хранит путь ФС, а не логический ключ object storage.
 - Удаление bare-репозитория не имеет состояния, повторяемости, quarantine-периода и надёжной компенсации.
 - Один глобальный AES-ключ не содержит ID версии ключа в модели данных и не даёт безопасно выполнить ротацию без одномоментного массового перешифрования.
@@ -902,4 +902,4 @@ Audit event фиксирует actor, scope, action, resource ID, result, reques
 
 - Подготовлен полный Markdown-документ для `docs/STORAGE_ARCHITECTURE.md`; файлы не изменялись.
 - Изучены текущие bootstrap-схема, Git hosting, artifact/secrets implementation, workspace ADR и deployment/testing docs.
-- Учтены текущие риски: raw bootstrap миграции, неавторизованный artifact download, orphan files, `MAX(sequence)+1`, best-effort Git deletion и единый AES-ключ.
+- Учтены текущие риски: raw bootstrap миграции, условный trusted-network режим без `CICD_AUTH_SECRET`, orphan files, `MAX(sequence)+1`, best-effort Git deletion и единый AES-ключ.

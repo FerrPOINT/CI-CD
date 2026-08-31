@@ -69,6 +69,7 @@ jobs:
       run: |
         pnpm openapi:generate
         git diff --exit-code -- src/api/schema.d.ts || (echo "schema.d.ts is stale; run pnpm openapi:generate" && exit 1)
+    - run: pnpm lint
     - run: pnpm test
     - run: pnpm build
 
