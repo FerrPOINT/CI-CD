@@ -9,7 +9,7 @@ Self-hosted control plane для Git-репозиториев и CI/CD: bare Git
 - если `CICD_AUTH_SECRET` не задан или пустой, API и Dashboard работают в trusted-network режиме без auth enforcement;
 - при заданном `CICD_AUTH_SECRET` включаются login/JWT/scoped PAT, session-bound access JWT, refresh rotate/logout/revoke, global roles, project membership RBAC и Git Smart HTTP read/write checks по связанному проекту, но tenant isolation, service-account tokens, scoped Git credentials и production cookie/CSRF/session-family policy остаются target;
 - нет TLS, CORS permissive, rate limiting пока in-process и не заменяет reverse proxy/distributed limiter;
-- schedules, outgoing webhooks и `in_app`/`sse` notifications работают как MVP worker/local delivery; inbound provider webhooks, external notification adapters и production-grade delivery guarantees ещё не реализованы.
+- schedules, outgoing webhooks и `in_app`/`sse` notifications работают как MVP worker/local delivery; outbox delivery history, attempt log и requeue failed-доставки реализованы как bounded MVP, а inbound provider webhooks, external notification adapters и production-grade lease/crash-safe delivery guarantees ещё не реализованы.
 
 Полный честный срез: [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md) · политика: [SECURITY.md](SECURITY.md). До Phase D security запускайте только в доверенной сети / за reverse proxy.
 
@@ -24,6 +24,7 @@ Self-hosted control plane для Git-репозиториев и CI/CD: bare Git
 | Окружения/деплои, отчёты, аудит (200 событий) | ✅ Current verified |
 | Auth/RBAC/сессии/scoped PAT enforcement при `CICD_AUTH_SECRET` | ✅ Current verified |
 | Schedules и outgoing webhooks | ✅ Current verified MVP |
+| Outbox delivery history/requeue | ✅ Current verified MVP |
 | Notifications (`in_app`/`sse`) | ✅ Current verified MVP |
 | Email/Slack notification adapters и inbound provider webhooks | 🎯 Target approved |
 | Внешние runner-ы (lease/protocol), tenant isolation, service-account tokens, production scheduler/outbox guarantees | 🎯 Target approved |

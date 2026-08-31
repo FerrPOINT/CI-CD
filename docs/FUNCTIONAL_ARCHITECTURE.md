@@ -16,7 +16,7 @@ Forge CI/CD — self-hosted control plane для жизненного цикла
 | Execution | Queue, attempts, dispatch, runner protocol, sandbox | Частично: embedded runner | Да |
 | Logs & Artifacts | Append-only logs, upload/download, integrity, retention | Частично | Да |
 | Environments & Deployments | Environment state, deploy history, approvals, rollback | Частично: metadata | Да |
-| Automation | Schedules, push events, webhooks, notifications, outbox | Частично: Git push, schedules MVP и outgoing webhooks MVP; notifications/inbound handlers configuration-only | Да |
+| Automation | Schedules, push events, webhooks, notifications, outbox | Частично: Git push, schedules MVP, outgoing webhooks MVP, bounded outbox history/requeue и `in_app`/`sse` notifications; inbound handlers и external adapters configuration/target-only | Да |
 | Observability & Governance | Audit, reports, metrics, traces, operations, DR | Частично | Да |
 | API & Clients | REST/OpenAPI, Dashboard, CLI, realtime | Частично | Да |
 

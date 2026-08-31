@@ -6,16 +6,21 @@
 //!   (8 attempts, 15s..1h) and dead-letters after exhaustion.
 //! - In-app notification fan-out: `in_app`/`sse` notification configs are
 //!   translated into durable local outbox messages for Dashboard history/SSE.
+//! - Delivery history: every attempt is written to `outbox_delivery_attempts`;
+//!   failed deliveries can be explicitly requeued as a new generation.
 //! - Scheduler: enabled cron schedules trigger pipelines with a
 //!   `last_fired_at` claim so a restart cannot double-fire the same minute.
 
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
 pub const MAX_ATTEMPTS: i32 = 8;
 pub const NOTIFICATION_CHANNEL_IN_APP: &str = "in_app";
 pub const NOTIFICATION_CHANNEL_SSE: &str = "sse";
+const OUTCOME_DELIVERED: &str = "delivered";
+const OUTCOME_RETRY_SCHEDULED: &str = "retry_scheduled";
+const OUTCOME_FAILED: &str = "failed";
 
 pub fn notification_destination(project_id: Uuid) -> String {
     format!("project:{project_id}")
@@ -57,11 +62,12 @@ pub async fn emit_pipeline_event(
     .await?;
     for (hook_id, url, secret) in hooks {
         sqlx::query(
-            "INSERT INTO outbox_messages (id, event_id, subscription_id, channel, destination, payload) \
-             VALUES ($1, $2, $3, 'webhook', $4, $5)",
+            "INSERT INTO outbox_messages (id, event_id, project_id, subscription_id, channel, destination, payload) \
+             VALUES ($1, $2, $3, $4, 'webhook', $5, $6)",
         )
         .bind(Uuid::new_v4())
         .bind(event_id)
+        .bind(project_id)
         .bind(format!("webhook:{hook_id}"))
         .bind(url)
         .bind(serde_json::json!({ "event": event_type, "pipeline_id": pipeline_id, "status": status, "signed": secret.is_some() }))
@@ -82,11 +88,12 @@ pub async fn emit_pipeline_event(
             pipeline_id.simple()
         );
         sqlx::query(
-            "INSERT INTO outbox_messages (id, event_id, subscription_id, channel, destination, payload) \
-             VALUES ($1, $2, $3, 'notification', $4, $5)",
+            "INSERT INTO outbox_messages (id, event_id, project_id, subscription_id, channel, destination, payload) \
+             VALUES ($1, $2, $3, $4, 'notification', $5, $6)",
         )
         .bind(Uuid::new_v4())
         .bind(event_id)
+        .bind(project_id)
         .bind(format!("notification:{config_id}"))
         .bind(notification_destination(project_id))
         .bind(serde_json::json!({
@@ -115,9 +122,9 @@ fn next_delay(attempts: i32) -> chrono::Duration {
 pub async fn deliver_due(pool: &PgPool, client: &reqwest::Client) -> usize {
     let due = sqlx::query_as::<_, (Uuid, String, String, serde_json::Value, i32)>(
         "SELECT id, channel, destination, payload, attempts FROM outbox_messages \
-         WHERE delivered_at IS NULL AND next_attempt_at <= now() \
+         WHERE delivered_at IS NULL AND failed_at IS NULL AND next_attempt_at <= now() \
            AND attempts < $1 \
-         ORDER BY next_attempt_at LIMIT 20",
+         ORDER BY next_attempt_at, id LIMIT 20",
     )
     .bind(MAX_ATTEMPTS)
     .fetch_all(pool)
@@ -126,6 +133,9 @@ pub async fn deliver_due(pool: &PgPool, client: &reqwest::Client) -> usize {
 
     let mut delivered = 0;
     for (id, channel, url, payload, attempts) in due {
+        let attempt_number = attempts + 1;
+        let started_at = Utc::now();
+        let timer = std::time::Instant::now();
         if channel == "notification" {
             let local_channel = payload
                 .get("channel")
@@ -133,33 +143,76 @@ pub async fn deliver_due(pool: &PgPool, client: &reqwest::Client) -> usize {
                 .unwrap_or_default();
             if supported_local_notification_channel(local_channel) {
                 let _ = sqlx::query(
-                    "UPDATE outbox_messages SET delivered_at = now(), last_error = NULL WHERE id = $1",
+                    "UPDATE outbox_messages SET attempts = $2, delivered_at = now(), failed_at = NULL, last_error = NULL WHERE id = $1",
                 )
                 .bind(id)
+                .bind(attempt_number)
                 .execute(pool)
                 .await;
+                record_delivery_attempt(
+                    pool,
+                    DeliveryAttemptRecord {
+                        message_id: id,
+                        attempt_number,
+                        started_at,
+                        outcome: OUTCOME_DELIVERED,
+                        http_status: None,
+                        error_message: None,
+                        duration_ms: elapsed_ms(timer),
+                    },
+                )
+                .await;
+                crate::metrics::OUTBOX_DELIVERED_TOTAL
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 delivered += 1;
             } else {
-                let new_attempts = attempts + 1;
                 let last_error = format!("unsupported notification channel: {local_channel}");
-                if new_attempts >= MAX_ATTEMPTS {
+                if attempt_number >= MAX_ATTEMPTS {
                     let _ = sqlx::query(
-                        "UPDATE outbox_messages SET attempts = $2, last_error = $3 WHERE id = $1",
+                        "UPDATE outbox_messages SET attempts = $2, last_error = $3, failed_at = now() WHERE id = $1",
                     )
                     .bind(id)
-                    .bind(new_attempts)
-                    .bind(last_error)
+                    .bind(attempt_number)
+                    .bind(&last_error)
                     .execute(pool)
                     .await;
+                    record_delivery_attempt(
+                        pool,
+                        DeliveryAttemptRecord {
+                            message_id: id,
+                            attempt_number,
+                            started_at,
+                            outcome: OUTCOME_FAILED,
+                            http_status: None,
+                            error_message: Some(last_error),
+                            duration_ms: elapsed_ms(timer),
+                        },
+                    )
+                    .await;
+                    crate::metrics::OUTBOX_DEAD_TOTAL
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 } else {
                     let _ = sqlx::query(
                         "UPDATE outbox_messages SET attempts = $2, last_error = $3, next_attempt_at = $4 WHERE id = $1",
                     )
                     .bind(id)
-                    .bind(new_attempts)
-                    .bind(last_error)
+                    .bind(attempt_number)
+                    .bind(&last_error)
                     .bind(Utc::now() + next_delay(attempts))
                     .execute(pool)
+                    .await;
+                    record_delivery_attempt(
+                        pool,
+                        DeliveryAttemptRecord {
+                            message_id: id,
+                            attempt_number,
+                            started_at,
+                            outcome: OUTCOME_RETRY_SCHEDULED,
+                            http_status: None,
+                            error_message: Some(last_error),
+                            duration_ms: elapsed_ms(timer),
+                        },
+                    )
                     .await;
                 }
             }
@@ -190,46 +243,242 @@ pub async fn deliver_due(pool: &PgPool, client: &reqwest::Client) -> usize {
             request = request.header("X-Forge-Signature", format!("sha256={sig}"));
         }
         let result = request.send().await;
-        let ok = matches!(&result, Ok(r) if r.status().is_success());
-        if ok {
-            let _ = sqlx::query(
-                "UPDATE outbox_messages SET delivered_at = now(), last_error = NULL WHERE id = $1",
-            )
-            .bind(id)
-            .execute(pool)
-            .await;
-            delivered += 1;
-        } else if attempts + 1 >= MAX_ATTEMPTS {
-            // Dead-letter: keep the row, stop retrying (observability).
-            let err = result
-                .err()
-                .map(|e| e.to_string())
-                .unwrap_or_else(|| "http error".into());
-            let _ = sqlx::query(
-                "UPDATE outbox_messages SET attempts = $2, last_error = $3 WHERE id = $1",
-            )
-            .bind(id)
-            .bind(attempts + 1)
-            .bind(err)
-            .execute(pool)
-            .await;
-        } else {
-            let err = result
-                .err()
-                .map(|e| e.to_string())
-                .unwrap_or_else(|| "non-2xx".into());
-            let _ = sqlx::query(
-                "UPDATE outbox_messages SET attempts = $2, last_error = $3, next_attempt_at = $4 WHERE id = $1",
-            )
-            .bind(id)
-            .bind(attempts + 1)
-            .bind(err)
-            .bind(Utc::now() + next_delay(attempts))
-            .execute(pool)
-            .await;
+        match result {
+            Ok(response) if response.status().is_success() => {
+                let _ = sqlx::query(
+                    "UPDATE outbox_messages SET attempts = $2, delivered_at = now(), failed_at = NULL, last_error = NULL WHERE id = $1",
+                )
+                .bind(id)
+                .bind(attempt_number)
+                .execute(pool)
+                .await;
+                record_delivery_attempt(
+                    pool,
+                    DeliveryAttemptRecord {
+                        message_id: id,
+                        attempt_number,
+                        started_at,
+                        outcome: OUTCOME_DELIVERED,
+                        http_status: Some(i32::from(response.status().as_u16())),
+                        error_message: None,
+                        duration_ms: elapsed_ms(timer),
+                    },
+                )
+                .await;
+                crate::metrics::OUTBOX_DELIVERED_TOTAL
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                delivered += 1;
+            }
+            Ok(response) => {
+                let status = i32::from(response.status().as_u16());
+                let err = format!("http status {status}");
+                record_failed_delivery_attempt(
+                    pool,
+                    id,
+                    attempt_number,
+                    started_at,
+                    timer,
+                    Some(status),
+                    err,
+                )
+                .await;
+            }
+            Err(error) => {
+                let err = classify_transport_error(&error);
+                record_failed_delivery_attempt(
+                    pool,
+                    id,
+                    attempt_number,
+                    started_at,
+                    timer,
+                    None,
+                    err,
+                )
+                .await;
+            }
         }
     }
     delivered
+}
+
+async fn record_failed_delivery_attempt(
+    pool: &PgPool,
+    id: Uuid,
+    attempt_number: i32,
+    started_at: DateTime<Utc>,
+    timer: std::time::Instant,
+    http_status: Option<i32>,
+    error_message: String,
+) {
+    if attempt_number >= MAX_ATTEMPTS {
+        let _ = sqlx::query(
+            "UPDATE outbox_messages SET attempts = $2, last_error = $3, failed_at = now() WHERE id = $1",
+        )
+        .bind(id)
+        .bind(attempt_number)
+        .bind(&error_message)
+        .execute(pool)
+        .await;
+        record_delivery_attempt(
+            pool,
+            DeliveryAttemptRecord {
+                message_id: id,
+                attempt_number,
+                started_at,
+                outcome: OUTCOME_FAILED,
+                http_status,
+                error_message: Some(error_message),
+                duration_ms: elapsed_ms(timer),
+            },
+        )
+        .await;
+        crate::metrics::OUTBOX_DEAD_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    } else {
+        let _ = sqlx::query(
+            "UPDATE outbox_messages SET attempts = $2, last_error = $3, next_attempt_at = $4 WHERE id = $1",
+        )
+        .bind(id)
+        .bind(attempt_number)
+        .bind(&error_message)
+        .bind(Utc::now() + next_delay(attempt_number - 1))
+        .execute(pool)
+        .await;
+        record_delivery_attempt(
+            pool,
+            DeliveryAttemptRecord {
+                message_id: id,
+                attempt_number,
+                started_at,
+                outcome: OUTCOME_RETRY_SCHEDULED,
+                http_status,
+                error_message: Some(error_message),
+                duration_ms: elapsed_ms(timer),
+            },
+        )
+        .await;
+    }
+}
+
+struct DeliveryAttemptRecord {
+    message_id: Uuid,
+    attempt_number: i32,
+    started_at: DateTime<Utc>,
+    outcome: &'static str,
+    http_status: Option<i32>,
+    error_message: Option<String>,
+    duration_ms: i32,
+}
+
+async fn record_delivery_attempt(pool: &PgPool, attempt: DeliveryAttemptRecord) {
+    let finished_at = Utc::now();
+    let _ = sqlx::query(
+        "INSERT INTO outbox_delivery_attempts \
+            (message_id, attempt_number, started_at, finished_at, outcome, http_status, error_message, duration_ms) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) \
+         ON CONFLICT (message_id, attempt_number) DO NOTHING",
+    )
+    .bind(attempt.message_id)
+    .bind(attempt.attempt_number)
+    .bind(attempt.started_at)
+    .bind(finished_at)
+    .bind(attempt.outcome)
+    .bind(attempt.http_status)
+    .bind(attempt.error_message)
+    .bind(attempt.duration_ms)
+    .execute(pool)
+    .await;
+}
+
+fn elapsed_ms(timer: std::time::Instant) -> i32 {
+    i32::try_from(timer.elapsed().as_millis().min(i32::MAX as u128)).unwrap_or(i32::MAX)
+}
+
+fn classify_transport_error(error: &reqwest::Error) -> String {
+    if error.is_timeout() {
+        "timeout".to_owned()
+    } else if error.is_connect() {
+        "connect error".to_owned()
+    } else if error.is_request() {
+        "request error".to_owned()
+    } else {
+        "transport error".to_owned()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequeueDeliveryError {
+    NotFound,
+    NotFailed,
+}
+
+pub async fn requeue_failed_delivery(
+    pool: &PgPool,
+    delivery_id: Uuid,
+) -> Result<Result<Uuid, RequeueDeliveryError>, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let row = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            Option<Uuid>,
+            String,
+            String,
+            String,
+            serde_json::Value,
+            Option<DateTime<Utc>>,
+            Option<DateTime<Utc>>,
+        ),
+    >(
+        "SELECT event_id, project_id, subscription_id, channel, destination, payload, delivered_at, failed_at \
+         FROM outbox_messages WHERE id = $1 FOR UPDATE",
+    )
+    .bind(delivery_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((
+        event_id,
+        project_id,
+        subscription_id,
+        channel,
+        destination,
+        payload,
+        delivered_at,
+        failed_at,
+    )) = row
+    else {
+        return Ok(Err(RequeueDeliveryError::NotFound));
+    };
+    if delivered_at.is_some() || failed_at.is_none() {
+        return Ok(Err(RequeueDeliveryError::NotFailed));
+    }
+
+    let generation: i32 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(generation), -1) + 1 \
+         FROM outbox_messages WHERE event_id = $1 AND subscription_id = $2",
+    )
+    .bind(event_id)
+    .bind(&subscription_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let new_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO outbox_messages \
+            (id, event_id, project_id, subscription_id, channel, destination, payload, generation, replay_of_id, next_attempt_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())",
+    )
+    .bind(new_id)
+    .bind(event_id)
+    .bind(project_id)
+    .bind(subscription_id)
+    .bind(channel)
+    .bind(destination)
+    .bind(payload)
+    .bind(generation)
+    .bind(delivery_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(Ok(new_id))
 }
 
 /// One scheduler pass: fire enabled schedules whose minute arrived (idempotent claim).

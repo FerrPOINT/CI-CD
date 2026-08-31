@@ -250,7 +250,8 @@ Retention/TTL, S3 и multipart upload - **Target approved**.
 1. Откройте **Webhooks** (`/projects/{projectId}/webhooks`).
 2. Укажите HTTPS URL получателя, список событий и enabled.
 3. Сохраните конфигурацию и документируйте владельца получателя.
-4. Worker создаёт outbox-message на terminal pipeline event и отправляет JSON в enabled webhook. Если задан secret, добавляется HMAC header; retry/backoff есть, но delivery history, audited replay и dead-letter workflow ещё target.
+4. Worker создаёт outbox-message на terminal pipeline event и отправляет JSON в enabled webhook. Если задан secret, добавляется HMAC header; retry/backoff и история attempts доступны на этой же странице.
+5. Failed delivery можно явно поставить в повтор кнопкой **Повторить**; backend создаёт новую generation и не переписывает исходную историю.
 
 ### Уведомления
 

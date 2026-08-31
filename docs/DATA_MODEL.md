@@ -553,7 +553,7 @@ Platform tables создаются и расширяются через `backend
 | `secret` | TEXT | NULL | — | Optional HMAC signing secret для outgoing delivery |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
 
-Outgoing delivery создаёт `outbox_messages` на terminal pipeline events. Delivery history/replay/dead letters — target.
+Outgoing delivery создаёт `outbox_messages` на terminal pipeline events. Current MVP использует `outbox_messages` как delivery row, сохраняет попытки в `outbox_delivery_attempts` и позволяет requeue failed-доставки новой generation. Production lease/reconciliation и full dead-letter policy остаются target.
 
 ### 9.8 notification_configs
 
@@ -661,19 +661,42 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 |---|---|---|---|---|
 | `id` | UUID PK | нет | — | Message ID |
 | `event_id` | UUID | нет | — | FK → `domain_events(id)` CASCADE |
+| `project_id` | UUID | да | — | Денормализованный project scope для delivery API/RBAC; backfill берётся из payload/domain event/pipeline |
 | `subscription_id` | TEXT | нет | — | Webhook/notification/SSE subscription key |
 | `channel` | TEXT CHECK | нет | — | `webhook`, `notification`, `sse` |
 | `destination` | TEXT | нет | — | URL/target |
 | `payload` | JSONB | нет | `'{}'` | Delivery payload |
+| `generation` | INTEGER | нет | `0` | Replay generation; первичная доставка = `0` |
+| `replay_of_id` | UUID | да | — | FK → `outbox_messages(id)` `ON DELETE SET NULL`, ссылка на исходную failed delivery |
 | `attempts` | INTEGER | нет | `0` | Attempt count |
 | `next_attempt_at` | TIMESTAMPTZ | нет | `now()` | Следующая попытка |
 | `delivered_at` | TIMESTAMPTZ | да | — | Успешная доставка |
+| `failed_at` | TIMESTAMPTZ | да | — | Terminal failed/dead state после исчерпания попыток или permanent error |
 | `last_error` | TEXT | да | — | Последняя ошибка |
 | `created_at` | TIMESTAMPTZ | нет | `now()` | Создано |
 
-Для notification MVP `outbox_messages.channel = 'notification'`, `destination = 'project:<project_id>'`, а payload содержит `event`, `project_id`, `pipeline_id`, `status`, `channel`, `target` и `message`. Worker помечает `in_app`/`sse` сообщения delivered локально; внешние adapters не запускаются.
+Для notification MVP `outbox_messages.channel = 'notification'`, `destination = 'project:<project_id>'`, а payload содержит `event`, `project_id`, `pipeline_id`, `status`, `channel`, `target` и `message`. Worker помечает `in_app`/`sse` сообщения delivered локально; внешние adapters не запускаются. `GET /projects/{project_id}/outbox-deliveries` читает только строки с `project_id = $1`; migration `0012_outbox_delivery_history.sql` backfill-ит старые rows.
 
-### 9.17 Индексы
+### 9.17 outbox_delivery_attempts
+
+История попыток доставки для current outbox MVP. Таблица хранит безопасный итог попытки; secrets, произвольные request headers и полный response body не сохраняются.
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | BIGSERIAL PK | нет | — | Attempt row ID |
+| `message_id` | UUID | нет | — | FK → `outbox_messages(id)` CASCADE |
+| `attempt_number` | INTEGER | нет | — | Номер попытки внутри delivery |
+| `started_at` | TIMESTAMPTZ | нет | — | Время начала попытки |
+| `finished_at` | TIMESTAMPTZ | нет | — | Время фиксации результата |
+| `outcome` | TEXT CHECK | нет | — | `delivered`, `retry_scheduled` или `failed` |
+| `http_status` | INTEGER | да | — | HTTP status, если была HTTP-попытка |
+| `error_message` | TEXT | да | — | Safe error class/message без secret/URL payload |
+| `duration_ms` | INTEGER | нет | `0` | Длительность попытки |
+| `created_at` | TIMESTAMPTZ | нет | `now()` | Время записи |
+
+**UNIQUE constraint:** `(message_id, attempt_number)`.
+
+### 9.18 Индексы
 
 ```
 idx_runners_status          ON runners(status)
@@ -700,6 +723,9 @@ idx_domain_events_aggregate  ON domain_events(aggregate_type, aggregate_id, occu
 idx_domain_events_type       ON domain_events(event_type, occurred_at DESC)
 idx_outbox_pending           ON outbox_messages(next_attempt_at) WHERE delivered_at IS NULL
 idx_outbox_notification_project_created ON outbox_messages(destination, created_at DESC, id DESC) WHERE channel = 'notification'
+idx_outbox_project_created   ON outbox_messages(project_id, created_at DESC, id DESC) WHERE project_id IS NOT NULL
+idx_outbox_project_dead      ON outbox_messages(project_id, created_at DESC, id DESC) WHERE project_id IS NOT NULL AND delivered_at IS NULL AND failed_at IS NOT NULL
+idx_outbox_delivery_attempts_message ON outbox_delivery_attempts(message_id, attempt_number DESC)
 ```
 
 ## 10. Планируемые таблицы (Roadmap)
@@ -707,7 +733,7 @@ idx_outbox_notification_project_created ON outbox_messages(destination, created_
 | Фаза | Таблицы | Назначение |
 |---|---|---|
 | Runner protocol | `job_leases` | External dispatch, fencing, retries |
-| Production outbox | `outbox_deliveries` | Delivery history, replay/dead letters, observed outcome |
+| Production outbox | `outbox_deliveries` / lease state | Full dispatcher snapshots, lease/fencing, crash recovery, response preview allowlist и operator dead-letter policy поверх current bounded history |
 | External notifications | delivery-specific tables | Email/Slack sender state, templates, preferences |
 
 ## References

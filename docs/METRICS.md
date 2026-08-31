@@ -22,7 +22,7 @@ Current: DORA считается вручную из reports/audit; автома
 | Pipeline queue depth (jobs `queued`) | SQL | Target (gauge в метриках) |
 | Job duration p50/p95 по проекту | reports | Current (агрегат в UI) |
 | Runner heartbeats / online count | runners registry | Current (UI); метрики — Target |
-| Outbox backlog / delivery latency | outbox worker | MVP data exists; exported metrics — Target |
+| Outbox backlog / delivery latency | outbox worker | Current: delivered/dead counters; target: backlog age, retry lag and per-outcome dashboards |
 | DB: connections, pool saturation, slow queries | sqlx/pg | Target |
 | Artifact storage usage / quota | filesystem | Target |
 | Git push rate / post-receive failures | git hooks | Target |

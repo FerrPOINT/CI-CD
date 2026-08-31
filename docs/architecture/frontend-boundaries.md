@@ -20,7 +20,7 @@ frontend/src/
 - i18n: все пользовательские строки через `t()`; ключи en/ru в паритете (проверяется verify_docs + vitest).
 - Статусы отображаются текстом + цветом (не только цветом).
 - Страница должна показывать фактический статус capability: `Current verified`, `Configuration only` или `Target approved`; target-функции не оформляются как готовые action controls.
-- Для страниц с частично реализованной capability используется общий `CapabilityCallout` из `frontend/src/shared/ui/capability-callout.tsx`: `Runners` показывает registry/heartbeat как MVP, `Schedules` — scheduler MVP, `Webhooks` — outgoing delivery MVP, `Notifications` — `in_app`/`sse` delivery MVP.
+- Для страниц с частично реализованной capability используется общий `CapabilityCallout` из `frontend/src/shared/ui/capability-callout.tsx`: `Runners` показывает registry/heartbeat как MVP, `Schedules` — scheduler MVP, `Webhooks` — outgoing delivery MVP, `Delivery history` — outbox history/requeue MVP, `Notifications` — `in_app`/`sse` delivery MVP.
 - Основной desktop layout — рабочий dashboard/sidebar с плотными таблицами и формами; mobile — карточный список без потери create/view/retry/cancel сценариев.
 - Новые страницы добавляются только для самостоятельного CI/CD workflow. Справка, issue tracking, registry и IDE-экраны остаются out-of-scope.
 

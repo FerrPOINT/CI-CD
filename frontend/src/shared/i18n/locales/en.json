@@ -233,7 +233,7 @@
   "schedules": {
     "title": "Schedules",
     "capabilityTitle": "MVP scheduled runs",
-    "capabilityDescription": "Enabled schedules are checked by the backend worker about once per minute. Full cron semantics, missed-fire recovery, and delivery history remain target.",
+    "capabilityDescription": "Enabled schedules are checked by the backend worker about once per minute. Full cron semantics, time zones, and missed-fire recovery remain target.",
     "create": "Create schedule",
     "cron": "Cron expression",
     "gitRef": "Git ref",
@@ -248,7 +248,7 @@
   "webhooks": {
     "title": "Webhooks",
     "capabilityTitle": "Outgoing webhooks MVP",
-    "capabilityDescription": "Terminal pipeline events are delivered through the outbox with basic retry and optional HMAC. Replay, dead letters, and full delivery history remain target.",
+    "capabilityDescription": "Terminal pipeline events are delivered through the outbox with basic retry, HMAC, and observable history. Full replay/dead-letter policies remain target.",
     "create": "Add webhook",
     "url": "URL",
     "events": "Events (comma-separated)",
@@ -259,6 +259,30 @@
     "deleted": "Webhook deleted",
     "deleteConfirm": "Delete webhook",
     "empty": "No webhooks configured."
+  },
+  "deliveries": {
+    "title": "Delivery history",
+    "capabilityTitle": "Outbox delivery MVP",
+    "capabilityDescription": "Delivery attempts are recorded in the database; failed deliveries can be explicitly requeued as a new generation.",
+    "event": "Event",
+    "destination": "Destination",
+    "status": "Status",
+    "attempts": "Attempts",
+    "created": "Created",
+    "details": "Delivery attempts",
+    "attempt": "Attempt",
+    "outcome": "Outcome",
+    "httpStatus": "HTTP",
+    "duration": "Duration",
+    "error": "Error",
+    "requeue": "Requeue",
+    "requeued": "Delivery requeued",
+    "pending": "Pending",
+    "retryScheduled": "Retry",
+    "delivered": "Delivered",
+    "failed": "Failed",
+    "empty": "No deliveries yet.",
+    "noAttempts": "No attempts yet."
   },
   "notifications": {
     "title": "Notifications",

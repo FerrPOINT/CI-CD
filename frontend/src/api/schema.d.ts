@@ -381,6 +381,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/outbox-deliveries/{delivery_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_outbox_delivery"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/outbox-deliveries/{delivery_id}/requeue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["requeue_outbox_delivery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pipelines/{pipeline_id}": {
         parameters: {
             query?: never;
@@ -581,6 +613,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["notification_stream"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/outbox-deliveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_outbox_deliveries"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1349,6 +1397,61 @@ export interface components {
             enabled?: boolean | null;
             target: string;
         };
+        OutboxDelivery: {
+            /** Format: uuid */
+            aggregate_id: string;
+            aggregate_type: string;
+            /** Format: int32 */
+            attempts: number;
+            channel: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            delivered_at?: string | null;
+            destination: string;
+            /** Format: uuid */
+            event_id: string;
+            event_type: string;
+            /** Format: date-time */
+            failed_at?: string | null;
+            /** Format: int32 */
+            generation: number;
+            /** Format: uuid */
+            id: string;
+            last_error?: string | null;
+            /** Format: date-time */
+            next_attempt_at: string;
+            /** Format: uuid */
+            project_id?: string | null;
+            /** Format: uuid */
+            replay_of_id?: string | null;
+            status: string;
+            subscription_id: string;
+        };
+        OutboxDeliveryAttempt: {
+            /** Format: int32 */
+            attempt_number: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: int32 */
+            duration_ms: number;
+            error_message?: string | null;
+            /** Format: date-time */
+            finished_at: string;
+            /** Format: int32 */
+            http_status?: number | null;
+            /** Format: int64 */
+            id: number;
+            /** Format: uuid */
+            message_id: string;
+            outcome: string;
+            /** Format: date-time */
+            started_at: string;
+        };
+        OutboxDeliveryDetail: {
+            attempts: components["schemas"]["OutboxDeliveryAttempt"][];
+            delivery: components["schemas"]["OutboxDelivery"];
+        };
         Pipeline: {
             /** Format: date-time */
             created_at: string;
@@ -1461,6 +1564,12 @@ export interface components {
             id: string;
             name: string;
             visibility: string;
+        };
+        RequeuedOutboxDelivery: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            replay_of_id: string;
         };
         RetriedPipelineResult: {
             /** Format: uuid */
@@ -2387,6 +2496,66 @@ export interface operations {
             };
         };
     };
+    get_outbox_delivery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                delivery_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutboxDeliveryDetail"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    requeue_outbox_delivery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                delivery_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequeuedOutboxDelivery"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     get_pipeline: {
         parameters: {
             query?: never;
@@ -2899,6 +3068,40 @@ export interface operations {
         responses: {
             /** @description text/event-stream of project notification events */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_outbox_deliveries: {
+        parameters: {
+            query?: {
+                /** @description Maximum number of recent deliveries to return. */
+                limit?: number | null;
+                /** @description Optional status filter: pending, retry_scheduled, delivered or failed. */
+                status?: string | null;
+                /** @description Optional channel filter: webhook, notification or sse. */
+                channel?: string | null;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutboxDelivery"][];
+                };
+            };
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };

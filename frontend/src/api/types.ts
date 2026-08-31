@@ -252,6 +252,11 @@ export interface NotificationEvent {
   created_at: string
 }
 
+export type OutboxDelivery = components['schemas']['OutboxDelivery']
+export type OutboxDeliveryAttempt = components['schemas']['OutboxDeliveryAttempt']
+export type OutboxDeliveryDetail = components['schemas']['OutboxDeliveryDetail']
+export type RequeuedOutboxDelivery = components['schemas']['RequeuedOutboxDelivery']
+
 export interface ProjectReport {
   total_pipelines: number
   successful_pipelines: number

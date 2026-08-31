@@ -150,7 +150,7 @@ error: connection refused (os error 111)
   ```bash
   docker compose exec postgres psql -U cicd -d cicd -c "\dt"
   ```
-- Должны быть как минимум: `projects`, `pipelines`, `stages`, `jobs`, `job_logs`, `user_credentials`, `sessions`, `domain_events`, `outbox_messages`.
+- Должны быть как минимум: `projects`, `pipelines`, `stages`, `jobs`, `job_logs`, `user_credentials`, `sessions`, `domain_events`, `outbox_messages`, `outbox_delivery_attempts`.
 - Если таблиц нет — пересоздать backend-контейнер, чтобы заново пройти startup migrator:
   ```bash
   docker compose up -d --build backend

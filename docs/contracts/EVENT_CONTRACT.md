@@ -2,7 +2,7 @@
 
 Статус: Accepted target contract. Основание: [ADR-0009](../adr/0009-canonical-registry.md).
 
-Этот контракт определяет целевое наблюдаемое поведение автоматизации. Текущий MVP уже доставляет outgoing webhooks и local `in_app`/`sse` notifications в ограниченных границах, но не реализует полный target-контракт history/replay/dead-letter, внешние adapters и общую delivery-модель.
+Этот контракт определяет целевое наблюдаемое поведение автоматизации. Текущий MVP уже доставляет outgoing webhooks и local `in_app`/`sse` notifications в ограниченных границах, хранит bounded delivery attempts в `outbox_delivery_attempts` и поддерживает requeue failed `outbox_messages` новой generation, но не реализует полный target-контракт lease/reconciliation/dead-letter policy, внешние adapters и общую delivery-модель.
 
 ## 1. Границы и хранение
 

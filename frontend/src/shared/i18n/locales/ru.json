@@ -233,7 +233,7 @@
   "schedules": {
     "title": "Расписания",
     "capabilityTitle": "Плановые запуски MVP",
-    "capabilityDescription": "Включённые расписания проверяются backend worker-ом примерно раз в минуту. Полная cron-семантика, восстановление пропущенных запусков и история доставок остаются target.",
+    "capabilityDescription": "Включённые расписания проверяются backend worker-ом примерно раз в минуту. Полная cron-семантика, timezone и восстановление пропущенных запусков остаются target.",
     "create": "Создать расписание",
     "cron": "Cron-выражение",
     "gitRef": "Git ref",
@@ -248,7 +248,7 @@
   "webhooks": {
     "title": "Webhook-и",
     "capabilityTitle": "Исходящие webhook-и MVP",
-    "capabilityDescription": "Финальные события pipeline доставляются через outbox с базовыми повторами и опциональным HMAC. Replay, dead letters и полная история доставок остаются target.",
+    "capabilityDescription": "Финальные события pipeline доставляются через outbox с базовыми повторами, HMAC и наблюдаемой историей. Полные политики replay/dead-letter остаются target.",
     "create": "Добавить webhook",
     "url": "URL",
     "events": "События (через запятую)",
@@ -259,6 +259,30 @@
     "deleted": "Webhook удалён",
     "deleteConfirm": "Удалить webhook",
     "empty": "Webhook-и не настроены."
+  },
+  "deliveries": {
+    "title": "История доставок",
+    "capabilityTitle": "Outbox delivery MVP",
+    "capabilityDescription": "Попытки доставки фиксируются в БД; failed-доставку можно явно поставить в повтор новой generation.",
+    "event": "Событие",
+    "destination": "Назначение",
+    "status": "Статус",
+    "attempts": "Попытки",
+    "created": "Создано",
+    "details": "Попытки доставки",
+    "attempt": "Попытка",
+    "outcome": "Итог",
+    "httpStatus": "HTTP",
+    "duration": "Длительность",
+    "error": "Ошибка",
+    "requeue": "Повторить",
+    "requeued": "Доставка поставлена в повтор",
+    "pending": "Ожидает",
+    "retryScheduled": "Повтор",
+    "delivered": "Доставлено",
+    "failed": "Ошибка",
+    "empty": "Доставок пока нет.",
+    "noAttempts": "Попыток ещё нет."
   },
   "notifications": {
     "title": "Уведомления",

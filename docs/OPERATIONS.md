@@ -357,14 +357,15 @@ Runner считается unhealthy после отсутствия heartbeat б
 
 **Current verified: диагностика и действия**
 
-Transactional outbox MVP реализован через `domain_events` и `outbox_messages`: terminal pipeline event создаёт сообщения для enabled outgoing webhooks и local `in_app`/`sse` notifications; worker доставляет webhook-и с basic retry/backoff и помечает local notifications delivered. Таблицы `outbox_deliveries`, audited replay, dead-letter workflow, external notification adapters и точные delivery guarantees ещё target.
+Transactional outbox MVP реализован через `domain_events`, `outbox_messages` и `outbox_delivery_attempts`: terminal pipeline event создаёт сообщения для enabled outgoing webhooks и local `in_app`/`sse` notifications; worker доставляет webhook-и с basic retry/backoff, помечает local notifications delivered, фиксирует attempts/outcome и останавливает exhausted delivery через `failed_at`. Failed delivery можно явно requeue через API; `outbox_deliveries` snapshots/leases, full dead-letter workflow, external notification adapters и точные crash-safe delivery guarantees ещё target.
 
-Для диагностики текущего backlog используйте read-only запросы к `outbox_messages` и backend logs; не редактируйте payload/attempts вручную:
+Для диагностики текущего backlog используйте API history, read-only запросы к `outbox_messages`/`outbox_delivery_attempts` и backend logs; не редактируйте payload/attempts вручную:
 
 ```bash
+curl -fsS "http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/outbox-deliveries?status=failed&limit=50"
 docker compose exec -T postgres \
   psql -U "$CICD_DATABASE_USER" -d "$CICD_DATABASE_NAME" \
-  -c "select channel, count(*), min(next_attempt_at) from outbox_messages where delivered_at is null group by channel"
+  -c "select channel, failed_at is not null as failed, count(*), min(next_attempt_at) from outbox_messages where delivered_at is null group by channel, failed"
 docker compose logs --tail=200 backend
 ```
 
@@ -373,7 +374,7 @@ docker compose logs --tail=200 backend
 1. Alert содержит queue age, pending/leased/failed counts, retry lag и worker version; зафиксировать их до изменений.
 2. Проверить worker health, PostgreSQL capacity/locks, oldest `outbox_messages`, lease expiry и safe failure class в `outbox_deliveries`.
 3. Восстановить worker или зависимость, не меняя immutable payload и не удаляя pending rows вручную.
-4. Просроченные lease должны быть reclaimed idempotently; delivery retry следует backoff policy. Terminal dead letter требует alert и только явный audited replay/requeue с новой delivery generation.
+4. Просроченные lease должны быть reclaimed idempotently; delivery retry следует backoff policy. В current MVP terminal failed row повторяется только явным `POST /api/v1/outbox-deliveries/{delivery_id}/requeue`, который создаёт новую generation; target dead letter дополнительно требует alert и full audited operator workflow.
 5. После восстановления подтвердить уменьшение queue age, отсутствие duplicate side effects у consumer и отсутствие secret в logs/history.
 
 Целевые гарантии и retry classification определены в [контракте событий и доставок](contracts/EVENT_CONTRACT.md).

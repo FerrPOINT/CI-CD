@@ -77,6 +77,9 @@ pub fn required_role(method: &str, path: &str) -> (Action, Role) {
     if path.contains("/secrets") && !read_only {
         return (Action::Admin, Role::Maintainer);
     }
+    if path.starts_with("/api/v1/outbox-deliveries") && !read_only {
+        return (Action::Admin, Role::Maintainer);
+    }
     // Everything else: reads for viewer+, writes for developer+.
     if read_only {
         (Action::Read, Role::Viewer)
@@ -124,5 +127,9 @@ mod tests {
         let membership_path = "/api/v1/projects/018f3c59-38f6-7c2a-bc55-081eb78cbf17/memberships";
         assert!(!allows(Role::Developer, "GET", membership_path));
         assert!(allows(Role::Maintainer, "GET", membership_path));
+
+        let requeue_path = "/api/v1/outbox-deliveries/018f3c59-38f6-7c2a-bc55-081eb78cbf17/requeue";
+        assert!(!allows(Role::Developer, "POST", requeue_path));
+        assert!(allows(Role::Maintainer, "POST", requeue_path));
     }
 }

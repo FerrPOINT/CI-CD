@@ -978,7 +978,55 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 | POST | `/projects/{project_id}/webhooks` | Создать (url, events[], enabled) |
 | DELETE | `/webhooks/{webhook_id}` | Удалить |
 
-> Outgoing webhook delivery реализована для terminal pipeline events через `domain_events`/`outbox_messages`, basic retry/backoff и optional HMAC secret. Delivery history/replay/dead letters остаются target.
+> Outgoing webhook delivery реализована для terminal pipeline events через `domain_events`/`outbox_messages`, basic retry/backoff и optional HMAC secret. Bounded delivery history и requeue failed-доставки описаны ниже; production lease/reconciliation и full dead-letter policy остаются target.
+
+### Outbox deliveries
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/projects/{project_id}/outbox-deliveries?limit=&status=&channel=` | Последние delivery rows проекта |
+| GET | `/outbox-deliveries/{delivery_id}` | Delivery detail + попытки |
+| POST | `/outbox-deliveries/{delivery_id}/requeue` | Явно поставить failed delivery в повтор новой generation |
+
+`GET /projects/{project_id}/outbox-deliveries` возвращает bounded список (`limit` `1..200`, default `50`) со stable ordering `created_at DESC, id DESC`. Фильтры allowlisted: `status=pending|retry_scheduled|delivered|failed`, `channel=webhook|notification|sse`.
+
+**Response 200:**
+```json
+[
+  {
+    "id": "delivery-uuid",
+    "project_id": "project-uuid",
+    "event_id": "event-uuid",
+    "replay_of_id": null,
+    "generation": 0,
+    "subscription_id": "webhook:...",
+    "channel": "webhook",
+    "destination": "https://example.invalid/hook",
+    "event_type": "pipeline.failed",
+    "aggregate_type": "pipeline",
+    "aggregate_id": "pipeline-uuid",
+    "status": "failed",
+    "attempts": 8,
+    "next_attempt_at": "2026-08-31T12:00:00Z",
+    "delivered_at": null,
+    "failed_at": "2026-08-31T12:00:00Z",
+    "last_error": "http status 500",
+    "created_at": "2026-08-31T11:58:00Z"
+  }
+]
+```
+
+`GET /outbox-deliveries/{delivery_id}` возвращает тот же delivery object и attempts в порядке `attempt_number DESC`. Attempts сохраняют номер, timestamps, outcome, optional HTTP status, safe error message и duration. Secret, request headers и response body не возвращаются.
+
+`POST /outbox-deliveries/{delivery_id}/requeue` доступен только для failed delivery (`delivered_at IS NULL`, `failed_at IS NOT NULL`) и требует maintainer-level policy при включённом auth. Backend создаёт новую строку `outbox_messages` с новым `id`, тем же `event_id`/subscription snapshot, `generation + 1`, `replay_of_id = исходный delivery_id` и `next_attempt_at = now()`. Нефейловая delivery возвращает `400`, отсутствующая — `404`.
+
+**Response 200:**
+```json
+{
+  "id": "new-delivery-uuid",
+  "replay_of_id": "failed-delivery-uuid"
+}
+```
 
 ### Notifications
 
@@ -1150,6 +1198,8 @@ Git Smart HTTP допускает unauthenticated read только для `repo
 | `/api/v1/jobs/{job_id}/status` | Jobs |
 | `/api/v1/jobs/{job_id}/test-report` | Jobs |
 | `/api/v1/openapi.json` | Health |
+| `/api/v1/outbox-deliveries/{delivery_id}` | Outbox |
+| `/api/v1/outbox-deliveries/{delivery_id}/requeue` | Outbox |
 | `/api/v1/pipelines/{pipeline_id}` | Pipelines |
 | `/api/v1/pipelines/{pipeline_id}/badge.svg` | Pipelines |
 | `/api/v1/pipelines/{pipeline_id}/cancel` | Pipelines |
@@ -1163,6 +1213,7 @@ Git Smart HTTP допускает unauthenticated read только для `repo
 | `/api/v1/projects/{project_id}/notification-events` | Notifications |
 | `/api/v1/projects/{project_id}/notifications` | Notifications |
 | `/api/v1/projects/{project_id}/notifications/stream` | Notifications |
+| `/api/v1/projects/{project_id}/outbox-deliveries` | Outbox |
 | `/api/v1/projects/{project_id}/pipelines` | Pipelines |
 | `/api/v1/projects/{project_id}/reports/summary` | Reports |
 | `/api/v1/projects/{project_id}/schedules` | Schedules |

@@ -674,6 +674,50 @@ paths:
       responses:
         '200':
           description: OpenAPI JSON document
+  /api/v1/outbox-deliveries/{delivery_id}:
+    get:
+      tags:
+      - outbox
+      operationId: get_outbox_delivery
+      parameters:
+      - name: delivery_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OutboxDeliveryDetail'
+        '404':
+          description: ''
+  /api/v1/outbox-deliveries/{delivery_id}/requeue:
+    post:
+      tags:
+      - outbox
+      operationId: requeue_outbox_delivery
+      parameters:
+      - name: delivery_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RequeuedOutboxDelivery'
+        '400':
+          description: ''
+        '404':
+          description: ''
   /api/v1/pipelines/{pipeline_id}:
     get:
       tags:
@@ -1107,6 +1151,54 @@ paths:
       responses:
         '200':
           description: text/event-stream of project notification events
+  /api/v1/projects/{project_id}/outbox-deliveries:
+    get:
+      tags:
+      - outbox
+      operationId: list_outbox_deliveries
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: limit
+        in: query
+        description: Maximum number of recent deliveries to return.
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: status
+        in: query
+        description: 'Optional status filter: pending, retry_scheduled, delivered or failed.'
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: channel
+        in: query
+        description: 'Optional channel filter: webhook, notification or sse.'
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/OutboxDelivery'
+        '400':
+          description: ''
   /api/v1/projects/{project_id}/pipelines:
     get:
       tags:
@@ -2757,6 +2849,136 @@ components:
           - 'null'
         target:
           type: string
+    OutboxDelivery:
+      type: object
+      required:
+      - id
+      - event_id
+      - generation
+      - subscription_id
+      - channel
+      - destination
+      - event_type
+      - aggregate_type
+      - aggregate_id
+      - status
+      - attempts
+      - next_attempt_at
+      - created_at
+      properties:
+        aggregate_id:
+          type: string
+          format: uuid
+        aggregate_type:
+          type: string
+        attempts:
+          type: integer
+          format: int32
+        channel:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        delivered_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        destination:
+          type: string
+        event_id:
+          type: string
+          format: uuid
+        event_type:
+          type: string
+        failed_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        generation:
+          type: integer
+          format: int32
+        id:
+          type: string
+          format: uuid
+        last_error:
+          type:
+          - string
+          - 'null'
+        next_attempt_at:
+          type: string
+          format: date-time
+        project_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        replay_of_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        status:
+          type: string
+        subscription_id:
+          type: string
+    OutboxDeliveryAttempt:
+      type: object
+      required:
+      - id
+      - message_id
+      - attempt_number
+      - started_at
+      - finished_at
+      - outcome
+      - duration_ms
+      - created_at
+      properties:
+        attempt_number:
+          type: integer
+          format: int32
+        created_at:
+          type: string
+          format: date-time
+        duration_ms:
+          type: integer
+          format: int32
+        error_message:
+          type:
+          - string
+          - 'null'
+        finished_at:
+          type: string
+          format: date-time
+        http_status:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        id:
+          type: integer
+          format: int64
+        message_id:
+          type: string
+          format: uuid
+        outcome:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+    OutboxDeliveryDetail:
+      type: object
+      required:
+      - delivery
+      - attempts
+      properties:
+        attempts:
+          type: array
+          items:
+            $ref: '#/components/schemas/OutboxDeliveryAttempt'
+        delivery:
+          $ref: '#/components/schemas/OutboxDelivery'
     Pipeline:
       type: object
       required:
@@ -3024,6 +3246,18 @@ components:
           type: string
         visibility:
           type: string
+    RequeuedOutboxDelivery:
+      type: object
+      required:
+      - id
+      - replay_of_id
+      properties:
+        id:
+          type: string
+          format: uuid
+        replay_of_id:
+          type: string
+          format: uuid
     RetriedPipelineResult:
       type: object
       required:
@@ -3389,6 +3623,8 @@ tags:
   description: Cron-style pipeline schedules
 - name: webhooks
   description: Outgoing project webhooks
+- name: outbox
+  description: Outbox delivery history and replay
 - name: notifications
   description: Notification channel configuration
 - name: reports

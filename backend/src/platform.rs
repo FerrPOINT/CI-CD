@@ -87,6 +87,18 @@ pub fn routes() -> Router<Arc<AppState>> {
             axum::routing::delete(delete_webhook),
         )
         .route(
+            "/api/v1/projects/{project_id}/outbox-deliveries",
+            get(list_outbox_deliveries),
+        )
+        .route(
+            "/api/v1/outbox-deliveries/{delivery_id}",
+            get(get_outbox_delivery),
+        )
+        .route(
+            "/api/v1/outbox-deliveries/{delivery_id}/requeue",
+            post(requeue_outbox_delivery),
+        )
+        .route(
             "/api/v1/projects/{project_id}/notifications",
             get(list_notifications).put(replace_notifications),
         )
@@ -550,6 +562,222 @@ async fn delete_webhook(
         .map_err(ApiError::internal)?
         .ok_or_else(ApiError::not_found)?;
     Ok(Json(serde_json::json!({"deleted": id})))
+}
+
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub(crate) struct OutboxDeliveriesParams {
+    /// Maximum number of recent deliveries to return.
+    limit: Option<i64>,
+    /// Optional status filter: pending, retry_scheduled, delivered or failed.
+    status: Option<String>,
+    /// Optional channel filter: webhook, notification or sse.
+    channel: Option<String>,
+}
+impl OutboxDeliveriesParams {
+    fn bounded_limit(&self) -> Result<i64, ApiError> {
+        let limit = self.limit.unwrap_or(50);
+        if !(1..=200).contains(&limit) {
+            return Err(ApiError::bad_request("limit must be between 1 and 200"));
+        }
+        Ok(limit)
+    }
+
+    fn status_filter(&self) -> Result<Option<String>, ApiError> {
+        optional_allowlisted(
+            &self.status,
+            &["pending", "retry_scheduled", "delivered", "failed"],
+        )
+    }
+
+    fn channel_filter(&self) -> Result<Option<String>, ApiError> {
+        optional_allowlisted(&self.channel, &["webhook", "notification", "sse"])
+    }
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct OutboxDelivery {
+    id: Uuid,
+    project_id: Option<Uuid>,
+    event_id: Uuid,
+    replay_of_id: Option<Uuid>,
+    generation: i32,
+    subscription_id: String,
+    channel: String,
+    destination: String,
+    event_type: String,
+    aggregate_type: String,
+    aggregate_id: Uuid,
+    status: String,
+    attempts: i32,
+    next_attempt_at: DateTime<Utc>,
+    delivered_at: Option<DateTime<Utc>>,
+    failed_at: Option<DateTime<Utc>>,
+    last_error: Option<String>,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct OutboxDeliveryAttempt {
+    id: i64,
+    message_id: Uuid,
+    attempt_number: i32,
+    started_at: DateTime<Utc>,
+    finished_at: DateTime<Utc>,
+    outcome: String,
+    http_status: Option<i32>,
+    error_message: Option<String>,
+    duration_ms: i32,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct OutboxDeliveryDetail {
+    delivery: OutboxDelivery,
+    attempts: Vec<OutboxDeliveryAttempt>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct RequeuedOutboxDelivery {
+    id: Uuid,
+    replay_of_id: Uuid,
+}
+
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/outbox-deliveries", tag = "outbox", params(("project_id" = Uuid, Path), OutboxDeliveriesParams), responses((status = 200, body = [OutboxDelivery]), (status = 400)))]
+pub(crate) async fn list_outbox_deliveries(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+    Query(params): Query<OutboxDeliveriesParams>,
+) -> ApiResult<Vec<OutboxDelivery>> {
+    Ok(Json(
+        project_outbox_deliveries(
+            pool(&state)?,
+            project_id,
+            params.bounded_limit()?,
+            params.status_filter()?,
+            params.channel_filter()?,
+        )
+        .await
+        .map_err(ApiError::internal)?,
+    ))
+}
+
+#[utoipa::path(get, path = "/api/v1/outbox-deliveries/{delivery_id}", tag = "outbox", params(("delivery_id" = Uuid, Path)), responses((status = 200, body = OutboxDeliveryDetail), (status = 404)))]
+pub(crate) async fn get_outbox_delivery(
+    State(state): State<Arc<AppState>>,
+    Path(delivery_id): Path<Uuid>,
+) -> ApiResult<OutboxDeliveryDetail> {
+    let db = pool(&state)?;
+    let delivery = outbox_delivery_by_id(db, delivery_id)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(ApiError::not_found)?;
+    let attempts = sqlx::query_as::<_, OutboxDeliveryAttempt>(
+        "SELECT id, message_id, attempt_number, started_at, finished_at, outcome, \
+            http_status, error_message, duration_ms, created_at \
+         FROM outbox_delivery_attempts \
+         WHERE message_id = $1 \
+         ORDER BY attempt_number DESC",
+    )
+    .bind(delivery_id)
+    .fetch_all(db)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(Json(OutboxDeliveryDetail { delivery, attempts }))
+}
+
+#[utoipa::path(post, path = "/api/v1/outbox-deliveries/{delivery_id}/requeue", tag = "outbox", params(("delivery_id" = Uuid, Path)), responses((status = 200, body = RequeuedOutboxDelivery), (status = 400), (status = 404)))]
+pub(crate) async fn requeue_outbox_delivery(
+    State(state): State<Arc<AppState>>,
+    Path(delivery_id): Path<Uuid>,
+) -> ApiResult<RequeuedOutboxDelivery> {
+    let db = pool(&state)?;
+    match crate::outbox::requeue_failed_delivery(db, delivery_id)
+        .await
+        .map_err(ApiError::internal)?
+    {
+        Ok(id) => {
+            audit(db, "outbox.requeue", "outbox_delivery", id, None).await?;
+            Ok(Json(RequeuedOutboxDelivery {
+                id,
+                replay_of_id: delivery_id,
+            }))
+        }
+        Err(crate::outbox::RequeueDeliveryError::NotFound) => Err(ApiError::not_found()),
+        Err(crate::outbox::RequeueDeliveryError::NotFailed) => Err(ApiError::bad_request(
+            "only failed deliveries can be requeued",
+        )),
+    }
+}
+
+fn optional_allowlisted(
+    value: &Option<String>,
+    allowed: &[&str],
+) -> Result<Option<String>, ApiError> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value.trim().to_ascii_lowercase();
+    if allowed.contains(&value.as_str()) {
+        Ok(Some(value))
+    } else {
+        Err(ApiError::bad_request("unsupported filter value"))
+    }
+}
+
+async fn project_outbox_deliveries(
+    pool: &PgPool,
+    project_id: Uuid,
+    limit: i64,
+    status: Option<String>,
+    channel: Option<String>,
+) -> Result<Vec<OutboxDelivery>, sqlx::Error> {
+    sqlx::query_as::<_, OutboxDelivery>(
+        "SELECT * FROM ( \
+            SELECT m.id, m.project_id, m.event_id, m.replay_of_id, m.generation, \
+                m.subscription_id, m.channel, m.destination, e.event_type, e.aggregate_type, e.aggregate_id, \
+                CASE \
+                    WHEN m.delivered_at IS NOT NULL THEN 'delivered' \
+                    WHEN m.failed_at IS NOT NULL THEN 'failed' \
+                    WHEN m.attempts > 0 THEN 'retry_scheduled' \
+                    ELSE 'pending' \
+                END AS status, \
+                m.attempts, m.next_attempt_at, m.delivered_at, m.failed_at, m.last_error, m.created_at \
+             FROM outbox_messages m \
+             JOIN domain_events e ON e.id = m.event_id \
+             WHERE m.project_id = $1 AND ($2::text IS NULL OR m.channel = $2) \
+         ) deliveries \
+         WHERE $3::text IS NULL OR status = $3 \
+         ORDER BY created_at DESC, id DESC LIMIT $4",
+    )
+    .bind(project_id)
+    .bind(channel)
+    .bind(status)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+async fn outbox_delivery_by_id(
+    pool: &PgPool,
+    delivery_id: Uuid,
+) -> Result<Option<OutboxDelivery>, sqlx::Error> {
+    sqlx::query_as::<_, OutboxDelivery>(
+        "SELECT m.id, m.project_id, m.event_id, m.replay_of_id, m.generation, \
+            m.subscription_id, m.channel, m.destination, e.event_type, e.aggregate_type, e.aggregate_id, \
+            CASE \
+                WHEN m.delivered_at IS NOT NULL THEN 'delivered' \
+                WHEN m.failed_at IS NOT NULL THEN 'failed' \
+                WHEN m.attempts > 0 THEN 'retry_scheduled' \
+                ELSE 'pending' \
+            END AS status, \
+            m.attempts, m.next_attempt_at, m.delivered_at, m.failed_at, m.last_error, m.created_at \
+         FROM outbox_messages m \
+         JOIN domain_events e ON e.id = m.event_id \
+         WHERE m.id = $1",
+    )
+    .bind(delivery_id)
+    .fetch_optional(pool)
+    .await
 }
 
 #[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]

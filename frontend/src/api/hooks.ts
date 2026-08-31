@@ -25,6 +25,8 @@ import type {
   JobLogPage,
   NotificationConfig,
   NotificationEvent,
+  OutboxDelivery,
+  OutboxDeliveryDetail,
   Pipeline,
   PipelineDetail,
   Project,
@@ -33,6 +35,7 @@ import type {
   ProjectReport,
   PullRequest,
   PullRequestAction,
+  RequeuedOutboxDelivery,
   Repository,
   RepositoryRef,
   Runner,
@@ -371,6 +374,8 @@ const PLATFORM_KEYS = {
   deployments: (environmentId: string) => ['deployments', environmentId] as const,
   schedules: (projectId: string) => ['schedules', projectId] as const,
   webhooks: (projectId: string) => ['webhooks', projectId] as const,
+  outboxDeliveries: (projectId: string) => ['outbox-deliveries', projectId] as const,
+  outboxDelivery: (deliveryId: string) => ['outbox-delivery', deliveryId] as const,
   notifications: (projectId: string) => ['notifications', projectId] as const,
   notificationEvents: (projectId: string) => ['notification-events', projectId] as const,
   report: (projectId: string) => ['report', projectId] as const,
@@ -571,6 +576,44 @@ export function useDeleteWebhook() {
   return useMutation({
     mutationFn: (id: string) => api<{ deleted: string }>(`/webhooks/${id}`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['webhooks'] }),
+  })
+}
+
+export function useOutboxDeliveries(projectId: string | undefined, filters?: { status?: string; channel?: string; limit?: number }) {
+  return useQuery({
+    queryKey: [
+      ...PLATFORM_KEYS.outboxDeliveries(projectId ?? ''),
+      filters?.status ?? 'all',
+      filters?.channel ?? 'all',
+      filters?.limit ?? 20,
+    ],
+    queryFn: () => {
+      const params = new URLSearchParams({ limit: String(filters?.limit ?? 20) })
+      if (filters?.status) params.set('status', filters.status)
+      if (filters?.channel) params.set('channel', filters.channel)
+      return api<OutboxDelivery[]>(`/projects/${projectId}/outbox-deliveries?${params.toString()}`)
+    },
+    enabled: Boolean(projectId),
+    refetchInterval: browserNotificationStreamEnabled() ? 10_000 : false,
+  })
+}
+
+export function useOutboxDelivery(deliveryId: string | null | undefined) {
+  return useQuery({
+    queryKey: PLATFORM_KEYS.outboxDelivery(deliveryId ?? ''),
+    queryFn: () => api<OutboxDeliveryDetail>(`/outbox-deliveries/${deliveryId}`),
+    enabled: Boolean(deliveryId),
+  })
+}
+
+export function useRequeueOutboxDelivery() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api<RequeuedOutboxDelivery>(`/outbox-deliveries/${id}/requeue`, { method: 'POST' }),
+    onSuccess: (_result, id) => {
+      void qc.invalidateQueries({ queryKey: ['outbox-deliveries'] })
+      void qc.invalidateQueries({ queryKey: PLATFORM_KEYS.outboxDelivery(id) })
+    },
   })
 }
 

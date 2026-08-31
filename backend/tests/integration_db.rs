@@ -519,7 +519,7 @@ async fn scoped_api_tokens_limit_project_routes_and_soft_revoke() {
         .await
         .expect("cleanup token admin");
     sqlx::query("DELETE FROM projects WHERE id = ANY($1)")
-        .bind(&[project_a, project_b])
+        .bind([project_a, project_b])
         .execute(&pool)
         .await
         .expect("cleanup scoped token projects");
@@ -853,12 +853,12 @@ async fn git_smart_http_uses_project_membership_when_auth_enabled() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
     sqlx::query("DELETE FROM users WHERE id = ANY($1)")
-        .bind(&[developer_id, viewer_id, outsider_id])
+        .bind([developer_id, viewer_id, outsider_id])
         .execute(&pool)
         .await
         .expect("cleanup git users");
     sqlx::query("DELETE FROM projects WHERE id = ANY($1)")
-        .bind(&[project_id, lookalike_project_id])
+        .bind([project_id, lookalike_project_id])
         .execute(&pool)
         .await
         .expect("cleanup git projects");
@@ -1735,6 +1735,194 @@ async fn exhausted_outbox_message_is_not_retried() {
         .execute(&pool)
         .await
         .expect("cleanup domain event");
+}
+
+#[tokio::test]
+async fn failed_outbox_delivery_records_attempt_and_can_be_requeued() {
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let event_id = Uuid::new_v4();
+    let message_id = Uuid::new_v4();
+    let project_name = format!("it-outbox-history-{}", project_id.simple());
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/outbox-history.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status) VALUES ($1, $2, 'main', 'failed')",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert pipeline");
+    sqlx::query(
+        "INSERT INTO domain_events (id, event_type, aggregate_type, aggregate_id, payload) \
+         VALUES ($1, 'pipeline.failed', 'pipeline', $2, $3)",
+    )
+    .bind(event_id)
+    .bind(pipeline_id)
+    .bind(serde_json::json!({ "project_id": project_id, "status": "failed" }))
+    .execute(&pool)
+    .await
+    .expect("insert domain event");
+    sqlx::query(
+        "INSERT INTO outbox_messages \
+            (id, event_id, project_id, subscription_id, channel, destination, payload, attempts, next_attempt_at) \
+         VALUES ($1, $2, $3, 'notification:external', 'notification', $4, $5, $6, now() - interval '1 minute')",
+    )
+    .bind(message_id)
+    .bind(event_id)
+    .bind(project_id)
+    .bind(cicd::outbox::notification_destination(project_id))
+    .bind(serde_json::json!({
+        "channel": "email",
+        "target": "ops@example.invalid",
+        "event": "pipeline.failed",
+        "project_id": project_id,
+        "pipeline_id": pipeline_id,
+        "status": "failed",
+    }))
+    .bind(cicd::outbox::MAX_ATTEMPTS - 1)
+    .execute(&pool)
+    .await
+    .expect("insert retrying outbox message");
+
+    let delivered = cicd::outbox::deliver_due(&pool, &reqwest::Client::new()).await;
+    assert_eq!(delivered, 0);
+
+    let (attempts, failed_at, last_error): (
+        i32,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<String>,
+    ) = sqlx::query_as("SELECT attempts, failed_at, last_error FROM outbox_messages WHERE id = $1")
+        .bind(message_id)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch failed delivery");
+    assert_eq!(attempts, cicd::outbox::MAX_ATTEMPTS);
+    assert!(failed_at.is_some());
+    assert_eq!(
+        last_error.as_deref(),
+        Some("unsupported notification channel: email")
+    );
+
+    let app = cicd::api::app(Some(pool.clone()));
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/projects/{project_id}/outbox-deliveries?status=failed&channel=notification&limit=10"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let deliveries = response_json(response).await;
+    assert_eq!(deliveries.as_array().unwrap().len(), 1);
+    assert_eq!(deliveries[0]["id"], message_id.to_string());
+    assert_eq!(deliveries[0]["status"], "failed");
+    assert_eq!(deliveries[0]["attempts"], cicd::outbox::MAX_ATTEMPTS);
+    assert_eq!(deliveries[0]["generation"], 0);
+
+    let detail = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/outbox-deliveries/{message_id}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail.status(), StatusCode::OK);
+    let detail = response_json(detail).await;
+    assert_eq!(detail["delivery"]["id"], message_id.to_string());
+    assert_eq!(detail["attempts"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        detail["attempts"][0]["attempt_number"],
+        cicd::outbox::MAX_ATTEMPTS
+    );
+    assert_eq!(detail["attempts"][0]["outcome"], "failed");
+
+    let requeue = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/outbox-deliveries/{message_id}/requeue"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(requeue.status(), StatusCode::OK);
+    let requeue = response_json(requeue).await;
+    let replay_id = Uuid::parse_str(requeue["id"].as_str().unwrap()).unwrap();
+    assert_eq!(requeue["replay_of_id"], message_id.to_string());
+
+    let (generation, replay_of_id, replay_attempts, replay_failed_at): (
+        i32,
+        Option<Uuid>,
+        i32,
+        Option<chrono::DateTime<chrono::Utc>>,
+    ) = sqlx::query_as(
+        "SELECT generation, replay_of_id, attempts, failed_at FROM outbox_messages WHERE id = $1",
+    )
+    .bind(replay_id)
+    .fetch_one(&pool)
+    .await
+    .expect("fetch replay delivery");
+    assert_eq!(generation, 1);
+    assert_eq!(replay_of_id, Some(message_id));
+    assert_eq!(replay_attempts, 0);
+    assert!(replay_failed_at.is_none());
+
+    let pending = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/projects/{project_id}/outbox-deliveries?status=pending&limit=10"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(pending.status(), StatusCode::OK);
+    let pending = response_json(pending).await;
+    assert_eq!(pending.as_array().unwrap().len(), 1);
+    assert_eq!(pending[0]["id"], replay_id.to_string());
+
+    let non_failed_requeue = app
+        .oneshot(
+            Request::post(format!("/api/v1/outbox-deliveries/{replay_id}/requeue"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(non_failed_requeue.status(), StatusCode::BAD_REQUEST);
+
+    sqlx::query("DELETE FROM outbox_messages WHERE event_id = $1")
+        .bind(event_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup outbox");
+    sqlx::query("DELETE FROM domain_events WHERE id = $1")
+        .bind(event_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup domain event");
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup project");
 }
 
 async fn response_json(response: axum::response::Response) -> serde_json::Value {

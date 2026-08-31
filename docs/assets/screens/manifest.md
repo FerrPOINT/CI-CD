@@ -25,7 +25,7 @@
 | [14-secrets.png](../../screenshots/14-secrets.png) | `/projects/:id/secrets` | Секреты проекта | 1920×1080 |
 | [15-environments.png](../../screenshots/15-environments.png) | `/projects/:id/environments` | Окружения и деплои | 1920×1080 |
 | [16-schedules.png](../../screenshots/16-schedules.png) | `/projects/:id/schedules` | Расписания | 1920×1080 |
-| [17-webhooks.png](../../screenshots/17-webhooks.png) | `/projects/:id/webhooks` | Webhooks + уведомления | 1920×1080 |
+| [17-webhooks.png](../../screenshots/17-webhooks.png) | `/projects/:id/webhooks` | Webhooks + история доставок + уведомления | 1920×1255 |
 | [18-reports.png](../../screenshots/18-reports.png) | `/projects/:id/reports` | Отчёты | 1920×1080 |
 | [19-audit-log.png](../../screenshots/19-audit-log.png) | `/audit-log` | Журнал аудита | 1920×2361 |
 | [20-users.png](../../screenshots/20-users.png) | `/users` | Пользователи и API-токены | 1920×1080 |

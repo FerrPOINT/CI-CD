@@ -73,6 +73,8 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_GIT_PUSH: &str = "git-push";
         crate::platform::list_schedules, crate::platform::create_schedule,
         crate::platform::update_schedule, crate::platform::delete_schedule,
         crate::platform::list_webhooks, crate::platform::create_webhook, crate::platform::delete_webhook,
+        crate::platform::list_outbox_deliveries, crate::platform::get_outbox_delivery,
+        crate::platform::requeue_outbox_delivery,
         crate::platform::list_notifications, crate::platform::replace_notifications,
         crate::platform::list_notification_events, crate::platform::notification_stream,
         crate::platform::project_report, crate::platform::list_audit_log,
@@ -102,6 +104,8 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_GIT_PUSH: &str = "git-push";
         crate::platform::Deployment, crate::platform::CreateDeployment,
         crate::platform::Schedule, crate::platform::ScheduleInput,
         crate::platform::Webhook, crate::platform::CreateWebhook,
+        crate::platform::OutboxDelivery, crate::platform::OutboxDeliveryAttempt,
+        crate::platform::OutboxDeliveryDetail, crate::platform::RequeuedOutboxDelivery,
         crate::platform::Notification, crate::platform::NotificationInput,
         crate::platform::NotificationEvent,
         crate::platform::Report, crate::platform::AuditEvent,
@@ -126,6 +130,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_GIT_PUSH: &str = "git-push";
         (name = "environments", description = "Environments and deployments"),
         (name = "schedules", description = "Cron-style pipeline schedules"),
         (name = "webhooks", description = "Outgoing project webhooks"),
+        (name = "outbox", description = "Outbox delivery history and replay"),
         (name = "notifications", description = "Notification channel configuration"),
         (name = "reports", description = "Project delivery reports"),
         (name = "audit", description = "Audit log"),
@@ -515,6 +520,7 @@ enum ProjectScopeRef {
     Environment(Uuid),
     Schedule(Uuid),
     Webhook(Uuid),
+    OutboxDelivery(Uuid),
     Repository(String),
 }
 
@@ -611,6 +617,7 @@ fn project_scope_ref(path: &str) -> Option<ProjectScopeRef> {
                 "environments" => Some(ProjectScopeRef::Environment(id)),
                 "schedules" => Some(ProjectScopeRef::Schedule(id)),
                 "webhooks" => Some(ProjectScopeRef::Webhook(id)),
+                "outbox-deliveries" => Some(ProjectScopeRef::OutboxDelivery(id)),
                 _ => None,
             }
         }
@@ -796,6 +803,22 @@ async fn project_id_for_scope_ref(
                 .await
                 .map_err(ApiError::internal)
         }
+        ProjectScopeRef::OutboxDelivery(id) => sqlx::query_scalar(
+            "SELECT COALESCE( \
+                m.project_id, \
+                CASE WHEN m.payload->>'project_id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN (m.payload->>'project_id')::uuid END, \
+                CASE WHEN e.payload->>'project_id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN (e.payload->>'project_id')::uuid END, \
+                p.project_id \
+            ) \
+             FROM outbox_messages m \
+             JOIN domain_events e ON e.id = m.event_id \
+             LEFT JOIN pipelines p ON p.id = e.aggregate_id AND e.aggregate_type = 'pipeline' \
+             WHERE m.id = $1",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(ApiError::internal),
         ProjectScopeRef::Repository(_) => Ok(None),
     }
 }
@@ -2317,10 +2340,22 @@ mod tests {
             Some(ProjectScopeRef::Project(project_id))
         );
         assert_eq!(
+            project_scope_ref(&format!("/api/v1/projects/{project_id}/outbox-deliveries")),
+            Some(ProjectScopeRef::Project(project_id))
+        );
+        assert_eq!(
             project_scope_ref(&format!(
                 "/api/v1/projects/{project_id}/notifications/stream"
             )),
             Some(ProjectScopeRef::Project(project_id))
+        );
+        assert_eq!(
+            project_scope_ref(&format!("/api/v1/outbox-deliveries/{webhook_id}")),
+            Some(ProjectScopeRef::OutboxDelivery(webhook_id))
+        );
+        assert_eq!(
+            project_scope_ref(&format!("/api/v1/outbox-deliveries/{webhook_id}/requeue")),
+            Some(ProjectScopeRef::OutboxDelivery(webhook_id))
         );
         assert_eq!(
             project_scope_ref(&format!("/api/v1/pipelines/{pipeline_id}/retry")),

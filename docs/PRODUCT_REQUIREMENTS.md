@@ -84,8 +84,8 @@ Forge **не является** и не должен развиваться ка
 | REQ-ENV-001 | Environments и deployments | P1 | **Current verified** | Пользователь ведёт metadata окружений и историю развёртываний для проекта. Текущий capability не означает автоматическую оркестрацию инфраструктуры, approvals или rollback. |
 | REQ-ENV-002 | Approval и rollback delivery | P2 | **Target approved** | Для чувствительных окружений доступны policy-controlled approval gates, неизменяемая история решений и управляемый rollback через pipeline. |
 | REQ-AUTO-001 | Git-события и автоматический trigger | P0 | **Current verified** | Push во встроенный Git может создать pipeline, связанный с изменённым ref. |
-| REQ-AUTO-002 | Schedules и outgoing webhooks | P1 | **Current verified** | MVP scheduler запускает enabled schedules примерно раз в минуту, а terminal pipeline events доставляются в enabled outgoing webhooks через basic outbox/retry. Полная cron-семантика и delivery history остаются target. |
-| REQ-AUTO-003 | Надёжная automation delivery | P1 | **Target approved** | Расписания, входящие события, webhooks и уведомления исполняются асинхронно, наблюдаемо и идемпотентно; повторы не теряют зафиксированное событие и не создают недопустимый дубликат результата. |
+| REQ-AUTO-002 | Schedules и outgoing webhooks | P1 | **Current verified MVP** | MVP scheduler запускает enabled schedules примерно раз в минуту, а terminal pipeline events доставляются в enabled outgoing webhooks через basic outbox/retry/HMAC. Полная cron-семантика остаётся target. |
+| REQ-AUTO-003 | Надёжная automation delivery | P1 | **Current verified MVP** | Current MVP фиксирует outbox delivery attempts, terminal `failed_at`, bounded delivery history и явный requeue failed-доставки новой generation. Lease/fencing/crash recovery, full dead-letter operator policy и single observed outcome для всех async effects остаются target. |
 | REQ-AUTO-004 | Local notifications (`in_app`/`sse`) | P1 | **Current verified MVP** | Пользователь может сохранить `in_app`/`sse` каналы и получить local notification history/stream на terminal pipeline events. |
 | REQ-AUTO-005 | External notification adapters и inbound provider webhooks | P1 | **Target approved** | Email/Slack adapters и public Git provider webhook handlers исполняются только после реализации sender/handlers, signature validation и delivery evidence. |
 | REQ-AUTH-001 | Identity, роли и API-токены | P0 | **Current verified** | Пользователи, роли, argon2id credentials, session-bound access JWT, refresh sessions с rotate/logout и scoped PAT хранятся и применяются при непустом `CICD_AUTH_SECRET`; без секрета действует trusted-network режим. |
@@ -108,7 +108,7 @@ Forge **не является** и не должен развиваться ка
 ### Надёжность и целостность
 
 - **NFR-REL-01** Pipeline plan, execution attempts, логи, metadata артефактов, deployment history и audit entries являются доказательствами и не переписываются задним числом; исправление создаёт новую запись. Current MVP закрывает retry history для attempts/logs/artifact metadata, а immutable pipeline plan snapshot и full storage integrity остаются target.
-- **NFR-REL-02** Асинхронные эффекты допускают повтор доставки, но наблюдаемый итог остаётся идемпотентным.
+- **NFR-REL-02** Асинхронные эффекты допускают повтор доставки, но наблюдаемый итог остаётся идемпотентным. Current MVP покрывает pipeline trigger replay/conflict, local notification delivery и bounded outbox delivery history/requeue; full lease recovery/crash retry для всех async effects остаётся target.
 - **NFR-REL-03** Статус pipeline должен быть согласован с состоянием дочерних сущностей и не может обходить доменные правила переходов.
 - **NFR-REL-04** Хранилища PostgreSQL, Git и артефактов имеют документированную и проверяемую процедуру backup/restore; запуск после сбоя восстанавливает согласованное рабочее состояние.
 - **NFR-REL-05** Внешнее выполнение имеет явные timeout, cancel, лимиты ресурсов и изоляцию; отказ runner-а не должен оставлять job бесконечно выполняющейся.
@@ -155,8 +155,8 @@ Forge **не является** и не должен развиваться ка
 ### Delivery и automation
 
 - Пользователь может создать environment и зафиксировать deployment, связанный с pipeline; история не изменяется при последующих развёртываниях.
-- Schedules, outgoing webhooks и `in_app`/`sse` notifications помечены как **Current verified MVP** до появления полной cron/delivery history/replay/dead-letter семантики; email/Slack adapters и inbound provider webhooks остаются target, пока соответствующие sender/handlers не исполняют доставку.
-- После реализации automation событие или расписание создаёт ожидаемый результат, delivery имеет наблюдаемый outcome, а transient failure проходит ограниченные повторы без потери committed event.
+- Schedules, outgoing webhooks, bounded outbox delivery history/requeue и `in_app`/`sse` notifications помечены как **Current verified MVP** до появления полной cron/lease/dead-letter семантики; email/Slack adapters и inbound provider webhooks остаются target, пока соответствующие sender/handlers не исполняют доставку.
+- Current automation событие или расписание создаёт ожидаемый результат в MVP-границах, delivery имеет наблюдаемый outcome, а failed delivery можно явно поставить в повтор без перезаписи исходной истории.
 - Для protected delivery approval требуется до исполнения, а rollback создаёт отдельную traceable запись и не подменяет исходный deployment.
 
 ### Identity, governance и клиенты

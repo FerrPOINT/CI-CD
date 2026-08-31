@@ -98,6 +98,11 @@ FORBIDDEN_STALE_STATUS = [
     (r"SSE не реализован", "notification SSE stream is current MVP; external adapters remain target"),
     (r"email/Slack/SSE sender", "SSE notification stream is current MVP; email/Slack adapters remain target"),
     (r"Доставки нет", "in_app/SSE notification delivery is current MVP; external adapters remain target"),
+    (r"Delivery history/replay/dead letters остаются target", "bounded delivery history/requeue is current MVP; production lease/dead-letter policy remains target"),
+    (r"Replay, dead letters и полная история доставок остаются target", "bounded delivery history/requeue is current MVP; production lease/dead-letter policy remains target"),
+    (r"история доставок остаются target", "bounded delivery history/requeue is current MVP; clarify remaining scheduler or dead-letter target scope"),
+    (r"full deliveries table/replay ещё target", "bounded outbox attempt history/requeue is current MVP; production delivery snapshots/leases remain target"),
+    (r"delivery history, audited replay/dead letters", "bounded delivery history/requeue is current MVP; audited full dead-letter workflow remains target"),
 ]
 
 problems: list[str] = []
