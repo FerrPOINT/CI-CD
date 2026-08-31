@@ -33,7 +33,7 @@ Roadmap фиксирует порядок доведения Forge до базо
 Ключевые ограничения current baseline:
 
 - execution attempts реализованы как MVP-слой без внешних leases/fencing; command spans, log pagination/search и richer error diagnostics остаются Phase 1 follow-up;
-- auth/RBAC имеет project membership, session-bound access invalidation и refresh rotate/logout/revoke MVP, но без tenant isolation, scoped PAT и production cookie/CSRF/session-family policy;
+- auth/RBAC имеет project membership, Git Smart HTTP read/write checks, session-bound access invalidation и refresh rotate/logout/revoke MVP, но без tenant isolation, scoped PAT/SAT, scoped Git credentials и production cookie/CSRF/session-family policy;
 - execution встроен в backend process, поэтому shared/prod режим требует external runner boundary;
 - webhooks не имеют полной delivery history/replay/dead-letter UI, notifications sender не реализован;
 - backup/restore пока процедура, а не проверяемый автоматизированный product gate.
@@ -67,9 +67,10 @@ Deliverables:
 
 - Current MVP: `project_memberships`, project members API/UI, list filtering и deny-before-load для project-owned routes;
 - Current MVP: refresh session rotation and logout/revoke, включая фиксацию `revoked_at` и немедленную инвалидизацию session-bound access JWT;
+- Current MVP: Git Smart HTTP read/write checks через legacy `CICD_GIT_TOKEN` либо JWT/PAT + project membership по связанному repository URL;
 - scoped PAT с expiry/revoke/last-used, без глобального доступа по умолчанию;
 - Target follow-up: refresh-cookie, CSRF и token-version/session-family reuse policy;
-- Target follow-up: deny-before-load для Git routes и delivery routes с repository/project binding;
+- Target follow-up: scoped Git credentials, tenant-bound repository mapping и delivery routes с repository/project binding;
 - CORS/CSRF policy для production deployment.
 
 Gate:

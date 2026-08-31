@@ -15,7 +15,7 @@ Forge CI/CD - self-hosted control plane для Git-репозиториев и C
 | Возможность | Статус | Практическая граница |
 |---|---|---|
 | Проекты, pipelines, jobs, attempts, логи | **Current verified** | Создание, просмотр, отмена и повтор; retry сохраняет историю attempts/logs, embedded runner выполняет jobs в Docker или host shell. |
-| Git Smart HTTP и auto-trigger | **Current verified** | Локальный bare-репозиторий, `clone`/`fetch`/`push`; push создаёт pipeline у связанного проекта. |
+| Git Smart HTTP и auto-trigger | **Current verified** | Локальный bare-репозиторий, `clone`/`fetch`/`push`; private/write доступ проверяется через Git token или project membership, push создаёт pipeline у связанного проекта. |
 | Артефакты | **Current verified** | Локальное хранение, upload/download, до 50 MiB на файл. |
 | Секреты проекта | **Current verified** | AES-256-GCM at rest; embedded runner передаёт их в env и маскирует значения в stdout/stderr logs. |
 | Окружения и записи деплоев | **Current verified** | Метаданные окружения и история деплоев; выполнение деплоя определяется job. |
@@ -25,7 +25,7 @@ Forge CI/CD - self-hosted control plane для Git-репозиториев и C
 | Уведомления и inbound provider webhooks | **Configuration only** | Конфигурация сохраняется, но email/Slack/SSE sender и public provider webhook handlers ещё не реализованы. |
 | Вход, сессии, RBAC | **Current verified conditional** | `/login` работает при непустом `CICD_AUTH_SECRET`; project-owned API проверяет active session, текущую роль и membership, без секрета API и Dashboard остаются trusted-network/open. |
 
-> **Безопасность:** для общего окружения задайте `CICD_AUTH_SECRET`, закройте API/Dashboard reverse proxy или сетью и не публикуйте Git endpoint с пустым `CICD_GIT_TOKEN`; обязательно замените dev-значение `CICD_GIT_INTERNAL_TOKEN`.
+> **Безопасность:** для общего окружения задайте `CICD_AUTH_SECRET`, закройте API/Dashboard reverse proxy или сетью и не запускайте Git endpoint в trusted-local режиме без `CICD_AUTH_SECRET`/`CICD_GIT_TOKEN`; обязательно замените dev-значение `CICD_GIT_INTERNAL_TOKEN`.
 
 ![Дашборд](screenshots/02-dashboard.png)
 
@@ -83,7 +83,7 @@ curl -fsS -X POST http://127.0.0.1:22801/api/v1/projects \
 3. Используйте `maintainer` для управления участниками и секретами проекта; `developer` — для запуска и изменения рабочих ресурсов; `viewer` — для чтения.
 4. Удаляйте ненужные memberships через список. Последнего maintainer удалить нельзя.
 
-Tenant isolation, scoped PAT/SAT, Git repository binding и production cookie/CSRF/session-family policy остаются **Target approved**; session-bound access invalidation и refresh logout/revoke уже выполняются сервером.
+Tenant isolation, scoped PAT/SAT, tenant-bound Git mapping, scoped Git credentials и production cookie/CSRF/session-family policy остаются **Target approved**; session-bound access invalidation, refresh logout/revoke и Git Smart HTTP read/write checks по linked repository URL уже выполняются сервером.
 
 ![Участники проекта](screenshots/40-project-members.png)
 
@@ -99,7 +99,7 @@ Auto-trigger работает для репозитория, созданног�
 4. Если pipeline не появился, проверьте точное соответствие локального URL проекта и имени bare-репозитория, затем health API и `CICD_GIT_INTERNAL_TOKEN`.
 
 ```bash
-# Для local development пустой CICD_GIT_TOKEN разрешает доступ без Basic auth.
+# Для trusted local development без CICD_AUTH_SECRET/CICD_GIT_TOKEN доступ открыт.
 git clone http://127.0.0.1:22802/git/my-service.git
 cd my-service
 git switch -c main
@@ -109,7 +109,7 @@ git commit -m 'Initial commit'
 git push -u origin main
 ```
 
-Если задан `CICD_GIT_TOKEN`, передайте его как пароль Basic auth (username произвольный):
+Если задан `CICD_GIT_TOKEN`, передайте его как пароль Basic auth (username произвольный). При включённом `CICD_AUTH_SECRET` вместо shared Git token можно передать access JWT или PAT пользователя; read требует `viewer+` в связанном проекте, push требует `developer+`.
 
 ```bash
 git clone http://any-user:<TOKEN>@<host>/git/my-service.git
@@ -399,7 +399,7 @@ curl -fsS -X POST "http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines"
 
 **Статус процедуры: Current verified.**
 
-Проверьте, задан ли непустой `CICD_AUTH_SECRET`. Без него API и Dashboard намеренно работают в trusted-network режиме; с ним JWT/PAT, глобальные роли и project memberships применяются middleware. Scoped PAT, tenant isolation и Git-level RBAC пока target, поэтому shared-доступ всё равно закрывайте reverse proxy/сетью.
+Проверьте, задан ли непустой `CICD_AUTH_SECRET`. Без него API и Dashboard намеренно работают в trusted-network режиме; с ним JWT/PAT, глобальные роли, project memberships и Git Smart HTTP read/write checks применяются middleware. Scoped PAT, tenant isolation и scoped Git credentials пока target, поэтому shared-доступ всё равно закрывайте reverse proxy/сетью.
 
 ## Связанные документы
 

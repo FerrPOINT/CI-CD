@@ -2,7 +2,7 @@
 
 ## 1. Назначение
 
-Forge CI/CD включает минимальный self-hosted Git-сервер. Он хранит bare-репозитории, реализует Git Smart HTTP и создаёт CI/CD-пайплайн после каждого push.
+Forge CI/CD включает минимальный self-hosted Git-сервер. Он хранит bare-репозитории, реализует Git Smart HTTP, проверяет read/write доступ к private/write операциям и создаёт CI/CD-пайплайн после каждого push.
 
 Это не замена GitLab или Gitea: в текущем объёме есть минимальные pull requests/compare, но нет issues, web editor, LFS API, пользователей или прав на уровне репозитория. Цель MVP — замкнуть локальный цикл `git push -> pipeline` без внешнего Git-провайдера.
 
@@ -94,36 +94,45 @@ curl -fsS -X POST http://127.0.0.1:22801/api/v1/projects \
 | Переменная | Default | Назначение |
 |---|---|---|
 | `CICD_GIT_ROOT` | `/var/lib/forge/git` | Корень bare-репозиториев в backend container |
-| `CICD_GIT_TOKEN` | empty | Токен Smart HTTP. Empty допустим только для local development |
+| `CICD_GIT_TOKEN` | empty | Legacy shared token Smart HTTP. Empty отключает shared bypass; без `CICD_AUTH_SECRET` это допустимо только для local development |
 | `CICD_GIT_INTERNAL_TOKEN` | empty | Токен для `post-receive -> internal endpoint`; empty допустим только для isolated local development |
 
 Данные репозиториев находятся в named volume `cicd_git_repos`, независимом от PostgreSQL volume. Удаление проекта не удаляет репозиторий; удаление репозитория через API удаляет и строку БД, и bare directory.
 
 ## 7. Аутентификация
 
-Если `CICD_GIT_TOKEN` задан, Git HTTP требует один из вариантов:
+Git Smart HTTP различает read и write:
+
+- `git-upload-pack` для repository с `visibility = public` доступен без credential.
+- Private `git-upload-pack` и любой `git-receive-pack` требуют credential.
+- Legacy `CICD_GIT_TOKEN` остаётся operator bypass для совместимости.
+- При непустом `CICD_AUTH_SECRET` можно передать JWT/PAT пользователя: `viewer+` читает связанный project repository, `developer+` может push, `admin` имеет bypass.
+
+Связь repository -> project в текущем MVP выводится из `projects.repository_url`, который оканчивается на `{repo}.git`; полноценная tenant-bound mapping table и scoped Git credentials остаются target.
+
+Если используется legacy `CICD_GIT_TOKEN`, Git HTTP принимает один из вариантов:
 
 ```bash
-# Basic auth: username произвольный, password = token
+# Basic auth: username произвольный, password = token или JWT/PAT
 git clone http://any-user:<TOKEN>@host/git/platform-core.git
 
 # Или для raw HTTP запросов
 curl -H "x-git-token: <TOKEN>" ...
 ```
 
-В local development пустой `CICD_GIT_TOKEN` отключает проверку. Нельзя запускать публичный Git endpoint с пустым токеном.
+В trusted local development без `CICD_AUTH_SECRET` и без `CICD_GIT_TOKEN` проверка отключена. Нельзя запускать shared/public Git endpoint в таком режиме.
 
 `CICD_GIT_INTERNAL_TOKEN` ведёт себя так же строго по границе окружения: пустое значение отключает проверку только для trusted-local hook traffic, shared deployment обязан задать уникальный токен. Устаревшее значение `forge-internal-dev-token` отклоняется при старте backend.
 
 ## 8. Ограничения MVP и следующий этап
 
-- Нет пользователей/организаций и repository-level RBAC.
+- Нет пользователей/организаций/tenant-bound repository model и scoped Git credentials; current read/write RBAC строится на project membership через `repository_url`.
 - Нет Git LFS HTTP endpoints несмотря на наличие `git-lfs` в образе.
 - Нет SSH transport: только Smart HTTP.
 - Hook делает best-effort запрос; он не блокирует push при временном сбое CI/CD API.
-- Embedded runner клонирует project repository в workspace перед выполнением job, но без внешнего runner lease/protocol и без repository-level identity boundary.
+- Embedded runner клонирует project repository в workspace перед выполнением job, но без внешнего runner lease/protocol и scoped repository credential boundary.
 
-Следующая фаза: per-project repository mapping вместо URL suffix lookup, signed internal events с one-time event ID, Git LFS, SSH transport, external runner protocol и stricter checkout/commit identity guarantees.
+Следующая фаза: per-project repository mapping вместо URL suffix lookup, scoped Git credentials, signed internal events с one-time event ID, Git LFS, SSH transport, external runner protocol и stricter checkout/commit identity guarantees.
 
 ## 9. Проверка
 

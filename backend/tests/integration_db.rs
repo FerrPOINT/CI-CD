@@ -12,6 +12,7 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
+use base64::Engine;
 use sqlx::postgres::PgPoolOptions;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -344,6 +345,303 @@ async fn access_token_is_bound_to_active_session() {
         .execute(&pool)
         .await
         .expect("cleanup user");
+}
+
+#[tokio::test]
+async fn git_smart_http_uses_project_membership_when_auth_enabled() {
+    let pool = test_pool().await;
+    let namespace = Uuid::new_v4();
+    let private_repo = format!("it_private_{}", namespace.simple());
+    let lookalike_repo = private_repo.replace('_', "x");
+    let public_repo = format!("it-public-{}", namespace.simple());
+    let root = std::env::temp_dir().join(format!("forge-git-auth-{namespace}"));
+    tokio::fs::create_dir_all(&root)
+        .await
+        .expect("create git root");
+    for repo in [&private_repo, &public_repo] {
+        let status = tokio::process::Command::new("git")
+            .args(["init", "--bare", "--quiet"])
+            .arg(root.join(format!("{repo}.git")))
+            .status()
+            .await
+            .expect("init bare repo");
+        assert!(status.success());
+    }
+
+    sqlx::query(
+        "INSERT INTO repositories (id, name, visibility) VALUES \
+         ($1, $2, 'private'), ($3, $4, 'public')",
+    )
+    .bind(Uuid::new_v4())
+    .bind(&private_repo)
+    .bind(Uuid::new_v4())
+    .bind(&public_repo)
+    .execute(&pool)
+    .await
+    .expect("insert repositories");
+    let project_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(format!("it-git-project-{}", namespace.simple()))
+        .bind(format!("http://127.0.0.1:22802/git/{private_repo}.git"))
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    let lookalike_project_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(lookalike_project_id)
+        .bind(format!("it-git-lookalike-{}", namespace.simple()))
+        .bind(format!("http://127.0.0.1:22802/git/{lookalike_repo}.git"))
+        .execute(&pool)
+        .await
+        .expect("insert lookalike project");
+
+    let developer_id = Uuid::new_v4();
+    let viewer_id = Uuid::new_v4();
+    let outsider_id = Uuid::new_v4();
+    let password = "IntegrationPass1!";
+    for (user_id, username, role, membership_project_id) in [
+        (
+            developer_id,
+            format!("it-git-dev-{}", developer_id.simple()),
+            "developer",
+            project_id,
+        ),
+        (
+            viewer_id,
+            format!("it-git-viewer-{}", viewer_id.simple()),
+            "viewer",
+            project_id,
+        ),
+        (
+            outsider_id,
+            format!("it-git-outsider-{}", outsider_id.simple()),
+            "developer",
+            lookalike_project_id,
+        ),
+    ] {
+        sqlx::query("INSERT INTO users (id, username, role) VALUES ($1, $2, $3)")
+            .bind(user_id)
+            .bind(&username)
+            .bind(role)
+            .execute(&pool)
+            .await
+            .expect("insert git user");
+        sqlx::query("INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2)")
+            .bind(user_id)
+            .bind(cicd::auth::hash_password(password).expect("hash password"))
+            .execute(&pool)
+            .await
+            .expect("insert git credential");
+        sqlx::query(
+            "INSERT INTO project_memberships (project_id, user_id, role) VALUES ($1, $2, $3)",
+        )
+        .bind(membership_project_id)
+        .bind(user_id)
+        .bind(role)
+        .execute(&pool)
+        .await
+        .expect("insert git membership");
+    }
+
+    let app = cicd::api::app_with_git_and_auth_secret(
+        Some(pool.clone()),
+        cicd::git_host::GitConfig {
+            root: root.clone(),
+            token: None,
+            internal_token: None,
+        },
+        Some(format!("git-auth-secret-{namespace}")),
+    );
+    let developer_access = login_access_token(
+        app.clone(),
+        &format!("it-git-dev-{}", developer_id.simple()),
+        password,
+    )
+    .await;
+    let viewer_access = login_access_token(
+        app.clone(),
+        &format!("it-git-viewer-{}", viewer_id.simple()),
+        password,
+    )
+    .await;
+    let outsider_access = login_access_token(
+        app.clone(),
+        &format!("it-git-outsider-{}", outsider_id.simple()),
+        password,
+    )
+    .await;
+    let viewer_basic =
+        base64::engine::general_purpose::STANDARD.encode(format!("git:{viewer_access}"));
+    let developer_basic =
+        base64::engine::general_purpose::STANDARD.encode(format!("git:{developer_access}"));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/git/{private_repo}.git/info/refs?service=git-upload-pack"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/git/{public_repo}.git/info/refs?service=git-upload-pack"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/git/{public_repo}.git/info/refs?service=git-receive-pack"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/git/{private_repo}.git/info/refs?service=git-upload-pack"
+            ))
+            .header("authorization", format!("Basic {viewer_basic}"))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/git/{private_repo}.git/info/refs?service=git-upload-pack"
+            ))
+            .header("authorization", format!("Bearer {viewer_access}"))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/git/{private_repo}.git/info/refs?service=git-receive-pack"
+            ))
+            .header("authorization", format!("Bearer {outsider_access}"))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/git/{private_repo}.git/info/refs?service=git-receive-pack"
+            ))
+            .header("authorization", format!("Basic {viewer_basic}"))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let response = app
+        .oneshot(
+            Request::get(format!(
+                "/git/{private_repo}.git/info/refs?service=git-receive-pack"
+            ))
+            .header("authorization", format!("Basic {developer_basic}"))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let legacy_token = format!("legacy-git-token-{namespace}");
+    let legacy_app = cicd::api::app_with_git_and_auth_secret(
+        Some(pool.clone()),
+        cicd::git_host::GitConfig {
+            root: root.clone(),
+            token: Some(legacy_token.clone()),
+            internal_token: None,
+        },
+        Some(format!("git-auth-secret-{namespace}")),
+    );
+    let response = legacy_app
+        .oneshot(
+            Request::get(format!(
+                "/git/{private_repo}.git/info/refs?service=git-receive-pack"
+            ))
+            .header("x-git-token", legacy_token)
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let trusted_app = cicd::api::app_with_git_and_auth_secret(
+        Some(pool.clone()),
+        cicd::git_host::GitConfig {
+            root: root.clone(),
+            token: None,
+            internal_token: None,
+        },
+        None,
+    );
+    let response = trusted_app
+        .oneshot(
+            Request::get("/git/missing-repo.git/info/refs?service=git-upload-pack")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    sqlx::query("DELETE FROM users WHERE id = ANY($1)")
+        .bind(&[developer_id, viewer_id, outsider_id])
+        .execute(&pool)
+        .await
+        .expect("cleanup git users");
+    sqlx::query("DELETE FROM projects WHERE id = ANY($1)")
+        .bind(&[project_id, lookalike_project_id])
+        .execute(&pool)
+        .await
+        .expect("cleanup git projects");
+    sqlx::query("DELETE FROM repositories WHERE name = ANY($1)")
+        .bind(&[private_repo, public_repo])
+        .execute(&pool)
+        .await
+        .expect("cleanup git repositories");
+    let _ = tokio::fs::remove_dir_all(&root).await;
 }
 
 #[tokio::test]
@@ -934,4 +1232,23 @@ async fn response_json(response: axum::response::Response) -> serde_json::Value 
         .await
         .expect("read response body");
     serde_json::from_slice(&body).expect("json response")
+}
+
+async fn login_access_token(app: axum::Router, username: &str, password: &str) -> String {
+    let response = app
+        .oneshot(
+            Request::post("/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"username":"{username}","password":"{password}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    response_json(response).await["access_token"]
+        .as_str()
+        .expect("access token")
+        .to_owned()
 }

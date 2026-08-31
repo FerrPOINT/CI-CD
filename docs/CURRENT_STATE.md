@@ -24,7 +24,8 @@
 | Notifications | ⚙️ | конфигурация каналов хранится, sender/SSE delivery нет |
 | Login UI | ✅ | `/login` вызывает auth API; redirect guard включается только при `401` |
 | Project membership RBAC | ✅ MVP | `project_memberships`, фильтрация списка проектов, deny-before-load для project-owned API; `admin` bypass, tenant/scoped PAT ещё target |
-| Auth/RBAC | ✅ conditional | если `CICD_AUTH_SECRET` задан непустым: argon2id+JWT+PAT, session-bound access invalidation, refresh rotate/logout/revoke, route role-политики, project memberships, аудит login/logout/denied; без секрета trusted-network mode |
+| Git auth/RBAC | ✅ conditional MVP | public repo read открыт; private read и receive-pack требуют legacy `CICD_GIT_TOKEN` либо JWT/PAT + `project_memberships` при `CICD_AUTH_SECRET`; без секрета и Git token остаётся trusted local mode |
+| Auth/RBAC | ✅ conditional | если `CICD_AUTH_SECRET` задан непустым: argon2id+JWT+PAT, session-bound access invalidation, refresh rotate/logout/revoke, route role-политики, project memberships, Git Smart HTTP project checks, аудит login/logout/denied; без секрета trusted-network mode |
 | Secret injection | ✅ | project secrets передаются env в embedded job и маскируются в stdout logs |
 | Error envelope + request_id | ✅ | {error:{code,message,request_id}} + x-request-id |
 | Pagination | ✅ | limit/offset (cap 200) на проектах/пайплайнах |
@@ -33,7 +34,7 @@
 
 ## Не реализовано (Target approved — см. ADR + contracts)
 
-Runner protocol/leases/dispatch (внешний runner, ADR-0007), immutable pipeline plan/DAG, general idempotency storage for all retryable mutations, S3 artifacts, backup scripts, notifications sender/SSE delivery, tenant isolation, scoped PAT, production cookie/CSRF/session-family policy, full cron semantics, delivery history/replay/dead letters, log pagination/search и distributed/proxy rate limiting (сейчас in-process окно по forwarded client key).
+Runner protocol/leases/dispatch (внешний runner, ADR-0007), immutable pipeline plan/DAG, general idempotency storage for all retryable mutations, S3 artifacts, backup scripts, notifications sender/SSE delivery, tenant isolation, scoped PAT/SAT и scoped Git credentials, production cookie/CSRF/session-family policy, full cron semantics, delivery history/replay/dead letters, log pagination/search и distributed/proxy rate limiting (сейчас in-process окно по forwarded client key).
 
 ## Текущее runtime-дерево backend
 
@@ -64,7 +65,7 @@ backend/
 - Без непустого `CICD_AUTH_SECRET` API и Dashboard полностью открыты в trusted-network режиме; CORS permissive.
 - PostgreSQL в compose опубликован только на `127.0.0.1`, но API/Dashboard host ports нельзя открывать в недоверенную сеть.
 - `CICD_GIT_INTERNAL_TOKEN` пустой по умолчанию только для isolated local development; shared-деплой обязан задать уникальный токен, а legacy `forge-internal-dev-token` отклоняется при старте.
-- Auth/RBAC пока без tenant isolation, scoped PAT и production-grade cookie/CSRF/session-family policy; session-bound access invalidation, refresh rotate/logout/revoke и project membership реализованы как MVP-слой поверх глобальных ролей.
+- Auth/RBAC пока без tenant isolation, scoped PAT/SAT, scoped Git credentials и production-grade cookie/CSRF/session-family policy; session-bound access invalidation, refresh rotate/logout/revoke, project membership и Git read/write checks реализованы как MVP-слой поверх глобальных ролей.
 - Execution attempts — MVP-слой без внешних leases/fencing: old `/jobs/{id}/logs` читает текущую или последнюю attempt, а полный аудит попыток доступен через `/jobs/{id}/attempts`.
 - Scheduler/outbox — MVP: нет точной cron-семантики, delivery history, audited replay/dead letters и notification/SSE sender.
 

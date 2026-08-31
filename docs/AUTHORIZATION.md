@@ -40,7 +40,7 @@ Forge CI/CD является multi-tenant control plane: один экземпл
 | Projects | Глобально уникальное `projects.name`; project memberships ограничивают доступ к project-owned ресурсам при включённом auth | Нет tenant ownership и tenant-aware project scope |
 | Secrets | `project_secrets`, AES-256-GCM at rest, API не возвращает value; embedded runner injects env and masks stdout/stderr best-effort | Нет scoped lease, key version/rotation и full redaction coverage |
 | Runners | Registry + heartbeat; embedded supervisor выполняет jobs | Runner не обладает отдельной криптографической идентичностью; registry не является границей доступа |
-| Git | Опциональный общий `CICD_GIT_TOKEN`, hook token | Нет repository/project authorization, токены не subject-bound |
+| Git | Public read для public repo; private read/write через legacy `CICD_GIT_TOKEN` либо JWT/PAT + project membership при `CICD_AUTH_SECRET`; hook token | Нет tenant-bound repository model, scoped Git credentials, signed push events и deny audit для Git |
 | Audit | `audit_log` с action/resource/actor text, login/denied и многие mutation events | Actor не является нормализованным principal, нет tenant/project scope и фильтров/export |
 | CORS и transport | permissive CORS, HTTP в dev | Для production необходим TLS и allowlist origins |
 

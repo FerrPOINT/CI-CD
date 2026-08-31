@@ -72,6 +72,12 @@ fn configured_internal_token(internal_token: Option<&str>) -> Option<&str> {
         .filter(|token| !token.is_empty())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GitOperation {
+    Read,
+    Write,
+}
+
 fn post_receive_hook(name: &str, internal_token: Option<&str>) -> String {
     let token_header = configured_internal_token(internal_token)
         .map(|t| format!("  -H 'x-internal-token: {t}' \\"))
@@ -179,62 +185,110 @@ pub async fn delete_repository_core(
     Ok(())
 }
 
-/// Checks basic-auth (any username + token as password) or `x-git-token`.
-/// Clone/fetch is open for public repos; private repos keep the token gate.
-/// Push (receive-pack) always requires the token.
-pub async fn check_repo_access(
+/// Checks Git Smart HTTP access.
+/// Public repositories allow unauthenticated read only. Legacy
+/// `CICD_GIT_TOKEN` is still accepted as an operator bypass; otherwise, when
+/// `CICD_AUTH_SECRET` is configured, Git accepts Bearer/JWT/PAT credentials
+/// from an Authorization header or Basic auth password and checks project role.
+async fn check_repo_access(
     state: &std::sync::Arc<AppState>,
     repo: &str,
     headers: &HeaderMap,
+    operation: GitOperation,
 ) -> Result<(), ApiError> {
-    let is_push = headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.contains("git-receive-pack"))
-        .unwrap_or(false)
-        || headers
-            .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .map(|v| v.contains("git-receive-pack"))
-            .unwrap_or(false);
-    if is_push {
-        return check_git_auth(&state.git, headers);
-    }
-    // Public read check (best-effort, falls back to token gate on any error).
-    let visibility = async {
-        match state.pool.as_ref() {
-            Some(pool) => sqlx::query_scalar::<_, String>(
-                "SELECT visibility FROM repositories WHERE name = $1",
-            )
-            .bind(repo.trim_end_matches(".git"))
-            .fetch_one(pool)
+    let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    let name = validate_repo_name(repo).map_err(ApiError::bad_request)?;
+    let visibility =
+        sqlx::query_scalar::<_, String>("SELECT visibility FROM repositories WHERE name = $1")
+            .bind(&name)
+            .fetch_optional(pool)
             .await
-            .ok(),
-            None => None,
-        }
+            .map_err(ApiError::internal)?;
+
+    if operation == GitOperation::Read && visibility.as_deref() == Some("public") {
+        return Ok(());
     }
-    .await;
-    match visibility.as_deref() {
-        Some("public") => Ok(()),
-        _ => check_git_auth(&state.git, headers),
+
+    if legacy_git_token_matches(&state.git, headers)? {
+        return if visibility.is_some() {
+            Ok(())
+        } else {
+            Err(ApiError::not_found())
+        };
+    }
+
+    let Some(auth_secret) = state.auth_secret.as_deref() else {
+        if configured_git_token(&state.git).is_none() && visibility.is_none() {
+            return Err(ApiError::not_found());
+        }
+        return check_git_auth(&state.git, headers);
+    };
+    let token = bearer_or_basic_password(headers)?.ok_or_else(ApiError::unauthorized)?;
+    let claims = crate::api::identity_for_bearer_token(pool, auth_secret, token.trim()).await?;
+    let global_role = crate::authz::Role::parse(&claims.role).ok_or_else(ApiError::unauthorized)?;
+    if visibility.is_none() {
+        return Err(ApiError::not_found());
+    }
+    if global_role == crate::authz::Role::Admin {
+        return Ok(());
+    }
+
+    let min_role = match operation {
+        GitOperation::Read => crate::authz::Role::Viewer,
+        GitOperation::Write => crate::authz::Role::Developer,
+    };
+    if git_project_access_allows(pool, &name, claims.sub, min_role).await? {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden())
     }
 }
 
 pub fn check_git_auth(config: &GitConfig, headers: &HeaderMap) -> Result<(), ApiError> {
-    let Some(expected) = config.token.as_deref() else {
-        return Ok(());
-    };
-    if expected.is_empty() {
+    if legacy_git_token_matches(config, headers)? {
         return Ok(());
     }
+    if configured_git_token(config).is_none() {
+        return Ok(());
+    }
+    Err(ApiError::unauthorized())
+}
+
+fn configured_git_token(config: &GitConfig) -> Option<&str> {
+    config
+        .token
+        .as_deref()
+        .map(str::trim)
+        .filter(|token| !token.is_empty())
+}
+
+fn legacy_git_token_matches(config: &GitConfig, headers: &HeaderMap) -> Result<bool, ApiError> {
+    let Some(expected) = configured_git_token(config) else {
+        return Ok(false);
+    };
     if let Some(provided) = headers
         .get("x-git-token")
         .and_then(|v| v.to_str().ok())
         .filter(|v| *v == expected)
     {
         let _ = provided;
-        return Ok(());
+        return Ok(true);
     }
+    Ok(basic_password(headers)?.as_deref() == Some(expected))
+}
+
+fn bearer_or_basic_password(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
+    if let Some(token) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+    {
+        return Ok(Some(token.to_string()));
+    }
+    basic_password(headers)
+}
+
+fn basic_password(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
     if let Some(value) = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -245,12 +299,44 @@ pub fn check_git_auth(config: &GitConfig, headers: &HeaderMap) -> Result<(), Api
             .map_err(|_| ApiError::unauthorized())?;
         let text = String::from_utf8_lossy(&decoded);
         if let Some((_, password)) = text.split_once(':') {
-            if password == expected {
-                return Ok(());
-            }
+            return Ok(Some(password.to_string()));
         }
     }
-    Err(ApiError::unauthorized())
+    Ok(None)
+}
+
+async fn git_project_access_allows(
+    pool: &PgPool,
+    repo: &str,
+    user_id: Uuid,
+    min_role: crate::authz::Role,
+) -> Result<bool, ApiError> {
+    let pattern = format!("%{}.git", escape_like_pattern(repo));
+    let roles = sqlx::query_scalar::<_, String>(
+        "SELECT m.role FROM projects p \
+         JOIN project_memberships m ON m.project_id = p.id \
+         WHERE p.repository_url ILIKE $1 ESCAPE '\\' AND m.user_id = $2",
+    )
+    .bind(pattern)
+    .bind(user_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(roles
+        .iter()
+        .filter_map(|role| crate::authz::Role::parse(role))
+        .any(|role| role >= min_role))
+}
+
+fn escape_like_pattern(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if matches!(ch, '%' | '_' | '\\') {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
 }
 
 fn pkt_line(payload: &str) -> Vec<u8> {
@@ -284,16 +370,16 @@ pub async fn git_info_refs(
     Query(params): Query<InfoRefsParams>,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(e) = check_repo_access(&state, &repo, &headers).await {
-        return e.into_response();
-    }
-    let service = match params.service.as_deref() {
-        Some("git-upload-pack") => "upload-pack",
-        Some("git-receive-pack") => "receive-pack",
+    let (service, operation) = match params.service.as_deref() {
+        Some("git-upload-pack") => ("upload-pack", GitOperation::Read),
+        Some("git-receive-pack") => ("receive-pack", GitOperation::Write),
         _ => {
             return ApiError::bad_request("service parameter is required").into_response();
         }
     };
+    if let Err(e) = check_repo_access(&state, &repo, &headers, operation).await {
+        return e.into_response();
+    }
     let pool = match state.pool.as_ref() {
         Some(pool) => pool,
         None => return ApiError::unavailable().into_response(),
@@ -405,19 +491,20 @@ pub async fn git_service_endpoint(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    if let Err(e) = check_repo_access(&state, &repo, &headers).await {
-        return e.into_response();
-    }
     let service = headers
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("application/x-git-"))
         .and_then(|v| v.strip_suffix("-request"))
         .unwrap_or("");
-    let service = match service {
-        "upload-pack" | "receive-pack" => service,
+    let (service, operation) = match service {
+        "upload-pack" => (service, GitOperation::Read),
+        "receive-pack" => (service, GitOperation::Write),
         _ => return ApiError::bad_request("unsupported git service").into_response(),
     };
+    if let Err(e) = check_repo_access(&state, &repo, &headers, operation).await {
+        return e.into_response();
+    }
     let pool = match state.pool.as_ref() {
         Some(pool) => pool,
         None => return ApiError::unavailable().into_response(),
@@ -675,6 +762,11 @@ mod tests {
         let line = pkt_line("# service=git-upload-pack\n");
         assert_eq!(&line[..4], b"001e");
         assert!(line.ends_with(b"# service=git-upload-pack\n"));
+    }
+
+    #[test]
+    fn escapes_like_wildcards_in_repository_binding() {
+        assert_eq!(escape_like_pattern("service_api"), "service\\_api");
     }
 
     #[tokio::test]

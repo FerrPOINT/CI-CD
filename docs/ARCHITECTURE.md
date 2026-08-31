@@ -119,7 +119,7 @@ Composition root: чтение конфига, создание `PgPool`, реп
 | `CICD_DATABASE_URL` | PostgreSQL connection string |
 | `CICD_BIND` | адрес API (по умолчанию `0.0.0.0:22801`) |
 | `CICD_GIT_ROOT` | путь к bare-репозиториям |
-| `CICD_GIT_TOKEN` | токен Git Smart HTTP |
+| `CICD_GIT_TOKEN` | legacy shared token Git Smart HTTP |
 | `CICD_GIT_INTERNAL_TOKEN` | токен post-receive → pipeline hook |
 | `CICD_SECRETS_KEY` | base64 32-byte ключ AES-256-GCM |
 | `CICD_ARTIFACTS_DIR` | локальное хранилище артефактов |
@@ -136,7 +136,7 @@ Composition root: чтение конфига, создание `PgPool`, реп
 
 ### 6.2 Git-хостинг
 
-Bare-репозитории в `CICD_GIT_ROOT`, Smart HTTP (`/git/<name>.git`), опциональный token-auth, auto-generated `post-receive` hook → internal endpoint → pipeline по pushed ref. Новый hook передаёт `old_rev/new_rev`; повтор same `repository/ref/new_rev` дедуплицируется. `.forge-ci.yml` из репозитория задаёт stages/jobs (fallback — шаблон build/test/deploy).
+Bare-репозитории в `CICD_GIT_ROOT`, Smart HTTP (`/git/<name>.git`), public read для public repo, legacy `CICD_GIT_TOKEN` и JWT/PAT project-membership auth при `CICD_AUTH_SECRET`, auto-generated `post-receive` hook → internal endpoint → pipeline по pushed ref. Новый hook передаёт `old_rev/new_rev`; повтор same `repository/ref/new_rev` дедуплицируется. `.forge-ci.yml` из репозитория задаёт stages/jobs (fallback — шаблон build/test/deploy).
 
 ### 6.3 Embedded runner
 
@@ -144,7 +144,7 @@ Supervisor-полл queued-джобов, атомарный claim (`queued → r
 
 ### 6.4 Платформенные ресурсы (MVP)
 
-Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-256-GCM at rest + embedded env injection/masking), artifacts (upload/download + локальное хранилище, 50 MiB лимит), environments/deployments, schedules MVP (enabled rows проверяются worker-ом примерно раз в минуту), outgoing webhooks MVP (terminal pipeline events через outbox/basic retry/HMAC), notifications config, reports (агрегаты success rate/duration), audit log (последние 200 событий), users/roles, project memberships, argon2id credentials, session-bound access JWT, refresh sessions с rotate/logout и PAT enforcement при `CICD_AUTH_SECRET`.
+Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-256-GCM at rest + embedded env injection/masking), artifacts (upload/download + локальное хранилище, 50 MiB лимит), environments/deployments, schedules MVP (enabled rows проверяются worker-ом примерно раз в минуту), outgoing webhooks MVP (terminal pipeline events через outbox/basic retry/HMAC), notifications config, reports (агрегаты success rate/duration), audit log (последние 200 событий), users/roles, project memberships, argon2id credentials, session-bound access JWT, refresh sessions с rotate/logout, PAT enforcement и Git Smart HTTP project checks при `CICD_AUTH_SECRET`.
 
 ## 7. Frontend архитектура
 

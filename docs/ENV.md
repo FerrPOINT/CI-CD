@@ -9,7 +9,7 @@
 | `CICD_DATABASE_URL` | нет вне compose | Полный URL PostgreSQL для прямого backend/test запуска |
 | `CICD_BIND` | `0.0.0.0:22801` | Адрес API + Git Smart HTTP |
 | `CICD_GIT_ROOT` | `./.forge/git` вне compose | Корень bare-репозиториев при локальном запуске |
-| `CICD_GIT_TOKEN` | — | Bearer для Git Smart HTTP (пусто = без auth) |
+| `CICD_GIT_TOKEN` | — | Legacy shared token для Git Smart HTTP; пусто отключает только этот token, а при непустом `CICD_AUTH_SECRET` private/read-write Git routes всё равно требуют JWT/PAT + project membership |
 | `CICD_GIT_INTERNAL_TOKEN` | — | `X-Internal-Token` для post-receive hook; пусто допустимо только для изолированного local development |
 | `CICD_SECRETS_KEY` | — | Base64 32-byte ключ AES-256-GCM (обязателен для secrets) |
 | `CICD_ARTIFACTS_DIR` | `/var/lib/forge/artifacts` | Локальное хранилище артефактов |

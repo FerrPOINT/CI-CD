@@ -61,8 +61,8 @@ Current middleware проверяет `Authorization: Bearer ...` при неп�
 | `developer` | запуск/повтор jobs/pipelines и чтение ресурсов |
 | `viewer` | только чтение большинства API |
 
-- Project-owned routes дополнительно требуют `project_memberships`; `admin` имеет instance-wide bypass. Tenant boundary, scoped PAT, repository-level permissions и Git policy checks — **Target approved**.
-- `/git/*` использует отдельный `CICD_GIT_TOKEN` и не опирается на JWT/PAT.
+- Project-owned routes дополнительно требуют `project_memberships`; `admin` имеет instance-wide bypass. Git Smart HTTP при непустом `CICD_AUTH_SECRET` принимает JWT/PAT через Bearer или Basic password и проверяет связанную project membership: `viewer+` для read, `developer+` для write. Tenant boundary, scoped PAT/SAT и scoped Git credentials — **Target approved**.
+- `/git/*` также принимает legacy `CICD_GIT_TOKEN` как shared operator token; пустой token допустим только в trusted local mode без `CICD_AUTH_SECRET`.
 
 ### 4.2 Middleware
 

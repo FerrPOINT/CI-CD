@@ -7,7 +7,7 @@
 
 Что отсутствует на данный момент (см. `docs/CURRENT_STATE.md`):
 
-- **Auth/RBAC условны**: если `CICD_AUTH_SECRET` не задан или пустой, API (`:22801`) и Dashboard (`:22802`) открыты в trusted-network режиме. Если секрет непустой, включаются login/JWT/PAT, session-bound access JWT, refresh rotate/logout/revoke, coarse global roles и project membership RBAC, но tenant isolation, scoped PAT и production cookie/CSRF/session-family policy ещё не завершены.
+- **Auth/RBAC условны**: если `CICD_AUTH_SECRET` не задан или пустой, API (`:22801`) и Dashboard (`:22802`) открыты в trusted-network режиме. Если секрет непустой, включаются login/JWT/PAT, session-bound access JWT, refresh rotate/logout/revoke, coarse global roles, project membership RBAC и Git Smart HTTP read/write checks по связанному проекту, но tenant isolation, scoped PAT и production cookie/CSRF/session-family policy ещё не завершены.
 - **Нет TLS**: весь трафик (включая Git push/fetch и логи джобов) идёт в открытом виде.
 - **CORS permissive**. PostgreSQL в `docker-compose.yml` привязан к `127.0.0.1:${CICD_DATABASE_PORT:-22543}`, но API/Dashboard по умолчанию публикуются на host port и должны быть закрыты сетью или reverse proxy.
 - **API/PAT не являются production IAM**: legacy `cicd_...` tokens проверяются только при включённом auth-secret и пока не имеют target scopes/pepper/rotation guarantees.

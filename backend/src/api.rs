@@ -617,7 +617,7 @@ async fn project_id_for_scope_ref(
     }
 }
 
-async fn project_membership_role(
+pub(crate) async fn project_membership_role(
     pool: &PgPool,
     user_id: Uuid,
     project_id: Uuid,
@@ -635,7 +635,7 @@ async fn project_membership_role(
 
 /// JWT access tokens are bound to `sessions.id`; PATs (`cicd_…`) are
 /// resolved against api_tokens and assume the owner's current role.
-async fn bearer_identity(
+pub(crate) async fn bearer_identity(
     pool: &PgPool,
     auth_secret: &str,
     headers: &axum::http::HeaderMap,
@@ -647,6 +647,14 @@ async fn bearer_identity(
     let token = value
         .strip_prefix("Bearer ")
         .ok_or_else(ApiError::unauthorized)?;
+    identity_for_bearer_token(pool, auth_secret, token).await
+}
+
+pub(crate) async fn identity_for_bearer_token(
+    pool: &PgPool,
+    auth_secret: &str,
+    token: &str,
+) -> Result<crate::auth::AccessClaims, ApiError> {
     if token.starts_with("cicd_") {
         let hash = crate::auth::hash_token(token);
         let row = sqlx::query_as::<_, (Uuid, String)>(
@@ -700,6 +708,15 @@ pub fn app_with_auth_secret(pool: Option<PgPool>, auth_secret: Option<String>) -
         None,
         auth_secret,
     )
+}
+
+#[cfg(any(test, feature = "integration"))]
+pub fn app_with_git_and_auth_secret(
+    pool: Option<PgPool>,
+    git: crate::git_host::GitConfig,
+    auth_secret: Option<String>,
+) -> Router {
+    build_router_with_auth_secret(pool, git, None, auth_secret)
 }
 
 fn build_router_with_auth_secret(

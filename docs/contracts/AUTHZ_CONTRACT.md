@@ -107,9 +107,9 @@ Tenant roles: `owner` управляет tenant, projects, memberships, service 
 | GET | `/api/v1/repos/{repo}/refs`, `/api/v1/repos/{repo}/commits`, `/api/v1/repos/{repo}/compare` | `repository.read` |
 | GET, POST | `/api/v1/repos/{repo}/pulls` | `pull_request.read` / `pull_request.manage` |
 | POST | `/api/v1/repos/{repo}/pulls/{number}/action` | `pull_request.manage` |
-| GET | `/api/v1/git/{repo}/info/refs` | Git credential with `repository.read` |
-| POST | `/api/v1/git/{repo}/git-upload-pack` | Git credential with `repository.read` |
-| POST | `/api/v1/git/{repo}/git-receive-pack` | Git credential with `repository.write` |
+| GET | `/git/{repo}/info/refs` | Git credential with `repository.read` |
+| POST | `/git/{repo}/git-upload-pack` | Git credential with `repository.read` |
+| POST | `/git/{repo}/git-receive-pack` | Git credential with `repository.write` |
 | POST | `/api/v1/internal/git-push` | `system` only: signed internal event, timestamp and one-time event ID |
 
 `/api/v1/auth/login`, `/refresh` и `/logout` являются public only for their stated credential flow, rate-limited; `/me` requires user access JWT. Cookie-authenticated unsafe requests require CSRF proof; bearer credentials are exempt.

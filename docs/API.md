@@ -472,7 +472,7 @@ curl -sS http://127.0.0.1:22801/api/v1/pipelines/$PIPELINE_ID
 | GET/POST | `/repos/{repo}/releases` | Список / создание или обновление release metadata |
 | GET/DELETE | `/repos/{repo}/releases/{tag}` | Один release / удаление metadata (Git tag сохраняется) |
 
-`ref` проходит только в Git через уже валидированный bare repository; пустой `HEAD` автоматически берёт `main`, затем `master`. Для Smart HTTP fetch public repository доступен без `CICD_GIT_TOKEN`; private repository требует token. `git-receive-pack` требует token всегда, если token сконфигурирован.
+`ref` проходит только в Git через уже валидированный bare repository; пустой `HEAD` автоматически берёт `main`, затем `master`. Для Smart HTTP fetch public repository доступен без credential; private repository и весь `git-receive-pack` требуют credential. При непустом `CICD_AUTH_SECRET` принимается legacy `CICD_GIT_TOKEN` либо JWT/PAT в `Authorization: Bearer`/Basic password с проверкой роли в проекте, связанном через `repository_url`.
 
 ### Дополнительные CI-результаты
 
@@ -1015,7 +1015,7 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 | POST | `/git/{repo}/git-upload-pack` | Smart HTTP fetch/clone service |
 | POST | `/git/{repo}/git-receive-pack` | Smart HTTP push service |
 
-Git Smart HTTP проверяет `CICD_GIT_TOKEN`, если он задан. Полный lifecycle — `docs/GIT_HOSTING.md`; PR merge semantics — `docs/PULL_REQUESTS.md`.
+Git Smart HTTP допускает unauthenticated read только для `repositories.visibility = public`. Private read и receive-pack требуют legacy `CICD_GIT_TOKEN` либо, при непустом `CICD_AUTH_SECRET`, JWT/PAT principal с `project_memberships`: `viewer+` для read, `developer+` для write; `admin` имеет bypass. Полный lifecycle — `docs/GIT_HOSTING.md`; PR merge semantics — `docs/PULL_REQUESTS.md`.
 
 ### Internal Git hook
 

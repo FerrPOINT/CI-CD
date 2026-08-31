@@ -8,7 +8,7 @@
 |---|---|---|---|
 | `POST /api/v1/internal/git-push` | `POST /api/v1/internal/git-events/push` | new route + adapter, old route отвечает 308/deprecation header 1 release | usage=0 по метрикам |
 | `/api/v1/*` array responses | envelope `{items,next_cursor}` | аддитивно, `?limit&cursor`; array сохраняется до миграции UI/CLI (`contracts/API_CONTRACT.md`) | все клиенты на envelope |
-| `/git/*` token-auth `CICD_GIT_TOKEN` | per-repo authorization + signed events (reserved ADR-0013) | feature flag `git_auth_v2` | flag on by default |
+| `/git/*` public-read + legacy `CICD_GIT_TOKEN`/JWT/PAT project-membership checks | tenant-bound per-repo authorization + scoped Git credentials + signed events (reserved ADR-0013) | feature flag `git_auth_v2` | flag on by default |
 | trusted-network fallback when `CICD_AUTH_SECRET` is unset | default-deny policy middleware (`contracts/AUTHZ_CONTRACT.md`) | flags `auth_required_*` по группам роутов + deployment gate for configured secret | Phase D complete |
 
 ## Schema
