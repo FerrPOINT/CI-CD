@@ -38,5 +38,5 @@ git clients ── Smart HTTP ── git ingress ── domain_events ── sch
 
 ## Наблюдаемость
 
-- Health: `GET /api/v1/health` (без БД), readiness — target (`dependency_unavailable`).
+- Health: `GET /api/v1/health` (без БД); readiness: `GET /api/v1/readiness` проверяет PostgreSQL и SQLx migration versions/checksums.
 - Логи: tracing stdout; metrics `/metrics` — current Prometheus exposition с target-расширением набора метрик (`contracts/API_CONTRACT.md`).

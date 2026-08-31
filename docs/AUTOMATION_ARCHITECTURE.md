@@ -32,7 +32,7 @@ PostgreSQL остаётся единственным источником ист
 | Фоновая обработка | Есть embedded runner, scheduler/outbox worker и polling loops для current MVP. Нет production lease-контура. | Независимые типы workers с lease в PostgreSQL, `FOR UPDATE SKIP LOCKED`, `LISTEN/NOTIFY` как ускорением и безопасным shutdown. |
 | Outbox | `domain_events` и `outbox_messages` есть для terminal pipeline webhooks и local notifications; current bounded history хранится в `outbox_delivery_attempts`, failed delivery можно requeue новой generation. | Бизнес-событие и outbox-запись создаются в одной БД-транзакции; dispatcher формирует full delivery snapshots с lease/reconciliation. |
 | Audit | Частичные записи в `audit_log`, без correlation id и без полного покрытия. | Неподменяемые автоматизационные события, технический аудит, correlation/causation ids и связность с доставками. |
-| Наблюдаемость | `tracing`, HTTP TraceLayer и `/health`. | Readiness, Prometheus/OpenTelemetry, метрики очередей, retry, delivery и scheduler lag, алерты и runbook. |
+| Наблюдаемость | `tracing`, HTTP TraceLayer, `/api/v1/health`, `/api/v1/readiness` и `/metrics`. | Prometheus/OpenTelemetry expansion, метрики очередей, retry, delivery и scheduler lag, алерты и runbook. |
 | Миграции | Committed SQLx migrations применяются backend-ом при старте и `cicd-migrate`; отдельный production rollout split ещё target. | Версионированные миграции, обратносуместимые изменения и отдельная проверка миграций перед rollout. |
 
 Фактические текущие границы подтверждаются `backend/src/platform.rs`, `backend/src/store.rs`, `backend/src/git_host.rs`, `backend/src/main.rs`, `docs/API.md` и `docs/GIT_HOSTING.md`.
@@ -993,13 +993,13 @@ Reconciliation jobs:
 
 ### 16.1 Health и readiness
 
-Разделить endpoints:
+Current endpoints и target automation split:
 
 - `/api/v1/health` — liveness процесса;
-- `/api/v1/readiness` — доступность PostgreSQL, миграции, способность worker-ов получать lease;
+- `/api/v1/readiness` — current проверка доступности PostgreSQL и SQLx migrations; worker lease/backlog checks остаются target extension;
 - `/api/v1/automation/health` — статус scheduler/outbox/workers, максимальный queue lag и age oldest pending message.
 
-Readiness не должна быть `200`, если миграции не применены или outbox worker критически отстал сверх установленного порога.
+Readiness не должна быть `200`, если миграции не применены. Target automation health дополнительно закрывает случай, когда outbox/scheduler worker критически отстал сверх установленного порога.
 
 ### 16.2 Метрики
 

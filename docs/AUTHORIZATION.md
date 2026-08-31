@@ -82,7 +82,7 @@ Forge instance
 
 Исключения:
 
-- `/api/v1/health`, `/readyz` и `/metrics` не требуют user authentication, но должны быть ограничены сетевой политикой;
+- `/api/v1/health`, `/api/v1/readiness` и `/metrics` не требуют user authentication, но должны быть ограничены сетевой политикой;
 - bootstrap регистрации runner использует короткоживущий registration token вместо user session;
 - internal Git hook использует подписанный internal event credential;
 - platform operator actions доступны только instance-admin principal и всегда создают audit event.

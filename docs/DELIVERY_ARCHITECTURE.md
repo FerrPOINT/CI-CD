@@ -24,7 +24,7 @@ Forge CI/CD развивается из MVP control plane в безопасну�
 | Область | Текущее состояние |
 |---|---|
 | Backend | Cargo workspace содержит server crate, `domain` и выделенный `cli`; основная HTTP/SQL-логика пока находится в `backend/src/api.rs` и смежных модулях. |
-| API | REST доступен по `/api/v1`; есть health, auth, projects, pipelines, jobs, Git и platform endpoints. OpenAPI генерируется из Rust annotations в `openapi/openapi.yaml` и проверяется drift gate в CI. |
+| API | REST доступен по `/api/v1`; есть health/readiness, auth, projects, pipelines, jobs, Git и platform endpoints. OpenAPI генерируется из Rust annotations в `openapi/openapi.yaml` и проверяется drift gate в CI. |
 | Ошибки | Current API возвращает structured envelope `{"error":{"code","message","request_id"}}` и header `x-request-id`; compatibility/error taxonomy ещё не полностью покрыта target contract tests. |
 | Версионирование | Path-versioning `/api/v1` документирован, но нет автоматической проверки breaking changes между контрактами. |
 | Пагинация | `projects` и `pipelines` поддерживают `limit/offset` с cap 200; job logs возвращаются целиком. Унифицированный response envelope/cursor model остаётся target. |
@@ -32,7 +32,7 @@ Forge CI/CD развивается из MVP control plane в безопасну�
 | Auth/RBAC | При `CICD_AUTH_SECRET` включены login/JWT/scoped PAT, argon2id credentials, sessions, route-level global roles и project memberships; без секрета остаётся trusted-network mode. Tenant scope, service-account/scoped Git credentials и production session policy остаются target. |
 | Frontend | React 19/Vite/TanStack Query; около 20 маршрутов + `/login`. DTO генерируются в `frontend/src/api/schema.d.ts`, API wrapper/hooks остаются handwritten. |
 | CLI | `backend/cli` уже отдельный package и работает через HTTP; реализованы группы `project`, `pipeline`, `job`. Конфигурация ограничена `CICD_API_URL`, stdout всегда pretty JSON, нет auth/profile/output policy. |
-| Observability | Есть `/api/v1/health`, `/metrics`, `TraceLayer` и `tracing`. DB-aware readiness, OTLP, alerting и корреляция API--CLI не реализованы. |
+| Observability | Есть `/api/v1/health`, `/api/v1/readiness`, `/metrics`, `TraceLayer` и `tracing`. OTLP, alerting и корреляция API--CLI не реализованы. |
 | Quality | GitHub Actions запускает backend fmt/clippy/workspace tests, real PostgreSQL integration, OpenAPI drift gate, frontend generated-client check/test/build и docs checks. Compose smoke, Playwright E2E, OpenAPI compatibility gate и evidence bundle отсутствуют. |
 
 ## 3. Целевые принципы
@@ -350,7 +350,7 @@ POST /api/v1/auth/tokens
 DELETE /api/v1/auth/tokens/{token_id}
 ```
 
-Все control-plane routes по умолчанию защищены. Исключения явно ограничены: `/health/live`, `/health/ready`, `/api/meta` и observability endpoints в соответствии с network policy.
+Все control-plane routes по умолчанию защищены. Исключения явно ограничены: current `/api/v1/health`, `/api/v1/readiness`, `/metrics`, target `/health/live`, `/health/ready`, `/api/meta` и observability endpoints в соответствии с network policy.
 
 RBAC выполняется в application layer, а не в React routes и не только в Axum middleware:
 
@@ -727,12 +727,14 @@ HTTP server span
 
 | Endpoint | Назначение | DB | Возврат |
 |---|---|---|---|
+| `GET /api/v1/health` | Current liveness процесса backend. | Не проверяет. | `200` пока процесс способен обслуживать probe. |
+| `GET /api/v1/readiness` | Current readiness API instance. | Проверяет connection/query timeout и обязательные SQLx migrations. | `200 ready`, иначе `503 not_ready`. |
 | `GET /health/live` | Процесс жив и event loop отвечает. | Не проверяет. | `200` пока процесс способен обслуживать probe. |
 | `GET /health/ready` | Инстанс может принимать traffic. | Проверяет connection/query timeout, обязательные migrations и критичные adapters. | `200 ready`, иначе `503 NOT_READY`. |
 | `GET /health/startup` | Инициализация завершена. | Проверяет только startup prerequisites. | `200` после migrations/config/bootstrap. |
 | `GET /metrics` | Scrape metrics. | Не является probe. | Prometheus text format. |
 
-Старый `/api/v1/health` поддерживается в переходный период и документируется как deprecated alias; Docker/Kubernetes liveness не должен использовать readiness, иначе временная недоступность БД приведёт к restart loop.
+Target `/health/*` routes остаются будущим split для production ingress. Current `/api/v1/health` используется как liveness, а `/api/v1/readiness` — как DB/migration readiness; Docker/Kubernetes liveness не должен использовать readiness, иначе временная недоступность БД приведёт к restart loop.
 
 ## 10. CI quality gates
 

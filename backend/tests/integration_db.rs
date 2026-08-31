@@ -43,6 +43,51 @@ async fn migrations_apply_and_reapply_idempotently() {
 }
 
 #[tokio::test]
+async fn readiness_reports_database_and_migrations() {
+    let pool = test_pool().await;
+    let app = cicd::api::app(Some(pool));
+    let response = app
+        .oneshot(
+            Request::get("/api/v1/readiness")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response_json(response).await;
+    assert_eq!(body["status"], "ready");
+    assert_eq!(body["service"], "cicd");
+    assert_eq!(body["database"], "ok");
+    assert_eq!(body["migrations"]["status"], "ok");
+    assert!(
+        body["migrations"]["latest_required_version"]
+            .as_i64()
+            .unwrap()
+            >= 15
+    );
+    assert_eq!(
+        body["migrations"]["latest_applied_version"],
+        body["migrations"]["latest_required_version"]
+    );
+    assert_eq!(
+        body["migrations"]["pending_versions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+    assert_eq!(
+        body["migrations"]["checksum_mismatches"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+}
+
+#[tokio::test]
 async fn project_crud_roundtrip() {
     let pool = test_pool().await;
     let id = Uuid::new_v4();
@@ -2215,8 +2260,10 @@ async fn failed_outbox_delivery_records_attempt_and_can_be_requeued() {
     .await
     .expect("insert retrying outbox message");
 
-    let delivered = cicd::outbox::deliver_due(&pool, &reqwest::Client::new()).await;
-    assert_eq!(delivered, 0);
+    // deliver_due returns a process-wide count, so parallel integration tests
+    // may contribute unrelated delivered messages. The assertions below are
+    // scoped to this unsupported-channel message.
+    let _delivered = cicd::outbox::deliver_due(&pool, &reqwest::Client::new()).await;
 
     let (attempts, failed_at, last_error): (
         i32,

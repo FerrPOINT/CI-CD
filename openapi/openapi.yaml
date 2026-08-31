@@ -243,7 +243,7 @@ paths:
       operationId: health
       responses:
         '200':
-          description: Liveness and readiness
+          description: Liveness
   /api/v1/internal/git-push:
     post:
       tags:
@@ -1419,6 +1419,24 @@ paths:
                 $ref: '#/components/schemas/Webhook'
         '400':
           description: ''
+  /api/v1/readiness:
+    get:
+      tags:
+      - health
+      operationId: readiness
+      responses:
+        '200':
+          description: Database-aware readiness
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+        '503':
+          description: Database or migrations are not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
   /api/v1/repos/{repo}/blob:
     get:
       tags:
@@ -2763,6 +2781,44 @@ components:
       properties:
         started:
           type: boolean
+    MigrationReadiness:
+      type: object
+      required:
+      - status
+      - latest_required_version
+      - pending_versions
+      - checksum_mismatches
+      - unknown_applied_versions
+      properties:
+        checksum_mismatches:
+          type: array
+          items:
+            type: integer
+            format: int64
+        error:
+          type:
+          - string
+          - 'null'
+        latest_applied_version:
+          type:
+          - integer
+          - 'null'
+          format: int64
+        latest_required_version:
+          type: integer
+          format: int64
+        pending_versions:
+          type: array
+          items:
+            type: integer
+            format: int64
+        status:
+          type: string
+        unknown_applied_versions:
+          type: array
+          items:
+            type: integer
+            format: int64
     Notification:
       type: object
       required:
@@ -3145,6 +3201,22 @@ components:
         updated_at:
           type: string
           format: date-time
+    Readiness:
+      type: object
+      required:
+      - status
+      - service
+      - database
+      - migrations
+      properties:
+        database:
+          type: string
+        migrations:
+          $ref: '#/components/schemas/MigrationReadiness'
+        service:
+          type: string
+        status:
+          type: string
     RefInfo:
       type: object
       required:

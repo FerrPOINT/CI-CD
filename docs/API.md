@@ -37,13 +37,14 @@ REST API первой версии Forge CI/CD. Контрольная плос�
 
 | Метод | Путь | Назначение |
 |---|---|---|
-| GET | `/health` | Health-check сервиса |
+| GET | `/health` | Liveness-check процесса backend |
+| GET | `/readiness` | Readiness-check PostgreSQL и SQLx migrations |
 | GET | `/openapi.json` | OpenAPI JSON document |
 | GET | `/metrics` | Prometheus text exposition, полный путь без `/api/v1` |
 
 #### GET /api/v1/health
 
-Проверка работоспособности API. Не требует БД.
+Liveness-проверка процесса backend. Не требует БД и не подтверждает готовность PostgreSQL или migrations.
 
 **Response 200:**
 ```json
@@ -56,6 +57,35 @@ REST API первой версии Forge CI/CD. Контрольная плос�
 **curl:**
 ```bash
 curl -sS http://127.0.0.1:22801/api/v1/health
+```
+
+#### GET /api/v1/readiness
+
+Readiness-проверка backend dependency boundary. Endpoint требует подключённый PostgreSQL pool, выполняет короткий `SELECT 1` и сверяет `_sqlx_migrations` с embedded SQLx migrations по version/checksum.
+
+**Response 200:**
+```json
+{
+  "status": "ready",
+  "service": "cicd",
+  "database": "ok",
+  "migrations": {
+    "status": "ok",
+    "latest_applied_version": 15,
+    "latest_required_version": 15,
+    "pending_versions": [],
+    "checksum_mismatches": [],
+    "unknown_applied_versions": [],
+    "error": null
+  }
+}
+```
+
+**Response 503:** та же JSON-форма со `status: "not_ready"`; `database` становится `unavailable` при недоступной БД, а `migrations.status` показывает `pending`, `mismatch` или `unknown`.
+
+**curl:**
+```bash
+curl -sS http://127.0.0.1:22801/api/v1/readiness
 ```
 
 #### GET /api/v1/openapi.json
@@ -131,7 +161,7 @@ In-process fixed-window limiter выполняется до auth/handler и во
 | `artifact-upload` | `POST /api/v1/jobs/{job_id}/artifacts` | 60/min |
 | `api-read` / `api-write` | прочие `/api/*` routes | 1200/min read, 600/min write |
 
-`/api/v1/health`, `/api/v1/openapi.json` и `/metrics` не ограничиваются этим middleware. Distributed limiter, per-account lockout, proxy-level request body/time/concurrency policy остаются target.
+`/api/v1/health`, `/api/v1/readiness`, `/api/v1/openapi.json` и `/metrics` не ограничиваются этим middleware. Distributed limiter, per-account lockout, proxy-level request body/time/concurrency policy остаются target.
 
 ---
 
@@ -1186,6 +1216,7 @@ Git Smart HTTP допускает unauthenticated read только для `repo
 | `/api/v1/environments/{environment_id}` | Environments |
 | `/api/v1/environments/{environment_id}/deployments` | Environments |
 | `/api/v1/health` | Health |
+| `/api/v1/readiness` | Health |
 | `/api/v1/internal/git-push` | Git hooks |
 | `/api/v1/jobs/{job_id}/artifacts` | Artifacts |
 | `/api/v1/jobs/{job_id}/attempts` | Jobs |

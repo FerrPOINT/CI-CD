@@ -18,7 +18,7 @@
 ### 2. Код
 
 - Backend: текущий runtime ещё монолитен, но новые изменения двигаются к `api → app/domain → infra/store` по ADR-0005.
-- Состояние приложения — `AppState` с `Option<PgPool>` (бездБ режим для health-check).
+- Состояние приложения — `AppState` с `Option<PgPool>` (`/api/v1/health` работает без БД, `/api/v1/readiness` без БД возвращает `503`).
 - SQL-схема управляется committed SQLx migrations в `backend/migrations/*.sql`; backend применяет их при старте, `cicd-migrate` использует тот же набор.
 - Доменные статусы и transition-правила — `JobStatus` enum с `transition_to()`, единственный источник правды для валидации переходов.
 - Frontend: компоненты на shadcn/ui + Tailwind, typed API wrapper и generated OpenAPI DTO `frontend/src/api/schema.d.ts`.
@@ -38,7 +38,7 @@
 - Frontend: Vitest для unit-тестов компонентов, Playwright для E2E (целевое).
 - После UI-изменений — скриншоты full-page (375 / 1920 / 2560).
 - Все новые endpoint — curl-проверка.
-- Docker compose smoke: `docker compose up --build -d` + `curl /api/v1/health`.
+- Docker compose smoke: `docker compose up --build -d` + `curl /api/v1/health` + `curl /api/v1/readiness`.
 
 ### 5. Документация
 
@@ -58,7 +58,7 @@
 
 - Сборка: `docker compose build`.
 - Пересоздание контейнера: `docker compose up -d` (не `docker compose restart`).
-- Проверка: `docker compose ps` и `curl http://127.0.0.1:22801/api/v1/health`.
+- Проверка: `docker compose ps`, `curl http://127.0.0.1:22801/api/v1/health` и `curl http://127.0.0.1:22801/api/v1/readiness`.
 - Backend Dockerfile: multi-stage `rust:1.86-slim` → `debian:bookworm-slim`, runs as `uid 10001`.
 - Frontend Dockerfile: multi-stage `node:22-bookworm-slim` → `nginx:1.27-alpine`.
 

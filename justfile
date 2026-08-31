@@ -23,3 +23,6 @@ build-frontend:
 
 health:
     curl -fsS http://127.0.0.1:22801/api/v1/health
+
+readiness:
+    curl -fsS http://127.0.0.1:22801/api/v1/readiness

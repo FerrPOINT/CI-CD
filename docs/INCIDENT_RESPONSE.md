@@ -2,7 +2,7 @@
 
 Этот документ определяет единый процесс реагирования на эксплуатационные и security-инциденты Forge CI/CD. Он не заменяет технические инструкции: действия по диагностике, восстановлению pipeline, runner, backup/restore и outbox описаны в [OPERATIONS.md](OPERATIONS.md).
 
-> **Граница текущего MVP.** В Current verified доступны Docker health/status, `/api/v1/health`, read API и структурированные логи. Метрики, alert routing, DB-aware readiness, distributed runner pool и статус-страница относятся к Target approved. `/api/v1/health` подтверждает только liveness backend и не подтверждает доступность PostgreSQL.
+> **Граница текущего MVP.** В Current verified доступны Docker health/status, `/api/v1/health`, `/api/v1/readiness`, read API, `/metrics` и структурированные логи. Alert routing, distributed runner pool и статус-страница относятся к Target approved. `/api/v1/health` подтверждает только liveness backend, а `/api/v1/readiness` проверяет PostgreSQL и SQLx migrations.
 
 ## Severity matrix
 
@@ -33,9 +33,9 @@ SEV1 и SEV2 требуют немедленного incident channel, назн�
 
 ### 1. Detection
 
-**Current verified:** мониторить Docker status/healthchecks, `GET /api/v1/health`, `pg_isready`, Dashboard, безопасный read API, логи backend/PostgreSQL и состояние диска. Конкретные команды и интерпретация приведены в разделе «Мониторинг и health» [OPERATIONS.md](OPERATIONS.md#мониторинг-и-health). Health API не использовать как единственное доказательство работоспособности: отдельно проверять PostgreSQL и read API.
+**Current verified:** мониторить Docker status/healthchecks, `GET /api/v1/health`, `GET /api/v1/readiness`, `pg_isready`, Dashboard, безопасный read API, `/metrics`, логи backend/PostgreSQL и состояние диска. Конкретные команды и интерпретация приведены в разделе «Мониторинг и health» [OPERATIONS.md](OPERATIONS.md#мониторинг-и-health). Health API не использовать как единственное доказательство работоспособности: отдельно проверять readiness, PostgreSQL и read API.
 
-**Target approved:** DB-aware readiness, metrics endpoint, централизованные structured logs, внешняя uptime-проверка и alert routing. Минимальные alert-и охватывают API/DB unavailable, error rate, disk pressure, backup age/failure, runner health, queue age, lease/reconciliation, outbox lag/dead letters, Git/artifact integrity и key/KMS availability. Метки и alert payload не должны содержать secret, token, tenant/project ID, URL либо event/delivery ID.
+**Target approved:** централизованные structured logs, внешняя uptime-проверка и alert routing. Минимальные alert-и охватывают API/DB unavailable, error rate, disk pressure, backup age/failure, runner health, queue age, lease/reconciliation, outbox lag/dead letters, Git/artifact integrity и key/KMS availability. Метки и alert payload не должны содержать secret, token, tenant/project ID, URL либо event/delivery ID.
 
 При сигнале создайте запись инцидента с UTC-временем, источником сигнала, затронутым сервисом и первичным impact. Сохраните `docker compose ps`, релевантные логи и release/commit до изменения системы; не копируйте в запись секреты или полный `.env`.
 

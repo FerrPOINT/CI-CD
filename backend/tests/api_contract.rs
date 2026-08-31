@@ -15,6 +15,19 @@ async fn health_endpoint_reports_service_ready() {
 }
 
 #[tokio::test]
+async fn readiness_endpoint_requires_database() {
+    let response = app(None)
+        .oneshot(
+            Request::get("/api/v1/readiness")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
 async fn project_crud_requires_database() {
     // Without a DB pool all project endpoints must return 503, not panic.
     let response = app(None)

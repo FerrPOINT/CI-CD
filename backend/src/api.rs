@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -41,6 +42,7 @@ pub struct AppState {
 
 type ApiResult<T> = Result<Json<T>, ApiError>;
 const IDEMPOTENCY_KEY_HEADER: &str = "idempotency-key";
+const READINESS_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const PIPELINE_TRIGGER_SOURCE_API: &str = "api";
 pub(crate) const PIPELINE_TRIGGER_SOURCE_GIT_PUSH: &str = "git-push";
 pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
@@ -58,7 +60,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         )
     ),
     paths(
-        health, metrics, serve_openapi_json, auth_login, auth_refresh, auth_logout,
+        health, readiness, metrics, serve_openapi_json, auth_login, auth_refresh, auth_logout,
         list_projects, create_project, get_project, update_project, delete_project,
         list_project_memberships, upsert_project_membership, delete_project_membership,
         trigger_pipeline, list_pipelines, get_pipeline, cancel_pipeline, retry_pipeline,
@@ -94,6 +96,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
     components(schemas(
         crate::auth::LoginRequest, crate::auth::LogoutRequest, crate::auth::LogoutResponse, crate::auth::RefreshRequest, crate::auth::TokenPair,
         Project, CreateProject, UpdateProject, ProjectMembership, ProjectMembershipInput,
+        Readiness, MigrationReadiness,
         TriggerPipeline, Pipeline, Stage, Job,
         PipelineDetail, StageDetail, JobAttempt, JobLog, JobLogPage, ChangeStatus, AppendLog,
         CanceledPipelineResult, RetriedPipelineResult, ManualJobStartResult,
@@ -370,7 +373,10 @@ async fn rate_limit_mw(
 }
 
 fn rate_limit_rule(method: &Method, path: &str) -> Option<RateLimitRule> {
-    if matches!(path, "/api/v1/health" | "/api/v1/openapi.json" | "/metrics") {
+    if matches!(
+        path,
+        "/api/v1/health" | "/api/v1/readiness" | "/api/v1/openapi.json" | "/metrics"
+    ) {
         return None;
     }
     if path == "/api/v1/auth/login" {
@@ -468,6 +474,7 @@ async fn require_auth(
 ) -> Result<axum::response::Response, ApiError> {
     const PUBLIC: &[&str] = &[
         "/api/v1/health",
+        "/api/v1/readiness",
         "/api/v1/openapi.json",
         "/api/v1/auth/login",
         "/api/v1/auth/refresh",
@@ -947,6 +954,7 @@ fn build_router_with_auth_secret(
     });
     Router::new()
         .route("/api/v1/health", get(health))
+        .route("/api/v1/readiness", get(readiness))
         .route("/metrics", get(metrics))
         .route("/api/v1/openapi.json", get(serve_openapi_json))
         .route("/api/v1/auth/login", post(auth_login))
@@ -1152,9 +1160,214 @@ async fn auth_logout(
     }))
 }
 
-#[utoipa::path(get, path="/api/v1/health", tag="health", responses((status=200, description="Liveness and readiness")))]
+#[utoipa::path(get, path="/api/v1/health", tag="health", responses((status=200, description="Liveness")))]
 async fn health() -> Json<serde_json::Value> {
     Json(serde_json::json!({"status": "ok", "service": "cicd"}))
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct Readiness {
+    status: String,
+    service: String,
+    database: String,
+    migrations: MigrationReadiness,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+struct MigrationReadiness {
+    status: String,
+    latest_applied_version: Option<i64>,
+    latest_required_version: i64,
+    pending_versions: Vec<i64>,
+    checksum_mismatches: Vec<i64>,
+    unknown_applied_versions: Vec<i64>,
+    error: Option<String>,
+}
+
+#[derive(Debug)]
+struct ExpectedMigration {
+    version: i64,
+    checksum: Vec<u8>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/readiness",
+    tag = "health",
+    responses(
+        (status = 200, description = "Database-aware readiness", body = Readiness),
+        (status = 503, description = "Database or migrations are not ready", body = Readiness)
+    )
+)]
+async fn readiness(State(state): State<Arc<AppState>>) -> axum::response::Response {
+    let expected = expected_migrations();
+    let Some(db) = state.pool.as_ref() else {
+        return readiness_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "not_ready",
+            "unavailable",
+            migration_readiness_error(&expected, "unknown", "database pool is not configured"),
+        );
+    };
+
+    let database_probe = tokio::time::timeout(
+        READINESS_TIMEOUT,
+        sqlx::query_scalar::<_, i64>("SELECT 1::BIGINT").fetch_one(db),
+    )
+    .await;
+    match database_probe {
+        Ok(Ok(_)) => {}
+        Ok(Err(_)) => {
+            return readiness_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "not_ready",
+                "unavailable",
+                migration_readiness_error(&expected, "unknown", "database query failed"),
+            );
+        }
+        Err(_) => {
+            return readiness_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "not_ready",
+                "unavailable",
+                migration_readiness_error(&expected, "unknown", "database query timed out"),
+            );
+        }
+    }
+
+    let migrations =
+        match tokio::time::timeout(READINESS_TIMEOUT, migration_readiness(db, &expected)).await {
+            Ok(readiness) => readiness,
+            Err(_) => migration_readiness_error(&expected, "unknown", "migration check timed out"),
+        };
+    let ready = migrations.status == "ok";
+    readiness_response(
+        if ready {
+            StatusCode::OK
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        },
+        if ready { "ready" } else { "not_ready" },
+        "ok",
+        migrations,
+    )
+}
+
+fn readiness_response(
+    status: StatusCode,
+    readiness_status: &str,
+    database: &str,
+    migrations: MigrationReadiness,
+) -> axum::response::Response {
+    (
+        status,
+        Json(Readiness {
+            status: readiness_status.to_string(),
+            service: "cicd".to_string(),
+            database: database.to_string(),
+            migrations,
+        }),
+    )
+        .into_response()
+}
+
+fn expected_migrations() -> Vec<ExpectedMigration> {
+    crate::migrations()
+        .iter()
+        .filter(|migration| migration.migration_type.is_up_migration())
+        .map(|migration| ExpectedMigration {
+            version: migration.version,
+            checksum: migration.checksum.to_vec(),
+        })
+        .collect()
+}
+
+async fn migration_readiness(db: &PgPool, expected: &[ExpectedMigration]) -> MigrationReadiness {
+    let applied: Vec<(i64, Vec<u8>)> = match sqlx::query_as(
+        "SELECT version, checksum FROM _sqlx_migrations WHERE success ORDER BY version",
+    )
+    .fetch_all(db)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(_) => {
+            return migration_readiness_error(
+                expected,
+                "unknown",
+                "migration history query failed",
+            );
+        }
+    };
+
+    let latest_applied_version = applied.iter().map(|(version, _)| *version).max();
+    let applied_by_version: HashMap<i64, Vec<u8>> = applied.into_iter().collect();
+    let expected_versions: HashSet<i64> =
+        expected.iter().map(|migration| migration.version).collect();
+    let pending_versions = expected
+        .iter()
+        .filter(|migration| !applied_by_version.contains_key(&migration.version))
+        .map(|migration| migration.version)
+        .collect::<Vec<_>>();
+    let checksum_mismatches = expected
+        .iter()
+        .filter_map(|migration| {
+            applied_by_version
+                .get(&migration.version)
+                .filter(|checksum| checksum.as_slice() != migration.checksum.as_slice())
+                .map(|_| migration.version)
+        })
+        .collect::<Vec<_>>();
+    let mut unknown_applied_versions = applied_by_version
+        .keys()
+        .copied()
+        .filter(|version| !expected_versions.contains(version))
+        .collect::<Vec<_>>();
+    unknown_applied_versions.sort_unstable();
+
+    let status = if checksum_mismatches.is_empty()
+        && pending_versions.is_empty()
+        && unknown_applied_versions.is_empty()
+    {
+        "ok"
+    } else if !checksum_mismatches.is_empty() || !unknown_applied_versions.is_empty() {
+        "mismatch"
+    } else {
+        "pending"
+    };
+
+    MigrationReadiness {
+        status: status.to_string(),
+        latest_applied_version,
+        latest_required_version: latest_required_version(expected),
+        pending_versions,
+        checksum_mismatches,
+        unknown_applied_versions,
+        error: None,
+    }
+}
+
+fn migration_readiness_error(
+    expected: &[ExpectedMigration],
+    status: &str,
+    error: &str,
+) -> MigrationReadiness {
+    MigrationReadiness {
+        status: status.to_string(),
+        latest_applied_version: None,
+        latest_required_version: latest_required_version(expected),
+        pending_versions: Vec::new(),
+        checksum_mismatches: Vec::new(),
+        unknown_applied_versions: Vec::new(),
+        error: Some(error.to_string()),
+    }
+}
+
+fn latest_required_version(expected: &[ExpectedMigration]) -> i64 {
+    expected
+        .iter()
+        .map(|migration| migration.version)
+        .max()
+        .unwrap_or_default()
 }
 
 #[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
@@ -2444,6 +2657,7 @@ mod tests {
     #[test]
     fn rate_limit_rules_cover_api_git_and_artifact_routes() {
         assert_eq!(rate_limit_rule(&Method::GET, "/api/v1/health"), None);
+        assert_eq!(rate_limit_rule(&Method::GET, "/api/v1/readiness"), None);
         assert_eq!(
             rate_limit_rule(&Method::POST, "/api/v1/auth/login"),
             Some(RateLimitRule {

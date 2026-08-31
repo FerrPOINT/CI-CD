@@ -40,17 +40,20 @@ docker compose config -q
 docker compose up -d --build
 docker compose ps
 curl -fsS http://127.0.0.1:22801/api/v1/health
+curl -fsS http://127.0.0.1:22801/api/v1/readiness
 curl -fsS http://127.0.0.1:22802/ >/dev/null
 ```
 
-Ожидаемый ответ API: `{"status":"ok","service":"cicd"}`. PostgreSQL проверяется отдельным healthcheck:
+Ожидаемый liveness-ответ API: `{"status":"ok","service":"cicd"}`. Readiness возвращает `200` только когда PostgreSQL отвечает и все committed SQLx migrations применены без checksum mismatch; иначе endpoint возвращает `503` с `status:"not_ready"`.
+
+PostgreSQL можно дополнительно проверить контейнерным healthcheck:
 
 ```bash
 docker compose exec -T postgres \
   pg_isready -U "$CICD_DATABASE_USER" -d "$CICD_DATABASE_NAME"
 ```
 
-`/api/v1/health` является liveness-проверкой: в Current verified он не подтверждает доступность PostgreSQL и не заменяет прикладной smoke. После запуска проверяйте также `docker compose ps` и, при необходимости, безвредный read API, например список проектов:
+`/api/v1/health` является liveness-проверкой и не должен использоваться как единственный сигнал готовности. После запуска проверяйте также `docker compose ps`, `/api/v1/readiness` и, при необходимости, безвредный read API, например список проектов:
 
 ```bash
 curl -fsS http://127.0.0.1:22801/api/v1/projects
@@ -209,23 +212,24 @@ Target backup включает physical PostgreSQL base backup и continuous WAL
 
 ### Current verified
 
-Наблюдаемость MVP включает Docker status/healthchecks, `/api/v1/health`, `/metrics` Prometheus text и backend `tracing` logs. DB-aware readiness, alert routing, queue-age/dead-letter dashboards и production log pipeline отсутствуют.
+Наблюдаемость MVP включает Docker status/healthchecks, `/api/v1/health`, `/api/v1/readiness`, `/metrics` Prometheus text и backend `tracing` logs. Alert routing, queue-age/dead-letter dashboards и production log pipeline отсутствуют.
 
 | Проверка | Команда | Значение |
 |---|---|---|
 | Compose services | `docker compose ps` | PostgreSQL должен быть `healthy`; backend должен быть running/healthy. |
 | API liveness | `curl -fsS http://127.0.0.1:22801/api/v1/health` | Процесс backend отвечает; это не DB readiness. |
+| API readiness | `curl -fsS http://127.0.0.1:22801/api/v1/readiness` | PostgreSQL отвечает, `_sqlx_migrations` совпадает с embedded SQLx migrations. |
 | Metrics | `curl -fsS http://127.0.0.1:22801/metrics` | Prometheus text endpoint; в MVP не защищён отдельно от общей сетевой/auth границы. |
 | PostgreSQL | `docker compose exec -T postgres pg_isready -U "$CICD_DATABASE_USER" -d "$CICD_DATABASE_NAME"` | База принимает подключения. |
 | Dashboard | `curl -fsS http://127.0.0.1:22802/ >/dev/null` | nginx отвечает статическим приложением. |
 | Логи | `docker compose logs --since 30m backend` | Ошибки запуска, execution и API requests. |
 | Диск | `df -h` и `docker system df` | Риск заполнения volumes/logs/images. |
 
-Health endpoint не должен быть единственным сигналом решения об инциденте: backend может отвечать, когда прикладные запросы не работают из-за PostgreSQL. Проверяйте PostgreSQL и read API отдельно.
+Health endpoint не должен быть единственным сигналом решения об инциденте: backend может отвечать, когда прикладные запросы не работают из-за PostgreSQL. Проверяйте readiness, PostgreSQL и read API отдельно.
 
 ### Target approved
 
-Production monitoring добавляет DB-aware readiness, защищённый metrics endpoint, централизованные structured logs и внешнюю uptime-проверку. Минимальные alert-и: API/DB unavailable, 5xx/error budget, disk pressure, backup age/failure, migration verify failure, runner offline, lease expiry/reconciliation, queue age, outbox retry lag/dead letters, Git/artifact integrity error и KMS/key availability. Labels не содержат tenant/project ID, URL, tokens, event/delivery IDs или secret data.
+Production monitoring добавляет защищённый metrics endpoint, централизованные structured logs, внешнюю uptime-проверку и alert routing поверх current readiness. Минимальные alert-и: API/DB unavailable, 5xx/error budget, disk pressure, backup age/failure, migration verify failure, runner offline, lease expiry/reconciliation, queue age, outbox retry lag/dead letters, Git/artifact integrity error и KMS/key availability. Labels не содержат tenant/project ID, URL, tokens, event/delivery IDs или secret data.
 
 ## Инцидент-ранбуки
 

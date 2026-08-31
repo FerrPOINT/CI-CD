@@ -54,6 +54,7 @@
 | Secrets encrypted at rest with runner injection and stdout masking | Current verified |
 | Environments, deployments, reports and audit trail | Current verified |
 | Auth/RBAC with `CICD_AUTH_SECRET` | Current verified |
+| Liveness, DB-aware readiness and Prometheus metrics | Current verified |
 | Schedules, outgoing webhooks, in-app/SSE notifications | MVP |
 | External adapters, tenant isolation, distributed runners | Target approved |
 
@@ -82,6 +83,7 @@ cp .env.example .env
 echo "CICD_SECRETS_KEY=$(openssl rand -base64 32)" >> .env
 docker compose up --build -d
 curl http://127.0.0.1:22801/api/v1/health
+curl http://127.0.0.1:22801/api/v1/readiness
 ```
 
 Dashboard: `http://127.0.0.1:22802`.
@@ -155,6 +157,7 @@ Full current-state cut: [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md). Security
 |---|---|
 | Stack up/down | `just up` / `just down` |
 | Health | `just health` |
+| Readiness | `just readiness` |
 | Backend tests | `just test-backend` |
 | Frontend tests | `just test-frontend` |
 | Frontend build | `just build-frontend` |
@@ -166,6 +169,7 @@ Full current-state cut: [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md). Security
 |---|---|
 | `just up` / `just down` | Build/start and stop the Docker Compose stack |
 | `just health` | API health check |
+| `just readiness` | DB and migration readiness check |
 | `just test-backend` | Backend unit and contract tests through the pinned Rust image |
 | `just test-frontend` | Frontend Vitest suite |
 | `just build-frontend` | Production frontend build |

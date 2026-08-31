@@ -51,6 +51,7 @@ cd /opt/dev/CI-CD
 scripts/backup.sh --backup-dir "$PWD/backups/$(date -u +%Y%m%dT%H%M%SZ)"
 scripts/verify-backup.sh "$PWD/backups/<backup-id>"
 curl -fsS http://127.0.0.1:22801/api/v1/health
+curl -fsS http://127.0.0.1:22801/api/v1/readiness
 ```
 
 После backup зафиксируйте UTC timestamp, operator, release/commit, checksum manifest, путь к off-site copy и результат последнего drill. Для дополнительной проверки структуры дампа можно запустить `scripts/verify-backup.sh <backup-dir> --pg-restore-list`, если `pg_restore` доступен локально. Локальный backup внутри Docker volume или на том же единственном хосте не является аварийной копией.
@@ -116,6 +117,7 @@ docker compose ps
 docker compose exec -T postgres \
   pg_isready -U "$CICD_DATABASE_USER" -d "$CICD_DATABASE_NAME"
 curl -fsS http://127.0.0.1:22801/api/v1/health
+curl -fsS http://127.0.0.1:22801/api/v1/readiness
 curl -fsS http://127.0.0.1:22801/api/v1/projects
 curl -fsS http://127.0.0.1:22802/ >/dev/null
 ```

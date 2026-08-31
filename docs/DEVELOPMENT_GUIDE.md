@@ -23,6 +23,7 @@ cp .env.example .env
 docker compose config -q
 just up
 just health
+just readiness
 ```
 
 `just up` выполняет `docker compose up --build -d`. После изменения Dockerfile, образа или env пересоздавайте сервисы командой `docker compose up -d` (с `--build`, если менялся образ); не используйте `docker compose restart` для применения этих изменений.
@@ -34,6 +35,7 @@ just                 # список recipes
 just up              # собрать и запустить весь stack
 just logs            # docker compose logs -f
 just health          # GET /api/v1/health
+just readiness       # GET /api/v1/readiness (PostgreSQL + SQLx migrations)
 just down            # остановить stack
 just test-backend    # cargo test в rust:1.86-bookworm
 just test-frontend   # Vitest на хосте
@@ -112,11 +114,11 @@ pnpm dev
 | Уровень | Что проверяется | Текущий запуск | Статус и следующий обязательный шаг |
 |---|---|---|---|
 | Rust unit | `JobStatus::transition_to()` и чистые domain правила | `cargo test -p cicd-server --test domain_transitions` | Current verified |
-| API contract без БД | router wiring, health и extractor behavior через `app(None)` | `cargo test -p cicd-server --test api_contract` | Current verified; не заменяет persistence tests |
+| API contract без БД | router wiring, liveness/readiness no-DB behavior и extractor behavior через `app(None)` | `cargo test -p cicd-server --test api_contract` | Current verified; не заменяет persistence tests |
 | CLI contract | `cicd-cli --help`, public command groups | `cargo test -p cicd-cli --test cli_contract` | Current verified |
 | Frontend unit | Components, pages и UI behavior через Vitest/Testing Library | `pnpm test` | Current verified |
-| Compose smoke | Запуск образов и `GET /api/v1/health` | `just up && just health` | Current verified локально; не является current CI gate |
-| API + PostgreSQL | CRUD, constraints, migrations, persisted side effects, headers/error envelope, auth/PAT и current pagination cases | `cargo test --features integration --test integration_db` с PostgreSQL service в CI | Current verified; isolated owner/runtime matrix всё ещё target |
+| Compose smoke | Запуск образов, `GET /api/v1/health` и `GET /api/v1/readiness` | `just up && just health && just readiness` | Current verified локально; не является current CI gate |
+| API + PostgreSQL | CRUD, constraints, migrations/readiness, persisted side effects, headers/error envelope, auth/PAT и current pagination cases | `cargo test --features integration --test integration_db` с PostgreSQL service в CI | Current verified; isolated owner/runtime matrix всё ещё target |
 | CLI + real API | Automation flow, config precedence, JSON output, exit codes и redaction | CLI against real API/PostgreSQL stack | Target approved |
 | Browser E2E | Critical UI journeys against built frontend и real API/PostgreSQL | Playwright Chromium | Target approved; сценарии -- [UI API CONTRACT](contracts/UI_API_CONTRACT.md) |
 | Accessibility | Keyboard flow, semantic controls, colour contrast и serious/critical violations | Playwright + axe | Target approved; не установлен как current script/gate |
@@ -179,6 +181,7 @@ docker compose build
 docker compose up --build -d
 docker compose ps
 curl -fsS http://127.0.0.1:22801/api/v1/health
+curl -fsS http://127.0.0.1:22801/api/v1/readiness
 docker compose down
 
 # Удаляет локальные volumes и все данные Compose; используйте только для disposable dev data.

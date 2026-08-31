@@ -246,6 +246,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
 ```bash
 # Проверить вручную (с curl на хосте)
 curl -sS http://127.0.0.1:22801/api/v1/health
+curl -sS http://127.0.0.1:22801/api/v1/readiness
 
 # Проверить внутри контейнера
 docker compose exec backend wget --quiet --tries=1 --spider http://127.0.0.1:22801/api/v1/health
@@ -311,6 +312,7 @@ HEALTHCHECK CMD curl -f http://127.0.0.1:22801/api/v1/health || exit 1
 - Проверить, что API доступен:
   ```bash
   curl -sS http://127.0.0.1:22801/api/v1/health
+  curl -sS http://127.0.0.1:22801/api/v1/readiness
   ```
 - Проверить nginx config (`frontend/nginx.conf`):
   - SPA fallback: `try_files $uri $uri/ /index.html`.

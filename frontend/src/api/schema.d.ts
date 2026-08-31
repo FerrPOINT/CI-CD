@@ -717,6 +717,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/readiness": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["readiness"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/repos/{repo}/blob": {
         parameters: {
             query?: never;
@@ -1361,6 +1377,17 @@ export interface components {
         ManualJobStartResult: {
             started: boolean;
         };
+        MigrationReadiness: {
+            checksum_mismatches: number[];
+            error?: string | null;
+            /** Format: int64 */
+            latest_applied_version?: number | null;
+            /** Format: int64 */
+            latest_required_version: number;
+            pending_versions: number[];
+            status: string;
+            unknown_applied_versions: number[];
+        };
         Notification: {
             channel: string;
             /** Format: date-time */
@@ -1520,6 +1547,12 @@ export interface components {
             title: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        Readiness: {
+            database: string;
+            migrations: components["schemas"]["MigrationReadiness"];
+            service: string;
+            status: string;
         };
         RefInfo: {
             name: string;
@@ -2045,7 +2078,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Liveness and readiness */
+            /** @description Liveness */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -3356,6 +3389,35 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    readiness: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Database-aware readiness */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Readiness"];
+                };
+            };
+            /** @description Database or migrations are not ready */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Readiness"];
+                };
             };
         };
     };

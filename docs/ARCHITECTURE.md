@@ -157,9 +157,9 @@ Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-2
 ## 8. Testing
 
 - Domain: unit-тесты переходов статусов (`domain/src/lib.rs`, `tests/domain_transitions.rs`).
-- API contract: no-DB тесты health/503/валидации (`tests/api_contract.rs`).
+- API contract: no-DB тесты health/readiness/503/валидации (`tests/api_contract.rs`).
 - CLI: contract-тест help-групп (`cli/tests/cli_contract.rs`).
-- Real-PostgreSQL integration tests уже есть для migrations/project/auth paths; target остаётся для Playwright E2E, coverage gate и широких protocol tests.
+- Real-PostgreSQL integration tests уже есть для migrations/readiness/project/auth paths; target остаётся для Playwright E2E, coverage gate и широких protocol tests.
 
 ## 9. Статус миграции (ADR-0005)
 
@@ -179,6 +179,7 @@ Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-2
 ```bash
 just up             # docker compose up --build -d
 just health         # curl /api/v1/health
+just readiness      # curl /api/v1/readiness
 just test-backend   # cargo test --workspace (в rust:1.86-bookworm)
 just test-frontend  # pnpm test
 just build-frontend # pnpm build

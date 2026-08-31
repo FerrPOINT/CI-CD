@@ -32,7 +32,7 @@
 | Error envelope + request_id | ✅ | {error:{code,message,request_id}} + x-request-id |
 | Pagination | ✅ | limit/offset (cap 200) на проектах/пайплайнах |
 | Rate limiting | ✅ MVP | in-process per-client fixed-window: auth, API read/write, Git Smart HTTP, internal hook и artifact upload возвращают `429` при превышении |
-| Metrics | ✅ | /metrics Prometheus text |
+| Health/readiness/metrics | ✅ | `/api/v1/health` liveness без БД; `/api/v1/readiness` проверяет PostgreSQL и SQLx migration versions/checksums; `/metrics` Prometheus text |
 | Backup/restore helper | ✅ MVP | `scripts/forge_backup.py` + wrappers создают/проверяют/restoring local Docker Compose backup: PostgreSQL custom dump, Git/artifact volume copy, `SHA256SUMS`, `manifest.json`; off-site/PITR/monthly drill остаются target |
 
 ## Не реализовано (Target approved — см. ADR + contracts)
@@ -45,7 +45,7 @@ External runner protocol/dispatch (отдельный runner process, registrati
 backend/
 ├── Cargo.toml          # workspace: [".", "domain", "cli"]
 ├── src/                # cicd-server (монолит, мигрирует по ADR-0005)
-│   ├── api.rs          # projects/pipelines/jobs/logs (+health, CORS)
+│   ├── api.rs          # projects/pipelines/jobs/logs (+health/readiness, CORS)
 │   ├── platform.rs     # runners/secrets/artifacts/… /users/tokens
 │   ├── git_host.rs     # bare repos, Smart HTTP, post-receive
 │   ├── pulls.rs        # refs/commits/compare/pull requests
@@ -77,6 +77,7 @@ backend/
 ```bash
 docker compose config -q
 docker compose -f backend/docker-compose.test.yml config -q
+just readiness
 docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" -w /workspace \
   -e CARGO_TARGET_DIR=/workspace/target rust:1.86-bookworm \
   -lc '/usr/local/cargo/bin/cargo test --workspace'

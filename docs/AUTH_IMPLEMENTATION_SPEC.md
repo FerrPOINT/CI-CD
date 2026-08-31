@@ -48,7 +48,7 @@ Bootstrap command: `cicd-migrate bootstrap-owner --tenant <slug> --username <nam
 
 | Surface | Current route family | Phase B policy |
 |---|---|---|
-| Health/readiness/metrics | `/api/v1/health`, `/readyz`, `/metrics` | public (readyz/metrics added with auth) |
+| Health/readiness/metrics | `/api/v1/health`, `/api/v1/readiness`, `/metrics` | public; readiness validates PostgreSQL and SQLx migrations |
 | Auth | `/api/v1/auth/*` | public/rate-limited per contract |
 | Projects/pipelines/jobs/logs | `/api/v1/projects*`, `/api/v1/pipelines*`, `/api/v1/jobs*` | resolve project; `project.read` / `pipeline.run` / `job.write` |
 | Git repository/PR/refs/compare | `/api/v1/repositories*`, `/api/v1/repos/*` | resolve project; `repository.read` / `repository.write` / `pull_request.*` |
