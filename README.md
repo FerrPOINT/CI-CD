@@ -6,6 +6,7 @@
   <a href="#features"><img src="https://img.shields.io/badge/%E2%9C%A8%20Features-0B1220?style=for-the-badge" alt="Features" /></a>
   <a href="#stack"><img src="https://img.shields.io/badge/%F0%9F%94%A7%20Stack-111827?style=for-the-badge" alt="Stack" /></a>
   <a href="#quick-start"><img src="https://img.shields.io/badge/%E2%9A%A1%20Quick%20Start-1F2937?style=for-the-badge" alt="Quick Start" /></a>
+  <a href="#screenshots"><img src="https://img.shields.io/badge/%F0%9F%96%BC%EF%B8%8F%20Screens-334155?style=for-the-badge" alt="Screenshots" /></a>
   <a href="#architecture"><img src="https://img.shields.io/badge/%F0%9F%8F%97%EF%B8%8F%20Architecture-374151?style=for-the-badge" alt="Architecture" /></a>
   <a href="#quality"><img src="https://img.shields.io/badge/%F0%9F%9B%A1%EF%B8%8F%20Quality-4B5563?style=for-the-badge" alt="Quality" /></a>
   <a href="#license"><img src="https://img.shields.io/badge/%F0%9F%94%92%20License-Proprietary%20source--available-7F1D1D?style=for-the-badge" alt="License" /></a>
@@ -85,6 +86,8 @@ curl http://127.0.0.1:22801/api/v1/health
 
 Dashboard: `http://127.0.0.1:22802`.
 
+Configuration: [docs/ENV.md](docs/ENV.md). CLI: [docs/CLI.md](docs/CLI.md).
+
 ```bash
 curl -X POST http://127.0.0.1:22801/api/v1/repositories \
   -H 'content-type: application/json' \
@@ -94,6 +97,27 @@ git clone http://127.0.0.1:22802/git/my-service.git
 # add .forge-ci.yml, commit, push
 git push
 ```
+
+<a name="screenshots"></a>
+## 🖼️ Screenshots
+
+Primary UI evidence is kept in-repo, so the README shows actual product surfaces rather than a decorative mock.
+
+| Surface | Preview |
+|---|---|
+| Dashboard | ![Дашборд](docs/screenshots/02-dashboard.png) |
+| Pipeline detail | ![Детали пайплайна](docs/screenshots/06-pipeline-detail.png) |
+| Repository browser | ![Код репозитория](docs/screenshots/09-repository-browser.png) |
+| Branch compare | ![Сравнение веток](docs/screenshots/10-compare.png) |
+| Pull requests | ![Pull-запросы](docs/screenshots/11-pull-requests.png) |
+| Pull request detail | ![Детали pull-запроса](docs/screenshots/12-pull-request-detail.png) |
+| Pull request diff | ![Diff конкретного pull-запроса](docs/screenshots/22-pr-diff.png) |
+| Project secrets | ![Секреты проекта](docs/screenshots/14-secrets.png) |
+| Job logs | ![Логи джоба](docs/screenshots/33-job-logs.png) |
+| Delete confirmation | ![Подтверждение удаления проекта](docs/screenshots/24-project-delete-confirm.png) |
+| Mobile dashboard | ![Дашборд — мобильная версия](docs/screenshots/m-dashboard.png) |
+
+Full visual registry: [docs/assets/screens/manifest.md](docs/assets/screens/manifest.md).
 
 <a name="architecture"></a>
 ## 🏗️ Architecture
@@ -114,9 +138,12 @@ flowchart TD
 
 ## 🧱 Границы доверия
 
-- Without `CICD_AUTH_SECRET`, API and Dashboard run in trusted-network mode.
-- TLS, distributed rate limiting, tenant isolation, service-account tokens, scoped Git credentials and production cookie/CSRF/session-family policy are hardening tasks.
-- Scheduler/outbox supports MVP scenarios but does not claim crash-safe distributed delivery guarantees.
+- If `CICD_AUTH_SECRET` is missing or empty, API and Dashboard run in trusted-network mode without auth enforcement.
+- With `CICD_AUTH_SECRET`, login/JWT/scoped PAT, session-bound access JWT, refresh rotate/logout/revoke, global roles, project membership RBAC and Git Smart HTTP read/write checks are enforced for linked projects.
+- Tenant isolation, service-account tokens, scoped Git credentials and production cookie/CSRF/session-family policy remain target hardening.
+- TLS is not bundled, CORS is permissive by default, and in-process rate limiting is not a replacement for a reverse proxy or distributed limiter.
+- Schedules, outgoing webhooks and `in_app`/`sse` notifications work as MVP local delivery.
+- Outbox delivery history, attempt log and failed-delivery requeue are bounded MVP features; inbound provider webhooks, external notification adapters and crash-safe distributed delivery guarantees are not complete.
 
 Full current-state cut: [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md). Security policy: [SECURITY.md](SECURITY.md).
 
@@ -132,6 +159,17 @@ Full current-state cut: [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md). Security
 | Frontend build | `just build-frontend` |
 | Docs verification | `python3 scripts/verify_docs.py --all` |
 
+## 🧰 Commands
+
+| Команда | Описание |
+|---|---|
+| `just up` / `just down` | Build/start and stop the Docker Compose stack |
+| `just health` | API health check |
+| `just test-backend` | Backend unit and contract tests through the pinned Rust image |
+| `just test-frontend` | Frontend Vitest suite |
+| `just build-frontend` | Production frontend build |
+| `python3 scripts/verify_docs.py --all` | Documentation links, canonical statuses and docs integrity |
+
 ## 🧭 Project Map
 
 ```text
@@ -146,14 +184,16 @@ CI-CD/
 
 ## 📚 Документы
 
-- [docs/README.md](docs/README.md) — documentation map.
-- [docs/USER_GUIDE.md](docs/USER_GUIDE.md) — user workflows.
-- [docs/DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md) — development.
-- [docs/OPERATIONS.md](docs/OPERATIONS.md), [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — operations.
-- [docs/ARCHITECTURE_INDEX.md](docs/ARCHITECTURE_INDEX.md), [docs/contracts](docs/contracts), [docs/ADR.md](docs/ADR.md) — architecture and contracts.
-- [docs/TEST_PLAN.md](docs/TEST_PLAN.md), [docs/TRACEABILITY.md](docs/TRACEABILITY.md), [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) — quality and security.
-
-Screenshots live in [docs/assets/screens/manifest.md](docs/assets/screens/manifest.md).
+| Аудитория | Документы |
+|---|---|
+| Overview | [docs/README.md](docs/README.md), [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md), [docs/ROADMAP.md](docs/ROADMAP.md) |
+| User/owner | [docs/USER_GUIDE.md](docs/USER_GUIDE.md), [docs/PRODUCT_REQUIREMENTS.md](docs/PRODUCT_REQUIREMENTS.md) |
+| Developer | [docs/DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md), [docs/API.md](docs/API.md), [docs/DATA_MODEL.md](docs/DATA_MODEL.md), [docs/ENV.md](docs/ENV.md), [docs/CLI.md](docs/CLI.md), [docs/LIBRARIES.md](docs/LIBRARIES.md) |
+| Operator | [docs/OPERATIONS.md](docs/OPERATIONS.md), [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md), [docs/SLO.md](docs/SLO.md), [docs/METRICS.md](docs/METRICS.md), [docs/DISASTER_RECOVERY.md](docs/DISASTER_RECOVERY.md), [docs/INCIDENT_RESPONSE.md](docs/INCIDENT_RESPONSE.md) |
+| Architecture | [docs/ARCHITECTURE_INDEX.md](docs/ARCHITECTURE_INDEX.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/FUNCTIONAL_ARCHITECTURE.md](docs/FUNCTIONAL_ARCHITECTURE.md), [docs/AUTHORIZATION.md](docs/AUTHORIZATION.md), [docs/RUNNER_ARCHITECTURE.md](docs/RUNNER_ARCHITECTURE.md), [docs/AUTOMATION_ARCHITECTURE.md](docs/AUTOMATION_ARCHITECTURE.md), [docs/STORAGE_ARCHITECTURE.md](docs/STORAGE_ARCHITECTURE.md), [docs/DELIVERY_ARCHITECTURE.md](docs/DELIVERY_ARCHITECTURE.md), [docs/ADR.md](docs/ADR.md), [docs/contracts](docs/contracts), [docs/architecture](docs/architecture) |
+| Executable specs | [docs/IMPLEMENTATION_CONTRACTS.md](docs/IMPLEMENTATION_CONTRACTS.md), [docs/MIGRATION_EXECUTION_SPEC.md](docs/MIGRATION_EXECUTION_SPEC.md), [docs/AUTH_IMPLEMENTATION_SPEC.md](docs/AUTH_IMPLEMENTATION_SPEC.md), [docs/EXECUTION_AUTOMATION_IMPLEMENTATION_SPEC.md](docs/EXECUTION_AUTOMATION_IMPLEMENTATION_SPEC.md) |
+| Quality/security | [docs/TEST_PLAN.md](docs/TEST_PLAN.md), [docs/TRACEABILITY.md](docs/TRACEABILITY.md), [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md), [docs/RISK_REGISTER.md](docs/RISK_REGISTER.md), [docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md), [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md), [SECURITY.md](SECURITY.md) |
+| Policy | [CONTRIBUTING.md](CONTRIBUTING.md), [SUPPORT.md](SUPPORT.md), [CHANGELOG.md](CHANGELOG.md), [LICENSE](LICENSE) |
 
 <a name="license"></a>
 ## 🔒 License
