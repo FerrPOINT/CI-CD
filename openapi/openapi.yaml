@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Forge CI/CD API
-  description: Self-hosted CI/CD control plane. Array responses and error envelope follow docs/contracts/API_CONTRACT.md current compatibility mode.
+  description: Self-hosted CI/CD control plane. Array responses, error envelope and in-process rate limits follow docs/contracts/API_CONTRACT.md and docs/API.md current compatibility mode.
   license:
     name: MIT
     identifier: MIT

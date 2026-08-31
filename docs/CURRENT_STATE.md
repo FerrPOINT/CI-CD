@@ -28,12 +28,12 @@
 | Secret injection | ✅ | project secrets передаются env в embedded job и маскируются в stdout logs |
 | Error envelope + request_id | ✅ | {error:{code,message,request_id}} + x-request-id |
 | Pagination | ✅ | limit/offset (cap 200) на проектах/пайплайнах |
-| Rate limiting | ✅ | login 30/min → 429 |
+| Rate limiting | ✅ MVP | in-process per-client fixed-window: auth, API read/write, Git Smart HTTP, internal hook и artifact upload возвращают `429` при превышении |
 | Metrics | ✅ | /metrics Prometheus text |
 
 ## Не реализовано (Target approved — см. ADR + contracts)
 
-Runner protocol/leases/dispatch (внешний runner, ADR-0007), immutable pipeline plan/DAG, general idempotency storage for all retryable mutations, S3 artifacts, backup scripts, notifications sender/SSE delivery, tenant isolation, scoped PAT, production session/logout policy, full cron semantics, delivery history/replay/dead letters, log pagination/search и per-IP rate limiting (сейчас per-process окно).
+Runner protocol/leases/dispatch (внешний runner, ADR-0007), immutable pipeline plan/DAG, general idempotency storage for all retryable mutations, S3 artifacts, backup scripts, notifications sender/SSE delivery, tenant isolation, scoped PAT, production session/logout policy, full cron semantics, delivery history/replay/dead letters, log pagination/search и distributed/proxy rate limiting (сейчас in-process окно по forwarded client key).
 
 ## Текущее runtime-дерево backend
 
@@ -48,7 +48,7 @@ backend/
 │   ├── runner.rs       # embedded executor (+secret injection, маскирование)
 │   ├── outbox.rs       # ADR-0006: domain_events/outbox + scheduler worker
 │   ├── authz.rs        # role-политики роутов + project membership enforcement
-│   ├── rate_limit.rs   # login rate limiting
+│   ├── rate_limit.rs   # in-process fixed-window route-class limiting
 │   ├── metrics.rs      # /metrics Prometheus exposition
 │   ├── migrations/     # versioned SQLx migrations incl. 0009 pipeline trigger idempotency
 │   └── domain.rs       # re-export shim → cicd-domain

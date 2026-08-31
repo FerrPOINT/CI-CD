@@ -18,7 +18,7 @@ Forge CI/CD — self-hosted CI/CD control plane. Текущая версия о�
 | SQL injection prevention | ✅ реализовано | parameterized queries через SQLx |
 | Input validation | ✅ частично | проверка `trim().is_empty()` на входе |
 | CORS | ⚠️ permissive | `CorsLayer::permissive()` — ограничить в production |
-| Rate limiting | ✅ частично | login endpoint 30/min в памяти процесса; general/per-IP policy — target |
+| Rate limiting | ✅ MVP | in-process fixed-window для auth, API, Git Smart HTTP, internal hook и artifact upload; distributed/proxy policy — target |
 | HTTPS/TLS | ❌ нет | через reverse proxy (nginx/Caddy) |
 
 ## 3. Authentication
@@ -40,7 +40,7 @@ POST /api/v1/auth/logout    — target: выход, отзыв refresh
 
 ### 3.3 Login lockout
 
-- Current: in-process limit 30 login attempts/minute.
+- Current: in-process per-client limit 30 login attempts/minute.
 - Current: login/denied события пишутся в audit.
 - Target: persistent per-IP + per-user lockout, alerting и admin unlock flow.
 
@@ -204,14 +204,17 @@ let cors = CorsLayer::new()
 
 ## 10. Rate Limiting
 
-- Current: login endpoint ограничен in-memory window 30/minute.
-- Target: general/per-IP/per-user policy и persistent lockout для auth endpoints.
+- Current: in-process fixed-window middleware ограничивает auth, API read/write, Git Smart HTTP, internal Git hook и artifact upload; key берётся из `X-Forwarded-For`, `X-Real-IP` или `unknown`.
+- Target: trusted reverse-proxy limiter, distributed counters, per-account lockout для auth endpoints, request body/time/concurrency policy и alerting.
 
 | Endpoint | Limit |
 |----------|-------------|
-| Login | current 30/min per process; target stricter per IP + per user |
-| API general | target 100/min или deployment policy |
-| Pipeline trigger | target 10/min |
+| Login | current 30/min per client |
+| Refresh | current 120/min per client |
+| Internal Git hook | current 120/min per client |
+| Git Smart HTTP | current 240/min per client |
+| Artifact upload | current 60/min per client |
+| API general | current 1200/min read, 600/min write per client |
 
 ## 11. Dependency Security
 

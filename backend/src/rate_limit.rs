@@ -1,8 +1,9 @@
-//! In-memory fixed-window rate limiter (THREAT_MODEL: brute-force mitigation).
+//! In-memory fixed-window rate limiter (THREAT_MODEL: resource exhaustion mitigation).
 //!
-//! Phase 1 scope: per-IP limits on authentication routes only. A distributed
-//! limiter is Target (see AUTHZ_CONTRACT); this stops naive brute force in the
-//! single-node deployment.
+//! Current scope: per-client limits for authentication, API, Git Smart HTTP,
+//! internal Git hooks and artifact uploads. A distributed limiter remains
+//! Target (see AUTHZ_CONTRACT); this bounds naive floods in the single-node
+//! deployment.
 
 use std::collections::HashMap;
 use std::sync::Mutex;

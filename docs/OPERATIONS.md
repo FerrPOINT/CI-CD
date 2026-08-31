@@ -6,7 +6,7 @@
 
 - **Current verified:** локальный Docker Compose запускает PostgreSQL, backend и Dashboard; versioned SQLx migrations применяются при старте; embedded runner выполняет jobs на том же узле; health, `/metrics`, structured logs, conditional auth, schedules и outgoing webhook worker доступны.
 - **Configuration only:** notifications и inbound provider webhooks можно настроить, но sender/handlers не исполняют доставку.
-- **Target approved:** TLS-termination, project-membership RBAC/tenant isolation, отдельные runner-ы с leases, production scheduler/outbox guarantees, alerting, backup scripts и production DR.
+- **Target approved:** TLS-termination, tenant isolation/scoped policy, отдельные runner-ы с leases, production scheduler/outbox guarantees, alerting, backup scripts и production DR.
 
 > **Критическое ограничение MVP: только локальная или доверенная сеть.** Если `CICD_AUTH_SECRET` не задан или пустой, API и Dashboard работают open/trusted-network; при непустом секрете enforcement всё ещё coarse global-role. CORS permissive, TLS отсутствует. PostgreSQL в `docker-compose.yml` привязан к `127.0.0.1`, но API/Dashboard host ports нельзя публиковать в недоверенную сеть и нельзя считать этот Compose production-развёртыванием.
 

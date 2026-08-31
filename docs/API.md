@@ -25,7 +25,7 @@ REST API первой версии Forge CI/CD. Контрольная плос�
 | 403 Forbidden | Роль principal не допускает route |
 | 404 Not Found | Ресурс не найден |
 | 409 Conflict | Недопустимое состояние операции |
-| 429 Too Many Requests | Login rate limit |
+| 429 Too Many Requests | In-process rate limit по client key |
 | 500 Internal Server Error | Ошибка БД |
 | 503 Service Unavailable | БД недоступна |
 
@@ -99,6 +99,23 @@ Auth enforcement включается только если задан непу�
 ```
 
 **Response 200:** структура `TokenPair`, как у login.
+
+---
+
+### Rate Limits
+
+In-process fixed-window limiter выполняется до auth/handler и возвращает стандартный error envelope с code `rate_limited`. Client key берётся из первого значения `X-Forwarded-For`, затем `X-Real-IP`, затем `unknown`; вне local development forwarded headers допустимы только за trusted reverse proxy.
+
+| Класс | Routes | Лимит |
+|---|---|---:|
+| `auth-login` | `POST /api/v1/auth/login` | 30/min |
+| `auth-refresh` | `POST /api/v1/auth/refresh` | 120/min |
+| `internal-git-push` | `POST /api/v1/internal/git-push` | 120/min |
+| `git-read` / `git-push` | `/git/*` Smart HTTP | 240/min |
+| `artifact-upload` | `POST /api/v1/jobs/{job_id}/artifacts` | 60/min |
+| `api-read` / `api-write` | прочие `/api/*` routes | 1200/min read, 600/min write |
+
+`/api/v1/health`, `/api/v1/openapi.json` и `/metrics` не ограничиваются этим middleware. Distributed limiter, per-account lockout, proxy-level request body/time/concurrency policy остаются target.
 
 ---
 

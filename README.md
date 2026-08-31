@@ -7,8 +7,8 @@ Self-hosted control plane для Git-репозиториев и CI/CD: bare Git
 Продукт находится в стадии **MVP (0.1.x)** и **не готов к эксплуатации в недоверенных сетях**:
 
 - если `CICD_AUTH_SECRET` не задан или пустой, API и Dashboard работают в trusted-network режиме без auth enforcement;
-- при заданном `CICD_AUTH_SECRET` включаются login/JWT/PAT и coarse global roles, но project membership/tenant isolation ещё не реализованы;
-- нет TLS, CORS permissive, rate limiting есть только для login endpoint в памяти процесса;
+- при заданном `CICD_AUTH_SECRET` включаются login/JWT/PAT, global roles и project membership RBAC, но tenant isolation и scoped PAT остаются target;
+- нет TLS, CORS permissive, rate limiting пока in-process и не заменяет reverse proxy/distributed limiter;
 - schedules и outgoing webhooks работают как MVP worker; notifications, inbound provider webhooks и production-grade delivery guarantees ещё не реализованы.
 
 Полный честный срез: [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md) · политика: [SECURITY.md](SECURITY.md). До Phase D security запускайте только в доверенной сети / за reverse proxy.
@@ -25,7 +25,7 @@ Self-hosted control plane для Git-репозиториев и CI/CD: bare Git
 | Auth/RBAC/сессии/PAT enforcement при `CICD_AUTH_SECRET` | ✅ Current verified |
 | Schedules и outgoing webhooks | ✅ Current verified MVP |
 | Notifications и inbound provider webhooks | ⚙️ Configuration only |
-| Внешние runner-ы (lease/protocol), project-membership RBAC, production scheduler/outbox guarantees | 🎯 Target approved |
+| Внешние runner-ы (lease/protocol), tenant/scoped PAT, production scheduler/outbox guarantees | 🎯 Target approved |
 
 Легенда: ✅ работает сейчас · ⚙️ конфигурация без исполнения · 🎯 принято в архитектуру ([ADR](docs/ADR.md), [контракты](docs/contracts/)).
 

@@ -4,7 +4,7 @@ use std::time::Duration;
 use axum::{
     Json, Router,
     extract::{Path, State},
-    http::{HeaderMap, HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderValue, Method, StatusCode},
     response::IntoResponse,
     routing::{get, post},
 };
@@ -36,6 +36,7 @@ pub struct AppState {
     pub pool: Option<PgPool>,
     pub git: crate::git_host::GitConfig,
     pub running_jobs: Option<crate::runner::RunningJobs>,
+    pub rate_limiter: Arc<crate::rate_limit::RateLimiter>,
 }
 
 type ApiResult<T> = Result<Json<T>, ApiError>;
@@ -46,7 +47,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_GIT_PUSH: &str = "git-push";
 /// OpenAPI 3 document for the current API surface (API_CONTRACT, utoipa).
 #[derive(utoipa::OpenApi)]
 #[openapi(
-    info(title = "Forge CI/CD API", version = "0.1.0", description = "Self-hosted CI/CD control plane. Array responses and error envelope follow docs/contracts/API_CONTRACT.md current compatibility mode."),
+    info(title = "Forge CI/CD API", version = "0.1.0", description = "Self-hosted CI/CD control plane. Array responses, error envelope and in-process rate limits follow docs/contracts/API_CONTRACT.md and docs/API.md current compatibility mode."),
     paths(
         health, metrics, serve_openapi_json, auth_login, auth_refresh,
         list_projects, create_project, get_project, update_project, delete_project,
@@ -222,6 +223,7 @@ impl ApiError {
             StatusCode::FORBIDDEN => "permission_denied",
             StatusCode::NOT_FOUND => "not_found",
             StatusCode::CONFLICT => "conflict",
+            StatusCode::TOO_MANY_REQUESTS => "rate_limited",
             StatusCode::SERVICE_UNAVAILABLE => "unavailable",
             _ => "internal_error",
         }
@@ -319,6 +321,114 @@ async fn request_id_mw(
         id.to_string().parse().unwrap(),
     );
     response
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RateLimitRule {
+    class: &'static str,
+    limit: u32,
+    window_secs: u64,
+}
+
+async fn rate_limit_mw(
+    State(state): State<Arc<AppState>>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Result<axum::response::Response, ApiError> {
+    if let Some(rule) = rate_limit_rule(req.method(), req.uri().path()) {
+        state.rate_limiter.prune(rule.window_secs);
+        let client = rate_limit_client(req.headers());
+        let key = format!("{}:{}", rule.class, client);
+        if !state.rate_limiter.allow(&key, rule.limit, rule.window_secs) {
+            return Err(ApiError::too_many_requests());
+        }
+    }
+    Ok(next.run(req).await)
+}
+
+fn rate_limit_rule(method: &Method, path: &str) -> Option<RateLimitRule> {
+    if matches!(path, "/api/v1/health" | "/api/v1/openapi.json" | "/metrics") {
+        return None;
+    }
+    if path == "/api/v1/auth/login" {
+        return Some(RateLimitRule {
+            class: "auth-login",
+            limit: 30,
+            window_secs: 60,
+        });
+    }
+    if path == "/api/v1/auth/refresh" {
+        return Some(RateLimitRule {
+            class: "auth-refresh",
+            limit: 120,
+            window_secs: 60,
+        });
+    }
+    if path == "/api/v1/internal/git-push" {
+        return Some(RateLimitRule {
+            class: "internal-git-push",
+            limit: 120,
+            window_secs: 60,
+        });
+    }
+    if path.starts_with("/git/") {
+        return Some(RateLimitRule {
+            class: if method == Method::POST && path.ends_with("/git-receive-pack") {
+                "git-push"
+            } else {
+                "git-read"
+            },
+            limit: 240,
+            window_secs: 60,
+        });
+    }
+    if method == Method::POST && path.starts_with("/api/v1/jobs/") && path.ends_with("/artifacts") {
+        return Some(RateLimitRule {
+            class: "artifact-upload",
+            limit: 60,
+            window_secs: 60,
+        });
+    }
+    if path.starts_with("/api/") {
+        return Some(RateLimitRule {
+            class: if matches!(
+                *method,
+                Method::POST | Method::PUT | Method::PATCH | Method::DELETE
+            ) {
+                "api-write"
+            } else {
+                "api-read"
+            },
+            limit: if matches!(
+                *method,
+                Method::POST | Method::PUT | Method::PATCH | Method::DELETE
+            ) {
+                600
+            } else {
+                1200
+            },
+            window_secs: 60,
+        });
+    }
+    None
+}
+
+fn rate_limit_client(headers: &HeaderMap) -> String {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|value| value.to_str().ok())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or("unknown")
+        .to_string()
 }
 
 async fn require_auth(
@@ -572,6 +682,12 @@ fn build_router(
     if let Some(p) = pool.as_ref() {
         let _ = STATE_POOL.set(p.clone());
     }
+    let state = Arc::new(AppState {
+        pool: pool.clone(),
+        git,
+        running_jobs: running,
+        rate_limiter: Arc::new(crate::rate_limit::RateLimiter::default()),
+    });
     Router::new()
         .route("/api/v1/health", get(health))
         .route("/metrics", get(metrics))
@@ -667,21 +783,17 @@ fn build_router(
             post(pr_action),
         )
         .layer(axum::middleware::from_fn_with_state(
-            Arc::new(AppState {
-                pool: pool.clone(),
-                git: git.clone(),
-                running_jobs: running.clone(),
-            }),
+            state.clone(),
             require_auth,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit_mw,
         ))
         .layer(axum::middleware::from_fn(request_id_mw))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
-        .with_state(Arc::new(AppState {
-            pool: pool.clone(),
-            git,
-            running_jobs: running,
-        }))
+        .with_state(state)
 }
 
 #[utoipa::path(post, path="/api/v1/auth/login", tag="auth", request_body=crate::auth::LoginRequest, responses((status=200, body=crate::auth::TokenPair), (status=401)))]
@@ -691,15 +803,6 @@ async fn auth_login(
 ) -> Result<Json<crate::auth::TokenPair>, ApiError> {
     use crate::auth::*;
     crate::metrics::LOGIN_ATTEMPTS_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    {
-        static LIMITER: std::sync::OnceLock<crate::rate_limit::RateLimiter> =
-            std::sync::OnceLock::new();
-        let limiter = LIMITER.get_or_init(crate::rate_limit::RateLimiter::default);
-        limiter.prune(60);
-        if !limiter.allow("login:global", 30, 60) {
-            return Err(ApiError::too_many_requests());
-        }
-    }
     let pool = pool(&state)?;
     let row = sqlx::query_as::<_, (Uuid, String, bool, String)>(
         "SELECT u.id, u.role, u.enabled, c.password_hash FROM users u \
@@ -1919,6 +2022,9 @@ fn valid_project_role(role: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use axum::body::Body;
+    use tower::ServiceExt;
+
     #[test]
     fn parse_junit_extracts_suite_names_and_counts() {
         let xml = r#"<?xml version="1.0"?>
@@ -2009,6 +2115,98 @@ mod tests {
         assert_eq!(default_project_role("admin"), Some("maintainer"));
         assert_eq!(default_project_role("developer"), Some("developer"));
         assert_eq!(default_project_role("viewer"), None);
+    }
+
+    #[test]
+    fn rate_limit_rules_cover_api_git_and_artifact_routes() {
+        assert_eq!(rate_limit_rule(&Method::GET, "/api/v1/health"), None);
+        assert_eq!(
+            rate_limit_rule(&Method::POST, "/api/v1/auth/login"),
+            Some(RateLimitRule {
+                class: "auth-login",
+                limit: 30,
+                window_secs: 60
+            })
+        );
+        assert_eq!(
+            rate_limit_rule(&Method::POST, "/api/v1/internal/git-push")
+                .expect("internal hook limit")
+                .class,
+            "internal-git-push"
+        );
+        assert_eq!(
+            rate_limit_rule(&Method::POST, "/git/demo.git/git-receive-pack")
+                .expect("git push limit")
+                .class,
+            "git-push"
+        );
+        assert_eq!(
+            rate_limit_rule(
+                &Method::POST,
+                "/api/v1/jobs/00000000-0000-0000-0000-000000000001/artifacts"
+            )
+            .expect("artifact upload limit")
+            .class,
+            "artifact-upload"
+        );
+        assert_eq!(
+            rate_limit_rule(
+                &Method::PATCH,
+                "/api/v1/projects/00000000-0000-0000-0000-000000000001"
+            )
+            .expect("api write limit")
+            .class,
+            "api-write"
+        );
+    }
+
+    #[test]
+    fn rate_limit_client_uses_forwarded_headers() {
+        let headers = HeaderMap::new();
+        assert_eq!(rate_limit_client(&headers), "unknown");
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", HeaderValue::from_static("198.51.100.7"));
+        assert_eq!(rate_limit_client(&headers), "198.51.100.7");
+
+        headers.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("203.0.113.9, 10.0.0.1"),
+        );
+        assert_eq!(rate_limit_client(&headers), "203.0.113.9");
+    }
+
+    #[tokio::test]
+    async fn login_rate_limit_returns_429_per_forwarded_client() {
+        let app = app(None);
+        for _ in 0..30 {
+            let response = app
+                .clone()
+                .oneshot(login_request("203.0.113.10"))
+                .await
+                .unwrap();
+            assert_ne!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        }
+
+        let response = app
+            .clone()
+            .oneshot(login_request("203.0.113.10"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        let response = app.oneshot(login_request("203.0.113.11")).await.unwrap();
+        assert_ne!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    fn login_request(client: &'static str) -> axum::http::Request<Body> {
+        axum::http::Request::post("/api/v1/auth/login")
+            .header("content-type", "application/json")
+            .header("x-forwarded-for", client)
+            .body(Body::from(
+                r#"{"username":"nobody","password":"bad","refresh_token":""}"#,
+            ))
+            .unwrap()
     }
 
     #[test]
