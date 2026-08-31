@@ -77,7 +77,7 @@ while read oldrev newrev refname; do
   curl -fsS -X POST "http://127.0.0.1:22801/api/v1/internal/git-push" \
     -H 'content-type: application/json' \
 {token_header}
-    -d "{{\"repository\":\"{name}\",\"ref_name\":\"$refname\"}}" >/dev/null 2>&1 || true
+    -d "{{\"repository\":\"{name}\",\"ref_name\":\"$refname\",\"old_rev\":\"$oldrev\",\"new_rev\":\"$newrev\"}}" >/dev/null 2>&1 || true
 done
 "#
     )
@@ -476,6 +476,10 @@ async fn resolve_repo_path(
 pub struct GitPushEvent {
     pub repository: String,
     pub ref_name: String,
+    #[serde(default)]
+    pub old_rev: Option<String>,
+    #[serde(default)]
+    pub new_rev: Option<String>,
 }
 
 /// Internal endpoint called by the generated `post-receive` hook.
@@ -515,6 +519,18 @@ pub async fn internal_git_push(
         .or_else(|| event.ref_name.strip_prefix("refs/tags/"))
         .unwrap_or(&event.ref_name)
         .to_string();
+    if event.new_rev.as_deref().is_some_and(is_zero_object_id) {
+        return Ok(axum::Json(serde_json::json!({
+            "triggered": false,
+            "pipeline_id": null,
+            "reason": "deleted_ref"
+        })));
+    }
+    let idempotency_key = event
+        .new_rev
+        .as_deref()
+        .filter(|rev| is_probable_object_id(rev))
+        .map(|rev| git_push_idempotency_key(&name, &event.ref_name, rev));
     let pattern = format!("%{name}.git");
     let project_id: Option<Uuid> =
         sqlx::query_scalar("SELECT id FROM projects WHERE repository_url ILIKE $1 LIMIT 1")
@@ -524,16 +540,39 @@ pub async fn internal_git_push(
             .map_err(ApiError::internal)?;
     match project_id {
         Some(project_id) => {
-            let pipeline = crate::api::create_pipeline(pool, project_id, short_ref).await?;
+            let outcome = crate::api::create_pipeline_with_vars_idempotent(
+                pool,
+                project_id,
+                short_ref,
+                serde_json::json!({}),
+                crate::api::PIPELINE_TRIGGER_SOURCE_GIT_PUSH,
+                idempotency_key.as_deref(),
+            )
+            .await?;
             Ok(axum::Json(serde_json::json!({
                 "triggered": true,
-                "pipeline_id": pipeline.id
+                "pipeline_id": outcome.pipeline.id,
+                "replayed": outcome.replayed
             })))
         }
         None => Ok(axum::Json(
             serde_json::json!({"triggered": false, "pipeline_id": null}),
         )),
     }
+}
+
+fn is_zero_object_id(value: &str) -> bool {
+    value.len() >= 40 && value.chars().all(|c| c == '0')
+}
+
+fn is_probable_object_id(value: &str) -> bool {
+    value.len() >= 40 && value.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn git_push_idempotency_key(repository: &str, ref_name: &str, new_rev: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let payload = format!("{repository}\0{ref_name}\0{new_rev}");
+    format!("git-push:{:x}", Sha256::digest(payload.as_bytes()))
 }
 
 // --- Axum HTTP handlers (thin wrappers over the core functions) ---
@@ -659,7 +698,23 @@ mod tests {
         assert!(hook.contains("x-internal-token: test-internal"));
         assert!(hook.contains("demo"));
         assert!(hook.contains("$refname"));
+        assert!(hook.contains("$oldrev"));
+        assert!(hook.contains("$newrev"));
         assert!(hook.contains("/api/v1/internal/git-push"));
+        let key = git_push_idempotency_key(
+            "demo",
+            "refs/heads/main",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        );
+        assert!(key.starts_with("git-push:"));
+        assert_ne!(
+            key,
+            git_push_idempotency_key(
+                "demo",
+                "refs/heads/main",
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            )
+        );
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
 }

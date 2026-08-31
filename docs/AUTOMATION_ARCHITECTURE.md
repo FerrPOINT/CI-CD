@@ -24,7 +24,7 @@ PostgreSQL остаётся единственным источником ист
 | Область | Сейчас | Целевое состояние |
 |---|---|---|
 | Расписания | Таблица `schedules`, CRUD и формальная проверка наличия пяти cron-полей. Исполнителя нет. | Durable scheduler с IANA timezone, расчётом `next_fire_at`, учётом DST, политикой пропущенных запусков, дедупликацией и аудитом. |
-| Git push | `post-receive` вызывает `/api/v1/internal/git-push`; передаются только repository/ref. Hook best-effort, ошибка не влияет на push. | Надёжный ingress с immutable delivery id, old/new SHA, типом ref-операции, идемпотентным сохранением входящего события и периодической сверкой refs. |
+| Git push | `post-receive` вызывает `/api/v1/internal/git-push`; передаются repository/ref/old_rev/new_rev. Hook best-effort, ошибка не влияет на push; повтор same `repository/ref/new_rev` дедуплицируется через `pipeline_triggers`. | Надёжный ingress с immutable delivery id, типом ref-операции, идемпотентным сохранением входящего события и периодической сверкой refs. |
 | Связь проекта с репозиторием | Поиск первого `projects.repository_url ILIKE '%<repo>.git'`. | Явная связь `project_repositories`, уникальная в пределах назначения и независимая от URL-шаблонов. |
 | Запуск pipeline | Pipeline создаётся сразу в HTTP-обработчике; нет `source_event_id`, SHA и dedupe key. | Создание pipeline в транзакции с причиной запуска, неизменяемым commit SHA и уникальностью по событию-триггеру. |
 | Webhooks | Сохраняются `url`, `events`, `enabled`; секретов, доставки, истории и retry нет. | Подписки с HMAC, версиями секретов, delivery history, ограниченными повторными попытками, replay и dead-letter состояниями. |
@@ -264,12 +264,12 @@ UNIQUE(trigger_event_id)
 
 ### 7.1 Ограничения текущей реализации
 
-Текущий hook отправляет только repository/ref, использует статический header-токен в сгенерированном shell-файле, игнорирует ошибку через `|| true`, не передаёт `oldrev/newrev` и создаёт pipeline непосредственно из HTTP-handler. Это означает риск:
+Текущий hook отправляет repository/ref/old_rev/new_rev, использует статический header-токен в сгенерированном shell-файле, игнорирует ошибку через `|| true` и создаёт pipeline непосредственно из HTTP-handler. Повтор same `repository/ref/new_rev` уже дедуплицируется через `pipeline_triggers`, но это ещё не полноценный durable ingress. Остаются риски:
 
 - потери события при недоступности API;
-- повторного pipeline при повторной доставке;
-- запуска по удалённой ветке;
-- запуска без фиксированного commit SHA;
+- повторного pipeline при старом hook без `new_rev` или при другом source/key;
+- отсутствия immutable ingress event и audited replay;
+- best-effort commit SHA вместо immutable event snapshot;
 - неверного выбора проекта при нескольких похожих URL.
 
 ### 7.2 Новый hook payload

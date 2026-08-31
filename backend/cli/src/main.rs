@@ -50,6 +50,8 @@ enum PipelineCommand {
         project: String,
         #[arg(long, default_value = "main")]
         git_ref: String,
+        #[arg(long)]
+        idempotency_key: Option<String>,
     },
     Show {
         #[arg(long)]
@@ -125,11 +127,19 @@ async fn main() -> anyhow::Result<()> {
             command: PipelineCommand::List { project },
         } => request(client.get(format!("{base}/api/v1/projects/{project}/pipelines"))).await?,
         Command::Pipeline {
-            command: PipelineCommand::Run { project, git_ref },
+            command:
+                PipelineCommand::Run {
+                    project,
+                    git_ref,
+                    idempotency_key,
+                },
         } => {
+            let idempotency_key =
+                idempotency_key.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             request(
                 client
                     .post(format!("{base}/api/v1/projects/{project}/pipelines"))
+                    .header("Idempotency-Key", idempotency_key)
                     .json(&json!({"git_ref": git_ref})),
             )
             .await?

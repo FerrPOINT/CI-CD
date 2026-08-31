@@ -1142,6 +1142,8 @@ export interface components {
             url?: string | null;
         };
         GitPushEvent: {
+            new_rev?: string | null;
+            old_rev?: string | null;
             ref_name: string;
             repository: string;
         };
@@ -2643,7 +2645,10 @@ export interface operations {
     trigger_pipeline: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description Optional UUID idempotency key for retry-safe pipeline trigger */
+                "Idempotency-Key"?: string | null;
+            };
             path: {
                 project_id: string;
             };
@@ -2663,7 +2668,19 @@ export interface operations {
                     "application/json": components["schemas"]["PipelineDetail"];
                 };
             };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -289,16 +289,26 @@ curl -sS http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines
 |---|---|---|
 | `project_id` | UUID | ID проекта |
 
+**Headers:**
+
+| Header | Required | Описание |
+|---|---|---|
+| `Idempotency-Key` | no | UUID на одно намерение запуска. Повтор с тем же key и тем же body возвращает первоначальный pipeline и header `Idempotency-Replayed: true`; тот же key с другим `git_ref`/`variables` возвращает `409`. |
+
 **Request body:**
 ```json
 {
-  "git_ref": "main"
+  "git_ref": "main",
+  "variables": {
+    "deploy_env": "staging"
+  }
 }
 ```
 
 | Поле | Тип | Required | Описание |
 |---|---|---|---|
 | `git_ref` | string | no | Git-реф, default `"main"` |
+| `variables` | object<string,string> | no | Переменные ручного запуска; runner экспортирует только `CICD_VAR_<UPPER_SNAKE_KEY>` |
 
 **Response 200** — `PipelineDetail`:
 ```json
@@ -378,6 +388,8 @@ curl -sS http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines
 ```
 
 **Errors:**
+- `400` — некорректный `Idempotency-Key` или pipeline config.
+- `409` — тот же `Idempotency-Key` использован с другим fingerprint запроса.
 - `404` — проект не найден.
 - `503` — БД недоступна.
 - `500` — ошибка БД.
@@ -386,6 +398,7 @@ curl -sS http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines
 ```bash
 curl -sS -X POST http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines \
   -H 'content-type: application/json' \
+  -H "Idempotency-Key: $(uuidgen)" \
   -d '{"git_ref":"main"}'
 ```
 
@@ -976,10 +989,17 @@ Git Smart HTTP проверяет `CICD_GIT_TOKEN`, если он задан. П
 `POST /api/v1/internal/git-push` вызывается generated `post-receive` hook. Заголовок `X-Internal-Token` обязан совпадать с `CICD_GIT_INTERNAL_TOKEN`, когда токен сконфигурирован.
 
 ```json
-{"repository":"my-service","ref_name":"refs/heads/main"}
+{
+  "repository": "my-service",
+  "ref_name": "refs/heads/main",
+  "old_rev": "0000000000000000000000000000000000000000",
+  "new_rev": "0123456789abcdef0123456789abcdef01234567"
+}
 ```
 
-Ответ: `{"triggered":true,"pipeline_id":"..."}` либо `{"triggered":false,"pipeline_id":null}`, если project с данным local Git URL не найден. Ошибочная hook-доставка не откатывает Git push.
+`old_rev`/`new_rev` необязательны для совместимости со старыми hook, но новый hook всегда отправляет их. Когда `new_rev` похож на Git object id, backend создаёт стабильный idempotency key по `repository/ref_name/new_rev`; повтор того же события возвращает существующий pipeline и `"replayed": true`. Удаление ref (`new_rev` из нулей) не запускает pipeline.
+
+Ответ: `{"triggered":true,"pipeline_id":"...","replayed":false}` либо `{"triggered":false,"pipeline_id":null}`, если project с данным local Git URL не найден или ref удалён. Ошибочная hook-доставка не откатывает Git push.
 
 ## Полный route inventory
 

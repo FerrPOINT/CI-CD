@@ -34,9 +34,12 @@ cicd-cli project create --name my-service \
 
 ```bash
 cicd-cli pipeline list --project <PROJECT_UUID>
-cicd-cli pipeline run --project <PROJECT_UUID> --ref main
+cicd-cli pipeline run --project <PROJECT_UUID> --git-ref main
+cicd-cli pipeline run --project <PROJECT_UUID> --git-ref main --idempotency-key <UUID>
 cicd-cli pipeline show --id <PIPELINE_UUID>
 ```
+
+`pipeline run` автоматически создаёт UUID `Idempotency-Key`, если `--idempotency-key` не задан. Явный key нужен для внешней automation, которая хочет безопасно повторить тот же запуск после transport error.
 
 ### job
 
@@ -52,7 +55,7 @@ cicd-cli job log   --id <JOB_UUID> --message "custom line"
 
 ## Контракт
 
-Группы команд и флаги зафиксированы тестом `backend/cli/tests/cli_contract.rs` (`project`, `pipeline`, `job`, `attempts`, `--attempt` в `--help`). Изменение набора команд требует обновления теста и этого документа.
+Группы команд и флаги зафиксированы тестом `backend/cli/tests/cli_contract.rs` (`project`, `pipeline`, `job`, `attempts`, `--attempt`, `--idempotency-key` в `--help`). Изменение набора команд требует обновления теста и этого документа.
 
 ## Плановое (Phase C/D)
 

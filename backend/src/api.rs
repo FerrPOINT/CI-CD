@@ -4,7 +4,7 @@ use std::time::Duration;
 use axum::{
     Json, Router,
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, HeaderValue, StatusCode},
     response::IntoResponse,
     routing::{get, post},
 };
@@ -39,6 +39,9 @@ pub struct AppState {
 }
 
 type ApiResult<T> = Result<Json<T>, ApiError>;
+const IDEMPOTENCY_KEY_HEADER: &str = "idempotency-key";
+pub(crate) const PIPELINE_TRIGGER_SOURCE_API: &str = "api";
+pub(crate) const PIPELINE_TRIGGER_SOURCE_GIT_PUSH: &str = "git-push";
 
 /// OpenAPI 3 document for the current API surface (API_CONTRACT, utoipa).
 #[derive(utoipa::OpenApi)]
@@ -1159,32 +1162,44 @@ struct StageDetail {
     jobs: Vec<Job>,
 }
 
-#[utoipa::path(post, path="/api/v1/projects/{project_id}/pipelines", tag="pipelines", request_body=TriggerPipeline, params(("project_id"=Uuid, Path)), responses((status=200, body=PipelineDetail), (status=404)))]
+#[utoipa::path(
+    post,
+    path="/api/v1/projects/{project_id}/pipelines",
+    tag="pipelines",
+    request_body=TriggerPipeline,
+    params(
+        ("project_id"=Uuid, Path),
+        ("Idempotency-Key" = Option<Uuid>, Header, description = "Optional UUID idempotency key for retry-safe pipeline trigger")
+    ),
+    responses((status=200, body=PipelineDetail), (status=400), (status=404), (status=409))
+)]
 async fn trigger_pipeline(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
+    headers: HeaderMap,
     Json(input): Json<TriggerPipeline>,
-) -> ApiResult<PipelineDetail> {
+) -> Result<(HeaderMap, Json<PipelineDetail>), ApiError> {
+    let idempotency_key = pipeline_idempotency_key(&headers)?;
     let pool = pool(&state)?;
-    let project_exists: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects WHERE id = $1)")
-            .bind(project_id)
-            .fetch_one(pool)
-            .await
-            .map_err(ApiError::internal)?;
-    if !project_exists {
-        return Err(ApiError::not_found());
-    }
     let git_ref = input.git_ref.unwrap_or_else(|| "main".into());
-    let pipeline = create_pipeline_with_vars(
+    let outcome = create_pipeline_with_vars_idempotent(
         pool,
         project_id,
         git_ref,
         serde_json::to_value(input.variables.clone().unwrap_or_default())
             .unwrap_or_else(|_| serde_json::json!({})),
+        PIPELINE_TRIGGER_SOURCE_API,
+        idempotency_key.as_deref(),
     )
     .await?;
-    pipeline_detail(pool, pipeline.id).await.map(Json)
+    let mut response_headers = HeaderMap::new();
+    if outcome.replayed {
+        response_headers.insert("idempotency-replayed", HeaderValue::from_static("true"));
+    }
+    pipeline_detail(pool, outcome.pipeline.id)
+        .await
+        .map(Json)
+        .map(|body| (response_headers, body))
 }
 
 /// Creates a queued pipeline. Stage/job structure comes from `.forge-ci.yml`
@@ -1204,18 +1219,87 @@ pub(crate) async fn create_pipeline_with_vars(
     git_ref: String,
     variables: serde_json::Value,
 ) -> Result<Pipeline, ApiError> {
-    let repository_url: Option<String> =
+    create_pipeline_with_vars_idempotent(
+        pool,
+        project_id,
+        git_ref,
+        variables,
+        PIPELINE_TRIGGER_SOURCE_API,
+        None,
+    )
+    .await
+    .map(|outcome| outcome.pipeline)
+}
+
+#[derive(Debug)]
+pub(crate) struct PipelineTriggerOutcome {
+    pub(crate) pipeline: Pipeline,
+    pub(crate) replayed: bool,
+}
+
+pub(crate) async fn create_pipeline_with_vars_idempotent(
+    pool: &PgPool,
+    project_id: Uuid,
+    git_ref: String,
+    variables: serde_json::Value,
+    source: &str,
+    idempotency_key: Option<&str>,
+) -> Result<PipelineTriggerOutcome, ApiError> {
+    let repository_url: String =
         sqlx::query_scalar("SELECT repository_url FROM projects WHERE id = $1")
             .bind(project_id)
             .fetch_optional(pool)
             .await
             .map_err(ApiError::internal)?
-            .flatten();
+            .ok_or_else(ApiError::not_found)?;
     // Never clone here: this path is called by post-receive and must return
     // before git-receive-pack finishes. Local config is read from the bare repo.
-    let config = read_local_forge_ci_config(repository_url.as_deref(), &git_ref).await;
+    let config = read_local_forge_ci_config(Some(repository_url.as_str()), &git_ref).await;
     let stages = parse_forge_ci(config.as_deref()).map_err(ApiError::bad_request)?;
-    let commit_sha = resolve_commit_sha(repository_url.as_deref(), &git_ref).await;
+    let commit_sha = resolve_commit_sha(Some(repository_url.as_str()), &git_ref).await;
+    let fingerprint = pipeline_trigger_fingerprint(&git_ref, &variables);
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+
+    if let Some(idempotency_key) = idempotency_key {
+        let lock_key = format!("pipeline-trigger:{project_id}:{source}:{idempotency_key}");
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(&lock_key)
+            .execute(&mut *tx)
+            .await
+            .map_err(ApiError::internal)?;
+
+        if let Some((pipeline_id, existing_fingerprint)) = sqlx::query_as::<_, (Uuid, String)>(
+            "SELECT pipeline_id, request_fingerprint \
+                 FROM pipeline_triggers \
+                 WHERE project_id = $1 AND source = $2 AND idempotency_key = $3",
+        )
+        .bind(project_id)
+        .bind(source)
+        .bind(idempotency_key)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?
+        {
+            if existing_fingerprint != fingerprint {
+                return Err(ApiError::conflict(
+                    "idempotency key was already used for a different pipeline trigger",
+                ));
+            }
+            let pipeline = sqlx::query_as::<_, Pipeline>(
+                "SELECT id, project_id, git_ref, status, created_at, started_at, finished_at \
+                 FROM pipelines WHERE id = $1",
+            )
+            .bind(pipeline_id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(ApiError::internal)?;
+            tx.commit().await.map_err(ApiError::internal)?;
+            return Ok(PipelineTriggerOutcome {
+                pipeline,
+                replayed: true,
+            });
+        }
+    }
 
     let pipeline = sqlx::query_as::<_, Pipeline>(
         "INSERT INTO pipelines (id, project_id, git_ref, commit_sha, variables, status) VALUES ($1, $2, $3, $4, $5, 'queued') RETURNING id, project_id, git_ref, status, created_at, started_at, finished_at",
@@ -1225,24 +1309,72 @@ pub(crate) async fn create_pipeline_with_vars(
     .bind(&git_ref)
     .bind(&commit_sha)
     .bind(&variables)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
     .map_err(ApiError::internal)?;
     for (position, stage) in stages.iter().enumerate() {
         let stage_id = Uuid::new_v4();
         sqlx::query("INSERT INTO stages (id, pipeline_id, name, position, status) VALUES ($1, $2, $3, $4, 'queued')")
-            .bind(stage_id).bind(pipeline.id).bind(&stage.name).bind(position as i32).execute(pool).await.map_err(ApiError::internal)?;
+            .bind(stage_id).bind(pipeline.id).bind(&stage.name).bind(position as i32).execute(&mut *tx).await.map_err(ApiError::internal)?;
         for (job_position, job) in stage.jobs.iter().enumerate() {
             let job_id = Uuid::new_v4();
             sqlx::query("INSERT INTO jobs (id, stage_id, name, image, command, position, status, timeout_seconds, allow_failure, manual) VALUES ($1, $2, $3, $4, $5, $6, 'queued', $7, $8, $9)")
                 .bind(job_id).bind(stage_id).bind(&job.name).bind(&job.image).bind(&job.command).bind(job_position as i32)
                 .bind(job.timeout_seconds).bind(job.allow_failure).bind(job.manual)
-                .execute(pool).await.map_err(ApiError::internal)?;
+                .execute(&mut *tx).await.map_err(ApiError::internal)?;
             sqlx::query("INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) VALUES ($1, $2, 1, 'queued', 'initial')")
-                .bind(Uuid::new_v4()).bind(job_id).execute(pool).await.map_err(ApiError::internal)?;
+                .bind(Uuid::new_v4()).bind(job_id).execute(&mut *tx).await.map_err(ApiError::internal)?;
         }
     }
-    Ok(pipeline)
+    if let Some(idempotency_key) = idempotency_key {
+        sqlx::query(
+            "INSERT INTO pipeline_triggers \
+             (id, project_id, source, idempotency_key, request_fingerprint, pipeline_id) \
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(project_id)
+        .bind(source)
+        .bind(idempotency_key)
+        .bind(&fingerprint)
+        .bind(pipeline.id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    }
+    tx.commit().await.map_err(ApiError::internal)?;
+    Ok(PipelineTriggerOutcome {
+        pipeline,
+        replayed: false,
+    })
+}
+
+fn pipeline_idempotency_key(headers: &HeaderMap) -> Result<Option<String>, ApiError> {
+    let Some(value) = headers.get(IDEMPOTENCY_KEY_HEADER) else {
+        return Ok(None);
+    };
+    let raw = value
+        .to_str()
+        .map_err(|_| ApiError::bad_request("idempotency key must be a UUID"))?
+        .trim();
+    if raw.is_empty() {
+        return Err(ApiError::bad_request("idempotency key must be a UUID"));
+    }
+    Uuid::parse_str(raw)
+        .map(|uuid| Some(uuid.to_string()))
+        .map_err(|_| ApiError::bad_request("idempotency key must be a UUID"))
+}
+
+fn pipeline_trigger_fingerprint(git_ref: &str, variables: &serde_json::Value) -> String {
+    use sha2::{Digest, Sha256};
+    let payload = serde_json::json!({
+        "git_ref": git_ref,
+        "variables": variables,
+    });
+    format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&payload).unwrap_or_default())
+    )
 }
 
 #[derive(Debug, Default)]

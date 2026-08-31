@@ -91,7 +91,7 @@ Tenant isolation, scoped PAT/SAT, Git repository binding и production session/l
 
 **Статус процедуры: Current verified.**
 
-Auto-trigger работает для репозитория, созданного Forge, если `repository_url` проекта оканчивается на имя этого локального репозитория. `post-receive` hook отправляет pushed ref внутреннему API и создаёт queued pipeline. Ошибка hook-доставки не откатывает Git push.
+Auto-trigger работает для репозитория, созданного Forge, если `repository_url` проекта оканчивается на имя этого локального репозитория. `post-receive` hook отправляет pushed ref и `old_rev/new_rev` внутреннему API и создаёт queued pipeline. Повтор того же push-event с тем же `new_rev` возвращает уже созданный pipeline, а ошибка hook-доставки не откатывает Git push.
 
 1. Создайте репозиторий и связанный проект по предыдущему разделу.
 2. Клонируйте URL, добавьте commit и отправьте его в нужную ветку.
@@ -354,6 +354,7 @@ CLI-команды для runners, secrets, artifacts, environments, schedules, 
 ```bash
 curl -fsS -X POST "http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines" \
   -H 'content-type: application/json' \
+  -H "Idempotency-Key: $(uuidgen)" \
   -d '{"git_ref":"main"}'
 ```
 

@@ -15,6 +15,9 @@ projects (1) ──── (N) pipelines (1) ──── (N) stages (1) ──�
    │                    │                    │ status CHECK       │
    │                    │                    │                    │ BIGSERIAL PK
    └── CASCADE          └── CASCADE          └── CASCADE          └── CASCADE             └── CASCADE
+   │                    │
+   └── (N) pipeline_triggers ────────────────┘
+        UUID PK, UNIQUE(project_id, source, idempotency_key)
 
 repositories (1) ──── (N) pull_requests (по repository_name)
    │
@@ -103,6 +106,8 @@ Indexes:
 Referenced by:
     TABLE "pipelines" CONSTRAINT pipelines_project_id_fkey
         FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+    TABLE "pipeline_triggers" CONSTRAINT pipeline_triggers_project_id_fkey
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 ```
 
 | Колонка | Тип | Nullable | Default | Описание |
@@ -171,7 +176,33 @@ Referenced by:
 
 **FK:** `project_id` → `projects(id)` ON DELETE CASCADE.
 
-**Referenced by:** `stages.pipeline_id` → `pipelines(id)` ON DELETE CASCADE.
+**Referenced by:** `stages.pipeline_id` → `pipelines(id)` ON DELETE CASCADE; `pipeline_triggers.pipeline_id` → `pipelines(id)` ON DELETE CASCADE.
+
+---
+
+## 2.1 pipeline_triggers
+
+Таблица идемпотентности запусков pipeline. Она не является общим хранилищем всех HTTP idempotency responses; текущий MVP закрывает manual/API trigger и internal Git push replay.
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | UUID | NOT NULL | — | Первичный ключ |
+| `project_id` | UUID | NOT NULL | — | FK → `projects.id`, CASCADE |
+| `source` | TEXT | NOT NULL | — | Источник ключа: `api`, `git-push` |
+| `idempotency_key` | TEXT | NOT NULL | — | UUID из `Idempotency-Key` для API либо stable hash для Git push event |
+| `request_fingerprint` | TEXT | NOT NULL | — | SHA-256 нормализованных `git_ref` и `variables` |
+| `pipeline_id` | UUID | NOT NULL | — | FK → созданный `pipelines.id`, CASCADE |
+| `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | Время первой обработки ключа |
+
+**UNIQUE constraint:** `(project_id, source, idempotency_key)` — один observable pipeline на один retry key.
+
+**Индексы:**
+- `pipeline_triggers_pkey` — PRIMARY KEY (id)
+- `pipeline_triggers_project_id_source_idempotency_key_key` — UNIQUE `(project_id, source, idempotency_key)`
+- `idx_pipeline_triggers_pipeline` — lookup trigger record по pipeline.
+- `idx_pipeline_triggers_project_created` — аудит/диагностика replay по project.
+
+**Поведение:** повтор с тем же key и fingerprint возвращает исходный pipeline; тот же key с другим fingerprint отклоняется `409`.
 
 ---
 

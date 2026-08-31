@@ -123,6 +123,96 @@ async fn auth_tables_and_sessions_work() {
 }
 
 #[tokio::test]
+async fn pipeline_trigger_replays_same_idempotency_key() {
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let name = format!("it-idempotency-{}", project_id.simple());
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&name)
+        .bind("https://example.invalid/repo.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+
+    let app = cicd::api::app(Some(pool.clone()));
+    let key = Uuid::new_v4().to_string();
+    let body = r#"{"git_ref":"main","variables":{"deploy_env":"staging"}}"#;
+    let first = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/projects/{project_id}/pipelines"))
+                .header("content-type", "application/json")
+                .header("Idempotency-Key", &key)
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    assert!(first.headers().get("idempotency-replayed").is_none());
+    let first_body = response_json(first).await;
+    let pipeline_id = first_body["pipeline"]["id"]
+        .as_str()
+        .expect("pipeline id")
+        .to_owned();
+
+    let replay = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/projects/{project_id}/pipelines"))
+                .header("content-type", "application/json")
+                .header("Idempotency-Key", &key)
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay.status(), StatusCode::OK);
+    assert_eq!(
+        replay.headers().get("idempotency-replayed").unwrap(),
+        "true"
+    );
+    let replay_body = response_json(replay).await;
+    assert_eq!(replay_body["pipeline"]["id"], pipeline_id);
+
+    let conflict = app
+        .oneshot(
+            Request::post(format!("/api/v1/projects/{project_id}/pipelines"))
+                .header("content-type", "application/json")
+                .header("Idempotency-Key", &key)
+                .body(Body::from(r#"{"git_ref":"release"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(conflict.status(), StatusCode::CONFLICT);
+
+    let pipeline_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM pipelines WHERE project_id = $1")
+            .bind(project_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count pipelines");
+    assert_eq!(pipeline_count, 1);
+
+    let trigger_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM pipeline_triggers WHERE project_id = $1")
+            .bind(project_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count trigger records");
+    assert_eq!(trigger_count, 1);
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup project");
+}
+
+#[tokio::test]
 async fn project_memberships_enforce_project_roles_and_cascade() {
     let pool = test_pool().await;
     let project_id = Uuid::new_v4();

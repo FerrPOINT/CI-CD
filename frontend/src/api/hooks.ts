@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useRef } from 'react'
 import { api, apiRetry } from './client'
 import type {
   TreeEntry,
@@ -116,11 +117,21 @@ export function useRetryPipeline() {
 
 export function useTriggerPipeline(projectId: string | undefined) {
   const qc = useQueryClient()
+  const idempotencyKeyRef = useRef<string | null>(null)
   return useMutation({
-    mutationFn: (gitRef: string) =>
-      api<PipelineDetail>(`/projects/${projectId}/pipelines`, { method: 'POST', body: JSON.stringify({ git_ref: gitRef }) }),
+    mutationFn: (gitRef: string) => {
+      idempotencyKeyRef.current ??= crypto.randomUUID()
+      return api<PipelineDetail>(`/projects/${projectId}/pipelines`, {
+        method: 'POST',
+        headers: { 'Idempotency-Key': idempotencyKeyRef.current },
+        body: JSON.stringify({ git_ref: gitRef }),
+      })
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEYS.pipelines(projectId ?? '') })
+    },
+    onSettled: () => {
+      idempotencyKeyRef.current = null
     },
   })
 }

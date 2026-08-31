@@ -32,3 +32,18 @@ fn cli_exposes_job_attempt_history_commands() {
     assert!(stdout.contains("attempts"));
     assert!(stdout.contains("logs"));
 }
+
+#[test]
+fn cli_exposes_pipeline_run_idempotency_key() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
+        .args(["pipeline", "run", "--help"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        output.status.success(),
+        "failed to run cicd-cli pipeline run --help: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.contains("--idempotency-key"));
+}

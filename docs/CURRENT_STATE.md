@@ -8,8 +8,8 @@
 | Capability | Статус | Границы |
 |---|---|---|
 | Проекты CRUD | ✅ | name/repository_url/default_branch; удаление CASCADE |
-| Git hosting (bare + Smart HTTP) | ✅ | public/private fetch ACL, optional token-protected push, code tree/blob, tags/releases; push → post-receive → pipeline |
-| Pipeline/стадии/джобы | ✅ | `.forge-ci.yml` (stages/jobs/image/command) или fallback-шаблон; отмена/повтор в текущей job-модели |
+| Git hosting (bare + Smart HTTP) | ✅ | public/private fetch ACL, optional token-protected push, code tree/blob, tags/releases; push → post-receive(old/new SHA) → idempotent pipeline per pushed object |
+| Pipeline/стадии/джобы | ✅ | `.forge-ci.yml` (stages/jobs/image/command) или fallback-шаблон; ручной trigger поддерживает `Idempotency-Key`; отмена/повтор в текущей job-модели |
 | Embedded runner | ✅ | Docker (`forge-job-<id>`) или host shell; стриминг stdout → attempt-owned `job_logs`; cancel через PID-map |
 | Execution attempts | ✅ MVP | `execution_attempts` создаются для каждой job; retry job/pipeline создаёт новую attempt и не удаляет старые логи |
 | Логи | ✅ | append-only внутри attempt, sequence per attempt, REST polling и SSE stream текущей/последней attempt |
@@ -33,7 +33,7 @@
 
 ## Не реализовано (Target approved — см. ADR + contracts)
 
-Runner protocol/leases/dispatch (внешний runner, ADR-0007), immutable pipeline plan/DAG, idempotency keys, S3 artifacts, backup scripts, notifications sender/SSE delivery, tenant isolation, scoped PAT, production session/logout policy, full cron semantics, delivery history/replay/dead letters, log pagination/search и per-IP rate limiting (сейчас per-process окно).
+Runner protocol/leases/dispatch (внешний runner, ADR-0007), immutable pipeline plan/DAG, general idempotency storage for all retryable mutations, S3 artifacts, backup scripts, notifications sender/SSE delivery, tenant isolation, scoped PAT, production session/logout policy, full cron semantics, delivery history/replay/dead letters, log pagination/search и per-IP rate limiting (сейчас per-process окно).
 
 ## Текущее runtime-дерево backend
 
@@ -50,7 +50,7 @@ backend/
 │   ├── authz.rs        # role-политики роутов + project membership enforcement
 │   ├── rate_limit.rs   # login rate limiting
 │   ├── metrics.rs      # /metrics Prometheus exposition
-│   ├── migrations/     # versioned SQLx migrations incl. 0007 execution_attempts
+│   ├── migrations/     # versioned SQLx migrations incl. 0009 pipeline trigger idempotency
 │   └── domain.rs       # re-export shim → cicd-domain
 ├── domain/             # cicd-domain: чистые типы + JobStatus
 ├── cli/                # cicd-cli: HTTP-only (project/pipeline/job)

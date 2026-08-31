@@ -28,7 +28,7 @@ Forge CI/CD развивается из MVP control plane в безопасну�
 | Ошибки | Current API возвращает structured envelope `{"error":{"code","message","request_id"}}` и header `x-request-id`; compatibility/error taxonomy ещё не полностью покрыта target contract tests. |
 | Версионирование | Path-versioning `/api/v1` документирован, но нет автоматической проверки breaking changes между контрактами. |
 | Пагинация | `projects` и `pipelines` поддерживают `limit/offset` с cap 200; job logs возвращаются целиком. Унифицированный response envelope/cursor model остаётся target. |
-| Идемпотентность | Для mutating POST-операций `Idempotency-Key` и хранилище результатов отсутствуют. Повтор trigger pipeline способен создать дубликат. |
+| Идемпотентность | Current MVP: `POST /projects/{project_id}/pipelines` поддерживает `Idempotency-Key` и хранит `pipeline_triggers`; generated Git hook дедуплицируется по `repository/ref/new_rev`. General idempotency storage для всех retryable mutations остаётся target. |
 | Auth/RBAC | При `CICD_AUTH_SECRET` включены login/JWT/PAT, argon2id credentials, sessions, route-level global roles и project memberships; без секрета остаётся trusted-network mode. Tenant scope, scoped PAT и production session policy остаются target. |
 | Frontend | React 19/Vite/TanStack Query; около 20 маршрутов + `/login`. DTO генерируются в `frontend/src/api/schema.d.ts`, API wrapper/hooks остаются handwritten. |
 | CLI | `backend/cli` уже отдельный package и работает через HTTP; реализованы группы `project`, `pipeline`, `job`. Конфигурация ограничена `CICD_API_URL`, stdout всегда pretty JSON, нет auth/profile/output policy. |

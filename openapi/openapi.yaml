@@ -968,6 +968,15 @@ paths:
         schema:
           type: string
           format: uuid
+      - name: Idempotency-Key
+        in: header
+        description: Optional UUID idempotency key for retry-safe pipeline trigger
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
       requestBody:
         content:
           application/json:
@@ -981,7 +990,11 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PipelineDetail'
+        '400':
+          description: ''
         '404':
+          description: ''
+        '409':
           description: ''
   /api/v1/projects/{project_id}/reports/summary:
     get:
@@ -2276,6 +2289,14 @@ components:
       - repository
       - ref_name
       properties:
+        new_rev:
+          type:
+          - string
+          - 'null'
+        old_rev:
+          type:
+          - string
+          - 'null'
         ref_name:
           type: string
         repository:

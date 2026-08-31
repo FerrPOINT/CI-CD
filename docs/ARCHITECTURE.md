@@ -132,11 +132,11 @@ Composition root: чтение конфига, создание `PgPool`, реп
 
 ### 6.1 Pipeline lifecycle
 
-`projects → pipelines → stages → jobs → job_logs` (CASCADE). Статусы `queued → running → success/failed/canceled`; правила — `JobStatus::transition_to()`. Агрегация job → stage → pipeline (`refresh_statuses`).
+`projects → pipelines → stages → jobs → job_logs` (CASCADE). Статусы `queued → running → success/failed/canceled`; правила — `JobStatus::transition_to()`. Агрегация job → stage → pipeline (`refresh_statuses`). Ручной trigger pipeline поддерживает `Idempotency-Key`, а `pipeline_triggers` хранит replay/fingerprint для защиты от duplicate run при повторе запроса.
 
 ### 6.2 Git-хостинг
 
-Bare-репозитории в `CICD_GIT_ROOT`, Smart HTTP (`/git/<name>.git`), опциональный token-auth, auto-generated `post-receive` hook → internal endpoint → pipeline по pushed ref. `.forge-ci.yml` из репозитория задаёт stages/jobs (fallback — шаблон build/test/deploy).
+Bare-репозитории в `CICD_GIT_ROOT`, Smart HTTP (`/git/<name>.git`), опциональный token-auth, auto-generated `post-receive` hook → internal endpoint → pipeline по pushed ref. Новый hook передаёт `old_rev/new_rev`; повтор same `repository/ref/new_rev` дедуплицируется. `.forge-ci.yml` из репозитория задаёт stages/jobs (fallback — шаблон build/test/deploy).
 
 ### 6.3 Embedded runner
 

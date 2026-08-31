@@ -83,7 +83,9 @@ curl -fsS -X POST http://127.0.0.1:22801/api/v1/projects \
   }'
 ```
 
-Каждый созданный репозиторий получает executable `hooks/post-receive`. Hook отправляет имя репозитория и pushed ref на internal endpoint. Backend ищет первый проект, `repository_url` которого оканчивается на `{name}.git`, и создаёт queued pipeline с `git_ref` из `refs/heads/<branch>` или `refs/tags/<tag>`.
+Каждый созданный репозиторий получает executable `hooks/post-receive`. Hook отправляет имя репозитория, pushed ref, `old_rev` и `new_rev` на internal endpoint. Backend ищет первый проект, `repository_url` которого оканчивается на `{name}.git`, и создаёт queued pipeline с `git_ref` из `refs/heads/<branch>` или `refs/tags/<tag>`.
+
+Повтор того же hook event с тем же `repository/ref_name/new_rev` не создаёт второй pipeline: backend хранит stable idempotency record в `pipeline_triggers` и возвращает существующий `pipeline_id`. Удаление ref (`new_rev` из нулей) не запускает pipeline.
 
 Если проект не связан с репозиторием, push остаётся успешным, но pipeline не создаётся.
 
@@ -119,7 +121,7 @@ curl -H "x-git-token: <TOKEN>" ...
 - Hook делает best-effort запрос; он не блокирует push при временном сбое CI/CD API.
 - Embedded runner клонирует project repository в workspace перед выполнением job, но без внешнего runner lease/protocol и без repository-level identity boundary.
 
-Следующая фаза: project-membership Auth/RBAC, per-project repository mapping вместо URL suffix lookup, signed internal events, Git LFS, SSH transport, external runner protocol и stricter checkout/commit identity guarantees.
+Следующая фаза: per-project repository mapping вместо URL suffix lookup, signed internal events с one-time event ID, Git LFS, SSH transport, external runner protocol и stricter checkout/commit identity guarantees.
 
 ## 9. Проверка
 
