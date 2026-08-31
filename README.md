@@ -27,6 +27,15 @@ Self-hosted CI/CD control plane для FerrPOINT: Git hosting, pipeline runs, jo
 - TLS, distributed rate limiting, tenant isolation, service-account tokens, scoped Git credentials, production cookie/CSRF/session-family policy и external notification adapters остаются production-hardening задачами.
 - Scheduler/outbox уже исполняет MVP-сценарии, но не заявляет crash-safe/distributed delivery guarantees.
 
+Статусы capability в документации:
+
+| Статус | Значение |
+|---|---|
+| Current verified | Реализовано и подтверждено тестами, CI, скриншотами или runbook evidence. |
+| Configuration only | Есть схема/настройка/контракт, но нет полного runtime enforcement. |
+| Target approved | Принято как целевое требование, но ещё не реализовано полностью. |
+| Deprecated/historical | Историческое решение или совместимость, не источник нового поведения. |
+
 Полный честный срез: [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md). Security policy: [SECURITY.md](SECURITY.md).
 
 ## Быстрый старт
