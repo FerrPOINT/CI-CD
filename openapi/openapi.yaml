@@ -3079,10 +3079,50 @@ components:
       properties:
         pipeline:
           $ref: '#/components/schemas/Pipeline'
+        plan:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/PipelinePlan'
         stages:
           type: array
           items:
             $ref: '#/components/schemas/StageDetail'
+    PipelinePlan:
+      type: object
+      required:
+      - pipeline_id
+      - config_source
+      - parser_version
+      - git_ref
+      - config_sha256
+      - plan_sha256
+      - raw_config
+      - plan
+      - created_at
+      properties:
+        config_sha256:
+          type: string
+        config_source:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        git_ref:
+          type: string
+        parser_version:
+          type: string
+        pipeline_id:
+          type: string
+          format: uuid
+        plan: {}
+        plan_sha256:
+          type: string
+        raw_config:
+          type: string
+        resolved_commit_sha:
+          type:
+          - string
+          - 'null'
     PrAction:
       type: object
       required:

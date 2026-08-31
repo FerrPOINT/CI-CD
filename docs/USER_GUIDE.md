@@ -143,6 +143,8 @@ stages:
 3. Следите за статусом: `queued`, `running`, `success`, `failed`, `canceled`.
 4. При необходимости отмените pipeline; повторите весь pipeline или отдельную terminal job доступной кнопкой **Retry**.
 
+Детали pipeline также показывают **План запуска**: источник config (`repository` или `legacy_template`), parser version, resolved commit SHA, количество dependency edges и SHA-256 для raw config/normalised plan. Это evidence текущего запуска; full v1 DAG с `jobs.needs`, policy snapshot и parser diagnostics остаётся target.
+
 Embedded runner каждые две секунды выбирает доступные queued jobs, выполняет их последовательно по stages, пишет stdout/stderr в append-only log текущей `execution_attempt` и устанавливает результат по exit code. Статусы stage и pipeline агрегируются автоматически. Retry pipeline или отдельной terminal job создаёт новую attempt и сохраняет логи предыдущих attempts. Для диагностики можно вручную менять статус job через UI, API или CLI, но это не заменяет фактическое выполнение.
 
 ![Список pipelines](screenshots/05-pipelines.png)

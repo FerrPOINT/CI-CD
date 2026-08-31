@@ -9,6 +9,7 @@ export type Job = components['schemas']['Job']
 export type Status = 'queued' | 'running' | 'success' | 'failed' | 'canceled'
 
 export type StageDetail = components['schemas']['StageDetail']
+export type PipelinePlan = components['schemas']['PipelinePlan']
 
 export interface Stage extends Omit<StageDetail, 'jobs'> {
   jobs: Job[]
@@ -16,6 +17,7 @@ export interface Stage extends Omit<StageDetail, 'jobs'> {
 
 export interface PipelineDetail {
   pipeline: Pipeline
+  plan?: PipelinePlan | null
   stages: Stage[]
 }
 

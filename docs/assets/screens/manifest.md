@@ -2,7 +2,7 @@
 
 > Скриншоты сняты Playwright (Chromium) с живого стенда и deterministic seed (`frontend/scripts/seed-evidence.mjs`). Viewport: desktop 1920×1080, mobile 375×812; итоговая высота full-page PNG указана в таблице. Локаль ru, тема dark, DPR 1. Пересъёмка: `node frontend/scripts/shoot-evidence.mjs`.
 >
-> Исключение текущего прохода: `16-schedules.png`, `20-users.png`, `21-artifacts.png`, `32-user-create.png` и `33-job-logs.png` пересняты через local Vite + мокированные API-ответы, потому что локальный Docker/API на машине недоступен; полный live evidence переснимается командой выше при доступном стенде.
+> Исключение текущего прохода: `06-pipeline-detail.png`, `m-pipeline-detail.png`, `16-schedules.png`, `20-users.png`, `21-artifacts.png`, `32-user-create.png` и `33-job-logs.png` пересняты через local Vite + мокированные API-ответы, потому что локальный Docker/API на машине недоступен или требовалась изолированная проверка изменённого UI; полный live evidence переснимается командой выше при доступном стенде.
 >
 > Номер `08` зарезервирован за удалённым статичным `/admin` screen. Отдельный `/admin` не входит в текущий baseline; системный срез находится в `/settings`.
 
@@ -15,7 +15,7 @@
 | [03-projects.png](../../screenshots/03-projects.png) | `/projects` | Проекты | 1920×1080 |
 | [04-repositories.png](../../screenshots/04-repositories.png) | `/repositories` | Репозитории | 1920×1080 |
 | [05-pipelines.png](../../screenshots/05-pipelines.png) | `/projects/:id/pipelines` | Пайплайны проекта | 1920×1080 |
-| [06-pipeline-detail.png](../../screenshots/06-pipeline-detail.png) | `/pipelines/:id` | Детали пайплайна: стадии, jobs, команды | 1920×1080 |
+| [06-pipeline-detail.png](../../screenshots/06-pipeline-detail.png) | `/pipelines/:id` | Детали пайплайна: immutable plan snapshot, стадии, jobs, команды | 1920×1080 |
 | [07-settings.png](../../screenshots/07-settings.png) | `/settings` | Системные настройки и `CICD_` окружение | 1920×1080 |
 | [09-repository-browser.png](../../screenshots/09-repository-browser.png) | `/repositories/:repo` → «Код» | Дерево и preview Git-файлов | 1920×1080 |
 | [10-compare.png](../../screenshots/10-compare.png) | `/repositories/:repo/compare` | Сравнение веток: diff + статистика | 1920×1080 |
@@ -61,7 +61,7 @@
 |---|---|---|---|
 | [m-dashboard.png](../../screenshots/m-dashboard.png) | `/` | Дашборд — мобильная версия | 375×1556 |
 | [m-projects.png](../../screenshots/m-projects.png) | `/projects` | Проекты — мобильная версия | 375×2188 |
-| [m-pipeline-detail.png](../../screenshots/m-pipeline-detail.png) | `/pipelines/:id` | Детали пайплайна — мобильная версия | 375×855 |
+| [m-pipeline-detail.png](../../screenshots/m-pipeline-detail.png) | `/pipelines/:id` | Детали пайплайна — мобильная версия | 375×1214 |
 | [m-runners.png](../../screenshots/m-runners.png) | `/runners` | Runners — мобильная версия (карточный layout) | 375×812 |
 | [m-pull-request.png](../../screenshots/m-pull-request.png) | `/repositories/:repo/pulls/:number` | Pull-запрос — мобильная версия | 375×812 |
 | [m-repo-code.png](../../screenshots/m-repo-code.png) | `/repositories/:repo` → Код | Git-дерево на mobile | 375×812 |

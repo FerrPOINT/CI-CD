@@ -8,6 +8,8 @@
 
 ```
 projects (1) ──── (N) pipelines (1) ──── (N) stages (1) ──── (N) jobs (1) ──── (N) execution_attempts (1) ──── (N) job_logs
+   │                    ├── (1) pipeline_plans
+   │                    │
                                                                                                    └──── (N) job_leases
    │                    │                    │                    │
    │ UUID PK            │ UUID PK            │ UUID PK            │ UUID PK
@@ -177,7 +179,7 @@ Referenced by:
 
 **FK:** `project_id` → `projects(id)` ON DELETE CASCADE.
 
-**Referenced by:** `stages.pipeline_id` → `pipelines(id)` ON DELETE CASCADE; `pipeline_triggers.pipeline_id` → `pipelines(id)` ON DELETE CASCADE.
+**Referenced by:** `stages.pipeline_id` → `pipelines(id)` ON DELETE CASCADE; `pipeline_triggers.pipeline_id` → `pipelines(id)` ON DELETE CASCADE; `pipeline_plans.pipeline_id` → `pipelines(id)` ON DELETE CASCADE.
 
 ---
 
@@ -204,6 +206,33 @@ Referenced by:
 - `idx_pipeline_triggers_project_created` — аудит/диагностика replay по project.
 
 **Поведение:** повтор с тем же key и fingerprint возвращает исходный pipeline; тот же key с другим fingerprint отклоняется `409`.
+
+---
+
+## 2.2 pipeline_plans
+
+Неизменяемый snapshot execution plan для созданного pipeline. Текущий MVP сохраняет normalised `legacy-linear` plan из current `stages/jobs` DSL или из fallback `legacy_template`; full v1 `jobs.needs` DAG, policy snapshot и parser diagnostics остаются target.
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `pipeline_id` | UUID | NOT NULL | — | Primary key и FK → `pipelines.id`, CASCADE |
+| `config_source` | TEXT | NOT NULL | — | `repository` или `legacy_template` |
+| `parser_version` | TEXT | NOT NULL | — | Current `forge-legacy-linear/1` |
+| `git_ref` | TEXT | NOT NULL | — | Исходный ref trigger-а |
+| `resolved_commit_sha` | TEXT | NULL | — | Best-effort immutable commit SHA, если ref удалось разрешить |
+| `config_sha256` | TEXT | NOT NULL | — | SHA-256 raw `.forge-ci.yml` или fallback template YAML |
+| `plan_sha256` | TEXT | NOT NULL | — | SHA-256 normalised JSON plan |
+| `raw_config` | TEXT | NOT NULL | — | Raw YAML, из которого построен snapshot |
+| `plan` | JSONB | NOT NULL | — | Normalised plan: stages, jobs, node keys, `needs` и dependency edges |
+| `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | Время фиксации snapshot |
+
+**CHECK constraints:** `config_source IN ('repository','legacy_template')`, `parser_version` длиной `1..64`, hash-поля соответствуют `^[0-9a-f]{64}$`.
+
+**Индексы:**
+- `pipeline_plans_pkey` — PRIMARY KEY (`pipeline_id`)
+- `idx_pipeline_plans_plan_sha256` — диагностика одинаковых normalised plans.
+
+**Immutability:** trigger `trg_pipeline_plans_no_update` запрещает `UPDATE` строк. Удаление возможно только вместе с parent `pipelines` по текущей CASCADE-модели проекта.
 
 ---
 
@@ -480,7 +509,7 @@ Foreign-key constraints:
 
 ## 8. Template pipeline
 
-При триггере пайплайна (`POST /projects/{id}/pipelines`) backend сначала пытается прочитать `.forge-ci.yml` из локального bare repository на указанном ref. Если файл недоступен или проект указывает внешний URL, используется fallback из 3 стадий с одной задачей в каждой:
+При триггере пайплайна (`POST /projects/{id}/pipelines`) backend сначала пытается разрешить ref в commit SHA и прочитать `.forge-ci.yml` из локального bare repository на resolved commit. Если файл недоступен или проект указывает внешний URL, используется fallback `legacy_template` из 3 стадий с одной задачей в каждой:
 
 | Position | Stage | Job | Image | Command |
 |---|---|---|---|---|
@@ -488,13 +517,13 @@ Foreign-key constraints:
 | 1 | `test` | `unit-tests` | `rust:1.86` | `cargo test` |
 | 2 | `deploy` | `deploy` | `alpine:3.21` | `echo deploy` |
 
-Все задачи создаются в статусе `queued`; `timeout_seconds`, `allow_failure` и `manual` берутся из YAML, если заданы.
+Все задачи создаются в статусе `queued`; `timeout_seconds`, `allow_failure` и `manual` берутся из YAML, если заданы. Одновременно создаётся `pipeline_plans` snapshot с raw config, `config_sha256`, normalised `legacy-linear` JSON plan и `plan_sha256`.
 
 ---
 
 ## 9. Platform tables (MVP)
 
-Platform tables создаются и расширяются через `backend/migrations/*.sql`; `0001_bootstrap_v1.sql` содержит исторический baseline, последующие файлы добавляют auth, outbox, execution gaps и project memberships.
+Platform tables создаются и расширяются через `backend/migrations/*.sql`; `0001_bootstrap_v1.sql` содержит исторический baseline, последующие файлы добавляют auth, outbox, execution gaps, project memberships, execution attempts/leases и pipeline plan snapshots.
 
 ### 9.1 runners
 

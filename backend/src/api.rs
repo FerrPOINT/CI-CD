@@ -43,6 +43,24 @@ pub struct AppState {
 type ApiResult<T> = Result<Json<T>, ApiError>;
 const IDEMPOTENCY_KEY_HEADER: &str = "idempotency-key";
 const READINESS_TIMEOUT: Duration = Duration::from_secs(2);
+const PIPELINE_PLAN_PARSER_VERSION: &str = "forge-legacy-linear/1";
+const LEGACY_TEMPLATE_CONFIG: &str = r#"stages:
+  - name: build
+    jobs:
+      - name: checkout
+        image: alpine/git:latest
+        command: git fetch --all
+  - name: test
+    jobs:
+      - name: unit-tests
+        image: rust:1.86
+        command: cargo test
+  - name: deploy
+    jobs:
+      - name: deploy
+        image: alpine:3.21
+        command: echo deploy
+"#;
 pub(crate) const PIPELINE_TRIGGER_SOURCE_API: &str = "api";
 pub(crate) const PIPELINE_TRIGGER_SOURCE_GIT_PUSH: &str = "git-push";
 pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
@@ -98,7 +116,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         Project, CreateProject, UpdateProject, ProjectMembership, ProjectMembershipInput,
         Readiness, MigrationReadiness,
         TriggerPipeline, Pipeline, Stage, Job,
-        PipelineDetail, StageDetail, JobAttempt, JobLog, JobLogPage, ChangeStatus, AppendLog,
+        PipelineDetail, PipelinePlan, StageDetail, JobAttempt, JobLog, JobLogPage, ChangeStatus, AppendLog,
         CanceledPipelineResult, RetriedPipelineResult, ManualJobStartResult,
         Release, CreateRelease, TestReport,
         crate::platform::Runner, crate::platform::RegisterRunner, crate::platform::RunnerHeartbeat,
@@ -1731,9 +1749,23 @@ struct Job {
     started_at: Option<DateTime<Utc>>,
     finished_at: Option<DateTime<Utc>>,
 }
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+struct PipelinePlan {
+    pipeline_id: Uuid,
+    config_source: String,
+    parser_version: String,
+    git_ref: String,
+    resolved_commit_sha: Option<String>,
+    config_sha256: String,
+    plan_sha256: String,
+    raw_config: String,
+    plan: serde_json::Value,
+    created_at: DateTime<Utc>,
+}
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 struct PipelineDetail {
     pipeline: Pipeline,
+    plan: Option<PipelinePlan>,
     stages: Vec<StageDetail>,
 }
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -1806,9 +1838,21 @@ pub(crate) async fn create_pipeline_with_vars_idempotent(
             .ok_or_else(ApiError::not_found)?;
     // Never clone here: this path is called by post-receive and must return
     // before git-receive-pack finishes. Local config is read from the bare repo.
-    let config = read_local_forge_ci_config(Some(repository_url.as_str()), &git_ref).await;
-    let stages = parse_forge_ci(config.as_deref()).map_err(ApiError::bad_request)?;
     let commit_sha = resolve_commit_sha(Some(repository_url.as_str()), &git_ref).await;
+    let config_ref = commit_sha.as_deref().unwrap_or(&git_ref);
+    let config = read_local_forge_ci_config(Some(repository_url.as_str()), config_ref).await;
+    let (config_source, raw_config) = match config {
+        Some(raw_config) => ("repository", raw_config),
+        None => ("legacy_template", LEGACY_TEMPLATE_CONFIG.to_string()),
+    };
+    let stages = parse_forge_ci(Some(&raw_config)).map_err(ApiError::bad_request)?;
+    let plan_snapshot = build_pipeline_plan_snapshot(
+        &git_ref,
+        commit_sha.as_deref(),
+        config_source,
+        raw_config,
+        &stages,
+    );
     let fingerprint = pipeline_trigger_fingerprint(&git_ref, &variables);
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
 
@@ -1862,6 +1906,23 @@ pub(crate) async fn create_pipeline_with_vars_idempotent(
     .bind(&commit_sha)
     .bind(&variables)
     .fetch_one(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+    sqlx::query(
+        "INSERT INTO pipeline_plans \
+         (pipeline_id, config_source, parser_version, git_ref, resolved_commit_sha, config_sha256, plan_sha256, raw_config, plan) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+    )
+    .bind(pipeline.id)
+    .bind(plan_snapshot.config_source)
+    .bind(plan_snapshot.parser_version)
+    .bind(&plan_snapshot.git_ref)
+    .bind(&plan_snapshot.resolved_commit_sha)
+    .bind(&plan_snapshot.config_sha256)
+    .bind(&plan_snapshot.plan_sha256)
+    .bind(&plan_snapshot.raw_config)
+    .bind(&plan_snapshot.plan)
+    .execute(&mut *tx)
     .await
     .map_err(ApiError::internal)?;
     for (position, stage) in stages.iter().enumerate() {
@@ -1918,15 +1979,146 @@ fn pipeline_idempotency_key(headers: &HeaderMap) -> Result<Option<String>, ApiEr
 }
 
 fn pipeline_trigger_fingerprint(git_ref: &str, variables: &serde_json::Value) -> String {
-    use sha2::{Digest, Sha256};
     let payload = serde_json::json!({
         "git_ref": git_ref,
         "variables": variables,
     });
-    format!(
-        "{:x}",
-        Sha256::digest(serde_json::to_vec(&payload).unwrap_or_default())
-    )
+    sha256_hex(&serde_json::to_vec(&payload).unwrap_or_default())
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+#[derive(Debug)]
+struct PipelinePlanSnapshot {
+    config_source: &'static str,
+    parser_version: &'static str,
+    git_ref: String,
+    resolved_commit_sha: Option<String>,
+    config_sha256: String,
+    plan_sha256: String,
+    raw_config: String,
+    plan: serde_json::Value,
+}
+
+#[derive(Debug, Serialize)]
+struct LegacyExecutionPlan {
+    format: &'static str,
+    parser_version: &'static str,
+    config_source: &'static str,
+    git_ref: String,
+    resolved_commit_sha: Option<String>,
+    stages: Vec<LegacyPlanStage>,
+    dependencies: Vec<LegacyPlanDependency>,
+}
+
+#[derive(Debug, Serialize)]
+struct LegacyPlanStage {
+    name: String,
+    position: i32,
+    jobs: Vec<LegacyPlanJob>,
+}
+
+#[derive(Debug, Serialize)]
+struct LegacyPlanJob {
+    key: String,
+    name: String,
+    stage: String,
+    stage_position: i32,
+    position: i32,
+    image: String,
+    command: String,
+    timeout_seconds: Option<i32>,
+    allow_failure: bool,
+    manual: bool,
+    needs: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct LegacyPlanDependency {
+    from: String,
+    to: String,
+}
+
+fn build_pipeline_plan_snapshot(
+    git_ref: &str,
+    resolved_commit_sha: Option<&str>,
+    config_source: &'static str,
+    raw_config: String,
+    stages: &[CiStage],
+) -> PipelinePlanSnapshot {
+    let plan = build_legacy_execution_plan(git_ref, resolved_commit_sha, config_source, stages);
+    let plan_bytes = serde_json::to_vec(&plan).expect("serialize legacy execution plan");
+    PipelinePlanSnapshot {
+        config_source,
+        parser_version: PIPELINE_PLAN_PARSER_VERSION,
+        git_ref: git_ref.to_string(),
+        resolved_commit_sha: resolved_commit_sha.map(ToOwned::to_owned),
+        config_sha256: sha256_hex(raw_config.as_bytes()),
+        plan_sha256: sha256_hex(&plan_bytes),
+        raw_config,
+        plan: serde_json::to_value(plan).expect("serialize legacy execution plan"),
+    }
+}
+
+fn build_legacy_execution_plan(
+    git_ref: &str,
+    resolved_commit_sha: Option<&str>,
+    config_source: &'static str,
+    stages: &[CiStage],
+) -> LegacyExecutionPlan {
+    let mut planned_stages = Vec::with_capacity(stages.len());
+    let mut dependencies = Vec::new();
+    let mut previous_stage_keys: Vec<String> = Vec::new();
+
+    for (stage_position, stage) in stages.iter().enumerate() {
+        let stage_position = stage_position as i32;
+        let mut current_stage_keys = Vec::with_capacity(stage.jobs.len());
+        let mut planned_jobs = Vec::with_capacity(stage.jobs.len());
+        for (job_position, job) in stage.jobs.iter().enumerate() {
+            let job_position = job_position as i32;
+            let key = format!("stage-{stage_position}/job-{job_position}");
+            let needs = previous_stage_keys.clone();
+            for predecessor in &needs {
+                dependencies.push(LegacyPlanDependency {
+                    from: predecessor.clone(),
+                    to: key.clone(),
+                });
+            }
+            current_stage_keys.push(key.clone());
+            planned_jobs.push(LegacyPlanJob {
+                key,
+                name: job.name.clone(),
+                stage: stage.name.clone(),
+                stage_position,
+                position: job_position,
+                image: job.image.clone(),
+                command: job.command.clone(),
+                timeout_seconds: job.timeout_seconds,
+                allow_failure: job.allow_failure,
+                manual: job.manual,
+                needs,
+            });
+        }
+        previous_stage_keys = current_stage_keys;
+        planned_stages.push(LegacyPlanStage {
+            name: stage.name.clone(),
+            position: stage_position,
+            jobs: planned_jobs,
+        });
+    }
+
+    LegacyExecutionPlan {
+        format: "legacy-linear",
+        parser_version: PIPELINE_PLAN_PARSER_VERSION,
+        config_source,
+        git_ref: git_ref.to_string(),
+        resolved_commit_sha: resolved_commit_sha.map(ToOwned::to_owned),
+        stages: planned_stages,
+        dependencies,
+    }
 }
 
 #[derive(Debug, Default)]
@@ -2841,6 +3033,35 @@ stages:
             assert!(parse_forge_ci(Some(source)).is_err(), "{source}");
         }
     }
+
+    #[test]
+    fn legacy_pipeline_plan_is_deterministic_and_records_stage_edges() {
+        let stages = default_pipeline();
+        let first = build_pipeline_plan_snapshot(
+            "main",
+            Some("abc123"),
+            "legacy_template",
+            LEGACY_TEMPLATE_CONFIG.to_string(),
+            &stages,
+        );
+        let second = build_pipeline_plan_snapshot(
+            "main",
+            Some("abc123"),
+            "legacy_template",
+            LEGACY_TEMPLATE_CONFIG.to_string(),
+            &stages,
+        );
+
+        assert_eq!(first.plan_sha256, second.plan_sha256);
+        assert_eq!(first.config_sha256, second.config_sha256);
+        assert_eq!(first.plan["format"], "legacy-linear");
+        assert_eq!(first.plan["stages"].as_array().unwrap().len(), 3);
+        assert_eq!(first.plan["dependencies"].as_array().unwrap().len(), 2);
+        assert_eq!(first.plan["dependencies"][0]["from"], "stage-0/job-0");
+        assert_eq!(first.plan["dependencies"][0]["to"], "stage-1/job-0");
+        assert_eq!(first.plan["dependencies"][1]["from"], "stage-1/job-0");
+        assert_eq!(first.plan["dependencies"][1]["to"], "stage-2/job-0");
+    }
 }
 
 #[utoipa::path(get, path="/api/v1/projects/{project_id}/pipelines", tag="pipelines", params(("project_id"=Uuid, Path)), responses((status=200, body=[Pipeline])))]
@@ -2869,6 +3090,14 @@ async fn get_pipeline(
 
 async fn pipeline_detail(pool: &PgPool, pipeline_id: Uuid) -> Result<PipelineDetail, ApiError> {
     let pipeline = sqlx::query_as::<_, Pipeline>("SELECT id, project_id, git_ref, status, created_at, started_at, finished_at FROM pipelines WHERE id = $1").bind(pipeline_id).fetch_optional(pool).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?;
+    let plan = sqlx::query_as::<_, PipelinePlan>(
+        "SELECT pipeline_id, config_source, parser_version, git_ref, resolved_commit_sha, config_sha256, plan_sha256, raw_config, plan, created_at \
+         FROM pipeline_plans WHERE pipeline_id = $1",
+    )
+    .bind(pipeline_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?;
     let stages = sqlx::query_as::<_, Stage>("SELECT id, pipeline_id, name, position, status FROM stages WHERE pipeline_id = $1 ORDER BY position").bind(pipeline_id).fetch_all(pool).await.map_err(ApiError::internal)?;
     let mut details = Vec::with_capacity(stages.len());
     for stage in stages {
@@ -2877,6 +3106,7 @@ async fn pipeline_detail(pool: &PgPool, pipeline_id: Uuid) -> Result<PipelineDet
     }
     Ok(PipelineDetail {
         pipeline,
+        plan,
         stages: details,
     })
 }

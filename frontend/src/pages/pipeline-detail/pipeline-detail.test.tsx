@@ -34,6 +34,21 @@ function renderPipelineDetail(requests: string[]) {
           started_at: now,
           finished_at: null,
         },
+        plan: {
+          pipeline_id: pipelineId,
+          config_source: 'legacy_template',
+          parser_version: 'forge-legacy-linear/1',
+          git_ref: 'main',
+          resolved_commit_sha: null,
+          config_sha256: 'a'.repeat(64),
+          plan_sha256: 'b'.repeat(64),
+          raw_config: 'stages:\n  - name: build\n',
+          plan: {
+            format: 'legacy-linear',
+            dependencies: [{ from: 'stage-0/job-0', to: 'stage-1/job-0' }],
+          },
+          created_at: now,
+        },
         stages: [
           {
             id: stageId,
@@ -140,6 +155,18 @@ afterEach(() => {
 })
 
 describe('PipelineDetailPage logs', () => {
+  it('shows immutable pipeline plan evidence', async () => {
+    const requests: string[] = []
+    renderPipelineDetail(requests)
+
+    expect(await screen.findByText('pipelines.planTitle')).toBeInTheDocument()
+    expect(screen.getByText('legacy_template')).toBeInTheDocument()
+    expect(screen.getByText('forge-legacy-linear/1')).toBeInTheDocument()
+    expect(screen.getByText('a'.repeat(64))).toBeInTheDocument()
+    expect(screen.getByText('b'.repeat(64))).toBeInTheDocument()
+    expect(screen.getByText('1')).toBeInTheDocument()
+  })
+
   it('loads log pages and refetches them with search', async () => {
     const requests: string[] = []
     renderPipelineDetail(requests)

@@ -27,8 +27,8 @@
 | Область | Сейчас | Цель |
 |---|---|---|
 | Архитектура backend | Переходный monolith: `api.rs`, `platform.rs`, `runner.rs`, `store.rs`; `domain` и `cli` уже выделяются в workspace | Полный Cargo workspace `domain → app → infra → api`, отдельный `server` composition root и отдельный runner process (`forge-runner`) |
-| Pipeline config | `.forge-ci.yml` уже читается из локального bare-репозитория; поддерживаются линейные `stages/jobs`, при отсутствии файла используется template | Версионированный parser, validation и immutable plan snapshot; зависимости задают DAG, а не порядок стадий |
-| Планирование | Linear stages; jobs одной стадии могут быть выбраны поллером, но model не хранит явные зависимости | Job-level DAG с `needs`, topological validation, матрицами, rules и неизменяемым plan |
+| Pipeline config | `.forge-ci.yml` уже читается из локального bare-репозитория по best-effort resolved commit; поддерживаются линейные `stages/jobs`, при отсутствии файла используется `legacy_template`; `pipeline_plans` хранит raw config/template, parser version и SHA-256 hashes | Версионированный v1 parser, diagnostics и policy validation; зависимости задают DAG, а не порядок стадий |
+| Планирование | Current `pipeline_plans` хранит normalised `legacy-linear` snapshot и dependency edges между стадиями; jobs одной стадии остаются параллельными | Job-level DAG с `needs`, topological validation, матрицами, rules и неизменяемым plan |
 | Выполнение | Embedded supervisor в `cicd-server`; Docker или host shell; PID map в памяти; `job_leases` фиксирует embedded owner/expiry и terminal outcome | Внешние runner-ы, pull protocol, leases, attempts, reconciliation; host shell отсутствует в production |
 | Runner registry | `POST /runners`, теги, heartbeat, status; registry не участвует в выборе и запуске job | Registration tokens, аутентификация, capability inventory, runner pools/tags, heartbeat, drain/disable, selection dispatcher |
 | Очередь | Polling queued jobs; атомарный `queued → running` теперь создаёт active `job_leases`; нет durable `job_queue`, внешнего dispatch delivery, ack/renew API и full fencing | PostgreSQL queue с `SKIP LOCKED`, scheduling eligibility, lease/ack/renew/expiry, outbox/event wakeup |
@@ -161,14 +161,14 @@ backend/
 
 1. Разрешить ref в **полный immutable commit SHA**.
 2. Прочитать `.forge-ci.yml` именно из этого commit.
-3. Сохранить исходный YAML, SHA-256 конфигурации, parser version и нормализованный execution plan.
+3. Сохранить исходный YAML/template, SHA-256 конфигурации, parser version и нормализованный execution plan.
 4. Создать pipeline run только после успешной schema/domain validation.
 
 Нельзя читать branch позднее на этапе runner execution: branch может переместиться между trigger и запуском job.
 
 ### Совместимость
 
-На переходной фазе template `build/test/deploy` допустим только как явно выбранный `legacy_template` source. Отсутствие `.forge-ci.yml` не должно незаметно запускать deploy-template в production. Целевое поведение:
+Current transition phase сохраняет template `build/test/deploy` как `legacy_template` source в `pipeline_plans`; отсутствие `.forge-ci.yml` всё ещё запускает compatibility template. Целевое production-поведение:
 
 - `config_source=repository`: файл обязателен.
 - `config_source=legacy_template`: template допустим только для migration/demo проектов.
@@ -986,8 +986,8 @@ Kubernetes, при наличии test cluster:
 ## Фаза 1 - parser и planning DAG без внешнего runner-а
 
 - Вынести parser из `api.rs` в domain/app.
-- Поддержать commit SHA pinning, parser diagnostics, immutable plan snapshot.
-- Добавить `planned_jobs`/dependencies и DAG visualization API.
+- Current MVP: поддержать commit SHA pinning where available и immutable `pipeline_plans` snapshot для legacy-linear plan.
+- Target follow-up: parser diagnostics, `planned_jobs`/dependencies и DAG visualization API.
 - Использовать compatibility executor только для local development.
 - Перестать silently fallback на deploy template в production config mode.
 

@@ -344,7 +344,7 @@ curl -sS http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines
 
 #### POST /api/v1/projects/{project_id}/pipelines
 
-Запускает новый пайплайн для указанного Git-рефа. Backend пытается прочитать `.forge-ci.yml` из локального bare repository; если файл недоступен, создаёт fallback build/test/deploy template. Все задачи — в статусе `queued`.
+Запускает новый пайплайн для указанного Git-рефа. Backend пытается разрешить ref в commit SHA, прочитать `.forge-ci.yml` из локального bare repository на этом commit; если файл недоступен, создаёт fallback `legacy_template` build/test/deploy. Все задачи — в статусе `queued`. `PipelineDetail.plan` содержит immutable `legacy-linear` snapshot с raw config, config/plan SHA-256, node keys и dependency edges между стадиями.
 
 **Path params:**
 
@@ -384,6 +384,46 @@ curl -sS http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines
     "created_at": "2026-08-26T10:05:00Z",
     "started_at": null,
     "finished_at": null
+  },
+  "plan": {
+    "pipeline_id": "a1b2c3d4-...",
+    "config_source": "legacy_template",
+    "parser_version": "forge-legacy-linear/1",
+    "git_ref": "main",
+    "resolved_commit_sha": null,
+    "config_sha256": "64-char-hex-sha256",
+    "plan_sha256": "64-char-hex-sha256",
+    "raw_config": "stages:\n  - name: build\n    jobs:\n      - name: checkout\n        image: alpine/git:latest\n        command: git fetch --all\n",
+    "plan": {
+      "format": "legacy-linear",
+      "parser_version": "forge-legacy-linear/1",
+      "config_source": "legacy_template",
+      "git_ref": "main",
+      "resolved_commit_sha": null,
+      "stages": [
+        {
+          "name": "build",
+          "position": 0,
+          "jobs": [
+            {
+              "key": "stage-0/job-0",
+              "name": "checkout",
+              "stage": "build",
+              "stage_position": 0,
+              "position": 0,
+              "image": "alpine/git:latest",
+              "command": "git fetch --all",
+              "timeout_seconds": null,
+              "allow_failure": false,
+              "manual": false,
+              "needs": []
+            }
+          ]
+        }
+      ],
+      "dependencies": []
+    },
+    "created_at": "2026-09-01T10:05:00Z"
   },
   "stages": [
     {

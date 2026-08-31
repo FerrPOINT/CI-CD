@@ -7,9 +7,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import type { TestReport } from '@/api/types'
 import { Button } from '@/shared/ui/button'
 import { Input } from '@/shared/ui/input'
-import { ChevronRight, Terminal, ClipboardCheck, Play, CheckCircle2, XCircle, Square, Ban, RotateCcw, Package } from 'lucide-react'
+import { ChevronRight, Terminal, ClipboardCheck, Play, CheckCircle2, XCircle, Square, Ban, RotateCcw, Package, FileCode2 } from 'lucide-react'
 import { toast } from 'sonner'
-import type { Status } from '@/api/types'
+import type { PipelinePlan, Status } from '@/api/types'
 
 const statusColors: Record<string, string> = {
   queued: 'bg-text-muted',
@@ -31,7 +31,7 @@ export function PipelineDetailPage() {
 
   if (isLoading || !data) return <p className="text-sm text-text-muted">{t('common.loading')}</p>
 
-  const { pipeline, stages } = data
+  const { pipeline, stages, plan } = data
   const selectedJob = stages.flatMap(s => s.jobs).find(j => j.id === selectedJobId)
 
   function handleStatus(jobId: string, status: Status) {
@@ -66,6 +66,8 @@ export function PipelineDetailPage() {
           <span className={`h-2.5 w-2.5 rounded-full ${statusColors[pipeline.status]}`} />
         </div>
       </div>
+
+      {plan && <PipelinePlanCard plan={plan} />}
 
       <div className="grid min-w-0 gap-4 lg:grid-cols-3">
         {stages.map(stage => (
@@ -139,6 +141,45 @@ export function PipelineDetailPage() {
       {selectedJob && <JobTestReportPanel jobId={selectedJob.id} />}
     </div>
   )
+}
+
+function PipelinePlanCard({ plan }: { plan: PipelinePlan }) {
+  const { t } = useTranslation()
+  return (
+    <Card className="min-w-0 p-4">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-3 border-b border-border pb-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <FileCode2 className="h-4 w-4 shrink-0 text-accent" />
+          <h2 className="text-sm font-semibold">{t('pipelines.planTitle')}</h2>
+        </div>
+        <span className="rounded bg-surface-raised px-2 py-1 text-xs font-medium text-text-muted">
+          {plan.config_source}
+        </span>
+      </div>
+      <dl className="mt-3 grid min-w-0 gap-3 text-xs sm:grid-cols-2 lg:grid-cols-3">
+        <PlanFact label={t('pipelines.planParser')} value={plan.parser_version} />
+        <PlanFact label={t('pipelines.planCommit')} value={plan.resolved_commit_sha ?? '-'} mono />
+        <PlanFact label={t('pipelines.planEdges')} value={String(planDependencyCount(plan.plan))} />
+        <PlanFact label={t('pipelines.planConfigHash')} value={plan.config_sha256} mono />
+        <PlanFact label={t('pipelines.planHash')} value={plan.plan_sha256} mono />
+      </dl>
+    </Card>
+  )
+}
+
+function PlanFact({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-text-muted">{label}</dt>
+      <dd className={`mt-1 break-all ${mono ? 'font-mono text-[11px]' : 'font-medium'}`}>{value}</dd>
+    </div>
+  )
+}
+
+function planDependencyCount(plan: unknown): number {
+  if (!plan || typeof plan !== 'object') return 0
+  const dependencies = (plan as { dependencies?: unknown }).dependencies
+  return Array.isArray(dependencies) ? dependencies.length : 0
 }
 
 function JobLogPanel({ jobId, logMessage, setLogMessage }: { jobId: string; logMessage: string; setLogMessage: (v: string) => void }) {

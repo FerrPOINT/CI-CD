@@ -1496,7 +1496,22 @@ export interface components {
         };
         PipelineDetail: {
             pipeline: components["schemas"]["Pipeline"];
+            plan?: null | components["schemas"]["PipelinePlan"];
             stages: components["schemas"]["StageDetail"][];
+        };
+        PipelinePlan: {
+            config_sha256: string;
+            config_source: string;
+            /** Format: date-time */
+            created_at: string;
+            git_ref: string;
+            parser_version: string;
+            /** Format: uuid */
+            pipeline_id: string;
+            plan: unknown;
+            plan_sha256: string;
+            raw_config: string;
+            resolved_commit_sha?: string | null;
         };
         PrAction: {
             action: string;

@@ -65,7 +65,7 @@ async fn readiness_reports_database_and_migrations() {
         body["migrations"]["latest_required_version"]
             .as_i64()
             .unwrap()
-            >= 15
+            >= 16
     );
     assert_eq!(
         body["migrations"]["latest_applied_version"],
@@ -952,6 +952,15 @@ async fn pipeline_trigger_replays_same_idempotency_key() {
         .as_str()
         .expect("pipeline id")
         .to_owned();
+    let plan = &first_body["plan"];
+    assert_eq!(plan["config_source"], "legacy_template");
+    assert_eq!(plan["parser_version"], "forge-legacy-linear/1");
+    assert_eq!(plan["git_ref"], "main");
+    assert_eq!(plan["plan"]["format"], "legacy-linear");
+    assert_eq!(plan["plan"]["stages"].as_array().unwrap().len(), 3);
+    assert_eq!(plan["plan"]["dependencies"].as_array().unwrap().len(), 2);
+    assert_eq!(plan["plan_sha256"].as_str().unwrap().len(), 64);
+    assert_eq!(plan["config_sha256"].as_str().unwrap().len(), 64);
 
     let replay = app
         .clone()
@@ -971,6 +980,10 @@ async fn pipeline_trigger_replays_same_idempotency_key() {
     );
     let replay_body = response_json(replay).await;
     assert_eq!(replay_body["pipeline"]["id"], pipeline_id);
+    assert_eq!(
+        replay_body["plan"]["plan_sha256"],
+        first_body["plan"]["plan_sha256"]
+    );
 
     let conflict = app
         .oneshot(
@@ -999,6 +1012,32 @@ async fn pipeline_trigger_replays_same_idempotency_key() {
             .await
             .expect("count trigger records");
     assert_eq!(trigger_count, 1);
+
+    let pipeline_uuid = Uuid::parse_str(&pipeline_id).expect("pipeline uuid");
+    let plan_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM pipeline_plans WHERE pipeline_id = $1")
+            .bind(pipeline_uuid)
+            .fetch_one(&pool)
+            .await
+            .expect("count pipeline plans");
+    assert_eq!(plan_count, 1);
+
+    let mut immutability_tx = pool.begin().await.expect("begin immutability check");
+    sqlx::query("SET LOCAL statement_timeout = '2s'")
+        .execute(&mut *immutability_tx)
+        .await
+        .expect("set statement timeout");
+    let update_result = sqlx::query(
+        "UPDATE pipeline_plans SET plan_sha256 = repeat('0', 64) WHERE pipeline_id = $1",
+    )
+    .bind(pipeline_uuid)
+    .execute(&mut *immutability_tx)
+    .await;
+    assert!(update_result.is_err(), "pipeline plan must be immutable");
+    immutability_tx
+        .rollback()
+        .await
+        .expect("rollback immutability check");
 
     sqlx::query("DELETE FROM projects WHERE id = $1")
         .bind(project_id)

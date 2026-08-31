@@ -19,7 +19,7 @@ Roadmap фиксирует порядок доведения Forge до базо
 На 2026-09-01 в коде уже есть:
 
 - проекты, встроенный bare Git hosting, Smart HTTP и auto-trigger pipeline на push;
-- pipeline из `.forge-ci.yml` с линейными stages/jobs, fallback-шаблон, manual jobs, basic timeout и `allow_failure`;
+- pipeline из `.forge-ci.yml` с линейными stages/jobs, fallback-шаблон, immutable `pipeline_plans` legacy-linear snapshot, manual jobs, basic timeout и `allow_failure`;
 - embedded runner в `cicd-server`: Docker/host shell, stdout/stderr в attempt-owned `job_logs`, cancel/retry, embedded `job_leases` claim/close/expiry reconciliation;
 - `execution_attempts`: каждая job получает initial attempt, retry job/pipeline создаёт новую attempt и сохраняет старые логи;
 - REST logs, attempts API и SSE stream логов job;
@@ -46,6 +46,7 @@ Roadmap фиксирует порядок доведения Forge до базо
 
 Deliverables:
 
+- Current MVP: `pipeline_plans` immutable snapshot с raw config/fallback template, parser version, config/plan SHA-256 и legacy-linear dependency edges;
 - Current MVP: таблицы `execution_attempts` и attempt-owned log/artifact metadata;
 - Current MVP: таблица `job_leases` для embedded claim, terminal close, cancel close и expiry reconciliation;
 - Current MVP: retry pipeline/job создаёт новую attempt, старые логи и timestamps остаются доступными;
@@ -179,7 +180,7 @@ Gate:
 - flaky test tracking и quarantine;
 - dependency/security scans, SBOM и license gates;
 - DORA/advanced reports, percentiles, dashboards и exports;
-- matrix builds и сложный DAG planner сверх базового immutable plan;
+- matrix builds и сложный DAG planner сверх текущего `legacy-linear` immutable plan;
 - SSO/OIDC;
 - Kubernetes runner adapter;
 - full code-review platform, threaded comments, merge queues;

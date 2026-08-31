@@ -14,10 +14,10 @@ Forge читает `.forge-ci.yml` только из полного immutable `r
 |---|---|---|
 | Формат | unversioned `stages`/`jobs` | обязательный `version: 1`, job-level DAG |
 | Job | `name`, optional `image`, один `command` | mapping `jobs.<key>` с `commands`, `needs`, policy и metadata |
-| Порядок | порядок stages; jobs stage параллельны | `needs` определяет DAG; stages не задают зависимости |
+| Порядок | порядок stages; snapshot хранит legacy-linear dependency edges между стадиями; jobs одной стадии параллельны | `needs` определяет DAG; stages не задают зависимости |
 | Trigger | pipeline создаётся manual или текущим Git push hook | `on.push`, `on.pull_request`, `on.schedule` |
-| Parser | `serde_yaml`, без durable version/plan | safe parser, diagnostics, immutable plan |
-| Fallback | если локальный config не прочитан, template build/test/deploy | только явный `legacy_template` source для migration/demo |
+| Parser | `serde_yaml`, durable `pipeline_plans` snapshot с parser version `forge-legacy-linear/1`, config/plan SHA-256 | safe parser, diagnostics, full v1 immutable plan |
+| Fallback | если локальный config не прочитан, сохраняется `legacy_template` source и template YAML snapshot | только явный `legacy_template` source для migration/demo |
 
 Текущий parser принимает только следующий legacy shape и не принимает `version`, `on`, `defaults`, top-level `jobs`, `needs`, secrets или artifacts:
 
@@ -30,7 +30,7 @@ stages:
         command: cargo build --release
 ```
 
-Пустые stages отбрасываются; после этого нужен хотя бы один job. `image` по умолчанию `alpine:3.21`. Текущий режим является compatibility behaviour, не реализацией target DSL.
+Пустые stages отбрасываются; после этого нужен хотя бы один job. `image` по умолчанию `alpine:3.21`. Текущий режим сохраняет immutable `legacy-linear` snapshot, но остаётся compatibility behaviour, не реализацией target DSL.
 
 ## 3. Грамматика target v1
 

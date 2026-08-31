@@ -24,7 +24,7 @@
 
 ## Канонический словарь (выдержка ADR-0009)
 
-`backend/migrations/`, `domain_events`, `outbox_messages`, `outbox_delivery_attempts` (current history), `outbox_deliveries` (target snapshots/leases), `execution_attempts`, `job_queue`, `job_leases`, `/api/v1/runner/*`, `openapi/openapi.yaml`, `tenant` (не organization/workspace), error codes в `snake_case`, `request_id` внутри `error`.
+`backend/migrations/`, `pipeline_plans`, `domain_events`, `outbox_messages`, `outbox_delivery_attempts` (current history), `outbox_deliveries` (target snapshots/leases), `execution_attempts`, `job_queue`, `job_leases`, `/api/v1/runner/*`, `openapi/openapi.yaml`, `tenant` (не organization/workspace), error codes в `snake_case`, `request_id` внутри `error`.
 
 Запрещены как канонические: `outbox_events`, `pipeline_runs`, `job_runs`, `/api/v1/runner/v1/*`, `openapi/openapi.json`.
 

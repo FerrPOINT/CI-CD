@@ -132,11 +132,11 @@ Composition root: чтение конфига, создание `PgPool`, реп
 
 ### 6.1 Pipeline lifecycle
 
-`projects → pipelines → stages → jobs → execution_attempts → job_logs` (CASCADE). Статусы `queued → running → success/failed/canceled`; правила — `JobStatus::transition_to()`. Агрегация job → stage → pipeline (`refresh_statuses`). Ручной trigger pipeline поддерживает `Idempotency-Key`, а `pipeline_triggers` хранит replay/fingerprint для защиты от duplicate run при повторе запроса.
+`projects → pipelines → pipeline_plans` и `projects → pipelines → stages → jobs → execution_attempts → job_logs` (CASCADE). Статусы `queued → running → success/failed/canceled`; правила — `JobStatus::transition_to()`. Агрегация job → stage → pipeline (`refresh_statuses`). Ручной trigger pipeline поддерживает `Idempotency-Key`, а `pipeline_triggers` хранит replay/fingerprint для защиты от duplicate run при повторе запроса. Текущий `pipeline_plans` фиксирует immutable `legacy-linear` snapshot с raw config/template, parser version, config/plan SHA-256 и dependency edges между стадиями; full v1 DAG/policy plan остаётся target.
 
 ### 6.2 Git-хостинг
 
-Bare-репозитории в `CICD_GIT_ROOT`, Smart HTTP (`/git/<name>.git`), public read для public repo, legacy `CICD_GIT_TOKEN` и JWT/PAT project-membership auth при `CICD_AUTH_SECRET`, auto-generated `post-receive` hook → internal endpoint → pipeline по pushed ref. Новый hook передаёт `old_rev/new_rev`; повтор same `repository/ref/new_rev` дедуплицируется. `.forge-ci.yml` из репозитория задаёт stages/jobs (fallback — шаблон build/test/deploy).
+Bare-репозитории в `CICD_GIT_ROOT`, Smart HTTP (`/git/<name>.git`), public read для public repo, legacy `CICD_GIT_TOKEN` и JWT/PAT project-membership auth при `CICD_AUTH_SECRET`, auto-generated `post-receive` hook → internal endpoint → pipeline по pushed ref. Новый hook передаёт `old_rev/new_rev`; повтор same `repository/ref/new_rev` дедуплицируется. `.forge-ci.yml` из репозитория читается best-effort по resolved commit SHA и задаёт stages/jobs; если файл недоступен, используется `legacy_template` build/test/deploy, а выбранный raw config фиксируется в `pipeline_plans`.
 
 ### 6.3 Embedded runner
 
@@ -159,7 +159,7 @@ Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-2
 - Domain: unit-тесты переходов статусов (`domain/src/lib.rs`, `tests/domain_transitions.rs`).
 - API contract: no-DB тесты health/readiness/503/валидации (`tests/api_contract.rs`).
 - CLI: contract-тест help-групп (`cli/tests/cli_contract.rs`).
-- Real-PostgreSQL integration tests уже есть для migrations/readiness/project/auth paths; target остаётся для Playwright E2E, coverage gate и широких protocol tests.
+- Real-PostgreSQL integration tests уже есть для migrations/readiness/project/auth paths, trigger idempotency и immutable `pipeline_plans`; target остаётся для Playwright E2E, coverage gate и широких protocol tests.
 
 ## 9. Статус миграции (ADR-0005)
 

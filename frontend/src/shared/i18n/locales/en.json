@@ -42,7 +42,13 @@
     "canceled": "Canceled",
     "empty": "No pipelines yet. Run one.",
     "cancel": "Cancel",
-    "retry": "Retry"
+    "retry": "Retry",
+    "planTitle": "Run plan",
+    "planParser": "Parser",
+    "planCommit": "Commit",
+    "planEdges": "Dependencies",
+    "planConfigHash": "Config SHA-256",
+    "planHash": "Plan SHA-256"
   },
   "repositories": {
     "title": "Repositories",

@@ -48,6 +48,7 @@
 | Feature | Статус |
 |---|---|
 | Projects, pipelines, stages, jobs and bounded logs | Current verified |
+| Immutable pipeline plan snapshots | Current verified MVP |
 | Bare Git hosting + Smart HTTP + `post-receive` trigger | Current verified |
 | Branch/tag browser, compare and pull request flow | Current verified |
 | Artifacts up to 50 MiB in local storage | Current verified |
@@ -129,10 +130,12 @@ flowchart TD
     Dev[Developer git push] --> Git[Smart HTTP + bare repo]
     Git --> Hook[post-receive hook]
     Hook --> Pipe[Pipeline orchestrator]
+    Pipe --> Plan[Immutable pipeline plan]
     Pipe --> Runner[Embedded Docker/shell runner]
     Runner --> Logs[Job logs + artifacts]
     API[Axum API] --> DB[(PostgreSQL)]
     UI[React dashboard] --> API
+    Plan --> DB
     Pipe --> DB
     Runner --> DB
     API --> Notify[Schedules, webhooks, in-app/SSE]
@@ -145,6 +148,7 @@ flowchart TD
 - Tenant isolation, service-account tokens, scoped Git credentials and production cookie/CSRF/session-family policy remain target hardening.
 - TLS is not bundled, CORS is permissive by default, and in-process rate limiting is not a replacement for a reverse proxy or distributed limiter.
 - Embedded runner records job ownership in `job_leases` and reconciles expired leases, but a separate external runner process/protocol remains target hardening.
+- Pipeline trigger stores immutable `pipeline_plans` snapshots for current `legacy-linear` plans; full v1 DAG/policy planning remains target hardening.
 - Schedules, outgoing webhooks and `in_app`/`sse` notifications work as MVP local delivery.
 - Outbox delivery history, attempt log and failed-delivery requeue are bounded MVP features; inbound provider webhooks, external notification adapters and crash-safe distributed delivery guarantees are not complete.
 

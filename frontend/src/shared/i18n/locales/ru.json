@@ -42,7 +42,13 @@
     "canceled": "Отменён",
     "empty": "Нет запусков. Запустите первый пайплайн.",
     "cancel": "Отменить",
-    "retry": "Повторить"
+    "retry": "Повторить",
+    "planTitle": "План запуска",
+    "planParser": "Parser",
+    "planCommit": "Commit",
+    "planEdges": "Зависимости",
+    "planConfigHash": "Config SHA-256",
+    "planHash": "Plan SHA-256"
   },
   "repositories": {
     "title": "Репозитории",
