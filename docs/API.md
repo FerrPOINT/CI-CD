@@ -1015,6 +1015,8 @@ Git Smart HTTP проверяет `CICD_GIT_TOKEN`, если он задан. П
 | `/api/v1/projects` | Projects |
 | `/api/v1/projects/{project_id}` | Projects |
 | `/api/v1/projects/{project_id}/environments` | Environments |
+| `/api/v1/projects/{project_id}/memberships` | Project memberships |
+| `/api/v1/projects/{project_id}/memberships/{user_id}` | Project memberships |
 | `/api/v1/projects/{project_id}/notifications` | Notifications |
 | `/api/v1/projects/{project_id}/pipelines` | Pipelines |
 | `/api/v1/projects/{project_id}/reports/summary` | Reports |

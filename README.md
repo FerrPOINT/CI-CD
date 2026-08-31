@@ -90,7 +90,7 @@ git push                       # → post-receive → пайплайн созд�
 
 ![Дашборд — мобильная версия](docs/screenshots/m-dashboard.png)
 
-Полный визуальный реестр (44 скрина: 20 базовых страниц + 18 состояний действий + 6 мобильных): [docs/assets/screens/manifest.md](docs/assets/screens/manifest.md).
+Полный визуальный реестр (45 скринов: 21 базовое состояние + 18 состояний действий + 6 мобильных): [docs/assets/screens/manifest.md](docs/assets/screens/manifest.md).
 
 ## Документация
 
