@@ -50,6 +50,7 @@ The first three migrations are fixed:
 0012_outbox_delivery_history.sql # delivery attempts, failed history and requeue generation
 0013_artifact_checksums.sql  # SHA-256 metadata for artifacts
 0014_schedule_fire_slots.sql # next_fire_at, schedule_fires and due indexes
+0015_job_leases.sql          # embedded runner lease ledger and expiry indexes
 ```
 
 No rollback SQL is executed automatically. A failed production migration stops deployment; recovery is forward migration or restore of verified backup. `CREATE INDEX CONCURRENTLY` lives in a separate `-- no-transaction` file and is run in maintenance window with `migration_progress` rows (batch 1,000, resumable).

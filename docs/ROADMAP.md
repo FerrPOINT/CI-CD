@@ -16,11 +16,11 @@ Roadmap фиксирует порядок доведения Forge до базо
 
 ## 3. Current baseline
 
-На 2026-08-31 в коде уже есть:
+На 2026-09-01 в коде уже есть:
 
 - проекты, встроенный bare Git hosting, Smart HTTP и auto-trigger pipeline на push;
 - pipeline из `.forge-ci.yml` с линейными stages/jobs, fallback-шаблон, manual jobs, basic timeout и `allow_failure`;
-- embedded runner в `cicd-server`: Docker/host shell, stdout/stderr в attempt-owned `job_logs`, cancel/retry;
+- embedded runner в `cicd-server`: Docker/host shell, stdout/stderr в attempt-owned `job_logs`, cancel/retry, embedded `job_leases` claim/close/expiry reconciliation;
 - `execution_attempts`: каждая job получает initial attempt, retry job/pipeline создаёт новую attempt и сохраняет старые логи;
 - REST logs, attempts API и SSE stream логов job;
 - local artifacts до 50 MiB с metadata текущей/latest attempt и SHA-256 для новых uploads;
@@ -32,7 +32,7 @@ Roadmap фиксирует порядок доведения Forge до базо
 
 Ключевые ограничения current baseline:
 
-- execution attempts реализованы как MVP-слой без внешних leases/fencing; bounded log pagination/search уже есть, command spans и richer error diagnostics остаются Phase 1 follow-up;
+- execution attempts и embedded `job_leases` реализованы как MVP-слой без внешнего runner protocol/fencing; bounded log pagination/search уже есть, command spans и richer error diagnostics остаются Phase 1 follow-up;
 - auth/RBAC имеет project membership, scoped PAT, Git Smart HTTP read/write checks, session-bound access invalidation и refresh rotate/logout/revoke MVP, но без tenant isolation, service-account tokens, scoped Git credentials и production cookie/CSRF/session-family policy;
 - execution встроен в backend process, поэтому shared/prod режим требует external runner boundary;
 - webhooks/notifications имеют bounded delivery history/requeue MVP, но без production leases/fencing, full dead-letter policy/metrics и external adapters; email/Slack notification adapters не реализованы;
@@ -47,6 +47,7 @@ Roadmap фиксирует порядок доведения Forge до базо
 Deliverables:
 
 - Current MVP: таблицы `execution_attempts` и attempt-owned log/artifact metadata;
+- Current MVP: таблица `job_leases` для embedded claim, terminal close, cancel close и expiry reconciliation;
 - Current MVP: retry pipeline/job создаёт новую attempt, старые логи и timestamps остаются доступными;
 - Current MVP: API, UI и CLI показывают attempts и логи выбранной attempt;
 - Current MVP: bounded `/logs/page` для current/latest и concrete attempt с `limit/after/q`; UI читает логи страницами и поддерживает поиск;

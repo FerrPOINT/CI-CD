@@ -2,11 +2,11 @@
 
 ## Status
 
-Accepted (target architecture; implementation pending)
+Accepted (target architecture; external runner implementation pending; embedded lease ledger partial)
 
 ## Context
 
-Текущий embedded runner выполняется в процессе backend. Такой процесс совмещает public API, PostgreSQL credentials и запуск недоверенного user code; Docker execution требует daemon privilege. Реестр `runners` пока не участвует в dispatch/lease.
+Текущий embedded runner выполняется в процессе backend. Такой процесс совмещает public API, PostgreSQL credentials и запуск недоверенного user code; Docker execution требует daemon privilege. Embedded execution уже пишет `job_leases` как локальный owner/expiry ledger, но реестр `runners` пока не участвует во внешнем dispatch/lease protocol.
 
 ## Decision
 
@@ -15,7 +15,7 @@ Control-plane API никогда не исполняет пользовател�
 ## Consequences
 
 - `runner` registry превращается в protocol participant, а не UI inventory.
-- Требуются очередь, lease expiry, reconciliation, cancellation signal и sandbox policy.
+- Требуются очередь, внешний lease token/ack/renew/fencing, cancellation signal и sandbox policy; current embedded `job_leases` закрывает только локальный owner/expiry/reconciliation MVP.
 - Локальный embedded executor остаётся development adapter до готовности отдельного runner service; production docs не должны рекламировать его как безопасный runner pool.
 
 ## Related

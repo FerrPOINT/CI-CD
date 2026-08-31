@@ -8,6 +8,7 @@
 
 ```
 projects (1) ──── (N) pipelines (1) ──── (N) stages (1) ──── (N) jobs (1) ──── (N) execution_attempts (1) ──── (N) job_logs
+                                                                                                   └──── (N) job_leases
    │                    │                    │                    │
    │ UUID PK            │ UUID PK            │ UUID PK            │ UUID PK
    │ name UNIQUE        │ project_id FK      │ pipeline_id FK     │ stage_id FK
@@ -316,7 +317,7 @@ Referenced by:
 
 **FK:** `stage_id` → `stages(id)` ON DELETE CASCADE.
 
-**Referenced by:** `execution_attempts.job_id` и совместимый `job_logs.job_id` → `jobs(id)` ON DELETE CASCADE.
+**Referenced by:** `execution_attempts.job_id`, `job_leases.job_id` и совместимый `job_logs.job_id` → `jobs(id)` ON DELETE CASCADE.
 
 ---
 
@@ -360,6 +361,36 @@ Foreign-key constraints:
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | Время создания attempt |
 | `started_at` | TIMESTAMPTZ | NULL | — | Время перехода attempt в `running` |
 | `finished_at` | TIMESTAMPTZ | NULL | — | Время terminal result |
+
+**Referenced by:** `job_logs.attempt_id`, `artifacts.attempt_id`, `job_leases.attempt_id`.
+
+## 5.1 job_leases
+
+Durable ledger владения execution attempt. Текущий MVP использует таблицу для embedded runner: claim одним SQL statement переводит `jobs` и `execution_attempts` в `running`, создаёт active lease и фиксирует generation/expiry. Terminal result, cancel и reconciler закрывают lease. Внешний runner protocol с registration token, ack/renew endpoint-ами, lease token и full fencing остаётся target.
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | UUID | NOT NULL | — | PK lease |
+| `job_id` | UUID | NOT NULL | — | FK → `jobs.id`, CASCADE |
+| `attempt_id` | UUID | NOT NULL | — | FK → `execution_attempts.id`, CASCADE |
+| `runner_id` | UUID | NULL | — | FK → `runners.id`, SET NULL; current embedded lease оставляет NULL |
+| `runner_name` | TEXT | NOT NULL | — | `embedded` для текущего runner-а |
+| `lease_status` | TEXT | NOT NULL | `active` | `active` / `completed` / `expired` / `canceled` |
+| `generation` | BIGINT | NOT NULL | — | Monotonic fencing generation внутри job |
+| `lease_expires_at` | TIMESTAMPTZ | NOT NULL | — | Deadline после `timeout_seconds + 60s`, используется reconciler |
+| `acquired_at` | TIMESTAMPTZ | NOT NULL | `now()` | Время выдачи lease |
+| `last_renewed_at` | TIMESTAMPTZ | NOT NULL | `now()` | Current embedded runner не renew-ит, поле оставлено для protocol evolution |
+| `completed_at` | TIMESTAMPTZ | NULL | — | Время закрытия lease |
+| `terminal_status` | TEXT | NULL | — | Итог attempt: `success` / `failed` / `canceled` |
+| `error_tail` | TEXT | NULL | — | Краткая причина failed/expired/canceled |
+
+**CHECK constraints:** active lease не имеет `completed_at`/`terminal_status`; terminal lease обязан иметь `completed_at`.
+
+**Индексы:**
+- `idx_job_leases_active_job` — UNIQUE active lease на job.
+- `idx_job_leases_attempt` — lookup leases по attempt.
+- `idx_job_leases_active_expiry` — due scan reconciler-а.
+- `idx_job_leases_runner_active` — future lookup активных leases runner-а.
 
 ## 6. job_logs
 
@@ -731,6 +762,10 @@ idx_stages_pipeline_id       ON stages(pipeline_id)
 idx_jobs_stage_id            ON jobs(stage_id)
 idx_execution_attempts_job   ON execution_attempts(job_id, attempt_no DESC)
 idx_execution_attempts_active_job ON execution_attempts(job_id) WHERE status IN ('queued','running')
+idx_job_leases_active_job    ON job_leases(job_id) WHERE lease_status = 'active'
+idx_job_leases_attempt       ON job_leases(attempt_id)
+idx_job_leases_active_expiry ON job_leases(lease_expires_at) WHERE lease_status = 'active'
+idx_job_leases_runner_active ON job_leases(runner_id, lease_status) WHERE runner_id IS NOT NULL
 idx_job_logs_attempt_sequence ON job_logs(attempt_id, sequence)
 idx_job_logs_job_id          ON job_logs(job_id)
 idx_artifacts_attempt        ON artifacts(attempt_id)
@@ -752,7 +787,7 @@ idx_outbox_delivery_attempts_message ON outbox_delivery_attempts(message_id, att
 
 | Фаза | Таблицы | Назначение |
 |---|---|---|
-| Runner protocol | `job_leases` | External dispatch, fencing, retries |
+| External runner protocol | `job_queue`, `runner_credentials`, protocol tokens | `job_leases` уже существует как embedded lease ledger; external dispatch добавляет queue, runner identity, ack/renew/fencing token enforcement |
 | Production outbox | `outbox_deliveries` / lease state | Full dispatcher snapshots, lease/fencing, crash recovery, response preview allowlist и operator dead-letter policy поверх current bounded history |
 | External notifications | delivery-specific tables | Email/Slack sender state, templates, preferences |
 

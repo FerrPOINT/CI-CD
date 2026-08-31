@@ -2685,6 +2685,19 @@ async fn change_job_status(
         .map_err(|error| ApiError::bad_request(error.to_string()))?;
     transition_open_attempt(pool, job_id, input.status.as_str(), "manual_status").await?;
     let updated = sqlx::query_as::<_, Job>("UPDATE jobs SET status = $2, started_at = CASE WHEN $2 = 'running' THEN now() ELSE started_at END, finished_at = CASE WHEN $2 IN ('success','failed','canceled') THEN now() ELSE finished_at END WHERE id = $1 RETURNING id, stage_id, name, image, command, position, status, started_at, finished_at").bind(job_id).bind(input.status.as_str()).fetch_one(pool).await.map_err(ApiError::internal)?;
+    if matches!(
+        input.status,
+        JobStatus::Success | JobStatus::Failed | JobStatus::Canceled
+    ) {
+        crate::runner::complete_active_lease_for_job(
+            pool,
+            job_id,
+            input.status.as_str(),
+            Some("manual status transition"),
+        )
+        .await
+        .map_err(ApiError::internal)?;
+    }
     refresh_statuses(pool, updated.stage_id).await?;
     Ok(Json(updated))
 }
@@ -2787,6 +2800,9 @@ async fn cancel_pipeline(
     .execute(pool)
     .await
     .map_err(ApiError::internal)?;
+    crate::runner::cancel_active_leases_for_pipeline(pool, pipeline_id, "pipeline canceled")
+        .await
+        .map_err(ApiError::internal)?;
     sqlx::query(
         "UPDATE stages SET status = 'canceled' \
          WHERE status IN ('queued','running') AND pipeline_id = $1",

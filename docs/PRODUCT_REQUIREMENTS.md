@@ -74,7 +74,7 @@ Forge **не является** и не должен развиваться ка
 | REQ-EXEC-001 | Выполнение задач | P0 | **Current verified** | Embedded runner выполняет задачи в Docker либо shell-режиме, отражает жизненный цикл job и позволяет отмену/повтор в доступных границах. Этот режим предназначен для доверенного локального контура. |
 | REQ-EXEC-002 | Изолированные внешние runner-ы | P1 | **Target approved** | Control plane выдаёт работу независимым runner-ам с аутентификацией, lease, reconciliation, лимитами конкурентности и изоляцией исполнения. API-процесс не становится исполнителем пользовательского кода. |
 | REQ-EXEC-003 | Статусы выполнения | P0 | **Current verified** | Пользователь видит согласованные статусы pipeline, стадий и задач; переходы валидируются, итог агрегируется вверх, а active/latest `execution_attempt` синхронизируется с текущим status job. |
-| REQ-EXEC-004 | Execution attempts и retry history | P0 | **Current verified** | Каждый запуск или повтор job создаёт отдельную неизменяемую попытку с собственными timestamps, terminal result, логами и metadata артефактов; retry не удаляет доказательства предыдущей попытки. Внешние leases/fencing остаются target runner boundary. |
+| REQ-EXEC-004 | Execution attempts, retry history и embedded leases | P0 | **Current verified MVP** | Каждый запуск или повтор job создаёт отдельную неизменяемую попытку с собственными timestamps, terminal result, логами и metadata артефактов; retry не удаляет доказательства предыдущей попытки. Embedded runner фиксирует owner/expiry/outcome в `job_leases`; внешний runner protocol и full fencing остаются target boundary. |
 | REQ-OBS-001 | Логи | P0 | **Current verified** | Логи job append-only, упорядочены внутри `execution_attempt` и доступны для диагностики. Текущий просмотр использует polling и совместимый latest/open shortcut. |
 | REQ-OBS-002 | Диагностические логи | P1 | **Current verified MVP** | Длинные логи доступны через bounded page/search (`limit`/`after`/`q`) и SSE stream; attempts хранят exit code, timestamps и error tail. Command span и stream classification остаются target. |
 | REQ-ART-001 | Артефакты | P0 | **Current verified** | Пользователь может сохранить и получить артефакт job из локального хранилища в рамках текущего лимита размера; новые uploads получают metadata текущей/latest attempt. |
@@ -108,10 +108,10 @@ Forge **не является** и не должен развиваться ка
 ### Надёжность и целостность
 
 - **NFR-REL-01** Pipeline plan, execution attempts, логи, metadata артефактов, deployment history и audit entries являются доказательствами и не переписываются задним числом; исправление создаёт новую запись. Current MVP закрывает retry history для attempts/logs/artifact metadata и checksum для новых artifacts, а immutable pipeline plan snapshot и full storage lifecycle остаются target.
-- **NFR-REL-02** Асинхронные эффекты допускают повтор доставки, но наблюдаемый итог остаётся идемпотентным. Current MVP покрывает pipeline trigger replay/conflict, local notification delivery и bounded outbox delivery history/requeue; full lease recovery/crash retry для всех async effects остаётся target.
+- **NFR-REL-02** Асинхронные эффекты допускают повтор доставки, но наблюдаемый итог остаётся идемпотентным. Current MVP покрывает pipeline trigger replay/conflict, embedded runner lease expiry reconciliation, local notification delivery и bounded outbox delivery history/requeue; full external lease recovery/crash retry для всех async effects остаётся target.
 - **NFR-REL-03** Статус pipeline должен быть согласован с состоянием дочерних сущностей и не может обходить доменные правила переходов.
 - **NFR-REL-04** Хранилища PostgreSQL, Git и артефактов имеют документированную и проверяемую процедуру backup/restore; запуск после сбоя восстанавливает согласованное рабочее состояние.
-- **NFR-REL-05** Внешнее выполнение имеет явные timeout, cancel, лимиты ресурсов и изоляцию; отказ runner-а не должен оставлять job бесконечно выполняющейся.
+- **NFR-REL-05** Выполнение имеет явные timeout/cancel/recovery границы: current embedded runner хранит `job_leases` и fail-ит expired/missing owner; external runner target дополнительно требует лимиты ресурсов, изоляцию, heartbeat/fencing и отсутствие бесконечного `running`.
 
 ### Производительность и масштабирование
 

@@ -539,6 +539,7 @@ curl -sS http://127.0.0.1:22801/api/v1/pipelines/$PIPELINE_ID
 - При `status = "running"`: `started_at = now()` (если ещё не проставлено для stage/pipeline).
 - При терминальном статусе (`success` / `failed` / `canceled`): `finished_at = now()`.
 - Одновременно обновляется open `execution_attempts` запись job; terminal attempt не переиспользуется.
+- Если у job есть active embedded `job_leases`, terminal transition закрывает lease с тем же `terminal_status`.
 - Каскадная агрегация: `refresh_statuses()` обновляет `stages.status` и `pipelines.status` + timestamps.
 
 **Errors:**
@@ -1124,7 +1125,7 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 | POST | `/runners/{runner_id}/heartbeat` | Обновляет `last_seen_at`/status |
 | DELETE | `/runners/{runner_id}` | Удаляет registry-запись |
 
-> Сейчас registry/heartbeat — inventory для embedded runner. Registration token, lease и dispatch на внешний runner пока не реализованы: `docs/RUNNER_ARCHITECTURE.md`.
+> Сейчас registry/heartbeat — inventory для embedded runner. Durable `job_leases` уже используются embedded executor-ом для claim/expiry/terminal outcome, но registration token, poll/ack/renew endpoints, lease token и dispatch на внешний runner пока не реализованы: `docs/RUNNER_ARCHITECTURE.md`.
 
 ### Secrets и artifacts
 

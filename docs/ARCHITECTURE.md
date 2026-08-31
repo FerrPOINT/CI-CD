@@ -140,7 +140,7 @@ Bare-репозитории в `CICD_GIT_ROOT`, Smart HTTP (`/git/<name>.git`), 
 
 ### 6.3 Embedded runner
 
-Supervisor-полл queued-джобов, атомарный claim (`queued → running`), создание/обновление active `execution_attempt`, клонирование репо в workspace, выполнение в Docker (имя контейнера `forge-job-<id>`, volume workspace) или host shell, построчный стриминг stdout в attempt-owned `job_logs`, bounded page/search API для длинных логов, kill-on-cancel через PID-map, cleanup workspace (кроме `CICD_RUNNER_KEEP_WORKSPACE=1`).
+Supervisor-полл queued-джобов, атомарный lease-aware claim (`queued → running`) с active `execution_attempt` и `job_leases`, клонирование репо в workspace, выполнение в Docker (имя контейнера `forge-job-<id>`, volume workspace) или host shell, построчный стриминг stdout в attempt-owned `job_logs`, bounded page/search API для длинных логов, kill-on-cancel через PID-map, закрытие lease на terminal result/cancel и reconciliation expired/missing lease, cleanup workspace (кроме `CICD_RUNNER_KEEP_WORKSPACE=1`).
 
 ### 6.4 Платформенные ресурсы (MVP)
 
@@ -172,7 +172,7 @@ Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-2
 | app/infra/api/server пакеты | ⬜ Phase C (strangler по вертикалям) |
 | OpenAPI + генерация клиента | ✅ current: `openapi/openapi.yaml` + `frontend/src/api/schema.d.ts` |
 | Auth/RBAC/token middleware | ◩ current conditional: JWT/scoped PAT/global roles + project memberships + session-bound access invalidation + refresh rotate/logout/revoke при `CICD_AUTH_SECRET`; tenant scope, service-account/scoped Git credentials и production cookie/CSRF/session-family policy target |
-| Distributed runner protocol | ⬜ Phase D |
+| Distributed runner protocol | ⬜ Phase D; current embedded `job_leases` ledger/reconciliation уже есть, внешний runner process и protocol endpoints ещё target |
 
 ## 10. Dev workflow
 

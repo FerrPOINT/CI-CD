@@ -29,12 +29,12 @@
 | Архитектура backend | Переходный monolith: `api.rs`, `platform.rs`, `runner.rs`, `store.rs`; `domain` и `cli` уже выделяются в workspace | Полный Cargo workspace `domain → app → infra → api`, отдельный `server` composition root и отдельный runner process (`forge-runner`) |
 | Pipeline config | `.forge-ci.yml` уже читается из локального bare-репозитория; поддерживаются линейные `stages/jobs`, при отсутствии файла используется template | Версионированный parser, validation и immutable plan snapshot; зависимости задают DAG, а не порядок стадий |
 | Планирование | Linear stages; jobs одной стадии могут быть выбраны поллером, но model не хранит явные зависимости | Job-level DAG с `needs`, topological validation, матрицами, rules и неизменяемым plan |
-| Выполнение | Embedded supervisor в `cicd-server`; Docker или host shell; PID map в памяти | Внешние runner-ы, pull protocol, leases, attempts, reconciliation; host shell отсутствует в production |
+| Выполнение | Embedded supervisor в `cicd-server`; Docker или host shell; PID map в памяти; `job_leases` фиксирует embedded owner/expiry и terminal outcome | Внешние runner-ы, pull protocol, leases, attempts, reconciliation; host shell отсутствует в production |
 | Runner registry | `POST /runners`, теги, heartbeat, status; registry не участвует в выборе и запуске job | Registration tokens, аутентификация, capability inventory, runner pools/tags, heartbeat, drain/disable, selection dispatcher |
-| Очередь | Polling queued jobs; атомарный `queued → running`, но без runner lease и durable delivery | PostgreSQL queue с `SKIP LOCKED`, scheduling eligibility, lease/ack/renew/expiry, outbox/event wakeup |
+| Очередь | Polling queued jobs; атомарный `queued → running` теперь создаёт active `job_leases`; нет durable `job_queue`, внешнего dispatch delivery, ack/renew API и full fencing | PostgreSQL queue с `SKIP LOCKED`, scheduling eligibility, lease/ack/renew/expiry, outbox/event wakeup |
 | Retry | API повторно ставит job/pipeline в `queued` и уже создаёт новую `execution_attempt`; внешней retry policy/lease fencing ещё нет | Policy-driven immutable execution attempt; история предыдущих попыток, логов и artifact manifest сохраняется |
-| Cancel | API меняет статусы и пытается остановить Docker/PID локального процесса | Cancel intent в БД, delivery к owner runner, grace period, forced backend termination, reconciliation |
-| Таймауты | Частично зависят от процесса; нет единой модели | Queue, startup, execution, idle-log, cancellation и lease deadlines - конфигурируемые и фиксируемые в attempt |
+| Cancel | API меняет статусы, закрывает active embedded lease и пытается остановить Docker/PID локального процесса | Cancel intent в БД, delivery к owner runner, grace period, forced backend termination, reconciliation |
+| Таймауты | Job timeout убивает локальный процесс; embedded lease получает expiry `timeout_seconds + 60s`, reconciler fail-ит expired/missing lease | Queue, startup, execution, idle-log, cancellation и lease deadlines - конфигурируемые и фиксируемые в attempt |
 | Secrets | AES-256-GCM at rest; API не возвращает значения; embedded runner умеет env injection и stdout/stderr masking | Ограниченная выдача secret bundle только lease owner; env/file injection; redaction до записи логов |
 | Logs | Строки `job_logs`, sequence по attempt, bounded page/search API, REST compatibility polling и SSE stream по current/latest attempt | Chunk protocol, idempotency, stream classification, monotonic sequence per attempt и durable append |
 | Artifacts | Local FS, metadata по `job_id` и active/latest `attempt_id`, лимит 50 MiB | Artifact manifest на attempt, checksum, staged upload, S3-compatible storage, retention, quarantine/cleanup |
@@ -761,7 +761,7 @@ Reconciler должен быть идемпотентен, работать lock
 | `jobs` | Mutable runtime projection logical job |
 | `job_queue` | Durable eligible work |
 | `execution_attempts` | Неизменяемая история каждого запуска job |
-| `job_leases` | Current/historical lease, fencing, ack/expiry |
+| `job_leases` | Current embedded lease ledger: active/completed/expired/canceled, generation, expiry; target расширяет до ack/renew, lease token и full fencing |
 | `runners` | Identity, scope, status, drain/revocation |
 | `runner_credentials` | Credential hashes, expiry, rotation/revocation |
 | `runner_capability_snapshots` | Inventory revision/history |
@@ -995,8 +995,9 @@ Kubernetes, при наличии test cluster:
 
 ## Фаза 2 - durable queue, attempts и leases
 
-- Ввести `job_queue`, `job_leases` и расширить текущие `execution_attempts` до lease-aware модели.
-- Реализовать lease offer/ack/renew/expiry и fencing token.
+- Current partial: `job_leases` уже фиксирует embedded runner claim, generation, expiry и terminal close.
+- Ввести `job_queue` и расширить lease-модель до внешнего dispatch.
+- Реализовать lease offer/ack/renew/expiry, lease token и fencing token на runner endpoints.
 - Сохранить текущую retry-модель с новой attempt и добавить policy/fencing поверх неё.
 - Добавить reconciliation/outbox workers.
 - Сохранить UI projection старых status полей как compatibility read model.

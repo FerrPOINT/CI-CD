@@ -16,6 +16,14 @@ use crate::api::ApiError;
 /// Maps job_id -> child process id so that cancel can kill it.
 pub type RunningJobs = Arc<Mutex<HashMap<Uuid, u32>>>;
 
+#[derive(Debug)]
+struct EmbeddedJobLease {
+    id: Uuid,
+    attempt_id: Uuid,
+    #[allow(dead_code)]
+    generation: i64,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RunnerMode {
     /// Execute jobs inside Docker containers using the declared image.
@@ -33,7 +41,7 @@ fn runner_mode() -> RunnerMode {
 
 /// Executes a single job: marks running, streams stdout/stderr into job_logs,
 /// sets success/failed from the exit code and refreshes stage/pipeline status.
-pub(crate) async fn run_job(pool: PgPool, job_id: Uuid, running: RunningJobs) {
+pub async fn run_job(pool: PgPool, job_id: Uuid, running: RunningJobs) {
     if let Err(error) = run_job_inner(pool.clone(), job_id, running.clone()).await {
         tracing::error!(%job_id, error = ?error, "runner job failed");
         running.lock().await.remove(&job_id);
@@ -84,8 +92,319 @@ async fn finish_job_after_runner_error(pool: &PgPool, job_id: Uuid, error: &ApiE
         }
     }
 
+    if let Err(db_error) =
+        complete_active_lease_for_job(pool, job_id, "failed", Some(&message)).await
+    {
+        tracing::warn!(%job_id, error = ?db_error, "could not close lease after runner error");
+    }
+
     if let Err(refresh_error) = refresh_stage(pool.clone(), job_id).await {
         tracing::warn!(%job_id, error = ?refresh_error, "could not refresh statuses after runner error");
+    }
+}
+
+async fn claim_embedded_job_lease(
+    pool: &PgPool,
+    job_id: Uuid,
+) -> Result<Option<EmbeddedJobLease>, ApiError> {
+    let row = sqlx::query_as::<_, (Uuid, Uuid, i64)>(
+        r#"
+        WITH job_row AS (
+            SELECT
+                j.id,
+                LEAST(GREATEST(COALESCE(j.timeout_seconds, 3600), 5), 86400)::bigint
+                    AS lease_ttl_seconds
+            FROM jobs j
+            WHERE j.id = $1
+              AND j.status = 'queued'
+              AND NOT j.manual
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM job_leases l
+                  WHERE l.job_id = j.id AND l.lease_status = 'active'
+              )
+            FOR UPDATE
+        ),
+        current_attempt AS (
+            SELECT a.id
+            FROM execution_attempts a
+            WHERE a.job_id = $1 AND a.status = 'queued'
+            ORDER BY a.attempt_no DESC
+            LIMIT 1
+            FOR UPDATE
+        ),
+        claimed_job AS (
+            UPDATE jobs
+            SET status = 'running', started_at = now()
+            WHERE id IN (SELECT id FROM job_row)
+              AND EXISTS (SELECT 1 FROM current_attempt)
+            RETURNING id
+        ),
+        claimed_attempt AS (
+            UPDATE execution_attempts
+            SET status = 'running',
+                trigger = 'runner',
+                started_at = COALESCE(started_at, now())
+            WHERE id IN (SELECT id FROM current_attempt)
+              AND EXISTS (SELECT 1 FROM claimed_job)
+            RETURNING id
+        ),
+        next_generation AS (
+            SELECT COALESCE(MAX(generation), 0) + 1 AS generation
+            FROM job_leases
+            WHERE job_id = $1
+        )
+        INSERT INTO job_leases (
+            id,
+            job_id,
+            attempt_id,
+            runner_name,
+            lease_status,
+            generation,
+            lease_expires_at
+        )
+        SELECT
+            $2,
+            $1,
+            claimed_attempt.id,
+            'embedded',
+            'active',
+            next_generation.generation,
+            now() + ((job_row.lease_ttl_seconds + 60) * interval '1 second')
+        FROM claimed_attempt
+        CROSS JOIN next_generation
+        CROSS JOIN job_row
+        RETURNING id, attempt_id, generation
+        "#,
+    )
+    .bind(job_id)
+    .bind(Uuid::new_v4())
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok(row.map(|(id, attempt_id, generation)| EmbeddedJobLease {
+        id,
+        attempt_id,
+        generation,
+    }))
+}
+
+async fn active_embedded_job_lease(
+    pool: &PgPool,
+    job_id: Uuid,
+) -> Result<Option<EmbeddedJobLease>, ApiError> {
+    let row = sqlx::query_as::<_, (Uuid, Uuid, i64)>(
+        "SELECT id, attempt_id, generation \
+         FROM job_leases \
+         WHERE job_id = $1 AND lease_status = 'active' \
+         ORDER BY generation DESC \
+         LIMIT 1",
+    )
+    .bind(job_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(row.map(|(id, attempt_id, generation)| EmbeddedJobLease {
+        id,
+        attempt_id,
+        generation,
+    }))
+}
+
+async fn complete_embedded_job_lease(
+    pool: &PgPool,
+    lease_id: Uuid,
+    terminal_status: &str,
+    error_tail: Option<&str>,
+) -> Result<(), ApiError> {
+    complete_lease_by_id(pool, lease_id, terminal_status, error_tail)
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(())
+}
+
+async fn complete_lease_by_id(
+    pool: &PgPool,
+    lease_id: Uuid,
+    terminal_status: &str,
+    error_tail: Option<&str>,
+) -> Result<u64, sqlx::Error> {
+    let lease_status = lease_status_for_terminal(terminal_status);
+    let bounded_tail = error_tail.map(|value| truncate_error_tail(value.to_owned()));
+    let result = sqlx::query(
+        "UPDATE job_leases \
+         SET lease_status = $2, \
+             completed_at = COALESCE(completed_at, now()), \
+             terminal_status = $3, \
+             error_tail = COALESCE(error_tail, $4) \
+         WHERE id = $1 AND lease_status = 'active'",
+    )
+    .bind(lease_id)
+    .bind(lease_status)
+    .bind(terminal_status)
+    .bind(bounded_tail.as_deref())
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn complete_active_lease_for_job(
+    pool: &PgPool,
+    job_id: Uuid,
+    terminal_status: &str,
+    error_tail: Option<&str>,
+) -> Result<u64, sqlx::Error> {
+    let lease_status = lease_status_for_terminal(terminal_status);
+    let bounded_tail = error_tail.map(|value| truncate_error_tail(value.to_owned()));
+    let result = sqlx::query(
+        "UPDATE job_leases \
+         SET lease_status = $2, \
+             completed_at = COALESCE(completed_at, now()), \
+             terminal_status = $3, \
+             error_tail = COALESCE(error_tail, $4) \
+         WHERE job_id = $1 AND lease_status = 'active'",
+    )
+    .bind(job_id)
+    .bind(lease_status)
+    .bind(terminal_status)
+    .bind(bounded_tail.as_deref())
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn cancel_active_leases_for_pipeline(
+    pool: &PgPool,
+    pipeline_id: Uuid,
+    reason: &str,
+) -> Result<u64, sqlx::Error> {
+    let bounded_reason = truncate_error_tail(reason.to_owned());
+    let result = sqlx::query(
+        "UPDATE job_leases \
+         SET lease_status = 'canceled', \
+             completed_at = COALESCE(completed_at, now()), \
+             terminal_status = 'canceled', \
+             error_tail = COALESCE(error_tail, $2) \
+         WHERE lease_status = 'active' \
+           AND job_id IN ( \
+             SELECT j.id \
+             FROM jobs j \
+             JOIN stages s ON s.id = j.stage_id \
+             WHERE s.pipeline_id = $1 \
+           )",
+    )
+    .bind(pipeline_id)
+    .bind(bounded_reason)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+async fn cancel_active_leases_for_canceled_pipelines(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE job_leases \
+         SET lease_status = 'canceled', \
+             completed_at = COALESCE(completed_at, now()), \
+             terminal_status = 'canceled', \
+             error_tail = COALESCE(error_tail, 'pipeline canceled') \
+         WHERE lease_status = 'active' \
+           AND job_id IN ( \
+             SELECT j.id \
+             FROM jobs j \
+             JOIN stages s ON s.id = j.stage_id \
+             JOIN pipelines p ON p.id = s.pipeline_id \
+             WHERE p.status = 'canceled' \
+           )",
+    )
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn reconcile_expired_leases(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let expired_jobs = sqlx::query_as::<_, (Uuid, Uuid)>(
+        "WITH expired AS ( \
+             UPDATE job_leases \
+             SET lease_status = 'expired', \
+                 completed_at = COALESCE(completed_at, now()), \
+                 terminal_status = 'failed', \
+                 error_tail = COALESCE(error_tail, 'runner lease expired') \
+             WHERE lease_status = 'active' AND lease_expires_at <= now() \
+             RETURNING job_id, attempt_id \
+         ), updated_attempts AS ( \
+             UPDATE execution_attempts a \
+             SET status = 'failed', \
+                 finished_at = COALESCE(a.finished_at, now()), \
+                 error_tail = COALESCE(a.error_tail, 'runner lease expired') \
+             FROM expired e \
+             WHERE a.id = e.attempt_id AND a.status IN ('queued','running') \
+             RETURNING a.job_id \
+         ), updated_jobs AS ( \
+             UPDATE jobs j \
+             SET status = 'failed', finished_at = COALESCE(j.finished_at, now()) \
+             FROM expired e \
+             WHERE j.id = e.job_id AND j.status IN ('queued','running') \
+             RETURNING j.id, j.stage_id \
+         ) \
+         SELECT id, stage_id FROM updated_jobs",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    for (job_id, stage_id) in &expired_jobs {
+        if let Err(error) = crate::api::refresh_statuses(pool, *stage_id).await {
+            tracing::warn!(%job_id, %stage_id, error = ?error, "could not refresh statuses after lease expiry");
+        }
+    }
+
+    Ok(expired_jobs.len() as u64)
+}
+
+async fn reconcile_unleased_running_jobs(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let stale_jobs = sqlx::query_as::<_, (Uuid, Uuid)>(
+        "WITH stale AS ( \
+             SELECT j.id, j.stage_id \
+             FROM jobs j \
+             WHERE j.status = 'running' \
+               AND (j.started_at IS NULL OR j.started_at <= now() - interval '5 minutes') \
+               AND NOT EXISTS ( \
+                 SELECT 1 FROM job_leases l \
+                 WHERE l.job_id = j.id AND l.lease_status = 'active' \
+               ) \
+         ), updated_attempts AS ( \
+             UPDATE execution_attempts a \
+             SET status = 'failed', \
+                 finished_at = COALESCE(a.finished_at, now()), \
+                 error_tail = COALESCE(a.error_tail, 'runner lease missing') \
+             FROM stale s \
+             WHERE a.job_id = s.id AND a.status IN ('queued','running') \
+             RETURNING a.job_id \
+         ), updated_jobs AS ( \
+             UPDATE jobs j \
+             SET status = 'failed', finished_at = COALESCE(j.finished_at, now()) \
+             FROM stale s \
+             WHERE j.id = s.id AND j.status = 'running' \
+             RETURNING j.id, j.stage_id \
+         ) \
+         SELECT id, stage_id FROM updated_jobs",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    for (job_id, stage_id) in &stale_jobs {
+        if let Err(error) = crate::api::refresh_statuses(pool, *stage_id).await {
+            tracing::warn!(%job_id, %stage_id, error = ?error, "could not refresh statuses after missing lease reconciliation");
+        }
+    }
+
+    Ok(stale_jobs.len() as u64)
+}
+
+fn lease_status_for_terminal(terminal_status: &str) -> &'static str {
+    match terminal_status {
+        "canceled" => "canceled",
+        _ => "completed",
     }
 }
 
@@ -109,29 +428,21 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
         return Ok(()); // terminal already
     }
 
-    // Resolve workspace before claiming so clone failures don't leave the job
-    // stuck in running.
-    let workspace = prepare_workspace(&pool, &job).await?;
-
-    if job.status == "queued" {
-        // Atomic claim: queued -> running prevents double dispatch.
-        let claimed = sqlx::query_scalar::<_, bool>(
-            "UPDATE jobs SET status = 'running', started_at = now() \
-             WHERE id = $1 AND status = 'queued' RETURNING TRUE",
-        )
-        .bind(job_id)
-        .fetch_optional(&pool)
-        .await
-        .map_err(ApiError::internal)?
-        .unwrap_or(false);
-        if !claimed {
-            // Someone else (cancel, retry, supervisor) moved it; leave workspace cleanup.
-            let _ = tokio::fs::remove_dir_all(&workspace).await;
+    let lease = if job.status == "queued" {
+        let Some(lease) = claim_embedded_job_lease(&pool, job_id).await? else {
             return Ok(());
-        }
-    }
-    let attempt_id =
-        crate::api::transition_open_attempt(&pool, job_id, "running", "runner").await?;
+        };
+        lease
+    } else {
+        let Some(lease) = active_embedded_job_lease(&pool, job_id).await? else {
+            tracing::warn!(%job_id, "running job has no active lease; skipping embedded execution");
+            return Ok(());
+        };
+        lease
+    };
+    let attempt_id = lease.attempt_id;
+
+    let workspace = prepare_workspace(&pool, &job).await?;
 
     // REQ-SEC-002: inject project secrets as env vars; mask them in logs.
     let secrets = crate::platform::project_secret_pairs(&pool, job.project_id)
@@ -295,11 +606,19 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
                     "runner: job canceled before timeout result",
                 )
                 .await?;
+                complete_embedded_job_lease(
+                    &pool,
+                    lease.id,
+                    "canceled",
+                    Some("runner: job canceled before timeout result"),
+                )
+                .await?;
                 refresh_stage(pool.clone(), job.id).await?;
                 let _ = tokio::fs::remove_dir_all(&workspace).await;
                 return Ok(());
             }
             mark_attempt_failed(&pool, attempt_id, &message).await?;
+            complete_embedded_job_lease(&pool, lease.id, "failed", Some(&message)).await?;
             refresh_stage(pool.clone(), job.id).await?;
             let _ = tokio::fs::remove_dir_all(&workspace).await;
             return Ok(());
@@ -346,6 +665,13 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
             "runner: job canceled before process result",
         )
         .await?;
+        complete_embedded_job_lease(
+            &pool,
+            lease.id,
+            "canceled",
+            Some("runner: job canceled before process result"),
+        )
+        .await?;
         refresh_stage(pool, job.id).await?;
         return Ok(());
     }
@@ -357,10 +683,11 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
     .bind(attempt_id)
     .bind(final_status)
     .bind(exit_code)
-    .bind(error_tail)
+    .bind(error_tail.as_deref())
     .execute(&pool)
     .await
     .map_err(ApiError::internal)?;
+    complete_embedded_job_lease(&pool, lease.id, final_status, error_tail.as_deref()).await?;
     refresh_stage(pool, job.id).await?;
     Ok(())
 }
@@ -499,7 +826,10 @@ async fn prepare_workspace(pool: &PgPool, job: &JobRow) -> Result<std::path::Pat
     // repository_url points back at the same backend serving this runner.
     let cloned = clone_from_local_bare(&repo_url, &git_ref, &workspace).await;
     if !cloned {
-        clone_via_http(&repo_url, &git_ref, &workspace, pool, job.id).await?;
+        if let Err(error) = clone_via_http(&repo_url, &git_ref, &workspace, pool, job.id).await {
+            let _ = tokio::fs::remove_dir_all(&workspace).await;
+            return Err(error);
+        }
     }
     Ok(workspace.join("workspace"))
 }
@@ -624,6 +954,27 @@ pub async fn supervisor_loop(pool: PgPool, running: RunningJobs) {
 /// Picks the first queued job of every non-terminal pipeline whose previous
 /// stages all finished successfully, and spawns it.
 async fn poll_and_dispatch(pool: &PgPool, running: RunningJobs) -> Result<(), sqlx::Error> {
+    let expired = reconcile_expired_leases(pool).await?;
+    if expired > 0 {
+        tracing::warn!(expired, "runner reconciled expired leases");
+    }
+
+    let unleased = reconcile_unleased_running_jobs(pool).await?;
+    if unleased > 0 {
+        tracing::warn!(
+            unleased,
+            "runner reconciled running jobs without active leases"
+        );
+    }
+
+    let canceled_leases = cancel_active_leases_for_canceled_pipelines(pool).await?;
+    if canceled_leases > 0 {
+        tracing::info!(
+            canceled_leases,
+            "runner closed active leases for canceled pipelines"
+        );
+    }
+
     // Cancel jobs of canceled pipelines (queued and running).
     sqlx::query(
         "UPDATE jobs SET status = 'canceled', finished_at = now() \
@@ -665,6 +1016,10 @@ async fn poll_and_dispatch(pool: &PgPool, running: RunningJobs) -> Result<(), sq
            AND NOT j.manual \
            AND p.status IN ('queued','running') \
            AND NOT EXISTS ( \
+             SELECT 1 FROM job_leases l \
+             WHERE l.job_id = j.id AND l.lease_status = 'active' \
+           ) \
+           AND NOT EXISTS ( \
              SELECT 1 FROM jobs x JOIN stages xs ON xs.id = x.stage_id \
              WHERE xs.pipeline_id = p.id AND xs.position < s.position \
                AND x.status NOT IN ('success') \
@@ -682,18 +1037,6 @@ async fn poll_and_dispatch(pool: &PgPool, running: RunningJobs) -> Result<(), sq
     .await?;
 
     for candidate in candidates {
-        // Atomic claim: queued -> running prevents double dispatch.
-        let claimed = sqlx::query_scalar::<_, bool>(
-            "UPDATE jobs SET status = 'running', started_at = now() \
-             WHERE id = $1 AND status = 'queued' RETURNING TRUE",
-        )
-        .bind(candidate.id)
-        .fetch_optional(pool)
-        .await?
-        .unwrap_or(false);
-        if !claimed {
-            continue;
-        }
         let pool2 = pool.clone();
         let running2 = running.clone();
         tokio::spawn(async move {

@@ -1525,6 +1525,7 @@ async fn cancel_pipeline_marks_open_attempts_canceled() {
     let queued_job_id = Uuid::new_v4();
     let running_attempt_id = Uuid::new_v4();
     let queued_attempt_id = Uuid::new_v4();
+    let running_lease_id = Uuid::new_v4();
     let project_name = format!("it-cancel-attempts-{}", project_id.simple());
 
     sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
@@ -1580,6 +1581,17 @@ async fn cancel_pipeline_marks_open_attempts_canceled() {
     .await
     .expect("insert running attempt");
     sqlx::query(
+        "INSERT INTO job_leases \
+         (id, job_id, attempt_id, runner_name, lease_status, generation, lease_expires_at) \
+         VALUES ($1, $2, $3, 'embedded', 'active', 1, now() + interval '10 minutes')",
+    )
+    .bind(running_lease_id)
+    .bind(running_job_id)
+    .bind(running_attempt_id)
+    .execute(&pool)
+    .await
+    .expect("insert active lease");
+    sqlx::query(
         "INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) \
          VALUES ($1, $2, 1, 'queued', 'initial')",
     )
@@ -1631,6 +1643,249 @@ async fn cancel_pipeline_marks_open_attempts_canceled() {
     .await
     .expect("count canceled jobs");
     assert_eq!(canceled_jobs, 2);
+
+    let (lease_status, terminal_status, completed_at): (
+        String,
+        Option<String>,
+        Option<chrono::DateTime<chrono::Utc>>,
+    ) = sqlx::query_as(
+        "SELECT lease_status, terminal_status, completed_at FROM job_leases WHERE id = $1",
+    )
+    .bind(running_lease_id)
+    .fetch_one(&pool)
+    .await
+    .expect("fetch canceled lease");
+    assert_eq!(lease_status, "canceled");
+    assert_eq!(terminal_status.as_deref(), Some("canceled"));
+    assert!(completed_at.is_some());
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup project");
+}
+
+#[tokio::test]
+async fn embedded_runner_closes_lease_when_prepare_fails() {
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let stage_id = Uuid::new_v4();
+    let job_id = Uuid::new_v4();
+    let attempt_id = Uuid::new_v4();
+    let project_name = format!("it-runner-lease-{}", project_id.simple());
+    let missing_repo = std::env::temp_dir().join(format!("forge-missing-{}.git", project_id));
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind(missing_repo.to_string_lossy().as_ref())
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status) VALUES ($1, $2, 'main', 'queued')",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert pipeline");
+    sqlx::query(
+        "INSERT INTO stages (id, pipeline_id, name, position, status) \
+         VALUES ($1, $2, 'build', 0, 'queued')",
+    )
+    .bind(stage_id)
+    .bind(pipeline_id)
+    .execute(&pool)
+    .await
+    .expect("insert stage");
+    sqlx::query(
+        "INSERT INTO jobs (id, stage_id, name, image, command, position, status, timeout_seconds) \
+         VALUES ($1, $2, 'compile', 'alpine:3.21', 'echo ok', 0, 'queued', 5)",
+    )
+    .bind(job_id)
+    .bind(stage_id)
+    .execute(&pool)
+    .await
+    .expect("insert job");
+    sqlx::query(
+        "INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) \
+         VALUES ($1, $2, 1, 'queued', 'initial')",
+    )
+    .bind(attempt_id)
+    .bind(job_id)
+    .execute(&pool)
+    .await
+    .expect("insert attempt");
+
+    cicd::runner::run_job(pool.clone(), job_id, cicd::runner::RunningJobs::default()).await;
+
+    let (job_status, job_finished_at): (String, Option<chrono::DateTime<chrono::Utc>>) =
+        sqlx::query_as("SELECT status, finished_at FROM jobs WHERE id = $1")
+            .bind(job_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch job");
+    assert_eq!(job_status, "failed");
+    assert!(job_finished_at.is_some());
+
+    let (attempt_status, attempt_finished_at, attempt_error): (
+        String,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT status, finished_at, error_tail FROM execution_attempts WHERE id = $1",
+    )
+    .bind(attempt_id)
+    .fetch_one(&pool)
+    .await
+    .expect("fetch attempt");
+    assert_eq!(attempt_status, "failed");
+    assert!(attempt_finished_at.is_some());
+    assert!(
+        attempt_error
+            .as_deref()
+            .is_some_and(|error| error.contains("runner: internal failure"))
+    );
+
+    let (lease_status, terminal_status, completed_at, lease_error, generation): (
+        String,
+        Option<String>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<String>,
+        i64,
+    ) = sqlx::query_as(
+        "SELECT lease_status, terminal_status, completed_at, error_tail, generation \
+         FROM job_leases WHERE job_id = $1 AND attempt_id = $2",
+    )
+    .bind(job_id)
+    .bind(attempt_id)
+    .fetch_one(&pool)
+    .await
+    .expect("fetch lease");
+    assert_eq!(lease_status, "completed");
+    assert_eq!(terminal_status.as_deref(), Some("failed"));
+    assert!(completed_at.is_some());
+    assert_eq!(generation, 1);
+    assert!(
+        lease_error
+            .as_deref()
+            .is_some_and(|error| error.contains("runner: internal failure"))
+    );
+
+    let active_leases: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM job_leases WHERE job_id = $1 AND lease_status = 'active'",
+    )
+    .bind(job_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count active leases");
+    assert_eq!(active_leases, 0);
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup project");
+}
+
+#[tokio::test]
+async fn expired_job_lease_is_reconciled_to_failed_attempt() {
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let stage_id = Uuid::new_v4();
+    let job_id = Uuid::new_v4();
+    let attempt_id = Uuid::new_v4();
+    let lease_id = Uuid::new_v4();
+    let project_name = format!("it-lease-expiry-{}", project_id.simple());
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/lease-expiry.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status, started_at) \
+         VALUES ($1, $2, 'main', 'running', now())",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert pipeline");
+    sqlx::query(
+        "INSERT INTO stages (id, pipeline_id, name, position, status) \
+         VALUES ($1, $2, 'build', 0, 'running')",
+    )
+    .bind(stage_id)
+    .bind(pipeline_id)
+    .execute(&pool)
+    .await
+    .expect("insert stage");
+    sqlx::query(
+        "INSERT INTO jobs (id, stage_id, name, image, command, position, status, started_at) \
+         VALUES ($1, $2, 'compile', 'alpine:3.21', 'sleep 30', 0, 'running', now())",
+    )
+    .bind(job_id)
+    .bind(stage_id)
+    .execute(&pool)
+    .await
+    .expect("insert job");
+    sqlx::query(
+        "INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger, started_at) \
+         VALUES ($1, $2, 1, 'running', 'runner', now())",
+    )
+    .bind(attempt_id)
+    .bind(job_id)
+    .execute(&pool)
+    .await
+    .expect("insert attempt");
+    sqlx::query(
+        "INSERT INTO job_leases \
+         (id, job_id, attempt_id, runner_name, lease_status, generation, lease_expires_at) \
+         VALUES ($1, $2, $3, 'embedded', 'active', 1, now() - interval '1 minute')",
+    )
+    .bind(lease_id)
+    .bind(job_id)
+    .bind(attempt_id)
+    .execute(&pool)
+    .await
+    .expect("insert expired lease");
+
+    let reconciled = cicd::runner::reconcile_expired_leases(&pool)
+        .await
+        .expect("reconcile expired leases");
+    assert_eq!(reconciled, 1);
+
+    let (job_status, attempt_status, lease_status, terminal_status, pipeline_status): (
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+    ) = sqlx::query_as(
+        "SELECT j.status, a.status, l.lease_status, l.terminal_status, p.status \
+         FROM jobs j \
+         JOIN execution_attempts a ON a.job_id = j.id \
+         JOIN job_leases l ON l.attempt_id = a.id \
+         JOIN stages s ON s.id = j.stage_id \
+         JOIN pipelines p ON p.id = s.pipeline_id \
+         WHERE j.id = $1",
+    )
+    .bind(job_id)
+    .fetch_one(&pool)
+    .await
+    .expect("fetch reconciled state");
+    assert_eq!(job_status, "failed");
+    assert_eq!(attempt_status, "failed");
+    assert_eq!(lease_status, "expired");
+    assert_eq!(terminal_status.as_deref(), Some("failed"));
+    assert_eq!(pipeline_status, "failed");
 
     sqlx::query("DELETE FROM projects WHERE id = $1")
         .bind(project_id)
