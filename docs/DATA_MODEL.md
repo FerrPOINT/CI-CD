@@ -499,10 +499,11 @@ Platform tables создаются и расширяются через `backend
 | `name` | TEXT | NOT NULL | — | Имя файла |
 | `storage_path` | TEXT | NOT NULL | — | Canonical path в локальной ФС внутри `CICD_ARTIFACTS_DIR`; download отвергает пути вне root |
 | `content_type` | TEXT | NOT NULL | `'application/octet-stream'` | MIME |
+| `sha256` | TEXT | NULL | — | SHA-256 hex для новых uploads; NULL допустим только для legacy metadata |
 | `size_bytes` | BIGINT | NOT NULL | — | Размер в байтах |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
 
-> Хранилище: `CICD_ARTIFACTS_DIR` (default `/var/lib/forge/artifacts`). Лимит — 50 MiB. Runtime не считает `storage_path` доверенным: перед чтением путь и root canonicalize-ятся, а нарушение containment возвращает `404`.
+> Хранилище: `CICD_ARTIFACTS_DIR` (default `/var/lib/forge/artifacts`). Лимит — 50 MiB. Runtime не считает `storage_path` доверенным: перед чтением путь и root canonicalize-ятся, нарушение containment возвращает `404`, а checksum drift для записей с `sha256` — `409`.
 
 ### 9.4 environments
 

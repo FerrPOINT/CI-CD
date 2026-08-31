@@ -2,7 +2,7 @@
 
 > Скриншоты сняты Playwright (Chromium) с живого стенда и deterministic seed (`frontend/scripts/seed-evidence.mjs`). Viewport: desktop 1920×1080, mobile 375×812; итоговая высота full-page PNG указана в таблице. Локаль ru, тема dark, DPR 1. Пересъёмка: `node frontend/scripts/shoot-evidence.mjs`.
 >
-> Исключение текущего прохода: `20-users.png`, `32-user-create.png` и `33-job-logs.png` пересняты через local Vite + мокированные API-ответы, потому что локальный Docker/API на машине недоступен; полный live evidence переснимается командой выше при доступном стенде.
+> Исключение текущего прохода: `20-users.png`, `21-artifacts.png`, `32-user-create.png` и `33-job-logs.png` пересняты через local Vite + мокированные API-ответы, потому что локальный Docker/API на машине недоступен; полный live evidence переснимается командой выше при доступном стенде.
 >
 > Номер `08` зарезервирован за удалённым статичным `/admin` screen. Отдельный `/admin` не входит в текущий baseline; системный срез находится в `/settings`.
 

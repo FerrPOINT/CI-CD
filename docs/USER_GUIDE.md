@@ -16,7 +16,7 @@ Forge CI/CD - self-hosted control plane для Git-репозиториев и C
 |---|---|---|
 | Проекты, pipelines, jobs, attempts, логи | **Current verified** | Создание, просмотр, отмена и повтор; retry сохраняет историю attempts/logs, embedded runner выполняет jobs в Docker или host shell. |
 | Git Smart HTTP и auto-trigger | **Current verified** | Локальный bare-репозиторий, `clone`/`fetch`/`push`; private/write доступ проверяется через Git token или project membership, push создаёт pipeline у связанного проекта. |
-| Артефакты | **Current verified** | Локальное хранение, upload/download, до 50 MiB на файл. |
+| Артефакты | **Current verified MVP** | Локальное хранение, upload/download, до 50 MiB на файл, SHA-256 для новых uploads. |
 | Секреты проекта | **Current verified** | AES-256-GCM at rest; embedded runner передаёт их в env и маскирует значения в stdout/stderr logs. |
 | Окружения и записи деплоев | **Current verified** | Метаданные окружения и история деплоев; выполнение деплоя определяется job. |
 | Отчёты и аудит | **Current verified** | Сводка по проекту и последние 200 событий аудита. |
@@ -167,8 +167,9 @@ Embedded runner каждые две секунды выбирает доступ
 
 1. Откройте **Artifacts** для job (`/jobs/{jobId}/artifacts`).
 2. Загрузите файл через UI либо отправьте raw body с заголовком `X-Artifact-Name`.
-3. Скачайте сохранённый файл по ссылке в списке.
-4. Учитывайте лимит 50 MiB на один файл и локальный характер хранилища `CICD_ARTIFACTS_DIR`.
+3. Сверьте SHA-256 в списке при расследовании повреждения или переноса backup.
+4. Скачайте сохранённый файл по ссылке в списке.
+5. Учитывайте лимит 50 MiB на один файл и локальный характер хранилища `CICD_ARTIFACTS_DIR`.
 
 ```bash
 # Загрузить файл артефакта.

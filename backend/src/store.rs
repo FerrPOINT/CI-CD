@@ -93,6 +93,7 @@ pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
             name TEXT NOT NULL,
             storage_path TEXT NOT NULL,
             content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+            sha256 TEXT CHECK (sha256 IS NULL OR sha256 ~ '^[0-9a-f]{64}$'),
             size_bytes BIGINT NOT NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         );

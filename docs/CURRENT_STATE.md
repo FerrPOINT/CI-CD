@@ -13,7 +13,7 @@
 | Embedded runner | ✅ | Docker (`forge-job-<id>`) или host shell; стриминг stdout → attempt-owned `job_logs`; cancel через PID-map |
 | Execution attempts | ✅ MVP | `execution_attempts` создаются для каждой job; retry job/pipeline создаёт новую attempt и не удаляет старые логи |
 | Логи | ✅ | append-only внутри attempt, sequence per attempt, совместимый REST array shortcut, bounded `/logs/page` с `limit/after/q` и SSE stream текущей/последней attempt |
-| Артефакты | ✅ | upload/download ≤50 MiB, локальный `CICD_ARTIFACTS_DIR`; новые metadata привязаны к active/latest attempt; download проверяет canonical path containment внутри artifact root |
+| Артефакты | ✅ MVP | upload/download ≤50 MiB, локальный `CICD_ARTIFACTS_DIR`; новые metadata привязаны к active/latest attempt и содержат SHA-256; download проверяет canonical path containment и checksum drift |
 | Секреты проектов | ✅ | AES-256-GCM at rest; значение не возвращается API |
 | Environments/deployments | ✅ | metadata + history |
 | Reports | ✅ | агрегаты success rate/duration |
@@ -36,7 +36,7 @@
 
 ## Не реализовано (Target approved — см. ADR + contracts)
 
-Runner protocol/leases/dispatch (внешний runner, ADR-0007), immutable pipeline plan/DAG, general idempotency storage for all retryable mutations, command spans/stream classification для диагностических логов, S3 artifacts/retention, off-site/PITR backup platform и verified restore drill, external notification channel adapters (email/Slack), inbound provider webhook handlers, tenant isolation, service-account tokens, scoped Git credentials, production cookie/CSRF/session-family policy, full cron semantics, outbox lease/fencing/crash recovery, full dead-letter operator policy/metrics и distributed/proxy rate limiting (сейчас in-process окно по forwarded client key).
+Runner protocol/leases/dispatch (внешний runner, ADR-0007), immutable pipeline plan/DAG, general idempotency storage for all retryable mutations, command spans/stream classification для диагностических логов, artifact retention/object storage, off-site/PITR backup platform и verified restore drill, external notification channel adapters (email/Slack), inbound provider webhook handlers, tenant isolation, service-account tokens, scoped Git credentials, production cookie/CSRF/session-family policy, full cron semantics, outbox lease/fencing/crash recovery, full dead-letter operator policy/metrics и distributed/proxy rate limiting (сейчас in-process окно по forwarded client key).
 
 ## Текущее runtime-дерево backend
 

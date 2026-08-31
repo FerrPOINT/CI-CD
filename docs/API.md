@@ -946,7 +946,7 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 | POST | `/jobs/{job_id}/artifacts` | Загрузить артефакт (raw body, `X-Artifact-Name`) |
 | GET | `/artifacts/{artifact_id}/download` | Скачать артефакт |
 
-> Артефакты хранятся в локальной ФС (`CICD_ARTIFACTS_DIR`, default `/var/lib/forge/artifacts`). Лимит — 50 MiB на файл. Download перед чтением canonicalize-ит `storage_path` и возвращает `404`, если файл не находится внутри artifact root.
+> Артефакты хранятся в локальной ФС (`CICD_ARTIFACTS_DIR`, default `/var/lib/forge/artifacts`). Лимит — 50 MiB на файл. Метаданные новых uploads содержат `sha256`; download перед чтением canonicalize-ит `storage_path` и возвращает `404`, если файл не находится внутри artifact root, либо `409`, если bytes не совпадают с сохранённым checksum.
 
 ### Environments & Deployments
 
@@ -1132,8 +1132,8 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 |---|---|---|
 | GET/POST | `/projects/{project_id}/secrets` | Метаданные / `{key,value}`; значение никогда не возвращается |
 | DELETE | `/secrets/{secret_id}` | Удаляет секрет |
-| GET/POST | `/jobs/{job_id}/artifacts` | Метаданные / raw body с `X-Artifact-Name` |
-| GET | `/artifacts/{artifact_id}/download` | Файл с сохранённым content type/name |
+| GET/POST | `/jobs/{job_id}/artifacts` | Метаданные с `sha256` / raw body с `X-Artifact-Name` |
+| GET | `/artifacts/{artifact_id}/download` | Файл с сохранённым content type/name и checksum check |
 
 ### Git repositories и Smart HTTP
 

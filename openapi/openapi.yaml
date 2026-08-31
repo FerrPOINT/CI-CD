@@ -2225,6 +2225,10 @@ components:
           format: uuid
         name:
           type: string
+        sha256:
+          type:
+          - string
+          - 'null'
         size_bytes:
           type: integer
           format: int64

@@ -208,6 +208,7 @@
     "name": "Name",
     "size": "Size",
     "type": "Type",
+    "digest": "SHA-256",
     "created": "Created",
     "download": "Download",
     "empty": "No artifacts for this job."

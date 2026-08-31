@@ -29,6 +29,7 @@ export function ArtifactsPage() {
                 <TableHead>{t('artifacts.name')}</TableHead>
                 <TableHead>{t('artifacts.size')}</TableHead>
                 <TableHead>{t('artifacts.type')}</TableHead>
+                <TableHead>{t('artifacts.digest')}</TableHead>
                 <TableHead>{t('artifacts.created')}</TableHead>
                 <TableHead className="w-24"></TableHead>
               </TableRow>
@@ -39,6 +40,7 @@ export function ArtifactsPage() {
                   <TableCell className="font-medium">{a.name}</TableCell>
                   <TableCell className="text-xs text-text-muted">{formatBytes(a.size_bytes)}</TableCell>
                   <TableCell className="text-xs text-text-muted">{a.content_type}</TableCell>
+                  <TableCell className="font-mono text-xs text-text-muted" title={a.sha256 ?? undefined}>{a.sha256 ? a.sha256.slice(0, 12) : 'n/a'}</TableCell>
                   <TableCell className="text-xs text-text-muted">{new Date(a.created_at).toLocaleString()}</TableCell>
                   <TableCell>
                     <a

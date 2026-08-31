@@ -185,6 +185,7 @@ export interface Artifact {
   attempt_id: string | null
   name: string
   content_type: string
+  sha256: string | null
   size_bytes: number
   created_at: string
 }

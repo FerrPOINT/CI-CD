@@ -264,6 +264,7 @@ pub(crate) struct Artifact {
     attempt_id: Option<Uuid>,
     name: String,
     content_type: String,
+    sha256: Option<String>,
     size_bytes: i64,
     created_at: DateTime<Utc>,
 }
@@ -272,7 +273,7 @@ async fn list_artifacts(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
 ) -> ApiResult<Vec<Artifact>> {
-    Ok(Json(sqlx::query_as("SELECT id, job_id, attempt_id, name, content_type, size_bytes, created_at FROM artifacts WHERE job_id = $1 ORDER BY created_at DESC")
+    Ok(Json(sqlx::query_as("SELECT id, job_id, attempt_id, name, content_type, sha256, size_bytes, created_at FROM artifacts WHERE job_id = $1 ORDER BY created_at DESC")
         .bind(job_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
 #[utoipa::path(post, path = "/api/v1/jobs/{job_id}/artifacts", tag = "artifacts", params(("job_id" = Uuid, Path), ("X-Artifact-Name" = String, Header)), request_body = Vec<u8>, responses((status = 200, body = Artifact), (status = 400)))]
@@ -293,7 +294,7 @@ async fn upload_artifact(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("artifact.bin")
         .trim();
-    if name.is_empty() || name.contains('/') || name.contains('\\') {
+    if !valid_artifact_name(name) {
         return Err(ApiError::bad_request("invalid artifact name"));
     }
     let content_type = headers
@@ -301,6 +302,7 @@ async fn upload_artifact(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("application/octet-stream");
     let id = Uuid::new_v4();
+    let artifact_sha256 = sha256_bytes(body.as_ref());
     let path = new_artifact_path(id)?;
     std::fs::write(&path, &body).map_err(io_error)?;
     let attempt_id = crate::store::active_or_latest_attempt_id(pool(&state)?, job_id)
@@ -309,8 +311,8 @@ async fn upload_artifact(
             sqlx::Error::RowNotFound => ApiError::not_found(),
             other => ApiError::internal(other),
         })?;
-    let artifact = sqlx::query_as("INSERT INTO artifacts (id, job_id, attempt_id, name, storage_path, content_type, size_bytes) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, job_id, attempt_id, name, content_type, size_bytes, created_at")
-        .bind(id).bind(job_id).bind(attempt_id).bind(name).bind(path.to_string_lossy().as_ref()).bind(content_type).bind(body.len() as i64).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
+    let artifact = sqlx::query_as("INSERT INTO artifacts (id, job_id, attempt_id, name, storage_path, content_type, sha256, size_bytes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, job_id, attempt_id, name, content_type, sha256, size_bytes, created_at")
+        .bind(id).bind(job_id).bind(attempt_id).bind(name).bind(path.to_string_lossy().as_ref()).bind(content_type).bind(&artifact_sha256).bind(body.len() as i64).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
     audit(pool(&state)?, "artifact.uploaded", "artifact", id, None).await?;
     Ok(Json(artifact))
 }
@@ -319,22 +321,26 @@ async fn download_artifact(
     State(state): State<Arc<AppState>>,
     Path(artifact_id): Path<Uuid>,
 ) -> Result<Response, ApiError> {
-    let row: (String, String, String) =
-        sqlx::query_as("SELECT storage_path, name, content_type FROM artifacts WHERE id = $1")
-            .bind(artifact_id)
-            .fetch_optional(pool(&state)?)
-            .await
-            .map_err(ApiError::internal)?
-            .ok_or_else(ApiError::not_found)?;
+    let row: (String, String, String, Option<String>) = sqlx::query_as(
+        "SELECT storage_path, name, content_type, sha256 FROM artifacts WHERE id = $1",
+    )
+    .bind(artifact_id)
+    .fetch_optional(pool(&state)?)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)?;
     let path = contained_artifact_path(&row.0)?;
     let bytes = std::fs::read(path).map_err(|_| ApiError::not_found())?;
+    if let Some(expected) = row.3.as_deref() {
+        let actual = sha256_bytes(&bytes);
+        if actual != expected {
+            return Err(ApiError::conflict("artifact checksum mismatch"));
+        }
+    }
     Ok((
         [
             ("content-type", row.2),
-            (
-                "content-disposition",
-                format!("attachment; filename=\"{}\"", row.1),
-            ),
+            ("content-disposition", artifact_content_disposition(&row.1)),
         ],
         bytes,
     )
@@ -1312,8 +1318,49 @@ fn canonical_artifacts_root() -> Result<PathBuf, ApiError> {
 fn io_error(error: std::io::Error) -> ApiError {
     ApiError::internal(sqlx::Error::Io(error))
 }
+fn valid_artifact_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 255
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains('"')
+        && !name.chars().any(char::is_control)
+}
+fn artifact_content_disposition(name: &str) -> String {
+    let fallback = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    format!(
+        "attachment; filename=\"{}\"; filename*=UTF-8''{}",
+        fallback,
+        percent_encode_utf8(name)
+    )
+}
+fn percent_encode_utf8(value: &str) -> String {
+    value
+        .as_bytes()
+        .iter()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-') {
+                (*byte as char).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
+        })
+        .collect()
+}
+fn sha256_bytes(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
 fn sha256(value: &str) -> String {
-    format!("{:x}", Sha256::digest(value.as_bytes()))
+    sha256_bytes(value.as_bytes())
 }
 
 fn decrypt_secret(stored: &str) -> Result<String, String> {
@@ -1404,5 +1451,21 @@ mod tests {
     fn roles_are_allowlisted() {
         assert!(valid_role("admin"));
         assert!(!valid_role("owner"));
+    }
+    #[test]
+    fn artifact_names_reject_path_and_header_breakers() {
+        assert!(valid_artifact_name("report.txt"));
+        assert!(valid_artifact_name("отчёт.txt"));
+        assert!(!valid_artifact_name("../report.txt"));
+        assert!(!valid_artifact_name("bad\"name.txt"));
+        assert!(!valid_artifact_name("bad\nname.txt"));
+    }
+    #[test]
+    fn artifact_content_disposition_is_header_safe() {
+        let header = artifact_content_disposition("отчёт final.txt");
+        assert!(header.is_ascii());
+        assert!(header.contains("filename=\""));
+        assert!(header.contains("filename*=UTF-8''"));
+        assert!(header.contains("%D0%BE%D1%82%D1%87"));
     }
 }

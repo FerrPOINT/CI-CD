@@ -13,6 +13,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use base64::Engine;
+use sha2::{Digest, Sha256};
 use sqlx::postgres::PgPoolOptions;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -1024,20 +1025,77 @@ async fn artifact_download_rejects_storage_paths_outside_artifact_root() {
     .execute(&pool)
     .await
     .expect("insert attempt");
+
+    let app = cicd::api::app(Some(pool.clone()));
+    let uploaded_body = b"uploaded artifact bytes".to_vec();
+    let uploaded_sha256 = format!("{:x}", Sha256::digest(&uploaded_body));
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/jobs/{job_id}/artifacts"))
+                .header("x-artifact-name", "build.log")
+                .header("content-type", "text/plain")
+                .body(Body::from(uploaded_body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let uploaded = response_json(response).await;
+    assert_eq!(uploaded["sha256"].as_str(), Some(uploaded_sha256.as_str()));
+    assert_eq!(
+        uploaded["size_bytes"].as_i64(),
+        Some(uploaded_body.len() as i64)
+    );
+    let uploaded_id = Uuid::parse_str(uploaded["id"].as_str().unwrap()).unwrap();
+    let uploaded_path: String =
+        sqlx::query_scalar("SELECT storage_path FROM artifacts WHERE id = $1")
+            .bind(uploaded_id)
+            .fetch_one(&pool)
+            .await
+            .expect("uploaded artifact storage path");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/artifacts/{uploaded_id}/download"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("read uploaded artifact body");
+    assert_eq!(bytes.as_ref(), uploaded_body.as_slice());
+
+    std::fs::write(uploaded_path, b"corrupt artifact").expect("corrupt uploaded artifact");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/artifacts/{uploaded_id}/download"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+
+    let inside_sha256 = format!("{:x}", Sha256::digest(b"inside artifact"));
     sqlx::query(
         "INSERT INTO artifacts \
-         (id, job_id, attempt_id, name, storage_path, content_type, size_bytes) \
-         VALUES ($1, $2, $3, 'report.txt', $4, 'text/plain', 15)",
+         (id, job_id, attempt_id, name, storage_path, content_type, sha256, size_bytes) \
+         VALUES ($1, $2, $3, 'report.txt', $4, 'text/plain', $5, 15)",
     )
     .bind(artifact_id)
     .bind(job_id)
     .bind(attempt_id)
     .bind(inside_path.to_string_lossy().as_ref())
+    .bind(inside_sha256)
     .execute(&pool)
     .await
     .expect("insert artifact");
 
-    let app = cicd::api::app(Some(pool.clone()));
     let response = app
         .clone()
         .oneshot(

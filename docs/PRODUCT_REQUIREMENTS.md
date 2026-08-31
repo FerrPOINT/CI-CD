@@ -78,7 +78,7 @@ Forge **не является** и не должен развиваться ка
 | REQ-OBS-001 | Логи | P0 | **Current verified** | Логи job append-only, упорядочены внутри `execution_attempt` и доступны для диагностики. Текущий просмотр использует polling и совместимый latest/open shortcut. |
 | REQ-OBS-002 | Диагностические логи | P1 | **Current verified MVP** | Длинные логи доступны через bounded page/search (`limit`/`after`/`q`) и SSE stream; attempts хранят exit code, timestamps и error tail. Command span и stream classification остаются target. |
 | REQ-ART-001 | Артефакты | P0 | **Current verified** | Пользователь может сохранить и получить артефакт job из локального хранилища в рамках текущего лимита размера; новые uploads получают metadata текущей/latest attempt. |
-| REQ-ART-002 | Надёжное хранилище и retention артефактов | P1 | **Target approved** | Артефакты имеют проверяемую целостность, политику хранения и очистки; поддерживается совместимое object storage без раскрытия данных между проектами. |
+| REQ-ART-002 | Надёжное хранилище и retention артефактов | P1 | **Current verified MVP** | Новые артефакты получают SHA-256 и download отвергает checksum drift. Retention policy, cleanup worker, object storage adapter и tenant/object isolation остаются target. |
 | REQ-SEC-001 | Secrets | P0 | **Current verified** | Проектные секреты шифруются при хранении, их значения не возвращаются пользователю после сохранения, embedded runner передаёт их в env и маскирует известные значения в stdout/stderr best-effort. |
 | REQ-SEC-002 | Scoped secret delivery и full redaction | P1 | **Target approved** | Только авторизованный runner получает нужный секрет на время выполнения; plaintext не попадает в API, audit, ошибки, traces или логи, а выдача имеет scopes, lease и rotation policy. |
 | REQ-ENV-001 | Environments и deployments | P1 | **Current verified** | Пользователь ведёт metadata окружений и историю развёртываний для проекта. Текущий capability не означает автоматическую оркестрацию инфраструктуры, approvals или rollback. |
@@ -107,7 +107,7 @@ Forge **не является** и не должен развиваться ка
 
 ### Надёжность и целостность
 
-- **NFR-REL-01** Pipeline plan, execution attempts, логи, metadata артефактов, deployment history и audit entries являются доказательствами и не переписываются задним числом; исправление создаёт новую запись. Current MVP закрывает retry history для attempts/logs/artifact metadata, а immutable pipeline plan snapshot и full storage integrity остаются target.
+- **NFR-REL-01** Pipeline plan, execution attempts, логи, metadata артефактов, deployment history и audit entries являются доказательствами и не переписываются задним числом; исправление создаёт новую запись. Current MVP закрывает retry history для attempts/logs/artifact metadata и checksum для новых artifacts, а immutable pipeline plan snapshot и full storage lifecycle остаются target.
 - **NFR-REL-02** Асинхронные эффекты допускают повтор доставки, но наблюдаемый итог остаётся идемпотентным. Current MVP покрывает pipeline trigger replay/conflict, local notification delivery и bounded outbox delivery history/requeue; full lease recovery/crash retry для всех async effects остаётся target.
 - **NFR-REL-03** Статус pipeline должен быть согласован с состоянием дочерних сущностей и не может обходить доменные правила переходов.
 - **NFR-REL-04** Хранилища PostgreSQL, Git и артефактов имеют документированную и проверяемую процедуру backup/restore; запуск после сбоя восстанавливает согласованное рабочее состояние.

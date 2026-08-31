@@ -1138,6 +1138,7 @@ export interface components {
             /** Format: uuid */
             job_id: string;
             name: string;
+            sha256?: string | null;
             /** Format: int64 */
             size_bytes: number;
         };
