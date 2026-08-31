@@ -541,6 +541,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/notification-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_notification_events"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/notifications": {
         parameters: {
             query?: never;
@@ -550,6 +566,22 @@ export interface paths {
         };
         get: operations["list_notifications"];
         put: operations["replace_notifications"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/notifications/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["notification_stream"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -1289,6 +1321,27 @@ export interface components {
             id: string;
             /** Format: uuid */
             project_id: string;
+            target: string;
+        };
+        NotificationEvent: {
+            /** Format: int32 */
+            attempts: number;
+            channel: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            delivered_at?: string | null;
+            /** Format: uuid */
+            event_id: string;
+            event_type: string;
+            /** Format: uuid */
+            id: string;
+            last_error?: string | null;
+            message: string;
+            /** Format: uuid */
+            pipeline_id: string;
+            status: string;
+            subscription_id: string;
             target: string;
         };
         NotificationInput: {
@@ -2751,6 +2804,36 @@ export interface operations {
             };
         };
     };
+    list_notification_events: {
+        parameters: {
+            query?: {
+                /** @description Maximum number of recent notification events to return. */
+                limit?: number | null;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationEvent"][];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     list_notifications: {
         parameters: {
             query?: never;
@@ -2796,6 +2879,26 @@ export interface operations {
                 };
             };
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    notification_stream: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description text/event-stream of project notification events */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -23,17 +23,17 @@ PostgreSQL остаётся единственным источником ист
 
 | Область | Сейчас | Целевое состояние |
 |---|---|---|
-| Расписания | Таблица `schedules`, CRUD и формальная проверка наличия пяти cron-полей. Исполнителя нет. | Durable scheduler с IANA timezone, расчётом `next_fire_at`, учётом DST, политикой пропущенных запусков, дедупликацией и аудитом. |
+| Расписания | Таблица `schedules`, CRUD, формальная проверка пяти cron-полей и MVP worker, который проверяет enabled rows примерно раз в минуту. | Durable scheduler с IANA timezone, расчётом `next_fire_at`, учётом DST, политикой пропущенных запусков, дедупликацией и аудитом. |
 | Git push | `post-receive` вызывает `/api/v1/internal/git-push`; передаются repository/ref/old_rev/new_rev. Hook best-effort, ошибка не влияет на push; повтор same `repository/ref/new_rev` дедуплицируется через `pipeline_triggers`. | Надёжный ingress с immutable delivery id, типом ref-операции, идемпотентным сохранением входящего события и периодической сверкой refs. |
 | Связь проекта с репозиторием | Поиск первого `projects.repository_url ILIKE '%<repo>.git'`. | Явная связь `project_repositories`, уникальная в пределах назначения и независимая от URL-шаблонов. |
 | Запуск pipeline | Pipeline создаётся сразу в HTTP-обработчике; нет `source_event_id`, SHA и dedupe key. | Создание pipeline в транзакции с причиной запуска, неизменяемым commit SHA и уникальностью по событию-триггеру. |
-| Webhooks | Сохраняются `url`, `events`, `enabled`; секретов, доставки, истории и retry нет. | Подписки с HMAC, версиями секретов, delivery history, ограниченными повторными попытками, replay и dead-letter состояниями. |
-| Уведомления | Сохраняются channel/target/enabled; `PUT` удаляет и создаёт конфигурацию заново. Доставки нет. | Правила, получатели, шаблоны, предпочтения, адаптеры каналов, агрегация и история доставок. |
-| Фоновая обработка | Есть embedded runner: polling queued jobs раз в две секунды. Нет общего worker-контура. | Независимые типы workers с lease в PostgreSQL, `FOR UPDATE SKIP LOCKED`, `LISTEN/NOTIFY` как ускорением и безопасным shutdown. |
-| Outbox | Отсутствует. | Бизнес-событие и outbox-запись создаются в одной БД-транзакции; dispatcher формирует deliveries. |
+| Webhooks | Сохраняются `url`, `events`, `enabled`, optional secret; terminal pipeline events создают `domain_events`/`outbox_messages`, worker выполняет basic retry/backoff и HMAC signing. | Подписки с HMAC, версиями секретов, delivery history, ограниченными повторными попытками, replay и dead-letter состояниями. |
+| Уведомления | Сохраняются channel/target/enabled; `in_app`/`sse` каналы получают terminal pipeline events через local outbox history/API/SSE. | Правила, получатели, шаблоны, предпочтения, внешние адаптеры каналов, агрегация и история доставок. |
+| Фоновая обработка | Есть embedded runner, scheduler/outbox worker и polling loops для current MVP. Нет production lease-контура. | Независимые типы workers с lease в PostgreSQL, `FOR UPDATE SKIP LOCKED`, `LISTEN/NOTIFY` как ускорением и безопасным shutdown. |
+| Outbox | `domain_events` и `outbox_messages` есть для terminal pipeline webhooks и local notifications; full deliveries table/replay ещё target. | Бизнес-событие и outbox-запись создаются в одной БД-транзакции; dispatcher формирует deliveries. |
 | Audit | Частичные записи в `audit_log`, без correlation id и без полного покрытия. | Неподменяемые автоматизационные события, технический аудит, correlation/causation ids и связность с доставками. |
 | Наблюдаемость | `tracing`, HTTP TraceLayer и `/health`. | Readiness, Prometheus/OpenTelemetry, метрики очередей, retry, delivery и scheduler lag, алерты и runbook. |
-| Миграции | `CREATE TABLE IF NOT EXISTS` при старте. | Версионированные миграции, обратносуместимые изменения и отдельная проверка миграций перед rollout. |
+| Миграции | Committed SQLx migrations применяются backend-ом при старте и `cicd-migrate`; отдельный production rollout split ещё target. | Версионированные миграции, обратносуместимые изменения и отдельная проверка миграций перед rollout. |
 
 Фактические текущие границы подтверждаются `backend/src/platform.rs`, `backend/src/store.rs`, `backend/src/git_host.rs`, `backend/src/main.rs`, `docs/API.md` и `docs/GIT_HOSTING.md`.
 

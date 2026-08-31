@@ -1595,6 +1595,148 @@ async fn list_attempts_returns_not_found_for_unknown_job() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
+#[tokio::test]
+async fn in_app_notification_events_are_fanned_out_and_delivered() {
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let enabled_notification_id = Uuid::new_v4();
+    let unsupported_notification_id = Uuid::new_v4();
+    let project_name = format!("it-notifications-{}", project_id.simple());
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/notifications.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status) VALUES ($1, $2, 'main', 'failed')",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert pipeline");
+    sqlx::query(
+        "INSERT INTO notification_configs (id, project_id, channel, target, enabled) \
+         VALUES ($1, $2, 'in_app', 'dashboard', true), ($3, $2, 'slack', 'https://hooks.invalid/test', true)",
+    )
+    .bind(enabled_notification_id)
+    .bind(project_id)
+    .bind(unsupported_notification_id)
+    .execute(&pool)
+    .await
+    .expect("insert notification configs");
+
+    let event_id = cicd::outbox::emit_pipeline_event(
+        &pool,
+        project_id,
+        pipeline_id,
+        "pipeline.failed",
+        "failed",
+    )
+    .await
+    .expect("emit pipeline event");
+
+    let notification_rows: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM outbox_messages \
+         WHERE event_id = $1 AND channel = 'notification'",
+    )
+    .bind(event_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count notification rows");
+    assert_eq!(notification_rows, 1);
+
+    let delivered = cicd::outbox::deliver_due(&pool, &reqwest::Client::new()).await;
+    assert!(delivered >= 1);
+
+    let app = cicd::api::app(Some(pool.clone()));
+    let response = app
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/projects/{project_id}/notification-events?limit=10"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let events = response_json(response).await;
+    assert_eq!(events.as_array().unwrap().len(), 1);
+    assert_eq!(events[0]["event_id"], event_id.to_string());
+    assert_eq!(events[0]["channel"], "in_app");
+    assert_eq!(events[0]["target"], "dashboard");
+    assert_eq!(events[0]["event_type"], "pipeline.failed");
+    assert_eq!(events[0]["pipeline_id"], pipeline_id.to_string());
+    assert_eq!(events[0]["status"], "failed");
+    assert!(events[0]["message"].as_str().unwrap().contains("failed"));
+    assert!(events[0]["delivered_at"].is_string());
+    assert!(events[0]["last_error"].is_null());
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup project");
+}
+
+#[tokio::test]
+async fn exhausted_outbox_message_is_not_retried() {
+    let pool = test_pool().await;
+    let event_id = Uuid::new_v4();
+    let aggregate_id = Uuid::new_v4();
+    let message_id = Uuid::new_v4();
+
+    sqlx::query(
+        "INSERT INTO domain_events (id, event_type, aggregate_type, aggregate_id, payload) \
+         VALUES ($1, 'pipeline.failed', 'pipeline', $2, '{}'::jsonb)",
+    )
+    .bind(event_id)
+    .bind(aggregate_id)
+    .execute(&pool)
+    .await
+    .expect("insert domain event");
+    sqlx::query(
+        "INSERT INTO outbox_messages \
+            (id, event_id, subscription_id, channel, destination, payload, attempts, next_attempt_at, last_error) \
+         VALUES ($1, $2, 'notification:test', 'notification', $3, $4, $5, now() - interval '1 hour', 'already failed')",
+    )
+    .bind(message_id)
+    .bind(event_id)
+    .bind(cicd::outbox::notification_destination(aggregate_id))
+    .bind(serde_json::json!({
+        "channel": "slack",
+        "event": "pipeline.failed",
+        "pipeline_id": aggregate_id,
+        "status": "failed",
+    }))
+    .bind(cicd::outbox::MAX_ATTEMPTS)
+    .execute(&pool)
+    .await
+    .expect("insert exhausted outbox message");
+
+    let _ = cicd::outbox::deliver_due(&pool, &reqwest::Client::new()).await;
+
+    let (attempts, last_error): (i32, Option<String>) =
+        sqlx::query_as("SELECT attempts, last_error FROM outbox_messages WHERE id = $1")
+            .bind(message_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch exhausted outbox message");
+    assert_eq!(attempts, cicd::outbox::MAX_ATTEMPTS);
+    assert_eq!(last_error.as_deref(), Some("already failed"));
+
+    sqlx::query("DELETE FROM domain_events WHERE id = $1")
+        .bind(event_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup domain event");
+}
+
 async fn response_json(response: axum::response::Response) -> serde_json::Value {
     let body = to_bytes(response.into_body(), usize::MAX)
         .await

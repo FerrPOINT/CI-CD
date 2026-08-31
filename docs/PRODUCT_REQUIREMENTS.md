@@ -86,7 +86,8 @@ Forge **не является** и не должен развиваться ка
 | REQ-AUTO-001 | Git-события и автоматический trigger | P0 | **Current verified** | Push во встроенный Git может создать pipeline, связанный с изменённым ref. |
 | REQ-AUTO-002 | Schedules и outgoing webhooks | P1 | **Current verified** | MVP scheduler запускает enabled schedules примерно раз в минуту, а terminal pipeline events доставляются в enabled outgoing webhooks через basic outbox/retry. Полная cron-семантика и delivery history остаются target. |
 | REQ-AUTO-003 | Надёжная automation delivery | P1 | **Target approved** | Расписания, входящие события, webhooks и уведомления исполняются асинхронно, наблюдаемо и идемпотентно; повторы не теряют зафиксированное событие и не создают недопустимый дубликат результата. |
-| REQ-AUTO-004 | Notifications и inbound provider webhooks | P1 | **Configuration only** | Пользователь может сохранить каналы уведомлений; email/Slack/SSE sender и public Git provider webhook handlers пока не исполняют доставку. |
+| REQ-AUTO-004 | Local notifications (`in_app`/`sse`) | P1 | **Current verified MVP** | Пользователь может сохранить `in_app`/`sse` каналы и получить local notification history/stream на terminal pipeline events. |
+| REQ-AUTO-005 | External notification adapters и inbound provider webhooks | P1 | **Target approved** | Email/Slack adapters и public Git provider webhook handlers исполняются только после реализации sender/handlers, signature validation и delivery evidence. |
 | REQ-AUTH-001 | Identity, роли и API-токены | P0 | **Current verified** | Пользователи, роли, argon2id credentials, session-bound access JWT, refresh sessions с rotate/logout и scoped PAT хранятся и применяются при непустом `CICD_AUTH_SECRET`; без секрета действует trusted-network режим. |
 | REQ-AUTH-002 | Project-scoped auth/RBAC enforcement | P1 | **Current verified MVP** | Project-owned API, name-based repo API и Git Smart HTTP read/write проверяют личность, route role, `project_memberships`, PAT `project_id` и scopes при непустом `CICD_AUTH_SECRET`. Tenant isolation, service-account tokens, scoped Git credentials и production cookie/CSRF/session-family policy остаются target. |
 | REQ-AUD-001 | Audit и отчётность | P1 | **Current verified** | Forge хранит append-only audit entries и показывает базовые агрегаты по успешности и длительности pipeline. Эти данные не заменяют полноценную observability-платформу. |
@@ -154,7 +155,7 @@ Forge **не является** и не должен развиваться ка
 ### Delivery и automation
 
 - Пользователь может создать environment и зафиксировать deployment, связанный с pipeline; история не изменяется при последующих развёртываниях.
-- Schedules и outgoing webhooks помечены как **Current verified MVP** до появления полной cron/delivery history/replay/dead-letter семантики; notifications и inbound provider webhooks остаются **Configuration only**, пока sender/handlers не исполняют доставку.
+- Schedules, outgoing webhooks и `in_app`/`sse` notifications помечены как **Current verified MVP** до появления полной cron/delivery history/replay/dead-letter семантики; email/Slack adapters и inbound provider webhooks остаются target, пока соответствующие sender/handlers не исполняют доставку.
 - После реализации automation событие или расписание создаёт ожидаемый результат, delivery имеет наблюдаемый outcome, а transient failure проходит ограниченные повторы без потери committed event.
 - Для protected delivery approval требуется до исполнения, а rollback создаёт отдельную traceable запись и не подменяет исходный deployment.
 

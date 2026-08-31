@@ -96,6 +96,8 @@ Tenant roles: `owner` управляет tenant, projects, memberships, service 
 | GET, POST | `/api/v1/projects/{project_id}/webhooks` | `automation.read` / `automation.manage` |
 | DELETE | `/api/v1/webhooks/{webhook_id}` | `automation.manage` |
 | GET, PUT | `/api/v1/projects/{project_id}/notifications` | `automation.read` / `automation.manage` |
+| GET | `/api/v1/projects/{project_id}/notification-events` | `automation.read` |
+| GET | `/api/v1/projects/{project_id}/notifications/stream` | `automation.read` |
 | GET | `/api/v1/projects/{project_id}/reports/summary` | `report.read` |
 | GET | `/api/v1/audit-log` | `audit.read_project` or tenant/instance audit scope; always filtered |
 | GET, POST | `/api/v1/users` | `identity.manage`; creation assigns no implicit owner |

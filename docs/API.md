@@ -986,6 +986,10 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 |---|---|---|
 | GET | `/projects/{project_id}/notifications` | Список каналов уведомлений |
 | PUT | `/projects/{project_id}/notifications` | Заменить все каналы (array) |
+| GET | `/projects/{project_id}/notification-events?limit=` | Последние local notification events проекта |
+| GET | `/projects/{project_id}/notifications/stream` | SSE stream новых local notification events |
+
+`in_app` и `sse` каналы являются текущим MVP: terminal pipeline events создают durable записи в `outbox_messages`, worker помечает их delivered локально, а Dashboard читает историю через `notification-events`. `limit` принимает `1..200`, default `50`. Email/Slack channel adapters и inbound provider webhook handlers остаются target.
 
 ### Reports
 
@@ -1156,7 +1160,9 @@ Git Smart HTTP допускает unauthenticated read только для `repo
 | `/api/v1/projects/{project_id}/environments` | Environments |
 | `/api/v1/projects/{project_id}/memberships` | Project memberships |
 | `/api/v1/projects/{project_id}/memberships/{user_id}` | Project memberships |
+| `/api/v1/projects/{project_id}/notification-events` | Notifications |
 | `/api/v1/projects/{project_id}/notifications` | Notifications |
+| `/api/v1/projects/{project_id}/notifications/stream` | Notifications |
 | `/api/v1/projects/{project_id}/pipelines` | Pipelines |
 | `/api/v1/projects/{project_id}/reports/summary` | Reports |
 | `/api/v1/projects/{project_id}/schedules` | Schedules |

@@ -4,6 +4,8 @@
 //! - Webhook fan-out: project webhooks are translated into outbox messages on
 //!   pipeline terminal transitions; the worker delivers with retry/backoff
 //!   (8 attempts, 15s..1h) and dead-letters after exhaustion.
+//! - In-app notification fan-out: `in_app`/`sse` notification configs are
+//!   translated into durable local outbox messages for Dashboard history/SSE.
 //! - Scheduler: enabled cron schedules trigger pipelines with a
 //!   `last_fired_at` claim so a restart cannot double-fire the same minute.
 
@@ -12,6 +14,19 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 pub const MAX_ATTEMPTS: i32 = 8;
+pub const NOTIFICATION_CHANNEL_IN_APP: &str = "in_app";
+pub const NOTIFICATION_CHANNEL_SSE: &str = "sse";
+
+pub fn notification_destination(project_id: Uuid) -> String {
+    format!("project:{project_id}")
+}
+
+pub fn supported_local_notification_channel(channel: &str) -> bool {
+    matches!(
+        channel.trim().to_ascii_lowercase().as_str(),
+        NOTIFICATION_CHANNEL_IN_APP | NOTIFICATION_CHANNEL_SSE
+    )
+}
 
 /// Record a domain event + fan out to project webhooks in one transaction.
 pub async fn emit_pipeline_event(
@@ -53,6 +68,39 @@ pub async fn emit_pipeline_event(
         .execute(&mut *tx)
         .await?;
     }
+
+    let notifications = sqlx::query_as::<_, (Uuid, String, String)>(
+        "SELECT id, lower(channel), target FROM notification_configs \
+         WHERE project_id = $1 AND enabled AND lower(channel) IN ('in_app', 'sse')",
+    )
+    .bind(project_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for (config_id, channel, target) in notifications {
+        let message = format!(
+            "Pipeline {} finished with status {status}",
+            pipeline_id.simple()
+        );
+        sqlx::query(
+            "INSERT INTO outbox_messages (id, event_id, subscription_id, channel, destination, payload) \
+             VALUES ($1, $2, $3, 'notification', $4, $5)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(event_id)
+        .bind(format!("notification:{config_id}"))
+        .bind(notification_destination(project_id))
+        .bind(serde_json::json!({
+            "event": event_type,
+            "project_id": project_id,
+            "pipeline_id": pipeline_id,
+            "status": status,
+            "channel": channel,
+            "target": target,
+            "message": message,
+        }))
+        .execute(&mut *tx)
+        .await?;
+    }
     tx.commit().await?;
     Ok(event_id)
 }
@@ -65,17 +113,59 @@ fn next_delay(attempts: i32) -> chrono::Duration {
 
 /// One delivery pass: claim due messages and POST them.
 pub async fn deliver_due(pool: &PgPool, client: &reqwest::Client) -> usize {
-    let due = sqlx::query_as::<_, (Uuid, String, serde_json::Value, i32)>(
-        "SELECT id, destination, payload, attempts FROM outbox_messages \
+    let due = sqlx::query_as::<_, (Uuid, String, String, serde_json::Value, i32)>(
+        "SELECT id, channel, destination, payload, attempts FROM outbox_messages \
          WHERE delivered_at IS NULL AND next_attempt_at <= now() \
+           AND attempts < $1 \
          ORDER BY next_attempt_at LIMIT 20",
     )
+    .bind(MAX_ATTEMPTS)
     .fetch_all(pool)
     .await
     .unwrap_or_default();
 
     let mut delivered = 0;
-    for (id, url, payload, attempts) in due {
+    for (id, channel, url, payload, attempts) in due {
+        if channel == "notification" {
+            let local_channel = payload
+                .get("channel")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            if supported_local_notification_channel(local_channel) {
+                let _ = sqlx::query(
+                    "UPDATE outbox_messages SET delivered_at = now(), last_error = NULL WHERE id = $1",
+                )
+                .bind(id)
+                .execute(pool)
+                .await;
+                delivered += 1;
+            } else {
+                let new_attempts = attempts + 1;
+                let last_error = format!("unsupported notification channel: {local_channel}");
+                if new_attempts >= MAX_ATTEMPTS {
+                    let _ = sqlx::query(
+                        "UPDATE outbox_messages SET attempts = $2, last_error = $3 WHERE id = $1",
+                    )
+                    .bind(id)
+                    .bind(new_attempts)
+                    .bind(last_error)
+                    .execute(pool)
+                    .await;
+                } else {
+                    let _ = sqlx::query(
+                        "UPDATE outbox_messages SET attempts = $2, last_error = $3, next_attempt_at = $4 WHERE id = $1",
+                    )
+                    .bind(id)
+                    .bind(new_attempts)
+                    .bind(last_error)
+                    .bind(Utc::now() + next_delay(attempts))
+                    .execute(pool)
+                    .await;
+                }
+            }
+            continue;
+        }
+
         let mut request = client.post(&url).json(&payload);
         // Sign when the webhook has a secret (subscription_id = "webhook:<id>").
         if let Some(secret) = sqlx::query_scalar::<_, Option<String>>(
@@ -213,5 +303,16 @@ mod tests {
         assert_eq!(next_delay(0).num_seconds(), 15);
         assert_eq!(next_delay(7).num_seconds(), 1920); // 15s * 2^7
         assert_eq!(next_delay(20).num_seconds(), 3600); // capped at 1h
+    }
+
+    #[test]
+    fn local_notification_channel_support_is_explicit() {
+        assert!(supported_local_notification_channel("in_app"));
+        assert!(supported_local_notification_channel("SSE"));
+        assert!(!supported_local_notification_channel("slack"));
+        assert_eq!(
+            notification_destination(Uuid::nil()),
+            "project:00000000-0000-0000-0000-000000000000"
+        );
     }
 }

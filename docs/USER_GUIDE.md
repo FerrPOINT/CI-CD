@@ -22,7 +22,8 @@ Forge CI/CD - self-hosted control plane для Git-репозиториев и C
 | Отчёты и аудит | **Current verified** | Сводка по проекту и последние 200 событий аудита. |
 | Пользователи, участники проектов и API-токены | **Current verified MVP** | Хранение, argon2id credentials, session-bound access JWT, sessions, PAT enforcement и project memberships при `CICD_AUTH_SECRET`. |
 | Расписания и outgoing webhooks | **Current verified MVP** | Worker запускает enabled schedules примерно раз в минуту и доставляет terminal pipeline webhooks с basic retry. |
-| Уведомления и inbound provider webhooks | **Configuration only** | Конфигурация сохраняется, но email/Slack/SSE sender и public provider webhook handlers ещё не реализованы. |
+| Уведомления (`in_app`/`sse`) | **Current verified MVP** | Каналы показывают terminal pipeline events в Dashboard history/stream. |
+| Email/Slack adapters и inbound provider webhooks | **Target approved** | Внешние уведомления и public provider webhook handlers ещё не исполняют доставку. |
 | Вход, сессии, RBAC | **Current verified conditional** | `/login` работает при непустом `CICD_AUTH_SECRET`; project-owned API проверяет active session, текущую роль и membership, без секрета API и Dashboard остаются trusted-network/open. |
 
 > **Безопасность:** для общего окружения задайте `CICD_AUTH_SECRET`, закройте API/Dashboard reverse proxy или сетью и не запускайте Git endpoint в trusted-local режиме без `CICD_AUTH_SECRET`/`CICD_GIT_TOKEN`; обязательно замените dev-значение `CICD_GIT_INTERNAL_TOKEN`.
@@ -253,11 +254,12 @@ Retention/TTL, S3 и multipart upload - **Target approved**.
 
 ### Уведомления
 
-**Статус процедуры: Current verified для schedule; Configuration only для Slack/email.**
+**Статус процедуры: Current verified MVP для `in_app`/`sse`; Configuration only для Slack/email.**
 
-1. На странице **Webhooks** добавьте каналы уведомлений с полями channel, target и enabled.
-2. Проверьте сохранённую конфигурацию через список каналов проекта.
-3. Не ожидайте email, Slack или другое сообщение: sender и SSE не реализованы.
+1. На странице **Webhooks** добавьте канал `in_app` с target `dashboard` или канал `sse` с понятным target.
+2. Завершите pipeline в `success`, `failed` или `canceled`.
+3. Проверьте историю уведомлений в таблице на странице **Webhooks** или через `GET /api/v1/projects/{project_id}/notification-events`.
+4. Не ожидайте email или Slack-сообщение: внешние adapters ещё не реализованы.
 
 Входящие webhooks от GitHub/GitLab/Gitea также являются **Target approved**; текущий Git auto-trigger работает через локальный `post-receive` hook, а не через public inbound webhook.
 
@@ -398,9 +400,9 @@ curl -fsS -X POST "http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines"
 
 ### Можно ли запланировать ночной запуск или получить Slack-уведомление?
 
-**Статус процедуры: Configuration only.**
+**Статус процедуры: Current verified MVP для schedule и `in_app`/`sse`; Configuration only для Slack/email.**
 
-Ночной запуск можно настроить как MVP schedule: backend проверяет enabled rows примерно раз в минуту, но пока без полной cron-семантики. Slack/email-уведомление можно только сохранить как конфигурацию; sender ещё не реализован.
+Ночной запуск можно настроить как MVP schedule: backend проверяет enabled rows примерно раз в минуту, но пока без полной cron-семантики. `in_app`/`sse` уведомления по terminal pipeline events видны в Dashboard/API. Slack/email-уведомление можно только сохранить как конфигурацию; внешний sender ещё не реализован.
 
 ### Почему роль пользователя или API-токен не запрещают доступ?
 

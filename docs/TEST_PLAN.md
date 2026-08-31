@@ -37,6 +37,7 @@
 | API contract без БД | `backend/tests/api_contract.rs` | Health возвращает `200`; project CRUD без pool возвращает `503`; пустой body PATCH отклоняется. |
 | CLI contract | `backend/cli/tests/cli_contract.rs` | `cicd-cli --help` содержит command groups `project`, `pipeline`, `job`. |
 | Dashboard unit | `frontend/src/pages/dashboard/dashboard.test.ts` | `statusLabel` форматирует known status и `success`. |
+| Webhooks page unit | `frontend/src/pages/webhooks/webhooks.test.tsx` | Страница показывает delivered `in_app` notification events и запрашивает bounded notification history API. |
 | Pull request detail unit | `frontend/src/pages/pull-request-detail/pull-request-detail.test.ts` | `buildCompareHref` формирует направление compare и URL-encoding имени repository. |
 | Shared UI unit | `frontend/src/shared/ui/confirm-dialog.test.tsx` | `ConfirmDialog` скрыт до открытия, подтверждает действие и не подтверждает при cancel. |
 | Shell unit | `frontend/src/widgets/app-shell.test.tsx` | Mobile drawer trigger имеет доступное имя. |
@@ -83,7 +84,7 @@ Coverage измеряет поведение и риск, а не только l
 | Auth и RBAC | Current enforcement требует `401`/`403`, enabled user, JWT/scoped PAT, PAT scopes/project boundary, session-bound access invalidation, refresh rotate/logout revoke и audit event при заданном `CICD_AUTH_SECRET`; tenant isolation, service-account tokens, refresh-cookie/CSRF/session-family policy и persistent lockout остаются target. |
 | Secrets/artifacts | Создание/metadata допускаются только через safe contract; plaintext secret не возвращается API/UI; artifact download не читает `storage_path` вне `CICD_ARTIFACTS_DIR`. Current embedded runner secret injection и masking нуждаются в focused regression tests; target дополнительно проверяет least privilege lease, artifact checksum/scope и redaction во всех error/audit/trace каналах. |
 | Rate limits | Current in-process middleware должен возвращать `429` до handler/auth для auth/API/Git/artifact route classes и не ограничивать health/openapi/metrics. Target дополнительно требует trusted proxy/distributed counters, per-account lockout, body/time/concurrency policy и нагрузочный evidence. |
-| Outbox и идемпотентность | Current `domain_events`/`outbox_messages` должны доказывать atomic terminal pipeline event и basic webhook retry; real-DB test проверяет replay/conflict для pipeline trigger `Idempotency-Key`. `outbox_deliveries`, general duplicate ingress, lease recovery, crash retry и single observed outcome для всех async effects остаются target. |
+| Outbox и идемпотентность | Current `domain_events`/`outbox_messages` должны доказывать atomic terminal pipeline event, basic webhook retry и local `in_app`/`sse` notification fan-out/delivery; real-DB test проверяет replay/conflict для pipeline trigger `Idempotency-Key`. `outbox_deliveries`, general duplicate ingress, lease recovery, crash retry и single observed outcome для всех async effects остаются target. |
 | Public contracts | Изменение API, CLI или generated client имеет focused contract test; breaking change в active `/api/v1` запрещён без новой версии и compatibility evidence. |
 | UI | Изменённый critical flow имеет component/feature test; после E2E rollout -- real-flow assertion, mobile `375 px` где применимо, и axe check. Скриншот сам по себе недостаточен. |
 

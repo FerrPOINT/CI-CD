@@ -52,7 +52,7 @@ BACKEND_ROUTE_FILES = (
 )
 FORBIDDEN_STALE_STATUS = [
     (r"В MVP задачи переводятся вручную через API, CLI или Dashboard", "current execution uses embedded runner; manual transitions are historical/manual-job only"),
-    (r"Automation — configuration only", "schedules/outgoing webhooks are Current verified MVP; only notifications/inbound handlers are configuration-only"),
+    (r"Automation — configuration only", "schedules/outgoing webhooks/in_app/SSE notifications are Current verified MVP; only inbound handlers/external adapters remain target"),
     (r"Identity — storage only", "identity has conditional auth/RBAC enforcement when CICD_AUTH_SECRET is non-empty"),
     (r"Outbox worker и runner API -- Target", "outbox worker is current MVP; only external runner API is target"),
     (r"Нет auth/RBAC: Spoofing на всех API", "auth/RBAC is conditional, not absent"),
@@ -91,6 +91,13 @@ FORBIDDEN_STALE_STATUS = [
     (r"log pagination/search и [^.\n]*оста[её]тся", "bounded log pagination/search is current MVP; command spans remain target"),
     (r"pagination/search оста[её]тся target", "bounded log pagination/search is current MVP; command spans remain target"),
     (r"pagination/search.*target diagnostic logs", "bounded log pagination/search is current MVP; command spans remain target"),
+    (r"sender/SSE delivery нет", "in_app/SSE notification delivery is current MVP; external adapters remain target"),
+    (r"notifications sender/SSE delivery", "in_app/SSE notification delivery is current MVP; external adapters remain target"),
+    (r"notification sender отсутств", "in_app/SSE notification delivery is current MVP; external adapters remain target"),
+    (r"notifications sender не реализован", "in_app/SSE notification delivery is current MVP; external adapters remain target"),
+    (r"SSE не реализован", "notification SSE stream is current MVP; external adapters remain target"),
+    (r"email/Slack/SSE sender", "SSE notification stream is current MVP; email/Slack adapters remain target"),
+    (r"Доставки нет", "in_app/SSE notification delivery is current MVP; external adapters remain target"),
 ]
 
 problems: list[str] = []

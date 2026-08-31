@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { api, apiRetry } from './client'
+import { currentSession } from './auth'
 import type {
   TreeEntry,
   BlobContent,
@@ -23,6 +24,7 @@ import type {
   JobLog,
   JobLogPage,
   NotificationConfig,
+  NotificationEvent,
   Pipeline,
   PipelineDetail,
   Project,
@@ -370,11 +372,16 @@ const PLATFORM_KEYS = {
   schedules: (projectId: string) => ['schedules', projectId] as const,
   webhooks: (projectId: string) => ['webhooks', projectId] as const,
   notifications: (projectId: string) => ['notifications', projectId] as const,
+  notificationEvents: (projectId: string) => ['notification-events', projectId] as const,
   report: (projectId: string) => ['report', projectId] as const,
   auditLog: ['audit-log'] as const,
   users: ['users'] as const,
   tokens: ['api-tokens'] as const,
   projectMemberships: (projectId: string) => ['project-memberships', projectId] as const,
+}
+
+function browserNotificationStreamEnabled(): boolean {
+  return typeof window !== 'undefined' && !window.navigator.userAgent.toLowerCase().includes('jsdom')
 }
 
 export function useRunners() {
@@ -573,6 +580,74 @@ export function useNotifications(projectId: string | undefined) {
     queryFn: () => api<NotificationConfig[]>(`/projects/${projectId}/notifications`),
     enabled: Boolean(projectId),
   })
+}
+
+export function useNotificationEvents(projectId: string | undefined) {
+  const qc = useQueryClient()
+  const streamEnabled = browserNotificationStreamEnabled()
+  const query = useQuery({
+    queryKey: PLATFORM_KEYS.notificationEvents(projectId ?? ''),
+    queryFn: () => api<NotificationEvent[]>(`/projects/${projectId}/notification-events?limit=20`),
+    enabled: Boolean(projectId),
+    refetchInterval: streamEnabled ? 10_000 : false,
+  })
+  useEffect(() => {
+    if (!projectId || !browserNotificationStreamEnabled()) return
+    const streamProjectId = projectId
+    const controller = new AbortController()
+    let stopped = false
+    let retryTimer: number | undefined
+
+    async function connect() {
+      while (!stopped) {
+        try {
+          const headers = new Headers()
+          const session = currentSession()
+          if (session && session.expires_at * 1000 > Date.now() + 30_000) {
+            headers.set('Authorization', `Bearer ${session.access_token}`)
+          }
+          const response = await fetch(`/api/v1/projects/${streamProjectId}/notifications/stream`, {
+            headers,
+            signal: controller.signal,
+          })
+          if (!response.ok || !response.body) throw new Error('notification stream unavailable')
+          const reader = response.body.getReader()
+          const decoder = new TextDecoder()
+          let buffer = ''
+          while (!stopped) {
+            const { done, value } = await reader.read()
+            if (done) break
+            buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n')
+            let frameEnd = buffer.indexOf('\n\n')
+            while (frameEnd >= 0) {
+              const frame = buffer.slice(0, frameEnd)
+              buffer = buffer.slice(frameEnd + 2)
+              if (frame.includes('event: notification')) {
+                void qc.invalidateQueries({ queryKey: PLATFORM_KEYS.notificationEvents(streamProjectId) })
+              }
+              frameEnd = buffer.indexOf('\n\n')
+            }
+          }
+        } catch {
+          if (stopped || controller.signal.aborted) return
+        }
+        if (!stopped) {
+          await new Promise<void>((resolve) => {
+            retryTimer = window.setTimeout(resolve, 5000)
+          })
+        }
+      }
+    }
+
+    void connect()
+    return () => {
+      stopped = true
+      controller.abort()
+      if (retryTimer) window.clearTimeout(retryTimer)
+    }
+  }, [projectId, qc])
+
+  return query
 }
 
 export function useSaveNotifications(projectId: string | undefined) {

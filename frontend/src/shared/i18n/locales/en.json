@@ -263,11 +263,19 @@
   "notifications": {
     "title": "Notifications",
     "capabilityTitle": "Notification channels",
-    "capabilityDescription": "Only channel configuration is stored right now. Email/Slack/SSE sender and delivery history are not implemented yet.",
+    "capabilityDescription": "In-app and SSE notifications are delivered from terminal pipeline events. Email and Slack adapters remain target.",
     "add": "Add channel",
-    "channelPlaceholder": "slack",
-    "targetPlaceholder": "https://hooks.slack.com/...",
-    "saved": "Notifications saved"
+    "channelPlaceholder": "in_app",
+    "targetPlaceholder": "dashboard",
+    "saved": "Notifications saved",
+    "event": "Event",
+    "channel": "Channel",
+    "delivery": "Delivery",
+    "created": "Created",
+    "delivered": "Delivered",
+    "pending": "Pending",
+    "failed": "Failed",
+    "noEvents": "No notification events yet."
   },
   "reports": {
     "title": "Reports",

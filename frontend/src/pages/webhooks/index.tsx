@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useParams } from 'react-router'
-import { useWebhooks, useCreateWebhook, useDeleteWebhook, useNotifications, useSaveNotifications } from '@/api/hooks'
+import { useWebhooks, useCreateWebhook, useDeleteWebhook, useNotifications, useNotificationEvents, useSaveNotifications } from '@/api/hooks'
 import { Card } from '@/shared/ui/card'
 import { Button } from '@/shared/ui/button'
 import { Input } from '@/shared/ui/input'
@@ -132,14 +132,17 @@ export function WebhooksPage() {
 function NotificationsSection() {
   const { t } = useTranslation()
   const { projectId } = useParams()
-  const { data: notifications = [], isLoading } = useNotifications(projectId)
+  const notificationsQuery = useNotifications(projectId)
+  const isLoading = notificationsQuery.isLoading
+  const { data: events = [], isLoading: eventsLoading } = useNotificationEvents(projectId)
   const save = useSaveNotifications(projectId)
   const [items, setItems] = useState<{ channel: string; target: string }[]>([])
 
-  // Sync loaded data into local state
-  if (items.length === 0 && notifications.length > 0) {
-    setItems(notifications.map(n => ({ channel: n.channel, target: n.target })))
-  }
+  useEffect(() => {
+    if (notificationsQuery.data) {
+      setItems(notificationsQuery.data.map(n => ({ channel: n.channel, target: n.target })))
+    }
+  }, [notificationsQuery.data])
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -156,9 +159,9 @@ function NotificationsSection() {
         <h2 className="text-lg font-semibold">{t('notifications.title')}</h2>
       </div>
       <CapabilityCallout
-        tone="configuration"
+        tone="mvp"
         title={t('notifications.capabilityTitle')}
-        label={t('capability.configurationOnly')}
+        label={t('capability.currentMvp')}
         description={t('notifications.capabilityDescription')}
       />
       <Card className="p-4">
@@ -176,7 +179,7 @@ function NotificationsSection() {
                   </Button>
                 </div>
               ))}
-              <Button type="button" variant="ghost" size="sm" onClick={() => setItems([...items, { channel: '', target: '' }])}>
+              <Button type="button" variant="ghost" size="sm" onClick={() => setItems([...items, { channel: 'in_app', target: 'dashboard' }])}>
                 <Plus className="h-4 w-4" /> {t('notifications.add')}
               </Button>
               <div className="flex gap-2">
@@ -185,6 +188,43 @@ function NotificationsSection() {
             </>
           )}
         </form>
+      </Card>
+      <Card>
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t('notifications.event')}</TableHead>
+                <TableHead>{t('notifications.channel')}</TableHead>
+                <TableHead>{t('notifications.delivery')}</TableHead>
+                <TableHead>{t('notifications.created')}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {eventsLoading ? (
+                <TableRow><TableCell colSpan={4} className="text-sm text-text-muted">{t('common.loading')}</TableCell></TableRow>
+              ) : events.length === 0 ? (
+                <TableRow><TableCell colSpan={4} className="text-sm text-text-muted">{t('notifications.noEvents')}</TableCell></TableRow>
+              ) : events.map(event => (
+                <TableRow key={event.id}>
+                  <TableCell>
+                    <div className="max-w-xl">
+                      <p className="text-sm font-medium">{event.message}</p>
+                      <p className="mt-1 font-mono text-xs text-text-muted">{event.event_type} - {event.pipeline_id.slice(0, 8)}</p>
+                    </div>
+                  </TableCell>
+                  <TableCell className="break-all font-mono text-xs">{event.channel} / {event.target}</TableCell>
+                  <TableCell>
+                    <span className={`rounded-full px-2 py-0.5 text-xs ${event.last_error ? 'bg-red-500/15 text-red-500' : event.delivered_at ? 'bg-emerald-500/15 text-emerald-500' : 'bg-amber-500/15 text-amber-500'}`}>
+                      {event.last_error ? t('notifications.failed') : event.delivered_at ? t('notifications.delivered') : t('notifications.pending')}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-xs text-text-muted">{new Date(event.created_at).toLocaleString()}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
       </Card>
     </div>
   )

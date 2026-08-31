@@ -2,7 +2,7 @@
 
 Статус: Accepted target contract. Основание: [ADR-0009](../adr/0009-canonical-registry.md).
 
-Этот контракт определяет целевое наблюдаемое поведение автоматизации. До реализации текущие конфигурации webhook-ов, уведомлений и SSE не означают гарантированную доставку.
+Этот контракт определяет целевое наблюдаемое поведение автоматизации. Текущий MVP уже доставляет outgoing webhooks и local `in_app`/`sse` notifications в ограниченных границах, но не реализует полный target-контракт history/replay/dead-letter, внешние adapters и общую delivery-модель.
 
 ## 1. Границы и хранение
 
@@ -131,7 +131,7 @@ X-Forge-Secret-Version: <integer>
 
 Rules и destinations project-scoped, наследуют tenant и применяют RBAC. В первом релизе template context ограничен allowlist: project name, pipeline ID/status/URL/ref/SHA, deployment environment и `event.occurred_at`. Success может быть muted или aggregated; `pipeline.failed` и `deployment.finished` с failure не подавляются quiet-hours/digest без явной policy.
 
-SSE передаёт `event: <type>`, `id: <event id>` и `data: <envelope>` на `GET /api/v1/events/stream`. Сервер фильтрует поток по authorisation, не обещает replay по `Last-Event-ID`; reconnect должен выполнить API refetch и идемпотентную cache invalidation.
+Целевой общий SSE передаёт `event: <type>`, `id: <event id>` и `data: <envelope>` на `GET /api/v1/events/stream`. Current MVP даёт project-scoped notification stream на `GET /api/v1/projects/{project_id}/notifications/stream`. Сервер фильтрует поток по authorisation, не обещает replay по `Last-Event-ID`; reconnect должен выполнить API refetch и идемпотентную cache invalidation.
 
 ## 7. Проверяемые требования
 

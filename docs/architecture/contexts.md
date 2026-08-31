@@ -22,7 +22,7 @@
 
 ## Текущее состояние контекстов
 
-Соответствует `docs/CURRENT_STATE.md`: Execution — embedded runner; Automation — Git push, schedules и outgoing webhooks в MVP, notifications/inbound provider webhooks только configuration-only; Identity — conditional auth/RBAC при непустом `CICD_AUTH_SECRET`; остальные контексты — current MVP с указанными ограничениями.
+Соответствует `docs/CURRENT_STATE.md`: Execution — embedded runner; Automation — Git push, schedules, outgoing webhooks и `in_app`/`sse` notifications в MVP, inbound provider webhooks и внешние notification adapters остаются target/config; Identity — conditional auth/RBAC при непустом `CICD_AUTH_SECRET`; остальные контексты — current MVP с указанными ограничениями.
 
 ## Переход к target
 

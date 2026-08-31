@@ -19,7 +19,7 @@ Outbox является источником для webhook/notification deliver
 - Нужны versioned migrations: `domain_events`, `outbox_messages`, target `outbox_deliveries` и индексы pending events.
 - Нужны worker lifecycle, backoff, dead-letter/retry policy, metrics и reconciliation.
 - Появляется небольшая eventual consistency, которую UI показывает как pending/delivery state.
-- До реализации старые configuration-only webhooks/schedules не считаются активной automation capability.
+- До реализации внешние adapters/handlers и любые configuration-only настройки не считаются активной automation capability.
 
 ## Related
 

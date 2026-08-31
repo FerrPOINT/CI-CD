@@ -144,7 +144,7 @@ Supervisor-полл queued-джобов, атомарный claim (`queued → r
 
 ### 6.4 Платформенные ресурсы (MVP)
 
-Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-256-GCM at rest + embedded env injection/masking), artifacts (upload/download + локальное хранилище, 50 MiB лимит), environments/deployments, schedules MVP (enabled rows проверяются worker-ом примерно раз в минуту), outgoing webhooks MVP (terminal pipeline events через outbox/basic retry/HMAC), notifications config, reports (агрегаты success rate/duration), audit log (последние 200 событий), users/roles, project memberships, argon2id credentials, session-bound access JWT, refresh sessions с rotate/logout, project-scoped PAT enforcement и Git Smart HTTP project checks при `CICD_AUTH_SECRET`.
+Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-256-GCM at rest + embedded env injection/masking), artifacts (upload/download + локальное хранилище, 50 MiB лимит), environments/deployments, schedules MVP (enabled rows проверяются worker-ом примерно раз в минуту), outgoing webhooks MVP (terminal pipeline events через outbox/basic retry/HMAC), `in_app`/`sse` notifications MVP (local outbox history + Dashboard stream), reports (агрегаты success rate/duration), audit log (последние 200 событий), users/roles, project memberships, argon2id credentials, session-bound access JWT, refresh sessions с rotate/logout, project-scoped PAT enforcement и Git Smart HTTP project checks при `CICD_AUTH_SECRET`.
 
 ## 7. Frontend архитектура
 

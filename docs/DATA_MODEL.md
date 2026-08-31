@@ -561,7 +561,7 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 |---|---|---|---|---|
 | `id` | UUID | NOT NULL | — | PK |
 | `project_id` | UUID | NOT NULL | — | FK → `projects(id)` CASCADE |
-| `channel` | TEXT | NOT NULL | — | Тип канала (slack, email, …) |
+| `channel` | TEXT | NOT NULL | — | Тип канала; current delivery поддерживает `in_app` и `sse`, email/Slack остаются target adapters |
 | `target` | TEXT | NOT NULL | — | Адрес назначения |
 | `enabled` | BOOLEAN | NOT NULL | `TRUE` | — |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
@@ -671,6 +671,8 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 | `last_error` | TEXT | да | — | Последняя ошибка |
 | `created_at` | TIMESTAMPTZ | нет | `now()` | Создано |
 
+Для notification MVP `outbox_messages.channel = 'notification'`, `destination = 'project:<project_id>'`, а payload содержит `event`, `project_id`, `pipeline_id`, `status`, `channel`, `target` и `message`. Worker помечает `in_app`/`sse` сообщения delivered локально; внешние adapters не запускаются.
+
 ### 9.17 Индексы
 
 ```
@@ -697,6 +699,7 @@ idx_project_memberships_user ON project_memberships(user_id, project_id)
 idx_domain_events_aggregate  ON domain_events(aggregate_type, aggregate_id, occurred_at DESC)
 idx_domain_events_type       ON domain_events(event_type, occurred_at DESC)
 idx_outbox_pending           ON outbox_messages(next_attempt_at) WHERE delivered_at IS NULL
+idx_outbox_notification_project_created ON outbox_messages(destination, created_at DESC, id DESC) WHERE channel = 'notification'
 ```
 
 ## 10. Планируемые таблицы (Roadmap)
@@ -705,7 +708,7 @@ idx_outbox_pending           ON outbox_messages(next_attempt_at) WHERE delivered
 |---|---|---|
 | Runner protocol | `job_leases` | External dispatch, fencing, retries |
 | Production outbox | `outbox_deliveries` | Delivery history, replay/dead letters, observed outcome |
-| Notifications/SSE | delivery-specific tables | Email/Slack/SSE sender state |
+| External notifications | delivery-specific tables | Email/Slack sender state, templates, preferences |
 
 ## References
 

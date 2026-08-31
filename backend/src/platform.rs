@@ -10,7 +10,7 @@ use aes_gcm::{
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::HeaderMap,
     response::{IntoResponse, Response},
     routing::{get, patch, post},
@@ -89,6 +89,14 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route(
             "/api/v1/projects/{project_id}/notifications",
             get(list_notifications).put(replace_notifications),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/notification-events",
+            get(list_notification_events),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/notifications/stream",
+            get(notification_stream),
         )
         .route(
             "/api/v1/projects/{project_id}/reports/summary",
@@ -559,6 +567,36 @@ pub(crate) struct NotificationInput {
     target: String,
     enabled: Option<bool>,
 }
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+pub(crate) struct NotificationEventsParams {
+    /// Maximum number of recent notification events to return.
+    limit: Option<i64>,
+}
+impl NotificationEventsParams {
+    fn bounded_limit(&self) -> Result<i64, ApiError> {
+        let limit = self.limit.unwrap_or(50);
+        if !(1..=200).contains(&limit) {
+            return Err(ApiError::bad_request("limit must be between 1 and 200"));
+        }
+        Ok(limit)
+    }
+}
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct NotificationEvent {
+    id: Uuid,
+    event_id: Uuid,
+    subscription_id: String,
+    channel: String,
+    target: String,
+    event_type: String,
+    pipeline_id: Uuid,
+    status: String,
+    message: String,
+    attempts: i32,
+    delivered_at: Option<DateTime<Utc>>,
+    last_error: Option<String>,
+    created_at: DateTime<Utc>,
+}
 #[utoipa::path(get, path = "/api/v1/projects/{project_id}/notifications", tag = "notifications", params(("project_id" = Uuid, Path)), responses((status = 200, body = [Notification])))]
 async fn list_notifications(
     State(state): State<Arc<AppState>>,
@@ -587,6 +625,119 @@ async fn replace_notifications(
         sqlx::query("INSERT INTO notification_configs (id, project_id, channel, target, enabled) VALUES ($1, $2, $3, $4, $5)").bind(Uuid::new_v4()).bind(project_id).bind(input.channel.trim()).bind(input.target.trim()).bind(input.enabled.unwrap_or(true)).execute(db).await.map_err(ApiError::internal)?;
     }
     list_notifications(State(state), Path(project_id)).await
+}
+
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/notification-events", tag = "notifications", params(("project_id" = Uuid, Path), NotificationEventsParams), responses((status = 200, body = [NotificationEvent]), (status = 400)))]
+pub(crate) async fn list_notification_events(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+    Query(params): Query<NotificationEventsParams>,
+) -> ApiResult<Vec<NotificationEvent>> {
+    let limit = params.bounded_limit()?;
+    Ok(Json(
+        recent_notification_events(pool(&state)?, project_id, limit)
+            .await
+            .map_err(ApiError::internal)?,
+    ))
+}
+
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/notifications/stream", tag = "notifications", params(("project_id" = Uuid, Path)), responses((status = 200, description = "text/event-stream of project notification events")))]
+pub(crate) async fn notification_stream(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+) -> Result<
+    axum::response::Sse<
+        tokio_stream::wrappers::UnboundedReceiverStream<
+            Result<axum::response::sse::Event, std::convert::Infallible>,
+        >,
+    >,
+    ApiError,
+> {
+    let pool = pool(&state)?.clone();
+    let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let mut after_created_at = Utc::now();
+        let mut after_id = Uuid::nil();
+        loop {
+            if sender.is_closed() {
+                return;
+            }
+            let rows = notification_events_after(&pool, project_id, after_created_at, after_id, 50)
+                .await
+                .unwrap_or_default();
+            for event in rows {
+                after_created_at = event.created_at;
+                after_id = event.id;
+                let data = serde_json::to_string(&event).unwrap_or_default();
+                if sender
+                    .send(Ok(axum::response::sse::Event::default()
+                        .event("notification")
+                        .id(event.id.to_string())
+                        .data(data)))
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+        }
+    });
+    Ok(axum::response::Sse::new(
+        tokio_stream::wrappers::UnboundedReceiverStream::new(receiver),
+    ))
+}
+
+async fn recent_notification_events(
+    pool: &PgPool,
+    project_id: Uuid,
+    limit: i64,
+) -> Result<Vec<NotificationEvent>, sqlx::Error> {
+    sqlx::query_as::<_, NotificationEvent>(
+        "SELECT id, event_id, subscription_id, \
+            COALESCE(payload->>'channel', '') AS channel, \
+            COALESCE(payload->>'target', '') AS target, \
+            COALESCE(payload->>'event', '') AS event_type, \
+            (payload->>'pipeline_id')::uuid AS pipeline_id, \
+            COALESCE(payload->>'status', '') AS status, \
+            COALESCE(payload->>'message', '') AS message, \
+            attempts, delivered_at, last_error, created_at \
+         FROM outbox_messages \
+         WHERE channel = 'notification' AND destination = $1 \
+         ORDER BY created_at DESC, id DESC LIMIT $2",
+    )
+    .bind(crate::outbox::notification_destination(project_id))
+    .bind(limit)
+    .fetch_all(pool)
+    .await
+}
+
+async fn notification_events_after(
+    pool: &PgPool,
+    project_id: Uuid,
+    after_created_at: DateTime<Utc>,
+    after_id: Uuid,
+    limit: i64,
+) -> Result<Vec<NotificationEvent>, sqlx::Error> {
+    sqlx::query_as::<_, NotificationEvent>(
+        "SELECT id, event_id, subscription_id, \
+            COALESCE(payload->>'channel', '') AS channel, \
+            COALESCE(payload->>'target', '') AS target, \
+            COALESCE(payload->>'event', '') AS event_type, \
+            (payload->>'pipeline_id')::uuid AS pipeline_id, \
+            COALESCE(payload->>'status', '') AS status, \
+            COALESCE(payload->>'message', '') AS message, \
+            attempts, delivered_at, last_error, created_at \
+         FROM outbox_messages \
+         WHERE channel = 'notification' AND destination = $1 \
+           AND (created_at, id) > ($2, $3) \
+         ORDER BY created_at ASC, id ASC LIMIT $4",
+    )
+    .bind(crate::outbox::notification_destination(project_id))
+    .bind(after_created_at)
+    .bind(after_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await
 }
 
 #[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]

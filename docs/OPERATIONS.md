@@ -4,8 +4,8 @@
 
 ## Статус и граница доверия
 
-- **Current verified:** локальный Docker Compose запускает PostgreSQL, backend и Dashboard; versioned SQLx migrations применяются при старте; embedded runner выполняет jobs на том же узле; health, `/metrics`, structured logs, conditional auth, schedules и outgoing webhook worker доступны.
-- **Configuration only:** notifications и inbound provider webhooks можно настроить, но sender/handlers не исполняют доставку.
+- **Current verified:** локальный Docker Compose запускает PostgreSQL, backend и Dashboard; versioned SQLx migrations применяются при старте; embedded runner выполняет jobs на том же узле; health, `/metrics`, structured logs, conditional auth, schedules, outgoing webhook worker и `in_app`/`sse` notification delivery доступны.
+- **Configuration only:** email/Slack notification adapters и inbound provider webhooks можно описать как target/config, но sender/handlers не исполняют внешнюю доставку.
 - **Target approved:** TLS-termination, tenant isolation/scoped policy, отдельные runner-ы с leases, production scheduler/outbox guarantees, alerting, backup scripts и production DR.
 
 > **Критическое ограничение MVP: только локальная или доверенная сеть.** Если `CICD_AUTH_SECRET` не задан или пустой, API и Dashboard работают open/trusted-network; при непустом секрете включаются JWT/scoped PAT, session-bound access invalidation, refresh rotate/logout/revoke, route roles и project memberships для project-owned ресурсов, но tenant isolation, service-account tokens, scoped Git credentials и production cookie/CSRF/session-family policy ещё не завершены. CORS permissive, TLS отсутствует. PostgreSQL в `docker-compose.yml` привязан к `127.0.0.1`, но API/Dashboard host ports нельзя публиковать в недоверенную сеть и нельзя считать этот Compose production-развёртыванием.
@@ -357,7 +357,7 @@ Runner считается unhealthy после отсутствия heartbeat б
 
 **Current verified: диагностика и действия**
 
-Transactional outbox MVP реализован через `domain_events` и `outbox_messages`: terminal pipeline event создаёт сообщения для enabled outgoing webhooks, worker доставляет их с basic retry/backoff. Таблицы `outbox_deliveries`, audited replay, dead-letter workflow, notification/SSE sender и точные delivery guarantees ещё target.
+Transactional outbox MVP реализован через `domain_events` и `outbox_messages`: terminal pipeline event создаёт сообщения для enabled outgoing webhooks и local `in_app`/`sse` notifications; worker доставляет webhook-и с basic retry/backoff и помечает local notifications delivered. Таблицы `outbox_deliveries`, audited replay, dead-letter workflow, external notification adapters и точные delivery guarantees ещё target.
 
 Для диагностики текущего backlog используйте read-only запросы к `outbox_messages` и backend logs; не редактируйте payload/attempts вручную:
 

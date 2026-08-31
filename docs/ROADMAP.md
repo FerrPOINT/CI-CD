@@ -27,7 +27,7 @@ Roadmap фиксирует порядок доведения Forge до базо
 - project secrets: AES-256-GCM at rest, env injection в embedded runner, best-effort masking stdout/stderr;
 - environments/deployments metadata, reports, audit log;
 - users, roles, argon2id credentials, session-bound access JWT, sessions, refresh rotate/logout/revoke, scoped PAT и project memberships при `CICD_AUTH_SECRET`;
-- schedules MVP и outgoing webhooks через outbox с basic retry/HMAC;
+- schedules MVP, outgoing webhooks через outbox с basic retry/HMAC и `in_app`/`sse` notifications через local outbox history/stream;
 - OpenAPI generation/drift gate и generated frontend schema.
 
 Ключевые ограничения current baseline:
@@ -35,7 +35,7 @@ Roadmap фиксирует порядок доведения Forge до базо
 - execution attempts реализованы как MVP-слой без внешних leases/fencing; bounded log pagination/search уже есть, command spans и richer error diagnostics остаются Phase 1 follow-up;
 - auth/RBAC имеет project membership, scoped PAT, Git Smart HTTP read/write checks, session-bound access invalidation и refresh rotate/logout/revoke MVP, но без tenant isolation, service-account tokens, scoped Git credentials и production cookie/CSRF/session-family policy;
 - execution встроен в backend process, поэтому shared/prod режим требует external runner boundary;
-- webhooks не имеют полной delivery history/replay/dead-letter UI, notifications sender не реализован;
+- webhooks/notifications не имеют полной delivery history/replay/dead-letter UI; email/Slack notification adapters не реализованы;
 - backup/restore пока процедура, а не проверяемый автоматизированный product gate.
 
 ## 4. Базовый roadmap
@@ -89,7 +89,8 @@ Deliverables:
 
 - delivery history для outgoing webhooks: attempts, status, response code/body summary, next retry;
 - replay и dead-letter workflow;
-- notifications sender для выбранных каналов первого релиза;
+- Current MVP: `in_app`/`sse` notification delivery на terminal pipeline events через local outbox projection;
+- Target follow-up: email/Slack adapters, notification templates, preferences и aggregation;
 - full cron semantics с timezone и next-run preview;
 - incoming provider webhook handlers только после auth/signature validation.
 

@@ -1009,6 +1009,38 @@ paths:
           description: ''
         '409':
           description: ''
+  /api/v1/projects/{project_id}/notification-events:
+    get:
+      tags:
+      - notifications
+      operationId: list_notification_events
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: limit
+        in: query
+        description: Maximum number of recent notification events to return.
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NotificationEvent'
+        '400':
+          description: ''
   /api/v1/projects/{project_id}/notifications:
     get:
       tags:
@@ -1060,6 +1092,21 @@ paths:
                   $ref: '#/components/schemas/Notification'
         '400':
           description: ''
+  /api/v1/projects/{project_id}/notifications/stream:
+    get:
+      tags:
+      - notifications
+      operationId: notification_stream
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: text/event-stream of project notification events
   /api/v1/projects/{project_id}/pipelines:
     get:
       tags:
@@ -2643,6 +2690,57 @@ components:
         project_id:
           type: string
           format: uuid
+        target:
+          type: string
+    NotificationEvent:
+      type: object
+      required:
+      - id
+      - event_id
+      - subscription_id
+      - channel
+      - target
+      - event_type
+      - pipeline_id
+      - status
+      - message
+      - attempts
+      - created_at
+      properties:
+        attempts:
+          type: integer
+          format: int32
+        channel:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        delivered_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        event_id:
+          type: string
+          format: uuid
+        event_type:
+          type: string
+        id:
+          type: string
+          format: uuid
+        last_error:
+          type:
+          - string
+          - 'null'
+        message:
+          type: string
+        pipeline_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+        subscription_id:
+          type: string
         target:
           type: string
     NotificationInput:

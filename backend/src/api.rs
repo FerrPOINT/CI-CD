@@ -74,6 +74,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_GIT_PUSH: &str = "git-push";
         crate::platform::update_schedule, crate::platform::delete_schedule,
         crate::platform::list_webhooks, crate::platform::create_webhook, crate::platform::delete_webhook,
         crate::platform::list_notifications, crate::platform::replace_notifications,
+        crate::platform::list_notification_events, crate::platform::notification_stream,
         crate::platform::project_report, crate::platform::list_audit_log,
         crate::platform::list_users, crate::platform::create_user, crate::platform::update_user,
         crate::platform::list_tokens, crate::platform::create_token, crate::platform::delete_token,
@@ -102,6 +103,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_GIT_PUSH: &str = "git-push";
         crate::platform::Schedule, crate::platform::ScheduleInput,
         crate::platform::Webhook, crate::platform::CreateWebhook,
         crate::platform::Notification, crate::platform::NotificationInput,
+        crate::platform::NotificationEvent,
         crate::platform::Report, crate::platform::AuditEvent,
         crate::platform::User, crate::platform::UserInput,
         crate::platform::ApiToken, crate::platform::CreatedToken, crate::platform::CreateToken,
@@ -2306,6 +2308,18 @@ mod tests {
         );
         assert_eq!(
             project_scope_ref(&format!("/api/v1/projects/{project_id}/memberships")),
+            Some(ProjectScopeRef::Project(project_id))
+        );
+        assert_eq!(
+            project_scope_ref(&format!(
+                "/api/v1/projects/{project_id}/notification-events"
+            )),
+            Some(ProjectScopeRef::Project(project_id))
+        );
+        assert_eq!(
+            project_scope_ref(&format!(
+                "/api/v1/projects/{project_id}/notifications/stream"
+            )),
             Some(ProjectScopeRef::Project(project_id))
         );
         assert_eq!(

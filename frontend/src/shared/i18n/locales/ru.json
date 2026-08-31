@@ -263,11 +263,19 @@
   "notifications": {
     "title": "Уведомления",
     "capabilityTitle": "Каналы уведомлений",
-    "capabilityDescription": "Сейчас сохраняется только конфигурация каналов. Email/Slack/SSE sender и история доставок ещё не реализованы.",
+    "capabilityDescription": "In-app и SSE-уведомления доставляются по финальным событиям pipeline. Email/Slack адаптеры остаются целевыми.",
     "add": "Добавить канал",
-    "channelPlaceholder": "slack",
-    "targetPlaceholder": "https://hooks.slack.com/...",
-    "saved": "Уведомления сохранены"
+    "channelPlaceholder": "in_app",
+    "targetPlaceholder": "dashboard",
+    "saved": "Уведомления сохранены",
+    "event": "Событие",
+    "channel": "Канал",
+    "delivery": "Доставка",
+    "created": "Создано",
+    "delivered": "Доставлено",
+    "pending": "Ожидает",
+    "failed": "Ошибка",
+    "noEvents": "Событий уведомлений пока нет."
   },
   "reports": {
     "title": "Отчёты",

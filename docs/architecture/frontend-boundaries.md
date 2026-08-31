@@ -20,7 +20,7 @@ frontend/src/
 - i18n: все пользовательские строки через `t()`; ключи en/ru в паритете (проверяется verify_docs + vitest).
 - Статусы отображаются текстом + цветом (не только цветом).
 - Страница должна показывать фактический статус capability: `Current verified`, `Configuration only` или `Target approved`; target-функции не оформляются как готовые action controls.
-- Для страниц с частично реализованной capability используется общий `CapabilityCallout` из `frontend/src/shared/ui/capability-callout.tsx`: `Runners` показывает registry/heartbeat как MVP, `Schedules` — scheduler MVP, `Webhooks` — outgoing delivery MVP, `Notifications` — configuration-only.
+- Для страниц с частично реализованной capability используется общий `CapabilityCallout` из `frontend/src/shared/ui/capability-callout.tsx`: `Runners` показывает registry/heartbeat как MVP, `Schedules` — scheduler MVP, `Webhooks` — outgoing delivery MVP, `Notifications` — `in_app`/`sse` delivery MVP.
 - Основной desktop layout — рабочий dashboard/sidebar с плотными таблицами и формами; mobile — карточный список без потери create/view/retry/cancel сценариев.
 - Новые страницы добавляются только для самостоятельного CI/CD workflow. Справка, issue tracking, registry и IDE-экраны остаются out-of-scope.
 
@@ -40,5 +40,5 @@ frontend/src/
 
 - DTO генерируются из `openapi/openapi.yaml` в `frontend/src/api/schema.d.ts`; generated transport boundary остаётся target.
 - Query-key конвенции и инвалидации — `contracts/UI_API_CONTRACT.md`.
-- Live-обновления job logs — current SSE endpoint; pipeline/events projection остаётся target (`AUTOMATION_ARCHITECTURE.md`).
+- Live-обновления job logs и `in_app`/`sse` notifications — current SSE endpoints; общая pipeline/events projection остаётся target (`AUTOMATION_ARCHITECTURE.md`).
 - Responsive/a11y-требования — `docs/DELIVERY_ARCHITECTURE.md` + USER_GUIDE.md (Gate 4/5 evidence).

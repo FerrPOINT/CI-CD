@@ -236,6 +236,22 @@ export interface NotificationConfig {
   enabled: boolean
 }
 
+export interface NotificationEvent {
+  id: string
+  event_id: string
+  subscription_id: string
+  channel: string
+  target: string
+  event_type: string
+  pipeline_id: string
+  status: string
+  message: string
+  attempts: number
+  delivered_at: string | null
+  last_error: string | null
+  created_at: string
+}
+
 export interface ProjectReport {
   total_pipelines: number
   successful_pipelines: number
