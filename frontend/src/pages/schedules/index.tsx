@@ -86,6 +86,8 @@ export function SchedulesPage() {
                 <TableHead>{t('schedules.cron')}</TableHead>
                 <TableHead>{t('schedules.gitRef')}</TableHead>
                 <TableHead>{t('schedules.enabled')}</TableHead>
+                <TableHead>{t('schedules.nextFire')}</TableHead>
+                <TableHead>{t('schedules.lastFire')}</TableHead>
                 <TableHead>{t('schedules.created')}</TableHead>
                 <TableHead className="w-20"></TableHead>
               </TableRow>
@@ -100,9 +102,22 @@ export function SchedulesPage() {
                       {s.enabled ? t('schedules.enabledOn') : t('schedules.enabledOff')}
                     </span>
                   </TableCell>
+                  <TableCell className="text-xs text-text-muted">{formatOptionalDate(s.next_fire_at)}</TableCell>
+                  <TableCell className="text-xs text-text-muted">
+                    {s.last_fire_error ? (
+                      <span className="text-danger" title={s.last_fire_error}>{t('schedules.error')}</span>
+                    ) : formatOptionalDate(s.last_fired_at)}
+                  </TableCell>
                   <TableCell className="text-xs text-text-muted">{new Date(s.created_at).toLocaleString()}</TableCell>
                   <TableCell>
-                    <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs text-danger hover:text-danger" onClick={() => handleDelete(s)}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      aria-label={t('common.delete')}
+                      title={t('common.delete')}
+                      className="h-7 gap-1 px-2 text-xs text-danger hover:text-danger"
+                      onClick={() => handleDelete(s)}
+                    >
                       <Trash2 className="h-3 w-3" />
                     </Button>
                   </TableCell>
@@ -123,4 +138,8 @@ export function SchedulesPage() {
       />
     </div>
   )
+}
+
+function formatOptionalDate(value: string | null): string {
+  return value ? new Date(value).toLocaleString() : 'n/a'
 }

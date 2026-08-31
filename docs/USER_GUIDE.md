@@ -21,7 +21,7 @@ Forge CI/CD - self-hosted control plane для Git-репозиториев и C
 | Окружения и записи деплоев | **Current verified** | Метаданные окружения и история деплоев; выполнение деплоя определяется job. |
 | Отчёты и аудит | **Current verified** | Сводка по проекту и последние 200 событий аудита. |
 | Пользователи, участники проектов и API-токены | **Current verified MVP** | Хранение, argon2id credentials, session-bound access JWT, sessions, PAT enforcement и project memberships при `CICD_AUTH_SECRET`. |
-| Расписания и outgoing webhooks | **Current verified MVP** | Worker запускает enabled schedules примерно раз в минуту и доставляет terminal pipeline webhooks с basic retry. |
+| Расписания и outgoing webhooks | **Current verified MVP** | Worker запускает enabled schedules по строгому 5-польному UTC cron и доставляет terminal pipeline webhooks с basic retry. |
 | Уведомления (`in_app`/`sse`) | **Current verified MVP** | Каналы показывают terminal pipeline events в Dashboard history/stream. |
 | Email/Slack adapters и inbound provider webhooks | **Target approved** | Внешние уведомления и public provider webhook handlers ещё не исполняют доставку. |
 | Вход, сессии, RBAC | **Current verified conditional** | `/login` работает при непустом `CICD_AUTH_SECRET`; project-owned API проверяет active session, текущую роль и membership, без секрета API и Dashboard остаются trusted-network/open. |
@@ -242,7 +242,9 @@ Retention/TTL, S3 и multipart upload - **Target approved**.
 1. Откройте **Schedules** (`/projects/{projectId}/schedules`).
 2. Создайте запись с пяти-польным cron-выражением, `git_ref` и флагом enabled, например `0 2 * * *` для `main`.
 3. Редактируйте, отключайте или удаляйте запись при изменении политики запуска.
-4. Scheduler проверяет enabled rows примерно раз в минуту и создаёт pipeline, если запись не запускалась в последние ~55 секунд. Cron-строка сейчас валидируется как пять полей и хранится, но не даёт полной cron-семантики.
+4. Scheduler хранит ближайший UTC `next_fire_at`, создаёт уникальный fire-slot и запускает pipeline для наступившего slot через idempotency key.
+5. Если в строке показана ошибка, исправьте cron/ref через обновление расписания: `PATCH` очищает ошибку и пересчитывает `next_fire_at`.
+6. IANA timezone, DST/misfire policy и multi-replica leases остаются target; текущие cron-времена интерпретируются как UTC.
 
 ### Исходящие webhooks
 
@@ -404,7 +406,7 @@ curl -fsS -X POST "http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines"
 
 **Статус процедуры: Current verified MVP для schedule и `in_app`/`sse`; Configuration only для Slack/email.**
 
-Ночной запуск можно настроить как MVP schedule: backend проверяет enabled rows примерно раз в минуту, но пока без полной cron-семантики. `in_app`/`sse` уведомления по terminal pipeline events видны в Dashboard/API. Slack/email-уведомление можно только сохранить как конфигурацию; внешний sender ещё не реализован.
+Ночной запуск можно настроить как MVP schedule: backend считает строгий 5-польный UTC cron, хранит `next_fire_at` и создаёт уникальный fire-slot; IANA timezone/DST/misfire остаются target. `in_app`/`sse` уведомления по terminal pipeline events видны в Dashboard/API. Slack/email-уведомление можно только сохранить как конфигурацию; внешний sender ещё не реализован.
 
 ### Почему роль пользователя или API-токен не запрещают доступ?
 

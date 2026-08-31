@@ -32,6 +32,7 @@
 - Outbox delivery history/requeue (REQ-AUTO-003): migration `0012_outbox_delivery_history` (`project_id`, `generation`, `replay_of_id`, `failed_at`, `outbox_delivery_attempts`), project-scoped delivery API/OpenAPI, Webhooks dashboard panel, failed delivery requeue, backend/frontend tests.
 - Backup/restore helper (NFR-REL-04): `scripts/forge_backup.py` plus `backup.sh`/`restore.sh`/`verify-backup.sh` create, verify and guarded-restore local Docker Compose backups for PostgreSQL, Git and artifact volumes; CI checks syntax, self-test and dry-run.
 - Artifact integrity MVP (REQ-ART-002): migration `0013_artifact_checksums` stores SHA-256 for new artifact uploads; download rejects checksum drift with `409`; Artifacts UI shows digest prefix.
+- Schedule fire slots (REQ-AUTO-002): migration `0014_schedule_fire_slots` adds `next_fire_at` and `schedule_fires`; scheduler evaluates strict five-field UTC cron, materializes unique fire slots and triggers pipelines idempotently; schedules with `last_fire_error` wait for an explicit PATCH instead of blocking the due batch.
 - CI: PostgreSQL service в backend-джобе — integration-тесты гоняются в CI; гейт `schema.d.ts` up-to-date; docs-джоба verify_docs.
 - SBOM: `scripts/generate_sbom.py` → docs/assets/sbom.json (CycloneDX-lite, 344 компонента; CISA Minimum Elements).
 - Пустой `CICD_AUTH_SECRET` теперь трактуется как не настроенный secret, поэтому compose default корректно оставляет локальный trusted-network mode.
@@ -90,7 +91,7 @@
 
 ### Planned
 
-- Baseline roadmap: immutable pipeline plan/DAG; diagnostic command spans/stream classification; external runner + durable queue/leases/fencing; full cron semantics/timezones; production outbox lease/reconciliation/full dead-letter policy/metrics; external notification adapters/inbound provider webhooks; off-site/PITR backup platform with verified restore drill; artifact retention/object storage; tenant isolation/service accounts/scoped Git credentials/production session hardening.
+- Baseline roadmap: immutable pipeline plan/DAG; diagnostic command spans/stream classification; external runner + durable queue/leases/fencing; schedule timezone/DST/misfire policies; production outbox lease/reconciliation/full dead-letter policy/metrics; external notification adapters/inbound provider webhooks; off-site/PITR backup platform with verified restore drill; artifact retention/object storage; tenant isolation/service accounts/scoped Git credentials/production session hardening.
 
 ## [0.1.0] — 2026-08-26
 

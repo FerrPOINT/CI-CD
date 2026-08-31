@@ -218,6 +218,9 @@ export interface Schedule {
   cron: string
   git_ref: string
   enabled: boolean
+  next_fire_at: string | null
+  last_fired_at: string | null
+  last_fire_error: string | null
   created_at: string
 }
 

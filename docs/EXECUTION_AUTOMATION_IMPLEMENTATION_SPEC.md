@@ -83,7 +83,7 @@ Every retry creates `execution_attempts.number + 1`; no `retry_wait → leasing`
 
 ## 6. Scheduler/outbox algorithms
 
-Scheduler uses `tokio-cron-scheduler` only to parse/evaluate 5-field cron in IANA timezone; PostgreSQL `schedule_fires` is authoritative. UTC due slots are computed deterministically; DST ambiguous time fires once at earliest UTC instant, nonexistent time is skipped and audited. Missed policy is `fire_once`: one latest due slot per schedule per tick, cap 100 schedules/tick.
+Current MVP uses the local strict 5-field UTC parser in `backend/src/schedule.rs`; PostgreSQL `schedule_fires` is authoritative. Target IANA timezone/DST support may use a dedicated cron crate, but PostgreSQL still owns claim/dedup. UTC due slots are computed deterministically; target DST ambiguous time fires once at earliest UTC instant, nonexistent time is skipped and audited. Target missed policy is `fire_once`: one latest due slot per schedule per tick, cap 100 schedules/tick.
 
 A Postgres advisory lock (`forge_scheduler_leader`) elects one scheduler; loss stops claims. For each due slot transaction: insert schedule_fire → create pipeline → append domain_event/outbox message. Unique fire prevents duplicate restart/multi-instance trigger.
 

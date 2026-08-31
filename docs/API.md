@@ -964,11 +964,11 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 | Метод | Путь | Назначение |
 |---|---|---|
 | GET | `/projects/{project_id}/schedules` | Список расписаний |
-| POST | `/projects/{project_id}/schedules` | Создать (cron, git_ref, enabled) |
-| PATCH | `/schedules/{schedule_id}` | Обновить |
+| POST | `/projects/{project_id}/schedules` | Создать (cron, git_ref, enabled); ответ содержит `next_fire_at` |
+| PATCH | `/schedules/{schedule_id}` | Обновить и пересчитать `next_fire_at` |
 | DELETE | `/schedules/{schedule_id}` | Удалить |
 
-> Cron хранится как 5-польная строка (`*/5 * * * *`). Текущий scheduler — MVP: примерно раз в минуту запускает enabled записи, не реализуя полную cron-семантику.
+> Cron — строгая 5-польная UTC-строка (`*/5 * * * *`) с поддержкой `*`, списков, диапазонов, шагов, month/weekday names и стандартной OR-семантики для day-of-month/day-of-week. Scheduler хранит `next_fire_at`, материализует уникальный `schedule_fires` slot и запускает pipeline через idempotency key. Если legacy schedule получает `last_fire_error`, он ждёт явного `PATCH`, который пересчитает `next_fire_at`. IANA timezone, DST/misfire policy и multi-replica lease остаются target.
 
 ### Webhooks
 

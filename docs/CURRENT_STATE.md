@@ -1,7 +1,7 @@
 # CURRENT STATE — Forge CI/CD
 
 > **Производный снимок текущего состояния.** Сгенерирован из кода; authority — код и коммит, не этот файл. Обновлять при каждом изменении capability.
-> Снято: `2026-08-31`, ветка `main`; visual evidence: 45 screenshots в `docs/assets/screens/manifest.md`.
+> Снято: `2026-09-01`, ветка `main`; visual evidence: 45 screenshots в `docs/assets/screens/manifest.md`.
 
 ## Что работает сейчас (Current verified)
 
@@ -19,7 +19,7 @@
 | Reports | ✅ | агрегаты success rate/duration |
 | Users/roles + API-токены | ✅ | хранение + enforcement при `CICD_AUTH_SECRET`; session-bound access JWT, refresh session rotate/logout; новые PAT требуют project scope, scopes и expiry; глобальная роль ограничивает максимум прав |
 | Audit log | ✅ | append-only, последние 200 |
-| Schedules | ✅ MVP | enabled rows проверяются примерно раз в минуту; cron строка валидируется/хранится, но не исполняет полную cron-семантику |
+| Schedules | ✅ MVP | строгий 5-польный UTC cron, persisted `next_fire_at`, unique `schedule_fires` slot и idempotent pipeline trigger; строки с `last_fire_error` ждут явного PATCH/исправления; IANA timezone/DST/misfire и multi-replica leases остаются target |
 | Outgoing webhooks | ✅ MVP | terminal pipeline event -> `domain_events`/`outbox_messages`; basic retry/backoff, optional HMAC |
 | Outbox delivery history | ✅ MVP | project-scoped `/outbox-deliveries` API показывает статус, attempts, `failed_at`/`last_error`; failed delivery можно явно requeue новой generation |
 | Notifications | ✅ MVP | `in_app`/`sse` каналы создают durable local outbox event на terminal pipeline events; история доступна через `/notification-events`, live stream — через `/notifications/stream`; email/Slack adapters и inbound provider handlers остаются target |
@@ -36,7 +36,7 @@
 
 ## Не реализовано (Target approved — см. ADR + contracts)
 
-Runner protocol/leases/dispatch (внешний runner, ADR-0007), immutable pipeline plan/DAG, general idempotency storage for all retryable mutations, command spans/stream classification для диагностических логов, artifact retention/object storage, off-site/PITR backup platform и verified restore drill, external notification channel adapters (email/Slack), inbound provider webhook handlers, tenant isolation, service-account tokens, scoped Git credentials, production cookie/CSRF/session-family policy, full cron semantics, outbox lease/fencing/crash recovery, full dead-letter operator policy/metrics и distributed/proxy rate limiting (сейчас in-process окно по forwarded client key).
+Runner protocol/leases/dispatch (внешний runner, ADR-0007), immutable pipeline plan/DAG, general idempotency storage for all retryable mutations, command spans/stream classification для диагностических логов, artifact retention/object storage, off-site/PITR backup platform и verified restore drill, external notification channel adapters (email/Slack), inbound provider webhook handlers, tenant isolation, service-account tokens, scoped Git credentials, production cookie/CSRF/session-family policy, schedule IANA timezone/DST/misfire и multi-replica leases, outbox lease/fencing/crash recovery, full dead-letter operator policy/metrics и distributed/proxy rate limiting (сейчас in-process окно по forwarded client key).
 
 ## Текущее runtime-дерево backend
 
@@ -53,8 +53,8 @@ backend/
 │   ├── authz.rs        # role-политики роутов + project membership enforcement
 │   ├── rate_limit.rs   # in-process fixed-window route-class limiting
 │   ├── metrics.rs      # /metrics Prometheus exposition
-│   ├── migrations/     # versioned SQLx migrations incl. 0009 pipeline trigger idempotency
 │   └── domain.rs       # re-export shim → cicd-domain
+├── migrations/         # versioned SQLx migrations incl. 0014 schedule fire slots
 ├── domain/             # cicd-domain: чистые типы + JobStatus
 ├── cli/                # cicd-cli: HTTP-only (project/pipeline/job)
 ├── tests/              # api_contract, domain_transitions, integration_db (+ sql/init-roles.sql)
@@ -69,7 +69,7 @@ backend/
 - `CICD_GIT_INTERNAL_TOKEN` пустой по умолчанию только для isolated local development; shared-деплой обязан задать уникальный токен, а legacy `forge-internal-dev-token` отклоняется при старте.
 - Auth/RBAC пока без tenant isolation, service-account tokens, scoped Git credentials и production-grade cookie/CSRF/session-family policy; session-bound access invalidation, refresh rotate/logout/revoke, project membership, scoped PAT и Git read/write checks реализованы как MVP-слой поверх глобальных ролей.
 - Execution attempts — MVP-слой без внешних leases/fencing: old `/jobs/{id}/logs` читает текущую или последнюю attempt, bounded `/jobs/{id}/logs/page` поддерживает `limit/after/q`, а полный аудит попыток доступен через `/jobs/{id}/attempts`.
-- Scheduler/outbox — MVP: нет точной cron-семантики, lease/fencing/crash-safe dispatcher-а, full dead-letter operator policy/metrics и внешних notification adapters; bounded delivery history/requeue и `in_app`/`sse` local outbox projection уже работают.
+- Scheduler/outbox — MVP: есть строгий 5-польный UTC cron и уникальные fire slots, но нет IANA timezone/DST/misfire, lease/fencing/crash-safe dispatcher-а, full dead-letter operator policy/metrics и внешних notification adapters; bounded delivery history/requeue и `in_app`/`sse` local outbox projection уже работают.
 
 ## Верификационные команды
 

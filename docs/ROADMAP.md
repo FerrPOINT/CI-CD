@@ -27,7 +27,7 @@ Roadmap фиксирует порядок доведения Forge до базо
 - project secrets: AES-256-GCM at rest, env injection в embedded runner, best-effort masking stdout/stderr;
 - environments/deployments metadata, reports, audit log;
 - users, roles, argon2id credentials, session-bound access JWT, sessions, refresh rotate/logout/revoke, scoped PAT и project memberships при `CICD_AUTH_SECRET`;
-- schedules MVP, outgoing webhooks через outbox с basic retry/HMAC, bounded delivery history/requeue и `in_app`/`sse` notifications через local outbox history/stream;
+- schedules MVP со строгим 5-польным UTC cron, `next_fire_at` и unique fire slots; outgoing webhooks через outbox с basic retry/HMAC, bounded delivery history/requeue и `in_app`/`sse` notifications через local outbox history/stream;
 - OpenAPI generation/drift gate и generated frontend schema.
 
 Ключевые ограничения current baseline:
@@ -91,13 +91,13 @@ Deliverables:
 - Target follow-up: production lease/fencing/crash recovery, response preview allowlist, full replay/dead-letter workflow и operator metrics;
 - Current MVP: `in_app`/`sse` notification delivery на terminal pipeline events через local outbox projection;
 - Target follow-up: email/Slack adapters, notification templates, preferences и aggregation;
-- full cron semantics с timezone и next-run preview;
+- IANA timezone/DST/misfire policy и scheduler leases для multi-replica режима;
 - incoming provider webhook handlers только после auth/signature validation.
 
 Gate:
 
 - outbox integration tests на retry, failed history, requeue generation и idempotency; target дополнительно покрывает leases/crash retry/single observed outcome;
-- scheduler tests на cron/timezone/no-double-fire;
+- scheduler tests на UTC cron/no-double-fire; target tests на timezone/DST/misfire;
 - UI показывает последний outcome и ошибку доставки;
 - metrics и runbook для stuck deliveries.
 

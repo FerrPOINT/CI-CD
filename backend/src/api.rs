@@ -43,6 +43,7 @@ type ApiResult<T> = Result<Json<T>, ApiError>;
 const IDEMPOTENCY_KEY_HEADER: &str = "idempotency-key";
 pub(crate) const PIPELINE_TRIGGER_SOURCE_API: &str = "api";
 pub(crate) const PIPELINE_TRIGGER_SOURCE_GIT_PUSH: &str = "git-push";
+pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
 
 /// OpenAPI 3 document for the current API surface (API_CONTRACT, utoipa).
 #[derive(utoipa::OpenApi)]
@@ -1567,35 +1568,6 @@ async fn trigger_pipeline(
         .await
         .map(Json)
         .map(|body| (response_headers, body))
-}
-
-/// Creates a queued pipeline. Stage/job structure comes from `.forge-ci.yml`
-/// in the project repository at the given ref when available; otherwise the
-/// default build/test/deploy template is used.
-pub(crate) async fn create_pipeline(
-    pool: &PgPool,
-    project_id: Uuid,
-    git_ref: String,
-) -> Result<Pipeline, ApiError> {
-    create_pipeline_with_vars(pool, project_id, git_ref, serde_json::json!({})).await
-}
-
-pub(crate) async fn create_pipeline_with_vars(
-    pool: &PgPool,
-    project_id: Uuid,
-    git_ref: String,
-    variables: serde_json::Value,
-) -> Result<Pipeline, ApiError> {
-    create_pipeline_with_vars_idempotent(
-        pool,
-        project_id,
-        git_ref,
-        variables,
-        PIPELINE_TRIGGER_SOURCE_API,
-        None,
-    )
-    .await
-    .map(|outcome| outcome.pipeline)
 }
 
 #[derive(Debug)]

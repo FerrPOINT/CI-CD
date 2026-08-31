@@ -1598,6 +1598,11 @@ export interface components {
             git_ref: string;
             /** Format: uuid */
             id: string;
+            last_fire_error?: string | null;
+            /** Format: date-time */
+            last_fired_at?: string | null;
+            /** Format: date-time */
+            next_fire_at?: string | null;
             /** Format: uuid */
             project_id: string;
         };

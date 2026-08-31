@@ -536,11 +536,27 @@ Platform tables создаются и расширяются через `backend
 | `cron` | TEXT | NOT NULL | — | 5-полей cron-выражение |
 | `git_ref` | TEXT | NOT NULL | — | Git-реф для запуска |
 | `enabled` | BOOLEAN | NOT NULL | `TRUE` | Включено/выключено |
-| `last_fired_at` | TIMESTAMPTZ | NULL | — | Последний MVP fire claim |
+| `next_fire_at` | TIMESTAMPTZ | NULL | — | Следующий UTC fire slot; `NULL` для disabled/invalid legacy rows |
+| `last_fired_at` | TIMESTAMPTZ | NULL | — | Последний успешно triggered fire slot |
 | `last_fire_error` | TEXT | NULL | — | Последняя ошибка scheduler |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
 
-Текущий scheduler проверяет enabled rows примерно раз в минуту. `cron` валидируется как пять полей и хранится, но full cron semantics остаётся target.
+Текущий scheduler валидирует строгий 5-польный UTC cron, рассчитывает `next_fire_at`, создаёт уникальный `schedule_fires` slot и запускает pipeline через idempotency key. Schedule с `last_fire_error` не выбирается scheduler loop до явного `PATCH`, чтобы legacy/сломанные строки не блокировали due-батч. IANA timezone, DST/misfire и multi-replica lease остаются target.
+
+### 9.6.1 schedule_fires
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | UUID | NOT NULL | — | PK |
+| `schedule_id` | UUID | NOT NULL | — | FK → `schedules(id)` CASCADE |
+| `project_id` | UUID | NOT NULL | — | FK → `projects(id)` CASCADE |
+| `scheduled_for` | TIMESTAMPTZ | NOT NULL | — | UTC cron-slot, а не фактическое время обработки worker-ом |
+| `pipeline_id` | UUID | NULL | — | FK → `pipelines(id)` SET NULL после успешного trigger |
+| `status` | TEXT | NOT NULL | `'pending'` | CHECK: `pending`, `triggered`, `failed` |
+| `error` | TEXT | NULL | — | Ошибка trigger-а для failed fire |
+| `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
+
+Ограничение `UNIQUE(schedule_id, scheduled_for)` предотвращает повторный fire одного cron-slot. Pending fire повторно обрабатывается через idempotent pipeline trigger `source='schedule'`.
 
 ### 9.7 webhooks
 
@@ -705,6 +721,9 @@ idx_project_secrets_project ON project_secrets(project_id)
 idx_artifacts_job            ON artifacts(job_id)
 idx_deployments_environment  ON deployments(environment_id)
 idx_schedules_project        ON schedules(project_id)
+idx_schedules_due            ON schedules(next_fire_at) WHERE enabled AND last_fire_error IS NULL
+idx_schedule_fires_schedule_created ON schedule_fires(schedule_id, scheduled_for DESC)
+idx_schedule_fires_pending   ON schedule_fires(scheduled_for) WHERE status = 'pending'
 idx_webhooks_project         ON webhooks(project_id)
 idx_audit_log_created        ON audit_log(created_at DESC)
 idx_pipelines_project_id     ON pipelines(project_id)

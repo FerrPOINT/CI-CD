@@ -13,6 +13,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use base64::Engine;
+use chrono::{TimeZone, Utc};
 use sha2::{Digest, Sha256};
 use sqlx::postgres::PgPoolOptions;
 use tower::ServiceExt;
@@ -1651,6 +1652,114 @@ async fn list_attempts_returns_not_found_for_unknown_job() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn cron_schedule_materializes_unique_fire_slots() {
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let project_name = format!("it-schedule-{}", project_id.simple());
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/schedule.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+
+    let app = cicd::api::app(Some(pool.clone()));
+    let response = app
+        .oneshot(
+            Request::post(format!("/api/v1/projects/{project_id}/schedules"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"cron":"0 4 * * *","git_ref":"main","enabled":true}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let schedule = response_json(response).await;
+    assert!(schedule["next_fire_at"].as_str().is_some());
+    assert!(schedule["last_fired_at"].is_null());
+    assert!(schedule["last_fire_error"].is_null());
+    let schedule_id = Uuid::parse_str(schedule["id"].as_str().unwrap()).unwrap();
+
+    let _ = cicd::outbox::fire_due_schedules(&pool).await;
+    let (pipeline_count_before_due,): (i64,) =
+        sqlx::query_as("SELECT count(*) FROM pipelines WHERE project_id = $1")
+            .bind(project_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count project pipelines before due");
+    assert_eq!(pipeline_count_before_due, 0);
+
+    let due_slot = Utc.with_ymd_and_hms(2026, 8, 31, 4, 0, 0).unwrap();
+    sqlx::query("UPDATE schedules SET next_fire_at = $2 WHERE id = $1")
+        .bind(schedule_id)
+        .bind(due_slot)
+        .execute(&pool)
+        .await
+        .expect("force due schedule slot");
+
+    let _ = cicd::outbox::fire_due_schedules(&pool).await;
+
+    let (fire_count,): (i64,) =
+        sqlx::query_as("SELECT count(*) FROM schedule_fires WHERE schedule_id = $1")
+            .bind(schedule_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count schedule fires");
+    assert_eq!(fire_count, 1);
+
+    let (scheduled_for, pipeline_id, status): (chrono::DateTime<Utc>, Uuid, String) =
+        sqlx::query_as(
+            "SELECT scheduled_for, pipeline_id, status FROM schedule_fires WHERE schedule_id = $1",
+        )
+        .bind(schedule_id)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch schedule fire");
+    assert_eq!(scheduled_for, due_slot);
+    assert_eq!(status, "triggered");
+
+    let (trigger_count,): (i64,) = sqlx::query_as(
+        "SELECT count(*) FROM pipeline_triggers \
+         WHERE project_id = $1 AND source = 'schedule' AND pipeline_id = $2",
+    )
+    .bind(project_id)
+    .bind(pipeline_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count schedule pipeline trigger");
+    assert_eq!(trigger_count, 1);
+
+    let (last_fired_at, next_fire_at): (chrono::DateTime<Utc>, chrono::DateTime<Utc>) =
+        sqlx::query_as("SELECT last_fired_at, next_fire_at FROM schedules WHERE id = $1")
+            .bind(schedule_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch updated schedule");
+    assert_eq!(last_fired_at, due_slot);
+    assert!(next_fire_at > due_slot);
+
+    let _ = cicd::outbox::fire_due_schedules(&pool).await;
+
+    let (pipeline_count,): (i64,) =
+        sqlx::query_as("SELECT count(*) FROM pipelines WHERE project_id = $1")
+            .bind(project_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count project pipelines");
+    assert_eq!(pipeline_count, 1);
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup project");
 }
 
 #[tokio::test]

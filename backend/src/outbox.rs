@@ -8,8 +8,8 @@
 //!   translated into durable local outbox messages for Dashboard history/SSE.
 //! - Delivery history: every attempt is written to `outbox_delivery_attempts`;
 //!   failed deliveries can be explicitly requeued as a new generation.
-//! - Scheduler: enabled cron schedules trigger pipelines with a
-//!   `last_fired_at` claim so a restart cannot double-fire the same minute.
+//! - Scheduler: enabled cron schedules compute `next_fire_at`, claim a unique
+//!   `schedule_fires` slot, then trigger pipelines idempotently.
 
 use chrono::{DateTime, Duration, Utc};
 use sqlx::PgPool;
@@ -481,12 +481,95 @@ pub async fn requeue_failed_delivery(
     Ok(Ok(new_id))
 }
 
-/// One scheduler pass: fire enabled schedules whose minute arrived (idempotent claim).
+/// One scheduler pass: materialize due cron slots and process pending fires.
 pub async fn fire_due_schedules(pool: &PgPool) -> usize {
-    // Phase 1 fires any schedule not fired in the last 55 seconds when enabled.
-    let due = sqlx::query_as::<_, (Uuid, Uuid, String)>(
-        "SELECT s.id, s.project_id, s.git_ref FROM schedules s \
-         WHERE s.enabled AND (s.last_fired_at IS NULL OR s.last_fired_at < now() - interval '55 seconds') \
+    let due = sqlx::query_as::<_, (Uuid, String, Option<DateTime<Utc>>)>(
+        "SELECT id, cron, next_fire_at FROM schedules \
+         WHERE enabled AND last_fire_error IS NULL AND (next_fire_at IS NULL OR next_fire_at <= now()) \
+         ORDER BY next_fire_at ASC NULLS FIRST, created_at ASC \
+         LIMIT 10",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
+    for (schedule_id, cron, next_fire_at) in due {
+        materialize_schedule_fire(pool, schedule_id, &cron, next_fire_at).await;
+    }
+    process_pending_schedule_fires(pool).await
+}
+
+async fn materialize_schedule_fire(
+    pool: &PgPool,
+    schedule_id: Uuid,
+    cron: &str,
+    next_fire_at: Option<DateTime<Utc>>,
+) {
+    let parsed = match crate::schedule::parse_cron(cron) {
+        Ok(parsed) => parsed,
+        Err(error) => {
+            mark_schedule_error(pool, schedule_id, error).await;
+            return;
+        }
+    };
+    let Some(scheduled_for) = next_fire_at else {
+        let Some(next_fire_at) = crate::schedule::next_fire_after(&parsed, Utc::now()) else {
+            mark_schedule_error(
+                pool,
+                schedule_id,
+                "cron expression has no matching fire time in the next five years".to_owned(),
+            )
+            .await;
+            return;
+        };
+        let _ = sqlx::query(
+            "UPDATE schedules SET next_fire_at = $2, last_fire_error = NULL \
+             WHERE id = $1 AND enabled AND next_fire_at IS NULL",
+        )
+        .bind(schedule_id)
+        .bind(next_fire_at)
+        .execute(pool)
+        .await;
+        return;
+    };
+
+    let Some(following_fire_at) = crate::schedule::next_fire_after(&parsed, scheduled_for) else {
+        mark_schedule_error(
+            pool,
+            schedule_id,
+            "cron expression has no matching fire time after the due slot".to_owned(),
+        )
+        .await;
+        return;
+    };
+
+    let fire_id = Uuid::new_v4();
+    let _ = sqlx::query(
+        "WITH claimed AS ( \
+             UPDATE schedules \
+             SET next_fire_at = $3, last_fire_error = NULL \
+             WHERE id = $1 AND enabled AND next_fire_at = $2 \
+             RETURNING id, project_id \
+         ) \
+         INSERT INTO schedule_fires (id, schedule_id, project_id, scheduled_for, status) \
+         SELECT $4, id, project_id, $2, 'pending' FROM claimed \
+         ON CONFLICT (schedule_id, scheduled_for) DO NOTHING",
+    )
+    .bind(schedule_id)
+    .bind(scheduled_for)
+    .bind(following_fire_at)
+    .bind(fire_id)
+    .execute(pool)
+    .await;
+}
+
+async fn process_pending_schedule_fires(pool: &PgPool) -> usize {
+    let fires = sqlx::query_as::<_, (Uuid, Uuid, Uuid, DateTime<Utc>, String)>(
+        "SELECT f.id, f.schedule_id, f.project_id, f.scheduled_for, s.git_ref \
+         FROM schedule_fires f \
+         JOIN schedules s ON s.id = f.schedule_id \
+         WHERE f.status = 'pending' \
+         ORDER BY f.scheduled_for ASC, f.created_at ASC \
          LIMIT 10",
     )
     .fetch_all(pool)
@@ -494,33 +577,68 @@ pub async fn fire_due_schedules(pool: &PgPool) -> usize {
     .unwrap_or_default();
 
     let mut fired = 0;
-    for (schedule_id, project_id, git_ref) in due {
-        // Atomic claim: only proceed when the row was still due.
-        let claimed = sqlx::query_scalar::<_, Uuid>(
-            "UPDATE schedules SET last_fired_at = now(), last_fire_error = NULL \
-             WHERE id = $1 AND (last_fired_at IS NULL OR last_fired_at < now() - interval '55 seconds') \
-             RETURNING id",
+    for (fire_id, schedule_id, project_id, scheduled_for, git_ref) in fires {
+        let pipeline = crate::api::create_pipeline_with_vars_idempotent(
+            pool,
+            project_id,
+            git_ref,
+            serde_json::json!({
+                "schedule_id": schedule_id,
+                "scheduled_for": scheduled_for.to_rfc3339(),
+            }),
+            crate::api::PIPELINE_TRIGGER_SOURCE_SCHEDULE,
+            Some(&schedule_idempotency_key(schedule_id, scheduled_for)),
         )
-        .bind(schedule_id)
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten();
-        let Some(_claim) = claimed else { continue };
-
-        let pipeline = crate::api::create_pipeline(pool, project_id, git_ref.clone()).await;
+        .await;
         match pipeline {
-            Ok(_) => fired += 1,
-            Err(e) => {
-                let _ = sqlx::query("UPDATE schedules SET last_fire_error = $2 WHERE id = $1")
-                    .bind(schedule_id)
-                    .bind(format!("{e:?}"))
-                    .execute(pool)
-                    .await;
+            Ok(outcome) => {
+                let _ = sqlx::query(
+                    "UPDATE schedule_fires \
+                     SET status = 'triggered', pipeline_id = $2, error = NULL \
+                     WHERE id = $1 AND status = 'pending'",
+                )
+                .bind(fire_id)
+                .bind(outcome.pipeline.id)
+                .execute(pool)
+                .await;
+                let _ = sqlx::query(
+                    "UPDATE schedules \
+                     SET last_fired_at = GREATEST(COALESCE(last_fired_at, $2), $2), last_fire_error = NULL \
+                     WHERE id = $1",
+                )
+                .bind(schedule_id)
+                .bind(scheduled_for)
+                .execute(pool)
+                .await;
+                fired += 1;
+            }
+            Err(error) => {
+                let error = format!("{error:?}");
+                let _ = sqlx::query(
+                    "UPDATE schedule_fires SET status = 'failed', error = $2 WHERE id = $1",
+                )
+                .bind(fire_id)
+                .bind(&error)
+                .execute(pool)
+                .await;
+                mark_schedule_error(pool, schedule_id, error).await;
             }
         }
     }
     fired
+}
+
+async fn mark_schedule_error(pool: &PgPool, schedule_id: Uuid, error: String) {
+    let _ =
+        sqlx::query("UPDATE schedules SET next_fire_at = NULL, last_fire_error = $2 WHERE id = $1")
+            .bind(schedule_id)
+            .bind(error)
+            .execute(pool)
+            .await;
+}
+
+fn schedule_idempotency_key(schedule_id: Uuid, scheduled_for: DateTime<Utc>) -> String {
+    format!("schedule:{schedule_id}:{}", scheduled_for.to_rfc3339())
 }
 
 /// Background supervisor loop: delivery + scheduler every 5 seconds.

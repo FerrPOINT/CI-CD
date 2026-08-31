@@ -3327,6 +3327,20 @@ components:
         id:
           type: string
           format: uuid
+        last_fire_error:
+          type:
+          - string
+          - 'null'
+        last_fired_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        next_fire_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
         project_id:
           type: string
           format: uuid

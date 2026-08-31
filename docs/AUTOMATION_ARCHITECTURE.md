@@ -23,7 +23,7 @@ PostgreSQL остаётся единственным источником ист
 
 | Область | Сейчас | Целевое состояние |
 |---|---|---|
-| Расписания | Таблица `schedules`, CRUD, формальная проверка пяти cron-полей и MVP worker, который проверяет enabled rows примерно раз в минуту. | Durable scheduler с IANA timezone, расчётом `next_fire_at`, учётом DST, политикой пропущенных запусков, дедупликацией и аудитом. |
+| Расписания | Таблица `schedules`, CRUD, строгий 5-польный UTC cron, persisted `next_fire_at`, `schedule_fires` unique slot и idempotent pipeline trigger. | Durable scheduler с IANA timezone, учётом DST, политикой пропущенных запусков, multi-replica leases и аудитом. |
 | Git push | `post-receive` вызывает `/api/v1/internal/git-push`; передаются repository/ref/old_rev/new_rev. Hook best-effort, ошибка не влияет на push; повтор same `repository/ref/new_rev` дедуплицируется через `pipeline_triggers`. | Надёжный ingress с immutable delivery id, типом ref-операции, идемпотентным сохранением входящего события и периодической сверкой refs. |
 | Связь проекта с репозиторием | Поиск первого `projects.repository_url ILIKE '%<repo>.git'`. | Явная связь `project_repositories`, уникальная в пределах назначения и независимая от URL-шаблонов. |
 | Запуск pipeline | Pipeline создаётся сразу в HTTP-обработчике; нет `source_event_id`, SHA и dedupe key. | Создание pipeline в транзакции с причиной запуска, неизменяемым commit SHA и уникальностью по событию-триггеру. |
@@ -1148,9 +1148,9 @@ HTTP webhook span фиксирует только hostname и status class, не
 
 ### Этап 1. Расписания
 
-1. Мигрировать текущие `schedules`: присвоить `timezone = UTC`, `fire_once`, `forbid`.
-2. Ввести строгую cron/IANA validation и расчёт `next_fire_at`.
-3. Реализовать `schedule_fires`, scheduler worker и audit/events.
+1. Current MVP already has strict five-field UTC cron validation, `next_fire_at`, `schedule_fires` and idempotent schedule pipeline trigger.
+2. Добавить IANA timezone validation, `fire_once`/misfire/concurrency policy и DST handling.
+3. Расширить scheduler worker leases/fencing и audit/events до target semantics.
 4. Включить feature flag `CICD_AUTOMATION_SCHEDULES_ENABLED=false` по default.
 5. Pilot для одного внутреннего проекта с read-only dry-run mode, затем real pipelines.
 

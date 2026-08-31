@@ -39,13 +39,17 @@ The first three migrations are fixed:
 0001_bootstrap_v1.sql        # Exact current public schema and indexes, no schema rename
 0002_runtime_role.sql        # forge_owner/forge_runtime grants
 0003_auth_foundation.sql     # password credentials and sessions
-0004_outbox_delivery.sql     # domain_events/outbox_messages + schedule fire bookkeeping
+0004_outbox_delivery.sql     # domain_events/outbox_messages + legacy schedule timestamps
 0005_execution_gaps.sql      # timeout/allow_failure/manual, protected branches, PAT expiry, commit_sha, webhook secret
 0006_git_ci_details.sql      # repository visibility, code tree/blob, releases and JUnit summaries
 0007_execution_attempts.sql  # immutable retry attempts and attempt-owned logs/artifacts
 0008_project_memberships.sql # project RBAC memberships and bootstrap backfill
 0009_pipeline_trigger_idempotency.sql # manual/Git trigger replay protection
 0010_scoped_api_tokens.sql   # project-bound PAT scopes and soft revoke
+0011_notification_outbox_index.sql # local notification outbox indexes
+0012_outbox_delivery_history.sql # delivery attempts, failed history and requeue generation
+0013_artifact_checksums.sql  # SHA-256 metadata for artifacts
+0014_schedule_fire_slots.sql # next_fire_at, schedule_fires and due indexes
 ```
 
 No rollback SQL is executed automatically. A failed production migration stops deployment; recovery is forward migration or restore of verified backup. `CREATE INDEX CONCURRENTLY` lives in a separate `-- no-transaction` file and is run in maintenance window with `migration_progress` rows (batch 1,000, resumable).

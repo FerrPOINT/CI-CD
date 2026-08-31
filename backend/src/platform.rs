@@ -463,6 +463,9 @@ pub(crate) struct Schedule {
     cron: String,
     git_ref: String,
     enabled: bool,
+    next_fire_at: Option<DateTime<Utc>>,
+    last_fired_at: Option<DateTime<Utc>>,
+    last_fire_error: Option<String>,
     created_at: DateTime<Utc>,
 }
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -476,7 +479,7 @@ async fn list_schedules(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
 ) -> ApiResult<Vec<Schedule>> {
-    Ok(Json(sqlx::query_as("SELECT id, project_id, cron, git_ref, enabled, created_at FROM schedules WHERE project_id = $1 ORDER BY created_at DESC").bind(project_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
+    Ok(Json(sqlx::query_as("SELECT id, project_id, cron, git_ref, enabled, next_fire_at, last_fired_at, last_fire_error, created_at FROM schedules WHERE project_id = $1 ORDER BY created_at DESC").bind(project_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
 #[utoipa::path(post, path = "/api/v1/projects/{project_id}/schedules", tag = "schedules", request_body = ScheduleInput, params(("project_id" = Uuid, Path)), responses((status = 200, body = Schedule), (status = 400)))]
 async fn create_schedule(
@@ -484,12 +487,14 @@ async fn create_schedule(
     Path(project_id): Path<Uuid>,
     Json(input): Json<ScheduleInput>,
 ) -> ApiResult<Schedule> {
-    if !valid_cron(&input.cron) || input.git_ref.trim().is_empty() {
-        return Err(ApiError::bad_request(
-            "cron must have five fields and git_ref is required",
-        ));
+    let cron = input.cron.trim();
+    let git_ref = input.git_ref.trim();
+    let enabled = input.enabled.unwrap_or(true);
+    if git_ref.is_empty() {
+        return Err(ApiError::bad_request("git_ref is required"));
     }
-    Ok(Json(sqlx::query_as("INSERT INTO schedules (id, project_id, cron, git_ref, enabled) VALUES ($1, $2, $3, $4, $5) RETURNING id, project_id, cron, git_ref, enabled, created_at").bind(Uuid::new_v4()).bind(project_id).bind(input.cron.trim()).bind(input.git_ref.trim()).bind(input.enabled.unwrap_or(true)).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?))
+    let next_fire_at = schedule_next_fire_at(cron, enabled)?;
+    Ok(Json(sqlx::query_as("INSERT INTO schedules (id, project_id, cron, git_ref, enabled, next_fire_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, project_id, cron, git_ref, enabled, next_fire_at, last_fired_at, last_fire_error, created_at").bind(Uuid::new_v4()).bind(project_id).bind(cron).bind(git_ref).bind(enabled).bind(next_fire_at).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?))
 }
 #[utoipa::path(patch, path = "/api/v1/schedules/{schedule_id}", tag = "schedules", request_body = ScheduleInput, params(("schedule_id" = Uuid, Path)), responses((status = 200, body = Schedule), (status = 400), (status = 404)))]
 async fn update_schedule(
@@ -497,12 +502,14 @@ async fn update_schedule(
     Path(id): Path<Uuid>,
     Json(input): Json<ScheduleInput>,
 ) -> ApiResult<Schedule> {
-    if !valid_cron(&input.cron) || input.git_ref.trim().is_empty() {
-        return Err(ApiError::bad_request(
-            "cron must have five fields and git_ref is required",
-        ));
+    let cron = input.cron.trim();
+    let git_ref = input.git_ref.trim();
+    let enabled = input.enabled.unwrap_or(true);
+    if git_ref.is_empty() {
+        return Err(ApiError::bad_request("git_ref is required"));
     }
-    Ok(Json(sqlx::query_as("UPDATE schedules SET cron = $2, git_ref = $3, enabled = $4 WHERE id = $1 RETURNING id, project_id, cron, git_ref, enabled, created_at").bind(id).bind(input.cron.trim()).bind(input.git_ref.trim()).bind(input.enabled.unwrap_or(true)).fetch_optional(pool(&state)?).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?))
+    let next_fire_at = schedule_next_fire_at(cron, enabled)?;
+    Ok(Json(sqlx::query_as("UPDATE schedules SET cron = $2, git_ref = $3, enabled = $4, next_fire_at = $5, last_fire_error = NULL WHERE id = $1 RETURNING id, project_id, cron, git_ref, enabled, next_fire_at, last_fired_at, last_fire_error, created_at").bind(id).bind(cron).bind(git_ref).bind(enabled).bind(next_fire_at).fetch_optional(pool(&state)?).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?))
 }
 #[utoipa::path(delete, path = "/api/v1/schedules/{schedule_id}", tag = "schedules", params(("schedule_id" = Uuid, Path)), responses((status = 200), (status = 404)))]
 async fn delete_schedule(
@@ -1410,8 +1417,13 @@ pub(crate) async fn project_secret_pairs(
 fn valid_role(role: &str) -> bool {
     matches!(role, "admin" | "maintainer" | "developer" | "viewer")
 }
-fn valid_cron(value: &str) -> bool {
-    value.split_whitespace().count() == 5
+fn schedule_next_fire_at(cron: &str, enabled: bool) -> Result<Option<DateTime<Utc>>, ApiError> {
+    if !enabled {
+        return Ok(None);
+    }
+    crate::schedule::next_fire_after_expr(cron, Utc::now())
+        .map(Some)
+        .map_err(ApiError::bad_request)
 }
 fn encrypt_secret(value: &str) -> Result<String, String> {
     let key = secret_key()?;
@@ -1444,8 +1456,8 @@ mod tests {
     use super::*;
     #[test]
     fn cron_requires_five_fields() {
-        assert!(valid_cron("0 4 * * 1"));
-        assert!(!valid_cron("not cron"));
+        assert!(crate::schedule::parse_cron("0 4 * * 1").is_ok());
+        assert!(crate::schedule::parse_cron("not cron").is_err());
     }
     #[test]
     fn roles_are_allowlisted() {
