@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.86"
 authors = ["FerrPOINT <ferrpoint@users.noreply.github.com>"]
-license = "MIT"
+license-file = "LICENSE"
 repository = "https://github.com/FerrPOINT/CI-CD"
 
 [workspace.dependencies]
@@ -32,7 +32,7 @@ name = "cicd-server"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+license-file.workspace = true
 repository.workspace = true
 autobins = false
 

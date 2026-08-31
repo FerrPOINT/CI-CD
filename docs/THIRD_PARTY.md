@@ -3,6 +3,8 @@
 > **Статус:** инвентарь current dependencies + Target approved policy генерации SBOM. Полный состав транзитивных компонентов берётся из lock-файлов, а не из этой сводки.
 > Основание: [ADR-0009](adr/0009-canonical-registry.md), [DEPENDABOT](../.github/dependabot.yml), [RISK_REGISTER](RISK_REGISTER.md).
 
+Этот документ описывает только сторонние компоненты и их лицензии. First-party код, документация, конфигурация и изменения FerrPOINT закрыты лицензией [FerrPOINT Proprietary Source-Available Evaluation License v1.0](../LICENSE).
+
 ## 1. Инвентарь прямых компонентов
 
 Версии — зафиксированные constraints манифестов; точные resolved версии — `backend/Cargo.lock` и `frontend/pnpm-lock.yaml`.

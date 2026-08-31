@@ -59,6 +59,12 @@ perf: кэшировать список пайплайнов
 - Frontend: React + Tailwind + shadcn/ui, типизированные API-клиенты и DTO.
 - Подробности — `docs/CODE_STYLE.md`, `docs/CODE_REVIEW.md`, `docs/TESTING.md`.
 
+## Лицензия и права на вклад
+
+Проект является proprietary source-available, not open source. PR принимается только если contributor дает FerrPOINT irrevocable, worldwide, perpetual, royalty-free, sublicensable, transferable right to use, reproduce, modify, distribute, relicense, commercialize, and sell the contribution as part of the software or related products and services.
+
+Если вы не согласны с этим grant of rights, не отправляйте PR, patch, documentation change, design, review suggestion или иной contribution.
+
 ## Сообщения об уязвимостях
 
 Уязвимости сообщайте приватно — процесс описан в [`SECURITY.md`](SECURITY.md), не через публичные issue.

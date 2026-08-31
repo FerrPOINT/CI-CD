@@ -127,7 +127,7 @@ Expected: no broken links, no orphan canonical doc, no stale “planned” claim
 - Modify: `README.md`, `docs/OPERATIONS.md`, `.github/workflows/ci.yml`
 
 **Actions:**
-1. Add actual MIT license matching Cargo metadata and README.
+1. Add actual FerrPOINT proprietary source-available license matching Cargo metadata and README.
 2. Add `CHANGELOG.md` with `Unreleased` and factual `0.1.0` baseline; do not claim a release tag before tag exists.
 3. Add public contributor and vulnerability-disclosure policy (supported versions, private reporting path, response expectations).
 4. Add unavoidable local/trusted-network-only warning to README/quick start until auth/RBAC, TLS, CORS restriction and non-public DB are implemented.

@@ -1,0 +1,12 @@
+# Third-Party Notices
+
+This project uses third-party dependencies, tools, generated files, or upstream
+materials that remain governed by their own licenses.
+
+The FerrPOINT Proprietary Source-Available Evaluation License applies only to
+FerrPOINT-owned code, documentation, assets, configuration, tests, database
+migrations, build scripts, and FerrPOINT modifications unless a file states
+otherwise.
+
+Before distributing any artifact, keep required third-party copyright notices,
+license texts, and attribution files with the artifact.
