@@ -17,7 +17,7 @@
 
 ## Deliberately deferred
 
-- Authentication/RBAC, webhooks, real runner agents, secret storage, artifact uploads, remote execution, YAML pipeline parser, parallel worker scheduling.
+- Authentication/RBAC, webhooks, external runner protocol, secret storage, artifact uploads, remote execution, YAML pipeline parser, parallel worker scheduling.
 
 ## TDD execution order
 

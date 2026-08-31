@@ -4,7 +4,7 @@
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 const API = 'http://127.0.0.1:22801/api/v1'
 
@@ -37,7 +37,7 @@ async function seedRepository(name, commits, branches = {}) {
   git(dir, 'commit', '-m', 'chore: initial project skeleton')
   for (const c of commits) {
     const fp = join(dir, c.file)
-    if (fp.includes('/')) mkdirSync(fp.slice(0, fp.lastIndexOf('/')), { recursive: true })
+    mkdirSync(dirname(fp), { recursive: true })
     writeFileSync(fp, c.content)
     git(dir, 'add', '.')
     git(dir, 'commit', '-m', c.message)

@@ -917,6 +917,69 @@ Git Smart HTTP проверяет `CICD_GIT_TOKEN`, если он задан. П
 
 Ответ: `{"triggered":true,"pipeline_id":"..."}` либо `{"triggered":false,"pipeline_id":null}`, если project с данным local Git URL не найден. Ошибочная hook-доставка не откатывает Git push.
 
+## Полный route inventory
+
+Этот список синхронизирован с Axum route definitions в `backend/src/api.rs`, `backend/src/platform.rs`, `backend/src/git_host.rs` и `backend/src/pulls.rs`. Он нужен как машинно проверяемая карта: `python3 scripts/verify_docs.py --api-doc-routes` падает, если backend route не упомянут в этом документе.
+
+| Route | Группа |
+|---|---|
+| `/api/v1/api-tokens` | Auth / tokens |
+| `/api/v1/api-tokens/{token_id}` | Auth / tokens |
+| `/api/v1/artifacts/{artifact_id}/download` | Artifacts |
+| `/api/v1/audit-log` | Audit |
+| `/api/v1/auth/login` | Auth |
+| `/api/v1/auth/refresh` | Auth |
+| `/api/v1/environments/{environment_id}` | Environments |
+| `/api/v1/environments/{environment_id}/deployments` | Environments |
+| `/api/v1/health` | Health |
+| `/api/v1/internal/git-push` | Git hooks |
+| `/api/v1/jobs/{job_id}/artifacts` | Artifacts |
+| `/api/v1/jobs/{job_id}/logs` | Jobs |
+| `/api/v1/jobs/{job_id}/logs/stream` | Jobs |
+| `/api/v1/jobs/{job_id}/retry` | Jobs |
+| `/api/v1/jobs/{job_id}/start` | Jobs |
+| `/api/v1/jobs/{job_id}/status` | Jobs |
+| `/api/v1/jobs/{job_id}/test-report` | Jobs |
+| `/api/v1/openapi.json` | Health |
+| `/api/v1/pipelines/{pipeline_id}` | Pipelines |
+| `/api/v1/pipelines/{pipeline_id}/badge.svg` | Pipelines |
+| `/api/v1/pipelines/{pipeline_id}/cancel` | Pipelines |
+| `/api/v1/pipelines/{pipeline_id}/retry` | Pipelines |
+| `/api/v1/pipelines/{pipeline_id}/variables` | Pipelines |
+| `/api/v1/projects` | Projects |
+| `/api/v1/projects/{project_id}` | Projects |
+| `/api/v1/projects/{project_id}/environments` | Environments |
+| `/api/v1/projects/{project_id}/notifications` | Notifications |
+| `/api/v1/projects/{project_id}/pipelines` | Pipelines |
+| `/api/v1/projects/{project_id}/reports/summary` | Reports |
+| `/api/v1/projects/{project_id}/schedules` | Schedules |
+| `/api/v1/projects/{project_id}/secrets` | Secrets |
+| `/api/v1/projects/{project_id}/webhooks` | Webhooks |
+| `/api/v1/repos/{repo}/blob` | Git repositories |
+| `/api/v1/repos/{repo}/commits` | Git repositories |
+| `/api/v1/repos/{repo}/compare` | Pull requests |
+| `/api/v1/repos/{repo}/pulls` | Pull requests |
+| `/api/v1/repos/{repo}/pulls/{number}/action` | Pull requests |
+| `/api/v1/repos/{repo}/refs` | Git repositories |
+| `/api/v1/repos/{repo}/releases` | Releases |
+| `/api/v1/repos/{repo}/releases/{tag}` | Releases |
+| `/api/v1/repos/{repo}/tags` | Releases |
+| `/api/v1/repos/{repo}/tree` | Git repositories |
+| `/api/v1/repositories` | Git repositories |
+| `/api/v1/repositories/{name}` | Git repositories |
+| `/api/v1/runners` | Runners |
+| `/api/v1/runners/{runner_id}` | Runners |
+| `/api/v1/runners/{runner_id}/heartbeat` | Runners |
+| `/api/v1/schedules/{schedule_id}` | Schedules |
+| `/api/v1/secrets/{secret_id}` | Secrets |
+| `/api/v1/users` | Users |
+| `/api/v1/users/{user_id}` | Users |
+| `/api/v1/webhooks/{webhook_id}` | Webhooks |
+| `/git/{repo}/git-receive-pack` | Git Smart HTTP |
+| `/git/{repo}/git-upload-pack` | Git Smart HTTP |
+| `/git/{repo}/info/refs` | Git Smart HTTP |
+| `/metrics` | Metrics |
+
 ## References
 
 - `docs/ARCHITECTURE.md` — архитектура приложения.

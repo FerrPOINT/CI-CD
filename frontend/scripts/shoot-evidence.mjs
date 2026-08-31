@@ -91,6 +91,32 @@ const shots = [
 ]
 
 const browser = await chromium.launch()
+
+async function normalizeVolatileText(page) {
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur()
+    }
+    const replacements = [
+      [/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '00000000-0000-0000-0000-000000000000'],
+      [/#([0-9a-f]{8})\b/gi, '#pipeline'],
+      [/\b[0-9a-f]{7,40}\b/gi, 'abcdef0'],
+      [/\b\d{2}\.\d{2}\.\d{4},\s+\d{2}:\d{2}:\d{2}\b/g, '31.08.2026, 12:00:00'],
+      [/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b/g, '2026-08-31T12:00:00Z'],
+    ]
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT)
+    const nodes = []
+    while (walker.nextNode()) nodes.push(walker.currentNode)
+    for (const node of nodes) {
+      let value = node.nodeValue ?? ''
+      for (const [pattern, replacement] of replacements) {
+        value = value.replace(pattern, replacement)
+      }
+      node.nodeValue = value
+    }
+  })
+}
+
 async function shoot(shot) {
   const ctx = await browser.newContext({
     viewport: shot.mobile ? { width: 375, height: 812 } : { width: 1920, height: 1080 },
@@ -105,6 +131,17 @@ async function shoot(shot) {
   })
   try {
     await page.goto(BASE + shot.path, { waitUntil: 'networkidle', timeout: 30000 })
+    await page.addStyleTag({
+      content: `
+        *, *::before, *::after {
+          animation-duration: 0s !important;
+          animation-delay: 0s !important;
+          transition-duration: 0s !important;
+          transition-delay: 0s !important;
+          caret-color: transparent !important;
+        }
+      `,
+    })
     if (shot.wait) await page.waitForTimeout(shot.wait)
     if (shot.click) {
       await page.locator(shot.click).first().click({ timeout: 10000 })
@@ -114,6 +151,7 @@ async function shoot(shot) {
       await page.locator(shot.click2).first().click({ timeout: 10000 })
       await page.waitForTimeout(shot.settle ?? 800)
     }
+    await normalizeVolatileText(page)
     await page.screenshot({ path: join(OUT, shot.name), fullPage: true })
     console.log('shot', shot.name)
   } catch (err) {

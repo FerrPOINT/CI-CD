@@ -5,7 +5,7 @@ Checks: markdown link/anchor integrity, canonical naming (ADR-0009),
 status taxonomy, orphan docs, current-state cross-check, screenshot manifest,
 and router/OpenAPI path drift.
 
-Usage: python3 scripts/verify_docs.py [--all | --links --anchors --canonical --status-labels --orphan-docs --current-state --screenshots --manifest --openapi-routes]
+Usage: python3 scripts/verify_docs.py [--all | --links --anchors --canonical --status-labels --orphan-docs --current-state --screenshots --manifest --openapi-routes --api-doc-routes]
 Exit code 0 = clean; non-zero with a report otherwise.
 """
 from __future__ import annotations
@@ -44,6 +44,12 @@ CANONICAL_ALLOWLIST = {
 }
 
 STATUS_TOKENS = ("Current verified", "Configuration only", "Target approved", "Deprecated/historical")
+BACKEND_ROUTE_FILES = (
+    "backend/src/api.rs",
+    "backend/src/platform.rs",
+    "backend/src/git_host.rs",
+    "backend/src/pulls.rs",
+)
 FORBIDDEN_STALE_STATUS = [
     (r"В MVP задачи переводятся вручную через API, CLI или Dashboard", "current execution uses embedded runner; manual transitions are historical/manual-job only"),
     (r"Automation — configuration only", "schedules/outgoing webhooks are Current verified MVP; only notifications/inbound handlers are configuration-only"),
@@ -305,7 +311,8 @@ def check_manifest() -> None:
 
 def extract_router_paths() -> set[str]:
     paths: set[str] = set()
-    for src in [ROOT / "backend/src/api.rs", ROOT / "backend/src/platform.rs"]:
+    for rel in BACKEND_ROUTE_FILES:
+        src = ROOT / rel
         if not src.exists():
             continue
         text = read_text(src)
@@ -341,6 +348,17 @@ def check_openapi_routes() -> None:
         fail(f"router path missing from OpenAPI: {path}")
 
 
+def check_api_doc_routes() -> None:
+    api_doc = DOCS / "API.md"
+    if not api_doc.exists():
+        fail("docs/API.md missing")
+        return
+    text = read_text(api_doc)
+    for path in sorted(extract_router_paths()):
+        if path not in text:
+            fail(f"backend route missing from API.md: {path}")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--all", action="store_true")
@@ -354,6 +372,7 @@ def main() -> int:
         "screenshots",
         "manifest",
         "openapi-routes",
+        "api-doc-routes",
     ):
         ap.add_argument(f"--{name}", action="store_true")
     args = ap.parse_args()
@@ -367,6 +386,7 @@ def main() -> int:
         "screenshots": check_screenshots,
         "manifest": check_manifest,
         "openapi-routes": check_openapi_routes,
+        "api-doc-routes": check_api_doc_routes,
     }
     selected = [fn for name, fn in checks.items() if args.all or getattr(args, name.replace("-", "_"))]
     if not selected:
