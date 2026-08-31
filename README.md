@@ -7,7 +7,7 @@ Self-hosted control plane для Git-репозиториев и CI/CD: bare Git
 Продукт находится в стадии **MVP (0.1.x)** и **не готов к эксплуатации в недоверенных сетях**:
 
 - если `CICD_AUTH_SECRET` не задан или пустой, API и Dashboard работают в trusted-network режиме без auth enforcement;
-- при заданном `CICD_AUTH_SECRET` включаются login/JWT/PAT, session-bound access JWT, refresh rotate/logout/revoke, global roles, project membership RBAC и Git Smart HTTP read/write checks по связанному проекту, но tenant isolation, scoped PAT и production cookie/CSRF/session-family policy остаются target;
+- при заданном `CICD_AUTH_SECRET` включаются login/JWT/scoped PAT, session-bound access JWT, refresh rotate/logout/revoke, global roles, project membership RBAC и Git Smart HTTP read/write checks по связанному проекту, но tenant isolation, service-account tokens, scoped Git credentials и production cookie/CSRF/session-family policy остаются target;
 - нет TLS, CORS permissive, rate limiting пока in-process и не заменяет reverse proxy/distributed limiter;
 - schedules и outgoing webhooks работают как MVP worker; notifications, inbound provider webhooks и production-grade delivery guarantees ещё не реализованы.
 
@@ -22,10 +22,10 @@ Self-hosted control plane для Git-репозиториев и CI/CD: bare Git
 | Артефакты (≤50 MiB, локальное хранилище) | ✅ Current verified |
 | Секреты (AES-256-GCM at rest; env injection в embedded runner + masking stdout) | ✅ Current verified |
 | Окружения/деплои, отчёты, аудит (200 событий) | ✅ Current verified |
-| Auth/RBAC/сессии/PAT enforcement при `CICD_AUTH_SECRET` | ✅ Current verified |
+| Auth/RBAC/сессии/scoped PAT enforcement при `CICD_AUTH_SECRET` | ✅ Current verified |
 | Schedules и outgoing webhooks | ✅ Current verified MVP |
 | Notifications и inbound provider webhooks | ⚙️ Configuration only |
-| Внешние runner-ы (lease/protocol), tenant/scoped PAT, production scheduler/outbox guarantees | 🎯 Target approved |
+| Внешние runner-ы (lease/protocol), tenant isolation, service-account tokens, production scheduler/outbox guarantees | 🎯 Target approved |
 
 Легенда: ✅ работает сейчас · ⚙️ конфигурация без исполнения · 🎯 принято в архитектуру ([ADR](docs/ADR.md), [контракты](docs/contracts/)).
 
@@ -120,7 +120,7 @@ git push                       # → post-receive → пайплайн созд�
 
 **Качество, безопасность и SDLC:** [TEST_PLAN](docs/TEST_PLAN.md) · [TRACEABILITY](docs/TRACEABILITY.md) · [THREAT_MODEL](docs/THREAT_MODEL.md) · [RISK_REGISTER](docs/RISK_REGISTER.md) · [ACCESSIBILITY](docs/ACCESSIBILITY.md) · [THIRD_PARTY/SBOM](docs/THIRD_PARTY.md) · [SLO](docs/SLO.md) · [METRICS](docs/METRICS.md) · [DISASTER_RECOVERY](docs/DISASTER_RECOVERY.md) · [INCIDENT_RESPONSE](docs/INCIDENT_RESPONSE.md)
 
-**Участие и политика:** [DOCUMENTATION_GOVERNANCE](docs/DOCUMENTATION_GOVERNANCE.md) · [CONTRIBUTING](CONTRIBUTING.md) · [SECURITY](SECURITY.md) · [SUPPORT](SUPPORT.md) · [CHANGELOG](CHANGELOG.md) · лицензия [MIT](LICENSE)
+**Участие и политика:** [DOCUMENTATION_GOVERNANCE](docs/DOCUMENTATION_GOVERNANCE.md) · [CONTRIBUTING](CONTRIBUTING.md) · [SECURITY](SECURITY.md) · [SUPPORT](SUPPORT.md) · [CHANGELOG](CHANGELOG.md) · лицензия [FerrPOINT Proprietary Source-Available Evaluation License v1.0](LICENSE)
 
 ## Структура
 
@@ -150,4 +150,8 @@ CI-CD/
 
 ## Лицензия
 
-MIT — см. [LICENSE](LICENSE).
+Proprietary source-available. Not open source.
+
+Viewing/evaluation only.
+
+Commercial, production, resale, redistribution, SaaS/hosting use require written license from FerrPOINT. См. [LICENSE](LICENSE).

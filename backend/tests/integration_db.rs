@@ -348,6 +348,184 @@ async fn access_token_is_bound_to_active_session() {
 }
 
 #[tokio::test]
+async fn scoped_api_tokens_limit_project_routes_and_soft_revoke() {
+    let pool = test_pool().await;
+    let namespace = Uuid::new_v4();
+    let admin_id = Uuid::new_v4();
+    let username = format!("it-token-admin-{}", admin_id.simple());
+    let password = "IntegrationPass1!";
+    let project_a = Uuid::new_v4();
+    let project_b = Uuid::new_v4();
+    let repo_a = format!("it-token-a-{}", namespace.simple());
+    let repo_b = format!("it-token-b-{}", namespace.simple());
+
+    sqlx::query("INSERT INTO users (id, username, role) VALUES ($1, $2, 'admin')")
+        .bind(admin_id)
+        .bind(&username)
+        .execute(&pool)
+        .await
+        .expect("insert token admin");
+    sqlx::query("INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2)")
+        .bind(admin_id)
+        .bind(cicd::auth::hash_password(password).expect("hash password"))
+        .execute(&pool)
+        .await
+        .expect("insert token admin credential");
+    sqlx::query(
+        "INSERT INTO projects (id, name, repository_url) VALUES \
+         ($1, $2, $3), ($4, $5, $6)",
+    )
+    .bind(project_a)
+    .bind(format!("it-token-project-a-{}", namespace.simple()))
+    .bind(format!("http://127.0.0.1:22802/git/{repo_a}.git"))
+    .bind(project_b)
+    .bind(format!("it-token-project-b-{}", namespace.simple()))
+    .bind(format!("http://127.0.0.1:22802/git/{repo_b}.git"))
+    .execute(&pool)
+    .await
+    .expect("insert scoped token projects");
+
+    let app = cicd::api::app_with_auth_secret(
+        Some(pool.clone()),
+        Some(format!("scoped-token-secret-{namespace}")),
+    );
+    let admin_access = login_access_token(app.clone(), &username, password).await;
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/api-tokens")
+                .header("authorization", format!("Bearer {admin_access}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"name":"missing-project"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/api-tokens")
+                .header("authorization", format!("Bearer {admin_access}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"name":"project-a-read","project_id":"{project_a}","scopes":["api:read"],"expires_in_days":7}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let created = response_json(response).await;
+    assert_eq!(created["project_id"], project_a.to_string());
+    assert_eq!(created["scopes"][0], "api:read");
+    assert!(created["expires_at"].is_string());
+    assert!(created["revoked_at"].is_null());
+    let token_id = created["id"].as_str().expect("token id").to_string();
+    let pat = created["value"].as_str().expect("token value").to_string();
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/projects")
+                .header("authorization", format!("Bearer {pat}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let projects = response_json(response).await;
+    assert_eq!(projects.as_array().expect("projects array").len(), 1);
+    assert_eq!(projects[0]["id"], project_a.to_string());
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/projects/{project_a}"))
+                .header("authorization", format!("Bearer {pat}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/projects/{project_b}"))
+                .header("authorization", format!("Bearer {pat}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::patch(format!("/api/v1/projects/{project_a}"))
+                .header("authorization", format!("Bearer {pat}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"default_branch":"release"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/repos/{repo_b}/refs"))
+                .header("authorization", format!("Bearer {pat}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::delete(format!("/api/v1/api-tokens/{token_id}"))
+                .header("authorization", format!("Bearer {admin_access}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .oneshot(
+            Request::get(format!("/api/v1/projects/{project_a}"))
+                .header("authorization", format!("Bearer {pat}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(admin_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup token admin");
+    sqlx::query("DELETE FROM projects WHERE id = ANY($1)")
+        .bind(&[project_a, project_b])
+        .execute(&pool)
+        .await
+        .expect("cleanup scoped token projects");
+}
+
+#[tokio::test]
 async fn git_smart_http_uses_project_membership_when_auth_enabled() {
     let pool = test_pool().await;
     let namespace = Uuid::new_v4();
@@ -471,6 +649,26 @@ async fn git_smart_http_uses_project_membership_when_auth_enabled() {
         password,
     )
     .await;
+    let read_only_pat = format!(
+        "cicd_{}{}",
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple()
+    );
+    sqlx::query(
+        "INSERT INTO api_tokens \
+         (id, name, token_hash, token_hint, user_id, project_id, scopes, expires_at) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, now() + interval '1 day')",
+    )
+    .bind(Uuid::new_v4())
+    .bind("git-read-only")
+    .bind(cicd::auth::hash_token(&read_only_pat))
+    .bind("cicd_pat...test")
+    .bind(developer_id)
+    .bind(project_id)
+    .bind(vec!["git:read".to_string()])
+    .execute(&pool)
+    .await
+    .expect("insert read-only PAT");
     let viewer_basic =
         base64::engine::general_purpose::STANDARD.encode(format!("git:{viewer_access}"));
     let developer_basic =
@@ -564,6 +762,34 @@ async fn git_smart_http_uses_project_membership_when_auth_enabled() {
                 "/git/{private_repo}.git/info/refs?service=git-receive-pack"
             ))
             .header("authorization", format!("Basic {viewer_basic}"))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/git/{private_repo}.git/info/refs?service=git-upload-pack"
+            ))
+            .header("authorization", format!("Bearer {read_only_pat}"))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/git/{private_repo}.git/info/refs?service=git-receive-pack"
+            ))
+            .header("authorization", format!("Bearer {read_only_pat}"))
             .body(Body::empty())
             .unwrap(),
         )

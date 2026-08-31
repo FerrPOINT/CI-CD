@@ -4,7 +4,7 @@
 
 Forge CI/CD включает минимальный self-hosted Git-сервер. Он хранит bare-репозитории, реализует Git Smart HTTP, проверяет read/write доступ к private/write операциям и создаёт CI/CD-пайплайн после каждого push.
 
-Это не замена GitLab или Gitea: в текущем объёме есть минимальные pull requests/compare, но нет issues, web editor, LFS API, пользователей или прав на уровне репозитория. Цель MVP — замкнуть локальный цикл `git push -> pipeline` без внешнего Git-провайдера.
+Это не замена GitLab или Gitea: в текущем объёме есть минимальные pull requests/compare, но нет issues, web editor, LFS API, отдельных Git-пользователей или прав на уровне репозитория. Цель MVP — замкнуть локальный цикл `git push -> pipeline` без внешнего Git-провайдера.
 
 ## 2. Реализованный поток
 
@@ -83,7 +83,7 @@ curl -fsS -X POST http://127.0.0.1:22801/api/v1/projects \
   }'
 ```
 
-Каждый созданный репозиторий получает executable `hooks/post-receive`. Hook отправляет имя репозитория, pushed ref, `old_rev` и `new_rev` на internal endpoint. Backend ищет первый проект, `repository_url` которого оканчивается на `{name}.git`, и создаёт queued pipeline с `git_ref` из `refs/heads/<branch>` или `refs/tags/<tag>`.
+Каждый созданный репозиторий получает executable `hooks/post-receive`. Hook отправляет имя репозитория, pushed ref, `old_rev` и `new_rev` на internal endpoint. Backend ищет первый проект, `repository_url` которого указывает на exact repo tail: `/{name}.git`, `:{name}.git` или ровно `{name}.git`, и создаёт queued pipeline с `git_ref` из `refs/heads/<branch>` или `refs/tags/<tag>`.
 
 Повтор того же hook event с тем же `repository/ref_name/new_rev` не создаёт второй pipeline: backend хранит stable idempotency record в `pipeline_triggers` и возвращает существующий `pipeline_id`. Удаление ref (`new_rev` из нулей) не запускает pipeline.
 
@@ -106,9 +106,9 @@ Git Smart HTTP различает read и write:
 - `git-upload-pack` для repository с `visibility = public` доступен без credential.
 - Private `git-upload-pack` и любой `git-receive-pack` требуют credential.
 - Legacy `CICD_GIT_TOKEN` остаётся operator bypass для совместимости.
-- При непустом `CICD_AUTH_SECRET` можно передать JWT/PAT пользователя: `viewer+` читает связанный project repository, `developer+` может push, `admin` имеет bypass.
+- При непустом `CICD_AUTH_SECRET` можно передать JWT/PAT пользователя: `viewer+` читает связанный project repository, `developer+` может push, `admin` имеет bypass. PAT дополнительно должен иметь `git:read` для fetch/clone или `git:write` для push и, если задан `project_id`, совпадать со связанным проектом.
 
-Связь repository -> project в текущем MVP выводится из `projects.repository_url`, который оканчивается на `{repo}.git`; полноценная tenant-bound mapping table и scoped Git credentials остаются target.
+Связь repository -> project в текущем MVP выводится из `projects.repository_url`, который указывает на exact repo tail: `/{repo}.git`, `:{repo}.git` или ровно `{repo}.git`. Полноценная tenant-bound mapping table и scoped Git credentials остаются target.
 
 Если используется legacy `CICD_GIT_TOKEN`, Git HTTP принимает один из вариантов:
 
@@ -126,7 +126,7 @@ curl -H "x-git-token: <TOKEN>" ...
 
 ## 8. Ограничения MVP и следующий этап
 
-- Нет пользователей/организаций/tenant-bound repository model и scoped Git credentials; current read/write RBAC строится на project membership через `repository_url`.
+- Нет organization/tenant-bound repository model и отдельного scoped Git credential class; current read/write RBAC строится на project membership и PAT scopes через `repository_url`.
 - Нет Git LFS HTTP endpoints несмотря на наличие `git-lfs` в образе.
 - Нет SSH transport: только Smart HTTP.
 - Hook делает best-effort запрос; он не блокирует push при временном сбое CI/CD API.

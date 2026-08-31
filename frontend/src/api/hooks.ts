@@ -13,6 +13,7 @@ import type {
   AuditEvent,
   Commit,
   Comparison,
+  CreateApiTokenInput,
   CreatedApiToken,
   CreatePullRequestInput,
   Deployment,
@@ -607,7 +608,7 @@ export function useApiTokens() {
 export function useCreateApiToken() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: { name: string; user_id?: string }) =>
+    mutationFn: (input: CreateApiTokenInput) =>
       api<CreatedApiToken>('/api-tokens', { method: 'POST', body: JSON.stringify(input) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.tokens }),
   })

@@ -47,7 +47,15 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_GIT_PUSH: &str = "git-push";
 /// OpenAPI 3 document for the current API surface (API_CONTRACT, utoipa).
 #[derive(utoipa::OpenApi)]
 #[openapi(
-    info(title = "Forge CI/CD API", version = "0.1.0", description = "Self-hosted CI/CD control plane. Array responses, error envelope and in-process rate limits follow docs/contracts/API_CONTRACT.md and docs/API.md current compatibility mode."),
+    info(
+        title = "Forge CI/CD API",
+        version = "0.1.0",
+        description = "Self-hosted CI/CD control plane. Array responses, error envelope and in-process rate limits follow docs/contracts/API_CONTRACT.md and docs/API.md current compatibility mode.",
+        license(
+            name = "FerrPOINT Proprietary Source-Available Evaluation License v1.0",
+            url = "https://github.com/FerrPOINT/CI-CD/blob/main/LICENSE"
+        )
+    ),
     paths(
         health, metrics, serve_openapi_json, auth_login, auth_refresh, auth_logout,
         list_projects, create_project, get_project, update_project, delete_project,
@@ -476,8 +484,9 @@ async fn require_auth(
     let (mut parts, body) = req.into_parts();
     parts.extensions.insert(claims.clone());
     let req = axum::extract::Request::from_parts(parts, body);
-    let allowed = crate::authz::allows(role, &method, &path)
-        && project_scope_allows(&state, claims.sub, role, &method, &path).await?;
+    let allowed = api_token_scope_allows(&claims, &method)
+        && crate::authz::allows(role, &method, &path)
+        && project_scope_allows(&state, &claims, role, &method, &path).await?;
     if !allowed {
         if let Some(pool) = state.pool.as_ref() {
             let _ = audit(
@@ -494,7 +503,7 @@ async fn require_auth(
     Ok(next.run(req).await)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum ProjectScopeRef {
     Project(Uuid),
     Pipeline(Uuid),
@@ -504,32 +513,79 @@ enum ProjectScopeRef {
     Environment(Uuid),
     Schedule(Uuid),
     Webhook(Uuid),
+    Repository(String),
 }
 
 async fn project_scope_allows(
     state: &AppState,
-    user_id: Uuid,
+    claims: &crate::auth::AccessClaims,
     global_role: crate::authz::Role,
     method: &str,
     path: &str,
 ) -> Result<bool, ApiError> {
-    if global_role == crate::authz::Role::Admin {
-        return Ok(true);
-    }
     let Some(scope_ref) = project_scope_ref(path) else {
+        if claims.token_id.is_some() && claims.token_project_id.is_some() {
+            return Ok(method == "GET" && path == "/api/v1/projects");
+        }
         return Ok(true);
     };
     let Some(pool) = state.pool.as_ref() else {
         return Err(ApiError::unavailable());
     };
+    let scope_ref = match scope_ref {
+        ProjectScopeRef::Repository(name) => {
+            let (_, min_role) = crate::authz::required_role(method, path);
+            return repository_scope_allows(
+                pool,
+                &name,
+                claims.sub,
+                global_role,
+                min_role,
+                claims.token_project_id,
+            )
+            .await;
+        }
+        other => other,
+    };
     let Some(project_id) = project_id_for_scope_ref(pool, scope_ref).await? else {
         return Ok(true);
     };
+    if let Some(token_project_id) = claims.token_project_id {
+        if project_id != token_project_id {
+            return Ok(false);
+        }
+    }
+    if global_role == crate::authz::Role::Admin {
+        return Ok(true);
+    }
     let (_, min_role) = crate::authz::required_role(method, path);
-    let Some(project_role) = project_membership_role(pool, user_id, project_id).await? else {
+    let Some(project_role) = project_membership_role(pool, claims.sub, project_id).await? else {
         return Ok(false);
     };
     Ok(project_role >= min_role)
+}
+
+fn api_token_scope_allows(claims: &crate::auth::AccessClaims, method: &str) -> bool {
+    if claims.token_id.is_none() {
+        return true;
+    }
+    let required_scope = if matches!(method, "GET" | "HEAD" | "OPTIONS") {
+        "api:read"
+    } else {
+        "api:write"
+    };
+    bearer_token_has_scope(claims, required_scope)
+}
+
+pub(crate) fn bearer_token_has_scope(
+    claims: &crate::auth::AccessClaims,
+    required_scope: &str,
+) -> bool {
+    claims.token_id.is_none()
+        || claims
+            .token_scopes
+            .iter()
+            .any(|scope| scope == required_scope)
 }
 
 fn project_scope_ref(path: &str) -> Option<ProjectScopeRef> {
@@ -538,17 +594,141 @@ fn project_scope_ref(path: &str) -> Option<ProjectScopeRef> {
         return None;
     }
     let resource = segments.next()?;
-    let id = segments.next().and_then(|raw| Uuid::parse_str(raw).ok())?;
     match resource {
-        "projects" => Some(ProjectScopeRef::Project(id)),
-        "pipelines" => Some(ProjectScopeRef::Pipeline(id)),
-        "jobs" => Some(ProjectScopeRef::Job(id)),
-        "artifacts" => Some(ProjectScopeRef::Artifact(id)),
-        "secrets" => Some(ProjectScopeRef::Secret(id)),
-        "environments" => Some(ProjectScopeRef::Environment(id)),
-        "schedules" => Some(ProjectScopeRef::Schedule(id)),
-        "webhooks" => Some(ProjectScopeRef::Webhook(id)),
-        _ => None,
+        "repos" | "repositories" => segments
+            .next()
+            .map(|name| ProjectScopeRef::Repository(name.to_string())),
+        _ => {
+            let id = segments.next().and_then(|raw| Uuid::parse_str(raw).ok())?;
+            match resource {
+                "projects" => Some(ProjectScopeRef::Project(id)),
+                "pipelines" => Some(ProjectScopeRef::Pipeline(id)),
+                "jobs" => Some(ProjectScopeRef::Job(id)),
+                "artifacts" => Some(ProjectScopeRef::Artifact(id)),
+                "secrets" => Some(ProjectScopeRef::Secret(id)),
+                "environments" => Some(ProjectScopeRef::Environment(id)),
+                "schedules" => Some(ProjectScopeRef::Schedule(id)),
+                "webhooks" => Some(ProjectScopeRef::Webhook(id)),
+                _ => None,
+            }
+        }
+    }
+}
+
+async fn repository_scope_allows(
+    pool: &PgPool,
+    repo: &str,
+    user_id: Uuid,
+    global_role: crate::authz::Role,
+    min_role: crate::authz::Role,
+    token_project_id: Option<Uuid>,
+) -> Result<bool, ApiError> {
+    let name = crate::git_host::validate_repo_name(repo).map_err(ApiError::bad_request)?;
+    if global_role == crate::authz::Role::Admin {
+        return match token_project_id {
+            Some(project_id) => repository_linked_to_project(pool, &name, project_id).await,
+            None => Ok(true),
+        };
+    }
+    let patterns = crate::git_host::repository_url_like_patterns(&name);
+    let roles = sqlx::query_scalar::<_, String>(
+        "SELECT m.role FROM projects p \
+         JOIN project_memberships m ON m.project_id = p.id \
+         WHERE (p.repository_url ILIKE $1 ESCAPE '\\' \
+             OR p.repository_url ILIKE $2 ESCAPE '\\' \
+             OR p.repository_url ILIKE $3 ESCAPE '\\') \
+           AND m.user_id = $4 \
+           AND ($5::uuid IS NULL OR p.id = $5)",
+    )
+    .bind(&patterns.path)
+    .bind(&patterns.scp)
+    .bind(&patterns.exact)
+    .bind(user_id)
+    .bind(token_project_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(roles
+        .iter()
+        .filter_map(|role| crate::authz::Role::parse(role))
+        .any(|role| role >= min_role))
+}
+
+async fn repository_linked_to_project(
+    pool: &PgPool,
+    repo: &str,
+    project_id: Uuid,
+) -> Result<bool, ApiError> {
+    let patterns = crate::git_host::repository_url_like_patterns(repo);
+    sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM projects \
+         WHERE id = $1 AND (repository_url ILIKE $2 ESCAPE '\\' \
+             OR repository_url ILIKE $3 ESCAPE '\\' \
+             OR repository_url ILIKE $4 ESCAPE '\\'))",
+    )
+    .bind(project_id)
+    .bind(&patterns.path)
+    .bind(&patterns.scp)
+    .bind(&patterns.exact)
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::internal)
+}
+
+async fn list_projects_for_claims(
+    pool: &PgPool,
+    claims: &crate::auth::AccessClaims,
+    role: crate::authz::Role,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Project>, ApiError> {
+    match (role, claims.token_project_id) {
+        (crate::authz::Role::Admin, Some(project_id)) => sqlx::query_as::<_, Project>(
+            "SELECT id, name, repository_url, default_branch, created_at \
+                 FROM projects WHERE id = $3 ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+        )
+        .bind(limit)
+        .bind(offset)
+        .bind(project_id)
+        .fetch_all(pool)
+        .await
+        .map_err(ApiError::internal),
+        (crate::authz::Role::Admin, None) => sqlx::query_as::<_, Project>(
+            "SELECT id, name, repository_url, default_branch, created_at \
+                 FROM projects ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await
+        .map_err(ApiError::internal),
+        (_, Some(project_id)) => sqlx::query_as::<_, Project>(
+            "SELECT p.id, p.name, p.repository_url, p.default_branch, p.created_at \
+                 FROM projects p \
+                 JOIN project_memberships m ON m.project_id = p.id \
+                 WHERE m.user_id = $3 AND p.id = $4 \
+                 ORDER BY p.created_at DESC LIMIT $1 OFFSET $2",
+        )
+        .bind(limit)
+        .bind(offset)
+        .bind(claims.sub)
+        .bind(project_id)
+        .fetch_all(pool)
+        .await
+        .map_err(ApiError::internal),
+        (_, None) => sqlx::query_as::<_, Project>(
+            "SELECT p.id, p.name, p.repository_url, p.default_branch, p.created_at \
+                 FROM projects p \
+                 JOIN project_memberships m ON m.project_id = p.id \
+                 WHERE m.user_id = $3 \
+                 ORDER BY p.created_at DESC LIMIT $1 OFFSET $2",
+        )
+        .bind(limit)
+        .bind(offset)
+        .bind(claims.sub)
+        .fetch_all(pool)
+        .await
+        .map_err(ApiError::internal),
     }
 }
 
@@ -614,6 +794,7 @@ async fn project_id_for_scope_ref(
                 .await
                 .map_err(ApiError::internal)
         }
+        ProjectScopeRef::Repository(_) => Ok(None),
     }
 }
 
@@ -633,8 +814,8 @@ pub(crate) async fn project_membership_role(
     Ok(role.and_then(|value| crate::authz::Role::parse(&value)))
 }
 
-/// JWT access tokens are bound to `sessions.id`; PATs (`cicd_…`) are
-/// resolved against api_tokens and assume the owner's current role.
+/// JWT access tokens are bound to `sessions.id`; PATs (`cicd_...`) are
+/// resolved against api_tokens and carry explicit token scopes/bindings.
 pub(crate) async fn bearer_identity(
     pool: &PgPool,
     auth_secret: &str,
@@ -657,25 +838,31 @@ pub(crate) async fn identity_for_bearer_token(
 ) -> Result<crate::auth::AccessClaims, ApiError> {
     if token.starts_with("cicd_") {
         let hash = crate::auth::hash_token(token);
-        let row = sqlx::query_as::<_, (Uuid, String)>(
-            "SELECT u.id, u.role FROM api_tokens t JOIN users u ON u.id = t.user_id \
+        let row = sqlx::query_as::<_, (Uuid, Uuid, String, Option<Uuid>, Vec<String>)>(
+            "SELECT t.id, u.id, u.role, t.project_id, t.scopes \
+             FROM api_tokens t JOIN users u ON u.id = t.user_id \
              WHERE t.token_hash = $1 AND u.enabled \
+               AND t.revoked_at IS NULL \
                AND (t.expires_at IS NULL OR t.expires_at > now())",
         )
         .bind(&hash)
         .fetch_optional(pool)
         .await
         .map_err(ApiError::internal)?;
-        let (sub, role) = row.ok_or_else(ApiError::unauthorized)?;
+        let (token_id, sub, role, token_project_id, token_scopes) =
+            row.ok_or_else(ApiError::unauthorized)?;
         // Touch last_used_at best-effort.
-        let _ = sqlx::query("UPDATE api_tokens SET last_used_at = now() WHERE token_hash = $1")
-            .bind(&hash)
+        let _ = sqlx::query("UPDATE api_tokens SET last_used_at = now() WHERE id = $1")
+            .bind(token_id)
             .execute(pool)
             .await;
         let now = chrono::Utc::now();
         Ok(crate::auth::AccessClaims {
             sub,
             sid: None,
+            token_id: Some(token_id),
+            token_project_id,
+            token_scopes,
             role,
             iat: now.timestamp(),
             exp: now.timestamp() + 900,
@@ -1021,28 +1208,7 @@ async fn list_projects(
     let projects = if state.auth_secret.is_some() {
         let claims = claims.ok_or_else(ApiError::unauthorized)?.0;
         let role = crate::authz::Role::parse(&claims.role).ok_or_else(ApiError::unauthorized)?;
-        if role == crate::authz::Role::Admin {
-            sqlx::query_as::<_, Project>("SELECT id, name, repository_url, default_branch, created_at FROM projects ORDER BY created_at DESC LIMIT $1 OFFSET $2")
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(db)
-                .await
-                .map_err(ApiError::internal)?
-        } else {
-            sqlx::query_as::<_, Project>(
-                "SELECT p.id, p.name, p.repository_url, p.default_branch, p.created_at \
-                 FROM projects p \
-                 JOIN project_memberships m ON m.project_id = p.id \
-                 WHERE m.user_id = $3 \
-                 ORDER BY p.created_at DESC LIMIT $1 OFFSET $2",
-            )
-            .bind(limit)
-            .bind(offset)
-            .bind(claims.sub)
-            .fetch_all(db)
-            .await
-            .map_err(ApiError::internal)?
-        }
+        list_projects_for_claims(db, &claims, role, limit, offset).await?
     } else {
         sqlx::query_as::<_, Project>("SELECT id, name, repository_url, default_branch, created_at FROM projects ORDER BY created_at DESC LIMIT $1 OFFSET $2")
             .bind(limit)
@@ -2167,8 +2333,32 @@ mod tests {
             project_scope_ref(&format!("/api/v1/webhooks/{webhook_id}")),
             Some(ProjectScopeRef::Webhook(webhook_id))
         );
+        assert_eq!(
+            project_scope_ref("/api/v1/repos/demo/refs"),
+            Some(ProjectScopeRef::Repository("demo".to_string()))
+        );
+        assert_eq!(
+            project_scope_ref("/api/v1/repositories/demo"),
+            Some(ProjectScopeRef::Repository("demo".to_string()))
+        );
         assert_eq!(project_scope_ref("/api/v1/projects"), None);
-        assert_eq!(project_scope_ref("/api/v1/repositories/demo"), None);
+        assert_eq!(project_scope_ref("/api/v1/repositories"), None);
+    }
+
+    #[test]
+    fn pat_scopes_are_enforced_by_method() {
+        let claims = crate::auth::AccessClaims {
+            sub: Uuid::new_v4(),
+            sid: None,
+            token_id: Some(Uuid::new_v4()),
+            token_project_id: Some(Uuid::new_v4()),
+            token_scopes: vec!["api:read".to_string()],
+            role: "admin".to_string(),
+            iat: 0,
+            exp: 900,
+        };
+        assert!(api_token_scope_allows(&claims, "GET"));
+        assert!(!api_token_scope_allows(&claims, "POST"));
     }
 
     #[test]

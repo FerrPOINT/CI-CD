@@ -229,15 +229,26 @@ async fn check_repo_access(
     if visibility.is_none() {
         return Err(ApiError::not_found());
     }
-    if global_role == crate::authz::Role::Admin {
-        return Ok(());
-    }
-
     let min_role = match operation {
         GitOperation::Read => crate::authz::Role::Viewer,
         GitOperation::Write => crate::authz::Role::Developer,
     };
-    if git_project_access_allows(pool, &name, claims.sub, min_role).await? {
+    let required_scope = match operation {
+        GitOperation::Read => "git:read",
+        GitOperation::Write => "git:write",
+    };
+    if !crate::api::bearer_token_has_scope(&claims, required_scope) {
+        return Err(ApiError::forbidden());
+    }
+    if global_role == crate::authz::Role::Admin {
+        return match claims.token_project_id {
+            Some(project_id) => git_repository_linked_to_project(pool, &name, project_id).await,
+            None => Ok(()),
+        };
+    }
+
+    if git_project_access_allows(pool, &name, claims.sub, min_role, claims.token_project_id).await?
+    {
         Ok(())
     } else {
         Err(ApiError::forbidden())
@@ -310,15 +321,23 @@ async fn git_project_access_allows(
     repo: &str,
     user_id: Uuid,
     min_role: crate::authz::Role,
+    token_project_id: Option<Uuid>,
 ) -> Result<bool, ApiError> {
-    let pattern = format!("%{}.git", escape_like_pattern(repo));
+    let patterns = repository_url_like_patterns(repo);
     let roles = sqlx::query_scalar::<_, String>(
         "SELECT m.role FROM projects p \
          JOIN project_memberships m ON m.project_id = p.id \
-         WHERE p.repository_url ILIKE $1 ESCAPE '\\' AND m.user_id = $2",
+         WHERE (p.repository_url ILIKE $1 ESCAPE '\\' \
+             OR p.repository_url ILIKE $2 ESCAPE '\\' \
+             OR p.repository_url ILIKE $3 ESCAPE '\\') \
+           AND m.user_id = $4 \
+           AND ($5::uuid IS NULL OR p.id = $5)",
     )
-    .bind(pattern)
+    .bind(&patterns.path)
+    .bind(&patterns.scp)
+    .bind(&patterns.exact)
     .bind(user_id)
+    .bind(token_project_id)
     .fetch_all(pool)
     .await
     .map_err(ApiError::internal)?;
@@ -326,6 +345,48 @@ async fn git_project_access_allows(
         .iter()
         .filter_map(|role| crate::authz::Role::parse(role))
         .any(|role| role >= min_role))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct RepositoryUrlPatterns {
+    pub(crate) path: String,
+    pub(crate) scp: String,
+    pub(crate) exact: String,
+}
+
+pub(crate) fn repository_url_like_patterns(repo: &str) -> RepositoryUrlPatterns {
+    let escaped = escape_like_pattern(repo);
+    RepositoryUrlPatterns {
+        path: format!("%/{escaped}.git"),
+        scp: format!("%:{escaped}.git"),
+        exact: format!("{escaped}.git"),
+    }
+}
+
+async fn git_repository_linked_to_project(
+    pool: &PgPool,
+    repo: &str,
+    project_id: Uuid,
+) -> Result<(), ApiError> {
+    let patterns = repository_url_like_patterns(repo);
+    let linked = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM projects \
+         WHERE id = $1 AND (repository_url ILIKE $2 ESCAPE '\\' \
+             OR repository_url ILIKE $3 ESCAPE '\\' \
+             OR repository_url ILIKE $4 ESCAPE '\\'))",
+    )
+    .bind(project_id)
+    .bind(&patterns.path)
+    .bind(&patterns.scp)
+    .bind(&patterns.exact)
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    if linked {
+        Ok(())
+    } else {
+        Err(ApiError::forbidden())
+    }
 }
 
 fn escape_like_pattern(value: &str) -> String {
@@ -622,13 +683,20 @@ pub async fn internal_git_push(
         .as_deref()
         .filter(|rev| is_probable_object_id(rev))
         .map(|rev| git_push_idempotency_key(&name, &event.ref_name, rev));
-    let pattern = format!("%{name}.git");
-    let project_id: Option<Uuid> =
-        sqlx::query_scalar("SELECT id FROM projects WHERE repository_url ILIKE $1 LIMIT 1")
-            .bind(&pattern)
-            .fetch_optional(pool)
-            .await
-            .map_err(ApiError::internal)?;
+    let patterns = repository_url_like_patterns(&name);
+    let project_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM projects \
+             WHERE repository_url ILIKE $1 ESCAPE '\\' \
+                OR repository_url ILIKE $2 ESCAPE '\\' \
+                OR repository_url ILIKE $3 ESCAPE '\\' \
+             LIMIT 1",
+    )
+    .bind(&patterns.path)
+    .bind(&patterns.scp)
+    .bind(&patterns.exact)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?;
     match project_id {
         Some(project_id) => {
             let outcome = crate::api::create_pipeline_with_vars_idempotent(
@@ -767,6 +835,14 @@ mod tests {
     #[test]
     fn escapes_like_wildcards_in_repository_binding() {
         assert_eq!(escape_like_pattern("service_api"), "service\\_api");
+        assert_eq!(
+            repository_url_like_patterns("service_api"),
+            RepositoryUrlPatterns {
+                path: "%/service\\_api.git".to_string(),
+                scp: "%:service\\_api.git".to_string(),
+                exact: "service\\_api.git".to_string(),
+            }
+        );
     }
 
     #[tokio::test]

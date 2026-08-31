@@ -994,11 +994,18 @@ export interface components {
         ApiToken: {
             /** Format: date-time */
             created_at: string;
+            /** Format: date-time */
+            expires_at?: string | null;
             /** Format: uuid */
             id: string;
             /** Format: date-time */
             last_used_at?: string | null;
             name: string;
+            /** Format: uuid */
+            project_id?: string | null;
+            /** Format: date-time */
+            revoked_at?: string | null;
+            scopes: string[];
             token_hint: string;
             /** Format: uuid */
             user_id?: string | null;
@@ -1096,10 +1103,17 @@ export interface components {
         CreateToken: {
             /**
              * Format: int32
-             * @description Optional lifetime in days; omit for a non-expiring token.
+             * @description Optional lifetime in days; defaults to 30 days in auth mode.
              */
             expires_in_days?: number | null;
             name: string;
+            /**
+             * Format: uuid
+             * @description Required in auth mode; omitted only for trusted-network legacy tokens.
+             */
+            project_id?: string | null;
+            /** @description Explicit token scopes. Defaults to project API/Git read-write scopes. */
+            scopes?: string[];
             /** Format: uuid */
             user_id?: string | null;
         };

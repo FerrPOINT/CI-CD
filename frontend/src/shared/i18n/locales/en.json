@@ -312,6 +312,11 @@
   "tokens": {
     "title": "API Tokens",
     "name": "Token name",
+    "project": "Project",
+    "expiresInDays": "Lifetime, days",
+    "scopes": "Scopes",
+    "expires": "Expires",
+    "lastUsed": "Last used",
     "create": "Generate",
     "hint": "Hint",
     "created": "Token created",
@@ -320,6 +325,19 @@
     "copy": "Copy",
     "copied": "Copied to clipboard",
     "copyWarning": "Copy this token now — it will not be shown again.",
+    "legacyGlobal": "Legacy global",
+    "noExpiry": "No expiry",
+    "neverUsed": "Never used",
+    "noProjects": "No projects",
+    "projectRequired": "Select a project for the token",
+    "scopeRequired": "Select at least one scope",
+    "invalidExpiry": "Lifetime must be between 1 and 365 days",
+    "scopeLabels": {
+      "apiread": "API read",
+      "apiwrite": "API write",
+      "gitread": "Git read",
+      "gitwrite": "Git write"
+    },
     "empty": "No API tokens."
   },
   "settings": {

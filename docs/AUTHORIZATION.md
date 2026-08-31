@@ -33,14 +33,14 @@ Forge CI/CD является multi-tenant control plane: один экземпл
 
 | Область | Реализовано сейчас | Риск / дефицит |
 |---|---|---|
-| HTTP API | Conditional auth middleware: без непустого `CICD_AUTH_SECRET` trusted-network/open; с секретом работают JWT/PAT, session-bound access invalidation, refresh rotate/logout/revoke, route-role checks и project membership enforcement для project-owned API | Нет production default-deny boundary, tenant isolation, scoped credentials и полноценной cookie/CSRF/session-family policy |
+| HTTP API | Conditional auth middleware: без непустого `CICD_AUTH_SECRET` trusted-network/open; с секретом работают JWT/PAT, scoped PAT, session-bound access invalidation, refresh rotate/logout/revoke, route-role checks и project membership enforcement для project-owned API | Нет production default-deny boundary, tenant isolation, service-account tokens и полноценной cookie/CSRF/session-family policy |
 | Users | `users(id, username, role, enabled)`, `user_credentials`, `sessions`, `project_memberships` | Tenant membership и tenant isolation отсутствуют |
 | Roles | `admin`, `maintainer`, `developer`, `viewer` участвуют в route-policy decisions; project role берётся из `project_memberships` для project-owned ресурсов | Нет tenant roles и tenant-wide membership model |
-| API tokens | Случайный `cicd_...`, SHA-256 hash, hint, owner optional, optional expiry; Bearer PAT работает при `CICD_AUTH_SECRET` | Нет scopes, pepper/HMAC storage, revoke reason и project boundary |
+| API tokens | Случайный `cicd_...`, SHA-256 hash, hint, owner, project_id, explicit scopes, expiry, last-used и soft revoke; Bearer PAT работает при `CICD_AUTH_SECRET` | Нет pepper/HMAC storage, revoke reason, service-account token и tenant boundary; legacy `project_id = NULL` tokens остаются global до отзыва |
 | Projects | Глобально уникальное `projects.name`; project memberships ограничивают доступ к project-owned ресурсам при включённом auth | Нет tenant ownership и tenant-aware project scope |
 | Secrets | `project_secrets`, AES-256-GCM at rest, API не возвращает value; embedded runner injects env and masks stdout/stderr best-effort | Нет scoped lease, key version/rotation и full redaction coverage |
 | Runners | Registry + heartbeat; embedded supervisor выполняет jobs | Runner не обладает отдельной криптографической идентичностью; registry не является границей доступа |
-| Git | Public read для public repo; private read/write через legacy `CICD_GIT_TOKEN` либо JWT/PAT + project membership при `CICD_AUTH_SECRET`; hook token | Нет tenant-bound repository model, scoped Git credentials, signed push events и deny audit для Git |
+| Git | Public read для public repo; private read/write через legacy `CICD_GIT_TOKEN` либо JWT/PAT + project membership + `git:*` PAT scopes при `CICD_AUTH_SECRET`; hook token | Нет tenant-bound repository model, отдельного scoped Git credential class, signed push events и deny audit для Git |
 | Audit | `audit_log` с action/resource/actor text, login/denied и многие mutation events | Actor не является нормализованным principal, нет tenant/project scope и фильтров/export |
 | CORS и transport | permissive CORS, HTTP в dev | Для production необходим TLS и allowlist origins |
 

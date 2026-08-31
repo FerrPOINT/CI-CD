@@ -83,7 +83,7 @@ curl -fsS -X POST http://127.0.0.1:22801/api/v1/projects \
 3. Используйте `maintainer` для управления участниками и секретами проекта; `developer` — для запуска и изменения рабочих ресурсов; `viewer` — для чтения.
 4. Удаляйте ненужные memberships через список. Последнего maintainer удалить нельзя.
 
-Tenant isolation, scoped PAT/SAT, tenant-bound Git mapping, scoped Git credentials и production cookie/CSRF/session-family policy остаются **Target approved**; session-bound access invalidation, refresh logout/revoke и Git Smart HTTP read/write checks по linked repository URL уже выполняются сервером.
+Tenant isolation, service-account tokens, tenant-bound Git mapping, scoped Git credentials и production cookie/CSRF/session-family policy остаются **Target approved**; scoped PAT, session-bound access invalidation, refresh logout/revoke и Git Smart HTTP read/write checks по linked repository URL уже выполняются сервером.
 
 ![Участники проекта](screenshots/40-project-members.png)
 
@@ -109,7 +109,7 @@ git commit -m 'Initial commit'
 git push -u origin main
 ```
 
-Если задан `CICD_GIT_TOKEN`, передайте его как пароль Basic auth (username произвольный). При включённом `CICD_AUTH_SECRET` вместо shared Git token можно передать access JWT или PAT пользователя; read требует `viewer+` в связанном проекте, push требует `developer+`.
+Если задан `CICD_GIT_TOKEN`, передайте его как пароль Basic auth (username произвольный). При включённом `CICD_AUTH_SECRET` вместо shared Git token можно передать access JWT или PAT пользователя; read требует `viewer+` в связанном проекте, push требует `developer+`. Для PAT дополнительно нужны scopes `git:read` для clone/fetch и `git:write` для push.
 
 ```bash
 git clone http://any-user:<TOKEN>@<host>/git/my-service.git
@@ -302,18 +302,19 @@ Retention/TTL, S3 и multipart upload - **Target approved**.
 3. Используйте данные как подготовку к будущей policy-модели.
 4. Роль ограничивает API только когда backend запущен с `CICD_AUTH_SECRET`; без него действует trusted-network режим.
 
-Пароли хранятся как `argon2id` credentials. Project membership, session-bound access invalidation и refresh logout/revoke уже используются при включённом `CICD_AUTH_SECRET`; tenant boundary, scoped PAT и production cookie/CSRF/session-family policy относятся к **Target approved**.
+Пароли хранятся как `argon2id` credentials. Project membership, scoped PAT, session-bound access invalidation и refresh logout/revoke уже используются при включённом `CICD_AUTH_SECRET`; tenant boundary, service-account tokens и production cookie/CSRF/session-family policy относятся к **Target approved**.
 
 ### API-токены
 
 **Статус процедуры: Current verified.**
 
-1. На странице **Users** создайте токен и укажите понятное имя; при необходимости свяжите его с пользователем.
+1. На странице **Users** создайте токен, укажите понятное имя, проект, срок действия и нужные scopes.
 2. Скопируйте значение немедленно в password manager или secret manager: API показывает полное значение только один раз.
-3. В дальнейшем сверяйте только hint в списке токенов.
-4. Отзовите токен через UI или `DELETE /api/v1/api-tokens/{token_id}`, если владелец/интеграция больше не нуждается в нём.
+3. Для REST-клиентов выдавайте `api:read` и только при необходимости `api:write`; для Git clone/fetch нужен `git:read`, для push — `git:write`.
+4. В дальнейшем сверяйте только hint, project binding, scopes, expiry и last-used в списке токенов.
+5. Отзовите токен через UI или `DELETE /api/v1/api-tokens/{token_id}`, если владелец/интеграция больше не нуждается в нём.
 
-Токены хранятся как SHA-256 hash и проверяются как Bearer PAT только при включённом `CICD_AUTH_SECRET`. Scoped tokens, pepper/HMAC storage, rotation policy и tenant/project permissions - **Target approved**.
+Токены хранятся как SHA-256 hash и проверяются как Bearer PAT только при включённом `CICD_AUTH_SECRET`. Новые PAT в auth-mode обязаны иметь `project_id`, scopes и expiry; старые записи без `project_id` остаются legacy global до отзыва. Pepper/HMAC storage, service-account tokens, rotation policy и tenant permissions - **Target approved**.
 
 ![Пользователи и API-токены](screenshots/20-users.png)
 
@@ -405,7 +406,7 @@ curl -fsS -X POST "http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines"
 
 **Статус процедуры: Current verified.**
 
-Проверьте, задан ли непустой `CICD_AUTH_SECRET`. Без него API и Dashboard намеренно работают в trusted-network режиме; с ним JWT/PAT, глобальные роли, project memberships и Git Smart HTTP read/write checks применяются middleware. Scoped PAT, tenant isolation и scoped Git credentials пока target, поэтому shared-доступ всё равно закрывайте reverse proxy/сетью.
+Проверьте, задан ли непустой `CICD_AUTH_SECRET`. Без него API и Dashboard намеренно работают в trusted-network режиме; с ним JWT/scoped PAT, глобальные роли, project memberships и Git Smart HTTP read/write checks применяются middleware. Tenant isolation, service-account tokens и scoped Git credentials пока target, поэтому shared-доступ всё равно закрывайте reverse proxy/сетью.
 
 ## Связанные документы
 

@@ -600,11 +600,14 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 | `token_hash` | TEXT | NOT NULL | — | UNIQUE, SHA-256 хэш |
 | `token_hint` | TEXT | NOT NULL | — | Подсказка (`cicd_xxxx...yyyy`) |
 | `user_id` | UUID | NULL | — | FK → `users(id)` SET NULL |
+| `project_id` | UUID | NULL | — | FK → `projects(id)` CASCADE; обязателен для новых PAT при `CICD_AUTH_SECRET` |
+| `scopes` | TEXT[] | NOT NULL | `ARRAY['api:read','api:write','git:read','git:write']` | Разрешённые области PAT: REST read/write и Git read/write |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
 | `last_used_at` | TIMESTAMPTZ | NULL | — | — |
 | `expires_at` | TIMESTAMPTZ | NULL | — | Optional PAT expiry (`NULL` = без срока) |
+| `revoked_at` | TIMESTAMPTZ | NULL | — | Soft revoke; активные списки фильтруют `revoked_at IS NULL` |
 
-> Полное значение возвращается только при создании. PAT проверяется как Bearer token при включённом `CICD_AUTH_SECRET`.
+> Полное значение возвращается только при создании. PAT проверяется как Bearer token при включённом `CICD_AUTH_SECRET`; `project_id` ограничивает project-owned API и linked Git repository, `scopes` ограничивают REST/Git операции. Старые записи с `project_id = NULL` остаются legacy global до отзыва.
 
 ### 9.12 project_memberships
 
@@ -688,6 +691,8 @@ idx_job_logs_job_id          ON job_logs(job_id)
 idx_artifacts_attempt        ON artifacts(attempt_id)
 idx_sessions_user            ON sessions(user_id)
 idx_sessions_expires         ON sessions(expires_at)
+idx_api_tokens_active_owner_project ON api_tokens(user_id, project_id) WHERE revoked_at IS NULL
+idx_api_tokens_active_project ON api_tokens(project_id) WHERE revoked_at IS NULL
 idx_project_memberships_user ON project_memberships(user_id, project_id)
 idx_domain_events_aggregate  ON domain_events(aggregate_type, aggregate_id, occurred_at DESC)
 idx_domain_events_type       ON domain_events(event_type, occurred_at DESC)

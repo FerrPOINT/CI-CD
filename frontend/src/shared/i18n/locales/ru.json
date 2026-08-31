@@ -312,6 +312,11 @@
   "tokens": {
     "title": "API-токены",
     "name": "Имя токена",
+    "project": "Проект",
+    "expiresInDays": "Срок, дней",
+    "scopes": "Права доступа",
+    "expires": "Истекает",
+    "lastUsed": "Последнее использование",
     "create": "Сгенерировать",
     "hint": "Подсказка",
     "created": "Токен создан",
@@ -320,6 +325,19 @@
     "copy": "Копировать",
     "copied": "Скопировано",
     "copyWarning": "Скопируйте токен сейчас — он больше не будет показан.",
+    "legacyGlobal": "Глобальный legacy",
+    "noExpiry": "Без срока",
+    "neverUsed": "Не использовался",
+    "noProjects": "Нет проектов",
+    "projectRequired": "Выберите проект для токена",
+    "scopeRequired": "Выберите хотя бы один scope",
+    "invalidExpiry": "Срок должен быть от 1 до 365 дней",
+    "scopeLabels": {
+      "apiread": "Чтение API",
+      "apiwrite": "Запись API",
+      "gitread": "Чтение Git",
+      "gitwrite": "Запись Git"
+    },
     "empty": "API-токенов нет."
   },
   "settings": {

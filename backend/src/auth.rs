@@ -38,6 +38,15 @@ pub struct AccessClaims {
     /// Session id for access-token invalidation; absent only for non-session credentials.
     #[serde(default)]
     pub sid: Option<Uuid>,
+    /// API token id for PAT credentials; absent for browser/session JWTs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_id: Option<Uuid>,
+    /// Optional project binding for scoped PAT credentials.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_project_id: Option<Uuid>,
+    /// Explicit PAT scopes. Empty only for browser/session JWTs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub token_scopes: Vec<String>,
     /// Role hint at issue time; middleware refreshes it from DB for session JWTs.
     pub role: String,
     pub iat: i64,
@@ -129,6 +138,9 @@ pub(crate) fn issue_access_with_secret(
     let claims = AccessClaims {
         sub: user_id,
         sid: Some(session_id),
+        token_id: None,
+        token_project_id: None,
+        token_scopes: Vec::new(),
         role: role.to_string(),
         iat: now.timestamp(),
         exp: exp.timestamp(),

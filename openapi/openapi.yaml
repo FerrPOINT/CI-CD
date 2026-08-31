@@ -3,8 +3,8 @@ info:
   title: Forge CI/CD API
   description: Self-hosted CI/CD control plane. Array responses, error envelope and in-process rate limits follow docs/contracts/API_CONTRACT.md and docs/API.md current compatibility mode.
   license:
-    name: MIT
-    identifier: MIT
+    name: FerrPOINT Proprietary Source-Available Evaluation License v1.0
+    url: https://github.com/FerrPOINT/CI-CD/blob/main/LICENSE
   version: 0.1.0
 paths:
   /api/v1/api-tokens:
@@ -1903,10 +1903,16 @@ components:
       - id
       - name
       - token_hint
+      - scopes
       - created_at
       properties:
         created_at:
           type: string
+          format: date-time
+        expires_at:
+          type:
+          - string
+          - 'null'
           format: date-time
         id:
           type: string
@@ -1918,6 +1924,20 @@ components:
           format: date-time
         name:
           type: string
+        project_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        revoked_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        scopes:
+          type: array
+          items:
+            type: string
         token_hint:
           type: string
         user_id:
@@ -2161,9 +2181,20 @@ components:
           - integer
           - 'null'
           format: int32
-          description: Optional lifetime in days; omit for a non-expiring token.
+          description: Optional lifetime in days; defaults to 30 days in auth mode.
         name:
           type: string
+        project_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+          description: Required in auth mode; omitted only for trusted-network legacy tokens.
+        scopes:
+          type: array
+          items:
+            type: string
+          description: Explicit token scopes. Defaults to project API/Git read-write scopes.
         user_id:
           type:
           - string

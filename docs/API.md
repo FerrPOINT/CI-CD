@@ -76,7 +76,7 @@ curl -sS http://127.0.0.1:22801/api/v1/health
 | POST | `/auth/refresh` | Обновить пару токенов |
 | POST | `/auth/logout` | Отозвать refresh session |
 
-Auth enforcement включается только если задан непустой `CICD_AUTH_SECRET`. Access token — JWT HS256 на 15 минут, содержит `sessions.id`, а protected API на каждом запросе проверяет активную session, enabled user и текущую роль из БД. Refresh token хранится hash-ом в `sessions`, rotate-ится через `/auth/refresh` и отзывается через `/auth/logout`. PAT `cicd_...` принимается как Bearer token при включённом enforcement.
+Auth enforcement включается только если задан непустой `CICD_AUTH_SECRET`. Access token — JWT HS256 на 15 минут, содержит `sessions.id`, а protected API на каждом запросе проверяет активную session, enabled user и текущую роль из БД. Refresh token хранится hash-ом в `sessions`, rotate-ится через `/auth/refresh` и отзывается через `/auth/logout`. PAT `cicd_...` принимается как Bearer token при включённом enforcement; новые PAT в auth-mode требуют `project_id`, имеют явные scopes и срок действия.
 
 #### POST /api/v1/auth/login
 
@@ -472,7 +472,7 @@ curl -sS http://127.0.0.1:22801/api/v1/pipelines/$PIPELINE_ID
 | GET/POST | `/repos/{repo}/releases` | Список / создание или обновление release metadata |
 | GET/DELETE | `/repos/{repo}/releases/{tag}` | Один release / удаление metadata (Git tag сохраняется) |
 
-`ref` проходит только в Git через уже валидированный bare repository; пустой `HEAD` автоматически берёт `main`, затем `master`. Для Smart HTTP fetch public repository доступен без credential; private repository и весь `git-receive-pack` требуют credential. При непустом `CICD_AUTH_SECRET` принимается legacy `CICD_GIT_TOKEN` либо JWT/PAT в `Authorization: Bearer`/Basic password с проверкой роли в проекте, связанном через `repository_url`.
+`ref` проходит только в Git через уже валидированный bare repository; пустой `HEAD` автоматически берёт `main`, затем `master`. Для Smart HTTP fetch public repository доступен без credential; private repository и весь `git-receive-pack` требуют credential. При непустом `CICD_AUTH_SECRET` принимается legacy `CICD_GIT_TOKEN` либо JWT/PAT в `Authorization: Bearer`/Basic password с проверкой роли в проекте, связанном через `repository_url` exact tail `/{repo}.git`, `:{repo}.git` или `{repo}.git`; PAT дополнительно требует `git:read` или `git:write` и соблюдает свой `project_id`.
 
 ### Дополнительные CI-результаты
 
@@ -853,7 +853,7 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 
 ## Platform endpoints (MVP)
 
-> **Security note:** auth/RBAC enforcement включается только при непустом `CICD_AUTH_SECRET`. Без него все endpoints ниже работают в trusted-network режиме; с ним применяются JWT/PAT, session-bound access invalidation, route roles и project memberships для project-owned ресурсов. Scoped PAT, tenant isolation и production cookie/CSRF/session-family policy ещё target.
+> **Security note:** auth/RBAC enforcement включается только при непустом `CICD_AUTH_SECRET`. Без него все endpoints ниже работают в trusted-network режиме; с ним применяются JWT/PAT, scoped PAT, session-bound access invalidation, route roles и project memberships для project-owned ресурсов. Tenant isolation, service-account tokens, scoped Git credentials и production cookie/CSRF/session-family policy ещё target.
 
 ### Runners
 
@@ -959,11 +959,40 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 
 | Метод | Путь | Назначение |
 |---|---|---|
-| GET | `/api-tokens` | Список токенов (hint only) |
-| POST | `/api-tokens` | Создать (name, user_id?) → возвращает `value` один раз |
-| DELETE | `/api-tokens/{token_id}` | Отозвать |
+| GET | `/api-tokens` | Список активных токенов (hint only) |
+| POST | `/api-tokens` | Создать scoped PAT (`name`, `project_id`, `scopes`, `expires_in_days`, `user_id?`) → возвращает `value` один раз |
+| DELETE | `/api-tokens/{token_id}` | Отозвать токен (`revoked_at`) |
 
-> Токены хранятся как SHA-256 хэш. Полное значение возвращается только при создании. Bearer PAT проверяется только при включённом `CICD_AUTH_SECRET`; scopes/pepper/rotation остаются target.
+**Create request (auth-mode):**
+```json
+{
+  "name": "deploy-bot",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+  "scopes": ["api:read", "api:write", "git:read"],
+  "expires_in_days": 30
+}
+```
+
+`project_id` обязателен при непустом `CICD_AUTH_SECRET`; без auth-mode он может быть опущен только для legacy/trusted-network сценариев. Поддерживаемые scopes: `api:read`, `api:write`, `git:read`, `git:write`. Если scopes не переданы, создаётся project-scoped read/write PAT для API и Git. `expires_in_days` принимает `1..365`; в auth-mode default — 30 дней.
+
+**Response 200:**
+```json
+{
+  "id": "token-uuid",
+  "name": "deploy-bot",
+  "token_hint": "cicd_xxxx...yyyy",
+  "user_id": "user-uuid",
+  "project_id": "550e8400-e29b-41d4-a716-446655440000",
+  "scopes": ["api:read", "api:write", "git:read"],
+  "expires_at": "2026-09-30T10:00:00Z",
+  "revoked_at": null,
+  "created_at": "2026-08-31T10:00:00Z",
+  "last_used_at": null,
+  "value": "cicd_..."
+}
+```
+
+Токены хранятся как SHA-256 хэш. Полное значение возвращается только при создании; списки показывают hint, project binding, scopes, expiry и last-used. Bearer PAT проверяется только при включённом `CICD_AUTH_SECRET`: `api:*` scopes ограничивают REST методы, `git:*` scopes ограничивают Smart HTTP, `project_id` ограничивает project-owned API и name-based repo API. Pepper/HMAC storage, revoke reason, service-account tokens и rotation policy остаются target.
 
 ## Дополнительные реализованные endpoint-ы
 
@@ -1015,7 +1044,7 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 | POST | `/git/{repo}/git-upload-pack` | Smart HTTP fetch/clone service |
 | POST | `/git/{repo}/git-receive-pack` | Smart HTTP push service |
 
-Git Smart HTTP допускает unauthenticated read только для `repositories.visibility = public`. Private read и receive-pack требуют legacy `CICD_GIT_TOKEN` либо, при непустом `CICD_AUTH_SECRET`, JWT/PAT principal с `project_memberships`: `viewer+` для read, `developer+` для write; `admin` имеет bypass. Полный lifecycle — `docs/GIT_HOSTING.md`; PR merge semantics — `docs/PULL_REQUESTS.md`.
+Git Smart HTTP допускает unauthenticated read только для `repositories.visibility = public`. Private read и receive-pack требуют legacy `CICD_GIT_TOKEN` либо, при непустом `CICD_AUTH_SECRET`, JWT/PAT principal с `project_memberships`: `viewer+` для read, `developer+` для write; PAT также требует `git:read`/`git:write` и проходит только в своём `project_id`. Связанный проект определяется по `repository_url` exact tail `/{repo}.git`, `:{repo}.git` или `{repo}.git`. Полный lifecycle — `docs/GIT_HOSTING.md`; PR merge semantics — `docs/PULL_REQUESTS.md`.
 
 ### Internal Git hook
 

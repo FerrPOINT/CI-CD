@@ -2,16 +2,16 @@
 
 ## 1. Overview
 
-Forge CI/CD — self-hosted CI/CD control plane. Текущая версия остаётся MVP и не является production-safe: без непустого `CICD_AUTH_SECRET` backend работает в trusted-network режиме; при включённом секрете уже применяются route roles, project memberships, session-bound access JWT и refresh rotate/logout/revoke, но tenant isolation, scoped PAT и production cookie/CSRF/session-family policy остаются target. Безопасность встроена на уровне SQL-запросов, валидации ввода, секретов at rest, условного auth middleware и audit.
+Forge CI/CD — self-hosted CI/CD control plane. Текущая версия остаётся MVP и не является production-safe: без непустого `CICD_AUTH_SECRET` backend работает в trusted-network режиме; при включённом секрете уже применяются route roles, project memberships, scoped PAT, session-bound access JWT и refresh rotate/logout/revoke, но tenant isolation, service-account tokens, scoped Git credentials и production cookie/CSRF/session-family policy остаются target. Безопасность встроена на уровне SQL-запросов, валидации ввода, секретов at rest, условного auth middleware и audit.
 
 ## 2. Текущий статус
 
 | Механизм | Статус | Описание |
 |----------|--------|----------|
 | Auth (login/JWT) | ✅ conditional | Включается при непустом `CICD_AUTH_SECRET`; access JWT привязан к `sessions.id`, без секрета API остаётся open trusted-network |
-| RBAC | ✅ MVP | Глобальные роли `admin`/`maintainer`/`developer`/`viewer` + `project_memberships`; tenant scope и scoped tokens — target |
+| RBAC | ✅ MVP | Глобальные роли `admin`/`maintainer`/`developer`/`viewer` + `project_memberships`; scoped PAT current, tenant scope и service-account tokens — target |
 | Secrets management | ✅ MVP | AES-256-GCM at rest, `CICD_SECRETS_KEY`; env injection в embedded runner + masking stdout |
-| API tokens | ✅ conditional | PAT `cicd_...` проверяется middleware при непустом `CICD_AUTH_SECRET`; legacy SHA-256 hash без target scopes/pepper |
+| API tokens | ✅ conditional | PAT `cicd_...` проверяется middleware при непустом `CICD_AUTH_SECRET`; новые PAT требуют project scope, scopes и expiry, legacy записи с `project_id = NULL` остаются global до отзыва; hash пока SHA-256 без pepper/HMAC |
 | Users & roles | ✅ MVP | Users, argon2id credentials, sessions, enabled flag |
 | Audit log | ✅ MVP | Последние 200 событий |
 | Artifacts storage | ✅ MVP | Локальная ФС, 50 MiB лимит |
@@ -61,7 +61,7 @@ Current middleware проверяет `Authorization: Bearer ...` при неп�
 | `developer` | запуск/повтор jobs/pipelines и чтение ресурсов |
 | `viewer` | только чтение большинства API |
 
-- Project-owned routes дополнительно требуют `project_memberships`; `admin` имеет instance-wide bypass. Git Smart HTTP при непустом `CICD_AUTH_SECRET` принимает JWT/PAT через Bearer или Basic password и проверяет связанную project membership: `viewer+` для read, `developer+` для write. Tenant boundary, scoped PAT/SAT и scoped Git credentials — **Target approved**.
+- Project-owned routes дополнительно требуют `project_memberships`; `admin` имеет instance-wide bypass. Scoped PAT дополнительно ограничивает REST методы scopes `api:read`/`api:write`, project boundary через `project_id`, а Git Smart HTTP — scopes `git:read`/`git:write`. Tenant boundary, service-account tokens и scoped Git credentials — **Target approved**.
 - `/git/*` также принимает legacy `CICD_GIT_TOKEN` как shared operator token; пустой token допустим только в trusted local mode без `CICD_AUTH_SECRET`.
 
 ### 4.2 Middleware

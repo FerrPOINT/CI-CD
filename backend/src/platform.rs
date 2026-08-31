@@ -25,6 +25,9 @@ use uuid::Uuid;
 use crate::api::{ApiError, AppState, pool};
 
 const MAX_ARTIFACT_BYTES: usize = 50 * 1024 * 1024;
+const DEFAULT_TOKEN_LIFETIME_DAYS: i32 = 30;
+const MAX_TOKEN_LIFETIME_DAYS: i32 = 365;
+const DEFAULT_TOKEN_SCOPES: &[&str] = &["api:read", "api:write", "git:read", "git:write"];
 
 type ApiResult<T> = Result<Json<T>, ApiError>;
 
@@ -715,6 +718,10 @@ pub(crate) struct ApiToken {
     name: String,
     token_hint: String,
     user_id: Option<Uuid>,
+    project_id: Option<Uuid>,
+    scopes: Vec<String>,
+    expires_at: Option<DateTime<Utc>>,
+    revoked_at: Option<DateTime<Utc>>,
     created_at: DateTime<Utc>,
     last_used_at: Option<DateTime<Utc>>,
 }
@@ -728,13 +735,19 @@ pub(crate) struct CreatedToken {
 pub(crate) struct CreateToken {
     name: String,
     user_id: Option<Uuid>,
-    /// Optional lifetime in days; omit for a non-expiring token.
+    /// Required in auth mode; omitted only for trusted-network legacy tokens.
+    #[serde(default)]
+    project_id: Option<Uuid>,
+    /// Explicit token scopes. Defaults to project API/Git read-write scopes.
+    #[serde(default = "default_token_scope_strings")]
+    scopes: Vec<String>,
+    /// Optional lifetime in days; defaults to 30 days in auth mode.
     #[serde(default)]
     expires_in_days: Option<i32>,
 }
 #[utoipa::path(get, path = "/api/v1/api-tokens", tag = "tokens", responses((status = 200, body = [ApiToken])))]
 async fn list_tokens(State(state): State<Arc<AppState>>) -> ApiResult<Vec<ApiToken>> {
-    Ok(Json(sqlx::query_as("SELECT id, name, token_hint, user_id, created_at, last_used_at FROM api_tokens ORDER BY created_at DESC").fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
+    Ok(Json(sqlx::query_as("SELECT id, name, token_hint, user_id, project_id, scopes, expires_at, revoked_at, created_at, last_used_at FROM api_tokens WHERE revoked_at IS NULL ORDER BY created_at DESC").fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
 #[utoipa::path(post, path = "/api/v1/api-tokens", tag = "tokens", request_body = CreateToken, responses((status = 200, body = CreatedToken), (status = 400)))]
 async fn create_token(
@@ -742,10 +755,22 @@ async fn create_token(
     claims: Option<axum::Extension<crate::auth::AccessClaims>>,
     Json(input): Json<CreateToken>,
 ) -> ApiResult<CreatedToken> {
-    let user_id = input.user_id.or(claims.map(|c| c.0.sub));
+    let auth_enabled = state.auth_secret.is_some();
+    let requester = claims.map(|c| c.0);
+    let user_id = input
+        .user_id
+        .or_else(|| requester.as_ref().map(|claims| claims.sub));
     if input.name.trim().is_empty() {
         return Err(ApiError::bad_request("token name is required"));
     }
+    if auth_enabled && input.project_id.is_none() {
+        return Err(ApiError::bad_request(
+            "project_id is required for scoped tokens",
+        ));
+    }
+    let scopes = normalize_token_scopes(input.scopes)?;
+    let db = pool(&state)?;
+    validate_token_owner_and_project(db, user_id, input.project_id).await?;
     let value = format!(
         "cicd_{}{}",
         Uuid::new_v4().simple(),
@@ -753,12 +778,20 @@ async fn create_token(
     );
     let token_hash = sha256(&value);
     let hint = format!("{}...{}", &value[..9], &value[value.len() - 4..]);
-    let expires_at = input
-        .expires_in_days
-        .filter(|d| *d > 0)
-        .map(|d| chrono::Utc::now() + chrono::Duration::days(d as i64));
-    let token = sqlx::query_as::<_, ApiToken>("INSERT INTO api_tokens (id, name, token_hash, token_hint, user_id, expires_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, name, token_hint, user_id, created_at, last_used_at").bind(Uuid::new_v4()).bind(input.name.trim()).bind(token_hash).bind(hint).bind(user_id).bind(expires_at).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
-    audit(pool(&state)?, "token.created", "api_token", token.id, None).await?;
+    let expires_at = token_expires_at(input.expires_in_days, auth_enabled)?;
+    let token = sqlx::query_as::<_, ApiToken>("INSERT INTO api_tokens (id, name, token_hash, token_hint, user_id, project_id, scopes, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, name, token_hint, user_id, project_id, scopes, expires_at, revoked_at, created_at, last_used_at")
+        .bind(Uuid::new_v4())
+        .bind(input.name.trim())
+        .bind(token_hash)
+        .bind(hint)
+        .bind(user_id)
+        .bind(input.project_id)
+        .bind(scopes)
+        .bind(expires_at)
+        .fetch_one(db)
+        .await
+        .map_err(ApiError::internal)?;
+    audit(db, "token.created", "api_token", token.id, None).await?;
     Ok(Json(CreatedToken { token, value }))
 }
 #[utoipa::path(delete, path = "/api/v1/api-tokens/{token_id}", tag = "tokens", params(("token_id" = Uuid, Path)), responses((status = 200), (status = 404)))]
@@ -766,14 +799,106 @@ async fn delete_token(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<serde_json::Value> {
-    let id: Uuid = sqlx::query_scalar("DELETE FROM api_tokens WHERE id = $1 RETURNING id")
-        .bind(id)
-        .fetch_optional(pool(&state)?)
+    let id: Uuid = sqlx::query_scalar(
+        "UPDATE api_tokens SET revoked_at = now() \
+         WHERE id = $1 AND revoked_at IS NULL RETURNING id",
+    )
+    .bind(id)
+    .fetch_optional(pool(&state)?)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)?;
+    audit(pool(&state)?, "token.revoked", "api_token", id, None).await?;
+    Ok(Json(serde_json::json!({"deleted": id})))
+}
+
+fn default_token_scope_strings() -> Vec<String> {
+    DEFAULT_TOKEN_SCOPES
+        .iter()
+        .map(|scope| (*scope).to_string())
+        .collect()
+}
+
+fn normalize_token_scopes(scopes: Vec<String>) -> Result<Vec<String>, ApiError> {
+    let mut normalized = Vec::new();
+    for scope in scopes {
+        let scope = scope.trim();
+        if scope.is_empty() {
+            continue;
+        }
+        if !DEFAULT_TOKEN_SCOPES.contains(&scope) {
+            return Err(ApiError::bad_request("unsupported token scope"));
+        }
+        if !normalized.iter().any(|existing| existing == scope) {
+            normalized.push(scope.to_string());
+        }
+    }
+    if normalized.is_empty() {
+        return Err(ApiError::bad_request(
+            "at least one token scope is required",
+        ));
+    }
+    Ok(normalized)
+}
+
+fn token_expires_at(
+    expires_in_days: Option<i32>,
+    auth_enabled: bool,
+) -> Result<Option<DateTime<Utc>>, ApiError> {
+    let Some(days) = expires_in_days.or(auth_enabled.then_some(DEFAULT_TOKEN_LIFETIME_DAYS)) else {
+        return Ok(None);
+    };
+    if !(1..=MAX_TOKEN_LIFETIME_DAYS).contains(&days) {
+        return Err(ApiError::bad_request(
+            "expires_in_days must be between 1 and 365",
+        ));
+    }
+    Ok(Some(
+        chrono::Utc::now() + chrono::Duration::days(days as i64),
+    ))
+}
+
+async fn validate_token_owner_and_project(
+    pool: &PgPool,
+    user_id: Option<Uuid>,
+    project_id: Option<Uuid>,
+) -> Result<(), ApiError> {
+    let Some(project_id) = project_id else {
+        return Ok(());
+    };
+    let exists =
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM projects WHERE id = $1)")
+            .bind(project_id)
+            .fetch_one(pool)
+            .await
+            .map_err(ApiError::internal)?;
+    if !exists {
+        return Err(ApiError::not_found());
+    }
+    let Some(user_id) = user_id else {
+        return Err(ApiError::bad_request(
+            "user_id is required for scoped tokens",
+        ));
+    };
+    let role = sqlx::query_scalar::<_, String>("SELECT role FROM users WHERE id = $1 AND enabled")
+        .bind(user_id)
+        .fetch_optional(pool)
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(ApiError::not_found)?;
-    audit(pool(&state)?, "token.revoked", "api_token", id, None).await?;
-    Ok(Json(serde_json::json!({"deleted": id})))
+    if role == crate::authz::Role::Admin.as_str() {
+        return Ok(());
+    }
+    if crate::api::project_membership_role(pool, user_id, project_id)
+        .await?
+        .is_some()
+    {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(
+            "token owner must be a member of the scoped project",
+        ))
+    }
 }
 
 fn artifacts_root() -> PathBuf {

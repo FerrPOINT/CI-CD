@@ -158,8 +158,12 @@ pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
             token_hash TEXT NOT NULL UNIQUE,
             token_hint TEXT NOT NULL,
             user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+            project_id UUID REFERENCES projects(id) ON DELETE CASCADE,
+            scopes TEXT[] NOT NULL DEFAULT ARRAY['api:read','api:write','git:read','git:write'],
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-            last_used_at TIMESTAMPTZ
+            last_used_at TIMESTAMPTZ,
+            expires_at TIMESTAMPTZ,
+            revoked_at TIMESTAMPTZ
         );
         CREATE INDEX IF NOT EXISTS idx_runners_status ON runners(status);
         CREATE INDEX IF NOT EXISTS idx_project_secrets_project ON project_secrets(project_id);
@@ -169,6 +173,8 @@ pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
         CREATE INDEX IF NOT EXISTS idx_webhooks_project ON webhooks(project_id);
         CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_pipelines_project_id ON pipelines(project_id);
+        CREATE INDEX IF NOT EXISTS idx_api_tokens_active_owner_project ON api_tokens(user_id, project_id) WHERE revoked_at IS NULL;
+        CREATE INDEX IF NOT EXISTS idx_api_tokens_active_project ON api_tokens(project_id) WHERE revoked_at IS NULL;
         "#,
     ).execute(pool).await?;
     Ok(())
