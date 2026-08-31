@@ -46,8 +46,11 @@ pub struct AccessClaims {
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
-    /// Only for /auth/refresh: the previously issued refresh token.
-    #[serde(default)]
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct RefreshRequest {
+    /// The previously issued refresh token.
     pub refresh_token: String,
 }
 
@@ -57,6 +60,17 @@ pub struct TokenPair {
     /// unix seconds
     pub expires_at: i64,
     pub refresh_token: String,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct LogoutRequest {
+    /// The refresh token issued by /auth/login or /auth/refresh.
+    pub refresh_token: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct LogoutResponse {
+    pub revoked: bool,
 }
 
 fn configured_secret_from(value: Option<String>) -> Result<String, AuthError> {
@@ -198,9 +212,24 @@ pub async fn rotate_session(
         .bind(old_refresh_hash)
         .execute(pool)
         .await?;
-    let new_hash = new_refresh_token();
-    create_session(pool, user.user_id, &new_hash).await?;
-    Ok((user.user_id, new_hash))
+    let new_refresh = new_refresh_token();
+    create_session(pool, user.user_id, &hash_token(&new_refresh)).await?;
+    Ok((user.user_id, new_refresh))
+}
+
+/// Revoke a refresh session by stored refresh-token hash. Idempotent for callers.
+pub async fn revoke_session(
+    pool: &sqlx::PgPool,
+    refresh_hash: &str,
+) -> Result<Option<Uuid>, AuthError> {
+    let user_id = sqlx::query_scalar::<_, Uuid>(
+        "UPDATE sessions SET revoked_at = now() \
+         WHERE refresh_token_hash = $1 AND revoked_at IS NULL RETURNING user_id",
+    )
+    .bind(refresh_hash)
+    .fetch_optional(pool)
+    .await?;
+    Ok(user_id)
 }
 
 pub fn hash_token(token: &str) -> String {

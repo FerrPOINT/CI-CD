@@ -105,7 +105,39 @@ async fn auth_tables_and_sessions_work() {
         .await
         .expect("rotate session");
     assert!(cicd::auth::session_user(&pool, &stored).await.is_err());
-    assert!(cicd::auth::session_user(&pool, &new_token).await.is_ok());
+    let new_stored = cicd::auth::hash_token(&new_token);
+    assert!(cicd::auth::session_user(&pool, &new_stored).await.is_ok());
+
+    let (_uid, second_token) = cicd::auth::rotate_session(&pool, &new_stored)
+        .await
+        .expect("rotate session a second time");
+    assert!(cicd::auth::session_user(&pool, &new_stored).await.is_err());
+    let second_stored = cicd::auth::hash_token(&second_token);
+    assert!(
+        cicd::auth::session_user(&pool, &second_stored)
+            .await
+            .is_ok()
+    );
+
+    let revoked = cicd::auth::revoke_session(&pool, &second_stored)
+        .await
+        .expect("revoke session");
+    assert_eq!(revoked, Some(user_id));
+    assert!(
+        cicd::auth::session_user(&pool, &second_stored)
+            .await
+            .is_err()
+    );
+    let revoked_again = cicd::auth::revoke_session(&pool, &second_stored)
+        .await
+        .expect("revoke session idempotently");
+    assert_eq!(revoked_again, None);
+
+    let disabled_refresh = cicd::auth::new_refresh_token();
+    let disabled_stored = cicd::auth::hash_token(&disabled_refresh);
+    cicd::auth::create_session(&pool, user_id, &disabled_stored)
+        .await
+        .expect("create live session before disabling user");
 
     // Disabled user cannot authenticate even with a live session.
     sqlx::query("UPDATE users SET enabled = false WHERE id = $1")
@@ -113,7 +145,65 @@ async fn auth_tables_and_sessions_work() {
         .execute(&pool)
         .await
         .expect("disable user");
-    assert!(cicd::auth::session_user(&pool, &new_token).await.is_err());
+    assert!(
+        cicd::auth::session_user(&pool, &disabled_stored)
+            .await
+            .is_err()
+    );
+
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup user");
+}
+
+#[tokio::test]
+async fn auth_logout_endpoint_revokes_refresh_session() {
+    let pool = test_pool().await;
+    let user_id = Uuid::new_v4();
+    let username = format!("it-logout-user-{}", user_id.simple());
+    let refresh = cicd::auth::new_refresh_token();
+    let stored = cicd::auth::hash_token(&refresh);
+
+    sqlx::query("INSERT INTO users (id, username, role) VALUES ($1, $2, 'admin')")
+        .bind(user_id)
+        .bind(&username)
+        .execute(&pool)
+        .await
+        .expect("insert user");
+    cicd::auth::create_session(&pool, user_id, &stored)
+        .await
+        .expect("create session");
+
+    let app = cicd::api::app(Some(pool.clone()));
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/auth/logout")
+                .header("content-type", "application/json")
+                .body(Body::from(format!(r#"{{"refresh_token":"{refresh}"}}"#)))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response_json(response).await;
+    assert_eq!(body["revoked"], true);
+    assert!(cicd::auth::session_user(&pool, &stored).await.is_err());
+
+    let replay = app
+        .oneshot(
+            Request::post("/api/v1/auth/logout")
+                .header("content-type", "application/json")
+                .body(Body::from(format!(r#"{{"refresh_token":"{refresh}"}}"#)))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(replay.status(), StatusCode::OK);
+    let body = response_json(replay).await;
+    assert_eq!(body["revoked"], false);
 
     sqlx::query("DELETE FROM users WHERE id = $1")
         .bind(user_id)

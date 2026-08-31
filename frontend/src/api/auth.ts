@@ -64,7 +64,7 @@ export async function refresh(): Promise<Session | null> {
         const res = await fetch('/api/v1/auth/refresh', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: '', password: '', refresh_token: token }),
+          body: JSON.stringify({ refresh_token: token }),
         })
         if (!res.ok) {
           clearSession()
@@ -83,6 +83,16 @@ export async function refresh(): Promise<Session | null> {
 }
 
 export async function logout(): Promise<void> {
-  // Server-side session revocation is Phase 2; locally we drop the session.
-  clearSession()
+  const token = storedRefresh()
+  try {
+    if (token) {
+      await fetch('/api/v1/auth/logout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: token }),
+      })
+    }
+  } finally {
+    clearSession()
+  }
 }

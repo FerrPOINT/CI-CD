@@ -84,6 +84,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["auth_logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/refresh": {
         parameters: {
             query?: never;
@@ -1199,9 +1215,14 @@ export interface components {
         JobStatus: "queued" | "running" | "success" | "failed" | "canceled";
         LoginRequest: {
             password: string;
-            /** @description Only for /auth/refresh: the previously issued refresh token. */
-            refresh_token?: string;
             username: string;
+        };
+        LogoutRequest: {
+            /** @description The refresh token issued by /auth/login or /auth/refresh. */
+            refresh_token: string;
+        };
+        LogoutResponse: {
+            revoked: boolean;
         };
         ManualJobStartResult: {
             started: boolean;
@@ -1294,6 +1315,10 @@ export interface components {
             name: string;
             sha: string;
             target: string;
+        };
+        RefreshRequest: {
+            /** @description The previously issued refresh token. */
+            refresh_token: string;
         };
         RegisterRunner: {
             name: string;
@@ -1630,6 +1655,29 @@ export interface operations {
             };
         };
     };
+    auth_logout: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LogoutRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LogoutResponse"];
+                };
+            };
+        };
+    };
     auth_refresh: {
         parameters: {
             query?: never;
@@ -1639,7 +1687,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["LoginRequest"];
+                "application/json": components["schemas"]["RefreshRequest"];
             };
         };
         responses: {

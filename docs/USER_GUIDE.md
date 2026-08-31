@@ -83,7 +83,7 @@ curl -fsS -X POST http://127.0.0.1:22801/api/v1/projects \
 3. Используйте `maintainer` для управления участниками и секретами проекта; `developer` — для запуска и изменения рабочих ресурсов; `viewer` — для чтения.
 4. Удаляйте ненужные memberships через список. Последнего maintainer удалить нельзя.
 
-Tenant isolation, scoped PAT/SAT, Git repository binding и production session/logout policy остаются **Target approved**.
+Tenant isolation, scoped PAT/SAT, Git repository binding и production cookie/CSRF/session-family policy остаются **Target approved**; refresh logout/revoke уже выполняется сервером.
 
 ![Участники проекта](screenshots/40-project-members.png)
 
@@ -296,7 +296,7 @@ Retention/TTL, S3 и multipart upload - **Target approved**.
 3. Используйте данные как подготовку к будущей policy-модели.
 4. Роль ограничивает API только когда backend запущен с `CICD_AUTH_SECRET`; без него действует trusted-network режим.
 
-Пароли хранятся как `argon2id` credentials. Project membership уже используется для project-owned API при включённом `CICD_AUTH_SECRET`; tenant boundary, scoped PAT и production session/logout policy относятся к **Target approved**.
+Пароли хранятся как `argon2id` credentials. Project membership и refresh logout/revoke уже используются при включённом `CICD_AUTH_SECRET`; tenant boundary, scoped PAT и production cookie/CSRF/session-family policy относятся к **Target approved**.
 
 ### API-токены
 

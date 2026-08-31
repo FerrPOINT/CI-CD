@@ -26,14 +26,14 @@ Roadmap фиксирует порядок доведения Forge до базо
 - local artifacts до 50 MiB с metadata текущей/latest attempt;
 - project secrets: AES-256-GCM at rest, env injection в embedded runner, best-effort masking stdout/stderr;
 - environments/deployments metadata, reports, audit log;
-- users, roles, argon2id credentials, sessions, PAT enforcement и project memberships при `CICD_AUTH_SECRET`;
+- users, roles, argon2id credentials, sessions, refresh logout/revoke, PAT enforcement и project memberships при `CICD_AUTH_SECRET`;
 - schedules MVP и outgoing webhooks через outbox с basic retry/HMAC;
 - OpenAPI generation/drift gate и generated frontend schema.
 
 Ключевые ограничения current baseline:
 
 - execution attempts реализованы как MVP-слой без внешних leases/fencing; command spans, log pagination/search и richer error diagnostics остаются Phase 1 follow-up;
-- auth/RBAC имеет project membership MVP, но без tenant isolation, scoped PAT и production session/logout policy;
+- auth/RBAC имеет project membership и refresh logout/revoke MVP, но без tenant isolation, scoped PAT и production cookie/CSRF/session-family policy;
 - execution встроен в backend process, поэтому shared/prod режим требует external runner boundary;
 - webhooks не имеют полной delivery history/replay/dead-letter UI, notifications sender не реализован;
 - backup/restore пока процедура, а не проверяемый автоматизированный product gate.
@@ -66,8 +66,9 @@ Gate:
 Deliverables:
 
 - Current MVP: `project_memberships`, project members API/UI, list filtering и deny-before-load для project-owned routes;
+- Current MVP: refresh session rotation and logout/revoke, включая фиксацию `revoked_at`;
 - scoped PAT с expiry/revoke/last-used, без глобального доступа по умолчанию;
-- logout/revoke policy для sessions;
+- Target follow-up: refresh-cookie, CSRF, token-version/session-family policy и немедленная инвалидизация access JWT;
 - Target follow-up: deny-before-load для Git routes и delivery routes с repository/project binding;
 - CORS/CSRF policy для production deployment.
 

@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-Forge CI/CD — self-hosted CI/CD control plane. Текущая версия остаётся MVP и не является production-safe: без непустого `CICD_AUTH_SECRET` backend работает в trusted-network режиме; при включённом секрете уже применяются route roles и project memberships, но tenant isolation, scoped PAT и production session/logout policy остаются target. Безопасность встроена на уровне SQL-запросов, валидации ввода, секретов at rest, условного auth middleware и audit.
+Forge CI/CD — self-hosted CI/CD control plane. Текущая версия остаётся MVP и не является production-safe: без непустого `CICD_AUTH_SECRET` backend работает в trusted-network режиме; при включённом секрете уже применяются route roles, project memberships и refresh logout/revoke, но tenant isolation, scoped PAT и production cookie/CSRF/session-family policy остаются target. Безопасность встроена на уровне SQL-запросов, валидации ввода, секретов at rest, условного auth middleware и audit.
 
 ## 2. Текущий статус
 
@@ -26,16 +26,16 @@ Forge CI/CD — self-hosted CI/CD control plane. Текущая версия о�
 ### 3.1 JWT
 
 - Current: access token — JWT HS256, срок жизни 15 минут, подпись через `CICD_AUTH_SECRET`.
-- Current: refresh token хранится в таблице `sessions`, возвращается клиенту и обновляется через `/api/v1/auth/refresh`; frontend MVP держит его в `localStorage`.
+- Current: refresh token хранится в таблице `sessions`, возвращается клиенту, обновляется через `/api/v1/auth/refresh` и отзывается через `/api/v1/auth/logout`; frontend MVP держит его в `localStorage`.
 - Current: пароли хранятся как `argon2id` hash в `user_credentials`.
-- Target: httpOnly/SameSite cookie для refresh, server-side logout/revocation UX, rotation policy, key management и bootstrap owner procedure.
+- Target: httpOnly/SameSite cookie для refresh, session-family reuse detection, immediate access-token invalidation, CSRF policy, key management и bootstrap owner procedure.
 
 ### 3.2 Эндпоинты
 
 ```
 POST /api/v1/auth/login     — вход, выдача access + refresh
 POST /api/v1/auth/refresh   — обновление access-токена
-POST /api/v1/auth/logout    — target: выход, отзыв refresh
+POST /api/v1/auth/logout    — выход, отзыв refresh session
 ```
 
 ### 3.3 Login lockout

@@ -108,6 +108,24 @@ paths:
                 $ref: '#/components/schemas/TokenPair'
         '401':
           description: ''
+  /api/v1/auth/logout:
+    post:
+      tags:
+      - auth
+      operationId: auth_logout
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogoutRequest'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogoutResponse'
   /api/v1/auth/refresh:
     post:
       tags:
@@ -117,7 +135,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/LoginRequest'
+              $ref: '#/components/schemas/RefreshRequest'
         required: true
       responses:
         '200':
@@ -2427,11 +2445,23 @@ components:
       properties:
         password:
           type: string
-        refresh_token:
-          type: string
-          description: 'Only for /auth/refresh: the previously issued refresh token.'
         username:
           type: string
+    LogoutRequest:
+      type: object
+      required:
+      - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          description: The refresh token issued by /auth/login or /auth/refresh.
+    LogoutResponse:
+      type: object
+      required:
+      - revoked
+      properties:
+        revoked:
+          type: boolean
     ManualJobStartResult:
       type: object
       required:
@@ -2653,6 +2683,14 @@ components:
           type: string
         target:
           type: string
+    RefreshRequest:
+      type: object
+      required:
+      - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          description: The previously issued refresh token.
     RegisterRunner:
       type: object
       required:
@@ -3081,7 +3119,7 @@ tags:
 - name: health
   description: Liveness/readiness
 - name: auth
-  description: Login and token refresh
+  description: Login, token refresh and logout
 - name: projects
   description: Project registry
 - name: memberships

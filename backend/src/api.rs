@@ -49,7 +49,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_GIT_PUSH: &str = "git-push";
 #[openapi(
     info(title = "Forge CI/CD API", version = "0.1.0", description = "Self-hosted CI/CD control plane. Array responses, error envelope and in-process rate limits follow docs/contracts/API_CONTRACT.md and docs/API.md current compatibility mode."),
     paths(
-        health, metrics, serve_openapi_json, auth_login, auth_refresh,
+        health, metrics, serve_openapi_json, auth_login, auth_refresh, auth_logout,
         list_projects, create_project, get_project, update_project, delete_project,
         list_project_memberships, upsert_project_membership, delete_project_membership,
         trigger_pipeline, list_pipelines, get_pipeline, cancel_pipeline, retry_pipeline,
@@ -80,7 +80,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_GIT_PUSH: &str = "git-push";
         pipeline_badge, pipeline_variables, get_test_report, upload_test_report,
     ),
     components(schemas(
-        crate::auth::LoginRequest, crate::auth::TokenPair,
+        crate::auth::LoginRequest, crate::auth::LogoutRequest, crate::auth::LogoutResponse, crate::auth::RefreshRequest, crate::auth::TokenPair,
         Project, CreateProject, UpdateProject, ProjectMembership, ProjectMembershipInput,
         TriggerPipeline, Pipeline, Stage, Job,
         PipelineDetail, StageDetail, JobAttempt, JobLog, ChangeStatus, AppendLog,
@@ -105,7 +105,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_GIT_PUSH: &str = "git-push";
     )),
     tags(
         (name = "health", description = "Liveness/readiness"),
-        (name = "auth", description = "Login and token refresh"),
+        (name = "auth", description = "Login, token refresh and logout"),
         (name = "projects", description = "Project registry"),
         (name = "memberships", description = "Project-scoped user roles"),
         (name = "pipelines", description = "Pipeline lifecycle"),
@@ -364,6 +364,13 @@ fn rate_limit_rule(method: &Method, path: &str) -> Option<RateLimitRule> {
             window_secs: 60,
         });
     }
+    if path == "/api/v1/auth/logout" {
+        return Some(RateLimitRule {
+            class: "auth-logout",
+            limit: 120,
+            window_secs: 60,
+        });
+    }
     if path == "/api/v1/internal/git-push" {
         return Some(RateLimitRule {
             class: "internal-git-push",
@@ -441,6 +448,7 @@ async fn require_auth(
         "/api/v1/openapi.json",
         "/api/v1/auth/login",
         "/api/v1/auth/refresh",
+        "/api/v1/auth/logout",
         "/api/v1/internal/git-push",
         "/metrics",
     ];
@@ -694,6 +702,7 @@ fn build_router(
         .route("/api/v1/openapi.json", get(serve_openapi_json))
         .route("/api/v1/auth/login", post(auth_login))
         .route("/api/v1/auth/refresh", post(auth_refresh))
+        .route("/api/v1/auth/logout", post(auth_logout))
         .merge(crate::platform::routes())
         .route("/api/v1/projects", get(list_projects).post(create_project))
         .route(
@@ -842,12 +851,11 @@ async fn auth_login(
     Ok(Json(pair))
 }
 
-#[utoipa::path(post, path="/api/v1/auth/refresh", tag="auth", request_body=crate::auth::LoginRequest, responses((status=200, body=crate::auth::TokenPair), (status=401)))]
+#[utoipa::path(post, path="/api/v1/auth/refresh", tag="auth", request_body=crate::auth::RefreshRequest, responses((status=200, body=crate::auth::TokenPair), (status=401)))]
 async fn auth_refresh(
     State(state): State<Arc<AppState>>,
-    Json(input): Json<crate::auth::LoginRequest>,
+    Json(input): Json<crate::auth::RefreshRequest>,
 ) -> Result<Json<crate::auth::TokenPair>, ApiError> {
-    // Reuses LoginRequest shape; only refresh_token matters here.
     use crate::auth::*;
     let pool = pool(&state)?;
     if input.refresh_token.is_empty() {
@@ -864,6 +872,27 @@ async fn auth_refresh(
     let mut pair = issue_access(user_id, &role).map_err(|_| ApiError::unauthorized())?;
     pair.refresh_token = new_refresh;
     Ok(Json(pair))
+}
+
+#[utoipa::path(post, path="/api/v1/auth/logout", tag="auth", request_body=crate::auth::LogoutRequest, responses((status=200, body=crate::auth::LogoutResponse)))]
+async fn auth_logout(
+    State(state): State<Arc<AppState>>,
+    Json(input): Json<crate::auth::LogoutRequest>,
+) -> Result<Json<crate::auth::LogoutResponse>, ApiError> {
+    use crate::auth::*;
+    if input.refresh_token.trim().is_empty() {
+        return Ok(Json(LogoutResponse { revoked: false }));
+    }
+    let pool = pool(&state)?;
+    let user_id = revoke_session(pool, &hash_token(input.refresh_token.trim()))
+        .await
+        .map_err(ApiError::from)?;
+    if let Some(user_id) = user_id {
+        let _ = audit(pool, "auth.logout", "session", user_id, None).await;
+    }
+    Ok(Json(LogoutResponse {
+        revoked: user_id.is_some(),
+    }))
 }
 
 #[utoipa::path(get, path="/api/v1/health", tag="health", responses((status=200, description="Liveness and readiness")))]
@@ -2135,6 +2164,12 @@ mod tests {
             "internal-git-push"
         );
         assert_eq!(
+            rate_limit_rule(&Method::POST, "/api/v1/auth/logout")
+                .expect("logout limit")
+                .class,
+            "auth-logout"
+        );
+        assert_eq!(
             rate_limit_rule(&Method::POST, "/git/demo.git/git-receive-pack")
                 .expect("git push limit")
                 .class,
@@ -2203,9 +2238,7 @@ mod tests {
         axum::http::Request::post("/api/v1/auth/login")
             .header("content-type", "application/json")
             .header("x-forwarded-for", client)
-            .body(Body::from(
-                r#"{"username":"nobody","password":"bad","refresh_token":""}"#,
-            ))
+            .body(Body::from(r#"{"username":"nobody","password":"bad"}"#))
             .unwrap()
     }
 

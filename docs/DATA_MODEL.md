@@ -637,6 +637,8 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 | `expires_at` | TIMESTAMPTZ | нет | — | Истекает |
 | `revoked_at` | TIMESTAMPTZ | да | — | Отозвана |
 
+`/api/v1/auth/refresh` rotate-ит refresh session: старый hash получает `revoked_at`, новый refresh token хранится как `hash_token(raw)`. `/api/v1/auth/logout` идемпотентно выставляет `revoked_at` для переданного refresh token.
+
 ### 9.15 domain_events
 
 | Колонка | Тип | Nullable | Default | Описание |

@@ -74,8 +74,9 @@ curl -sS http://127.0.0.1:22801/api/v1/health
 |---|---|---|
 | POST | `/auth/login` | Выдать access/refresh tokens |
 | POST | `/auth/refresh` | Обновить пару токенов |
+| POST | `/auth/logout` | Отозвать refresh session |
 
-Auth enforcement включается только если задан непустой `CICD_AUTH_SECRET`. Access token — JWT HS256 на 15 минут; refresh token хранится hash-ом в `sessions`. PAT `cicd_...` принимается как Bearer token при включённом enforcement.
+Auth enforcement включается только если задан непустой `CICD_AUTH_SECRET`. Access token — JWT HS256 на 15 минут; refresh token хранится hash-ом в `sessions`, rotate-ится через `/auth/refresh` и отзывается через `/auth/logout`. PAT `cicd_...` принимается как Bearer token при включённом enforcement.
 
 #### POST /api/v1/auth/login
 
@@ -95,10 +96,24 @@ Auth enforcement включается только если задан непу�
 
 **Request body:**
 ```json
-{"username":"","password":"","refresh_token":"..."}
+{"refresh_token":"..."}
 ```
 
 **Response 200:** структура `TokenPair`, как у login.
+
+#### POST /api/v1/auth/logout
+
+Идемпотентно отзывает refresh session по переданному refresh token. Уже выданный access JWT остаётся действительным до истечения 15-минутного TTL; немедленная инвалидизация access token через `session_id`/`token_version`, refresh-cookie и CSRF policy остаются target.
+
+**Request body:**
+```json
+{"refresh_token":"..."}
+```
+
+**Response 200:**
+```json
+{"revoked": true}
+```
 
 ---
 
@@ -110,6 +125,7 @@ In-process fixed-window limiter выполняется до auth/handler и во
 |---|---|---:|
 | `auth-login` | `POST /api/v1/auth/login` | 30/min |
 | `auth-refresh` | `POST /api/v1/auth/refresh` | 120/min |
+| `auth-logout` | `POST /api/v1/auth/logout` | 120/min |
 | `internal-git-push` | `POST /api/v1/internal/git-push` | 120/min |
 | `git-read` / `git-push` | `/git/*` Smart HTTP | 240/min |
 | `artifact-upload` | `POST /api/v1/jobs/{job_id}/artifacts` | 60/min |
@@ -837,7 +853,7 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 
 ## Platform endpoints (MVP)
 
-> **Security note:** auth/RBAC enforcement включается только при непустом `CICD_AUTH_SECRET`. Без него все endpoints ниже работают в trusted-network режиме; с ним применяются JWT/PAT, route roles и project memberships для project-owned ресурсов. Scoped PAT, tenant isolation и production logout/session policy ещё target.
+> **Security note:** auth/RBAC enforcement включается только при непустом `CICD_AUTH_SECRET`. Без него все endpoints ниже работают в trusted-network режиме; с ним применяются JWT/PAT, route roles и project memberships для project-owned ресурсов. Logout refresh revocation уже есть, но scoped PAT, tenant isolation и production cookie/CSRF/session-family policy ещё target.
 
 ### Runners
 
@@ -1030,6 +1046,7 @@ Git Smart HTTP проверяет `CICD_GIT_TOKEN`, если он задан. П
 | `/api/v1/audit-log` | Audit |
 | `/api/v1/auth/login` | Auth |
 | `/api/v1/auth/refresh` | Auth |
+| `/api/v1/auth/logout` | Auth |
 | `/api/v1/environments/{environment_id}` | Environments |
 | `/api/v1/environments/{environment_id}/deployments` | Environments |
 | `/api/v1/health` | Health |

@@ -33,10 +33,10 @@ Forge CI/CD является multi-tenant control plane: один экземпл
 
 | Область | Реализовано сейчас | Риск / дефицит |
 |---|---|---|
-| HTTP API | Conditional auth middleware: без непустого `CICD_AUTH_SECRET` trusted-network/open; с секретом работают JWT/PAT, route-role checks и project membership enforcement для project-owned API | Нет production default-deny boundary, tenant isolation, scoped credentials и полноценной session policy |
+| HTTP API | Conditional auth middleware: без непустого `CICD_AUTH_SECRET` trusted-network/open; с секретом работают JWT/PAT, refresh logout/revoke, route-role checks и project membership enforcement для project-owned API | Нет production default-deny boundary, tenant isolation, scoped credentials и полноценной cookie/CSRF/session-family policy |
 | Users | `users(id, username, role, enabled)`, `user_credentials`, `sessions`, `project_memberships` | Tenant membership и tenant isolation отсутствуют |
 | Roles | `admin`, `maintainer`, `developer`, `viewer` участвуют в route-policy decisions; project role берётся из `project_memberships` для project-owned ресурсов | Нет tenant roles и tenant-wide membership model |
-| API tokens | Случайный `cicd_...`, SHA-256 hash, hint, owner optional, optional expiry; Bearer PAT работает при `CICD_AUTH_SECRET` | Нет scopes, pepper/HMAC storage, отзыва с причиной и project boundary |
+| API tokens | Случайный `cicd_...`, SHA-256 hash, hint, owner optional, optional expiry; Bearer PAT работает при `CICD_AUTH_SECRET` | Нет scopes, pepper/HMAC storage, revoke reason и project boundary |
 | Projects | Глобально уникальное `projects.name`; project memberships ограничивают доступ к project-owned ресурсам при включённом auth | Нет tenant ownership и tenant-aware project scope |
 | Secrets | `project_secrets`, AES-256-GCM at rest, API не возвращает value; embedded runner injects env and masks stdout/stderr best-effort | Нет scoped lease, key version/rotation и full redaction coverage |
 | Runners | Registry + heartbeat; embedded supervisor выполняет jobs | Runner не обладает отдельной криптографической идентичностью; registry не является границей доступа |
