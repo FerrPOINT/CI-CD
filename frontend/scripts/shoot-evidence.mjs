@@ -49,7 +49,7 @@ const shots = [
   { name: '05-pipelines.png', path: `/projects/${platform.id}/pipelines`, desktop: true },
   { name: '06-pipeline-detail.png', path: `/pipelines/${pipeline.id}`, desktop: true, wait: 1500 },
   { name: '07-settings.png', path: '/settings', desktop: true },
-  { name: '09-repository-browser.png', path: '/repositories/platform-core', desktop: true, wait: 1200 },
+  { name: '09-repository-browser.png', path: '/repositories/platform-core', desktop: true, wait: 1200, click: 'button:has-text("Код")', settle: 500 },
   { name: '10-compare.png', path: '/repositories/platform-core/compare?from=main&to=feature%2Fcache-layer', desktop: true, wait: 1200 },
   { name: '11-pull-requests.png', path: '/repositories/platform-core/pulls', desktop: true, wait: 1200 },
   { name: '12-pull-request-detail.png', path: pullRequestPath, desktop: true, wait: 1200 },
@@ -64,7 +64,7 @@ const shots = [
   { name: '21-artifacts.png', path: `/jobs/${jobId}/artifacts`, desktop: true, wait: 800 },
   { name: '40-project-members.png', path: `/projects/${platform.id}/members`, desktop: true },
   // --- Состояния действий: диалоги, диффы, логи, формы ---
-  { name: '22-pr-diff.png', path: pullRequestPath, desktop: true, wait: 1200, click: 'a[href*="/compare?from="]', settle: 1500 },
+  { name: '22-pr-diff.png', path: pullRequestPath, desktop: true, wait: 1200, click: 'a[href*="view=diff"]', settle: 1500 },
   { name: '23-project-create.png', path: '/projects', desktop: true, click: 'button:has-text("Создать проект")' },
   { name: '24-project-delete-confirm.png', path: '/projects', desktop: true, click: 'button:has-text("Удалить")', settle: 600 },
   { name: '25-repo-create.png', path: '/repositories', desktop: true, click: 'button:has-text("Создать репозиторий")' },
@@ -78,7 +78,7 @@ const shots = [
   { name: '33-job-logs.png', path: `/pipelines/${pipeline.id}`, desktop: true, wait: 1500, click: 'button:has-text("Логи")', settle: 1200 },
   { name: '34-pipeline-run-form.png', path: `/projects/${platform.id}/pipelines`, desktop: true, wait: 800, click: 'button:has-text("Запустить пайплайн")', settle: 400 },
   // --- Git-server/CI parity: code, tags, releases, JUnit results ---
-  { name: '35-repo-code-tree.png', path: '/repositories/platform-core', desktop: true, wait: 1200, click: 'button:has-text("Код")', settle: 500 },
+  { name: '35-releases-list.png', path: '/repositories/platform-core', desktop: true, wait: 1200, click: 'button:has-text("Релизы")', settle: 500 },
   { name: '36-repo-code-blob.png', path: '/repositories/platform-core', desktop: true, wait: 1200, click: 'button:has-text("Код")', click2: 'button:has-text(".forge-ci.yml")', settle: 700 },
   { name: '37-repo-tags.png', path: '/repositories/platform-core', desktop: true, wait: 1200, click: 'button:has-text("Теги")', settle: 500 },
   { name: '38-releases-create.png', path: '/repositories/platform-core', desktop: true, wait: 1200, click: 'button:has-text("Релизы")', click2: 'button:has-text("Создать релиз")', settle: 500 },

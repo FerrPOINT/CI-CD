@@ -183,11 +183,17 @@ Retention/TTL, S3 и multipart upload - **Target approved**.
 
 ![Артефакты](screenshots/21-artifacts.png)
 
-### Diff из pull-запроса
+### Репозиторий и pull-запрос
 
-Кнопка «Посмотреть изменения» в pull-запросе открывает сравнение веток с merge-base и патчем.
+Страница репозитория открывает вкладку **Код** с деревом bare Git-репозитория и безопасным preview текстовых файлов. Для файлов больше 512 KiB и бинарных файлов preview намеренно не отображается.
 
-![Diff из pull-запроса](screenshots/22-pr-diff.png)
+![Код репозитория](screenshots/09-repository-browser.png)
+
+Карточка pull request показывает автора, source/target ветки и действия merge/close. Кнопка «Посмотреть изменения» сохраняет контекст конкретного PR: номер, заголовок, ветки, merge-base, список файлов и patch; кнопка возврата ведёт обратно в этот PR.
+
+![Детали pull-запроса](screenshots/12-pull-request-detail.png)
+
+![Diff конкретного pull-запроса](screenshots/22-pr-diff.png)
 
 ### Логи джоба
 

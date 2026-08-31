@@ -62,6 +62,10 @@ git push                       # → post-receive → пайплайн созд�
 
 ![Детали пайплайна](docs/screenshots/06-pipeline-detail.png)
 
+### Код репозитория
+
+![Код репозитория](docs/screenshots/09-repository-browser.png)
+
 ### Код-ревью: diff веток
 
 ![Сравнение веток](docs/screenshots/10-compare.png)
@@ -70,13 +74,17 @@ git push                       # → post-receive → пайплайн созд�
 
 ![Pull-запросы](docs/screenshots/11-pull-requests.png)
 
+### Детали pull-запроса
+
+![Детали pull-запроса](docs/screenshots/12-pull-request-detail.png)
+
 ### Секреты проекта
 
 ![Секреты проекта](docs/screenshots/14-secrets.png)
 
-### Diff из pull-запроса
+### Diff конкретного pull-запроса
 
-![Diff из pull-запроса](docs/screenshots/22-pr-diff.png)
+![Diff конкретного pull-запроса](docs/screenshots/22-pr-diff.png)
 
 ### Логи джоба
 
