@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
-import { usePipeline, useUpdateJobStatus, useJobLogs, useAppendLog, useCancelPipeline, useRetryPipeline, useTestReport } from '@/api/hooks'
+import { usePipeline, useUpdateJobStatus, useJobLogs, useAppendLog, useCancelPipeline, useRetryPipeline, useTestReport, useJobAttempts } from '@/api/hooks'
 import { Card } from '@/shared/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
 import type { TestReport } from '@/api/types'
@@ -142,27 +142,79 @@ export function PipelineDetailPage() {
 }
 
 function JobLogPanel({ jobId, logMessage, setLogMessage }: { jobId: string; logMessage: string; setLogMessage: (v: string) => void }) {
-  const { data: logs = [] } = useJobLogs(jobId)
+  const { t } = useTranslation()
+  const { data: attempts = [] } = useJobAttempts(jobId)
+  const [selectedAttemptId, setSelectedAttemptId] = useState<string | null>(null)
+  const selectedAttempt = attempts.find(a => a.id === selectedAttemptId) ?? attempts[0]
+  const { data: logs = [] } = useJobLogs(jobId, selectedAttempt?.id)
   const appendLog = useAppendLog()
+  const activeAttemptId = attempts[0]?.id
+  const canAppend = !selectedAttempt || selectedAttempt.id === activeAttemptId
+
+  useEffect(() => {
+    if (attempts.length === 0) {
+      setSelectedAttemptId(null)
+      return
+    }
+    if (!selectedAttemptId || !attempts.some(a => a.id === selectedAttemptId)) {
+      setSelectedAttemptId(attempts[0].id)
+    }
+  }, [attempts, selectedAttemptId])
 
   return (
     <div className="mt-3 space-y-3">
+      {attempts.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-2">
+            {attempts.map(attempt => (
+              <Button
+                key={attempt.id}
+                type="button"
+                size="sm"
+                variant={attempt.id === selectedAttempt?.id ? 'default' : 'outline'}
+                onClick={() => setSelectedAttemptId(attempt.id)}
+              >
+                {t('jobs.attempt')} #{attempt.attempt_no} · {t(`pipelines.${attempt.status}`)}
+              </Button>
+            ))}
+          </div>
+          {selectedAttempt && (
+            <div className="grid gap-2 text-xs text-text-muted sm:grid-cols-2 lg:grid-cols-4">
+              <span>{t('jobs.trigger')}: {selectedAttempt.trigger}</span>
+              <span>{t('jobs.exitCode')}: {selectedAttempt.exit_code ?? '-'}</span>
+              <span>{t('jobs.startedAt')}: {formatAttemptTime(selectedAttempt.started_at)}</span>
+              <span>{t('jobs.finishedAt')}: {formatAttemptTime(selectedAttempt.finished_at)}</span>
+            </div>
+          )}
+          {selectedAttempt?.error_tail && (
+            <p className="rounded-md border border-danger/40 bg-danger/10 p-2 text-xs text-danger">
+              {selectedAttempt.error_tail}
+            </p>
+          )}
+        </div>
+      )}
       <pre className="max-h-80 overflow-auto rounded-md bg-zinc-950 p-3 text-xs text-green-400">
         {logs.length === 0 ? '<no logs>' : logs.map(l => `${String(l.sequence).padStart(3, '0')}  ${l.message}`).join('\n')}
       </pre>
-      <form
-        className="flex gap-2"
-        onSubmit={(e) => {
-          e.preventDefault()
-          if (!logMessage.trim()) return
-          appendLog.mutate({ jobId, message: logMessage.trim() }, { onSuccess: () => setLogMessage(''), onError: err => toast.error(err.message) })
-        }}
-      >
-        <Input value={logMessage} onChange={e => setLogMessage(e.target.value)} placeholder="Log message…" className="font-mono text-sm" />
-        <Button type="submit" size="sm">Append</Button>
-      </form>
+      {canAppend && (
+        <form
+          className="flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault()
+            if (!logMessage.trim()) return
+            appendLog.mutate({ jobId, message: logMessage.trim() }, { onSuccess: () => setLogMessage(''), onError: err => toast.error(err.message) })
+          }}
+        >
+          <Input value={logMessage} onChange={e => setLogMessage(e.target.value)} placeholder={t('jobs.logMessage')} className="font-mono text-sm" />
+          <Button type="submit" size="sm">{t('jobs.append')}</Button>
+        </form>
+      )}
     </div>
   )
+}
+
+function formatAttemptTime(value: string | null): string {
+  return value ? new Date(value).toLocaleString() : '-'
 }
 
 

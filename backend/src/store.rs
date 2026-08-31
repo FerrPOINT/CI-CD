@@ -1,4 +1,6 @@
+use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};
+use uuid::Uuid;
 
 pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
     sqlx::raw_sql(
@@ -172,12 +174,117 @@ pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-pub async fn next_log_sequence(pool: &PgPool, job_id: uuid::Uuid) -> Result<i32, sqlx::Error> {
-    let row = sqlx::query(
-        "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence FROM job_logs WHERE job_id = $1",
+pub async fn active_or_latest_attempt_id(pool: &PgPool, job_id: Uuid) -> Result<Uuid, sqlx::Error> {
+    let attempt_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM execution_attempts \
+         WHERE job_id = $1 \
+         ORDER BY CASE WHEN status IN ('queued','running') THEN 0 ELSE 1 END, attempt_no DESC \
+         LIMIT 1",
     )
     .bind(job_id)
+    .fetch_optional(pool)
+    .await?;
+
+    if let Some(attempt_id) = attempt_id {
+        return Ok(attempt_id);
+    }
+
+    sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) \
+         SELECT $2, j.id, 1, j.status, 'compat' \
+         FROM jobs j WHERE j.id = $1 \
+         RETURNING id",
+    )
+    .bind(job_id)
+    .bind(Uuid::new_v4())
+    .fetch_one(pool)
+    .await
+}
+
+pub async fn open_attempt_id(
+    pool: &PgPool,
+    job_id: Uuid,
+    trigger: &str,
+) -> Result<Uuid, sqlx::Error> {
+    let attempt_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM execution_attempts \
+         WHERE job_id = $1 AND status IN ('queued','running') \
+         ORDER BY attempt_no DESC \
+         LIMIT 1",
+    )
+    .bind(job_id)
+    .fetch_optional(pool)
+    .await?;
+
+    if let Some(attempt_id) = attempt_id {
+        return Ok(attempt_id);
+    }
+
+    sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) \
+         SELECT $2, j.id, COALESCE(MAX(a.attempt_no), 0) + 1, 'queued', $3 \
+         FROM jobs j LEFT JOIN execution_attempts a ON a.job_id = j.id \
+         WHERE j.id = $1 \
+         GROUP BY j.id \
+         RETURNING id",
+    )
+    .bind(job_id)
+    .bind(Uuid::new_v4())
+    .bind(trigger)
+    .fetch_one(pool)
+    .await
+}
+
+pub async fn next_attempt_log_sequence(
+    pool: &PgPool,
+    attempt_id: Uuid,
+) -> Result<i32, sqlx::Error> {
+    let row = sqlx::query(
+        "SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence FROM job_logs WHERE attempt_id = $1",
+    )
+    .bind(attempt_id)
     .fetch_one(pool)
     .await?;
     Ok(row.get("next_sequence"))
+}
+
+pub async fn next_log_sequence(pool: &PgPool, job_id: Uuid) -> Result<i32, sqlx::Error> {
+    let attempt_id = active_or_latest_attempt_id(pool, job_id).await?;
+    next_attempt_log_sequence(pool, attempt_id).await
+}
+
+#[derive(Debug, sqlx::FromRow)]
+pub struct StoredJobLog {
+    pub id: i64,
+    pub job_id: Uuid,
+    pub attempt_id: Uuid,
+    pub sequence: i32,
+    pub message: String,
+    pub created_at: DateTime<Utc>,
+}
+
+pub async fn append_job_log(
+    pool: &PgPool,
+    job_id: Uuid,
+    attempt_id: Uuid,
+    message: &str,
+) -> Result<StoredJobLog, sqlx::Error> {
+    sqlx::query_as::<_, StoredJobLog>(
+        "WITH locked AS ( \
+             SELECT pg_advisory_xact_lock(hashtextextended($2::text, 0)) \
+         ), target_attempt AS ( \
+             SELECT id FROM execution_attempts WHERE id = $2 AND job_id = $1 \
+         ), next_log AS ( \
+             SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence \
+             FROM job_logs WHERE attempt_id = $2 \
+         ) \
+         INSERT INTO job_logs (job_id, attempt_id, sequence, message) \
+         SELECT $1, target_attempt.id, next_log.sequence, $3 FROM locked, target_attempt, next_log \
+         RETURNING id, job_id, attempt_id, sequence, message, created_at",
+    )
+    .bind(job_id)
+    .bind(attempt_id)
+    .bind(message)
+    .fetch_one(pool)
+    .await
 }

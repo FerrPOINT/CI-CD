@@ -22,9 +22,23 @@ export interface PipelineDetail {
 export interface JobLog {
   id: number
   job_id: string
+  attempt_id: string
   sequence: number
   message: string
   created_at: string
+}
+
+export interface JobAttempt {
+  id: string
+  job_id: string
+  attempt_no: number
+  status: Status
+  trigger: string
+  exit_code: number | null
+  error_tail: string | null
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
 }
 
 export interface Repository {
@@ -163,6 +177,7 @@ export interface SecretMetadata {
 export interface Artifact {
   id: string
   job_id: string
+  attempt_id: string | null
   name: string
   content_type: string
   size_bytes: number

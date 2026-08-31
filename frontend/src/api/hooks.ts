@@ -17,6 +17,7 @@ import type {
   Deployment,
   Environment,
   Job,
+  JobAttempt,
   JobLog,
   NotificationConfig,
   Pipeline,
@@ -41,6 +42,8 @@ const KEYS = {
   pipelines: (projectId: string) => ['pipelines', projectId] as const,
   pipeline: (id: string) => ['pipeline', id] as const,
   logs: (jobId: string) => ['logs', jobId] as const,
+  attempts: (jobId: string) => ['attempts', jobId] as const,
+  attemptLogs: (jobId: string, attemptId: string) => ['logs', jobId, attemptId] as const,
   repositories: ['repositories'] as const,
   refs: (repo: string) => ['repository-refs', repo] as const,
   commits: (repo: string, branch: string) => ['repository-commits', repo, branch] as const,
@@ -137,10 +140,21 @@ export function useUpdateJobStatus() {
   })
 }
 
-export function useJobLogs(jobId: string | undefined) {
+export function useJobAttempts(jobId: string | undefined) {
   return useQuery({
-    queryKey: KEYS.logs(jobId ?? ''),
-    queryFn: () => api<JobLog[]>(`/jobs/${jobId}/logs`),
+    queryKey: KEYS.attempts(jobId ?? ''),
+    queryFn: () => api<JobAttempt[]>(`/jobs/${jobId}/attempts`),
+    enabled: !!jobId,
+  })
+}
+
+export function useJobLogs(jobId: string | undefined, attemptId?: string) {
+  return useQuery({
+    queryKey: attemptId ? KEYS.attemptLogs(jobId ?? '', attemptId) : KEYS.logs(jobId ?? ''),
+    queryFn: () =>
+      attemptId
+        ? api<JobLog[]>(`/jobs/${jobId}/attempts/${attemptId}/logs`)
+        : api<JobLog[]>(`/jobs/${jobId}/logs`),
     enabled: !!jobId,
   })
 }
@@ -150,7 +164,10 @@ export function useAppendLog() {
   return useMutation({
     mutationFn: ({ jobId, message }: { jobId: string; message: string }) =>
       api<JobLog>(`/jobs/${jobId}/logs`, { method: 'POST', body: JSON.stringify({ message }) }),
-    onSuccess: (_data, vars) => qc.invalidateQueries({ queryKey: KEYS.logs(vars.jobId) }),
+    onSuccess: (_data, vars) => {
+      qc.invalidateQueries({ queryKey: KEYS.logs(vars.jobId) })
+      qc.invalidateQueries({ queryKey: KEYS.attempts(vars.jobId) })
+    },
   })
 }
 

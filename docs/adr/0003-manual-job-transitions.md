@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted as historical MVP baseline; partially superseded by current embedded runner execution and ADR-0007 target runner boundary.
+Accepted as historical MVP baseline; partially superseded by current embedded runner execution, execution attempts, and ADR-0007 target runner boundary.
 
 ## Context
 
@@ -10,7 +10,7 @@ Accepted as historical MVP baseline; partially superseded by current embedded ru
 
 ## Current Status
 
-Current baseline уже не manual-only: embedded runner в `cicd-server` выполняет jobs в Docker или host shell, пишет stdout/stderr в `job_logs`, поддерживает cancel/retry в текущей модели и inject/mask project secrets. Ручный status API остаётся диагностическим и legacy-compatible механизмом, но не является основным исполнителем job. Target-граница external runner с lease/fencing описана в ADR-0007 и `docs/RUNNER_ARCHITECTURE.md`.
+Current baseline уже не manual-only: embedded runner в `cicd-server` выполняет jobs в Docker или host shell, пишет stdout/stderr в attempt-owned `job_logs`, поддерживает cancel/retry через `execution_attempts` и inject/mask project secrets. Ручный status API остаётся диагностическим и legacy-compatible механизмом, но не является основным исполнителем job. Target-граница external runner с lease/fencing описана в ADR-0007 и `docs/RUNNER_ARCHITECTURE.md`.
 
 ## Alternatives Considered
 
@@ -34,7 +34,7 @@ Current baseline уже не manual-only: embedded runner в `cicd-server` вы�
 ## Migration Path
 
 1. Добавить модели runner, registration token, capabilities, heartbeat и lease без изменения существующей state machine.
-2. Ввести execution attempt для job, idempotency key и устойчивую очередь в PostgreSQL.
+2. Current baseline ввёл `execution_attempts` для job; idempotency key и устойчивая очередь в PostgreSQL остаются target.
 3. Реализовать защищённый runner protocol, sandboxing и потоковую загрузку append-only логов.
 4. Добавить timeout, retry, circuit breaker и reconciliation согласно `docs/RESILIENCE.md`.
 5. Подключить S3-совместимое artifact storage, secrets/RBAC и наблюдаемость.

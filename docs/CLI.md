@@ -41,16 +41,18 @@ cicd-cli pipeline show --id <PIPELINE_UUID>
 ### job
 
 ```bash
-cicd-cli job start --job <JOB_UUID>   # queued → running
-cicd-cli job pass  --job <JOB_UUID>   # → success
-cicd-cli job fail  --job <JOB_UUID>   # → failed
-cicd-cli job logs  --job <JOB_UUID>   # append-only логи
-cicd-cli job log   --job <JOB_UUID> --message "custom line"
+cicd-cli job start --id <JOB_UUID>   # queued → running
+cicd-cli job pass  --id <JOB_UUID>   # → success
+cicd-cli job fail  --id <JOB_UUID>   # → failed
+cicd-cli job attempts --id <JOB_UUID>
+cicd-cli job logs  --id <JOB_UUID>   # логи текущей/последней attempt
+cicd-cli job logs  --id <JOB_UUID> --attempt <ATTEMPT_UUID>
+cicd-cli job log   --id <JOB_UUID> --message "custom line"
 ```
 
 ## Контракт
 
-Группы команд и флаги зафиксированы тестом `backend/cli/tests/cli_contract.rs` (`project`, `pipeline`, `job` в `--help`). Изменение набора команд требует обновления теста и этого документа.
+Группы команд и флаги зафиксированы тестом `backend/cli/tests/cli_contract.rs` (`project`, `pipeline`, `job`, `attempts`, `--attempt` в `--help`). Изменение набора команд требует обновления теста и этого документа.
 
 ## Плановое (Phase C/D)
 

@@ -16,13 +16,14 @@ Roadmap фиксирует порядок доведения Forge до базо
 
 ## 3. Current baseline
 
-На 2026-08-28 в коде уже есть:
+На 2026-08-31 в коде уже есть:
 
 - проекты, встроенный bare Git hosting, Smart HTTP и auto-trigger pipeline на push;
 - pipeline из `.forge-ci.yml` с линейными stages/jobs, fallback-шаблон, manual jobs, basic timeout и `allow_failure`;
-- embedded runner в `cicd-server`: Docker/host shell, stdout/stderr в `job_logs`, cancel/retry в текущей модели;
-- REST logs и SSE stream логов job;
-- local artifacts до 50 MiB;
+- embedded runner в `cicd-server`: Docker/host shell, stdout/stderr в attempt-owned `job_logs`, cancel/retry;
+- `execution_attempts`: каждая job получает initial attempt, retry job/pipeline создаёт новую attempt и сохраняет старые логи;
+- REST logs, attempts API и SSE stream логов job;
+- local artifacts до 50 MiB с metadata текущей/latest attempt;
 - project secrets: AES-256-GCM at rest, env injection в embedded runner, best-effort masking stdout/stderr;
 - environments/deployments metadata, reports, audit log;
 - users, roles, argon2id credentials, sessions и PAT enforcement при `CICD_AUTH_SECRET`;
@@ -31,7 +32,7 @@ Roadmap фиксирует порядок доведения Forge до базо
 
 Ключевые ограничения current baseline:
 
-- retry job удаляет старые `job_logs`, потому полноценной истории попыток ещё нет;
+- execution attempts реализованы как MVP-слой без внешних leases/fencing; command spans, log pagination/search и richer error diagnostics остаются Phase 1 follow-up;
 - auth/RBAC глобальный, без project membership и scoped PAT;
 - execution встроен в backend process, поэтому shared/prod режим требует external runner boundary;
 - webhooks не имеют полной delivery history/replay/dead-letter UI, notifications sender не реализован;
@@ -45,17 +46,17 @@ Roadmap фиксирует порядок доведения Forge до базо
 
 Deliverables:
 
-- таблицы `execution_attempts` и attempt-owned log/artifact metadata;
-- retry pipeline/job создаёт новую attempt, старые логи и timestamps остаются доступными;
-- API и UI показывают список attempts, активную attempt и terminal result;
-- лог делится минимум на command span, stream, exit code, started/finished timestamps и error tail;
-- CLI умеет читать attempts и логи выбранной attempt.
+- Current MVP: таблицы `execution_attempts` и attempt-owned log/artifact metadata;
+- Current MVP: retry pipeline/job создаёт новую attempt, старые логи и timestamps остаются доступными;
+- Current MVP: API, UI и CLI показывают attempts и логи выбранной attempt;
+- Target follow-up: лог делится минимум на command span, stream, exit code, started/finished timestamps и error tail;
+- Target follow-up: pagination/search, richer empty/error states и отдельные UI tests переключения attempts.
 
 Gate:
 
 - real PostgreSQL migration test для retry без удаления старых логов;
-- API contract test на attempts/log ordering;
-- UI test для переключения attempts и empty/error states;
+- API/OpenAPI/CLI contract test на attempts/log ordering;
+- UI screenshot smoke для переключения attempts; dedicated component/e2e test остаётся follow-up;
 - документация `API.md`, `DATA_MODEL.md`, `USER_GUIDE.md`, `CURRENT_STATE.md`.
 
 ### Phase 2 — Production auth и project RBAC

@@ -14,6 +14,7 @@
 - Git-server parity: code browsing `GET /api/v1/repos/{repo}/tree|blob` (safe bare-repository ref fallback and binary/512 KiB preview guard), tags read API, release CRUD, repository `public`/`private` visibility and Smart HTTP read access control.
 - CI parity: trigger-time pipeline variables stored in `pipelines.variables` and injected into jobs only as `CICD_VAR_<KEY>`; public SVG pipeline badge; JUnit XML report ingest/read API and dashboard summary.
 - Migration `0006_git_ci_details`: `repositories.visibility`, `releases`, `pipelines.variables`, `test_reports`.
+- Execution attempts (REQ-EXEC-004): migration `0007_execution_attempts`, attempt-owned job logs/artifact metadata, retry job/pipeline creates a new attempt without deleting previous logs, API/OpenAPI endpoints for attempts and attempt logs, Dashboard attempt switcher, CLI `job attempts` and `job logs --attempt`.
 
 - P0 (GitLab/Jenkins parity): `CICD_*` CI variables in every job (`PIPELINE_ID`, `JOB_ID/NAME`, `STAGE_NAME`, `PROJECT_ID/NAME`, `COMMIT_REF/SHA`, `ARTIFACTS_DIR`), shared per-pipeline artifacts directory passed between jobs/stages, job `timeout` DSL (default 1h, kill on expiry), merge gate on protected branches (`projects.protected_branches`, 409 without a success pipeline on the PR head).
 - P1: webhook HMAC-SHA256 signing (`webhooks.secret` → `X-Forge-Signature`), PAT expiry (`api_tokens.expires_at`, `expires_in_days`), SSE live logs `GET /api/v1/jobs/{id}/logs/stream`, DSL `allow_failure` / `when: manual` + `POST /api/v1/jobs/{id}/start` approval gate.
@@ -31,6 +32,12 @@
 - CI: PostgreSQL service в backend-джобе — integration-тесты гоняются в CI; гейт `schema.d.ts` up-to-date; docs-джоба verify_docs.
 - SBOM: `scripts/generate_sbom.py` → docs/assets/sbom.json (CycloneDX-lite, 344 компонента; CISA Minimum Elements).
 - Пустой `CICD_AUTH_SECRET` теперь трактуется как не настроенный secret, поэтому compose default корректно оставляет локальный trusted-network mode.
+
+### Fixed
+
+- Embedded runner secret injection now reads `project_secrets.key` and `encrypted_value`, so saved project secrets are actually decrypted and passed to jobs as runtime env variables.
+- Embedded runner now drains job stdout/stderr while the process is running and serializes log append sequence per attempt, avoiding blocked jobs on large output.
+- Runner and pipeline cancel paths now finish open `execution_attempts`, avoiding stale `queued`/`running` attempts after job failure, timeout or cancel.
 
 ### Added
 
@@ -80,7 +87,7 @@
 
 ### Planned
 
-- Baseline roadmap: `execution_attempts` и attempt-owned logs/artifacts; диагностические command spans/error tails; project-level RBAC, scoped PAT и session revoke; delivery history/replay/dead-letter для webhooks/notifications; full cron semantics; проверяемый backup/restore; external runner + durable queue/leases; artifact retention/S3.
+- Baseline roadmap: диагностические command spans/error tails; project-level RBAC, scoped PAT и session revoke; delivery history/replay/dead-letter для webhooks/notifications; full cron semantics; проверяемый backup/restore; external runner + durable queue/leases; artifact retention/S3.
 
 ## [0.1.0] — 2026-08-26
 

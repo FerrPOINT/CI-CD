@@ -14,7 +14,7 @@ Forge CI/CD - self-hosted control plane для Git-репозиториев и C
 
 | Возможность | Статус | Практическая граница |
 |---|---|---|
-| Проекты, pipelines, jobs, логи | **Current verified** | Создание, просмотр, отмена и повтор в текущей job-модели; embedded runner выполняет jobs в Docker или host shell. |
+| Проекты, pipelines, jobs, attempts, логи | **Current verified** | Создание, просмотр, отмена и повтор; retry сохраняет историю attempts/logs, embedded runner выполняет jobs в Docker или host shell. |
 | Git Smart HTTP и auto-trigger | **Current verified** | Локальный bare-репозиторий, `clone`/`fetch`/`push`; push создаёт pipeline у связанного проекта. |
 | Артефакты | **Current verified** | Локальное хранение, upload/download, до 50 MiB на файл. |
 | Секреты проекта | **Current verified** | AES-256-GCM at rest; embedded runner передаёт их в env и маскирует значения в stdout/stderr logs. |
@@ -127,9 +127,7 @@ stages:
 3. Следите за статусом: `queued`, `running`, `success`, `failed`, `canceled`.
 4. При необходимости отмените pipeline; повторите весь pipeline или отдельную terminal job доступной кнопкой **Retry**.
 
-Embedded runner каждые две секунды выбирает доступные queued jobs, выполняет их последовательно по stages, пишет stdout/stderr в append-only log и устанавливает результат по exit code. Статусы stage и pipeline агрегируются автоматически. Для диагностики можно вручную менять статус job через UI, API или CLI, но это не заменяет фактическое выполнение.
-
-Ограничение current-модели: retry отдельной job переиспользует запись job и удаляет её старые строки `job_logs`. Полноценная история попыток (`execution_attempts`) — ближайший обязательный baseline roadmap.
+Embedded runner каждые две секунды выбирает доступные queued jobs, выполняет их последовательно по stages, пишет stdout/stderr в append-only log текущей `execution_attempt` и устанавливает результат по exit code. Статусы stage и pipeline агрегируются автоматически. Retry pipeline или отдельной terminal job создаёт новую attempt и сохраняет логи предыдущих attempts. Для диагностики можно вручную менять статус job через UI, API или CLI, но это не заменяет фактическое выполнение.
 
 ![Список pipelines](screenshots/05-pipelines.png)
 
@@ -140,9 +138,10 @@ Embedded runner каждые две секунды выбирает доступ
 **Статус процедуры: Current verified.**
 
 1. В деталях pipeline выберите job и откройте **Logs**.
-2. Лог отображается в порядке `sequence`; новая строка добавляется только в конец.
-3. Для API используйте `GET /api/v1/jobs/{job_id}/logs`; для live-tail доступен `GET /api/v1/jobs/{job_id}/logs/stream?after=<sequence>`.
-4. При анализе ошибки сопоставьте последнюю строку лога с image и command job; отдельные command spans, exit code summary и error tail пока относятся к target diagnostic logs.
+2. При наличии retry выберите нужную attempt: каждая attempt хранит собственные timestamps, terminal result и sequence логов.
+3. Для API используйте `GET /api/v1/jobs/{job_id}/attempts`, затем `GET /api/v1/jobs/{job_id}/attempts/{attempt_id}/logs`. Совместимый `GET /api/v1/jobs/{job_id}/logs` возвращает текущую open attempt, а если её нет — последнюю.
+4. Для live-tail доступен `GET /api/v1/jobs/{job_id}/logs/stream?after=<sequence>` по текущей/последней attempt.
+5. При анализе ошибки сопоставьте последнюю строку лога с image и command job; более богатые command spans и pagination/search остаются target diagnostic logs.
 
 > Значения project secrets передаются embedded runner в env и маскируются в stdout/stderr logs best-effort. Всё равно не выводите секреты намеренно: target redaction во всех audit/error/trace каналах ещё не завершён.
 
@@ -267,7 +266,7 @@ Retention/TTL, S3 и multipart upload - **Target approved**.
 3. Для интеграции запросите `GET /api/v1/audit-log`; API возвращает не более последних 200 событий.
 4. Сохраняйте критичные расследования вне Forge, если нужен срок хранения или экспорт больше встроенного окна.
 
-Аудит append-only для текущих mutation-операций, включая runner, secret, artifact и token. Полный authorisation context, фильтры, pagination и export - **Target approved**. Он не заменяет историю delivery webhooks или execution attempts.
+Аудит append-only для текущих mutation-операций, включая runner, secret, artifact и token. Полный authorisation context, фильтры, pagination и export - **Target approved**. Он не заменяет delivery history webhooks; execution attempts смотрите в деталях job и через attempts API.
 
 ![Журнал аудита](screenshots/19-audit-log.png)
 
@@ -322,7 +321,9 @@ export CICD_CLI="$PWD/backend/target/debug/cicd-cli"
 | Запустить job | `$CICD_CLI job start --id <JOB_UUID>` |
 | Завершить job успешно | `$CICD_CLI job pass --id <JOB_UUID>` |
 | Пометить job ошибочной | `$CICD_CLI job fail --id <JOB_UUID>` |
+| История попыток job | `$CICD_CLI job attempts --id <JOB_UUID>` |
 | Прочитать логи | `$CICD_CLI job logs --id <JOB_UUID>` |
+| Прочитать логи attempt | `$CICD_CLI job logs --id <JOB_UUID> --attempt <ATTEMPT_UUID>` |
 | Добавить строку лога | `$CICD_CLI job log --id <JOB_UUID> --message 'diagnostic line'` |
 
 CLI-команды для runners, secrets, artifacts, environments, schedules, webhooks, users и tokens - **Target approved**. Также пока нет `CICD_API_TOKEN`/`--token`, JSON/table formatting и pagination.
@@ -364,7 +365,7 @@ curl -fsS -X POST "http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines"
 
 **Статус процедуры: Current verified.**
 
-Откройте job и **Logs** или вызовите `GET /api/v1/jobs/{job_id}/logs`. Логи append-only в рамках текущей попытки job; у queued job может ещё не быть строк, а retry отдельной job сейчас очищает старые строки. Проверьте status job, image, command и доступность Docker/host shell для embedded runner.
+Откройте job и **Logs** или вызовите `GET /api/v1/jobs/{job_id}/attempts` вместе с `/attempts/{attempt_id}/logs`. Логи append-only в рамках выбранной attempt; у queued job может ещё не быть строк. Если после retry shortcut `/logs` показывает пустой текущий запуск, переключитесь на предыдущую attempt для старой диагностики и проверьте status job, image, command и доступность Docker/host shell для embedded runner.
 
 ### Как безопасно передать credential в job?
 

@@ -32,12 +32,12 @@
 | Выполнение | Embedded supervisor в `cicd-server`; Docker или host shell; PID map в памяти | Внешние runner-ы, pull protocol, leases, attempts, reconciliation; host shell отсутствует в production |
 | Runner registry | `POST /runners`, теги, heartbeat, status; registry не участвует в выборе и запуске job | Registration tokens, аутентификация, capability inventory, runner pools/tags, heartbeat, drain/disable, selection dispatcher |
 | Очередь | Polling queued jobs; атомарный `queued → running`, но без runner lease и durable delivery | PostgreSQL queue с `SKIP LOCKED`, scheduling eligibility, lease/ack/renew/expiry, outbox/event wakeup |
-| Retry | API повторно ставит job/pipeline в `queued`, очищая логи job | Новый immutable execution attempt; история предыдущих попыток и логов сохраняется |
+| Retry | API повторно ставит job/pipeline в `queued` и уже создаёт новую `execution_attempt`; внешней retry policy/lease fencing ещё нет | Policy-driven immutable execution attempt; история предыдущих попыток, логов и artifact manifest сохраняется |
 | Cancel | API меняет статусы и пытается остановить Docker/PID локального процесса | Cancel intent в БД, delivery к owner runner, grace period, forced backend termination, reconciliation |
 | Таймауты | Частично зависят от процесса; нет единой модели | Queue, startup, execution, idle-log, cancellation и lease deadlines - конфигурируемые и фиксируемые в attempt |
 | Secrets | AES-256-GCM at rest; API не возвращает значения; embedded runner умеет env injection и stdout/stderr masking | Ограниченная выдача secret bundle только lease owner; env/file injection; redaction до записи логов |
-| Logs | Строки `job_logs`, sequence по job, REST polling и SSE stream по job | Chunk protocol, idempotency, monotonic sequence per attempt, streaming и durable append |
-| Artifacts | Local FS, metadata по `job_id`, лимит 50 MiB | Artifact manifest на attempt, checksum, staged upload, S3-compatible storage, retention, quarantine/cleanup |
+| Logs | Строки `job_logs`, sequence по attempt, REST polling и SSE stream по current/latest attempt | Chunk protocol, idempotency, monotonic sequence per attempt, streaming и durable append |
+| Artifacts | Local FS, metadata по `job_id` и active/latest `attempt_id`, лимит 50 MiB | Artifact manifest на attempt, checksum, staged upload, S3-compatible storage, retention, quarantine/cleanup |
 | Изоляция | API/backend может запускать Docker; есть host-shell fallback | Docker socket только у runner host; rootless/least privilege. Kubernetes runner создаёт ограниченный Job/Pod |
 | Тесты | Domain/API/CLI tests, real PostgreSQL integration для persistent paths, frontend unit/build gates | Unit, property, protocol compatibility, runner contract, Docker/K8s integration, chaos/e2e |
 
@@ -551,7 +551,7 @@ Docker - первый поддерживаемый backend.
 - Workspace удаляется после завершения независимо от результата, кроме явно контролируемого diagnostic retention.
 - Git credentials передаются только на checkout phase и не остаются в process environment после неё.
 
-`host shell` допускается только для локальной development-среды с явным `CICD_RUNNER_UNSAFE_HOST_SHELL=true`; production configuration валидатор обязан его отклонять.
+`host shell` допускается только для disposable local development. Target production configuration validator обязан отклонять host shell или требовать отдельный явный unsafe-флаг вне стандартного compose.
 
 ## 9.3 Kubernetes executor
 
@@ -995,9 +995,9 @@ Kubernetes, при наличии test cluster:
 
 ## Фаза 2 - durable queue, attempts и leases
 
-- Ввести `jobs`, `job_queue`, `execution_attempts`, `job_leases`.
+- Ввести `job_queue`, `job_leases` и расширить текущие `execution_attempts` до lease-aware модели.
 - Реализовать lease offer/ack/renew/expiry и fencing token.
-- Перевести retry с mutation job/logs на создание новой attempt.
+- Сохранить текущую retry-модель с новой attempt и добавить policy/fencing поверх неё.
 - Добавить reconciliation/outbox workers.
 - Сохранить UI projection старых status полей как compatibility read model.
 

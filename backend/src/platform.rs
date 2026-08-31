@@ -235,6 +235,7 @@ async fn delete_secret(
 pub(crate) struct Artifact {
     id: Uuid,
     job_id: Uuid,
+    attempt_id: Option<Uuid>,
     name: String,
     content_type: String,
     size_bytes: i64,
@@ -245,7 +246,7 @@ async fn list_artifacts(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
 ) -> ApiResult<Vec<Artifact>> {
-    Ok(Json(sqlx::query_as("SELECT id, job_id, name, content_type, size_bytes, created_at FROM artifacts WHERE job_id = $1 ORDER BY created_at DESC")
+    Ok(Json(sqlx::query_as("SELECT id, job_id, attempt_id, name, content_type, size_bytes, created_at FROM artifacts WHERE job_id = $1 ORDER BY created_at DESC")
         .bind(job_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
 #[utoipa::path(post, path = "/api/v1/jobs/{job_id}/artifacts", tag = "artifacts", params(("job_id" = Uuid, Path), ("X-Artifact-Name" = String, Header)), request_body = Vec<u8>, responses((status = 200, body = Artifact), (status = 400)))]
@@ -277,8 +278,14 @@ async fn upload_artifact(
     let path = artifact_path(id);
     std::fs::create_dir_all(path.parent().expect("artifact parent")).map_err(io_error)?;
     std::fs::write(&path, &body).map_err(io_error)?;
-    let artifact = sqlx::query_as("INSERT INTO artifacts (id, job_id, name, storage_path, content_type, size_bytes) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, job_id, name, content_type, size_bytes, created_at")
-        .bind(id).bind(job_id).bind(name).bind(path.to_string_lossy().as_ref()).bind(content_type).bind(body.len() as i64).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
+    let attempt_id = crate::store::active_or_latest_attempt_id(pool(&state)?, job_id)
+        .await
+        .map_err(|error| match error {
+            sqlx::Error::RowNotFound => ApiError::not_found(),
+            other => ApiError::internal(other),
+        })?;
+    let artifact = sqlx::query_as("INSERT INTO artifacts (id, job_id, attempt_id, name, storage_path, content_type, size_bytes) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, job_id, attempt_id, name, content_type, size_bytes, created_at")
+        .bind(id).bind(job_id).bind(attempt_id).bind(name).bind(path.to_string_lossy().as_ref()).bind(content_type).bind(body.len() as i64).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
     audit(pool(&state)?, "artifact.uploaded", "artifact", id, None).await?;
     Ok(Json(artifact))
 }
@@ -806,7 +813,7 @@ pub(crate) async fn project_secret_pairs(
     project_id: Uuid,
 ) -> Result<Vec<(String, String)>, ApiError> {
     let rows = sqlx::query_as::<_, (String, String)>(
-        "SELECT name, value FROM project_secrets WHERE project_id = $1",
+        "SELECT key, encrypted_value FROM project_secrets WHERE project_id = $1",
     )
     .bind(project_id)
     .fetch_all(pool)

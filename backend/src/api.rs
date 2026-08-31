@@ -24,7 +24,7 @@ use crate::{
     pulls::{
         compare_refs, create_pull_request, list_commits, list_pull_requests, list_refs, pr_action,
     },
-    store::next_log_sequence,
+    store::{active_or_latest_attempt_id, append_job_log, open_attempt_id},
 };
 
 static STATE_POOL: std::sync::OnceLock<sqlx::PgPool> = std::sync::OnceLock::new();
@@ -48,7 +48,8 @@ type ApiResult<T> = Result<Json<T>, ApiError>;
         health, metrics, serve_openapi_json, auth_login, auth_refresh,
         list_projects, create_project, get_project, update_project, delete_project,
         trigger_pipeline, list_pipelines, get_pipeline, cancel_pipeline, retry_pipeline,
-        change_job_status, retry_job, start_manual_job, job_log_stream, list_logs, append_log,
+        change_job_status, retry_job, start_manual_job, list_job_attempts, list_attempt_logs,
+        job_log_stream, list_logs, append_log,
         crate::platform::list_runners, crate::platform::register_runner,
         crate::platform::runner_heartbeat, crate::platform::delete_runner,
         crate::platform::list_secrets, crate::platform::create_secret, crate::platform::delete_secret,
@@ -76,7 +77,7 @@ type ApiResult<T> = Result<Json<T>, ApiError>;
     components(schemas(
         crate::auth::LoginRequest, crate::auth::TokenPair,
         Project, CreateProject, UpdateProject, TriggerPipeline, Pipeline, Stage, Job,
-        PipelineDetail, StageDetail, JobLog, ChangeStatus, AppendLog,
+        PipelineDetail, StageDetail, JobAttempt, JobLog, ChangeStatus, AppendLog,
         CanceledPipelineResult, RetriedPipelineResult, ManualJobStartResult,
         Release, CreateRelease, TestReport,
         crate::platform::Runner, crate::platform::RegisterRunner, crate::platform::RunnerHeartbeat,
@@ -226,6 +227,14 @@ impl ApiError {
         }
     }
 }
+
+fn attempt_lookup_error(error: sqlx::Error) -> ApiError {
+    match error {
+        sqlx::Error::RowNotFound => ApiError::not_found(),
+        other => ApiError::internal(other),
+    }
+}
+
 impl From<crate::auth::AuthError> for ApiError {
     fn from(error: crate::auth::AuthError) -> Self {
         match error {
@@ -444,6 +453,11 @@ fn build_router(
             post(retry_pipeline),
         )
         .route("/api/v1/jobs/{job_id}/retry", post(retry_job))
+        .route("/api/v1/jobs/{job_id}/attempts", get(list_job_attempts))
+        .route(
+            "/api/v1/jobs/{job_id}/attempts/{attempt_id}/logs",
+            get(list_attempt_logs),
+        )
         .route(
             "/api/v1/jobs/{job_id}/logs",
             get(list_logs).post(append_log),
@@ -855,10 +869,13 @@ pub(crate) async fn create_pipeline_with_vars(
         sqlx::query("INSERT INTO stages (id, pipeline_id, name, position, status) VALUES ($1, $2, $3, $4, 'queued')")
             .bind(stage_id).bind(pipeline.id).bind(&stage.name).bind(position as i32).execute(pool).await.map_err(ApiError::internal)?;
         for (job_position, job) in stage.jobs.iter().enumerate() {
+            let job_id = Uuid::new_v4();
             sqlx::query("INSERT INTO jobs (id, stage_id, name, image, command, position, status, timeout_seconds, allow_failure, manual) VALUES ($1, $2, $3, $4, $5, $6, 'queued', $7, $8, $9)")
-                .bind(Uuid::new_v4()).bind(stage_id).bind(&job.name).bind(&job.image).bind(&job.command).bind(job_position as i32)
+                .bind(job_id).bind(stage_id).bind(&job.name).bind(&job.image).bind(&job.command).bind(job_position as i32)
                 .bind(job.timeout_seconds).bind(job.allow_failure).bind(job.manual)
                 .execute(pool).await.map_err(ApiError::internal)?;
+            sqlx::query("INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) VALUES ($1, $2, 1, 'queued', 'initial')")
+                .bind(Uuid::new_v4()).bind(job_id).execute(pool).await.map_err(ApiError::internal)?;
         }
     }
     Ok(pipeline)
@@ -1576,9 +1593,36 @@ async fn change_job_status(
     current
         .transition_to(input.status)
         .map_err(|error| ApiError::bad_request(error.to_string()))?;
+    transition_open_attempt(pool, job_id, input.status.as_str(), "manual_status").await?;
     let updated = sqlx::query_as::<_, Job>("UPDATE jobs SET status = $2, started_at = CASE WHEN $2 = 'running' THEN now() ELSE started_at END, finished_at = CASE WHEN $2 IN ('success','failed','canceled') THEN now() ELSE finished_at END WHERE id = $1 RETURNING id, stage_id, name, image, command, position, status, started_at, finished_at").bind(job_id).bind(input.status.as_str()).fetch_one(pool).await.map_err(ApiError::internal)?;
     refresh_statuses(pool, updated.stage_id).await?;
     Ok(Json(updated))
+}
+
+pub(crate) async fn transition_open_attempt(
+    pool: &PgPool,
+    job_id: Uuid,
+    status: &str,
+    trigger: &str,
+) -> Result<Uuid, ApiError> {
+    let attempt_id = open_attempt_id(pool, job_id, trigger)
+        .await
+        .map_err(attempt_lookup_error)?;
+    let finished_status = matches!(status, "success" | "failed" | "canceled");
+    sqlx::query(
+        "UPDATE execution_attempts \
+         SET status = $2, \
+             started_at = CASE WHEN $2 = 'running' THEN COALESCE(started_at, now()) ELSE started_at END, \
+             finished_at = CASE WHEN $3 THEN now() ELSE finished_at END \
+         WHERE id = $1",
+    )
+    .bind(attempt_id)
+    .bind(status)
+    .bind(finished_status)
+    .execute(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(attempt_id)
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -1638,6 +1682,22 @@ async fn cancel_pipeline(
     .await
     .map_err(ApiError::internal)?;
     sqlx::query(
+        "UPDATE execution_attempts \
+         SET status = 'canceled', \
+             finished_at = COALESCE(finished_at, now()), \
+             error_tail = COALESCE(error_tail, 'pipeline canceled') \
+         WHERE status IN ('queued','running') \
+           AND job_id IN ( \
+             SELECT j.id FROM jobs j \
+             JOIN stages s ON s.id = j.stage_id \
+             WHERE s.pipeline_id = $1 \
+           )",
+    )
+    .bind(pipeline_id)
+    .execute(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    sqlx::query(
         "UPDATE stages SET status = 'canceled' \
          WHERE status IN ('queued','running') AND pipeline_id = $1",
     )
@@ -1689,6 +1749,23 @@ async fn retry_pipeline(
         ));
     }
     sqlx::query(
+        "WITH retry_jobs AS ( \
+             SELECT j.id \
+             FROM jobs j JOIN stages s ON s.id = j.stage_id \
+             WHERE s.pipeline_id = $1 AND j.status IN ('failed','canceled') \
+         ), nexts AS ( \
+             SELECT r.id AS job_id, COALESCE(MAX(a.attempt_no), 0) + 1 AS attempt_no \
+             FROM retry_jobs r LEFT JOIN execution_attempts a ON a.job_id = r.id \
+             GROUP BY r.id \
+         ) \
+         INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) \
+         SELECT gen_random_uuid(), job_id, attempt_no, 'queued', 'pipeline_retry' FROM nexts",
+    )
+    .bind(pipeline_id)
+    .execute(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    sqlx::query(
         "UPDATE jobs SET status = 'queued', started_at = NULL, finished_at = NULL WHERE status IN ('failed','canceled') AND stage_id IN (SELECT id FROM stages WHERE pipeline_id = $1)",
     )
     .bind(pipeline_id)
@@ -1728,11 +1805,16 @@ async fn retry_job(State(state): State<Arc<AppState>>, Path(job_id): Path<Uuid>)
             "only failed or canceled jobs can be retried",
         ));
     }
-    sqlx::query("DELETE FROM job_logs WHERE job_id = $1")
-        .bind(job_id)
-        .execute(pool)
-        .await
-        .map_err(ApiError::internal)?;
+    sqlx::query(
+        "INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) \
+         SELECT $2, $1, COALESCE(MAX(attempt_no), 0) + 1, 'queued', 'job_retry' \
+         FROM execution_attempts WHERE job_id = $1",
+    )
+    .bind(job_id)
+    .bind(Uuid::new_v4())
+    .execute(pool)
+    .await
+    .map_err(ApiError::internal)?;
     let updated = sqlx::query_as::<_, Job>("UPDATE jobs SET status = 'queued', started_at = NULL, finished_at = NULL WHERE id = $1 RETURNING id, stage_id, name, image, command, position, status, started_at, finished_at")
         .bind(job_id)
         .fetch_one(pool)
@@ -1796,9 +1878,24 @@ pub(crate) async fn refresh_statuses(pool: &PgPool, stage_id: Uuid) -> Result<()
 }
 
 #[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+struct JobAttempt {
+    id: Uuid,
+    job_id: Uuid,
+    attempt_no: i32,
+    status: String,
+    trigger: String,
+    exit_code: Option<i32>,
+    error_tail: Option<String>,
+    created_at: DateTime<Utc>,
+    started_at: Option<DateTime<Utc>>,
+    finished_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
 struct JobLog {
     id: i64,
     job_id: Uuid,
+    attempt_id: Uuid,
     sequence: i32,
     message: String,
     created_at: DateTime<Utc>,
@@ -1858,16 +1955,21 @@ async fn job_log_stream(
     ApiError,
 > {
     let pool = pool(&state)?;
+    let attempt_id = active_or_latest_attempt_id(pool, job_id)
+        .await
+        .map_err(attempt_lookup_error)?;
     let mut after = params.after.unwrap_or(-1);
     let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
     let p = pool.clone();
     let jid = job_id;
+    let aid = attempt_id;
     tokio::spawn(async move {
         loop {
             let rows = sqlx::query_as::<_, (i32, String)>(
-                "SELECT sequence, message FROM job_logs WHERE job_id = $1 AND sequence > $2 ORDER BY sequence",
+                "SELECT sequence, message FROM job_logs WHERE job_id = $1 AND attempt_id = $2 AND sequence > $3 ORDER BY sequence",
             )
             .bind(jid)
+            .bind(aid)
             .bind(after)
             .fetch_all(&p)
             .await
@@ -1903,12 +2005,71 @@ struct StreamParams {
     after: Option<i32>,
 }
 
+#[utoipa::path(get, path="/api/v1/jobs/{job_id}/attempts", tag="jobs", params(("job_id"=Uuid, Path)), responses((status=200, body=[JobAttempt]), (status=404)))]
+async fn list_job_attempts(
+    State(state): State<Arc<AppState>>,
+    Path(job_id): Path<Uuid>,
+) -> ApiResult<Vec<JobAttempt>> {
+    let pool = pool(&state)?;
+    let job_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM jobs WHERE id = $1)")
+        .bind(job_id)
+        .fetch_one(pool)
+        .await
+        .map_err(ApiError::internal)?;
+    if !job_exists {
+        return Err(ApiError::not_found());
+    }
+    let _ = active_or_latest_attempt_id(pool, job_id)
+        .await
+        .map_err(attempt_lookup_error)?;
+    let attempts = sqlx::query_as::<_, JobAttempt>(
+        "SELECT id, job_id, attempt_no, status, trigger, exit_code, error_tail, created_at, started_at, finished_at \
+         FROM execution_attempts WHERE job_id = $1 ORDER BY attempt_no DESC",
+    )
+    .bind(job_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(Json(attempts))
+}
+
+#[utoipa::path(get, path="/api/v1/jobs/{job_id}/attempts/{attempt_id}/logs", tag="jobs", params(("job_id"=Uuid, Path), ("attempt_id"=Uuid, Path)), responses((status=200, body=[JobLog]), (status=404)))]
+async fn list_attempt_logs(
+    State(state): State<Arc<AppState>>,
+    Path((job_id, attempt_id)): Path<(Uuid, Uuid)>,
+) -> ApiResult<Vec<JobLog>> {
+    let attempt_belongs_to_job: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM execution_attempts WHERE id = $1 AND job_id = $2)",
+    )
+    .bind(attempt_id)
+    .bind(job_id)
+    .fetch_one(pool(&state)?)
+    .await
+    .map_err(ApiError::internal)?;
+    if !attempt_belongs_to_job {
+        return Err(ApiError::not_found());
+    }
+    let logs = sqlx::query_as::<_, JobLog>(
+        "SELECT id, job_id, attempt_id, sequence, message, created_at \
+         FROM job_logs WHERE job_id = $1 AND attempt_id = $2 ORDER BY sequence",
+    )
+    .bind(job_id)
+    .bind(attempt_id)
+    .fetch_all(pool(&state)?)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(Json(logs))
+}
+
 #[utoipa::path(get, path="/api/v1/jobs/{job_id}/logs", tag="jobs", params(("job_id"=Uuid, Path)), responses((status=200, body=[JobLog])))]
 async fn list_logs(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
 ) -> ApiResult<Vec<JobLog>> {
-    let logs = sqlx::query_as::<_, JobLog>("SELECT id, job_id, sequence, message, created_at FROM job_logs WHERE job_id = $1 ORDER BY sequence").bind(job_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?;
+    let attempt_id = active_or_latest_attempt_id(pool(&state)?, job_id)
+        .await
+        .map_err(attempt_lookup_error)?;
+    let logs = sqlx::query_as::<_, JobLog>("SELECT id, job_id, attempt_id, sequence, message, created_at FROM job_logs WHERE job_id = $1 AND attempt_id = $2 ORDER BY sequence").bind(job_id).bind(attempt_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?;
     Ok(Json(logs))
 }
 #[utoipa::path(post, path="/api/v1/jobs/{job_id}/logs", tag="jobs", request_body=AppendLog, params(("job_id"=Uuid, Path)), responses((status=200, body=JobLog)))]
@@ -1921,6 +2082,19 @@ async fn append_log(
         return Err(ApiError::bad_request("message is required"));
     }
     let pool = pool(&state)?;
-    let log = sqlx::query_as::<_, JobLog>("INSERT INTO job_logs (job_id, sequence, message) VALUES ($1, $2, $3) RETURNING id, job_id, sequence, message, created_at").bind(job_id).bind(next_log_sequence(pool, job_id).await.map_err(ApiError::internal)?).bind(input.message.trim()).fetch_one(pool).await.map_err(ApiError::internal)?;
+    let attempt_id = active_or_latest_attempt_id(pool, job_id)
+        .await
+        .map_err(attempt_lookup_error)?;
+    let record = append_job_log(pool, job_id, attempt_id, input.message.trim())
+        .await
+        .map_err(ApiError::internal)?;
+    let log = JobLog {
+        id: record.id,
+        job_id: record.job_id,
+        attempt_id: record.attempt_id,
+        sequence: record.sequence,
+        message: record.message,
+        created_at: record.created_at,
+    };
     Ok(Json(log))
 }

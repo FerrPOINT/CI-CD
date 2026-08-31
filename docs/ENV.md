@@ -13,6 +13,7 @@
 | `CICD_GIT_INTERNAL_TOKEN` | `forge-internal-dev-token` (dev) | `X-Internal-Token` для post-receive hook |
 | `CICD_SECRETS_KEY` | — | Base64 32-byte ключ AES-256-GCM (обязателен для secrets) |
 | `CICD_ARTIFACTS_DIR` | `/var/lib/forge/artifacts` | Локальное хранилище артефактов |
+| `CICD_RUNNER_MODE` | `host` в compose | Режим embedded runner: `host` для локального evidence/dev; `docker` только если Docker executor/socket подключены явно |
 
 ## Сборочные переменные compose (в .env)
 
@@ -29,7 +30,7 @@
 
 | Переменная | Default | Назначение |
 |---|---|---|
-| `CICD_RUNNER_MODE` | `docker` | Режим embedded runner: `docker` \| `shell` |
+| `CICD_RUNNER_MODE` | `docker` вне compose | Режим embedded runner binary: `docker` \| `host` |
 | `CICD_RUNNER_KEEP_WORKSPACE` | `false` | Не удалять workspace после job |
 | `CICD_API_URL` | `http://127.0.0.1:22801` | Base URL для cicd-cli |
 

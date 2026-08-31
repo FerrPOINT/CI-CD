@@ -184,6 +184,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/jobs/{job_id}/attempts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_job_attempts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/jobs/{job_id}/attempts/{attempt_id}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_attempt_logs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/jobs/{job_id}/logs": {
         parameters: {
             query?: never;
@@ -927,6 +959,8 @@ export interface components {
             message: string;
         };
         Artifact: {
+            /** Format: uuid */
+            attempt_id?: string | null;
             content_type: string;
             /** Format: date-time */
             created_at: string;
@@ -1095,7 +1129,28 @@ export interface components {
             started_at?: string | null;
             status: string;
         };
+        JobAttempt: {
+            /** Format: int32 */
+            attempt_no: number;
+            /** Format: date-time */
+            created_at: string;
+            error_tail?: string | null;
+            /** Format: int32 */
+            exit_code?: number | null;
+            /** Format: date-time */
+            finished_at?: string | null;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            job_id: string;
+            /** Format: date-time */
+            started_at?: string | null;
+            status: string;
+            trigger: string;
+        };
         JobLog: {
+            /** Format: uuid */
+            attempt_id: string;
             /** Format: date-time */
             created_at: string;
             /** Format: int64 */
@@ -1759,6 +1814,61 @@ export interface operations {
                 };
             };
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_job_attempts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobAttempt"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_attempt_logs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+                attempt_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobLog"][];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

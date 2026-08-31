@@ -74,12 +74,18 @@ enum JobCommand {
     Logs {
         #[arg(long)]
         id: String,
+        #[arg(long)]
+        attempt: Option<String>,
     },
     Log {
         #[arg(long)]
         id: String,
         #[arg(long)]
         message: String,
+    },
+    Attempts {
+        #[arg(long)]
+        id: String,
     },
 }
 
@@ -98,76 +104,84 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let base = cli.api_url.trim_end_matches('/');
     let client = reqwest::Client::new();
-    let value =
-        match cli.command {
-            Command::Project {
-                command: ProjectCommand::List,
-            } => request(client.get(format!("{base}/api/v1/projects"))).await?,
-            Command::Project {
-                command:
-                    ProjectCommand::Create {
-                        name,
-                        repository_url,
-                        branch,
-                    },
-            } => request(client.post(format!("{base}/api/v1/projects")).json(
+    let value = match cli.command {
+        Command::Project {
+            command: ProjectCommand::List,
+        } => request(client.get(format!("{base}/api/v1/projects"))).await?,
+        Command::Project {
+            command:
+                ProjectCommand::Create {
+                    name,
+                    repository_url,
+                    branch,
+                },
+        } => {
+            request(client.post(format!("{base}/api/v1/projects")).json(
                 &json!({"name": name, "repository_url": repository_url, "default_branch": branch}),
             ))
-            .await?,
-            Command::Pipeline {
-                command: PipelineCommand::List { project },
-            } => request(client.get(format!("{base}/api/v1/projects/{project}/pipelines"))).await?,
-            Command::Pipeline {
-                command: PipelineCommand::Run { project, git_ref },
-            } => {
+            .await?
+        }
+        Command::Pipeline {
+            command: PipelineCommand::List { project },
+        } => request(client.get(format!("{base}/api/v1/projects/{project}/pipelines"))).await?,
+        Command::Pipeline {
+            command: PipelineCommand::Run { project, git_ref },
+        } => {
+            request(
+                client
+                    .post(format!("{base}/api/v1/projects/{project}/pipelines"))
+                    .json(&json!({"git_ref": git_ref})),
+            )
+            .await?
+        }
+        Command::Pipeline {
+            command: PipelineCommand::Show { id },
+        } => request(client.get(format!("{base}/api/v1/pipelines/{id}"))).await?,
+        Command::Job { command } => match command {
+            JobCommand::Start { id } => {
                 request(
                     client
-                        .post(format!("{base}/api/v1/projects/{project}/pipelines"))
-                        .json(&json!({"git_ref": git_ref})),
+                        .post(format!("{base}/api/v1/jobs/{id}/status"))
+                        .json(&json!({"status": "running"})),
                 )
                 .await?
             }
-            Command::Pipeline {
-                command: PipelineCommand::Show { id },
-            } => request(client.get(format!("{base}/api/v1/pipelines/{id}"))).await?,
-            Command::Job { command } => match command {
-                JobCommand::Start { id } => {
-                    request(
-                        client
-                            .post(format!("{base}/api/v1/jobs/{id}/status"))
-                            .json(&json!({"status": "running"})),
-                    )
-                    .await?
+            JobCommand::Pass { id } => {
+                request(
+                    client
+                        .post(format!("{base}/api/v1/jobs/{id}/status"))
+                        .json(&json!({"status": "success"})),
+                )
+                .await?
+            }
+            JobCommand::Fail { id } => {
+                request(
+                    client
+                        .post(format!("{base}/api/v1/jobs/{id}/status"))
+                        .json(&json!({"status": "failed"})),
+                )
+                .await?
+            }
+            JobCommand::Logs { id, attempt } => match attempt {
+                Some(attempt) => {
+                    request(client.get(format!("{base}/api/v1/jobs/{id}/attempts/{attempt}/logs")))
+                        .await?
                 }
-                JobCommand::Pass { id } => {
-                    request(
-                        client
-                            .post(format!("{base}/api/v1/jobs/{id}/status"))
-                            .json(&json!({"status": "success"})),
-                    )
-                    .await?
-                }
-                JobCommand::Fail { id } => {
-                    request(
-                        client
-                            .post(format!("{base}/api/v1/jobs/{id}/status"))
-                            .json(&json!({"status": "failed"})),
-                    )
-                    .await?
-                }
-                JobCommand::Logs { id } => {
-                    request(client.get(format!("{base}/api/v1/jobs/{id}/logs"))).await?
-                }
-                JobCommand::Log { id, message } => {
-                    request(
-                        client
-                            .post(format!("{base}/api/v1/jobs/{id}/logs"))
-                            .json(&json!({"message": message})),
-                    )
-                    .await?
-                }
+                None => request(client.get(format!("{base}/api/v1/jobs/{id}/logs"))).await?,
             },
-        };
+            JobCommand::Log { id, message } => {
+                request(
+                    client
+                        .post(format!("{base}/api/v1/jobs/{id}/logs"))
+                        .json(&json!({"message": message})),
+                )
+                .await?
+            }
+            JobCommand::Attempts { id } => {
+                request(client.get(format!("{base}/api/v1/jobs/{id}/attempts"))).await?
+            }
+        },
+    };
     println!("{}", serde_json::to_string_pretty(&value)?);
     Ok(())
 }

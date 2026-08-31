@@ -5,6 +5,7 @@ use std::{collections::HashMap, process::Stdio, sync::Arc, time::Duration};
 use sqlx::PgPool;
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
+    process::ChildStdout,
     sync::Mutex,
 };
 use uuid::Uuid;
@@ -33,15 +34,58 @@ fn runner_mode() -> RunnerMode {
 /// Executes a single job: marks running, streams stdout/stderr into job_logs,
 /// sets success/failed from the exit code and refreshes stage/pipeline status.
 pub(crate) async fn run_job(pool: PgPool, job_id: Uuid, running: RunningJobs) {
-    if let Err(error) = run_job_inner(pool.clone(), job_id, running).await {
+    if let Err(error) = run_job_inner(pool.clone(), job_id, running.clone()).await {
         tracing::error!(%job_id, error = ?error, "runner job failed");
-        let _ = sqlx::query(
-            "UPDATE jobs SET status = 'failed', finished_at = now() \
-             WHERE id = $1 AND status NOT IN ('canceled')",
-        )
+        running.lock().await.remove(&job_id);
+        finish_job_after_runner_error(&pool, job_id, &error).await;
+    }
+}
+
+async fn finish_job_after_runner_error(pool: &PgPool, job_id: Uuid, error: &ApiError) {
+    let message = truncate_error_tail(format!("runner: internal failure: {}", error.message));
+    let status = match sqlx::query_scalar::<_, String>("SELECT status FROM jobs WHERE id = $1")
         .bind(job_id)
-        .execute(&pool)
-        .await;
+        .fetch_optional(pool)
+        .await
+    {
+        Ok(status) => status,
+        Err(db_error) => {
+            tracing::warn!(%job_id, error = ?db_error, "could not read job status after runner error");
+            None
+        }
+    };
+
+    if matches!(status.as_deref(), Some("success" | "canceled") | None) {
+        return;
+    }
+
+    if let Err(db_error) = sqlx::query(
+        "UPDATE jobs SET status = 'failed', finished_at = now() \
+         WHERE id = $1 AND status IN ('queued','running')",
+    )
+    .bind(job_id)
+    .execute(pool)
+    .await
+    {
+        tracing::warn!(%job_id, error = ?db_error, "could not mark job failed after runner error");
+    }
+
+    match crate::store::active_or_latest_attempt_id(pool, job_id).await {
+        Ok(attempt_id) => {
+            if let Err(log_error) = append_attempt_log(pool, job_id, attempt_id, &message).await {
+                tracing::warn!(%job_id, %attempt_id, error = ?log_error, "could not append runner error log");
+            }
+            if let Err(db_error) = mark_attempt_failed(pool, attempt_id, &message).await {
+                tracing::warn!(%job_id, %attempt_id, error = ?db_error, "could not mark attempt failed after runner error");
+            }
+        }
+        Err(db_error) => {
+            tracing::warn!(%job_id, error = ?db_error, "could not resolve attempt after runner error");
+        }
+    }
+
+    if let Err(refresh_error) = refresh_stage(pool.clone(), job_id).await {
+        tracing::warn!(%job_id, error = ?refresh_error, "could not refresh statuses after runner error");
     }
 }
 
@@ -86,6 +130,8 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
             return Ok(());
         }
     }
+    let attempt_id =
+        crate::api::transition_open_attempt(&pool, job_id, "running", "runner").await?;
 
     // REQ-SEC-002: inject project secrets as env vars; mask them in logs.
     let secrets = crate::platform::project_secret_pairs(&pool, job.project_id)
@@ -116,7 +162,13 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
         .await
         .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
 
-    append_log(&pool, job_id, &format!("runner: starting job {}", job.name)).await?;
+    append_attempt_log(
+        &pool,
+        job_id,
+        attempt_id,
+        &format!("runner: starting job {}", job.name),
+    )
+    .await?;
     refresh_stage(pool.clone(), job.id).await?;
 
     let command_shell = format!("{} 2>&1", job.command);
@@ -210,18 +262,44 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
         running.lock().await.insert(job_id, pid);
     }
 
-    let stdout = child.stdout.take();
+    let mut stdout_task = child.stdout.take().map(|stdout| {
+        let pool = pool.clone();
+        let masks = masks.clone();
+        tokio::spawn(async move {
+            stream_stdout_to_attempt(pool, job_id, attempt_id, stdout, masks).await
+        })
+    });
     let exit_status = tokio::select! {
         status = child.wait() => status,
         _ = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs as u64)) => {
-            append_log(&pool, job_id, &format!("runner: job timed out after {timeout_secs}s, killing")).await?;
+            let message = format!("runner: job timed out after {timeout_secs}s, killing");
+            append_attempt_log(&pool, job_id, attempt_id, &message).await?;
             let _ = child.start_kill();
+            let _ = child.wait().await;
+            if let Some(task) = stdout_task.take() {
+                await_stdout_task(task).await?;
+            }
             running.lock().await.remove(&job_id);
-            sqlx::query("UPDATE jobs SET status = 'failed', finished_at = now() WHERE id = $1")
+            let updated = sqlx::query(
+                "UPDATE jobs SET status = 'failed', finished_at = now() \
+                 WHERE id = $1 AND status NOT IN ('canceled')",
+            )
                 .bind(job_id)
                 .execute(&pool)
                 .await
                 .map_err(ApiError::internal)?;
+            if updated.rows_affected() == 0 {
+                mark_attempt_canceled(
+                    &pool,
+                    attempt_id,
+                    "runner: job canceled before timeout result",
+                )
+                .await?;
+                refresh_stage(pool.clone(), job.id).await?;
+                let _ = tokio::fs::remove_dir_all(&workspace).await;
+                return Ok(());
+            }
+            mark_attempt_failed(&pool, attempt_id, &message).await?;
             refresh_stage(pool.clone(), job.id).await?;
             let _ = tokio::fs::remove_dir_all(&workspace).await;
             return Ok(());
@@ -230,18 +308,8 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
 
     running.lock().await.remove(&job_id);
 
-    // Stream lines into job_logs.
-    if let Some(stdout) = stdout {
-        let mut reader = BufReader::new(stdout);
-        let mut line = String::new();
-        loop {
-            line.clear();
-            let n = reader.read_line(&mut line).await.unwrap_or(0);
-            if n == 0 {
-                break;
-            }
-            append_log(&pool, job_id, &mask_secrets(line.trim_end(), &masks)).await?;
-        }
+    if let Some(task) = stdout_task {
+        await_stdout_task(task).await?;
     }
 
     // Cleanup workspace unless CICD_RUNNER_KEEP_WORKSPACE=1.
@@ -249,12 +317,20 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
         let _ = tokio::fs::remove_dir_all(&workspace).await;
     }
 
-    let final_status = match exit_status {
-        Ok(status) if status.success() => "success",
-        Ok(_) => "failed",
-        Err(_) => "failed",
+    let (final_status, exit_code, error_tail) = match exit_status {
+        Ok(status) if status.success() => ("success", status.code(), None),
+        Ok(status) => (
+            "failed",
+            status.code(),
+            Some(format!("runner: process exited with status {status}")),
+        ),
+        Err(error) => (
+            "failed",
+            None,
+            Some(format!("runner: failed to wait for process: {error}")),
+        ),
     };
-    let _ = sqlx::query(
+    let updated = sqlx::query(
         "UPDATE jobs SET status = $2, finished_at = now() \
          WHERE id = $1 AND status NOT IN ('canceled')",
     )
@@ -263,7 +339,108 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
     .execute(&pool)
     .await
     .map_err(ApiError::internal)?;
+    if updated.rows_affected() == 0 {
+        mark_attempt_canceled(
+            &pool,
+            attempt_id,
+            "runner: job canceled before process result",
+        )
+        .await?;
+        refresh_stage(pool, job.id).await?;
+        return Ok(());
+    }
+    sqlx::query(
+        "UPDATE execution_attempts \
+         SET status = $2, finished_at = now(), exit_code = $3, error_tail = $4 \
+         WHERE id = $1 AND status NOT IN ('success','failed','canceled')",
+    )
+    .bind(attempt_id)
+    .bind(final_status)
+    .bind(exit_code)
+    .bind(error_tail)
+    .execute(&pool)
+    .await
+    .map_err(ApiError::internal)?;
     refresh_stage(pool, job.id).await?;
+    Ok(())
+}
+
+async fn mark_attempt_failed(
+    pool: &PgPool,
+    attempt_id: Uuid,
+    error_tail: &str,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE execution_attempts \
+         SET status = 'failed', finished_at = COALESCE(finished_at, now()), error_tail = $2 \
+         WHERE id = $1 AND status NOT IN ('success','failed','canceled')",
+    )
+    .bind(attempt_id)
+    .bind(error_tail)
+    .execute(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(())
+}
+
+async fn mark_attempt_canceled(
+    pool: &PgPool,
+    attempt_id: Uuid,
+    error_tail: &str,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE execution_attempts \
+         SET status = 'canceled', \
+             finished_at = COALESCE(finished_at, now()), \
+             error_tail = COALESCE(error_tail, $2) \
+         WHERE id = $1 AND status NOT IN ('success','failed','canceled')",
+    )
+    .bind(attempt_id)
+    .bind(error_tail)
+    .execute(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(())
+}
+
+fn truncate_error_tail(value: String) -> String {
+    const MAX_ERROR_TAIL_CHARS: usize = 1000;
+    value.chars().take(MAX_ERROR_TAIL_CHARS).collect()
+}
+
+async fn await_stdout_task(
+    task: tokio::task::JoinHandle<Result<(), ApiError>>,
+) -> Result<(), ApiError> {
+    task.await.map_err(|error| {
+        ApiError::internal(sqlx::Error::Protocol(format!(
+            "stdout reader task failed: {error}"
+        )))
+    })?
+}
+
+async fn stream_stdout_to_attempt(
+    pool: PgPool,
+    job_id: Uuid,
+    attempt_id: Uuid,
+    stdout: ChildStdout,
+    masks: Vec<String>,
+) -> Result<(), ApiError> {
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = reader.read_line(&mut line).await.unwrap_or(0);
+        if n == 0 {
+            break;
+        }
+        append_attempt_log(
+            &pool,
+            job_id,
+            attempt_id,
+            &mask_secrets(line.trim_end(), &masks),
+        )
+        .await?;
+    }
     Ok(())
 }
 
@@ -415,14 +592,19 @@ fn mask_secrets(line: &str, masks: &[String]) -> String {
 }
 
 async fn append_log(pool: &PgPool, job_id: Uuid, message: &str) -> Result<(), ApiError> {
-    let seq = crate::store::next_log_sequence(pool, job_id)
+    let attempt_id = crate::store::active_or_latest_attempt_id(pool, job_id)
         .await
         .map_err(ApiError::internal)?;
-    sqlx::query("INSERT INTO job_logs (job_id, sequence, message) VALUES ($1, $2, $3)")
-        .bind(job_id)
-        .bind(seq)
-        .bind(message)
-        .execute(pool)
+    append_attempt_log(pool, job_id, attempt_id, message).await
+}
+
+async fn append_attempt_log(
+    pool: &PgPool,
+    job_id: Uuid,
+    attempt_id: Uuid,
+    message: &str,
+) -> Result<(), ApiError> {
+    crate::store::append_job_log(pool, job_id, attempt_id, message)
         .await
         .map_err(ApiError::internal)?;
     Ok(())
@@ -448,6 +630,28 @@ async fn poll_and_dispatch(pool: &PgPool, running: RunningJobs) -> Result<(), sq
          WHERE status IN ('queued','running') AND stage_id IN \
          (SELECT id FROM stages WHERE pipeline_id IN \
           (SELECT id FROM pipelines WHERE status = 'canceled'))",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "UPDATE execution_attempts \
+         SET status = 'canceled', \
+             finished_at = COALESCE(finished_at, now()), \
+             error_tail = COALESCE(error_tail, 'pipeline canceled') \
+         WHERE status IN ('queued','running') \
+           AND job_id IN ( \
+             SELECT j.id FROM jobs j \
+             JOIN stages s ON s.id = j.stage_id \
+             JOIN pipelines p ON p.id = s.pipeline_id \
+             WHERE p.status = 'canceled' \
+           )",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "UPDATE stages SET status = 'canceled' \
+         WHERE status IN ('queued','running') \
+           AND pipeline_id IN (SELECT id FROM pipelines WHERE status = 'canceled')",
     )
     .execute(pool)
     .await?;

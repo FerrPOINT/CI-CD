@@ -303,6 +303,58 @@ paths:
                 $ref: '#/components/schemas/Artifact'
         '400':
           description: ''
+  /api/v1/jobs/{job_id}/attempts:
+    get:
+      tags:
+      - jobs
+      operationId: list_job_attempts
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/JobAttempt'
+        '404':
+          description: ''
+  /api/v1/jobs/{job_id}/attempts/{attempt_id}/logs:
+    get:
+      tags:
+      - jobs
+      operationId: list_attempt_logs
+      parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: attempt_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/JobLog'
+        '404':
+          description: ''
   /api/v1/jobs/{job_id}/logs:
     get:
       tags:
@@ -1783,6 +1835,11 @@ components:
       - size_bytes
       - created_at
       properties:
+        attempt_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
         content_type:
           type: string
         created_at:
@@ -2185,15 +2242,64 @@ components:
           format: date-time
         status:
           type: string
+    JobAttempt:
+      type: object
+      required:
+      - id
+      - job_id
+      - attempt_no
+      - status
+      - trigger
+      - created_at
+      properties:
+        attempt_no:
+          type: integer
+          format: int32
+        created_at:
+          type: string
+          format: date-time
+        error_tail:
+          type:
+          - string
+          - 'null'
+        exit_code:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        finished_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        job_id:
+          type: string
+          format: uuid
+        started_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        status:
+          type: string
+        trigger:
+          type: string
     JobLog:
       type: object
       required:
       - id
       - job_id
+      - attempt_id
       - sequence
       - message
       - created_at
       properties:
+        attempt_id:
+          type: string
+          format: uuid
         created_at:
           type: string
           format: date-time

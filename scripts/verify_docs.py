@@ -57,6 +57,9 @@ FORBIDDEN_STALE_STATUS = [
     (r"Outbox worker и runner API -- Target", "outbox worker is current MVP; only external runner API is target"),
     (r"Нет auth/RBAC: Spoofing на всех API", "auth/RBAC is conditional, not absent"),
     (r"Отсутствует rate limiting", "login rate limiting exists; broader rate limiting remains target"),
+    (r"retry отдельной job[^.\n]*удаляет[^.\n]*job_logs", "job retry now creates execution_attempts and preserves old logs"),
+    (r"retry отдельной job[^.\n]*очищает старые", "job retry now preserves previous attempt logs"),
+    (r"полноценной истории попыток ещё нет", "execution_attempts are current MVP"),
 ]
 
 problems: list[str] = []

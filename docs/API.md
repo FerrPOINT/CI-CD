@@ -445,9 +445,11 @@ curl -sS http://127.0.0.1:22801/api/v1/pipelines/$PIPELINE_ID
 |---|---|---|
 | POST | `/jobs/{job_id}/status` | Смена статуса задачи |
 | POST | `/jobs/{job_id}/start` | Старт manual job |
-| GET | `/jobs/{job_id}/logs` | Список логов задачи |
-| GET | `/jobs/{job_id}/logs/stream` | SSE stream логов |
-| POST | `/jobs/{job_id}/logs` | Добавление строки лога |
+| GET | `/jobs/{job_id}/attempts` | История execution attempts задачи |
+| GET | `/jobs/{job_id}/attempts/{attempt_id}/logs` | Логи конкретной attempt |
+| GET | `/jobs/{job_id}/logs` | Логи текущей или последней attempt задачи |
+| GET | `/jobs/{job_id}/logs/stream` | SSE stream логов текущей/последней attempt |
+| POST | `/jobs/{job_id}/logs` | Добавление строки лога в текущую/последнюю attempt |
 
 #### POST /api/v1/jobs/{job_id}/status
 
@@ -488,6 +490,7 @@ curl -sS http://127.0.0.1:22801/api/v1/pipelines/$PIPELINE_ID
 **Side effects:**
 - При `status = "running"`: `started_at = now()` (если ещё не проставлено для stage/pipeline).
 - При терминальном статусе (`success` / `failed` / `canceled`): `finished_at = now()`.
+- Одновременно обновляется open `execution_attempts` запись job; terminal attempt не переиспользуется.
 - Каскадная агрегация: `refresh_statuses()` обновляет `stages.status` и `pipelines.status` + timestamps.
 
 **Errors:**
@@ -516,9 +519,9 @@ curl -sS -X POST http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/status \
   -d '{"status":"failed"}'
 ```
 
-#### GET /api/v1/jobs/{job_id}/logs
+#### GET /api/v1/jobs/{job_id}/attempts
 
-Возвращает все логи задачи, отсортированные по `sequence`.
+Возвращает attempts задачи в порядке `attempt_no DESC`. Каждая попытка хранит собственные timestamps, terminal result и diagnostics.
 
 **Path params:**
 
@@ -530,8 +533,31 @@ curl -sS -X POST http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/status \
 ```json
 [
   {
+    "id": "attempt-uuid-2",
+    "job_id": "job-uuid-1",
+    "attempt_no": 2,
+    "status": "queued",
+    "trigger": "job_retry",
+    "exit_code": null,
+    "error_tail": null,
+    "created_at": "2026-08-31T10:00:00Z",
+    "started_at": null,
+    "finished_at": null
+  }
+]
+```
+
+#### GET /api/v1/jobs/{job_id}/attempts/{attempt_id}/logs
+
+Возвращает логи конкретной attempt, отсортированные по `sequence`. Если attempt не принадлежит job, возвращается `404`.
+
+**Response 200:**
+```json
+[
+  {
     "id": 1,
     "job_id": "job-uuid-1",
+    "attempt_id": "attempt-uuid-1",
     "sequence": 1,
     "message": "Starting checkout...",
     "created_at": "2026-08-26T10:06:01Z"
@@ -539,6 +565,7 @@ curl -sS -X POST http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/status \
   {
     "id": 2,
     "job_id": "job-uuid-1",
+    "attempt_id": "attempt-uuid-1",
     "sequence": 2,
     "message": "Fetching remotes",
     "created_at": "2026-08-26T10:06:02Z"
@@ -552,12 +579,22 @@ curl -sS -X POST http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/status \
 
 **curl:**
 ```bash
+curl -sS http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/attempts
+curl -sS http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/attempts/$ATTEMPT_ID/logs
+```
+
+#### GET /api/v1/jobs/{job_id}/logs
+
+Совместимый shortcut: возвращает логи текущей open attempt (`queued`/`running`), а если open attempt нет — последней по `attempt_no`. Для полного retry history используйте endpoint-ы attempts выше.
+
+**curl:**
+```bash
 curl -sS http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/logs
 ```
 
 #### GET /api/v1/jobs/{job_id}/logs/stream
 
-Возвращает `text/event-stream`: сначала существующие строки с `sequence > after`, затем новые строки при polling backend. Query param `after` опционален; default `-1`. При terminal status отправляется event `done`.
+Возвращает `text/event-stream` для текущей/последней attempt: сначала существующие строки с `sequence > after`, затем новые строки при polling backend. Query param `after` опционален; default `-1`. При terminal status job отправляется event `done`.
 
 **curl:**
 ```bash
@@ -566,7 +603,7 @@ curl -N 'http://127.0.0.1:22801/api/v1/jobs/'"$JOB_ID"'/logs/stream?after=0'
 
 #### POST /api/v1/jobs/{job_id}/logs
 
-Добавляет строку лога. `sequence` вычисляется сервером: `COALESCE(MAX(sequence), 0) + 1`.
+Добавляет строку лога в текущую open attempt, а если её нет — в последнюю attempt. `sequence` вычисляется сервером внутри attempt под advisory lock, поэтому конкурирующие append-запросы получают монотонные номера.
 
 **Path params:**
 
@@ -590,6 +627,7 @@ curl -N 'http://127.0.0.1:22801/api/v1/jobs/'"$JOB_ID"'/logs/stream?after=0'
 {
   "id": 3,
   "job_id": "job-uuid-1",
+  "attempt_id": "attempt-uuid-2",
   "sequence": 3,
   "message": "Build completed successfully",
   "created_at": "2026-08-26T10:06:03Z"
@@ -599,7 +637,7 @@ curl -N 'http://127.0.0.1:22801/api/v1/jobs/'"$JOB_ID"'/logs/stream?after=0'
 **Errors:**
 - `400` — `message` пустое.
 - `503` — БД недоступна.
-- `500` — ошибка БД (включая нарушение UNIQUE(job_id, sequence) при гонке).
+- `500` — ошибка БД.
 
 **curl:**
 ```bash
@@ -685,9 +723,23 @@ curl -sS -X POST http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/logs \
 |---|---|---|
 | `id` | integer | BIGSERIAL PK |
 | `job_id` | UUID | FK → jobs |
-| `sequence` | integer | Порядковый номер |
+| `attempt_id` | UUID | FK → execution_attempts |
+| `sequence` | integer | Порядковый номер внутри attempt |
 | `message` | string | Текст лога |
 | `created_at` | datetime | Время записи |
+
+### JobAttempt
+
+| Поле | Тип | Описание |
+|---|---|---|
+| `id` | UUID | PK |
+| `job_id` | UUID | FK → jobs |
+| `attempt_no` | integer | Номер попытки внутри job |
+| `status` | JobStatus | Текущий или terminal status attempt |
+| `trigger` | string | `initial`, `job_retry`, `pipeline_retry`, `runner`, `manual_status`, `compat` |
+| `exit_code` | integer/null | Код процесса embedded runner, если известен |
+| `error_tail` | string/null | Краткая terminal diagnostics |
+| `created_at` / `started_at` / `finished_at` | datetime/null | Timestamps attempt |
 
 ---
 
@@ -710,6 +762,8 @@ cicd-cli job start --id <uuid>     # POST status=running
 cicd-cli job pass --id <uuid>      # POST status=success
 cicd-cli job fail --id <uuid>      # POST status=failed
 cicd-cli job logs --id <uuid>      # GET logs
+cicd-cli job attempts --id <uuid>  # GET attempts
+cicd-cli job logs --id <uuid> --attempt <attempt-uuid>
 cicd-cli job log --id <uuid> --message "..."  # POST log
 ```
 
@@ -861,12 +915,12 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 
 | Метод | Путь | Body | Результат |
 |---|---|---|---|
-| POST | `/pipelines/{pipeline_id}/cancel` | — | Каскадно отменяет нетерминальные stages/jobs и возвращает `{"canceled":"<uuid>"}` |
-| POST | `/pipelines/{pipeline_id}/retry` | — | Сбрасывает failed/canceled pipeline в queued и возвращает `{"retried":"<uuid>"}` |
-| POST | `/jobs/{job_id}/retry` | — | Сбрасывает terminal job в новый execution path согласно текущему pipeline |
+| POST | `/pipelines/{pipeline_id}/cancel` | — | Каскадно отменяет нетерминальные stages/jobs, закрывает открытые execution attempts как `canceled` и возвращает `{"canceled":"<uuid>"}` |
+| POST | `/pipelines/{pipeline_id}/retry` | — | Сбрасывает failed/canceled pipeline в queued, создаёт новые attempts для affected jobs и возвращает `{"retried":"<uuid>"}` |
+| POST | `/jobs/{job_id}/retry` | — | Сбрасывает terminal job в queued и создаёт новую `execution_attempt` без удаления старых логов |
 | POST | `/jobs/{job_id}/start` | — | Стартует manual job и возвращает `{"started":true}` |
 
-Current limitation: `POST /jobs/{job_id}/retry` переиспользует запись job и удаляет её старые `job_logs`; полноценная история retry появится вместе с `execution_attempts`.
+История попыток хранится в `execution_attempts`. Логическая запись `jobs` остаётся текущей проекцией для pipeline/stage aggregation, а terminal evidence каждой попытки читается через `/jobs/{job_id}/attempts` и `/jobs/{job_id}/attempts/{attempt_id}/logs`.
 
 Ошибки: `404` — ресурс не найден; `400/409` — недопустимая операция/состояние; `503` — БД недоступна.
 
@@ -934,6 +988,8 @@ Git Smart HTTP проверяет `CICD_GIT_TOKEN`, если он задан. П
 | `/api/v1/health` | Health |
 | `/api/v1/internal/git-push` | Git hooks |
 | `/api/v1/jobs/{job_id}/artifacts` | Artifacts |
+| `/api/v1/jobs/{job_id}/attempts` | Jobs |
+| `/api/v1/jobs/{job_id}/attempts/{attempt_id}/logs` | Jobs |
 | `/api/v1/jobs/{job_id}/logs` | Jobs |
 | `/api/v1/jobs/{job_id}/logs/stream` | Jobs |
 | `/api/v1/jobs/{job_id}/retry` | Jobs |

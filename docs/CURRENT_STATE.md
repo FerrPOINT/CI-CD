@@ -10,9 +10,10 @@
 | Проекты CRUD | ✅ | name/repository_url/default_branch; удаление CASCADE |
 | Git hosting (bare + Smart HTTP) | ✅ | public/private fetch ACL, optional token-protected push, code tree/blob, tags/releases; push → post-receive → pipeline |
 | Pipeline/стадии/джобы | ✅ | `.forge-ci.yml` (stages/jobs/image/command) или fallback-шаблон; отмена/повтор в текущей job-модели |
-| Embedded runner | ✅ | Docker (`forge-job-<id>`) или host shell; стриминг stdout → `job_logs`; cancel через PID-map |
-| Логи | ✅ | append-only, sequence, REST polling и SSE stream; пока без attempt-owned history |
-| Артефакты | ✅ | upload/download ≤50 MiB, локальный `CICD_ARTIFACTS_DIR` |
+| Embedded runner | ✅ | Docker (`forge-job-<id>`) или host shell; стриминг stdout → attempt-owned `job_logs`; cancel через PID-map |
+| Execution attempts | ✅ MVP | `execution_attempts` создаются для каждой job; retry job/pipeline создаёт новую attempt и не удаляет старые логи |
+| Логи | ✅ | append-only внутри attempt, sequence per attempt, REST polling и SSE stream текущей/последней attempt |
+| Артефакты | ✅ | upload/download ≤50 MiB, локальный `CICD_ARTIFACTS_DIR`; новые metadata привязаны к active/latest attempt |
 | Секреты проектов | ✅ | AES-256-GCM at rest; значение не возвращается API |
 | Environments/deployments | ✅ | metadata + history |
 | Reports | ✅ | агрегаты success rate/duration |
@@ -31,7 +32,7 @@
 
 ## Не реализовано (Target approved — см. ADR + contracts)
 
-Execution attempts и retry history (сейчас `retry_job` очищает старые `job_logs`), runner protocol/leases/dispatch (внешний runner, ADR-0007), idempotency keys, S3 artifacts, backup scripts, notifications sender/SSE delivery, project-membership RBAC, production session policy, full cron semantics, delivery history/replay/dead letters, per-IP rate limiting (сейчас per-process окно).
+Runner protocol/leases/dispatch (внешний runner, ADR-0007), immutable pipeline plan/DAG, idempotency keys, S3 artifacts, backup scripts, notifications sender/SSE delivery, project-membership RBAC, production session policy, full cron semantics, delivery history/replay/dead letters, log pagination/search и per-IP rate limiting (сейчас per-process окно).
 
 ## Текущее runtime-дерево backend
 
@@ -48,7 +49,7 @@ backend/
 │   ├── authz.rs        # role-политики роутов (AUTHZ_CONTRACT)
 │   ├── rate_limit.rs   # login rate limiting
 │   ├── metrics.rs      # /metrics Prometheus exposition
-│   ├── migrations/     # versioned SQLx migrations (ADR-0008, applied at startup + cicd-migrate)
+│   ├── migrations/     # versioned SQLx migrations incl. 0007 execution_attempts
 │   └── domain.rs       # re-export shim → cicd-domain
 ├── domain/             # cicd-domain: чистые типы + JobStatus
 ├── cli/                # cicd-cli: HTTP-only (project/pipeline/job)
@@ -63,7 +64,7 @@ backend/
 - PostgreSQL в compose опубликован только на `127.0.0.1`, но API/Dashboard host ports нельзя открывать в недоверенную сеть.
 - Токен `CICD_GIT_INTERNAL_TOKEN` обязателен к смене для shared-деплоя.
 - Auth/RBAC пока глобальный: нет project membership, tenant isolation, scoped PAT и production-grade session/logout policy.
-- Retry job переиспользует текущую запись job и очищает её старые логи; полноценные `execution_attempts` остаются обязательным target baseline.
+- Execution attempts — MVP-слой без внешних leases/fencing: old `/jobs/{id}/logs` читает текущую или последнюю attempt, а полный аудит попыток доступен через `/jobs/{id}/attempts`.
 - Scheduler/outbox — MVP: нет точной cron-семантики, delivery history, audited replay/dead letters и notification/SSE sender.
 
 ## Верификационные команды

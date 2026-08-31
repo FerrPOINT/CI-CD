@@ -123,7 +123,7 @@ Composition root: чтение конфига, создание `PgPool`, реп
 | `CICD_GIT_INTERNAL_TOKEN` | токен post-receive → pipeline hook |
 | `CICD_SECRETS_KEY` | base64 32-byte ключ AES-256-GCM |
 | `CICD_ARTIFACTS_DIR` | локальное хранилище артефактов |
-| `CICD_RUNNER_MODE` | `docker` (default) / `host` |
+| `CICD_RUNNER_MODE` | `host` в local compose; `docker`/`host` в backend binary |
 | `CICD_RUNNER_KEEP_WORKSPACE` | `1` — не удалять workspace джоба |
 
 Целевая модель — typed config (группы Database/Http/Git/Artifacts/Runner/Auth) по образцу task-tracker; сейчас — прямое чтение env.
@@ -140,11 +140,11 @@ Bare-репозитории в `CICD_GIT_ROOT`, Smart HTTP (`/git/<name>.git`), 
 
 ### 6.3 Embedded runner
 
-Supervisor-полл queued-джобов, атомарный claim (`queued → running`), клонирование репо в workspace, выполнение в Docker (имя контейнера `forge-job-<id>`, volume workspace) или host shell, построчный стриминг stdout в `job_logs`, kill-on-cancel через PID-map, cleanup workspace (кроме `CICD_RUNNER_KEEP_WORKSPACE=1`).
+Supervisor-полл queued-джобов, атомарный claim (`queued → running`), создание/обновление active `execution_attempt`, клонирование репо в workspace, выполнение в Docker (имя контейнера `forge-job-<id>`, volume workspace) или host shell, построчный стриминг stdout в attempt-owned `job_logs`, kill-on-cancel через PID-map, cleanup workspace (кроме `CICD_RUNNER_KEEP_WORKSPACE=1`).
 
 ### 6.4 Платформенные ресурсы (MVP)
 
-Runners (registry + heartbeat), secrets (AES-256-GCM at rest + embedded env injection/masking), artifacts (upload/download + локальное хранилище, 50 MiB лимит), environments/deployments, schedules MVP (enabled rows проверяются worker-ом примерно раз в минуту), outgoing webhooks MVP (terminal pipeline events через outbox/basic retry/HMAC), notifications config, reports (агрегаты success rate/duration), audit log (последние 200 событий), users/roles, argon2id credentials, sessions и PAT enforcement при `CICD_AUTH_SECRET`.
+Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-256-GCM at rest + embedded env injection/masking), artifacts (upload/download + локальное хранилище, 50 MiB лимит), environments/deployments, schedules MVP (enabled rows проверяются worker-ом примерно раз в минуту), outgoing webhooks MVP (terminal pipeline events через outbox/basic retry/HMAC), notifications config, reports (агрегаты success rate/duration), audit log (последние 200 событий), users/roles, argon2id credentials, sessions и PAT enforcement при `CICD_AUTH_SECRET`.
 
 ## 7. Frontend архитектура
 

@@ -27,7 +27,9 @@ services:
       CICD_GIT_INTERNAL_TOKEN: ${CICD_GIT_INTERNAL_TOKEN:-forge-internal-dev-token}
       CICD_SECRETS_KEY: ${CICD_SECRETS_KEY:-}
       CICD_ARTIFACTS_DIR: /var/lib/forge/artifacts
-      CICD_RUNNER_MODE: ${CICD_RUNNER_MODE:-docker}
+      # Local compose runs the embedded runner inside the backend container.
+      # Set docker only when a Docker executor/socket setup is wired deliberately.
+      CICD_RUNNER_MODE: ${CICD_RUNNER_MODE:-host}
       CICD_AUTH_SECRET: ${CICD_AUTH_SECRET:-}
       RUST_LOG: info
     ports:

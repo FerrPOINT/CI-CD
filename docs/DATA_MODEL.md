@@ -7,14 +7,14 @@
 ### ER-диаграмма (логическая)
 
 ```
-projects (1) ──── (N) pipelines (1) ──── (N) stages (1) ──── (N) jobs (1) ──── (N) job_logs
+projects (1) ──── (N) pipelines (1) ──── (N) stages (1) ──── (N) jobs (1) ──── (N) execution_attempts (1) ──── (N) job_logs
    │                    │                    │                    │
    │ UUID PK            │ UUID PK            │ UUID PK            │ UUID PK
    │ name UNIQUE        │ project_id FK      │ pipeline_id FK     │ stage_id FK
    │                    │ status CHECK       │ position UNIQUE    │ status CHECK
    │                    │                    │ status CHECK       │
    │                    │                    │                    │ BIGSERIAL PK
-   └── CASCADE          └── CASCADE          └── CASCADE          └── CASCADE
+   └── CASCADE          └── CASCADE          └── CASCADE          └── CASCADE             └── CASCADE
 
 repositories (1) ──── (N) pull_requests (по repository_name)
    │
@@ -216,8 +216,7 @@ Referenced by:
 **Индексы:**
 - `stages_pkey` — PRIMARY KEY (id)
 - `stages_pipeline_id_position_key` — UNIQUE (pipeline_id, position)
-
-> **TODO:** добавить индекс `idx_stages_pipeline_id` на `pipeline_id` (для `pipeline_detail`).
+- `idx_stages_pipeline_id` — lookup stages внутри pipeline для `pipeline_detail`.
 
 **FK:** `pipeline_id` → `pipelines(id)` ON DELETE CASCADE.
 
@@ -254,6 +253,8 @@ Foreign-key constraints:
     "jobs_stage_id_fkey" FOREIGN KEY (stage_id)
         REFERENCES stages(id) ON DELETE CASCADE
 Referenced by:
+    TABLE "execution_attempts" CONSTRAINT execution_attempts_job_id_fkey
+        FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
     TABLE "job_logs" CONSTRAINT job_logs_job_id_fkey
         FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
 ```
@@ -280,18 +281,58 @@ Referenced by:
 **Индексы:**
 - `jobs_pkey` — PRIMARY KEY (id)
 - `jobs_stage_id_position_key` — UNIQUE (stage_id, position)
-
-> **TODO:** добавить индекс `idx_jobs_stage_id` на `stage_id` (для `pipeline_detail`).
+- `idx_jobs_stage_id` — lookup jobs внутри stage для `pipeline_detail`.
 
 **FK:** `stage_id` → `stages(id)` ON DELETE CASCADE.
 
-**Referenced by:** `job_logs.job_id` → `jobs(id)` ON DELETE CASCADE.
+**Referenced by:** `execution_attempts.job_id` и совместимый `job_logs.job_id` → `jobs(id)` ON DELETE CASCADE.
 
 ---
 
-## 5. job_logs
+## 5. execution_attempts
 
-Append-only логи выполнения задач. В current-модели логи принадлежат `job_id`; `retry_job` удаляет старые строки этого job до повторного выполнения. Target `execution_attempts` переносит ownership логов на attempt и сохраняет историю retry.
+Неизменяемая история запусков логической job. Каждая job получает `attempt_no = 1` при создании pipeline; retry job/pipeline добавляет новую attempt и не удаляет логи предыдущих attempts.
+
+```
+                       Table "public.execution_attempts"
+    Column     |           Type           | Nullable |      Default
+---------------+--------------------------+----------+-------------------
+ id            | uuid                     | not null |
+ job_id        | uuid                     | not null |
+ attempt_no    | integer                  | not null |
+ status        | text                     | not null |
+ trigger       | text                     | not null | 'initial'
+ exit_code     | integer                  |          |
+ error_tail    | text                     |          |
+ created_at    | timestamp with time zone | not null | now()
+ started_at    | timestamp with time zone |          |
+ finished_at   | timestamp with time zone |          |
+Indexes:
+    "execution_attempts_pkey" PRIMARY KEY, btree (id)
+    "execution_attempts_job_id_attempt_no_key" UNIQUE CONSTRAINT, btree (job_id, attempt_no)
+    "idx_execution_attempts_job" btree (job_id, attempt_no DESC)
+    "idx_execution_attempts_active_job" UNIQUE, btree (job_id) WHERE status IN ('queued','running')
+Foreign-key constraints:
+    "execution_attempts_job_id_fkey" FOREIGN KEY (job_id)
+        REFERENCES jobs(id) ON DELETE CASCADE
+```
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | UUID | NOT NULL | — | Первичный ключ |
+| `job_id` | UUID | NOT NULL | — | FK → `jobs.id`, CASCADE |
+| `attempt_no` | INTEGER | NOT NULL | — | Номер попытки внутри job, начиная с 1 |
+| `status` | TEXT | NOT NULL | — | `queued` / `running` / `success` / `failed` / `canceled` |
+| `trigger` | TEXT | NOT NULL | `'initial'` | Источник попытки: `initial`, `job_retry`, `pipeline_retry`, `runner`, `manual_status`, `compat` |
+| `exit_code` | INTEGER | NULL | — | Код завершения процесса embedded runner, если известен |
+| `error_tail` | TEXT | NULL | — | Краткий terminal diagnostic для failed/timeout |
+| `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | Время создания attempt |
+| `started_at` | TIMESTAMPTZ | NULL | — | Время перехода attempt в `running` |
+| `finished_at` | TIMESTAMPTZ | NULL | — | Время terminal result |
+
+## 6. job_logs
+
+Append-only логи выполнения задач. Логи принадлежат `attempt_id`, а `job_id` сохранён как совместимый lookup. `GET /jobs/{job_id}/logs` возвращает текущую или последнюю attempt; полный retry history читается через `/jobs/{job_id}/attempts/{attempt_id}/logs`.
 
 ```
                        Table "public.job_logs"
@@ -299,38 +340,42 @@ Append-only логи выполнения задач. В current-модели л
 --------------+--------------------------+----------+-------------------
  id           | bigint                   | not null | nextval(...)
  job_id       | uuid                     | not null |
+ attempt_id   | uuid                     | not null |
  sequence     | integer                  | not null |
  message      | text                     | not null |
  created_at   | timestamp with time zone | not null | now()
 Indexes:
     "job_logs_pkey" PRIMARY KEY, btree (id)
-    "job_logs_job_id_sequence_key" UNIQUE CONSTRAINT, btree (job_id, sequence)
+    "idx_job_logs_attempt_sequence" UNIQUE, btree (attempt_id, sequence)
+    "idx_job_logs_job_id" btree (job_id)
 Foreign-key constraints:
     "job_logs_job_id_fkey" FOREIGN KEY (job_id)
         REFERENCES jobs(id) ON DELETE CASCADE
+    "job_logs_attempt_id_fkey" FOREIGN KEY (attempt_id)
+        REFERENCES execution_attempts(id) ON DELETE CASCADE
 ```
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
 | `id` | BIGSERIAL | NOT NULL | `nextval(...)` | Автоинкрементный PK |
 | `job_id` | UUID | NOT NULL | — | FK → `jobs.id`, CASCADE |
-| `sequence` | INTEGER | NOT NULL | — | Порядковый номер лога в рамках job (вычисляется `next_log_sequence()`) |
+| `attempt_id` | UUID | NOT NULL | — | FK → `execution_attempts.id`, CASCADE |
+| `sequence` | INTEGER | NOT NULL | — | Порядковый номер лога в рамках attempt |
 | `message` | TEXT | NOT NULL | — | Текстовая строка лога |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | Время записи |
 
-**UNIQUE constraint:** `(job_id, sequence)` — последовательность уникальна в рамках job.
+**UNIQUE constraint:** `(attempt_id, sequence)` — последовательность уникальна в рамках attempt. Application append сериализуется advisory lock-ом по `attempt_id`.
 
 **Индексы:**
 - `job_logs_pkey` — PRIMARY KEY (id)
-- `job_logs_job_id_sequence_key` — UNIQUE (job_id, sequence)
+- `idx_job_logs_attempt_sequence` — UNIQUE (attempt_id, sequence)
+- `idx_job_logs_job_id` — lookup по job для совместимых API.
 
-> **TODO:** добавить индекс `idx_job_logs_job_id` на `job_id` (для `list_logs`).
-
-**FK:** `job_id` → `jobs(id)` ON DELETE CASCADE.
+**FK:** `job_id` → `jobs(id)` ON DELETE CASCADE; `attempt_id` → `execution_attempts(id)` ON DELETE CASCADE.
 
 ---
 
-## 6. Status state machine
+## 7. Status state machine
 
 Все статусные таблицы (`pipelines`, `stages`, `jobs`) используют один набор значений:
 
@@ -371,7 +416,7 @@ Foreign-key constraints:
 
 ---
 
-## 7. Template pipeline
+## 8. Template pipeline
 
 При триггере пайплайна (`POST /projects/{id}/pipelines`) backend сначала пытается прочитать `.forge-ci.yml` из локального bare repository на указанном ref. Если файл недоступен или проект указывает внешний URL, используется fallback из 3 стадий с одной задачей в каждой:
 
@@ -385,11 +430,11 @@ Foreign-key constraints:
 
 ---
 
-## 8. Platform tables (MVP)
+## 9. Platform tables (MVP)
 
 Platform tables создаются и расширяются через `backend/migrations/*.sql`; `0001_bootstrap_v1.sql` содержит исторический baseline, последующие файлы добавляют auth, outbox и execution gaps.
 
-### 8.1 runners
+### 9.1 runners
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -400,7 +445,7 @@ Platform tables создаются и расширяются через `backend
 | `last_seen_at` | TIMESTAMPTZ | NULL | — | Последний heartbeat |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | Время регистрации |
 
-### 8.2 project_secrets
+### 9.2 project_secrets
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -413,12 +458,13 @@ Platform tables создаются и расширяются через `backend
 
 > `UNIQUE(project_id, key)`. Ключ шифрования — `CICD_SECRETS_KEY` (base64 32 bytes). Значения не возвращаются через API.
 
-### 8.3 artifacts
+### 9.3 artifacts
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
 | `id` | UUID | NOT NULL | — | PK |
 | `job_id` | UUID | NOT NULL | — | FK → `jobs(id)` CASCADE |
+| `attempt_id` | UUID | NULL | — | FK → `execution_attempts(id)` SET NULL; новые uploads привязаны к active/latest attempt |
 | `name` | TEXT | NOT NULL | — | Имя файла |
 | `storage_path` | TEXT | NOT NULL | — | Путь в локальной ФС |
 | `content_type` | TEXT | NOT NULL | `'application/octet-stream'` | MIME |
@@ -427,7 +473,7 @@ Platform tables создаются и расширяются через `backend
 
 > Хранилище: `CICD_ARTIFACTS_DIR` (default `/var/lib/forge/artifacts`). Лимит — 50 MiB.
 
-### 8.4 environments
+### 9.4 environments
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -438,7 +484,7 @@ Platform tables создаются и расширяются через `backend
 | `status` | TEXT | NOT NULL | `'available'` | CHECK: `available`, `stopped`, `degraded` |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
 
-### 8.5 deployments
+### 9.5 deployments
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -449,7 +495,7 @@ Platform tables создаются и расширяются через `backend
 | `status` | TEXT | NOT NULL | `'pending'` | CHECK: `pending`, `running`, `success`, `failed` |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
 
-### 8.6 schedules
+### 9.6 schedules
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -464,7 +510,7 @@ Platform tables создаются и расширяются через `backend
 
 Текущий scheduler проверяет enabled rows примерно раз в минуту. `cron` валидируется как пять полей и хранится, но full cron semantics остаётся target.
 
-### 8.7 webhooks
+### 9.7 webhooks
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -478,7 +524,7 @@ Platform tables создаются и расширяются через `backend
 
 Outgoing delivery создаёт `outbox_messages` на terminal pipeline events. Delivery history/replay/dead letters — target.
 
-### 8.8 notification_configs
+### 9.8 notification_configs
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -489,7 +535,7 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 | `enabled` | BOOLEAN | NOT NULL | `TRUE` | — |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
 
-### 8.9 audit_log
+### 9.9 audit_log
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -502,7 +548,7 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 
 > Append-only. GET `/audit-log` возвращает последние 200 событий.
 
-### 8.10 users
+### 9.10 users
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -514,7 +560,7 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 
 > Пароли хранятся отдельно в `user_credentials`; роли применяются middleware только при `CICD_AUTH_SECRET`.
 
-### 8.11 api_tokens
+### 9.11 api_tokens
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -529,7 +575,7 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 
 > Полное значение возвращается только при создании. PAT проверяется как Bearer token при включённом `CICD_AUTH_SECRET`.
 
-### 8.12 user_credentials
+### 9.12 user_credentials
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -537,7 +583,7 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 | `password_hash` | TEXT | нет | — | `argon2id` hash |
 | `updated_at` | TIMESTAMPTZ | нет | `now()` | Последнее изменение credential |
 
-### 8.13 sessions
+### 9.13 sessions
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -548,7 +594,7 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 | `expires_at` | TIMESTAMPTZ | нет | — | Истекает |
 | `revoked_at` | TIMESTAMPTZ | да | — | Отозвана |
 
-### 8.14 domain_events
+### 9.14 domain_events
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -561,7 +607,7 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 | `correlation_id` | UUID | да | — | Correlation |
 | `causation_id` | UUID | да | — | Causation |
 
-### 8.15 outbox_messages
+### 9.15 outbox_messages
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -577,7 +623,7 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 | `last_error` | TEXT | да | — | Последняя ошибка |
 | `created_at` | TIMESTAMPTZ | нет | `now()` | Создано |
 
-### 8.16 Индексы
+### 9.16 Индексы
 
 ```
 idx_runners_status          ON runners(status)
@@ -588,6 +634,13 @@ idx_schedules_project        ON schedules(project_id)
 idx_webhooks_project         ON webhooks(project_id)
 idx_audit_log_created        ON audit_log(created_at DESC)
 idx_pipelines_project_id     ON pipelines(project_id)
+idx_stages_pipeline_id       ON stages(pipeline_id)
+idx_jobs_stage_id            ON jobs(stage_id)
+idx_execution_attempts_job   ON execution_attempts(job_id, attempt_no DESC)
+idx_execution_attempts_active_job ON execution_attempts(job_id) WHERE status IN ('queued','running')
+idx_job_logs_attempt_sequence ON job_logs(attempt_id, sequence)
+idx_job_logs_job_id          ON job_logs(job_id)
+idx_artifacts_attempt        ON artifacts(attempt_id)
 idx_sessions_user            ON sessions(user_id)
 idx_sessions_expires         ON sessions(expires_at)
 idx_domain_events_aggregate  ON domain_events(aggregate_type, aggregate_id, occurred_at DESC)
@@ -595,11 +648,11 @@ idx_domain_events_type       ON domain_events(event_type, occurred_at DESC)
 idx_outbox_pending           ON outbox_messages(next_attempt_at) WHERE delivered_at IS NULL
 ```
 
-## 9. Планируемые таблицы (Roadmap)
+## 10. Планируемые таблицы (Roadmap)
 
 | Фаза | Таблицы | Назначение |
 |---|---|---|
-| Runner protocol | `job_leases`, `execution_attempts` | External dispatch, fencing, retries |
+| Runner protocol | `job_leases` | External dispatch, fencing, retries |
 | Production outbox | `outbox_deliveries` | Delivery history, replay/dead letters, observed outcome |
 | Notifications/SSE | delivery-specific tables | Email/Slack/SSE sender state |
 
