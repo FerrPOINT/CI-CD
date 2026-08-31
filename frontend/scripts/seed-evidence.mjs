@@ -5,8 +5,12 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const API = 'http://127.0.0.1:22801/api/v1'
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
+const demoRunnerNames = new Set(['docker-runner-01', 'shell-runner-02'])
+const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 async function api(method, path, body) {
   const res = await fetch(`${API}${path}`, {
@@ -21,6 +25,37 @@ async function api(method, path, body) {
 
 function git(cwd, ...args) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' })
+}
+
+function pruneEvidenceAudit(resourceIds) {
+  const ids = [...resourceIds].filter(id => uuidRe.test(id))
+  if (ids.length === 0) return
+
+  const sql = `DELETE FROM audit_log WHERE resource_id IN (${ids.map(id => `'${id}'::uuid`).join(',')});`
+  execFileSync('docker', [
+    'compose',
+    'exec',
+    '-T',
+    'postgres',
+    'sh',
+    '-lc',
+    `psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -c "${sql}"`,
+  ], { cwd: ROOT })
+}
+
+async function collectSecretIds(projects) {
+  const ids = new Set()
+  for (const project of projects) {
+    const secrets = await api('GET', `/projects/${project.id}/secrets`)
+    for (const secret of secrets) ids.add(secret.id)
+  }
+  return ids
+}
+
+async function deleteDemoRunners(runners) {
+  for (const runner of runners) {
+    await api('DELETE', `/runners/${runner.id}`)
+  }
 }
 
 async function seedRepository(name, commits, branches = {}) {
@@ -81,9 +116,17 @@ const FORGE_CI = `stages:
 async function main() {
   // Clean previous demo data by deleting demo projects (cascades pipelines)
   const projects = await api('GET', '/projects')
-  for (const p of projects.filter(p => p.name.startsWith('forge-demo-'))) {
+  const demoProjects = projects.filter(p => p.name.startsWith('forge-demo-'))
+  const existingRunners = await api('GET', '/runners')
+  const demoRunners = existingRunners.filter(r => demoRunnerNames.has(r.name))
+  const oldAuditResourceIds = await collectSecretIds(demoProjects)
+  for (const runner of demoRunners) oldAuditResourceIds.add(runner.id)
+
+  for (const p of demoProjects) {
     await api('DELETE', `/projects/${p.id}`)
   }
+  await deleteDemoRunners(demoRunners)
+  pruneEvidenceAudit(oldAuditResourceIds)
 
   // Repositories with real content
   await seedRepository('platform-core', [

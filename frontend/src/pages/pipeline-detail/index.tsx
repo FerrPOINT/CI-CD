@@ -41,16 +41,16 @@ export function PipelineDetailPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       <div>
-        <div className="flex items-center gap-2 text-sm text-text-muted">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-text-muted">
           <Link to="/projects" className="hover:text-text-primary">{t('navigation.projects')}</Link>
           <ChevronRight className="h-3 w-3" />
           <Link to={`/projects/${pipeline.project_id}/pipelines`} className="hover:text-text-primary">{t('navigation.pipelines')}</Link>
           <ChevronRight className="h-3 w-3" />
           <span>#{pipeline.id.slice(0, 8)}</span>
         </div>
-        <div className="mt-2 flex items-center gap-3">
+        <div className="mt-2 flex min-w-0 flex-wrap items-center gap-3">
           <h1 className="text-2xl font-bold">#{pipeline.id.slice(0, 8)}</h1>
           {(pipeline.status === 'queued' || pipeline.status === 'running') && (
             <Button size="sm" variant="ghost" className="h-8 gap-1 text-danger hover:text-danger" disabled={cancelPipeline.isPending} onClick={() => cancelPipeline.mutate(pipeline.id)}>
@@ -67,29 +67,29 @@ export function PipelineDetailPage() {
         </div>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid min-w-0 gap-4 lg:grid-cols-3">
         {stages.map(stage => (
-          <Card key={stage.id} className="p-4">
-            <div className="flex items-center justify-between border-b border-border pb-3">
+          <Card key={stage.id} className="min-w-0 p-4">
+            <div className="flex items-center justify-between gap-3 border-b border-border pb-3">
               <h3 className="text-sm font-semibold uppercase tracking-wide">{stage.name}</h3>
               <span className={`h-2.5 w-2.5 rounded-full ${statusColors[stage.status]}`} />
             </div>
             <div className="mt-3 space-y-3">
               {stage.jobs.map(job => (
-                <div key={job.id} className="rounded-md border border-border p-3">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+                <div key={job.id} className="min-w-0 rounded-md border border-border p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
                       <span className={`h-2 w-2 rounded-full ${statusColors[job.status]}`} />
-                      <span className="text-sm font-medium">{job.name}</span>
+                      <span className="break-words text-sm font-medium">{job.name}</span>
                     </div>
                     <span className="text-xs text-text-muted">{t(`pipelines.${job.status}`)}</span>
                   </div>
-                  <p className="mt-2 text-xs text-text-muted">
+                  <p className="mt-2 min-w-0 break-words text-xs text-text-muted">
                     <code className="rounded bg-surface-raised px-1 py-0.5">{job.image}</code>
                     <span className="mx-1">·</span>
-                    <code>{job.command}</code>
+                    <code className="break-all">{job.command}</code>
                   </p>
-                  <div className="mt-3 flex items-center gap-1.5">
+                  <div className="mt-3 flex flex-wrap items-center gap-1.5">
                     {job.status === 'queued' && (
                       <Button size="sm" variant="outline" onClick={() => handleStatus(job.id, 'running')}>
                         <Play className="h-3 w-3" /> {t('jobs.start')}
