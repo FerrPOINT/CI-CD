@@ -33,7 +33,7 @@ Forge CI/CD является multi-tenant control plane: один экземпл
 
 | Область | Реализовано сейчас | Риск / дефицит |
 |---|---|---|
-| HTTP API | Conditional auth middleware: без непустого `CICD_AUTH_SECRET` trusted-network/open; с секретом работают JWT/PAT, refresh logout/revoke, route-role checks и project membership enforcement для project-owned API | Нет production default-deny boundary, tenant isolation, scoped credentials и полноценной cookie/CSRF/session-family policy |
+| HTTP API | Conditional auth middleware: без непустого `CICD_AUTH_SECRET` trusted-network/open; с секретом работают JWT/PAT, session-bound access invalidation, refresh rotate/logout/revoke, route-role checks и project membership enforcement для project-owned API | Нет production default-deny boundary, tenant isolation, scoped credentials и полноценной cookie/CSRF/session-family policy |
 | Users | `users(id, username, role, enabled)`, `user_credentials`, `sessions`, `project_memberships` | Tenant membership и tenant isolation отсутствуют |
 | Roles | `admin`, `maintainer`, `developer`, `viewer` участвуют в route-policy decisions; project role берётся из `project_memberships` для project-owned ресурсов | Нет tenant roles и tenant-wide membership model |
 | API tokens | Случайный `cicd_...`, SHA-256 hash, hint, owner optional, optional expiry; Bearer PAT работает при `CICD_AUTH_SECRET` | Нет scopes, pepper/HMAC storage, revoke reason и project boundary |

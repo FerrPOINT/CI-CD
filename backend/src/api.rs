@@ -27,13 +27,13 @@ use crate::{
     store::{active_or_latest_attempt_id, append_job_log, open_attempt_id},
 };
 
-static STATE_POOL: std::sync::OnceLock<sqlx::PgPool> = std::sync::OnceLock::new();
 tokio::task_local! {
     static REQUEST_ID: uuid::Uuid;
 }
 
 pub struct AppState {
     pub pool: Option<PgPool>,
+    pub auth_secret: Option<String>,
     pub git: crate::git_host::GitConfig,
     pub running_jobs: Option<crate::runner::RunningJobs>,
     pub rate_limiter: Arc<crate::rate_limit::RateLimiter>,
@@ -283,6 +283,13 @@ pub(crate) fn pool(state: &AppState) -> Result<&PgPool, ApiError> {
     state.pool.as_ref().ok_or_else(ApiError::unavailable)
 }
 
+fn auth_secret(state: &AppState) -> Result<&str, ApiError> {
+    state
+        .auth_secret
+        .as_deref()
+        .ok_or_else(ApiError::unauthorized)
+}
+
 pub fn app(pool: Option<PgPool>) -> Router {
     app_with(pool, None)
 }
@@ -456,16 +463,14 @@ async fn require_auth(
     if PUBLIC.contains(&path) || path.starts_with("/git/") {
         return Ok(next.run(req).await);
     }
-    if !crate::auth::is_configured() {
+    let Some(auth_secret) = state.auth_secret.as_deref() else {
         return Ok(next.run(req).await); // trusted-network mode: no enforcement
-    }
-    let claims = bearer_identity(req.headers())
+    };
+    let pool = pool(&state)?;
+    let claims = bearer_identity(pool, auth_secret, req.headers())
         .await
         .map_err(|_| ApiError::unauthorized())?;
     let role = crate::authz::Role::parse(&claims.role).ok_or_else(ApiError::unauthorized)?;
-    if !user_enabled(&state, claims.sub).await? {
-        return Err(ApiError::unauthorized());
-    }
     let method = req.method().as_str().to_string();
     let path = req.uri().path().to_string();
     let (mut parts, body) = req.into_parts();
@@ -628,9 +633,11 @@ async fn project_membership_role(
     Ok(role.and_then(|value| crate::authz::Role::parse(&value)))
 }
 
-/// JWT access tokens carry the role at issue time; PATs (`cicd_…`) are
-/// resolved against api_tokens and assume the owner's role.
+/// JWT access tokens are bound to `sessions.id`; PATs (`cicd_…`) are
+/// resolved against api_tokens and assume the owner's current role.
 async fn bearer_identity(
+    pool: &PgPool,
+    auth_secret: &str,
     headers: &axum::http::HeaderMap,
 ) -> Result<crate::auth::AccessClaims, ApiError> {
     let value = headers
@@ -648,38 +655,33 @@ async fn bearer_identity(
                AND (t.expires_at IS NULL OR t.expires_at > now())",
         )
         .bind(&hash)
-        .fetch_optional(STATE_POOL.get().ok_or_else(ApiError::unavailable)?)
+        .fetch_optional(pool)
         .await
         .map_err(ApiError::internal)?;
         let (sub, role) = row.ok_or_else(ApiError::unauthorized)?;
         // Touch last_used_at best-effort.
         let _ = sqlx::query("UPDATE api_tokens SET last_used_at = now() WHERE token_hash = $1")
             .bind(&hash)
-            .execute(STATE_POOL.get().ok_or_else(ApiError::unavailable)?)
+            .execute(pool)
             .await;
         let now = chrono::Utc::now();
         Ok(crate::auth::AccessClaims {
             sub,
+            sid: None,
             role,
             iat: now.timestamp(),
             exp: now.timestamp() + 900,
         })
     } else {
-        crate::auth::verify_access(token).map_err(|_| ApiError::unauthorized())
+        let mut claims = crate::auth::verify_access_with_secret(token, auth_secret)
+            .map_err(|_| ApiError::unauthorized())?;
+        let session_id = claims.sid.ok_or_else(ApiError::unauthorized)?;
+        let current = crate::auth::access_session_user(pool, session_id, claims.sub)
+            .await
+            .map_err(|_| ApiError::unauthorized())?;
+        claims.role = current.role;
+        Ok(claims)
     }
-}
-
-async fn user_enabled(state: &AppState, user_id: uuid::Uuid) -> Result<bool, ApiError> {
-    let Some(pool) = state.pool.as_ref() else {
-        return Err(ApiError::unavailable());
-    };
-    let enabled = sqlx::query_scalar::<_, bool>("SELECT enabled FROM users WHERE id = $1")
-        .bind(user_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(ApiError::internal)?
-        .unwrap_or(false);
-    Ok(enabled)
 }
 
 fn build_router(
@@ -687,11 +689,28 @@ fn build_router(
     git: crate::git_host::GitConfig,
     running: Option<crate::runner::RunningJobs>,
 ) -> Router {
-    if let Some(p) = pool.as_ref() {
-        let _ = STATE_POOL.set(p.clone());
-    }
+    build_router_with_auth_secret(pool, git, running, crate::auth::configured_secret().ok())
+}
+
+#[cfg(any(test, feature = "integration"))]
+pub fn app_with_auth_secret(pool: Option<PgPool>, auth_secret: Option<String>) -> Router {
+    build_router_with_auth_secret(
+        pool,
+        crate::git_host::GitConfig::default(),
+        None,
+        auth_secret,
+    )
+}
+
+fn build_router_with_auth_secret(
+    pool: Option<PgPool>,
+    git: crate::git_host::GitConfig,
+    running: Option<crate::runner::RunningJobs>,
+    auth_secret: Option<String>,
+) -> Router {
     let state = Arc::new(AppState {
         pool: pool.clone(),
+        auth_secret,
         git,
         running_jobs: running,
         rate_limiter: Arc::new(crate::rate_limit::RateLimiter::default()),
@@ -843,10 +862,11 @@ async fn auth_login(
     )
     .await;
     let refresh = new_refresh_token();
-    create_session(pool, user_id, &hash_token(&refresh))
+    let session_id = create_session(pool, user_id, &hash_token(&refresh))
         .await
         .map_err(ApiError::from)?;
-    let mut pair = issue_access(user_id, &role).map_err(|_| ApiError::unauthorized())?;
+    let mut pair = issue_access_with_secret(user_id, &role, session_id, auth_secret(&state)?)
+        .map_err(|_| ApiError::unauthorized())?;
     pair.refresh_token = refresh;
     Ok(Json(pair))
 }
@@ -861,15 +881,17 @@ async fn auth_refresh(
     if input.refresh_token.is_empty() {
         return Err(ApiError::unauthorized());
     }
-    let (user_id, new_refresh) = rotate_session(pool, &hash_token(&input.refresh_token))
-        .await
-        .map_err(|_| ApiError::unauthorized())?;
+    let (user_id, session_id, new_refresh) =
+        rotate_session(pool, &hash_token(&input.refresh_token))
+            .await
+            .map_err(|_| ApiError::unauthorized())?;
     let role = sqlx::query_scalar::<_, String>("SELECT role FROM users WHERE id = $1")
         .bind(user_id)
         .fetch_one(pool)
         .await
         .map_err(ApiError::internal)?;
-    let mut pair = issue_access(user_id, &role).map_err(|_| ApiError::unauthorized())?;
+    let mut pair = issue_access_with_secret(user_id, &role, session_id, auth_secret(&state)?)
+        .map_err(|_| ApiError::unauthorized())?;
     pair.refresh_token = new_refresh;
     Ok(Json(pair))
 }
@@ -979,7 +1001,7 @@ async fn list_projects(
 ) -> ApiResult<Vec<Project>> {
     let (limit, offset) = page.bounded();
     let db = pool(&state)?;
-    let projects = if crate::auth::is_configured() {
+    let projects = if state.auth_secret.is_some() {
         let claims = claims.ok_or_else(ApiError::unauthorized)?.0;
         let role = crate::authz::Role::parse(&claims.role).ok_or_else(ApiError::unauthorized)?;
         if role == crate::authz::Role::Admin {
@@ -1769,13 +1791,10 @@ async fn list_releases(
 async fn create_release(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(repo): axum::extract::Path<String>,
-    headers: axum::http::HeaderMap,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
     Json(input): Json<CreateRelease>,
 ) -> ApiResult<Release> {
-    let created_by = bearer_identity(&headers)
-        .await
-        .ok()
-        .map(|c| c.sub.to_string());
+    let created_by = claims.map(|c| c.0.sub.to_string());
     if input.tag_name.trim().is_empty() || input.name.trim().is_empty() {
         return Err(ApiError::bad_request("tag_name and name are required"));
     }

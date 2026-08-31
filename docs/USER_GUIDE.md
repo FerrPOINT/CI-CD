@@ -20,10 +20,10 @@ Forge CI/CD - self-hosted control plane для Git-репозиториев и C
 | Секреты проекта | **Current verified** | AES-256-GCM at rest; embedded runner передаёт их в env и маскирует значения в stdout/stderr logs. |
 | Окружения и записи деплоев | **Current verified** | Метаданные окружения и история деплоев; выполнение деплоя определяется job. |
 | Отчёты и аудит | **Current verified** | Сводка по проекту и последние 200 событий аудита. |
-| Пользователи, участники проектов и API-токены | **Current verified MVP** | Хранение, argon2id credentials, sessions, PAT enforcement и project memberships при `CICD_AUTH_SECRET`. |
+| Пользователи, участники проектов и API-токены | **Current verified MVP** | Хранение, argon2id credentials, session-bound access JWT, sessions, PAT enforcement и project memberships при `CICD_AUTH_SECRET`. |
 | Расписания и outgoing webhooks | **Current verified MVP** | Worker запускает enabled schedules примерно раз в минуту и доставляет terminal pipeline webhooks с basic retry. |
 | Уведомления и inbound provider webhooks | **Configuration only** | Конфигурация сохраняется, но email/Slack/SSE sender и public provider webhook handlers ещё не реализованы. |
-| Вход, сессии, RBAC | **Current verified conditional** | `/login` работает при непустом `CICD_AUTH_SECRET`; project-owned API проверяет membership, без секрета API и Dashboard остаются trusted-network/open. |
+| Вход, сессии, RBAC | **Current verified conditional** | `/login` работает при непустом `CICD_AUTH_SECRET`; project-owned API проверяет active session, текущую роль и membership, без секрета API и Dashboard остаются trusted-network/open. |
 
 > **Безопасность:** для общего окружения задайте `CICD_AUTH_SECRET`, закройте API/Dashboard reverse proxy или сетью и не публикуйте Git endpoint с пустым `CICD_GIT_TOKEN`; обязательно замените dev-значение `CICD_GIT_INTERNAL_TOKEN`.
 
@@ -83,7 +83,7 @@ curl -fsS -X POST http://127.0.0.1:22801/api/v1/projects \
 3. Используйте `maintainer` для управления участниками и секретами проекта; `developer` — для запуска и изменения рабочих ресурсов; `viewer` — для чтения.
 4. Удаляйте ненужные memberships через список. Последнего maintainer удалить нельзя.
 
-Tenant isolation, scoped PAT/SAT, Git repository binding и production cookie/CSRF/session-family policy остаются **Target approved**; refresh logout/revoke уже выполняется сервером.
+Tenant isolation, scoped PAT/SAT, Git repository binding и production cookie/CSRF/session-family policy остаются **Target approved**; session-bound access invalidation и refresh logout/revoke уже выполняются сервером.
 
 ![Участники проекта](screenshots/40-project-members.png)
 
@@ -296,7 +296,7 @@ Retention/TTL, S3 и multipart upload - **Target approved**.
 3. Используйте данные как подготовку к будущей policy-модели.
 4. Роль ограничивает API только когда backend запущен с `CICD_AUTH_SECRET`; без него действует trusted-network режим.
 
-Пароли хранятся как `argon2id` credentials. Project membership и refresh logout/revoke уже используются при включённом `CICD_AUTH_SECRET`; tenant boundary, scoped PAT и production cookie/CSRF/session-family policy относятся к **Target approved**.
+Пароли хранятся как `argon2id` credentials. Project membership, session-bound access invalidation и refresh logout/revoke уже используются при включённом `CICD_AUTH_SECRET`; tenant boundary, scoped PAT и production cookie/CSRF/session-family policy относятся к **Target approved**.
 
 ### API-токены
 

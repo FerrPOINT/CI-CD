@@ -2,13 +2,13 @@
 
 ## 1. Overview
 
-Forge CI/CD — self-hosted CI/CD control plane. Текущая версия остаётся MVP и не является production-safe: без непустого `CICD_AUTH_SECRET` backend работает в trusted-network режиме; при включённом секрете уже применяются route roles, project memberships и refresh logout/revoke, но tenant isolation, scoped PAT и production cookie/CSRF/session-family policy остаются target. Безопасность встроена на уровне SQL-запросов, валидации ввода, секретов at rest, условного auth middleware и audit.
+Forge CI/CD — self-hosted CI/CD control plane. Текущая версия остаётся MVP и не является production-safe: без непустого `CICD_AUTH_SECRET` backend работает в trusted-network режиме; при включённом секрете уже применяются route roles, project memberships, session-bound access JWT и refresh rotate/logout/revoke, но tenant isolation, scoped PAT и production cookie/CSRF/session-family policy остаются target. Безопасность встроена на уровне SQL-запросов, валидации ввода, секретов at rest, условного auth middleware и audit.
 
 ## 2. Текущий статус
 
 | Механизм | Статус | Описание |
 |----------|--------|----------|
-| Auth (login/JWT) | ✅ conditional | Включается при непустом `CICD_AUTH_SECRET`; без него API остаётся open trusted-network |
+| Auth (login/JWT) | ✅ conditional | Включается при непустом `CICD_AUTH_SECRET`; access JWT привязан к `sessions.id`, без секрета API остаётся open trusted-network |
 | RBAC | ✅ MVP | Глобальные роли `admin`/`maintainer`/`developer`/`viewer` + `project_memberships`; tenant scope и scoped tokens — target |
 | Secrets management | ✅ MVP | AES-256-GCM at rest, `CICD_SECRETS_KEY`; env injection в embedded runner + masking stdout |
 | API tokens | ✅ conditional | PAT `cicd_...` проверяется middleware при непустом `CICD_AUTH_SECRET`; legacy SHA-256 hash без target scopes/pepper |
@@ -25,10 +25,10 @@ Forge CI/CD — self-hosted CI/CD control plane. Текущая версия о�
 
 ### 3.1 JWT
 
-- Current: access token — JWT HS256, срок жизни 15 минут, подпись через `CICD_AUTH_SECRET`.
-- Current: refresh token хранится в таблице `sessions`, возвращается клиенту, обновляется через `/api/v1/auth/refresh` и отзывается через `/api/v1/auth/logout`; frontend MVP держит его в `localStorage`.
+- Current: access token — JWT HS256, срок жизни 15 минут, подпись через `CICD_AUTH_SECRET`, привязка к `sessions.id`; middleware проверяет активную session, enabled user и текущую роль из БД на protected routes.
+- Current: refresh token хранится в таблице `sessions`, возвращается клиенту, обновляется через `/api/v1/auth/refresh` и отзывается через `/api/v1/auth/logout`; logout/rotate немедленно инвалидируют session-bound access JWT; frontend MVP держит refresh token в `localStorage`.
 - Current: пароли хранятся как `argon2id` hash в `user_credentials`.
-- Target: httpOnly/SameSite cookie для refresh, session-family reuse detection, immediate access-token invalidation, CSRF policy, key management и bootstrap owner procedure.
+- Target: httpOnly/SameSite cookie для refresh, session-family reuse detection, CSRF policy, key management и bootstrap owner procedure.
 
 ### 3.2 Эндпоинты
 
@@ -69,10 +69,10 @@ Current middleware проверяет `Authorization: Bearer ...` при неп�
 ```rust
 // Current shape: simplified excerpt.
 async fn require_auth(req: Request, next: Next) -> Result<Response, ApiError> {
-    if !crate::auth::is_configured() {
+    if state.auth_secret.is_none() {
         return Ok(next.run(req).await); // trusted-network mode
     }
-    // verify JWT/PAT, enabled user, route role policy and project membership
+    // verify JWT/PAT, active session, enabled user, route role policy and project membership
 }
 ```
 

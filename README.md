@@ -7,7 +7,7 @@ Self-hosted control plane для Git-репозиториев и CI/CD: bare Git
 Продукт находится в стадии **MVP (0.1.x)** и **не готов к эксплуатации в недоверенных сетях**:
 
 - если `CICD_AUTH_SECRET` не задан или пустой, API и Dashboard работают в trusted-network режиме без auth enforcement;
-- при заданном `CICD_AUTH_SECRET` включаются login/JWT/PAT, refresh logout/revoke, global roles и project membership RBAC, но tenant isolation и scoped PAT остаются target;
+- при заданном `CICD_AUTH_SECRET` включаются login/JWT/PAT, session-bound access JWT, refresh rotate/logout/revoke, global roles и project membership RBAC, но tenant isolation, scoped PAT и production cookie/CSRF/session-family policy остаются target;
 - нет TLS, CORS permissive, rate limiting пока in-process и не заменяет reverse proxy/distributed limiter;
 - schedules и outgoing webhooks работают как MVP worker; notifications, inbound provider webhooks и production-grade delivery guarantees ещё не реализованы.
 

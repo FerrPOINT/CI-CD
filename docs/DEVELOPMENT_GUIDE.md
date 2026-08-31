@@ -49,7 +49,7 @@ just build-frontend  # TypeScript check и Vite build на хосте
 | Dashboard в Vite dev mode | `http://127.0.0.1:5173` | Vite | Current verified |
 | PostgreSQL 17 | `127.0.0.1:22543` | `CICD_DATABASE_PORT` | Current verified |
 
-Vite proxy направляет `/api` на `http://localhost:22801`; отдельная frontend env-переменная для API в текущем режиме не нужна. PostgreSQL Compose-профиля привязан к `127.0.0.1`, а API и Dashboard защищены только при непустом `CICD_AUTH_SECRET` и всё ещё используют coarse global-role policy. Это допустимо только для изолированной локальной разработки или закрытого shared-контура; ограничения и известные риски перечислены в [CURRENT STATE](CURRENT_STATE.md).
+Vite proxy направляет `/api` на `http://localhost:22801`; отдельная frontend env-переменная для API в текущем режиме не нужна. PostgreSQL Compose-профиля привязан к `127.0.0.1`, а API и Dashboard защищены только при непустом `CICD_AUTH_SECRET`: включаются JWT/PAT, session-bound access invalidation, route roles и project membership enforcement. Это допустимо только для изолированной локальной разработки или закрытого shared-контура; ограничения и известные риски перечислены в [CURRENT STATE](CURRENT_STATE.md).
 
 ### Переменные окружения
 

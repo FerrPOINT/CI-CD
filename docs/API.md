@@ -76,7 +76,7 @@ curl -sS http://127.0.0.1:22801/api/v1/health
 | POST | `/auth/refresh` | Обновить пару токенов |
 | POST | `/auth/logout` | Отозвать refresh session |
 
-Auth enforcement включается только если задан непустой `CICD_AUTH_SECRET`. Access token — JWT HS256 на 15 минут; refresh token хранится hash-ом в `sessions`, rotate-ится через `/auth/refresh` и отзывается через `/auth/logout`. PAT `cicd_...` принимается как Bearer token при включённом enforcement.
+Auth enforcement включается только если задан непустой `CICD_AUTH_SECRET`. Access token — JWT HS256 на 15 минут, содержит `sessions.id`, а protected API на каждом запросе проверяет активную session, enabled user и текущую роль из БД. Refresh token хранится hash-ом в `sessions`, rotate-ится через `/auth/refresh` и отзывается через `/auth/logout`. PAT `cicd_...` принимается как Bearer token при включённом enforcement.
 
 #### POST /api/v1/auth/login
 
@@ -103,7 +103,7 @@ Auth enforcement включается только если задан непу�
 
 #### POST /api/v1/auth/logout
 
-Идемпотентно отзывает refresh session по переданному refresh token. Уже выданный access JWT остаётся действительным до истечения 15-минутного TTL; немедленная инвалидизация access token через `session_id`/`token_version`, refresh-cookie и CSRF policy остаются target.
+Идемпотентно отзывает refresh session по переданному refresh token. Session-bound access JWT с тем же `sessions.id` после logout перестаёт проходить protected API сразу; refresh-cookie, CSRF policy и session-family reuse detection остаются target.
 
 **Request body:**
 ```json
@@ -853,7 +853,7 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 
 ## Platform endpoints (MVP)
 
-> **Security note:** auth/RBAC enforcement включается только при непустом `CICD_AUTH_SECRET`. Без него все endpoints ниже работают в trusted-network режиме; с ним применяются JWT/PAT, route roles и project memberships для project-owned ресурсов. Logout refresh revocation уже есть, но scoped PAT, tenant isolation и production cookie/CSRF/session-family policy ещё target.
+> **Security note:** auth/RBAC enforcement включается только при непустом `CICD_AUTH_SECRET`. Без него все endpoints ниже работают в trusted-network режиме; с ним применяются JWT/PAT, session-bound access invalidation, route roles и project memberships для project-owned ресурсов. Scoped PAT, tenant isolation и production cookie/CSRF/session-family policy ещё target.
 
 ### Runners
 

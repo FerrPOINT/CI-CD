@@ -3,13 +3,12 @@
 //! - argon2id password hashing (`user_credentials`)
 //! - short-lived JWT access tokens (HS256, `CICD_AUTH_SECRET`)
 //! - opaque refresh tokens with rotation (`sessions`)
-//! - `Authorization: Bearer <jwt>` extraction
+//! - session lookup helpers for protected API middleware
 //!
 //! Enforcement policy lives in `authz`; this module only proves identity.
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
-use axum::http::HeaderMap;
 use chrono::{Duration, Utc};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
@@ -36,7 +35,10 @@ pub enum AuthError {
 pub struct AccessClaims {
     /// user id
     pub sub: Uuid,
-    /// role at issue time
+    /// Session id for access-token invalidation; absent only for non-session credentials.
+    #[serde(default)]
+    pub sid: Option<Uuid>,
+    /// Role hint at issue time; middleware refreshes it from DB for session JWTs.
     pub role: String,
     pub iat: i64,
     pub exp: i64,
@@ -80,18 +82,16 @@ fn configured_secret_from(value: Option<String>) -> Result<String, AuthError> {
     }
 }
 
-pub(crate) fn is_configured() -> bool {
-    configured_secret_from(std::env::var("CICD_AUTH_SECRET").ok()).is_ok()
+pub(crate) fn configured_secret() -> Result<String, AuthError> {
+    configured_secret_from(std::env::var("CICD_AUTH_SECRET").ok())
 }
 
-fn encoding_secret() -> Result<EncodingKey, AuthError> {
-    let secret = configured_secret_from(std::env::var("CICD_AUTH_SECRET").ok())?;
-    Ok(EncodingKey::from_secret(secret.as_bytes()))
+fn encoding_secret(secret: &str) -> EncodingKey {
+    EncodingKey::from_secret(secret.as_bytes())
 }
 
-fn decoding_secret() -> Result<DecodingKey, AuthError> {
-    let secret = configured_secret_from(std::env::var("CICD_AUTH_SECRET").ok())?;
-    Ok(DecodingKey::from_secret(secret.as_bytes()))
+fn decoding_secret(secret: &str) -> DecodingKey {
+    DecodingKey::from_secret(secret.as_bytes())
 }
 
 pub fn hash_password(password: &str) -> Result<String, AuthError> {
@@ -112,17 +112,28 @@ pub fn verify_password(hash: &str, password: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub fn issue_access(user_id: Uuid, role: &str) -> Result<TokenPair, AuthError> {
+pub fn issue_access(user_id: Uuid, role: &str, session_id: Uuid) -> Result<TokenPair, AuthError> {
+    let secret = configured_secret()?;
+    issue_access_with_secret(user_id, role, session_id, &secret)
+}
+
+pub(crate) fn issue_access_with_secret(
+    user_id: Uuid,
+    role: &str,
+    session_id: Uuid,
+    secret: &str,
+) -> Result<TokenPair, AuthError> {
     // Note: refresh token is issued separately by the session layer.
     let now = Utc::now();
     let exp = now + Duration::minutes(ACCESS_TTL_MINUTES);
     let claims = AccessClaims {
         sub: user_id,
+        sid: Some(session_id),
         role: role.to_string(),
         iat: now.timestamp(),
         exp: exp.timestamp(),
     };
-    let token = jsonwebtoken::encode(&Header::default(), &claims, &encoding_secret()?)
+    let token = jsonwebtoken::encode(&Header::default(), &claims, &encoding_secret(secret))
         .map_err(|_| AuthError::Invalid)?;
     Ok(TokenPair {
         access_token: token,
@@ -131,24 +142,27 @@ pub fn issue_access(user_id: Uuid, role: &str) -> Result<TokenPair, AuthError> {
     })
 }
 
+/// Verifies only JWT signature and expiry. Protected API routes must also
+/// validate `AccessClaims::sid` with `access_session_user`.
 pub fn verify_access(token: &str) -> Result<AccessClaims, AuthError> {
-    let data =
-        jsonwebtoken::decode::<AccessClaims>(token, &decoding_secret()?, &Validation::default())
-            .map_err(|e| match e.kind() {
-                jsonwebtoken::errors::ErrorKind::ExpiredSignature => AuthError::Expired,
-                _ => AuthError::Invalid,
-            })?;
-    Ok(data.claims)
+    let secret = configured_secret()?;
+    verify_access_with_secret(token, &secret)
 }
 
-/// Extracts and verifies a `Authorization: Bearer` JWT.
-pub fn bearer_claims(headers: &HeaderMap) -> Result<AccessClaims, AuthError> {
-    let value = headers
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .ok_or(AuthError::Invalid)?;
-    let token = value.strip_prefix("Bearer ").ok_or(AuthError::Invalid)?;
-    verify_access(token)
+pub(crate) fn verify_access_with_secret(
+    token: &str,
+    secret: &str,
+) -> Result<AccessClaims, AuthError> {
+    let data = jsonwebtoken::decode::<AccessClaims>(
+        token,
+        &decoding_secret(secret),
+        &Validation::default(),
+    )
+    .map_err(|e| match e.kind() {
+        jsonwebtoken::errors::ErrorKind::ExpiredSignature => AuthError::Expired,
+        _ => AuthError::Invalid,
+    })?;
+    Ok(data.claims)
 }
 
 // --- refresh sessions -------------------------------------------------------
@@ -202,19 +216,38 @@ pub async fn session_user(
         .ok_or(AuthError::InvalidCredentials)
 }
 
+/// Validates that an access JWT is still bound to an active refresh session.
+pub async fn access_session_user(
+    pool: &sqlx::PgPool,
+    session_id: Uuid,
+    user_id: Uuid,
+) -> Result<SessionUser, AuthError> {
+    let row = sqlx::query_as::<_, (Uuid, String)>(
+        "SELECT u.id, u.role FROM sessions s JOIN users u ON u.id = s.user_id \
+         WHERE s.id = $1 AND s.user_id = $2 AND s.revoked_at IS NULL \
+           AND s.expires_at > now() AND u.enabled",
+    )
+    .bind(session_id)
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?;
+    row.map(|(user_id, role)| SessionUser { user_id, role })
+        .ok_or(AuthError::InvalidCredentials)
+}
+
 /// Rotate: revoke old session row, create a new one, return fresh pair.
 pub async fn rotate_session(
     pool: &sqlx::PgPool,
     old_refresh_hash: &str,
-) -> Result<(Uuid, String), AuthError> {
+) -> Result<(Uuid, Uuid, String), AuthError> {
     let user = session_user(pool, old_refresh_hash).await?;
     sqlx::query("UPDATE sessions SET revoked_at = now() WHERE refresh_token_hash = $1")
         .bind(old_refresh_hash)
         .execute(pool)
         .await?;
     let new_refresh = new_refresh_token();
-    create_session(pool, user.user_id, &hash_token(&new_refresh)).await?;
-    Ok((user.user_id, new_refresh))
+    let session_id = create_session(pool, user.user_id, &hash_token(&new_refresh)).await?;
+    Ok((user.user_id, session_id, new_refresh))
 }
 
 /// Revoke a refresh session by stored refresh-token hash. Idempotent for callers.
@@ -251,11 +284,24 @@ mod tests {
     #[test]
     fn access_token_requires_secret() {
         // No CICD_AUTH_SECRET in test env by default.
-        let res = issue_access(Uuid::new_v4(), "admin");
+        let res = issue_access(Uuid::new_v4(), "admin", Uuid::new_v4());
         match res {
             Err(AuthError::NotConfigured) => {}
             _ => panic!("expected NotConfigured when secret is unset"),
         }
+    }
+
+    #[test]
+    fn access_token_roundtrip_includes_session_id() {
+        let user_id = Uuid::new_v4();
+        let session_id = Uuid::new_v4();
+        let pair = issue_access_with_secret(user_id, "admin", session_id, "test-secret")
+            .expect("issue token");
+        let claims =
+            verify_access_with_secret(&pair.access_token, "test-secret").expect("verify token");
+        assert_eq!(claims.sub, user_id);
+        assert_eq!(claims.sid, Some(session_id));
+        assert_eq!(claims.role, "admin");
     }
 
     #[test]

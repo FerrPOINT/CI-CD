@@ -637,7 +637,7 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 | `expires_at` | TIMESTAMPTZ | нет | — | Истекает |
 | `revoked_at` | TIMESTAMPTZ | да | — | Отозвана |
 
-`/api/v1/auth/refresh` rotate-ит refresh session: старый hash получает `revoked_at`, новый refresh token хранится как `hash_token(raw)`. `/api/v1/auth/logout` идемпотентно выставляет `revoked_at` для переданного refresh token.
+`/api/v1/auth/refresh` rotate-ит refresh session: старый hash получает `revoked_at`, новый refresh token хранится как `hash_token(raw)`. `/api/v1/auth/logout` идемпотентно выставляет `revoked_at` для переданного refresh token. Access JWT содержит `sessions.id`; protected API проверяет, что session активна, не истекла и принадлежит enabled user, поэтому rotate/logout инвалидирует связанный access JWT сразу.
 
 ### 9.15 domain_events
 

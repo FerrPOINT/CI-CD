@@ -144,7 +144,7 @@ Supervisor-полл queued-джобов, атомарный claim (`queued → r
 
 ### 6.4 Платформенные ресурсы (MVP)
 
-Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-256-GCM at rest + embedded env injection/masking), artifacts (upload/download + локальное хранилище, 50 MiB лимит), environments/deployments, schedules MVP (enabled rows проверяются worker-ом примерно раз в минуту), outgoing webhooks MVP (terminal pipeline events через outbox/basic retry/HMAC), notifications config, reports (агрегаты success rate/duration), audit log (последние 200 событий), users/roles, project memberships, argon2id credentials, refresh sessions с rotate/logout и PAT enforcement при `CICD_AUTH_SECRET`.
+Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-256-GCM at rest + embedded env injection/masking), artifacts (upload/download + локальное хранилище, 50 MiB лимит), environments/deployments, schedules MVP (enabled rows проверяются worker-ом примерно раз в минуту), outgoing webhooks MVP (terminal pipeline events через outbox/basic retry/HMAC), notifications config, reports (агрегаты success rate/duration), audit log (последние 200 событий), users/roles, project memberships, argon2id credentials, session-bound access JWT, refresh sessions с rotate/logout и PAT enforcement при `CICD_AUTH_SECRET`.
 
 ## 7. Frontend архитектура
 
@@ -171,7 +171,7 @@ Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-2
 | SQLx версионные миграции | ✅ current: `backend/migrations/*.sql` + `sqlx::migrate!`/`cicd-migrate` |
 | app/infra/api/server пакеты | ⬜ Phase C (strangler по вертикалям) |
 | OpenAPI + генерация клиента | ✅ current: `openapi/openapi.yaml` + `frontend/src/api/schema.d.ts` |
-| Auth/RBAC/token middleware | ◩ current conditional: JWT/PAT/global roles + project memberships + refresh logout/revoke при `CICD_AUTH_SECRET`; tenant scope/scoped credentials и production cookie/CSRF/session-family policy target |
+| Auth/RBAC/token middleware | ◩ current conditional: JWT/PAT/global roles + project memberships + session-bound access invalidation + refresh rotate/logout/revoke при `CICD_AUTH_SECRET`; tenant scope/scoped credentials и production cookie/CSRF/session-family policy target |
 | Distributed runner protocol | ⬜ Phase D |
 
 ## 10. Dev workflow

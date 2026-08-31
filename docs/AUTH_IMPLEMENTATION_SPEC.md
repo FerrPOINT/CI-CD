@@ -30,11 +30,11 @@ All paths are under `/api/v1/auth`.
 
 Cookie: name `forge_refresh`; `HttpOnly; SameSite=Lax; Path=/api/v1/auth; Max-Age=2592000`; `Secure` follows config; no Domain attribute. Mutating cookie-auth requests require `X-CSRF-Token` matching `forge_csrf` non-HttpOnly cookie; bearer/API token clients are exempt.
 
-`Authorization` accepts exactly one `Bearer <JWT-or-PAT>`. A JWT has three dot-separated segments; otherwise it is a PAT prefixed `forge_pat_`. A malformed/duplicate header returns 401 + `WWW-Authenticate: Bearer`.
+`Authorization` accepts exactly one `Bearer <JWT-or-PAT>`. A JWT has three dot-separated segments; otherwise it is a target PAT prefixed `forge_pat_`. Current MVP PATs use the legacy `cicd_` prefix until Phase C migration. A malformed/duplicate header returns 401 + `WWW-Authenticate: Bearer`.
 
 ## 3. JWT, refresh and password details
 
-JWT HS256 claims: `{sub: UUID, tid: UUID, role: string, ver: integer, typ:"access", iss, aud, iat, exp, jti, kid}`. Validate alg=HS256, issuer/audience/type, exp/iat with 30 second skew, `token_version` and user enabled. Passwords use Argon2id memory 65536 KiB, iterations 3, parallelism 4; rehash after parameter change.
+JWT HS256 claims: `{sub: UUID, tid: UUID, sid: UUID, role: string, ver: integer, typ:"access", iss, aud, iat, exp, jti, kid}`. Validate alg=HS256, issuer/audience/type, exp/iat with 30 second skew, session revoke/expiry, `token_version` and user enabled. Current MVP stores `sid` plus a role hint and refreshes the effective role from DB on protected requests. Passwords use Argon2id memory 65536 KiB, iterations 3, parallelism 4; rehash after parameter change.
 
 Refresh tokens: random 32 bytes base64url; DB stores `HMAC-SHA256(CICD_AUTH_REFRESH_PEPPER, raw)` plus `hash_key_id`. Rotation is one transaction: `SELECT ... FOR UPDATE`, reject revoked/expired/replaced, insert child then set parent `replaced_by/revoked_at`. Reuse of an already replaced token revokes all sessions in `family_id` and increments `users.token_version`.
 

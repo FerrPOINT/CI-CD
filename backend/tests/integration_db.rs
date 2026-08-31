@@ -93,28 +93,48 @@ async fn auth_tables_and_sessions_work() {
     // Session lifecycle: create -> valid -> rotate revokes old.
     let refresh = cicd::auth::new_refresh_token();
     let stored = cicd::auth::hash_token(&refresh);
-    cicd::auth::create_session(&pool, user_id, &stored)
+    let session_id = cicd::auth::create_session(&pool, user_id, &stored)
         .await
         .expect("create session");
     let su = cicd::auth::session_user(&pool, &stored)
         .await
         .expect("session user");
     assert_eq!(su.user_id, user_id);
+    assert!(
+        cicd::auth::access_session_user(&pool, session_id, user_id)
+            .await
+            .is_ok()
+    );
 
-    let (_uid, new_token) = cicd::auth::rotate_session(&pool, &stored)
+    let (_uid, new_session_id, new_token) = cicd::auth::rotate_session(&pool, &stored)
         .await
         .expect("rotate session");
     assert!(cicd::auth::session_user(&pool, &stored).await.is_err());
+    assert!(
+        cicd::auth::access_session_user(&pool, session_id, user_id)
+            .await
+            .is_err()
+    );
     let new_stored = cicd::auth::hash_token(&new_token);
     assert!(cicd::auth::session_user(&pool, &new_stored).await.is_ok());
+    assert!(
+        cicd::auth::access_session_user(&pool, new_session_id, user_id)
+            .await
+            .is_ok()
+    );
 
-    let (_uid, second_token) = cicd::auth::rotate_session(&pool, &new_stored)
+    let (_uid, second_session_id, second_token) = cicd::auth::rotate_session(&pool, &new_stored)
         .await
         .expect("rotate session a second time");
     assert!(cicd::auth::session_user(&pool, &new_stored).await.is_err());
     let second_stored = cicd::auth::hash_token(&second_token);
     assert!(
         cicd::auth::session_user(&pool, &second_stored)
+            .await
+            .is_ok()
+    );
+    assert!(
+        cicd::auth::access_session_user(&pool, second_session_id, user_id)
             .await
             .is_ok()
     );
@@ -125,6 +145,11 @@ async fn auth_tables_and_sessions_work() {
     assert_eq!(revoked, Some(user_id));
     assert!(
         cicd::auth::session_user(&pool, &second_stored)
+            .await
+            .is_err()
+    );
+    assert!(
+        cicd::auth::access_session_user(&pool, second_session_id, user_id)
             .await
             .is_err()
     );
@@ -204,6 +229,115 @@ async fn auth_logout_endpoint_revokes_refresh_session() {
     assert_eq!(replay.status(), StatusCode::OK);
     let body = response_json(replay).await;
     assert_eq!(body["revoked"], false);
+
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup user");
+}
+
+#[tokio::test]
+async fn access_token_is_bound_to_active_session() {
+    let pool = test_pool().await;
+    let user_id = Uuid::new_v4();
+    let username = format!("it-session-bound-user-{}", user_id.simple());
+    let password = "IntegrationPass1!";
+    let password_hash = cicd::auth::hash_password(password).expect("hash password");
+
+    sqlx::query("INSERT INTO users (id, username, role) VALUES ($1, $2, 'admin')")
+        .bind(user_id)
+        .bind(&username)
+        .execute(&pool)
+        .await
+        .expect("insert user");
+    sqlx::query("INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2)")
+        .bind(user_id)
+        .bind(&password_hash)
+        .execute(&pool)
+        .await
+        .expect("insert credential");
+
+    let app = cicd::api::app_with_auth_secret(
+        Some(pool.clone()),
+        Some(format!("integration-secret-{user_id}")),
+    );
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"username":"{username}","password":"{password}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response_json(response).await;
+    let access_token = body["access_token"]
+        .as_str()
+        .expect("access token")
+        .to_owned();
+    let refresh_token = body["refresh_token"]
+        .as_str()
+        .expect("refresh token")
+        .to_owned();
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/users")
+                .header("authorization", format!("Bearer {access_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    sqlx::query("UPDATE users SET role = 'viewer' WHERE id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .expect("downgrade user role");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/users")
+                .header("authorization", format!("Bearer {access_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/auth/logout")
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"refresh_token":"{refresh_token}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let response = app
+        .oneshot(
+            Request::get("/api/v1/users")
+                .header("authorization", format!("Bearer {access_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
     sqlx::query("DELETE FROM users WHERE id = $1")
         .bind(user_id)
