@@ -234,7 +234,7 @@ python3 scripts/verify_docs.py --all
 
 ### Current verified
 
-`.github/workflows/ci.yml` запускается на `push` и `pull_request` в `main` и содержит следующие jobs:
+`.github/workflows/ci.yml` запускается на `push` и `pull_request` в `main`, отменяет устаревшие in-progress runs для того же ref через concurrency и ограничивает каждый job `timeout-minutes`; production image build и Trivy scan имеют отдельные step-level timeouts.
 
 | Job | Фактические проверки |
 |---|---|

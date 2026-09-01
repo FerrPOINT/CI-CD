@@ -18,7 +18,7 @@
 | Уровень | Объект и минимальная область | Текущий запуск / evidence | Статус |
 |---|---|---|---|
 | Domain unit | Чистые доменные правила, прежде всего `JobStatus::transition_to()` | `cargo test -p cicd-server --test domain_transitions` | **Current verified** |
-| API contract | Router, HTTP method/path, status, extractor и поведение без pool через `app(None)`, включая liveness `200` и readiness `503` без БД | `cargo test -p cicd-server --test api_contract` | **Current verified** |
+| API contract | Router, HTTP method/path, route-policy inventory, status, extractor и поведение без pool через `app(None)`, включая liveness `200` и readiness `503` без БД | `cargo test -p cicd-server --test api_contract`; inline `backend/src/authz.rs` OpenAPI coverage test в `cargo test --workspace` | **Current verified** |
 | CLI/runner binary contract | Public command groups, help, стабильное пользовательское поведение CLI и `forge-runner` flags | `cargo test -p cicd-cli --test cli_contract`; `cargo test -p cicd-server --test runner_binary_contract` | **Current verified** |
 | CLI real API smoke | Настоящий `cicd-cli` против disposable HTTP API/PostgreSQL stack: config precedence, bounded HTTP timeout, JSON output, idempotent pipeline run, attempts, protected deployment approval, JWT/PAT auth-mode, RBAC denial, project-scoped read-only PAT, token redaction на failure и non-zero API error exit | `cargo test -p cicd-cli --features integration --test cli_real_api -- --test-threads=1` с `CICD_TEST_DATABASE_URL`; CI backend job | **Current verified MVP** |
 | Frontend unit | Компоненты, pure helpers, typed API transport, route smoke всех Dashboard-страниц, i18n contract и доступность UI в Vitest/Testing Library | `cd frontend && pnpm test` | **Current verified** |
@@ -37,6 +37,7 @@
 |---|---|---|
 | Domain unit | `backend/tests/domain_transitions.rs` | `queued -> running -> success`; terminal `failed` не перезапускается; `queued -> success` отклоняется. |
 | API contract без БД | `backend/tests/api_contract.rs` | Health возвращает `200`; readiness без pool возвращает `503`; project CRUD без pool возвращает `503`; пустой body PATCH отклоняется. |
+| AuthZ route inventory | `backend/src/authz.rs` inline tests | Executable `ROUTE_POLICIES` покрывает все generated OpenAPI operations, не содержит duplicate method/path и не разрешает unpublished API route через user policy. |
 | Frontend API transport | `frontend/src/api/client.test.ts` | `ApiError` сохраняет `status`, `code`, `request_id`, details и `Retry-After` из JSON envelope, безопасно обрабатывает non-JSON HTTP error и отличает network/cancelled failures для retry policy. |
 | CLI contract | `backend/cli/tests/cli_contract.rs`; `backend/cli/tests/cli_real_api.rs` | `cicd-cli --help` содержит runtime/platform command groups, `--token`, `--timeout-seconds`, `--output`, pagination flags, job attempt history, `--idempotency-key` и key mutation subcommands. Real-API smoke проверяет публичный HTTP path, env/flag precedence, bounded timeout, protected API auth/RBAC/PAT behavior, JSON output и non-zero API error exit. |
 | Runner binary contract | `backend/tests/runner_binary_contract.rs` | `forge-runner --help` содержит protocol/config flags `--api-url`, `--credential`, `--registration-token`, `--tags`, `--total-slots`, `--poll-interval-seconds`, `--work-dir`, `--once`, `--no-checkout`, `--keep-workspace`. |
@@ -126,7 +127,7 @@ Coverage измеряет поведение и риск, а не только l
 
 ### Current verified
 
-`.github/workflows/ci.yml` запускается на `push` и `pull_request` в `main`.
+`.github/workflows/ci.yml` запускается на `push` и `pull_request` в `main`, имеет concurrency per ref и bounded `timeout-minutes` на каждом job; production image build и Trivy scan дополнительно ограничены step-level timeouts.
 
 | Job | Обязательная проверка |
 |---|---|

@@ -545,19 +545,20 @@ async fn require_auth(
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Result<axum::response::Response, ApiError> {
-    const PUBLIC: &[&str] = &[
-        "/api/v1/health",
-        "/api/v1/readiness",
-        "/api/v1/openapi.json",
-        "/api/v1/auth/login",
-        "/api/v1/auth/refresh",
-        "/api/v1/auth/logout",
-        "/api/v1/internal/git-push",
-        "/metrics",
-    ];
     let path = req.uri().path();
-    if PUBLIC.contains(&path) || path.starts_with("/git/") || path.starts_with("/api/v1/runner/") {
-        return Ok(next.run(req).await);
+    let method = req.method().as_str().to_string();
+    match crate::authz::route_access(&method, path) {
+        Some(
+            crate::authz::RouteAccess::Public
+            | crate::authz::RouteAccess::Runner
+            | crate::authz::RouteAccess::System
+            | crate::authz::RouteAccess::Git { .. },
+        ) => return Ok(next.run(req).await),
+        Some(crate::authz::RouteAccess::User { .. }) => {}
+        None if path.starts_with("/api/v1/") || path.starts_with("/git/") || path == "/metrics" => {
+            return Err(ApiError::not_found());
+        }
+        None => return Ok(next.run(req).await),
     }
     let Some(auth_secret) = state.auth_secret.as_deref() else {
         return Ok(next.run(req).await); // trusted-network mode: no enforcement
@@ -567,7 +568,6 @@ async fn require_auth(
         .await
         .map_err(|_| ApiError::unauthorized())?;
     let role = crate::authz::Role::parse(&claims.role).ok_or_else(ApiError::unauthorized)?;
-    let method = req.method().as_str().to_string();
     let path = req.uri().path().to_string();
     let (mut parts, body) = req.into_parts();
     parts.extensions.insert(claims.clone());

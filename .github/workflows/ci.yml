@@ -6,9 +6,14 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backend:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: backend
@@ -55,6 +60,7 @@ jobs:
 
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: frontend
@@ -92,6 +98,7 @@ jobs:
 
   compose-smoke:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
     - uses: actions/checkout@v7
     - name: Compose config
@@ -131,6 +138,7 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
     - uses: actions/checkout@v7
     - uses: pnpm/setup@v2
@@ -188,6 +196,7 @@ jobs:
 
   security:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
     - uses: actions/checkout@v7
     - uses: dtolnay/rust-toolchain@stable
@@ -227,14 +236,17 @@ jobs:
     - name: SBOM drift gate
       run: python3 scripts/generate_sbom.py --check
     - name: Build production images for scan
+      timeout-minutes: 15
       run: |
         docker build -t forge-cicd-backend:ci backend
         docker build -t forge-cicd-frontend:ci frontend
     - name: Container image scan
+      timeout-minutes: 10
       run: bash scripts/scan_container_images.sh forge-cicd-backend:ci forge-cicd-frontend:ci
 
   docs:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
     - uses: actions/checkout@v7
     - uses: actions/setup-python@v7
