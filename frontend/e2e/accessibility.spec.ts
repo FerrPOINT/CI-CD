@@ -79,7 +79,7 @@ test.describe('accessibility smoke', () => {
       },
       { name: 'Webhooks', path: `/projects/${evidence.project.id}/webhooks`, ready: page => page.getByRole('heading', { name: 'История доставок' }), shell: true },
       { name: 'Reports', path: `/projects/${evidence.project.id}/reports`, ready: page => page.getByText('Доля успехов').first(), shell: true },
-      { name: 'Audit log', path: '/audit-log', ready: page => page.getByText(/project\.created|События аудита отсутствуют\./).first(), shell: true },
+      { name: 'Audit log', path: '/audit-log', ready: page => page.getByRole('heading', { name: /Журнал аудита|Audit log/ }), shell: true },
       { name: 'Users', path: '/users', ready: page => page.getByRole('row', { name: /a\.zhukov/ }), shell: true },
       { name: 'Login', path: '/login', ready: page => page.getByRole('heading', { name: 'Вход в Forge' }) },
     ]
