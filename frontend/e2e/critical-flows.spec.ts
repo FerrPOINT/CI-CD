@@ -17,7 +17,7 @@ test.describe('critical dashboard journeys', () => {
     await expect(page.getByRole('heading', { name: `#${evidence.pipeline.id.slice(0, 8)}` })).toBeVisible()
     await expect(page.getByText('План запуска')).toBeVisible()
     await expect(page.getByText(evidence.job.name).first()).toBeVisible()
-    await expect(page.getByText('target/release/app.tar.gz')).toBeVisible()
+    await expect(page.getByText('target/release/app.tar.gz', { exact: true })).toBeVisible()
 
     await page.getByRole('button', { name: /Логи/ }).first().click()
     await expect(page.getByText(new RegExp(`Логи.*${evidence.job.name}`))).toBeVisible()
