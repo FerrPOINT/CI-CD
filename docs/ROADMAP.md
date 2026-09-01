@@ -21,7 +21,7 @@ Roadmap фиксирует порядок доведения Forge до базо
 - проекты, встроенный bare Git hosting, Smart HTTP и auto-trigger pipeline на push;
 - pipeline из `.forge-ci.yml` с legacy линейными stages/jobs и v1 DAG MVP (`version: 1`, top-level `jobs.commands/needs/tags`, `defaults.tags`), fallback-шаблон, immutable `pipeline_plans` snapshot (`legacy-linear`/`v1-dag`), manual legacy jobs, basic timeout и `allow_failure`;
 - embedded runner в `cicd-server`: Docker/host shell, stdout/stderr в attempt-owned `job_logs`, cancel/retry, embedded `job_leases` claim/close/expiry reconciliation;
-- external runner protocol MVP: register через `CICD_RUNNER_REGISTRATION_TOKEN`, heartbeat, immediate/bounded `work:poll` с process-local + PostgreSQL `LISTEN/NOTIFY` wakeup, basic tag + current executor capability matching, lease token, ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, `workspace.checkoutUrl`, fencing generation, stale-runner offline reconciliation и отдельный `forge-runner` shell process с active-lease heartbeat;
+- external runner protocol MVP: register через `CICD_RUNNER_REGISTRATION_TOKEN`, heartbeat, immediate/bounded `work:poll` с process-local + PostgreSQL `LISTEN/NOTIFY` wakeup, basic tag + current executor capability matching, lease token, ack-timeout requeue, ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, `workspace.checkoutUrl`, fencing generation, stale-runner offline reconciliation и отдельный `forge-runner` shell process с active-lease heartbeat;
 - `execution_attempts`: каждая job получает initial attempt, retry job/pipeline создаёт новую attempt и сохраняет старые логи;
 - REST logs, attempts API и SSE stream логов job;
 - local artifacts до 50 MiB с metadata текущей/latest attempt и SHA-256 для новых uploads;
@@ -127,7 +127,7 @@ Gate:
 
 Deliverables:
 
-- Current MVP: durable `job_queue`, `/api/v1/runner/*` register/heartbeat/bounded long-poll `work:poll` с process-local + PostgreSQL `LISTEN/NOTIFY` wakeup/ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, basic tag + current executor capability matching, hashed runner credential, lease token hash, `workspace.checkoutUrl`, fencing generation, stale-runner offline reconciliation и отдельный `forge-runner` shell process с active-lease heartbeat;
+- Current MVP: durable `job_queue`, `/api/v1/runner/*` register/heartbeat/bounded long-poll `work:poll` с process-local + PostgreSQL `LISTEN/NOTIFY` wakeup/ack-timeout requeue/ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, basic tag + current executor capability matching, hashed runner credential, lease token hash, `workspace.checkoutUrl`, fencing generation, stale-runner offline reconciliation и отдельный `forge-runner` shell process с active-lease heartbeat;
 - fairness, pool/protected-tag/capability claim policy, lost-runner requeue и production lease reconciliation поверх current stale-offline MVP;
 - runner registration credentials rotation/revoke, heartbeat, capacity/drain policy;
 - cancel/timeout/reconciliation race suite для потерянного runner-а;

@@ -14,7 +14,7 @@
 | `CICD_CORS_ALLOWED_ORIGINS` | — | Comma-separated allowlist browser origins для API/Git Dashboard CORS; пусто сохраняет permissive trusted-local режим, explicit `*` запрещён |
 | `CICD_SECRETS_KEY` | — | Base64 32-byte ключ AES-256-GCM (обязателен для secrets) |
 | `CICD_ARTIFACTS_DIR` | `/var/lib/forge/artifacts` | Локальное хранилище артефактов |
-| `CICD_EMBEDDED_RUNNER_ENABLED` | `true` | Включает embedded runner внутри backend; при `false` работу забирает внешний `forge-runner`, а backend оставляет maintenance loop для lease expiry и stale-runner offline reconciliation |
+| `CICD_EMBEDDED_RUNNER_ENABLED` | `true` | Включает embedded runner внутри backend; при `false` работу забирает внешний `forge-runner`, а backend оставляет maintenance loop для ack-timeout requeue, lease expiry и stale-runner offline reconciliation |
 | `CICD_RUNNER_MODE` | `host` в compose | Режим embedded runner: `host` для локального evidence/dev; `docker` только если Docker executor/socket подключены явно |
 | `CICD_RUNNER_KEEP_WORKSPACE` | `false` | Не удалять workspace после job для embedded runner и `forge-runner` |
 | `CICD_RUNNER_REGISTRATION_TOKEN` | — | Bootstrap token для `POST /api/v1/runner/register`; пусто отключает регистрацию внешних runner-ов |
@@ -42,7 +42,7 @@
 | Переменная | Default | Назначение |
 |---|---|---|
 | `CICD_RUNNER_MODE` | `docker` вне compose | Режим embedded runner binary: `docker` \| `host` |
-| `CICD_EMBEDDED_RUNNER_ENABLED` | `true` | Отключение embedded execution при запуске внешнего runner-а; runtime maintenance для leases/stale runners продолжает работать |
+| `CICD_EMBEDDED_RUNNER_ENABLED` | `true` | Отключение embedded execution при запуске внешнего runner-а; runtime maintenance для ack timeout, leases/stale runners продолжает работать |
 | `CICD_RUNNER_REGISTRATION_TOKEN` | пусто | Bootstrap token внешнего runner protocol MVP |
 | `CICD_RUNNER_CREDENTIAL` | пусто | Credential внешнего `forge-runner`, полученный при регистрации |
 | `CICD_RUNNER_NAME` | `forge-runner` | Имя внешнего runner-а |

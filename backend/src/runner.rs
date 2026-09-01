@@ -484,6 +484,67 @@ pub async fn reconcile_expired_leases(pool: &PgPool) -> Result<u64, sqlx::Error>
     Ok(expired_jobs.len() as u64)
 }
 
+pub async fn reconcile_unacknowledged_leases(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let requeued_jobs = sqlx::query_as::<_, (Uuid, Uuid)>(
+        "WITH requeued AS ( \
+             UPDATE job_leases l \
+             SET lease_status = 'expired', \
+                 completed_at = COALESCE(completed_at, now()), \
+                 terminal_status = 'failed', \
+                 error_tail = COALESCE(error_tail, 'runner lease ack deadline exceeded') \
+             FROM job_queue q \
+             JOIN jobs j ON j.id = q.job_id \
+             JOIN execution_attempts a ON a.id = q.attempt_id \
+             JOIN stages s ON s.id = j.stage_id \
+             JOIN pipelines p ON p.id = s.pipeline_id \
+             WHERE l.lease_status = 'active' \
+               AND l.acknowledged_at IS NULL \
+               AND l.ack_deadline IS NOT NULL \
+               AND l.ack_deadline <= now() \
+               AND q.state = 'leased' \
+               AND q.job_id = l.job_id \
+               AND q.attempt_id = l.attempt_id \
+               AND (q.lease_id = l.id OR q.lease_id IS NULL) \
+               AND j.status = 'running' \
+               AND a.status = 'running' \
+               AND p.status IN ('queued','running') \
+             RETURNING l.id AS lease_id, l.job_id, l.attempt_id \
+         ), updated_attempts AS ( \
+             UPDATE execution_attempts a \
+             SET status = 'queued', started_at = NULL, \
+                 finished_at = NULL, exit_code = NULL, error_tail = NULL \
+             FROM requeued e \
+             WHERE a.id = e.attempt_id AND a.status = 'running' \
+             RETURNING a.job_id \
+         ), updated_jobs AS ( \
+             UPDATE jobs j \
+             SET status = 'queued', started_at = NULL, finished_at = NULL \
+             FROM requeued e \
+             WHERE j.id = e.job_id AND j.status = 'running' \
+             RETURNING j.id, j.stage_id \
+         ), updated_queue AS ( \
+             UPDATE job_queue q \
+             SET state = 'queued', lease_id = NULL, leased_at = NULL, completed_at = NULL, \
+                 not_before = now(), updated_at = now() \
+             FROM requeued e \
+             WHERE q.state = 'leased' \
+               AND (q.lease_id = e.lease_id OR q.attempt_id = e.attempt_id) \
+             RETURNING q.id \
+         ) \
+         SELECT id, stage_id FROM updated_jobs",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    for (job_id, stage_id) in &requeued_jobs {
+        if let Err(error) = crate::api::refresh_statuses(pool, *stage_id).await {
+            tracing::warn!(%job_id, %stage_id, error = ?error, "could not refresh statuses after unacknowledged lease reconciliation");
+        }
+    }
+
+    Ok(requeued_jobs.len() as u64)
+}
+
 pub async fn reconcile_stale_runners(pool: &PgPool) -> Result<u64, sqlx::Error> {
     let result = sqlx::query(
         "UPDATE runners r \
@@ -1280,6 +1341,14 @@ async fn poll_and_dispatch(pool: &PgPool, running: RunningJobs) -> Result<(), sq
 }
 
 async fn reconcile_runtime_state(pool: &PgPool) -> Result<(), sqlx::Error> {
+    let unacknowledged = reconcile_unacknowledged_leases(pool).await?;
+    if unacknowledged > 0 {
+        tracing::warn!(
+            unacknowledged,
+            "runner reconciled unacknowledged lease offers"
+        );
+    }
+
     let expired = reconcile_expired_leases(pool).await?;
     if expired > 0 {
         tracing::warn!(expired, "runner reconciled expired leases");

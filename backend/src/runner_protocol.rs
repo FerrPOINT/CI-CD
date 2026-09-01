@@ -500,6 +500,9 @@ pub(crate) async fn poll_runner_work(
         .await
         .map_err(ApiError::internal)?;
 
+    crate::runner::reconcile_unacknowledged_leases(db)
+        .await
+        .map_err(ApiError::internal)?;
     crate::runner::reconcile_expired_leases(db)
         .await
         .map_err(ApiError::internal)?;

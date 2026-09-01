@@ -3884,6 +3884,195 @@ async fn expired_job_lease_is_reconciled_to_failed_attempt() {
 }
 
 #[tokio::test]
+async fn unacknowledged_external_lease_is_requeued_after_ack_deadline() {
+    let pool = test_pool().await;
+    let namespace = Uuid::new_v4();
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let stage_id = Uuid::new_v4();
+    let job_id = Uuid::new_v4();
+    let attempt_id = Uuid::new_v4();
+    let runner_id = Uuid::new_v4();
+    let lease_id = Uuid::new_v4();
+    let project_name = format!("it-ack-timeout-{}", namespace.simple());
+    let runner_credential = format!("cicd_runner_{}", namespace.simple());
+    let lease_token = format!("lease-{}", namespace.simple());
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/ack-timeout.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status, started_at) \
+         VALUES ($1, $2, 'main', 'running', now())",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert pipeline");
+    sqlx::query(
+        "INSERT INTO stages (id, pipeline_id, name, position, status) \
+         VALUES ($1, $2, 'build', 0, 'running')",
+    )
+    .bind(stage_id)
+    .bind(pipeline_id)
+    .execute(&pool)
+    .await
+    .expect("insert stage");
+    sqlx::query(
+        "INSERT INTO jobs (id, stage_id, name, image, command, position, status, started_at) \
+         VALUES ($1, $2, 'compile', 'alpine:3.21', 'echo ok', 0, 'running', now())",
+    )
+    .bind(job_id)
+    .bind(stage_id)
+    .execute(&pool)
+    .await
+    .expect("insert job");
+    sqlx::query(
+        "INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger, started_at) \
+         VALUES ($1, $2, 1, 'running', 'external_runner', now())",
+    )
+    .bind(attempt_id)
+    .bind(job_id)
+    .execute(&pool)
+    .await
+    .expect("insert attempt");
+    sqlx::query(
+        "INSERT INTO runners \
+         (id, name, tags, status, last_seen_at, credential_hash, token_hint, credential_expires_at, \
+          capacity_total_slots, capacity_busy_slots, capabilities, heartbeat_payload) \
+         VALUES ($1, $2, ARRAY['linux'], 'online', now(), $3, 'ack-test', \
+                 now() + interval '1 day', 1, 0, '{}'::jsonb, '{}'::jsonb)",
+    )
+    .bind(runner_id)
+    .bind(format!("runner-ack-timeout-{}", namespace.simple()))
+    .bind(cicd::auth::hash_token(&runner_credential))
+    .execute(&pool)
+    .await
+    .expect("insert runner");
+    sqlx::query(
+        "INSERT INTO job_leases \
+         (id, job_id, attempt_id, runner_id, runner_name, lease_status, generation, lease_expires_at, \
+          lease_token_hash, ack_deadline, runner_protocol_version) \
+         VALUES ($1, $2, $3, $4, 'external', 'active', 1, now() + interval '10 minutes', \
+                 $5, now() - interval '1 minute', 1)",
+    )
+    .bind(lease_id)
+    .bind(job_id)
+    .bind(attempt_id)
+    .bind(runner_id)
+    .bind(cicd::auth::hash_token(&lease_token))
+    .execute(&pool)
+    .await
+    .expect("insert unacknowledged lease");
+    sqlx::query(
+        "INSERT INTO job_queue \
+         (id, job_id, attempt_id, pipeline_id, stage_id, state, leased_at, lease_id) \
+         VALUES ($1, $2, $3, $4, $5, 'leased', now() - interval '1 minute', $6)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(job_id)
+    .bind(attempt_id)
+    .bind(pipeline_id)
+    .bind(stage_id)
+    .bind(lease_id)
+    .execute(&pool)
+    .await
+    .expect("insert leased queue row");
+
+    let requeued = cicd::runner::reconcile_unacknowledged_leases(&pool)
+        .await
+        .expect("reconcile unacknowledged lease");
+    assert_eq!(requeued, 1);
+
+    let (
+        job_status,
+        attempt_status,
+        queue_state,
+        queue_lease_id,
+        queue_leased_at,
+        lease_status,
+        lease_terminal_status,
+    ): (
+        String,
+        String,
+        String,
+        Option<Uuid>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        String,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT j.status, a.status, q.state, q.lease_id, q.leased_at, l.lease_status, l.terminal_status \
+         FROM jobs j \
+         JOIN execution_attempts a ON a.job_id = j.id \
+         JOIN job_queue q ON q.attempt_id = a.id \
+         JOIN job_leases l ON l.id = $2 \
+         WHERE j.id = $1",
+    )
+    .bind(job_id)
+    .bind(lease_id)
+    .fetch_one(&pool)
+    .await
+    .expect("fetch requeued state");
+    assert_eq!(job_status, "queued");
+    assert_eq!(attempt_status, "queued");
+    assert_eq!(queue_state, "queued");
+    assert!(queue_lease_id.is_none());
+    assert!(queue_leased_at.is_none());
+    assert_eq!(lease_status, "expired");
+    assert_eq!(lease_terminal_status.as_deref(), Some("failed"));
+
+    let app = cicd::api::app(Some(pool.clone()));
+    let response = app
+        .oneshot(
+            Request::post("/api/v1/runner/work:poll")
+                .header("authorization", format!("Bearer {runner_credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "protocolVersion": 1,
+                        "capacity": {"freeSlots": 1},
+                        "waitSeconds": 0,
+                        "tags": ["linux"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let offer = response_json(response).await;
+    let next_lease_id = Uuid::parse_str(offer["leaseId"].as_str().unwrap()).unwrap();
+    assert_ne!(next_lease_id, lease_id);
+    assert_eq!(offer["fencingToken"], 2);
+
+    let active_leases: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM job_leases WHERE job_id = $1 AND lease_status = 'active'",
+    )
+    .bind(job_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count active leases after requeue poll");
+    assert_eq!(active_leases, 1);
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup project");
+    sqlx::query("DELETE FROM runners WHERE id = $1")
+        .bind(runner_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup runner");
+}
+
+#[tokio::test]
 async fn stale_runner_without_active_lease_is_marked_offline() {
     let pool = test_pool().await;
     let namespace = Uuid::new_v4();

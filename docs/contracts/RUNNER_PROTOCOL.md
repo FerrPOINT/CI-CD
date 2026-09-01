@@ -97,7 +97,7 @@ Offer содержит только имена declared secrets и relative path
 },"additionalProperties":false}
 ```
 
-Ack допускается только до `ackDeadline`; ответ: `{protocolVersion, leaseExpiresAt, renewAfter, cancelRequested}`. Renew допускается только для active, неистёкшей lease и возвращает те же поля. Повтор корректного ack/renew идемпотентен; stale token/generation возвращает `409 lease_fenced` (или `410` после окончательного expiry).
+Ack допускается только до `ackDeadline`; ответ: `{protocolVersion, leaseExpiresAt, renewAfter, cancelRequested}`. Current reconciler после `ackDeadline` закрывает unacknowledged lease как expired delivery и возвращает тот же `job_queue`/job/attempt в `queued` для следующего claim; поздний ack старой lease получает `410`. Renew допускается только для active, acknowledged, неистёкшей lease и возвращает те же поля. Повтор корректного ack/renew идемпотентен; stale token/generation возвращает `409 lease_fenced` (или `410` после окончательного expiry).
 
 `GET /api/v1/runner/leases/{leaseId}/control` возвращает те же control fields без продления lease. В current MVP control fields передаются headers: `Authorization: Bearer <runner-credential>`, `X-Runner-Protocol-Version: 1`, `X-Lease-Token: <opaque>`, `X-Fencing-Token: <generation>`. Endpoint доступен только owner-у acknowledged active lease. User-facing cancel для external lease выставляет `cancel_requested_at`, после чего `control`, `ack` и `renew` возвращают `cancelRequested: true`; `forge-runner` polling-ит этот endpoint во время long-running shell command, завершает процесс и отправляет `complete` с `outcome: "canceled"`. Если user cancel уже перевёл job/attempt в `canceled`, сервер принимает только подтверждённый `outcome: "canceled"` от того же active lease; конкурентный `success` rejected как fenced/conflict.
 
@@ -178,7 +178,7 @@ Completion terminal и идемпотентен только для иденти
 | registration token TTL | 1h | 5m..24h | атомарно расходуется при register |
 | heartbeat interval | 15s | 5s..60s | current MVP переводит stale online runner без unexpired active lease в `offline` после 120s; `unhealthy` остаётся target state |
 | poll wait | 0s default / 30s max | 0s..30s | `0` immediate, `>0` bounded ожидание offer с in-process + PostgreSQL `LISTEN/NOTIFY` wakeup |
-| ack timeout | 30s | 10s..120s | offer без ack становится abandoned |
+| ack timeout | 30s | 10s..120s | current MVP закрывает unacknowledged lease как expired delivery и requeue-ит attempt; target может выделить `abandoned` state |
 | lease TTL | 120s | 30s..600s | продлевается только owner-ом |
 | renew interval | 40s | `< TTL / 2` | runner начинает renew до deadline |
 | execution timeout | 1h | 1m..24h | фиксируется в attempt snapshot |
@@ -189,8 +189,8 @@ Completion terminal и идемпотентен только для иденти
 | Сущность | Состояния и допустимый переход |
 |---|---|
 | Runner | `registered -> online -> draining|unhealthy|offline|disabled|revoked`; только `online` получает work |
-| Queue | Current MVP: `queued -> leased -> completed|canceled`; long-poll ждёт только до claim и не вводит отдельное состояние; target может split-ить pre-ack `offered/abandoned`; claim выполняется транзакционно через `SKIP LOCKED` |
-| Lease | Current MVP: `active -> completed|expired|canceled`; target может split-ить `offered -> active`, `offered -> abandoned` при ack timeout |
+| Queue | Current MVP: `queued -> leased -> queued` при ack timeout или `leased -> completed|canceled` при terminal/cancel; long-poll ждёт только до claim и не вводит отдельное состояние; target может split-ить pre-ack `offered/abandoned`; claim выполняется транзакционно через `SKIP LOCKED` |
+| Lease | Current MVP: `active -> completed|expired|canceled`; unacknowledged lease после `ackDeadline` становится `expired`, а queue row получает новый claim с новой generation; target может split-ить `offered -> active`, `offered -> abandoned` при ack timeout |
 | Attempt | `queued -> leasing -> assigned -> running -> success|failed|canceled|timed_out|lost`; retry создаёт следующий номер |
 
 Мутирующая операция проверяет одновременно authenticated `runnerId`, `leaseId`, HMAC token, `fencingToken`, owner, active state и `expiresAt > now()`. Для одного attempt существует не более одной active lease; `job_leases` хранит историю, а не один mutable lease.

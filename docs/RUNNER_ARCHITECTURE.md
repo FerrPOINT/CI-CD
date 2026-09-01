@@ -31,7 +31,7 @@
 | Планирование | Current `pipeline_plans` хранит normalised `legacy-linear` или `v1-dag` snapshot; v1 `needs` проходит topological validation и исполняется через runtime-стадии `dag-*` | Job-level DAG dispatcher с `needs`, матрицами, rules и неизменяемым policy-aware plan |
 | Выполнение | Embedded supervisor в `cicd-server`; Docker или host shell; PID map в памяти; `job_leases` фиксирует embedded owner/expiry/terminal outcome; external runner protocol MVP может claim/ack/control/`secrets:resolve`/artifact upload/renew/logs/complete queued job через API; `forge-runner` shell MVP выполняет checkout/commands/secret env/artifact upload/log append/active-lease heartbeat/cancel polling/terminal completion отдельным процессом; maintenance reconciliation переводит stale online runner без unexpired active lease в offline | Отдельные sandboxed runner-ы, pull protocol, leases, attempts, reconciliation; host shell отсутствует в production |
 | Runner registry | Legacy `POST /runners` inventory плюс protocol register через `CICD_RUNNER_REGISTRATION_TOKEN`; runner credential hash, tags, heartbeat, capacity, capabilities, drain/disable metadata сохраняются в `runners` | Runner pools/scopes, credential rotation/revocation UI/API, mTLS/service identity, selection dispatcher |
-| Очередь | Durable `job_queue` материализует dispatch row для current queued attempt и хранит `required_tags`; trigger/retry/manual start enqueue-ят non-manual work; embedded claim берёт только untagged rows, external `work:poll` claim-ит compatible queue row через `SKIP LOCKED` + `required_tags ⊆ runner.tags` + current `shell` executor compatibility, поддерживает optional bounded long-poll `waitSeconds` `0..30` с in-process + PostgreSQL `LISTEN/NOTIFY` wakeup, создаёт active `job_leases`, lease token/`workspace.checkoutUrl`, declared `attempt.secrets`/`attempt.artifacts`, ack/control/`secrets:resolve`/artifact upload/renew/logs/complete и fencing generation | PostgreSQL queue с richer scheduling eligibility, pool/protected-tag policy, advanced capability matching и fairness |
+| Очередь | Durable `job_queue` материализует dispatch row для current queued attempt и хранит `required_tags`; trigger/retry/manual start enqueue-ят non-manual work; embedded claim берёт только untagged rows, external `work:poll` claim-ит compatible queue row через `SKIP LOCKED` + `required_tags ⊆ runner.tags` + current `shell` executor compatibility, поддерживает optional bounded long-poll `waitSeconds` `0..30` с in-process + PostgreSQL `LISTEN/NOTIFY` wakeup, создаёт active `job_leases`, requeue-ит unacknowledged offer после `ackDeadline`, выдаёт lease token/`workspace.checkoutUrl`, declared `attempt.secrets`/`attempt.artifacts`, ack/control/`secrets:resolve`/artifact upload/renew/logs/complete и fencing generation | PostgreSQL queue с richer scheduling eligibility, pool/protected-tag policy, advanced capability matching и fairness |
 | Retry | API повторно ставит job/pipeline в `queued` и уже создаёт новую `execution_attempt`; external protocol lease fencing, active heartbeat и stale-offline reconciliation есть на generation/token/lease ledger, но широкая policy retry/lost-runner restart/race suite ещё target | Policy-driven immutable execution attempt; история предыдущих попыток, логов и artifact manifest сохраняется |
 | Cancel | API меняет статусы, закрывает active embedded lease и пытается остановить Docker/PID локального процесса | Cancel intent в БД, delivery к owner runner, grace period, forced backend termination, reconciliation |
 | Таймауты | Job timeout убивает локальный процесс; embedded lease получает expiry `timeout_seconds + 60s`, reconciler fail-ит expired/missing lease | Queue, startup, execution, idle-log, cancellation и lease deadlines - конфигурируемые и фиксируемые в attempt |
@@ -351,7 +351,7 @@ Lease защищает от двойного выполнения при раз�
 |---|---|
 | `lease_id` | Уникальная lease конкретной attempt |
 | `fencing_token` | Монотонное значение; старый owner не может завершить новую attempt |
-| `ack_deadline` | Если runner не подтвердил assignment, lease освобождается |
+| `ack_deadline` | Если external runner не подтвердил assignment, current MVP закрывает старую delivery как `expired` и requeue-ит тот же queue row/job/attempt; target может выделить `abandoned` state |
 | `lease_expires_at` | Продлевается только owner runner-ом |
 | `renewal_interval` | Существенно короче TTL, например TTL/3 |
 | `owner_runner_id` | Единственный runner, который вправе писать logs/status/artifacts |
@@ -481,7 +481,8 @@ created
   -> succeeded | failed | canceled | timed_out | lost
 
 leaving states:
-leasing  -> abandoned       # ack deadline
+leasing  -> queued          # current MVP ack deadline requeue
+leasing  -> abandoned       # target split state for ack deadline
 assigned -> abandoned       # runner did not start
 starting/running/uploading -> cancel_requested -> canceled
 starting/running/uploading -> timed_out
@@ -685,7 +686,7 @@ Protocol:
 Отмена pipeline/job - intent, который должен переживать сетевой сбой:
 
 1. API проверяет RBAC и переводит pipeline/job в `cancel_requested`.
-2. Scheduler отменяет `ready` queue rows без выдачи lease.
+2. Scheduler отменяет `queued` queue rows без выдачи lease.
 3. Для active lease создаётся durable `cancel_request`.
 4. Runner получает cancel через следующий poll/renew/explicit endpoint.
 5. Runner посылает graceful cancellation executor-у.
@@ -700,7 +701,7 @@ API не должен объявлять job окончательно `canceled`
 Нужно разделять:
 
 - **Transport retry**: повтор HTTP log/upload/renew request с тем же idempotency key; не создаёт новую attempt.
-- **Lease delivery retry**: lease не acknowledged до deadline; старая attempt `abandoned`, queue item возвращается в `ready`.
+- **Lease delivery retry**: current MVP после `ackDeadline` закрывает unacknowledged lease как `expired` delivery, очищает `lease_id`/`leased_at` и возвращает тот же queue row/job/attempt в `queued`; target может split-ить старую delivery в `abandoned`.
 - **Execution retry**: новая attempt после terminal `failed`, `lost`, `timed_out` или policy-allowed infrastructure error.
 
 Retry policy входит в immutable plan и может ограничиваться project policy:
@@ -720,7 +721,7 @@ retry:
 | Таймаут | Объект | Действие |
 |---|---|---|
 | `queue_timeout` | Job слишком долго не назначается | `failed`/`timed_out` с diagnostic `no compatible runner` |
-| `lease_ack_timeout` | Lease | `abandoned`, release queue |
+| `lease_ack_timeout` | Lease | current MVP: `expired` delivery + requeue того же queue row/job/attempt; target: отдельный `abandoned` state |
 | `lease_ttl` | Active lease | `expired`; reconciliation |
 | `startup_timeout` | Container/Pod не перешёл в running | cancel backend, `failed`/`timed_out` |
 | `execution_timeout` | Attempt | `cancel_requested`, forced termination после grace |
@@ -734,7 +735,8 @@ retry:
 
 Reconciliation - обязательный server worker, запускаемый на старте и периодически:
 
-- `lease_expiry_reconciler`: находит истекшие leases, fencing old owner, переводит attempt в `lost`/`abandoned`, планирует retry по policy.
+- `lease_ack_reconciler`: current MVP закрывает unacknowledged external delivery после `ackDeadline` как `expired`, снимает lease с queue row и возвращает job/attempt в `queued`.
+- `lease_expiry_reconciler`: находит истекшие leases, fencing old owner, current MVP переводит attempt в `failed`; target расширяет `lost`/`abandoned` и retry policy.
 - `runner_health_reconciler`: current MVP переводит stale online runner без unexpired active lease в `offline`; target добавляет `unhealthy`, richer observations и restart/race policy.
 - `attempt_reconciler`: запрашивает executor observation через runner или backend-specific adapter, если completion отсутствует.
 - `queue_reconciler`: восстанавливает missing queue row для eligible job и убирает queue rows canceled/terminal jobs.
@@ -762,7 +764,7 @@ Reconciler должен быть идемпотентен, работать lock
 | `jobs` | Mutable runtime projection logical job |
 | `execution_attempts` | Неизменяемая история каждого запуска job |
 | `job_queue` | Current dispatch ledger: queued/leased/completed/canceled row на current attempt, `SKIP LOCKED` claim, open-row uniqueness и terminal cleanup |
-| `job_leases` | Current lease ledger: active/completed/expired/canceled, generation, expiry, external lease token hash, ack deadline, ack/renew/control/logs/complete, protocol version и защита stale-offline от unexpired active lease; target расширяет restart/race policy/full protocol data planes |
+| `job_leases` | Current lease ledger: active/completed/expired/canceled, generation, expiry, external lease token hash, ack deadline, ack-timeout requeue, ack/renew/control/logs/complete, protocol version и защита stale-offline от unexpired active lease; target расширяет restart/race policy/full protocol data planes |
 | `runners` | Identity, scope, status, drain/revocation |
 | `runner_credentials` | Credential hashes, expiry, rotation/revocation |
 | `runner_capability_snapshots` | Inventory revision/history |
@@ -1002,7 +1004,7 @@ Kubernetes, при наличии test cluster:
 
 ## Фаза 2 - durable queue, attempts и leases
 
-- Current MVP: `job_queue` материализует dispatch row для current queued attempt, поддерживает claim через `SKIP LOCKED`, basic tag + current executor capability matching и terminal/cancel cleanup.
+- Current MVP: `job_queue` материализует dispatch row для current queued attempt, поддерживает claim через `SKIP LOCKED`, basic tag + current executor capability matching, ack-timeout requeue и terminal/cancel cleanup.
 - Current MVP: `job_leases` фиксирует embedded runner claim, generation, expiry и terminal close.
 - Current MVP: external runner protocol создаёт lease offer, проверяет lease token/fencing, поддерживает ack/renew/control/logs/complete, heartbeat, basic tag/current executor matching и отдаёт `workspace.checkoutUrl`.
 - Расширить `job_queue` до pool/protected-tag/advanced capability matching, priorities/backoff и observability.
