@@ -41,7 +41,7 @@ function PatchView({ patch }: { patch: string }) {
           return <span key={key} className="block bg-red-500/10 font-mono text-red-400">{line}</span>
         }
         if (line.startsWith('diff --git') || line.startsWith('index ')) {
-          return <span key={key} className="block font-mono text-zinc-500">{line}</span>
+          return <span key={key} className="block font-mono text-zinc-400">{line}</span>
         }
         return <span key={key} className="block font-mono text-zinc-300">{line}</span>
       })}
