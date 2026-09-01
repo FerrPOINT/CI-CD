@@ -17,7 +17,7 @@ frontend/src/
 
 - `pages/*` не делают fetch напрямую — только через `api/` hooks.
 - `shared/ui` не импортирует `api`/`pages`.
-- i18n: все пользовательские строки через `t()`; ключи en/ru в паритете (проверяется verify_docs + vitest).
+- i18n: все пользовательские строки через `t()`; ключи en/ru в паритете, leaf-значения не пустые, runtime switch i18next и динамические ключи для стабильных API contract values покрыты `frontend/src/shared/i18n/i18n-contract.test.ts`.
 - Статусы отображаются текстом + цветом (не только цветом).
 - Страница должна показывать фактический статус capability: `Current verified`, `Configuration only` или `Target approved`; target-функции не оформляются как готовые action controls.
 - Для страниц с частично реализованной capability используется общий `CapabilityCallout` из `frontend/src/shared/ui/capability-callout.tsx`: `Runners` показывает registry/heartbeat как MVP, `Schedules` — scheduler MVP, `Webhooks` — outgoing delivery MVP, `Delivery history` — outbox history/requeue MVP, `Notifications` — `in_app`/`sse` delivery MVP.

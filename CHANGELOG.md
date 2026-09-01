@@ -43,6 +43,7 @@
 - CI actions: workflow переведён на Node 24-compatible `actions/checkout@v7`, `actions/setup-python@v7` и `pnpm/setup@v2` для pnpm v11/Node 22 runtime; target immutable digest pinning остаётся release hardening.
 - Compose smoke: CI теперь собирает production Docker images, поднимает `docker compose up --build -d`, проверяет backend health/readiness и frontend nginx; frontend Dockerfile использует frozen pnpm lockfile, а secret-scan pruning не заходит в generated dirs.
 - Browser E2E/a11y: добавлен Playwright Chromium gate против собранного Docker Compose stack с deterministic `seed:evidence`; critical journey проверяет Dashboard → project pipelines → pipeline plan/logs/artifacts, repository code browser и mobile drawer Escape/focus contract, а axe smoke падает на `serious`/`critical` violations representative pages. CI сохраняет Playwright report, traces, screenshots и video на failure через `actions/upload-artifact@v7`.
+- I18n contract: Vitest проверяет parity ключей `ru`/`en`, непустые leaf-значения, runtime language switch и динамические переводы для стабильных API contract values, включая status/action ключи.
 - Dependency review: `git2 0.21.0` remediation проверен, но отложен из-за несовместимости с закреплённым Rust 1.86; `git2 0.20.4` warnings остаются documented accepted findings.
 - SBOM: `scripts/generate_sbom.py` → docs/assets/sbom.json (CycloneDX-lite, 344 компонента; CISA Minimum Elements).
 - Пустой `CICD_AUTH_SECRET` теперь трактуется как не настроенный secret, поэтому compose default корректно оставляет локальный trusted-network mode.

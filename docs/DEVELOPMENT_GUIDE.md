@@ -138,7 +138,7 @@ Current `forge-runner` регистрируется или использует 
 | Rust unit | `JobStatus::transition_to()` и чистые domain правила | `cargo test -p cicd-server --test domain_transitions` | Current verified |
 | API contract без БД | router wiring, liveness/readiness no-DB behavior и extractor behavior через `app(None)` | `cargo test -p cicd-server --test api_contract` | Current verified; не заменяет persistence tests |
 | CLI contract | `cicd-cli --help`, public command groups | `cargo test -p cicd-cli --test cli_contract` | Current verified |
-| Frontend unit | Components, pages и UI behavior через Vitest/Testing Library | `pnpm test` | Current verified |
+| Frontend unit | Components, pages, i18n contract и UI behavior через Vitest/Testing Library | `pnpm test` | Current verified |
 | Dependency/SBOM security | Rust/Node advisories, committed-secret baseline и SBOM drift | SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`, `python3 scripts/scan_secrets.py`, `python3 scripts/generate_sbom.py --check` в CI job `security` | Current verified MVP |
 | Compose smoke | Запуск образов, `GET /api/v1/health`, `GET /api/v1/readiness` и frontend nginx | `.github/workflows/ci.yml` job `compose-smoke`; локально `just up && just health && just readiness` | Current verified |
 | API + PostgreSQL | CRUD, constraints, migrations/readiness, persisted side effects, headers/error envelope, auth/PAT и current pagination cases | `cargo test --features integration --test integration_db -- --test-threads=1` с PostgreSQL service в CI | Current verified; isolated owner/runtime matrix всё ещё target |
@@ -245,7 +245,7 @@ python3 scripts/verify_docs.py --all
 | `security` | SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm install --frozen-lockfile`, `pnpm audit --audit-level high`, `python3 scripts/scan_secrets.py`, `python3 scripts/generate_sbom.py --check`, production backend/frontend image build, pinned Trivy critical scan через `scripts/scan_container_images.sh` |
 | `docs` | `python3 -m py_compile scripts/verify_docs.py scripts/generate_sbom.py scripts/scan_secrets.py scripts/forge_backup.py`, backup helper self-test/dry-run, shell wrapper syntax, `python3 scripts/verify_docs.py --all` |
 
-В текущем workflow нет isolated owner/runtime migration matrix, prior-schema upgrade, OpenAPI examples validation, Lighthouse, `cargo-deny`, history/container secret scans или coverage ratchet. Backend release build, OpenAPI backward compatibility diff и critical container image scan уже включены как MVP-gates; broader image policy остаётся target. Playwright/axe существуют как MVP-gate для representative flows; full auth/RBAC/CLI E2E, all-route a11y и performance budgets всё ещё target. Не утверждайте, что branch protection, approval policy или checks из устаревших narrative-доков фактически включены, пока это не подтверждено настройками GitHub.
+В текущем workflow нет isolated owner/runtime migration matrix, prior-schema upgrade, OpenAPI examples validation, Lighthouse, `cargo-deny`, history/container secret scans или coverage ratchet. Backend release build, OpenAPI backward compatibility diff, RU/EN i18n contract и critical container image scan уже включены как MVP-gates; broader image policy остаётся target. Playwright/axe существуют как MVP-gate для representative flows; full auth/RBAC/CLI E2E, all-route a11y, full locale E2E и performance budgets всё ещё target. Не утверждайте, что branch protection, approval policy или checks из устаревших narrative-доков фактически включены, пока это не подтверждено настройками GitHub.
 
 ### Target approved
 
@@ -276,7 +276,7 @@ PR, добавляющий или меняющий capability, NFR, публич
 
 ## OpenAPI и generated types
 
-OpenAPI-first artifact уже current: Rust `utoipa` annotations генерируют committed `openapi/openapi.yaml`, а frontend генерирует DTO в `frontend/src/api/schema.d.ts`. Отдельный `cicd-api` crate, compatibility diff и generated transport boundary остаются target.
+OpenAPI-first artifact уже current: Rust `utoipa` annotations генерируют committed `openapi/openapi.yaml`, frontend генерирует DTO в `frontend/src/api/schema.d.ts`, а `pnpm openapi:compat` проверяет backward compatibility против base/default branch. Отдельный `cicd-api` crate и generated transport boundary остаются target.
 
 Текущий порядок при изменении API:
 

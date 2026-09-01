@@ -59,6 +59,7 @@
 | Liveness, DB-aware readiness and Prometheus metrics | Current verified |
 | Dependency audit, secret scan and SBOM drift gate | Current verified MVP |
 | Browser E2E and representative axe smoke on real Compose stack | Current verified MVP |
+| RU/EN Dashboard i18n contract parity and dynamic status/action keys | Current verified MVP |
 | Schedules, outgoing webhooks, in-app/SSE notifications | MVP |
 | External adapters, tenant isolation, distributed runners | Target approved |
 
