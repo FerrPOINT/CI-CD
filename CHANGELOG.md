@@ -35,6 +35,7 @@
 - Schedule fire slots (REQ-AUTO-002): migration `0014_schedule_fire_slots` adds `next_fire_at` and `schedule_fires`; scheduler evaluates strict five-field UTC cron, materializes unique fire slots and triggers pipelines idempotently; schedules with `last_fire_error` wait for an explicit PATCH instead of blocking the due batch.
 - CI: PostgreSQL service в backend-джобе — integration-тесты гоняются в CI; гейт `schema.d.ts` up-to-date; docs-джоба verify_docs.
 - Supply-chain gate (NFR-SEC-06): CI job `security` запускает SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`, committed-secret baseline scan и SBOM drift check; parser compatibility dependency переведена на maintained `yaml_serde` package без deprecated `serde_yaml`/`unsafe-libyaml` в resolved Cargo graph.
+- CI actions: workflow переведён на Node 24-compatible `actions/checkout@v7`, `actions/setup-python@v7` и `pnpm/setup@v2` для pnpm v11/Node 22 runtime; target immutable digest pinning остаётся release hardening.
 - Dependency review: `git2 0.21.0` remediation проверен, но отложен из-за несовместимости с закреплённым Rust 1.86; `git2 0.20.4` warnings остаются documented accepted findings.
 - SBOM: `scripts/generate_sbom.py` → docs/assets/sbom.json (CycloneDX-lite, 341 компонентов; CISA Minimum Elements).
 - Пустой `CICD_AUTH_SECRET` теперь трактуется как не настроенный secret, поэтому compose default корректно оставляет локальный trusted-network mode.

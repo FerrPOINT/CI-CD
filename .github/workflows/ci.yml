@@ -28,7 +28,7 @@ jobs:
     env:
       CICD_TEST_DATABASE_URL: postgres://forge_owner:forge_test_owner@localhost:5432/forge_test_cicd
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - uses: dtolnay/rust-toolchain@stable
       with:
         toolchain: "1.86"
@@ -55,15 +55,15 @@ jobs:
       run:
         working-directory: frontend
     steps:
-    - uses: actions/checkout@v4
-    - uses: pnpm/action-setup@v4
+    - uses: actions/checkout@v7
+    - uses: pnpm/setup@v2
       with:
         version: 11
-    - uses: actions/setup-node@v4
-      with:
-        node-version: 22
-        cache: pnpm
+        runtime: node@22
+        cache: true
         cache-dependency-path: frontend/pnpm-lock.yaml
+        working-directory: frontend
+        install: false
     - run: pnpm install --frozen-lockfile
     - name: generated client up to date
       run: |
@@ -76,7 +76,7 @@ jobs:
   security:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
     - uses: dtolnay/rust-toolchain@stable
       with:
         toolchain: "1.86"
@@ -94,20 +94,20 @@ jobs:
           exit 1
         fi
         cargo audit --ignore RUSTSEC-2023-0071
-    - uses: pnpm/action-setup@v4
+    - uses: pnpm/setup@v2
       with:
         version: 11
-    - uses: actions/setup-node@v4
-      with:
-        node-version: 22
-        cache: pnpm
+        runtime: node@22
+        cache: true
         cache-dependency-path: frontend/pnpm-lock.yaml
+        working-directory: frontend
+        install: false
     - name: Node dependency audit
       working-directory: frontend
       run: |
         pnpm install --frozen-lockfile
         pnpm audit --audit-level high
-    - uses: actions/setup-python@v5
+    - uses: actions/setup-python@v7
       with:
         python-version: "3.12"
     - name: Secret scan
@@ -118,8 +118,8 @@ jobs:
   docs:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-python@v5
+    - uses: actions/checkout@v7
+    - uses: actions/setup-python@v7
       with:
         python-version: "3.12"
     - name: script checks
