@@ -82,22 +82,22 @@ defaults:
 jobs:
   compile:
     commands:
-      - echo "build: compiling platform-core"
+      - 'echo "build: compiling platform-core"'
       - mkdir -p target/release
-      - printf "forge evidence artifact\\n" > target/release/app.tar.gz
-      - echo "build: artifact target/release/app.tar.gz ready"
+      - 'printf "forge evidence artifact\\n" > target/release/app.tar.gz'
+      - 'echo "build: artifact target/release/app.tar.gz ready"'
     artifacts:
       paths:
         - target/release/app.tar.gz
   unit:
     needs: [compile]
     commands:
-      - echo "test: 42 passed, 0 failed"
+      - 'echo "test: 42 passed, 0 failed"'
   publish:
     needs: [unit]
     commands:
-      - echo "deploy: publishing artifacts to registry"
-      - echo "deploy: done"
+      - 'echo "deploy: publishing artifacts to registry"'
+      - 'echo "deploy: done"'
 `
 
 async function main() {
