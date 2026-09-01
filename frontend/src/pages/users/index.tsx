@@ -353,7 +353,7 @@ function ApiTokensSection() {
                   <TableHead>{t('tokens.lastUsed')}</TableHead>
                   <TableHead>{t('tokens.hint')}</TableHead>
                   <TableHead>{t('tokens.created')}</TableHead>
-                  <TableHead className="w-20"></TableHead>
+                  <TableHead className="w-20"><span className="sr-only">{t('common.actions')}</span></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

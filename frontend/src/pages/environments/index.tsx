@@ -116,7 +116,7 @@ export function EnvironmentsPage() {
                   <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs" onClick={() => setSelectedEnv(selectedEnv?.id === env.id ? null : env)}>
                     <Rocket className="h-3 w-3" /> {t('environments.deployments')}
                   </Button>
-                  <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs text-danger hover:text-danger" onClick={() => {
+                  <Button size="sm" variant="ghost" aria-label={`${t('common.delete')} ${env.name}`} title={`${t('common.delete')} ${env.name}`} className="h-7 gap-1 px-2 text-xs text-danger hover:text-danger" onClick={() => {
                     setPendingEnv(env)
                   }}>
                     <Trash2 className="h-3 w-3" />

@@ -32,7 +32,7 @@ export function ArtifactsPage() {
                 <TableHead>{t('artifacts.digest')}</TableHead>
                 <TableHead>{t('artifacts.created')}</TableHead>
                 <TableHead>{t('artifacts.expires')}</TableHead>
-                <TableHead className="w-24"></TableHead>
+                <TableHead className="w-24"><span className="sr-only">{t('common.actions')}</span></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

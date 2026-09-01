@@ -84,7 +84,7 @@ export function SecretsPage() {
               <TableRow>
                 <TableHead>{t('secrets.key')}</TableHead>
                 <TableHead>{t('secrets.updated')}</TableHead>
-                <TableHead className="w-20"></TableHead>
+                <TableHead className="w-20"><span className="sr-only">{t('common.actions')}</span></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

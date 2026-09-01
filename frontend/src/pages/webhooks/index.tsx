@@ -89,7 +89,7 @@ export function WebhooksPage() {
                 <TableHead>{t('webhooks.url')}</TableHead>
                 <TableHead>{t('webhooks.events')}</TableHead>
                 <TableHead>{t('webhooks.enabled')}</TableHead>
-                <TableHead className="w-20"></TableHead>
+                <TableHead className="w-20"><span className="sr-only">{t('common.actions')}</span></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -103,7 +103,7 @@ export function WebhooksPage() {
                     </span>
                   </TableCell>
                   <TableCell>
-                    <Button size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs text-danger hover:text-danger" onClick={() => handleDelete(w)}>
+                    <Button size="sm" variant="ghost" aria-label={`${t('common.delete')} ${w.url}`} title={`${t('common.delete')} ${w.url}`} className="h-7 gap-1 px-2 text-xs text-danger hover:text-danger" onClick={() => handleDelete(w)}>
                       <Trash2 className="h-3 w-3" />
                     </Button>
                   </TableCell>
@@ -171,7 +171,7 @@ function DeliveryHistorySection() {
                 <TableHead>{t('deliveries.status')}</TableHead>
                 <TableHead>{t('deliveries.attempts')}</TableHead>
                 <TableHead>{t('deliveries.created')}</TableHead>
-                <TableHead className="w-28"></TableHead>
+                <TableHead className="w-28"><span className="sr-only">{t('common.actions')}</span></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -323,7 +323,7 @@ function NotificationsSection() {
                 <div key={i} className="grid gap-2 sm:grid-cols-[1fr_2fr_auto]">
                   <Input required placeholder={t('notifications.channelPlaceholder')} value={item.channel} onChange={e => setItems(items.map((it, idx) => idx === i ? { ...it, channel: e.target.value } : it))} />
                   <Input required placeholder={t('notifications.targetPlaceholder')} value={item.target} onChange={e => setItems(items.map((it, idx) => idx === i ? { ...it, target: e.target.value } : it))} />
-                  <Button type="button" variant="ghost" size="icon" className="h-9 w-9 text-danger" onClick={() => setItems(items.filter((_, idx) => idx !== i))}>
+                  <Button type="button" variant="ghost" size="icon" aria-label={t('common.delete')} title={t('common.delete')} className="h-9 w-9 text-danger" onClick={() => setItems(items.filter((_, idx) => idx !== i))}>
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>

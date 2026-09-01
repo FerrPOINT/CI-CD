@@ -133,7 +133,7 @@ export function ProjectMembersPage() {
                   <TableHead>{t('projectMembers.role')}</TableHead>
                   <TableHead>{t('users.enabled')}</TableHead>
                   <TableHead>{t('projectMembers.updated')}</TableHead>
-                  <TableHead className="w-20"></TableHead>
+                  <TableHead className="w-20"><span className="sr-only">{t('common.actions')}</span></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>

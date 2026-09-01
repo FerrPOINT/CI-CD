@@ -89,7 +89,7 @@ export function SchedulesPage() {
                 <TableHead>{t('schedules.nextFire')}</TableHead>
                 <TableHead>{t('schedules.lastFire')}</TableHead>
                 <TableHead>{t('schedules.created')}</TableHead>
-                <TableHead className="w-20"></TableHead>
+                <TableHead className="w-20"><span className="sr-only">{t('common.actions')}</span></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

@@ -60,7 +60,7 @@ pnpm build
 | UI primitives | `@radix-ui/*`, `class-variance-authority`, `tailwind-merge`, `lucide-react`, `sonner` | Controls должны иметь accessible name, стабильные размеры и i18n strings. |
 | Styling | `tailwindcss`, `@tailwindcss/vite` | Цвета через theme tokens из `frontend/src/index.css`. |
 | I18n | `i18next`, `react-i18next`, `i18next-http-backend` | ru/en ключи в паритете. |
-| Tests/build | `vitest`, `@testing-library/*`, `jsdom`, `typescript`, `vite`, `playwright`, `@playwright/test`, `@axe-core/playwright`, `openapi-typescript` | Unit/build current; Playwright/axe являются current CI MVP gate для critical browser journeys на seeded Compose stack. |
+| Tests/build | `vitest`, `@testing-library/*`, `jsdom`, `typescript`, `vite`, `playwright`, `@playwright/test`, `@axe-core/playwright`, `openapi-typescript` | Unit/build current; Playwright/axe являются current CI MVP gate для critical browser journeys и all-route axe smoke на seeded Compose stack. |
 
 ## 6. Priority candidates
 

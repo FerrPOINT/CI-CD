@@ -1,6 +1,6 @@
 # Accessibility — Forge CI/CD
 
-> **Целевой стандарт:** WCAG 2.2 AA. **Статус:** Current verified MVP для representative Playwright/axe smoke; полный WCAG/Lighthouse аудит остаётся Target approved. Скриншот не является доказательством доступности.
+> **Целевой стандарт:** WCAG 2.2 AA. **Статус:** Current verified MVP для Playwright/axe smoke по всем 21 baseline route; полный WCAG/theme/Lighthouse аудит остаётся Target approved. Скриншот не является доказательством доступности.
 
 ## 1. Scope
 
@@ -17,7 +17,7 @@
 | Статусы не передаются только цветом: есть текст `Онлайн`, `Успешно`, `Открыт` | UI + `m-runners.png` | Current verified |
 | 375 px evidence для ключевых flows | `docs/assets/screens/manifest.md` | Current verified |
 | Playwright mobile drawer contract: открыть drawer, Escape закрывает, focus возвращается trigger | `frontend/e2e/critical-flows.spec.ts` | Current verified MVP |
-| Representative axe smoke без `serious`/`critical` violations на Dashboard, Projects, Repository browser, Pipeline detail и Artifacts | `frontend/e2e/accessibility.spec.ts`; CI job `e2e` | Current verified MVP |
+| All-route desktop axe smoke без `serious`/`critical` violations на 20 рабочих Dashboard-страницах + `/login` | `frontend/e2e/accessibility.spec.ts`; CI job `e2e` | Current verified MVP |
 
 `min-h-9` (36 px) — текущий минимальный размер компактного элемента. Для primary mobile actions целевая норма — 44×44 CSS px; 36 px допускается только для вторичных dense-table действий с явным aria-label.
 
@@ -26,7 +26,7 @@
 - Нет Lighthouse accessibility CI gate.
 - Контраст palette dark/light/gray не измерен полной программной матрицей; соответствие AA для всей UI-системы не заявляется.
 - Нет полного keyboard-only прохода по всем маршрутам и form validation/error announcements audit.
-- Нет all-route axe matrix для всех 21 маршрута и всех тем.
+- Нет axe matrix для всех тем.
 - `aria-live` политика для async mutations/toasts не задокументирована.
 - Скриншоты доказывают responsive layout, но не screen-reader semantics, focus order или contrast.
 
@@ -34,7 +34,7 @@
 
 | Gate | Критерий | Evidence |
 |---|---|---|
-| axe in Playwright | Current MVP: 0 serious/critical violations на representative pages; target: all-route/theme matrix | `frontend/e2e/accessibility.spec.ts` report |
+| axe in Playwright | Current MVP: 0 serious/critical violations на всех 21 baseline route в desktop viewport; target: theme matrix | `frontend/e2e/accessibility.spec.ts` report |
 | Lighthouse | Accessibility score ≥95 на desktop и 375px mobile | CI artifact JSON/HTML |
 | Keyboard journey | Current MVP: mobile drawer Escape/focus; target: Tab/Shift+Tab/Escape/Enter/Space работает для nav, drawer, create forms, dialogs, destructive action | Playwright scenario + manual checklist |
 | Contrast | text, controls, focus indicator проходят WCAG AA; non-text UI ≥3:1 | palette audit report |

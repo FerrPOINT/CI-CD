@@ -49,10 +49,7 @@ export function RepositoriesPage() {
   }
 
   function handleDelete(repo: Repository) {
-    deleteRepository.mutate(repo.name, {
-      onSuccess: () => toast.success(t('repositories.deleted')),
-      onError: (err) => toast.error(err.message),
-    })
+    setPendingDelete(repo)
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -138,11 +135,11 @@ export function RepositoriesPage() {
                 <code className="flex-1 truncate rounded bg-surface-raised px-1.5 py-0.5 text-xs">
                   {buildCloneUrl(r.name)}
                 </code>
-                <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => copyUrl(r.name)}>
+                <Button size="sm" variant="ghost" aria-label={`${t('common.copy')} ${r.name}`} title={`${t('common.copy')} ${r.name}`} className="h-7 w-7 p-0" onClick={() => copyUrl(r.name)}>
                   {copied === r.name ? <Check className="h-3 w-3 text-success" /> : <Copy className="h-3 w-3" />}
                 </Button>
               </div>
-              <div className="mt-3 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+              <div className="mt-3 flex gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
                 <Button asChild size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs">
                   <Link to={`/repositories/${encodeURIComponent(r.name)}`}>
                     <FolderOpen className="h-3 w-3" /> {t('repositories.open')}

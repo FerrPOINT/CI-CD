@@ -33,7 +33,7 @@ Forge CI/CD развивается из MVP control plane в безопасну�
 | Frontend | React 19/Vite/TanStack Query; около 20 маршрутов + `/login`. DTO генерируются в `frontend/src/api/schema.d.ts`, API wrapper/hooks остаются handwritten. |
 | CLI | `backend/cli` уже отдельный package и работает через HTTP; реализованы runtime/platform группы `project`, `pipeline`, `job`, `runner`, `secret`, `artifact`, `environment`, `deployment`, `schedule`, `webhook`, `notification`, `outbox`, `report`, `audit`, `user`, `member`, `token`; есть `--api-url`/`CICD_API_URL`, `--token`/`CICD_API_TOKEN`, `--timeout-seconds`/`CICD_TIMEOUT_SECONDS`, `--output json|table`/`CICD_OUTPUT` и real-API smoke в CI, включая JWT/PAT auth-mode, RBAC denial и project-scoped read-only PAT. Profiles, keyring, generated DTO/client, request tracing, NDJSON и расширенные redaction fixtures остаются target. |
 | Observability | Есть `/api/v1/health`, `/api/v1/readiness`, `/metrics`, `TraceLayer` и `tracing`. OTLP, alerting и корреляция API--CLI не реализованы. |
-| Quality | GitHub Actions запускает backend fmt/clippy/workspace tests, real PostgreSQL integration, OpenAPI drift/compatibility gate, frontend generated-client check/test/build, Compose startup/health smoke, representative Playwright/axe/performance E2E на seeded Compose stack, security и docs checks. Lighthouse/load budgets и полный evidence bundle остаются target. |
+| Quality | GitHub Actions запускает backend fmt/clippy/workspace tests, real PostgreSQL integration, OpenAPI drift/compatibility gate, frontend generated-client check/test/build, Compose startup/health smoke, critical Playwright journeys, all-route axe/performance E2E на seeded Compose stack, security и docs checks. Lighthouse/load budgets и полный evidence bundle остаются target. |
 
 ## 3. Целевые принципы
 
@@ -951,5 +951,5 @@ Evidence requirements:
 - `docs/CI_CD.md`
 
 - Подготовлен полный текст для `docs/DELIVERY_ARCHITECTURE.md`; файлы не изменялись.
-- Зафиксировано текущее состояние: ручные frontend DTO/hooks, выделенный но минимальный CLI, current OpenAPI/auth/idempotency/metrics/representative Playwright MVP и target-пробелы по compatibility/Lighthouse/full E2E.
+- Зафиксировано текущее состояние: ручные frontend DTO/hooks, выделенный но минимальный CLI, current OpenAPI/auth/idempotency/metrics/critical Playwright + all-route axe MVP и target-пробелы по compatibility/Lighthouse/full E2E.
 - Целевой дизайн покрывает API contract, React FSD, CLI, observability, CI/E2E evidence и поэтапные gates.

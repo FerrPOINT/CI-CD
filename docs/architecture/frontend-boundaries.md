@@ -23,7 +23,7 @@ frontend/src/
 - Для страниц с частично реализованной capability используется общий `CapabilityCallout` из `frontend/src/shared/ui/capability-callout.tsx`: `Runners` показывает registry/heartbeat как MVP, `Environments` — metadata/history/protected approval/rollback MVP без расширенной policy orchestration, `Schedules` — scheduler MVP, `Webhooks` — outgoing delivery MVP, `Delivery history` — outbox history/requeue MVP, `Notifications` — `in_app`/`sse` delivery MVP.
 - Основной desktop layout — рабочий dashboard/sidebar с плотными таблицами и формами; mobile — карточный список без потери create/view/retry/cancel сценариев.
 - Новые страницы добавляются только для самостоятельного CI/CD workflow. Справка, issue tracking, registry и IDE-экраны остаются out-of-scope.
-- Каждый route из текущего baseline должен проходить `frontend/src/app/router.test.tsx`: тест использует production `appRoutes`, memory router и mocked API DTO для первого рендера 20 рабочих страниц + `/login`. Critical real-browser journeys проверяются `frontend/e2e/critical-flows.spec.ts` на собранном Compose stack; representative a11y smoke — `frontend/e2e/accessibility.spec.ts`.
+- Каждый route из текущего baseline должен проходить `frontend/src/app/router.test.tsx`: тест использует production `appRoutes`, memory router и mocked API DTO для первого рендера 20 рабочих страниц + `/login`. Critical real-browser journeys проверяются `frontend/e2e/critical-flows.spec.ts` на собранном Compose stack; all-route desktop a11y smoke — `frontend/e2e/accessibility.spec.ts`.
 
 ## Page-design baseline
 

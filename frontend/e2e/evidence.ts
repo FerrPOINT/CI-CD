@@ -1,6 +1,7 @@
 import { expect, type APIRequestContext } from '@playwright/test'
 
 const apiBaseURL = process.env.E2E_API_URL ?? 'http://127.0.0.1:22801/api/v1'
+export const evidenceRepositoryName = 'platform-core'
 export const expectedArtifactName = 'target__release__app.tar.gz'
 
 export type Project = {
@@ -39,6 +40,12 @@ export type Artifact = {
   name: string
 }
 
+export type PullRequest = {
+  number: number
+  title: string
+  description: string
+}
+
 export type EvidenceContext = {
   project: Project
   pipeline: Pipeline
@@ -46,13 +53,21 @@ export type EvidenceContext = {
   artifacts: Artifact[]
 }
 
-async function apiGet<T>(request: APIRequestContext, path: string): Promise<T> {
+export async function apiGet<T>(request: APIRequestContext, path: string): Promise<T> {
   const response = await request.get(`${apiBaseURL}${path}`)
   if (!response.ok()) {
     const body = await response.text()
     expect(response.ok(), `${path} -> ${response.status()} ${body.slice(0, 300)}`).toBeTruthy()
   }
   return response.json() as Promise<T>
+}
+
+export async function readEvidencePullRequest(request: APIRequestContext): Promise<PullRequest> {
+  const pullRequests = await apiGet<PullRequest[]>(request, `/repos/${evidenceRepositoryName}/pulls`)
+  const pullRequest = pullRequests.find(candidate => candidate.title === 'Add cache layer for registry lookups')
+    ?? pullRequests[0]
+  if (!pullRequest) throw new Error(`${evidenceRepositoryName} has no seeded pull request`)
+  return pullRequest
 }
 
 function sleep(ms: number): Promise<void> {
