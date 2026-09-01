@@ -23,5 +23,5 @@ uuid.workspace = true
 
 [dev-dependencies]
 axum = { version = "0.8", features = ["macros"] }
-cicd = { package = "cicd-server", path = "..", features = ["integration"] }
+cicd = { package = "cicd-server", path = ".." }
 sqlx.workspace = true

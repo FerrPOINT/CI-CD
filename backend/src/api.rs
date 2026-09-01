@@ -1004,7 +1004,7 @@ fn build_router_from_env(
     build_router_with_auth_secret(pool, git, running, crate::auth::configured_secret().ok())
 }
 
-#[cfg(any(test, feature = "integration"))]
+/// Build a router with an explicit auth secret for tests and integration harnesses.
 pub fn app_with_auth_secret(pool: Option<PgPool>, auth_secret: Option<String>) -> Router {
     build_router_with_auth_secret(
         pool,
@@ -1014,7 +1014,7 @@ pub fn app_with_auth_secret(pool: Option<PgPool>, auth_secret: Option<String>) -
     )
 }
 
-#[cfg(any(test, feature = "integration"))]
+/// Build a Git-aware router with an explicit auth secret for tests and integration harnesses.
 pub fn app_with_git_and_auth_secret(
     pool: Option<PgPool>,
     git: crate::git_host::GitConfig,
