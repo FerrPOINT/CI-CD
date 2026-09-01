@@ -403,7 +403,7 @@ Foreign-key constraints:
 
 ## 5.1 job_queue
 
-Durable dispatch ledger для current queued attempts. Trigger/retry/manual start создают row на non-manual queued attempt и копируют `jobs.required_tags`; embedded supervisor выбирает только untagged row, external `work:poll` выбирает compatible row через `FOR UPDATE SKIP LOCKED` с правилом `job_queue.required_tags ⊆ runner.tags`, создаёт `job_leases` и переводит row в `leased`; terminal/cancel/expiry закрывают row в `completed` или `canceled`.
+Durable dispatch ledger для current queued attempts. Trigger/retry/manual start создают row на non-manual queued attempt и копируют `jobs.required_tags`; embedded supervisor выбирает только untagged row, external `work:poll` выбирает compatible row через `FOR UPDATE SKIP LOCKED` с правилом `job_queue.required_tags ⊆ runner.tags` и current `shell` executor compatibility по `runners.capabilities.executorKinds`, создаёт `job_leases` и переводит row в `leased`; terminal/cancel/expiry закрывают row в `completed` или `canceled`.
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -434,7 +434,7 @@ Durable dispatch ledger для current queued attempts. Trigger/retry/manual sta
 
 ## 5.2 job_leases
 
-Durable ledger владения execution attempt. Текущий MVP использует таблицу для embedded runner и external runner protocol: claim одним SQL statement переводит compatible `job_queue` row в `leased`, `jobs` и `execution_attempts` в `running`, создаёт active lease и фиксирует generation/expiry. Embedded runner закрывает lease при terminal result/cancel, reconciler закрывает expired/missing owner, а external protocol дополнительно хранит hash lease token, ack deadline, ack/renew state и protocol version. `forge-runner` уже работает как отдельный shell process поверх этой модели, получает declared secrets и загружает declared artifact files через lease-scoped endpoint; production chunked artifact sessions, protected tag/pool policy, capability matching, sandbox и lost-heartbeat policy остаются target.
+Durable ledger владения execution attempt. Текущий MVP использует таблицу для embedded runner и external runner protocol: claim одним SQL statement переводит compatible `job_queue` row в `leased`, `jobs` и `execution_attempts` в `running`, создаёт active lease и фиксирует generation/expiry. Embedded runner закрывает lease при terminal result/cancel, reconciler закрывает expired/missing owner, а external protocol дополнительно хранит hash lease token, ack deadline, ack/renew state и protocol version, плюс проверяет current `shell` executor compatibility перед claim. `forge-runner` уже работает как отдельный shell process поверх этой модели, получает declared secrets и загружает declared artifact files через lease-scoped endpoint; production chunked artifact sessions, protected tag/pool policy, advanced capability matching, sandbox и lost-heartbeat policy остаются target.
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -878,7 +878,7 @@ idx_outbox_delivery_attempts_message ON outbox_delivery_attempts(message_id, att
 
 | Фаза | Таблицы | Назначение |
 |---|---|---|
-| External runner production boundary | credential rotation/revocation tables, richer artifact sessions, richer log chunks | `runners` + `job_queue` + `job_leases` уже покрывают protocol MVP: runner credential hash, heartbeat metadata, durable dispatch row с basic tag matching, lease token hash, `workspace.checkoutUrl`, ack/renew/`secrets:resolve`/artifact upload/logs/complete, fencing generation и shell `forge-runner`; target добавляет richer identity lifecycle, protected tags/pools, capability matching, sandbox и chunked protocol data planes |
+| External runner production boundary | credential rotation/revocation tables, richer artifact sessions, richer log chunks | `runners` + `job_queue` + `job_leases` уже покрывают protocol MVP: runner credential hash, heartbeat metadata, durable dispatch row с basic tag + current executor capability matching, lease token hash, `workspace.checkoutUrl`, ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, fencing generation и shell `forge-runner`; target добавляет richer identity lifecycle, protected tags/pools, advanced capability matching, sandbox и chunked protocol data planes |
 | Production outbox | `outbox_deliveries` / lease state | Full dispatcher snapshots, lease/fencing, crash recovery, response preview allowlist и operator dead-letter policy поверх current bounded history |
 | External notifications | delivery-specific tables | Email/Slack sender state, templates, preferences |
 

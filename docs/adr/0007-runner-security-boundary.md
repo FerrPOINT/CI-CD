@@ -6,7 +6,7 @@ Accepted (target architecture; external runner protocol + forge-runner shell MVP
 
 ## Context
 
-Текущий embedded runner выполняется в процессе backend. Такой процесс совмещает public API, PostgreSQL credentials и запуск недоверенного user code; Docker execution требует daemon privilege. Embedded execution уже пишет `job_leases` как локальный owner/expiry ledger и собирает declared artifact files. External runner protocol MVP подключил `runners` к register/heartbeat/poll/ack/renew/`secrets:resolve`/artifact upload/logs/complete и lease fencing; `forge-runner` уже может выполнять shell jobs отдельным процессом, отправлять stdout/stderr в `job_logs`, получать declared secrets и загружать declared artifacts, но production sandbox boundary ещё не закрыт.
+Текущий embedded runner выполняется в процессе backend. Такой процесс совмещает public API, PostgreSQL credentials и запуск недоверенного user code; Docker execution требует daemon privilege. Embedded execution уже пишет `job_leases` как локальный owner/expiry ledger и собирает declared artifact files. External runner protocol MVP подключил `runners` к register/heartbeat/poll/ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, lease fencing и basic tag/current `shell` executor compatibility; `forge-runner` уже может выполнять shell jobs отдельным процессом, отправлять stdout/stderr в `job_logs`, poll-ить cancel signal, получать declared secrets и загружать declared artifacts, но production sandbox boundary ещё не закрыт.
 
 ## Decision
 
@@ -15,7 +15,7 @@ Control-plane API никогда не исполняет пользовател�
 ## Consequences
 
 - `runner` registry уже участвует в protocol MVP, но legacy inventory endpoints сохраняются для оператора.
-- Текущий protocol MVP закрывает durable queue claim, внешний lease token/ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, `workspace.checkoutUrl`, fencing generation, cancel signal delivery и отдельный shell-runner process; ещё требуются credential rotation/revocation, richer log chunks, resumable artifact sessions и sandbox policy.
+- Текущий protocol MVP закрывает durable queue claim, basic tag + current `shell` executor capability matching, внешний lease token/ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, `workspace.checkoutUrl`, fencing generation, cancel signal delivery и отдельный shell-runner process; ещё требуются credential rotation/revocation, richer log chunks, resumable artifact sessions и sandbox policy.
 - Локальный embedded executor остаётся development adapter до готовности отдельного runner service; production docs не должны рекламировать его как безопасный runner pool.
 
 ## Related

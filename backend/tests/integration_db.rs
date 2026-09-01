@@ -20,6 +20,17 @@ use sqlx::postgres::PgPoolOptions;
 use tower::ServiceExt;
 use uuid::Uuid;
 
+type CanceledExternalLeaseState = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<chrono::DateTime<chrono::Utc>>,
+    Option<chrono::DateTime<chrono::Utc>>,
+);
+
 async fn test_pool() -> sqlx::PgPool {
     let url = std::env::var("CICD_TEST_DATABASE_URL")
         .expect("CICD_TEST_DATABASE_URL must point at the test-compose PostgreSQL");
@@ -150,7 +161,7 @@ async fn job_log_append_serializes_concurrent_attempt_writes() {
     let second = tokio::spawn(async move {
         cicd::store::append_job_log(&second_pool, job_id, attempt_id, "stderr").await
     });
-    let mut records = vec![
+    let mut records = [
         first.await.expect("first task join").expect("first append"),
         second
             .await
@@ -893,6 +904,56 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
             .await
             .expect("fetch queue state after incompatible poll");
     assert_eq!(queue_still_waiting, "queued");
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/runner/work:poll")
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "protocolVersion": 1,
+                        "capacity": {"freeSlots": 1},
+                        "tags": ["linux", "docker"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let queue_still_waiting: String =
+        sqlx::query_scalar("SELECT state FROM job_queue WHERE attempt_id = $1")
+            .bind(attempt_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch queue state after incompatible executor poll");
+    assert_eq!(queue_still_waiting, "queued");
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/runner/heartbeat")
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "protocolVersion": 1,
+                        "status": "online",
+                        "capacity": {"totalSlots": 2, "busySlots": 0},
+                        "tags": ["linux", "docker"],
+                        "capabilities": {"executorKinds": ["shell"], "os": "linux", "arch": "amd64"},
+                        "activeLeaseIds": []
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
 
     let response = app
         .clone()
@@ -3096,16 +3157,7 @@ async fn cancel_pipeline_signals_external_runner_until_confirmed() {
         terminal_status,
         lease_completed_at,
         cancel_requested_at,
-    ): (
-        String,
-        String,
-        String,
-        String,
-        String,
-        Option<String>,
-        Option<chrono::DateTime<chrono::Utc>>,
-        Option<chrono::DateTime<chrono::Utc>>,
-    ) = sqlx::query_as(
+    ): CanceledExternalLeaseState = sqlx::query_as(
         "SELECT j.status, a.status, p.status, q.state, l.lease_status, l.terminal_status, \
                 l.completed_at, l.cancel_requested_at \
          FROM jobs j \

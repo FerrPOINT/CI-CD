@@ -1,6 +1,6 @@
 # Runner protocol
 
-**Статус:** Current verified MVP + Target approved. Реализованный subset на 2026-09-01 покрывает `register`, `heartbeat`, immediate `work:poll`, basic tag matching, `ack`, lease-scoped `control`/`secrets:resolve`, one-shot artifact upload, `renew`, `logs`, `complete`, cancel signal delivery через `job_leases.cancel_requested_at`, SHA-256 storage для runner credential/lease token, fencing по `job_leases.generation`, `workspace.checkoutUrl`, declared `attempt.secrets`/`attempt.artifacts` и отдельный `forge-runner` shell process. Остальные разделы описывают target-контракт production runner-а. Канонические путь и имена таблиц закреплены [ADR-0009](../adr/0009-canonical-registry.md).
+**Статус:** Current verified MVP + Target approved. Реализованный subset на 2026-09-01 покрывает `register`, `heartbeat`, immediate `work:poll`, basic tag matching, current `shell` executor capability matching, `ack`, lease-scoped `control`/`secrets:resolve`, one-shot artifact upload, `renew`, `logs`, `complete`, cancel signal delivery через `job_leases.cancel_requested_at`, SHA-256 storage для runner credential/lease token, fencing по `job_leases.generation`, `workspace.checkoutUrl`, declared `attempt.secrets`/`attempt.artifacts` и отдельный `forge-runner` shell process. Остальные разделы описывают target-контракт production runner-а. Канонические путь и имена таблиц закреплены [ADR-0009](../adr/0009-canonical-registry.md).
 
 ## 1. Область и общие правила
 
@@ -38,12 +38,18 @@
     "registrationToken":{"type":"string","minLength":1},
     "name":{"type":"string","minLength":1,"maxLength":128},
     "tags":{"type":"array","maxItems":64,"items":{"type":"string","pattern":"^[a-z0-9][a-z0-9._-]{0,62}$"}},
-    "capabilities":{"type":"object","additionalProperties":true}
+    "capabilities":{
+      "type":"object",
+      "properties":{
+        "executorKinds":{"type":"array","maxItems":16,"items":{"type":"string","pattern":"^[a-z0-9][a-z0-9._-]{0,62}$"}}
+      },
+      "additionalProperties":true
+    }
   },"additionalProperties":false
 }
 ```
 
-Успешный `201` возвращает `{protocolVersion, runnerId, credential, credentialExpiresAt, heartbeatIntervalSeconds, pollWaitMaxSeconds}`. `credential` показывается ровно один раз. Current MVP сверяет `registrationToken` с `CICD_RUNNER_REGISTRATION_TOKEN`, нормализует optional `tags`, принимает optional object `capabilities` и хранит credential hash + hint; одноразовые/scoped registration tokens, protected tags и registration-token audit остаются target.
+Успешный `201` возвращает `{protocolVersion, runnerId, credential, credentialExpiresAt, heartbeatIntervalSeconds, pollWaitMaxSeconds}`. `credential` показывается ровно один раз. Current MVP сверяет `registrationToken` с `CICD_RUNNER_REGISTRATION_TOKEN`, нормализует optional `tags`, принимает optional object `capabilities`, валидирует optional `capabilities.executorKinds` и хранит credential hash + hint; одноразовые/scoped registration tokens, protected tags и registration-token audit остаются target.
 
 `POST /api/v1/runner/heartbeat` принимает:
 
@@ -51,7 +57,7 @@
 {"protocolVersion":1,"status":"online","draining":false,"capacity":{"totalSlots":4,"busySlots":1},"tags":["linux","docker"],"capabilities":{},"activeLeaseIds":["uuid"]}
 ```
 
-Схема: `status` равен `online` или `draining`; `totalSlots` - 1..1024, `busySlots` - 0..`totalSlots`; current MVP нормализует optional tags, при наличии заменяет stored tags, при отсутствии сохраняет текущие tags, сохраняет optional object capabilities и обновляет heartbeat snapshot. Ответ `204`. Protected-tag scope, capability allowlist и запрет изменения protected tags остаются target policy.
+Схема: `status` равен `online` или `draining`; `totalSlots` - 1..1024, `busySlots` - 0..`totalSlots`; current MVP нормализует optional tags, при наличии заменяет stored tags, при отсутствии сохраняет текущие tags, сохраняет optional object capabilities, валидирует optional `capabilities.executorKinds` и обновляет heartbeat snapshot. Ответ `204`. Protected-tag scope, capability allowlist и запрет изменения protected tags остаются target policy.
 
 ## 3. Получение и подтверждение работы
 
@@ -66,7 +72,7 @@
 },"additionalProperties":false}
 ```
 
-Current MVP отвечает сразу и возвращает `204`, если совместимой работы нет. Optional `tags` в poll нормализуются; пустой список означает текущие stored runner tags, непустой список должен быть subset stored runner tags и может сузить выдачу. Target сервер long-poll-ит не более `pollWait`. При найденной работе ответ `200 LeaseOffer`:
+Current MVP отвечает сразу и возвращает `204`, если совместимой работы нет. Optional `tags` в poll нормализуются; пустой список означает текущие stored runner tags, непустой список должен быть subset stored runner tags и может сузить выдачу. Текущий executor offer равен `shell`: runner получает работу, если `capabilities.executorKinds` отсутствует или явно содержит `shell`; runner с явным списком без `shell` считается несовместимым. Target сервер long-poll-ит не более `pollWait`. При найденной работе ответ `200 LeaseOffer`:
 
 ```json
 {"protocolVersion":1,"leaseId":"uuid","leaseToken":"opaque","fencingToken":7,
@@ -78,7 +84,7 @@ Current MVP отвечает сразу и возвращает `204`, если 
  "planSignature":{"kid":"string","signature":"base64url"}}
 ```
 
-Offer содержит только имена declared secrets и relative paths declared artifacts, но не secret values и не storage credentials. Current `forge-runner` использует `workspace.checkoutUrl` для `git clone`, после `ack` получает scoped secret bundle, затем выполняет команды shell в workspace, передаёт declared secrets в env, отправляет stdout/stderr через protocol log append с best-effort masking, загружает declared artifact files и отправляет terminal result; `image` остаётся compatibility field до Docker/Kubernetes runner. Target runner проверяет `planSignature`, не запускает работу до ack и не сохраняет `leaseToken` в log/metadata. Несовместимый/disabled/draining/offline runner или runner без нужных `required_tags` не получает offer.
+Offer содержит только имена declared secrets и relative paths declared artifacts, но не secret values и не storage credentials. Current `forge-runner` использует `workspace.checkoutUrl` для `git clone`, после `ack` получает scoped secret bundle, затем выполняет команды shell в workspace, передаёт declared secrets в env, отправляет stdout/stderr через protocol log append с best-effort masking, загружает declared artifact files и отправляет terminal result; `image` остаётся compatibility field до Docker/Kubernetes runner. Target runner проверяет `planSignature`, не запускает работу до ack и не сохраняет `leaseToken` в log/metadata. Несовместимый/disabled/draining/offline runner, runner без нужных `required_tags` или runner с explicit `executorKinds` без `shell` не получает offer.
 
 `POST /api/v1/runner/leases/{leaseId}/ack` и `POST /api/v1/runner/leases/{leaseId}/renew` используют одну схему:
 

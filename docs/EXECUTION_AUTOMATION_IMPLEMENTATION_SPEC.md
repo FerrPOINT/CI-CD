@@ -4,9 +4,9 @@
 
 ## 1. Первая поставка и границы
 
-Этот документ описывает target-срез external runner/production scheduler/outbox. Current MVP уже имеет embedded runner, runner protocol register/heartbeat/immediate poll/ack/renew/logs/complete, `forge-runner` shell process, scheduler/outgoing webhook/local notification worker, bounded `outbox_delivery_attempts` history и explicit requeue failed delivery.
+Этот документ описывает target-срез external runner/production scheduler/outbox. Current MVP уже имеет embedded runner, runner protocol register/heartbeat/immediate poll/ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, basic tag + current executor capability matching, `forge-runner` shell process, scheduler/outgoing webhook/local notification worker, bounded `outbox_delivery_attempts` history и explicit requeue failed delivery.
 
-Уже реализовано в runner protocol MVP: env bootstrap registration token, heartbeat, durable `job_queue` claim, basic tag matching, immediate `work:poll`, `workspace.checkoutUrl`, ack/renew/logs/complete, attempt/lease/log writes, fencing generation и отдельный shell runner binary. В target external-runner поставку остаются Docker-only/sandboxed runner, long-poll/wakeup, credential lifecycle, pool/protected-tag/capability policy, lost-runner reconciliation и production sandbox boundary.
+Уже реализовано в runner protocol MVP: env bootstrap registration token, heartbeat, durable `job_queue` claim, basic tag + current executor capability matching, immediate `work:poll`, `workspace.checkoutUrl`, ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, attempt/lease/log writes, fencing generation и отдельный shell runner binary. В target external-runner поставку остаются Docker-only/sandboxed runner, long-poll/wakeup, credential lifecycle, advanced pool/protected-tag/capability policy, lost-runner reconciliation и production sandbox boundary.
 
 Исключено из этого target-среза: Kubernetes, external-runner secret injection, artifact streaming, email/Slack adapters и inbound provider webhooks. Они остаются feature-flagged до отдельного contract PR.
 
@@ -58,7 +58,7 @@ Runner credentials: `Authorization: Bearer <opaque>`. Registration returns raw c
 |---|---|---|
 | `POST /register` | `{registration_token,name,tags,capabilities}` | Current MVP: 201 `{runner_id,credential,credential_expires_at}`; target: registration token atomically consumed |
 | `POST /heartbeat` | `{status,capacity,running_attempt_ids}` | 204; stale credential 401 |
-| `POST /work:poll` | `{capacity,tags}` | Current MVP: immediate `204` or compatible `200 LeaseOffer` with `required_tags ⊆ runner.tags`; target: long-poll with signed plan |
+| `POST /work:poll` | `{capacity,tags}` | Current MVP: immediate `204` or compatible `200 LeaseOffer` with `required_tags ⊆ runner.tags` and current `shell` executor compatibility; target: long-poll with signed plan |
 | `POST /leases/{id}/ack` | `{generation,lease_token}` | 200 `{expires_at,renew_after}`; expired/fenced 409 `lease_fenced` |
 | `POST /leases/{id}/renew` | `{generation,lease_token}` | 200 `{expires_at,cancel_requested}` |
 | `POST /attempts/{id}/logs` | `{generation,lease_token,sequence,stream,message_sha256,chunk}` | 202; unique `(attempt,sequence,sha256)` makes retry idempotent |
@@ -92,7 +92,7 @@ Outbox claim uses `FOR UPDATE SKIP LOCKED`, sets `state=processing`, `worker_gen
 ## 7. First acceptance suite
 
 - registration token one-use/max-use/expiry/revoke races;
-- duplicate poll returns one offer, stale ack/renew/logs/complete fenced;
+- duplicate poll returns one offer, stale ack/renew/control/`secrets:resolve`/artifact upload/logs/complete fenced;
 - server restart expires lease and creates exactly one next attempt;
 - cancel versus complete deterministic precedence;
 - scheduler DST/missed/restart/multi-instance yields exactly one schedule_fire;

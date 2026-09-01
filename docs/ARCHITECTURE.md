@@ -152,7 +152,7 @@ Supervisor-полл queued-джобов, атомарный lease-aware claim (`
 
 ### 6.4 External runner protocol MVP
 
-`/api/v1/runner/*` реализует control-plane protocol slice для внешних runner-ов: register через `CICD_RUNNER_REGISTRATION_TOKEN`, heartbeat с tags/capacity/capabilities, immediate `work:poll`, lease `ack`, `renew`, `secrets:resolve`, artifact upload, `logs` и `complete`. Сервер хранит только hash runner credential и lease token, а mutating lease endpoints проверяют runner identity, token, `job_leases.generation` и expiry. `work:poll` claim-ит compatible durable `job_queue` row с `required_tags ⊆ runner.tags`, отдаёт `workspace.checkoutUrl`, declared `attempt.secrets` и `attempt.artifacts`, а `forge-runner` умеет зарегистрироваться, heartbeat-ить, подтвердить lease, получить только declared secrets после ack, продлевать lease, выполнить команды в shell workspace, загрузить declared artifact files, отправить stdout/stderr в attempt-owned `job_logs` с masking и отправить terminal result. Long-poll wakeup, resumable artifact sessions, richer log chunks, Docker/Kubernetes sandbox isolation и production runner policy остаются target.
+`/api/v1/runner/*` реализует control-plane protocol slice для внешних runner-ов: register через `CICD_RUNNER_REGISTRATION_TOKEN`, heartbeat с tags/capacity/capabilities, immediate `work:poll`, lease `ack`, `renew`, `control`, `secrets:resolve`, artifact upload, `logs` и `complete`. Сервер хранит только hash runner credential и lease token, а mutating lease endpoints проверяют runner identity, token, `job_leases.generation` и expiry. `work:poll` claim-ит compatible durable `job_queue` row с `required_tags ⊆ runner.tags` и текущим executor `shell`, если `capabilities.executorKinds` отсутствует или явно содержит `shell`; затем отдаёт `workspace.checkoutUrl`, declared `attempt.secrets` и `attempt.artifacts`. `forge-runner` умеет зарегистрироваться, heartbeat-ить, подтвердить lease, получить только declared secrets после ack, продлевать lease, poll-ить cancel control signal, выполнить команды в shell workspace, загрузить declared artifact files, отправить stdout/stderr в attempt-owned `job_logs` с masking и отправить terminal result. Long-poll wakeup, resumable artifact sessions, richer log chunks, Docker/Kubernetes sandbox isolation и advanced pool/protected-tag/capability policy остаются target.
 
 ### 6.5 Платформенные ресурсы (MVP)
 
@@ -171,7 +171,7 @@ Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-2
 - Domain: unit-тесты переходов статусов (`domain/src/lib.rs`, `tests/domain_transitions.rs`).
 - API contract: no-DB тесты health/readiness/503/валидации (`tests/api_contract.rs`).
 - CLI: contract-тест help-групп (`cli/tests/cli_contract.rs`).
-- Real-PostgreSQL integration tests уже есть для migrations/readiness/project/auth paths, trigger idempotency, immutable `pipeline_plans`, v1 DAG config из bare repo с `required_tags`/`required_secrets`/`artifact_paths` и runner protocol register/heartbeat/poll/ack/`secrets:resolve`/artifact upload/renew/logs/complete с basic tag matching, scoped secret delivery и attempt-owned artifacts; target остаётся для Playwright E2E, coverage gate и широких failure/protocol tests.
+- Real-PostgreSQL integration tests уже есть для migrations/readiness/project/auth paths, trigger idempotency, immutable `pipeline_plans`, v1 DAG config из bare repo с `required_tags`/`required_secrets`/`artifact_paths` и runner protocol register/heartbeat/poll/ack/control/`secrets:resolve`/artifact upload/renew/logs/complete с basic tag + executor capability matching, scoped secret delivery и attempt-owned artifacts; target остаётся для Playwright E2E, coverage gate и широких failure/protocol tests.
 
 ## 9. Статус миграции (ADR-0005)
 
@@ -184,7 +184,7 @@ Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-2
 | app/infra/api/server пакеты | ⬜ Phase C (strangler по вертикалям) |
 | OpenAPI + генерация клиента | ✅ current: `openapi/openapi.yaml` + `frontend/src/api/schema.d.ts` |
 | Auth/RBAC/token middleware | ◩ current conditional: JWT/scoped PAT/global roles + project memberships + session-bound access invalidation + refresh rotate/logout/revoke при `CICD_AUTH_SECRET`; tenant scope, service-account/scoped Git credentials и production cookie/CSRF/session-family policy target |
-| Distributed runner protocol | ◩ current MVP: `/api/v1/runner/*` register/heartbeat/poll/ack/`secrets:resolve`/artifact upload/renew/logs/complete + durable `job_queue` + basic tag matching + hashed credentials/lease tokens + fencing generation + scoped secret delivery + `forge-runner` shell process; long-poll, resumable artifact sessions, richer log chunks и sandbox boundary остаются Phase D |
+| Distributed runner protocol | ◩ current MVP: `/api/v1/runner/*` register/heartbeat/poll/ack/control/`secrets:resolve`/artifact upload/renew/logs/complete + durable `job_queue` + basic tag/executor capability matching + hashed credentials/lease tokens + fencing generation + scoped secret delivery + `forge-runner` shell process; long-poll, resumable artifact sessions, richer log chunks, advanced runner policy и sandbox boundary остаются Phase D |
 
 ## 10. Dev workflow
 

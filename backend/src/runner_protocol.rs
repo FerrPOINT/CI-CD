@@ -26,6 +26,7 @@ const ACK_DEADLINE_SECONDS: i64 = 30;
 const LEASE_TTL_SECONDS: i64 = 120;
 const RENEW_AFTER_SECONDS: i64 = 40;
 const CREDENTIAL_TTL_DAYS: i64 = 30;
+const CURRENT_EXECUTOR_KIND: &str = "shell";
 const MAX_TAGS: usize = 64;
 const MAX_NAME_LEN: usize = 128;
 const MAX_DIAGNOSTIC_LEN: usize = 4096;
@@ -273,6 +274,7 @@ struct AuthenticatedRunner {
     tags: Vec<String>,
     status: String,
     draining: bool,
+    capabilities: serde_json::Value,
 }
 
 #[derive(Debug, FromRow)]
@@ -492,6 +494,10 @@ pub(crate) async fn poll_runner_work(
     crate::runner::reconcile_expired_leases(db)
         .await
         .map_err(ApiError::internal)?;
+
+    if !runner_supports_executor(&runner.capabilities, CURRENT_EXECUTOR_KIND) {
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    }
 
     match claim_next_work(db, &runner, &runner_tags).await? {
         Some(offer) => Ok(Json(offer).into_response()),
@@ -1217,7 +1223,7 @@ async fn authenticate_runner(
     let token = bearer_token(headers)?;
     let token_hash = crate::auth::hash_token(token);
     let runner = sqlx::query_as::<_, AuthenticatedRunner>(
-        "SELECT id, name, tags, status, draining \
+        "SELECT id, name, tags, status, draining, capabilities \
          FROM runners \
          WHERE credential_hash = $1 \
            AND disabled_at IS NULL \
@@ -1439,10 +1445,45 @@ fn valid_tag(value: &str) -> bool {
 }
 
 fn validate_capabilities(value: &serde_json::Value) -> Result<(), ApiError> {
-    if value.is_object() {
-        Ok(())
-    } else {
-        Err(ApiError::bad_request("capabilities must be an object"))
+    let Some(object) = value.as_object() else {
+        return Err(ApiError::bad_request("capabilities must be an object"));
+    };
+
+    if let Some(executor_kinds) = object.get("executorKinds") {
+        let Some(executor_kinds) = executor_kinds.as_array() else {
+            return Err(ApiError::bad_request(
+                "capabilities.executorKinds must be an array",
+            ));
+        };
+        if executor_kinds.len() > 16 {
+            return Err(ApiError::bad_request(
+                "capabilities.executorKinds must contain at most 16 items",
+            ));
+        }
+        for kind in executor_kinds {
+            let Some(kind) = kind.as_str().map(str::trim) else {
+                return Err(ApiError::bad_request(
+                    "capabilities.executorKinds must contain executor names",
+                ));
+            };
+            if !valid_tag(kind) {
+                return Err(ApiError::bad_request(
+                    "capabilities.executorKinds must match ^[a-z0-9][a-z0-9._-]{0,62}$",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn runner_supports_executor(capabilities: &serde_json::Value, executor: &str) -> bool {
+    match capabilities.get("executorKinds") {
+        None => true,
+        Some(serde_json::Value::Array(kinds)) => kinds
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .any(|kind| kind.trim() == executor),
+        Some(_) => false,
     }
 }
 
@@ -1594,6 +1635,7 @@ mod tests {
             tags: vec!["docker".to_string(), "linux".to_string()],
             status: "online".to_string(),
             draining: false,
+            capabilities: serde_json::json!({}),
         };
 
         assert_eq!(
@@ -1605,6 +1647,39 @@ mod tests {
             vec!["linux".to_string()]
         );
         assert!(poll_runner_tags(&runner, &["prod".to_string()]).is_err());
+    }
+
+    #[test]
+    fn runner_executor_capabilities_are_validated_and_matched() {
+        assert!(runner_supports_executor(&serde_json::json!({}), "shell"));
+        assert!(runner_supports_executor(
+            &serde_json::json!({"executorKinds": ["shell", "docker"]}),
+            "shell"
+        ));
+        assert!(!runner_supports_executor(
+            &serde_json::json!({"executorKinds": ["docker"]}),
+            "shell"
+        ));
+        assert!(
+            validate_capabilities(&serde_json::json!({
+                "executorKinds": ["shell", "docker-24"],
+                "os": "linux"
+            }))
+            .is_ok()
+        );
+        assert!(validate_capabilities(&serde_json::json!([])).is_err());
+        assert!(
+            validate_capabilities(&serde_json::json!({
+                "executorKinds": "shell"
+            }))
+            .is_err()
+        );
+        assert!(
+            validate_capabilities(&serde_json::json!({
+                "executorKinds": ["Shell"]
+            }))
+            .is_err()
+        );
     }
 
     #[test]

@@ -16,7 +16,7 @@
 │      └── embedded runner: Docker API / host shell                       │
 │             └── workspace volume + forge-job-<id> containers            │
 │  runner profile (forge-runner)                                          │
-│      └── runner API poll/ack/renew/logs/complete + shell workspace      │
+│      └── runner API poll/ack/renew/control/logs/complete + shell workdir│
 │  postgres :22543 (volume)          artifacts dir (volume)               │
 │  bare git repos (volume)                                                │
 └─────────────────────────────────────────────────────────────────────────┘
