@@ -6,7 +6,7 @@ use std::{
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -17,7 +17,10 @@ use sqlx::{FromRow, PgPool};
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
-use crate::api::{ApiError, AppState, pool};
+use crate::{
+    api::{ApiError, AppState, pool},
+    body_limits,
+};
 
 const PROTOCOL_VERSION: i32 = 1;
 const HEARTBEAT_INTERVAL_SECONDS: i32 = 15;
@@ -58,11 +61,13 @@ pub fn routes() -> Router<Arc<AppState>> {
         )
         .route(
             "/api/v1/runner/leases/{lease_id}/artifacts",
-            post(upload_runner_lease_artifact),
+            post(upload_runner_lease_artifact)
+                .layer(DefaultBodyLimit::max(body_limits::ARTIFACT_UPLOAD_BYTES)),
         )
         .route(
             "/api/v1/runner/leases/{lease_id}/logs",
-            post(append_runner_lease_logs),
+            post(append_runner_lease_logs)
+                .layer(DefaultBodyLimit::max(body_limits::RUNNER_LOG_APPEND_BYTES)),
         )
         .route(
             "/api/v1/runner/leases/{lease_id}/complete",
@@ -772,7 +777,7 @@ pub(crate) async fn resolve_runner_lease_secrets(
         ("X-Artifact-Path" = String, Header),
         ("X-Artifact-Name" = String, Header)
     ),
-    responses((status = 200, body = crate::platform::Artifact), (status = 400), (status = 401), (status = 403), (status = 409), (status = 410))
+    responses((status = 200, body = crate::platform::Artifact), (status = 400), (status = 401), (status = 403), (status = 409), (status = 410), (status = 413, description = "artifact body exceeds 50 MiB"))
 )]
 pub(crate) async fn upload_runner_lease_artifact(
     State(state): State<Arc<AppState>>,
@@ -869,7 +874,7 @@ pub(crate) async fn upload_runner_lease_artifact(
     tag = "runner-protocol",
     request_body = RunnerLogAppendRequest,
     params(("lease_id" = Uuid, Path)),
-    responses((status = 200, body = RunnerLogAppendResponse), (status = 400), (status = 401), (status = 409), (status = 410))
+    responses((status = 200, body = RunnerLogAppendResponse), (status = 400), (status = 401), (status = 409), (status = 410), (status = 413, description = "log append body exceeds 1 MiB"))
 )]
 pub(crate) async fn append_runner_lease_logs(
     State(state): State<Arc<AppState>>,

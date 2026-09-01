@@ -2520,6 +2520,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description artifact body exceeds 50 MiB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     list_job_attempts: {
@@ -2661,6 +2668,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["JobLog"];
                 };
+            };
+            /** @description log append body exceeds 1 MiB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -2861,6 +2875,13 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["TestReport"][];
                 };
+            };
+            /** @description test report body exceeds 10 MiB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
@@ -4375,6 +4396,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description artifact body exceeds 50 MiB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     complete_runner_lease: {
@@ -4517,6 +4545,13 @@ export interface operations {
                 content?: never;
             };
             410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description log append body exceeds 1 MiB */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5053,6 +5088,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description git rpc body exceeds 100 MiB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     git_service_endpoint: {
@@ -5092,6 +5134,13 @@ export interface operations {
                 content?: never;
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description git rpc body exceeds 100 MiB */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };

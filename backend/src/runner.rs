@@ -23,8 +23,6 @@ use crate::api::ApiError;
 /// Maps job_id -> child process id so that cancel can kill it.
 pub type RunningJobs = Arc<Mutex<HashMap<Uuid, u32>>>;
 
-const MAX_ARTIFACT_BYTES: u64 = 50 * 1024 * 1024;
-
 #[derive(Debug)]
 struct EmbeddedJobLease {
     id: Uuid,
@@ -940,7 +938,8 @@ async fn collect_declared_artifacts(
         let metadata = tokio::fs::metadata(&file)
             .await
             .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
-        if metadata.len() == 0 || metadata.len() > MAX_ARTIFACT_BYTES {
+        if metadata.len() == 0 || metadata.len() > crate::body_limits::ARTIFACT_UPLOAD_BYTES as u64
+        {
             return Err(ApiError::bad_request(
                 "artifact must be between 1 byte and 50 MiB",
             ));

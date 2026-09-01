@@ -10,7 +10,7 @@ use aes_gcm::{
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{Path, Query, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     http::HeaderMap,
     response::{IntoResponse, Response},
     routing::{get, patch, post},
@@ -22,9 +22,12 @@ use sha2::{Digest, Sha256};
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
-use crate::api::{ApiError, AppState, pool};
+use crate::{
+    api::{ApiError, AppState, pool},
+    body_limits,
+};
 
-const MAX_ARTIFACT_BYTES: usize = 50 * 1024 * 1024;
+pub(crate) const MAX_ARTIFACT_BYTES: usize = body_limits::ARTIFACT_UPLOAD_BYTES;
 const DEFAULT_TOKEN_LIFETIME_DAYS: i32 = 30;
 const MAX_TOKEN_LIFETIME_DAYS: i32 = 365;
 const DEFAULT_TOKEN_SCOPES: &[&str] = &["api:read", "api:write", "git:read", "git:write"];
@@ -52,7 +55,9 @@ pub fn routes() -> Router<Arc<AppState>> {
         )
         .route(
             "/api/v1/jobs/{job_id}/artifacts",
-            get(list_artifacts).post(upload_artifact),
+            get(list_artifacts)
+                .post(upload_artifact)
+                .layer(DefaultBodyLimit::max(body_limits::ARTIFACT_UPLOAD_BYTES)),
         )
         .route(
             "/api/v1/artifacts/{artifact_id}/download",
@@ -276,7 +281,7 @@ async fn list_artifacts(
     Ok(Json(sqlx::query_as("SELECT id, job_id, attempt_id, name, content_type, sha256, size_bytes, created_at FROM artifacts WHERE job_id = $1 ORDER BY created_at DESC")
         .bind(job_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
-#[utoipa::path(post, path = "/api/v1/jobs/{job_id}/artifacts", tag = "artifacts", params(("job_id" = Uuid, Path), ("X-Artifact-Name" = String, Header)), request_body = Vec<u8>, responses((status = 200, body = Artifact), (status = 400)))]
+#[utoipa::path(post, path = "/api/v1/jobs/{job_id}/artifacts", tag = "artifacts", params(("job_id" = Uuid, Path), ("X-Artifact-Name" = String, Header)), request_body = Vec<u8>, responses((status = 200, body = Artifact), (status = 400), (status = 413, description = "artifact body exceeds 50 MiB")))]
 #[allow(clippy::too_many_arguments)]
 async fn upload_artifact(
     State(state): State<Arc<AppState>>,

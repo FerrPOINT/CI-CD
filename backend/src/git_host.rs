@@ -494,6 +494,11 @@ fn maybe_gunzip(headers: &HeaderMap, body: Bytes) -> Result<Bytes, ApiError> {
     decoder
         .read_to_end(&mut out)
         .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if out.len() > crate::body_limits::GIT_SMART_HTTP_RPC_BYTES {
+        return Err(ApiError::payload_too_large(
+            "git rpc body exceeds 100 MiB limit",
+        ));
+    }
     Ok(out.into())
 }
 
@@ -544,6 +549,7 @@ async fn run_git_service(
         (status = 400, description = "Unsupported git service"),
         (status = 401),
         (status = 404),
+        (status = 413, description = "git rpc body exceeds 100 MiB"),
     ),
 )]
 pub async fn git_service_endpoint(
@@ -603,6 +609,7 @@ pub async fn git_service_endpoint(
         (status = 400, description = "Unsupported git service"),
         (status = 401),
         (status = 404),
+        (status = 413, description = "git rpc body exceeds 100 MiB"),
     ),
 )]
 #[allow(dead_code)]

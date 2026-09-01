@@ -94,6 +94,7 @@ Breaking change выпускается под новым versioned path. Пре�
 | 403 | `permission_denied` | Аутентифицированный субъект не имеет права. |
 | 404 | `not_found` | Ресурс отсутствует или скрыт policy. |
 | 409 | `conflict`, `idempotency_conflict`, `lease_fenced` | Конфликт состояния, unique constraint либо key/fingerprint conflict. |
+| 413 | `payload_too_large` | Body превышает лимит операции. |
 | 422 | `validation_failed` | JSON корректен, но input не проходит validation. |
 | 429 | `rate_limited` | Целочисленный `Retry-After`. |
 | 500 | `internal_error` | Непредвиденная server error. |
@@ -173,4 +174,5 @@ CLI и UI создают UUID на одно пользовательское/а�
 | Compatibility | Contract diff не содержит breaking change в `v1`. |
 | Error | Integration tests проверяют HTTP status, полный envelope, `error.request_id` и `X-Request-Id`. |
 | Pagination | Tests проверяют stable order, tampering/expiry cursor, empty page и max `limit`. |
+| Body limits | Tests проверяют, что large artifact/Git/JUnit routes не ломаются об общий Axum default, а log append routes отсекают payload выше явного лимита. |
 | Idempotency | Real PostgreSQL tests проверяют first request, replay, conflicting fingerprint и restart-safe persistence. |

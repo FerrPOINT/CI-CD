@@ -321,6 +321,8 @@ paths:
                 $ref: '#/components/schemas/Artifact'
         '400':
           description: ''
+        '413':
+          description: artifact body exceeds 50 MiB
   /api/v1/jobs/{job_id}/attempts:
     get:
       tags:
@@ -474,6 +476,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/JobLog'
+        '413':
+          description: log append body exceeds 1 MiB
   /api/v1/jobs/{job_id}/logs/page:
     get:
       tags:
@@ -666,6 +670,8 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/TestReport'
+        '413':
+          description: test report body exceeds 10 MiB
   /api/v1/openapi.json:
     get:
       tags:
@@ -1964,6 +1970,8 @@ paths:
           description: ''
         '410':
           description: ''
+        '413':
+          description: artifact body exceeds 50 MiB
   /api/v1/runner/leases/{lease_id}/complete:
     post:
       tags:
@@ -2074,6 +2082,8 @@ paths:
           description: ''
         '410':
           description: ''
+        '413':
+          description: log append body exceeds 1 MiB
   /api/v1/runner/leases/{lease_id}/renew:
     post:
       tags:
@@ -2439,6 +2449,8 @@ paths:
           description: ''
         '404':
           description: ''
+        '413':
+          description: git rpc body exceeds 100 MiB
   /git/{repo}/git-upload-pack:
     post:
       tags:
@@ -2470,6 +2482,8 @@ paths:
           description: ''
         '404':
           description: ''
+        '413':
+          description: git rpc body exceeds 100 MiB
   /git/{repo}/info/refs:
     get:
       tags:

@@ -166,6 +166,24 @@ In-process fixed-window limiter выполняется до auth/handler и во
 
 ---
 
+### Request Body Limits
+
+Axum extractor limit настроен явно для routes, где payload может быть больше общего JSON control-plane профиля. Превышение лимита отклоняется до handler-а с HTTP `413 Payload Too Large`; для Git gzip RPC сервер дополнительно проверяет размер тела после распаковки.
+
+| Route | Content type | Лимит |
+|---|---|---:|
+| `POST /api/v1/jobs/{job_id}/artifacts` | raw artifact body | 50 MiB |
+| `POST /api/v1/runner/leases/{lease_id}/artifacts` | raw declared artifact body | 50 MiB |
+| `POST /git/{repo}/git-upload-pack` | Git Smart HTTP RPC | 100 MiB |
+| `POST /git/{repo}/git-receive-pack` | Git Smart HTTP RPC | 100 MiB |
+| `POST /api/v1/jobs/{job_id}/test-report` | JSON string with JUnit XML | 10 MiB |
+| `POST /api/v1/jobs/{job_id}/logs` | JSON log append | 1 MiB |
+| `POST /api/v1/runner/leases/{lease_id}/logs` | JSON log batch | 1 MiB |
+
+Остальные JSON mutation endpoints остаются в стандартном малом профиле Axum для control-plane команд. Reverse-proxy body/time/concurrency policy и quota-aware artifact reservations остаются target.
+
+---
+
 ### Projects
 
 | Метод | Путь | Назначение |

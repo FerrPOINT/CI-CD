@@ -1,6 +1,7 @@
 pub mod api;
 pub mod auth;
 pub mod authz;
+pub(crate) mod body_limits;
 pub mod metrics;
 pub mod outbox;
 pub mod rate_limit;

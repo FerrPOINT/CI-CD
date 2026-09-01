@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, State},
     http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, header},
     response::IntoResponse,
     routing::{get, post},
@@ -258,6 +258,12 @@ impl ApiError {
             message: "rate limit exceeded".into(),
         }
     }
+    pub(crate) fn payload_too_large(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
+            message: message.into(),
+        }
+    }
     pub(crate) fn forbidden() -> Self {
         Self {
             status: StatusCode::FORBIDDEN,
@@ -297,6 +303,7 @@ impl ApiError {
             StatusCode::CONFLICT => "conflict",
             StatusCode::GONE => "expired",
             StatusCode::TOO_MANY_REQUESTS => "rate_limited",
+            StatusCode::PAYLOAD_TOO_LARGE => "payload_too_large",
             StatusCode::SERVICE_UNAVAILABLE => "unavailable",
             _ => "internal_error",
         }
@@ -1077,7 +1084,9 @@ fn build_router_with_cors(
         )
         .route(
             "/api/v1/jobs/{job_id}/logs",
-            get(list_logs).post(append_log),
+            get(list_logs).post(append_log).layer(DefaultBodyLimit::max(
+                crate::body_limits::JOB_LOG_APPEND_BYTES,
+            )),
         )
         .route("/api/v1/jobs/{job_id}/logs/page", get(list_logs_page))
         .route("/api/v1/jobs/{job_id}/start", post(start_manual_job))
@@ -1091,8 +1100,18 @@ fn build_router_with_cors(
             axum::routing::delete(delete_repository),
         )
         .route("/git/{repo}/info/refs", get(git_info_refs))
-        .route("/git/{repo}/git-upload-pack", post(git_service_endpoint))
-        .route("/git/{repo}/git-receive-pack", post(git_service_endpoint))
+        .route(
+            "/git/{repo}/git-upload-pack",
+            post(git_service_endpoint).layer(DefaultBodyLimit::max(
+                crate::body_limits::GIT_SMART_HTTP_RPC_BYTES,
+            )),
+        )
+        .route(
+            "/git/{repo}/git-receive-pack",
+            post(git_service_endpoint).layer(DefaultBodyLimit::max(
+                crate::body_limits::GIT_SMART_HTTP_RPC_BYTES,
+            )),
+        )
         .route("/api/v1/internal/git-push", post(internal_git_push))
         .route("/api/v1/repos/{repo}/refs", get(list_refs))
         .route("/api/v1/repos/{repo}/tree", get(crate::pulls::list_tree))
@@ -1112,7 +1131,11 @@ fn build_router_with_cors(
         )
         .route(
             "/api/v1/jobs/{job_id}/test-report",
-            get(get_test_report).post(upload_test_report),
+            get(get_test_report)
+                .post(upload_test_report)
+                .layer(DefaultBodyLimit::max(
+                    crate::body_limits::TEST_REPORT_UPLOAD_BYTES,
+                )),
         )
         .route(
             "/api/v1/pipelines/{pipeline_id}/variables",
@@ -3281,7 +3304,7 @@ async fn get_test_report(
 }
 
 /// Minimal JUnit XML parser: sums testsuite/testcase counts and failures.
-#[utoipa::path(post, path="/api/v1/jobs/{job_id}/test-report", tag="jobs", params(("job_id"=Uuid, Path)), request_body=String, responses((status=200, body=[TestReport])))]
+#[utoipa::path(post, path="/api/v1/jobs/{job_id}/test-report", tag="jobs", params(("job_id"=Uuid, Path)), request_body=String, responses((status=200, body=[TestReport]), (status=413, description="test report body exceeds 10 MiB")))]
 async fn upload_test_report(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
@@ -4715,7 +4738,7 @@ async fn list_logs_page(
         .map_err(attempt_lookup_error)?;
     Ok(Json(log_page(db, job_id, attempt_id, params).await?))
 }
-#[utoipa::path(post, path="/api/v1/jobs/{job_id}/logs", tag="jobs", request_body=AppendLog, params(("job_id"=Uuid, Path)), responses((status=200, body=JobLog)))]
+#[utoipa::path(post, path="/api/v1/jobs/{job_id}/logs", tag="jobs", request_body=AppendLog, params(("job_id"=Uuid, Path)), responses((status=200, body=JobLog), (status=413, description="log append body exceeds 1 MiB")))]
 async fn append_log(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
