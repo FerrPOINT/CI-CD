@@ -62,6 +62,7 @@ pub struct LoginRequest {
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct RefreshRequest {
     /// The previously issued refresh token.
+    #[serde(default)]
     pub refresh_token: String,
 }
 
@@ -76,6 +77,7 @@ pub struct TokenPair {
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct LogoutRequest {
     /// The refresh token issued by /auth/login or /auth/refresh.
+    #[serde(default)]
     pub refresh_token: String,
 }
 
@@ -190,20 +192,37 @@ pub fn new_refresh_token() -> String {
     sha256_hex(&raw)
 }
 
+pub fn new_csrf_token() -> String {
+    new_refresh_token()
+}
+
 pub async fn create_session(
     pool: &sqlx::PgPool,
     user_id: Uuid,
     refresh_hash: &str,
 ) -> Result<Uuid, AuthError> {
+    create_session_with_csrf(pool, user_id, refresh_hash, None).await
+}
+
+pub async fn create_session_with_csrf(
+    pool: &sqlx::PgPool,
+    user_id: Uuid,
+    refresh_hash: &str,
+    csrf_hash: Option<&str>,
+) -> Result<Uuid, AuthError> {
     let id = Uuid::new_v4();
     let expires = Utc::now() + Duration::days(REFRESH_TTL_DAYS);
-    sqlx::query("INSERT INTO sessions (id, user_id, refresh_token_hash, expires_at) VALUES ($1, $2, $3, $4)")
-        .bind(id)
-        .bind(user_id)
-        .bind(refresh_hash)
-        .bind(expires)
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "INSERT INTO sessions (id, user_id, refresh_token_hash, csrf_token_hash, expires_at) \
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(id)
+    .bind(user_id)
+    .bind(refresh_hash)
+    .bind(csrf_hash)
+    .bind(expires)
+    .execute(pool)
+    .await?;
     Ok(id)
 }
 
@@ -217,11 +236,22 @@ pub async fn session_user(
     pool: &sqlx::PgPool,
     refresh_hash: &str,
 ) -> Result<SessionUser, AuthError> {
+    session_user_for_refresh(pool, refresh_hash, None).await
+}
+
+async fn session_user_for_refresh(
+    pool: &sqlx::PgPool,
+    refresh_hash: &str,
+    csrf_hash: Option<&str>,
+) -> Result<SessionUser, AuthError> {
     let row = sqlx::query_as::<_, (Uuid, String)>(
         "SELECT u.id, u.role FROM sessions s JOIN users u ON u.id = s.user_id \
-         WHERE s.refresh_token_hash = $1 AND s.revoked_at IS NULL AND s.expires_at > now() AND u.enabled",
+         WHERE s.refresh_token_hash = $1 \
+           AND ($2::TEXT IS NULL OR s.csrf_token_hash = $2) \
+           AND s.revoked_at IS NULL AND s.expires_at > now() AND u.enabled",
     )
     .bind(refresh_hash)
+    .bind(csrf_hash)
     .fetch_optional(pool)
     .await?;
     row.map(|(user_id, role)| SessionUser { user_id, role })
@@ -252,14 +282,43 @@ pub async fn rotate_session(
     pool: &sqlx::PgPool,
     old_refresh_hash: &str,
 ) -> Result<(Uuid, Uuid, String), AuthError> {
-    let user = session_user(pool, old_refresh_hash).await?;
+    let rotated = rotate_session_with_csrf(pool, old_refresh_hash, None).await?;
+    Ok((rotated.user_id, rotated.session_id, rotated.refresh_token))
+}
+
+pub struct RotatedSession {
+    pub user_id: Uuid,
+    pub session_id: Uuid,
+    pub refresh_token: String,
+    pub csrf_token: String,
+}
+
+pub async fn rotate_session_with_csrf(
+    pool: &sqlx::PgPool,
+    old_refresh_hash: &str,
+    old_csrf_hash: Option<&str>,
+) -> Result<RotatedSession, AuthError> {
+    let user = session_user_for_refresh(pool, old_refresh_hash, old_csrf_hash).await?;
     sqlx::query("UPDATE sessions SET revoked_at = now() WHERE refresh_token_hash = $1")
         .bind(old_refresh_hash)
         .execute(pool)
         .await?;
     let new_refresh = new_refresh_token();
-    let session_id = create_session(pool, user.user_id, &hash_token(&new_refresh)).await?;
-    Ok((user.user_id, session_id, new_refresh))
+    let new_csrf = new_csrf_token();
+    let new_csrf_hash = hash_token(&new_csrf);
+    let session_id = create_session_with_csrf(
+        pool,
+        user.user_id,
+        &hash_token(&new_refresh),
+        Some(&new_csrf_hash),
+    )
+    .await?;
+    Ok(RotatedSession {
+        user_id: user.user_id,
+        session_id,
+        refresh_token: new_refresh,
+        csrf_token: new_csrf,
+    })
 }
 
 /// Revoke a refresh session by stored refresh-token hash. Idempotent for callers.

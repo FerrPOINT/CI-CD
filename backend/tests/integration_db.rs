@@ -11,7 +11,7 @@
 
 use axum::{
     body::{Body, to_bytes},
-    http::{Request, StatusCode},
+    http::{HeaderMap, Request, StatusCode},
 };
 use base64::Engine;
 use chrono::{Duration, Timelike, Utc};
@@ -384,6 +384,136 @@ async fn auth_logout_endpoint_revokes_refresh_session() {
     assert_eq!(replay.status(), StatusCode::OK);
     let body = response_json(replay).await;
     assert_eq!(body["revoked"], false);
+
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup user");
+}
+
+#[tokio::test]
+async fn auth_cookie_refresh_requires_csrf_and_rotates_session() {
+    let pool = test_pool().await;
+    let user_id = Uuid::new_v4();
+    let username = format!("it-cookie-user-{}", user_id.simple());
+    let password = "IntegrationPass1!";
+
+    sqlx::query("INSERT INTO users (id, username, role) VALUES ($1, $2, 'admin')")
+        .bind(user_id)
+        .bind(&username)
+        .execute(&pool)
+        .await
+        .expect("insert user");
+    sqlx::query("INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2)")
+        .bind(user_id)
+        .bind(cicd::auth::hash_password(password).expect("hash password"))
+        .execute(&pool)
+        .await
+        .expect("insert credential");
+
+    let app = cicd::api::app_with_auth_secret(
+        Some(pool.clone()),
+        Some(format!("cookie-secret-{user_id}")),
+    );
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"username":"{username}","password":"{password}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let login_headers = response.headers().clone();
+    let login_body = response_json(response).await;
+    let refresh_cookie = set_cookie_value(&login_headers, "forge_refresh");
+    let csrf_cookie = set_cookie_value(&login_headers, "forge_csrf");
+    assert_eq!(
+        login_body["refresh_token"].as_str(),
+        Some(refresh_cookie.as_str())
+    );
+    assert_set_cookie_contains(&login_headers, "forge_refresh", "HttpOnly");
+    assert_set_cookie_contains(&login_headers, "forge_refresh", "SameSite=Lax");
+    assert_set_cookie_contains(&login_headers, "forge_csrf", "SameSite=Lax");
+    assert_set_cookie_lacks(&login_headers, "forge_csrf", "HttpOnly");
+
+    let refresh_cookie_header = format!("forge_refresh={refresh_cookie}; forge_csrf={csrf_cookie}");
+    let rejected = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/auth/refresh")
+                .header("content-type", "application/json")
+                .header("cookie", &refresh_cookie_header)
+                .body(Body::from(r#"{"refresh_token":""}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
+
+    let refreshed = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/auth/refresh")
+                .header("content-type", "application/json")
+                .header("cookie", &refresh_cookie_header)
+                .header("x-csrf-token", &csrf_cookie)
+                .body(Body::from(r#"{"refresh_token":""}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(refreshed.status(), StatusCode::OK);
+    let refreshed_headers = refreshed.headers().clone();
+    let refreshed_body = response_json(refreshed).await;
+    let new_refresh_cookie = set_cookie_value(&refreshed_headers, "forge_refresh");
+    let new_csrf_cookie = set_cookie_value(&refreshed_headers, "forge_csrf");
+    assert_eq!(
+        refreshed_body["refresh_token"].as_str(),
+        Some(new_refresh_cookie.as_str())
+    );
+    assert_ne!(new_refresh_cookie, refresh_cookie);
+    assert_ne!(new_csrf_cookie, csrf_cookie);
+    assert!(
+        cicd::auth::session_user(&pool, &cicd::auth::hash_token(&refresh_cookie))
+            .await
+            .is_err()
+    );
+    assert!(
+        cicd::auth::session_user(&pool, &cicd::auth::hash_token(&new_refresh_cookie))
+            .await
+            .is_ok()
+    );
+
+    let logout_cookie_header =
+        format!("forge_refresh={new_refresh_cookie}; forge_csrf={new_csrf_cookie}");
+    let logout = app
+        .oneshot(
+            Request::post("/api/v1/auth/logout")
+                .header("content-type", "application/json")
+                .header("cookie", logout_cookie_header)
+                .header("x-csrf-token", &new_csrf_cookie)
+                .body(Body::from(r#"{"refresh_token":""}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(logout.status(), StatusCode::OK);
+    let logout_headers = logout.headers().clone();
+    let logout_body = response_json(logout).await;
+    assert_eq!(logout_body["revoked"], true);
+    assert_set_cookie_contains(&logout_headers, "forge_refresh", "Max-Age=0");
+    assert_set_cookie_contains(&logout_headers, "forge_csrf", "Max-Age=0");
+    assert!(
+        cicd::auth::session_user(&pool, &cicd::auth::hash_token(&new_refresh_cookie))
+            .await
+            .is_err()
+    );
 
     sqlx::query("DELETE FROM users WHERE id = $1")
         .bind(user_id)
@@ -5308,6 +5438,49 @@ async fn response_json(response: axum::response::Response) -> serde_json::Value 
         .await
         .expect("read response body");
     serde_json::from_slice(&body).expect("json response")
+}
+
+fn set_cookie_value(headers: &HeaderMap, name: &str) -> String {
+    set_cookie_values(headers)
+        .into_iter()
+        .find_map(|cookie| {
+            let prefix = format!("{name}=");
+            cookie
+                .strip_prefix(&prefix)
+                .and_then(|rest| rest.split(';').next())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| panic!("missing Set-Cookie for {name}"))
+}
+
+fn assert_set_cookie_contains(headers: &HeaderMap, name: &str, expected: &str) {
+    let cookie = set_cookie_values(headers)
+        .into_iter()
+        .find(|cookie| cookie.starts_with(&format!("{name}=")))
+        .unwrap_or_else(|| panic!("missing Set-Cookie for {name}"));
+    assert!(
+        cookie.contains(expected),
+        "expected Set-Cookie for {name} to contain {expected:?}, got {cookie:?}"
+    );
+}
+
+fn assert_set_cookie_lacks(headers: &HeaderMap, name: &str, unexpected: &str) {
+    let cookie = set_cookie_values(headers)
+        .into_iter()
+        .find(|cookie| cookie.starts_with(&format!("{name}=")))
+        .unwrap_or_else(|| panic!("missing Set-Cookie for {name}"));
+    assert!(
+        !cookie.contains(unexpected),
+        "expected Set-Cookie for {name} not to contain {unexpected:?}, got {cookie:?}"
+    );
+}
+
+fn set_cookie_values(headers: &HeaderMap) -> Vec<String> {
+    headers
+        .get_all("set-cookie")
+        .iter()
+        .map(|value| value.to_str().expect("valid Set-Cookie").to_string())
+        .collect()
 }
 
 async fn login_access_token(app: axum::Router, username: &str, password: &str) -> String {

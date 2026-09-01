@@ -72,8 +72,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 23,
-    "latest_required_version": 23,
+    "latest_applied_version": 25,
+    "latest_required_version": 25,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],
@@ -103,11 +103,11 @@ curl -sS http://127.0.0.1:22801/api/v1/readiness
 
 | Метод | Путь | Назначение |
 |---|---|---|
-| POST | `/auth/login` | Выдать access/refresh tokens |
+| POST | `/auth/login` | Выдать access token и refresh session |
 | POST | `/auth/refresh` | Обновить пару токенов |
 | POST | `/auth/logout` | Отозвать refresh session |
 
-Auth enforcement включается только если задан непустой `CICD_AUTH_SECRET`. Access token — JWT HS256 на 15 минут, содержит `sessions.id`, а protected API на каждом запросе проверяет активную session, enabled user и текущую роль из БД. Refresh token хранится hash-ом в `sessions`, rotate-ится через `/auth/refresh` и отзывается через `/auth/logout`. PAT `cicd_...` принимается как Bearer token при включённом enforcement; новые PAT в auth-mode требуют `project_id`, имеют явные scopes и срок действия.
+Auth enforcement включается только если задан непустой `CICD_AUTH_SECRET`. Access token — JWT HS256 на 15 минут, содержит `sessions.id`, а protected API на каждом запросе проверяет активную session, enabled user и текущую роль из БД. Refresh token хранится hash-ом в `sessions`, rotate-ится через `/auth/refresh` и отзывается через `/auth/logout`. Browser flow получает refresh token в `HttpOnly; SameSite=Lax` cookie `forge_refresh` и CSRF companion cookie `forge_csrf`; `/auth/refresh` и `/auth/logout` с cookie требуют совпадающий `X-CSRF-Token`. Body `refresh_token` остаётся совместимым для CLI/API clients и legacy dashboard migration. PAT `cicd_...` принимается как Bearer token при включённом enforcement; новые PAT в auth-mode требуют `project_id`, имеют явные scopes и срок действия.
 
 #### POST /api/v1/auth/login
 
@@ -116,7 +116,7 @@ Auth enforcement включается только если задан непу�
 {"username":"admin","password":"..."}
 ```
 
-**Response 200:**
+**Response 200:** backend также выставляет `Set-Cookie: forge_refresh=...; Path=/api/v1/auth; HttpOnly; SameSite=Lax` и `Set-Cookie: forge_csrf=...; Path=/; SameSite=Lax`.
 ```json
 {"access_token":"...","expires_at":1787859000,"refresh_token":"..."}
 ```
@@ -125,16 +125,18 @@ Auth enforcement включается только если задан непу�
 
 #### POST /api/v1/auth/refresh
 
-**Request body:**
+**Request body (CLI/API clients):**
 ```json
 {"refresh_token":"..."}
 ```
 
-**Response 200:** структура `TokenPair`, как у login.
+**Browser request:** отправляет cookie `forge_refresh`/`forge_csrf`, body `{"refresh_token":""}` и header `X-CSRF-Token: <forge_csrf>`.
+
+**Response 200:** структура `TokenPair`, как у login; refresh cookie и CSRF cookie rotate-ятся.
 
 #### POST /api/v1/auth/logout
 
-Идемпотентно отзывает refresh session по переданному refresh token. Session-bound access JWT с тем же `sessions.id` после logout перестаёт проходить protected API сразу; refresh-cookie, CSRF policy и session-family reuse detection остаются target.
+Идемпотентно отзывает refresh session по переданному refresh token или по cookie `forge_refresh` + `X-CSRF-Token`. Session-bound access JWT с тем же `sessions.id` после logout перестаёт проходить protected API сразу; session-family reuse detection остаётся target.
 
 **Request body:**
 ```json
@@ -1023,7 +1025,7 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 
 ## Platform endpoints (MVP)
 
-> **Security note:** auth/RBAC enforcement включается только при непустом `CICD_AUTH_SECRET`. Без него все endpoints ниже работают в trusted-network режиме; с ним применяются JWT/PAT, scoped PAT, session-bound access invalidation, route roles и project memberships для project-owned ресурсов. Tenant isolation, service-account tokens, scoped Git credentials и production cookie/CSRF/session-family policy ещё target.
+> **Security note:** auth/RBAC enforcement включается только при непустом `CICD_AUTH_SECRET`. Без него все endpoints ниже работают в trusted-network режиме; с ним применяются JWT/PAT, scoped PAT, session-bound access invalidation, refresh cookie + CSRF для browser flow, route roles и project memberships для project-owned ресурсов. Tenant isolation, service-account tokens, scoped Git credentials и session-family reuse detection ещё target.
 
 ### Runners
 

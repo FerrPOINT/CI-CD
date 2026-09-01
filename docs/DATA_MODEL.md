@@ -790,11 +790,12 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 | `id` | UUID PK | нет | — | Session ID |
 | `user_id` | UUID | нет | — | FK → `users(id)` CASCADE |
 | `refresh_token_hash` | TEXT UNIQUE | нет | — | Hash refresh token |
+| `csrf_token_hash` | TEXT | да | — | Hash CSRF companion token для cookie-backed refresh session |
 | `created_at` | TIMESTAMPTZ | нет | `now()` | Создана |
 | `expires_at` | TIMESTAMPTZ | нет | — | Истекает |
 | `revoked_at` | TIMESTAMPTZ | да | — | Отозвана |
 
-`/api/v1/auth/refresh` rotate-ит refresh session: старый hash получает `revoked_at`, новый refresh token хранится как `hash_token(raw)`. `/api/v1/auth/logout` идемпотентно выставляет `revoked_at` для переданного refresh token. Access JWT содержит `sessions.id`; protected API проверяет, что session активна, не истекла и принадлежит enabled user, поэтому rotate/logout инвалидирует связанный access JWT сразу.
+`/api/v1/auth/refresh` rotate-ит refresh session: старый hash получает `revoked_at`, новый refresh token хранится как `hash_token(raw)`, а browser flow дополнительно сверяет `forge_csrf` cookie с `X-CSRF-Token` и `csrf_token_hash`. `/api/v1/auth/logout` идемпотентно выставляет `revoked_at` для переданного refresh token или cookie-backed session. Access JWT содержит `sessions.id`; protected API проверяет, что session активна, не истекла и принадлежит enabled user, поэтому rotate/logout инвалидирует связанный access JWT сразу. Session-family reuse detection остаётся target.
 
 ### 9.15 domain_events
 

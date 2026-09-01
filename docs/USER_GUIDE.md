@@ -35,7 +35,7 @@ Forge CI/CD - self-hosted control plane для Git-репозиториев и C
 **Статус процедуры: Current verified conditional.**
 
 1. Откройте `/login`.
-2. Если backend запущен с `CICD_AUTH_SECRET`, форма отправляет `POST /api/v1/auth/login`, сохраняет access/refresh token и переводит в Dashboard.
+2. Если backend запущен с `CICD_AUTH_SECRET`, форма отправляет `POST /api/v1/auth/login`, держит access token в памяти, получает refresh session через HttpOnly cookie + CSRF companion cookie и переводит в Dashboard.
 3. Если `CICD_AUTH_SECRET` не задан или пустой, backend не требует principal, а UI не будет воспринимать `/login` как boundary доступа. Для shared-инстанса задайте секрет и закройте сервис reverse proxy/сетью.
 
 ![Страница входа](screenshots/01-login.png)
@@ -84,7 +84,7 @@ curl -fsS -X POST http://127.0.0.1:22801/api/v1/projects \
 3. Используйте `maintainer` для управления участниками и секретами проекта; `developer` — для запуска и изменения рабочих ресурсов; `viewer` — для чтения.
 4. Удаляйте ненужные memberships через список. Последнего maintainer удалить нельзя.
 
-Tenant isolation, service-account tokens, tenant-bound Git mapping, scoped Git credentials и production cookie/CSRF/session-family policy остаются **Target approved**; scoped PAT, session-bound access invalidation, refresh logout/revoke и Git Smart HTTP read/write checks по linked repository URL уже выполняются сервером.
+Tenant isolation, service-account tokens, tenant-bound Git mapping, scoped Git credentials и session-family reuse detection остаются **Target approved**; scoped PAT, session-bound access invalidation, browser refresh cookie + CSRF, refresh logout/revoke и Git Smart HTTP read/write checks по linked repository URL уже выполняются сервером.
 
 ![Участники проекта](screenshots/40-project-members.png)
 
@@ -321,7 +321,7 @@ Embedded runner inject-ит только объявленные `jobs.required_s
 3. Включайте или отключайте пользователя через action в таблице; отключённый пользователь не проходит login/refresh/access-session checks.
 4. Роль ограничивает API только когда backend запущен с `CICD_AUTH_SECRET`; без него действует trusted-network режим.
 
-Пароли хранятся как `argon2id` credentials и не возвращаются через API. После перезагрузки Dashboard сначала пытается восстановить access session через refresh token и только затем отправляет пользователя на `/login`. Project membership, scoped PAT, session-bound access invalidation и refresh logout/revoke уже используются при включённом `CICD_AUTH_SECRET`; tenant boundary, service-account tokens и production cookie/CSRF/session-family policy относятся к **Target approved**.
+Пароли хранятся как `argon2id` credentials и не возвращаются через API. После перезагрузки Dashboard сначала пытается восстановить access session через HttpOnly refresh cookie + CSRF companion cookie и только затем отправляет пользователя на `/login`. Project membership, scoped PAT, session-bound access invalidation, browser refresh cookie + CSRF и refresh logout/revoke уже используются при включённом `CICD_AUTH_SECRET`; tenant boundary, service-account tokens и session-family reuse detection относятся к **Target approved**.
 
 ### API-токены
 

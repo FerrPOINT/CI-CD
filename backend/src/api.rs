@@ -48,6 +48,9 @@ const IDEMPOTENCY_KEY_HEADER: &str = "idempotency-key";
 const READINESS_TIMEOUT: Duration = Duration::from_secs(2);
 const LEGACY_PIPELINE_PLAN_PARSER_VERSION: &str = "forge-legacy-linear/1";
 const V1_PIPELINE_PLAN_PARSER_VERSION: &str = "forge-dsl/1.0.0";
+const AUTH_REFRESH_COOKIE: &str = "forge_refresh";
+const AUTH_CSRF_COOKIE: &str = "forge_csrf";
+const AUTH_CSRF_HEADER: &str = "x-csrf-token";
 const LEGACY_TEMPLATE_CONFIG: &str = r#"stages:
   - name: build
     jobs:
@@ -1249,6 +1252,7 @@ fn cors_layer_from_allowed_origins(raw: Option<&str>) -> Result<CorsLayer, Strin
             HeaderName::from_static("x-attempt-id"),
             HeaderName::from_static("x-artifact-path"),
             HeaderName::from_static("x-artifact-name"),
+            HeaderName::from_static(AUTH_CSRF_HEADER),
         ])
         .allow_credentials(true))
 }
@@ -1257,7 +1261,7 @@ fn cors_layer_from_allowed_origins(raw: Option<&str>) -> Result<CorsLayer, Strin
 async fn auth_login(
     State(state): State<Arc<AppState>>,
     Json(input): Json<crate::auth::LoginRequest>,
-) -> Result<Json<crate::auth::TokenPair>, ApiError> {
+) -> Result<(HeaderMap, Json<crate::auth::TokenPair>), ApiError> {
     use crate::auth::*;
     crate::metrics::LOGIN_ATTEMPTS_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let pool = pool(&state)?;
@@ -1291,59 +1295,232 @@ async fn auth_login(
     )
     .await;
     let refresh = new_refresh_token();
-    let session_id = create_session(pool, user_id, &hash_token(&refresh))
-        .await
-        .map_err(ApiError::from)?;
+    let csrf = new_csrf_token();
+    let csrf_hash = hash_token(&csrf);
+    let session_id =
+        create_session_with_csrf(pool, user_id, &hash_token(&refresh), Some(&csrf_hash))
+            .await
+            .map_err(ApiError::from)?;
     let mut pair = issue_access_with_secret(user_id, &role, session_id, auth_secret(&state)?)
         .map_err(|_| ApiError::unauthorized())?;
-    pair.refresh_token = refresh;
-    Ok(Json(pair))
+    pair.refresh_token = refresh.clone();
+    Ok((auth_cookie_headers(&refresh, &csrf), Json(pair)))
 }
 
 #[utoipa::path(post, path="/api/v1/auth/refresh", tag="auth", request_body=crate::auth::RefreshRequest, responses((status=200, body=crate::auth::TokenPair), (status=401)))]
 async fn auth_refresh(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(input): Json<crate::auth::RefreshRequest>,
-) -> Result<Json<crate::auth::TokenPair>, ApiError> {
+) -> Result<(HeaderMap, Json<crate::auth::TokenPair>), ApiError> {
     use crate::auth::*;
     let pool = pool(&state)?;
-    if input.refresh_token.is_empty() {
-        return Err(ApiError::unauthorized());
-    }
-    let (user_id, session_id, new_refresh) =
-        rotate_session(pool, &hash_token(&input.refresh_token))
-            .await
-            .map_err(|_| ApiError::unauthorized())?;
+    let credential = refresh_credential(&headers, &input.refresh_token)?;
+    let csrf_hash = credential
+        .csrf_token
+        .as_ref()
+        .map(|token| hash_token(token));
+    let rotated = rotate_session_with_csrf(
+        pool,
+        &hash_token(&credential.refresh_token),
+        csrf_hash.as_deref(),
+    )
+    .await
+    .map_err(|_| ApiError::unauthorized())?;
     let role = sqlx::query_scalar::<_, String>("SELECT role FROM users WHERE id = $1")
-        .bind(user_id)
+        .bind(rotated.user_id)
         .fetch_one(pool)
         .await
         .map_err(ApiError::internal)?;
-    let mut pair = issue_access_with_secret(user_id, &role, session_id, auth_secret(&state)?)
-        .map_err(|_| ApiError::unauthorized())?;
-    pair.refresh_token = new_refresh;
-    Ok(Json(pair))
+    let mut pair = issue_access_with_secret(
+        rotated.user_id,
+        &role,
+        rotated.session_id,
+        auth_secret(&state)?,
+    )
+    .map_err(|_| ApiError::unauthorized())?;
+    pair.refresh_token = rotated.refresh_token.clone();
+    Ok((
+        auth_cookie_headers(&rotated.refresh_token, &rotated.csrf_token),
+        Json(pair),
+    ))
 }
 
 #[utoipa::path(post, path="/api/v1/auth/logout", tag="auth", request_body=crate::auth::LogoutRequest, responses((status=200, body=crate::auth::LogoutResponse)))]
 async fn auth_logout(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(input): Json<crate::auth::LogoutRequest>,
-) -> Result<Json<crate::auth::LogoutResponse>, ApiError> {
+) -> Result<(HeaderMap, Json<crate::auth::LogoutResponse>), ApiError> {
     use crate::auth::*;
-    if input.refresh_token.trim().is_empty() {
-        return Ok(Json(LogoutResponse { revoked: false }));
-    }
+    let Some(credential) = logout_credential(&headers, &input.refresh_token)? else {
+        return Ok((
+            clear_auth_cookie_headers(),
+            Json(LogoutResponse { revoked: false }),
+        ));
+    };
     let pool = pool(&state)?;
-    let user_id = revoke_session(pool, &hash_token(input.refresh_token.trim()))
+    let user_id = revoke_session(pool, &hash_token(&credential.refresh_token))
         .await
         .map_err(ApiError::from)?;
     if let Some(user_id) = user_id {
         let _ = audit(pool, "auth.logout", "session", user_id, None).await;
     }
-    Ok(Json(LogoutResponse {
-        revoked: user_id.is_some(),
+    Ok((
+        clear_auth_cookie_headers(),
+        Json(LogoutResponse {
+            revoked: user_id.is_some(),
+        }),
+    ))
+}
+
+struct RefreshCredential {
+    refresh_token: String,
+    csrf_token: Option<String>,
+}
+
+fn refresh_credential(
+    headers: &HeaderMap,
+    body_refresh_token: &str,
+) -> Result<RefreshCredential, ApiError> {
+    let trimmed = body_refresh_token.trim();
+    if !trimmed.is_empty() {
+        return Ok(RefreshCredential {
+            refresh_token: trimmed.to_string(),
+            csrf_token: None,
+        });
+    }
+    cookie_refresh_credential(headers)?.ok_or_else(ApiError::unauthorized)
+}
+
+fn logout_credential(
+    headers: &HeaderMap,
+    body_refresh_token: &str,
+) -> Result<Option<RefreshCredential>, ApiError> {
+    let trimmed = body_refresh_token.trim();
+    if !trimmed.is_empty() {
+        return Ok(Some(RefreshCredential {
+            refresh_token: trimmed.to_string(),
+            csrf_token: None,
+        }));
+    }
+    cookie_refresh_credential(headers)
+}
+
+fn cookie_refresh_credential(headers: &HeaderMap) -> Result<Option<RefreshCredential>, ApiError> {
+    let Some(refresh_token) = cookie_value(headers, AUTH_REFRESH_COOKIE) else {
+        return Ok(None);
+    };
+    let csrf_cookie = cookie_value(headers, AUTH_CSRF_COOKIE).ok_or_else(ApiError::unauthorized)?;
+    let csrf_header = headers
+        .get(AUTH_CSRF_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(ApiError::unauthorized)?;
+    if !constant_time_eq(csrf_cookie.as_bytes(), csrf_header.as_bytes()) {
+        return Err(ApiError::unauthorized());
+    }
+    Ok(Some(RefreshCredential {
+        refresh_token,
+        csrf_token: Some(csrf_cookie),
     }))
+}
+
+fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(';'))
+        .filter_map(|part| part.trim().split_once('='))
+        .find_map(|(candidate, value)| {
+            if candidate == name && !value.is_empty() {
+                Some(value.to_string())
+            } else {
+                None
+            }
+        })
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    use subtle::ConstantTimeEq;
+    left.ct_eq(right).into()
+}
+
+fn auth_cookie_headers(refresh_token: &str, csrf_token: &str) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.append(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&format_auth_cookie(
+            AUTH_REFRESH_COOKIE,
+            refresh_token,
+            "/api/v1/auth",
+            true,
+            crate::auth::REFRESH_TTL_DAYS * 24 * 60 * 60,
+        ))
+        .expect("refresh cookie contains only safe ASCII"),
+    );
+    headers.append(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&format_auth_cookie(
+            AUTH_CSRF_COOKIE,
+            csrf_token,
+            "/",
+            false,
+            crate::auth::REFRESH_TTL_DAYS * 24 * 60 * 60,
+        ))
+        .expect("csrf cookie contains only safe ASCII"),
+    );
+    headers
+}
+
+fn clear_auth_cookie_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    headers.append(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&format_auth_cookie(
+            AUTH_REFRESH_COOKIE,
+            "",
+            "/api/v1/auth",
+            true,
+            0,
+        ))
+        .expect("refresh cookie contains only safe ASCII"),
+    );
+    headers.append(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&format_auth_cookie(AUTH_CSRF_COOKIE, "", "/", false, 0))
+            .expect("csrf cookie contains only safe ASCII"),
+    );
+    headers
+}
+
+fn format_auth_cookie(
+    name: &str,
+    value: &str,
+    path: &str,
+    http_only: bool,
+    max_age_seconds: i64,
+) -> String {
+    let http_only = if http_only { "; HttpOnly" } else { "" };
+    let secure = if auth_cookie_secure() { "; Secure" } else { "" };
+    format!(
+        "{name}={value}; Path={path}; Max-Age={max_age_seconds}; SameSite=Lax{http_only}{secure}"
+    )
+}
+
+fn auth_cookie_secure() -> bool {
+    std::env::var("CICD_AUTH_COOKIE_SECURE")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
 }
 
 #[utoipa::path(get, path="/api/v1/health", tag="health", responses((status=200, description="Liveness")))]

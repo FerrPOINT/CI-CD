@@ -33,7 +33,7 @@ Forge CI/CD является multi-tenant control plane: один экземпл
 
 | Область | Реализовано сейчас | Риск / дефицит |
 |---|---|---|
-| HTTP API | Conditional auth middleware: без непустого `CICD_AUTH_SECRET` trusted-network/open; с секретом работают JWT/PAT, scoped PAT, session-bound access invalidation, refresh rotate/logout/revoke, route-role checks и project membership enforcement для project-owned API | Нет production default-deny boundary, tenant isolation, service-account tokens и полноценной cookie/CSRF/session-family policy |
+| HTTP API | Conditional auth middleware: без непустого `CICD_AUTH_SECRET` trusted-network/open; с секретом работают JWT/PAT, scoped PAT, session-bound access invalidation, browser refresh cookie + CSRF, refresh rotate/logout/revoke, route-role checks и project membership enforcement для project-owned API | Нет production default-deny boundary, tenant isolation, service-account tokens и полноценной session-family reuse policy |
 | Users | `users(id, username, role, enabled)`, `user_credentials`, `sessions`, `project_memberships` | Tenant membership и tenant isolation отсутствуют |
 | Roles | `admin`, `maintainer`, `developer`, `viewer` участвуют в route-policy decisions; project role берётся из `project_memberships` для project-owned ресурсов | Нет tenant roles и tenant-wide membership model |
 | API tokens | Случайный `cicd_...`, SHA-256 hash, hint, owner, project_id, explicit scopes, expiry, last-used и soft revoke; Bearer PAT работает при `CICD_AUTH_SECRET` | Нет pepper/HMAC storage, revoke reason, service-account token и tenant boundary; legacy `project_id = NULL` tokens остаются global до отзыва |
@@ -42,7 +42,7 @@ Forge CI/CD является multi-tenant control plane: один экземпл
 | Runners | Registry + heartbeat; embedded supervisor выполняет jobs | Runner не обладает отдельной криптографической идентичностью; registry не является границей доступа |
 | Git | Public read для public repo; private read/write через legacy `CICD_GIT_TOKEN` либо JWT/PAT + project membership + `git:*` PAT scopes при `CICD_AUTH_SECRET`; hook token | Нет tenant-bound repository model, отдельного scoped Git credential class, signed push events и deny audit для Git |
 | Audit | `audit_log` с action/resource/actor text, login/denied и многие mutation events | Actor не является нормализованным principal, нет tenant/project scope и фильтров/export |
-| CORS и transport | `CICD_CORS_ALLOWED_ORIGINS` включает allowlist origins; пустое значение оставляет permissive CORS только для isolated dev; HTTP в dev | Для production необходим TLS, CSRF/cookie policy и непустой allowlist |
+| CORS и transport | `CICD_CORS_ALLOWED_ORIGINS` включает allowlist origins; пустое значение оставляет permissive CORS только для isolated dev; cookie-backed refresh/logout требует CSRF proof; HTTP в dev | Для production необходим TLS, `CICD_AUTH_COOKIE_SECURE=true` и непустой allowlist |
 
 До внедрения целевой модели open/trusted-network режим допустим только в изолированной локальной сети разработки. Публичный или shared deployment без непустого `CICD_AUTH_SECRET`, reverse proxy/network boundary и непустых Git/internal tokens запрещён.
 
@@ -733,7 +733,7 @@ Route inventory test обязан сверять все `/api/v1/**` routes с d
 
 ### Phase B — Human authentication и tenancy
 
-- Argon2id, access/refresh session rotation, login rate limiting, configurable CORS allowlist и target CSRF policy.
+- Argon2id, access/refresh session rotation, browser refresh cookie + CSRF, login rate limiting и configurable CORS allowlist.
 - Tenant/project memberships и application `AuthorizationService`.
 - Project, pipeline, job, artifact и repository routes переводятся на deny-by-default.
 - Dashboard protected routes и tenant context.
