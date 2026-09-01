@@ -62,7 +62,6 @@ pub struct LoginRequest {
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct RefreshRequest {
     /// The previously issued refresh token.
-    #[serde(default)]
     pub refresh_token: String,
 }
 
@@ -77,7 +76,6 @@ pub struct TokenPair {
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct LogoutRequest {
     /// The refresh token issued by /auth/login or /auth/refresh.
-    #[serde(default)]
     pub refresh_token: String,
 }
 
