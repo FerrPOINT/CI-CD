@@ -179,7 +179,7 @@
   "runners": {
     "title": "Runner-ы",
     "capabilityTitle": "Реестр runner-ов",
-    "capabilityDescription": "Сейчас экран хранит runner-ы, теги, статус и heartbeat для операционного инвентаря. Внешний runner protocol MVP уже покрывает регистрацию, heartbeat и lease lifecycle; отдельный production runner binary остаётся target.",
+    "capabilityDescription": "Сейчас экран хранит runner-ы, теги, статус и heartbeat для операционного инвентаря. Внешний runner protocol MVP уже покрывает регистрацию, heartbeat и lease lifecycle; forge-runner даёт shell-MVP, а production sandbox остаётся target.",
     "register": "Зарегистрировать runner",
     "name": "Имя",
     "tags": "Теги (через запятую)",
@@ -408,8 +408,17 @@
       "gitToken": "Опциональный токен Git Smart HTTP",
       "gitInternalToken": "Внутренний токен post-receive hook",
       "artifactsDir": "Локальное хранилище артефактов",
+      "embeddedRunnerEnabled": "Включает embedded runner внутри backend",
       "runnerMode": "Режим embedded runner: docker или host",
-      "runnerRegistrationToken": "Bootstrap token для регистрации внешнего runner-а"
+      "runnerRegistrationToken": "Bootstrap token для регистрации внешнего runner-а",
+      "runnerCredential": "Bearer credential уже зарегистрированного forge-runner",
+      "runnerName": "Имя внешнего forge-runner процесса",
+      "runnerTags": "Теги внешнего runner-а через запятую",
+      "runnerTotalSlots": "Параллельные слоты внешнего runner-а",
+      "runnerPollIntervalSeconds": "Пауза между пустыми poll-запросами внешнего runner-а",
+      "runnerNoCheckout": "Отключает git checkout и создаёт пустой workspace",
+      "runnerWorkDir": "Рабочая директория checkout для forge-runner",
+      "runnerKeepWorkspace": "Не удалять workspace после job"
     }
   },
   "dashboard": {

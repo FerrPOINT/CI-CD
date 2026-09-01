@@ -2,11 +2,11 @@
 
 ## Status
 
-Accepted (target architecture; external runner protocol MVP implemented; separate runner boundary pending)
+Accepted (target architecture; external runner protocol + forge-runner shell MVP implemented; production runner boundary pending)
 
 ## Context
 
-Текущий embedded runner выполняется в процессе backend. Такой процесс совмещает public API, PostgreSQL credentials и запуск недоверенного user code; Docker execution требует daemon privilege. Embedded execution уже пишет `job_leases` как локальный owner/expiry ledger. External runner protocol MVP подключил `runners` к register/heartbeat/poll/ack/renew/complete и lease fencing, но ещё не вынес исполнение в отдельный production runner process.
+Текущий embedded runner выполняется в процессе backend. Такой процесс совмещает public API, PostgreSQL credentials и запуск недоверенного user code; Docker execution требует daemon privilege. Embedded execution уже пишет `job_leases` как локальный owner/expiry ledger. External runner protocol MVP подключил `runners` к register/heartbeat/poll/ack/renew/complete и lease fencing; `forge-runner` уже может выполнять shell jobs отдельным процессом, но production sandbox boundary ещё не закрыт.
 
 ## Decision
 
@@ -15,7 +15,7 @@ Control-plane API никогда не исполняет пользовател�
 ## Consequences
 
 - `runner` registry уже участвует в protocol MVP, но legacy inventory endpoints сохраняются для оператора.
-- Текущий protocol MVP закрывает внешний lease token/ack/renew/complete и fencing generation; ещё требуются durable queue, cancellation signal/control endpoint, credential rotation/revocation, log/secret/artifact protocol и sandbox policy.
+- Текущий protocol MVP закрывает внешний lease token/ack/renew/complete, `workspace.checkoutUrl`, fencing generation и отдельный shell-runner process; ещё требуются durable queue, cancellation signal/control endpoint, credential rotation/revocation, log/secret/artifact protocol и sandbox policy.
 - Локальный embedded executor остаётся development adapter до готовности отдельного runner service; production docs не должны рекламировать его как безопасный runner pool.
 
 ## Related

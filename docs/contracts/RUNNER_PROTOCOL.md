@@ -1,6 +1,6 @@
 # Runner protocol
 
-**Статус:** Current verified MVP + Target approved. Реализованный subset на 2026-09-01 покрывает `register`, `heartbeat`, immediate `work:poll`, `ack`, `renew`, `complete`, SHA-256 storage для runner credential/lease token и fencing по `job_leases.generation`. Остальные разделы описывают target-контракт внешнего runner-а. Канонические путь и имена таблиц закреплены [ADR-0009](../adr/0009-canonical-registry.md).
+**Статус:** Current verified MVP + Target approved. Реализованный subset на 2026-09-01 покрывает `register`, `heartbeat`, immediate `work:poll`, `ack`, `renew`, `complete`, SHA-256 storage для runner credential/lease token, fencing по `job_leases.generation`, `workspace.checkoutUrl` и отдельный `forge-runner` shell process. Остальные разделы описывают target-контракт production runner-а. Канонические путь и имена таблиц закреплены [ADR-0009](../adr/0009-canonical-registry.md).
 
 ## 1. Область и общие правила
 
@@ -39,7 +39,7 @@
     "name":{"type":"string","minLength":1,"maxLength":128},
     "tags":{"type":"array","maxItems":64,"items":{"type":"string","pattern":"^[a-z0-9][a-z0-9._-]{0,62}$"}},
     "capabilities":{"type":"object","required":["executorKinds","os","arch"],"properties":{
-      "executorKinds":{"type":"array","minItems":1,"items":{"enum":["docker","kubernetes"]}},
+      "executorKinds":{"type":"array","minItems":1,"items":{"enum":["shell","docker","kubernetes"]}},
       "os":{"const":"linux"},"arch":{"enum":["amd64","arm64"]},
       "maxCpuMillis":{"type":"integer","minimum":1},"maxMemoryMiB":{"type":"integer","minimum":1}
     },"additionalProperties":true}
@@ -76,12 +76,12 @@ Current MVP отвечает сразу и возвращает `204`, если 
 {"protocolVersion":1,"leaseId":"uuid","leaseToken":"opaque","fencingToken":7,
  "ackDeadline":"2026-08-27T12:00:30Z","leaseExpiresAt":"2026-08-27T12:02:00Z",
  "attempt":{"id":"uuid","number":1,"pipelineId":"uuid","jobKey":"test","commitSha":"<full-sha>",
- "executor":"docker","image":"rust@sha256:<digest>","commands":["cargo test"],"environment":{},
- "timeoutSeconds":3600,"workspace":{"checkout":true},"artifacts":[]},
+ "executor":"shell","image":"rust@sha256:<digest>","commands":["cargo test"],"environment":{},
+ "timeoutSeconds":3600,"workspace":{"checkout":true,"checkoutUrl":"https://forge.example/git/project.git"},"artifacts":[]},
  "planSignature":{"kid":"string","signature":"base64url"}}
 ```
 
-Offer не содержит секреты. Runner проверяет `planSignature`, не запускает работу до ack и не сохраняет `leaseToken` в log/metadata. Несовместимый/disabled/draining/offline runner не получает offer.
+Offer не содержит секреты. Current `forge-runner` использует `workspace.checkoutUrl` для `git clone`, затем выполняет команды shell в workspace и отправляет terminal result; `image` остаётся compatibility field до Docker/Kubernetes runner. Target runner проверяет `planSignature`, не запускает работу до ack и не сохраняет `leaseToken` в log/metadata. Несовместимый/disabled/draining/offline runner не получает offer.
 
 `POST /api/v1/runner/leases/{leaseId}/ack` и `POST /api/v1/runner/leases/{leaseId}/renew` используют одну схему:
 

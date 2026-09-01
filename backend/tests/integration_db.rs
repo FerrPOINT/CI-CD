@@ -695,7 +695,8 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
         .await
         .expect("insert project");
     sqlx::query(
-        "INSERT INTO pipelines (id, project_id, git_ref, status) VALUES ($1, $2, 'main', 'queued')",
+        "INSERT INTO pipelines (id, project_id, git_ref, status, created_at) \
+         VALUES ($1, $2, 'main', 'queued', '2000-01-01T00:00:00Z')",
     )
     .bind(pipeline_id)
     .bind(project_id)
@@ -755,8 +756,14 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
     assert_eq!(offer["attempt"]["id"], attempt_id.to_string());
     assert_eq!(offer["attempt"]["jobId"], job_id.to_string());
     assert_eq!(offer["attempt"]["jobKey"], "compile");
+    assert_eq!(offer["attempt"]["executor"], "shell");
     assert_eq!(offer["attempt"]["commands"][0], "echo ok");
     assert_eq!(offer["attempt"]["timeoutSeconds"], 30);
+    assert_eq!(offer["attempt"]["workspace"]["checkout"], true);
+    assert_eq!(
+        offer["attempt"]["workspace"]["checkoutUrl"],
+        "https://example.invalid/external-runner.git"
+    );
     let lease_id = Uuid::parse_str(offer["leaseId"].as_str().unwrap()).unwrap();
     let lease_token = offer["leaseToken"].as_str().unwrap().to_owned();
 

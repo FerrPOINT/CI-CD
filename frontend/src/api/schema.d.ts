@@ -1859,6 +1859,7 @@ export interface components {
         };
         RunnerWorkspace: {
             checkout: boolean;
+            checkoutUrl?: string | null;
         };
         Schedule: {
             /** Format: date-time */

@@ -1215,7 +1215,9 @@ Runner protocol обслуживается на `/api/v1/runner/*` и не ис�
 
 `work:poll` атомарно выбирает queued job, создаёт active `job_leases`, генерирует opaque `leaseToken`, хранит только hash, фиксирует `ackDeadline`, `leaseExpiresAt`, `runnerProtocolVersion=1`, переводит job/attempt в `running` и возвращает `fencingToken = job_leases.generation`. `ack`, `renew` и `complete` одновременно проверяют runner identity, lease token hash, generation, active state и expiry; stale или fenced mutation возвращает `409`, expired lease — `410`.
 
-Ограничения MVP: нет отдельного production runner binary/process, durable `job_queue`, long-poll wakeup, protocol endpoints для secrets/logs/artifacts и pool policy. Эти границы остаются в `docs/RUNNER_ARCHITECTURE.md` и `docs/contracts/RUNNER_PROTOCOL.md`.
+`LeaseOffer.attempt.workspace.checkoutUrl` содержит `projects.repository_url`, чтобы внешний `forge-runner` мог выполнить checkout без доступа к БД. Current `forge-runner` — отдельный shell-runner process: он умеет register/heartbeat/poll/ack/renew/complete, checkout по `checkoutUrl`, запуск команд в workspace и terminal completion.
+
+Ограничения MVP: нет durable `job_queue`, long-poll wakeup, protocol endpoints для secrets/logs/artifacts, pool policy, Docker/Kubernetes isolation и production sandbox. Эти границы остаются в `docs/RUNNER_ARCHITECTURE.md` и `docs/contracts/RUNNER_PROTOCOL.md`.
 
 ### Secrets и artifacts
 

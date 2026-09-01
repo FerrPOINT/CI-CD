@@ -146,6 +146,8 @@ pub(crate) struct RunnerAttemptSpec {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RunnerWorkspace {
     checkout: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    checkout_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -210,6 +212,7 @@ struct ClaimedWork {
     timeout_seconds: i32,
     git_ref: String,
     commit_sha: Option<String>,
+    repository_url: String,
     generation: i64,
     lease_expires_at: DateTime<Utc>,
     ack_deadline: DateTime<Utc>,
@@ -633,10 +636,11 @@ async fn claim_next_work(
         "WITH candidate AS ( \
              SELECT j.id AS job_id, j.stage_id, j.name AS job_name, j.image, j.command, \
                     LEAST(GREATEST(COALESCE(j.timeout_seconds, 3600), 5), 86400)::integer AS timeout_seconds, \
-                    s.pipeline_id, p.git_ref, p.commit_sha, pp.plan_sha256 \
+                    s.pipeline_id, p.git_ref, p.commit_sha, pr.repository_url, pp.plan_sha256 \
              FROM jobs j \
              JOIN stages s ON s.id = j.stage_id \
              JOIN pipelines p ON p.id = s.pipeline_id \
+             JOIN projects pr ON pr.id = p.project_id \
              LEFT JOIN pipeline_plans pp ON pp.pipeline_id = p.id \
              WHERE j.status = 'queued' \
                AND NOT j.manual \
@@ -699,7 +703,7 @@ async fn claim_next_work(
          ) \
          SELECT cl.lease_id, c.job_id, c.stage_id, ca.id AS attempt_id, ca.attempt_no, \
                 c.pipeline_id, c.job_name, c.image, c.command, c.timeout_seconds, \
-                c.git_ref, c.commit_sha, cl.generation, cl.lease_expires_at, \
+                c.git_ref, c.commit_sha, c.repository_url, cl.generation, cl.lease_expires_at, \
                 cl.ack_deadline, c.plan_sha256 \
          FROM candidate c \
          CROSS JOIN claimed_attempt ca \
@@ -737,12 +741,15 @@ async fn claim_next_work(
             job_key: row.job_name,
             git_ref: row.git_ref,
             commit_sha: row.commit_sha,
-            executor: "docker".to_string(),
+            executor: "shell".to_string(),
             image: row.image,
             commands: vec![row.command],
             environment: BTreeMap::new(),
             timeout_seconds: row.timeout_seconds,
-            workspace: RunnerWorkspace { checkout: true },
+            workspace: RunnerWorkspace {
+                checkout: true,
+                checkout_url: Some(row.repository_url),
+            },
             artifacts: Vec::new(),
         },
     }))

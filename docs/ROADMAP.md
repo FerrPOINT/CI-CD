@@ -21,7 +21,7 @@ Roadmap фиксирует порядок доведения Forge до базо
 - проекты, встроенный bare Git hosting, Smart HTTP и auto-trigger pipeline на push;
 - pipeline из `.forge-ci.yml` с legacy линейными stages/jobs и v1 DAG MVP (`version: 1`, top-level `jobs.commands/needs`), fallback-шаблон, immutable `pipeline_plans` snapshot (`legacy-linear`/`v1-dag`), manual legacy jobs, basic timeout и `allow_failure`;
 - embedded runner в `cicd-server`: Docker/host shell, stdout/stderr в attempt-owned `job_logs`, cancel/retry, embedded `job_leases` claim/close/expiry reconciliation;
-- external runner protocol MVP: register через `CICD_RUNNER_REGISTRATION_TOKEN`, heartbeat, immediate `work:poll`, lease token, ack/renew/complete и fencing generation;
+- external runner protocol MVP: register через `CICD_RUNNER_REGISTRATION_TOKEN`, heartbeat, immediate `work:poll`, lease token, ack/renew/complete, `workspace.checkoutUrl`, fencing generation и отдельный `forge-runner` shell process;
 - `execution_attempts`: каждая job получает initial attempt, retry job/pipeline создаёт новую attempt и сохраняет старые логи;
 - REST logs, attempts API и SSE stream логов job;
 - local artifacts до 50 MiB с metadata текущей/latest attempt и SHA-256 для новых uploads;
@@ -33,9 +33,9 @@ Roadmap фиксирует порядок доведения Forge до базо
 
 Ключевые ограничения current baseline:
 
-- execution attempts, v1 DAG projection и runner lease/protocol реализованы как MVP-слой; bounded log pagination/search уже есть, а command spans, line/column parser diagnostics, richer error diagnostics, lost-heartbeat/cancel race suite и full external runner process остаются follow-up;
+- execution attempts, v1 DAG projection и runner lease/protocol реализованы как MVP-слой; bounded log pagination/search и внешний `forge-runner` shell process уже есть, а command spans, line/column parser diagnostics, richer error diagnostics, lost-heartbeat/cancel race suite и production sandboxed runner остаются follow-up;
 - auth/RBAC имеет project membership, scoped PAT, Git Smart HTTP read/write checks, session-bound access invalidation и refresh rotate/logout/revoke MVP, но без tenant isolation, service-account tokens, scoped Git credentials и production cookie/CSRF/session-family policy;
-- execution встроен в backend process, поэтому shared/prod режим требует external runner boundary;
+- embedded execution всё ещё встроен в backend process по умолчанию; для shared/prod режима нужно отключать его и доводить external runner boundary до production sandbox;
 - webhooks/notifications имеют bounded delivery history/requeue MVP, но без production leases/fencing, full dead-letter policy/metrics и external adapters; email/Slack notification adapters не реализованы;
 - backup/restore имеет local scripted MVP helper и CI self-test/dry-run, но ещё не является off-site/PITR production platform или verified restore drill gate.
 
@@ -127,8 +127,7 @@ Gate:
 
 Deliverables:
 
-- Current MVP: `/api/v1/runner/*` register/heartbeat/immediate poll/ack/renew/complete, hashed runner credential, lease token hash и fencing generation;
-- отдельный runner binary/process поверх текущего protocol MVP;
+- Current MVP: `/api/v1/runner/*` register/heartbeat/immediate poll/ack/renew/complete, hashed runner credential, lease token hash, `workspace.checkoutUrl`, fencing generation и отдельный `forge-runner` shell process;
 - durable `job_queue`, long-poll/wakeup, claim expiry/requeue и production lease reconciliation;
 - runner registration credentials rotation/revoke, heartbeat, tags/capacity/drain policy;
 - cancel/timeout/reconciliation для потерянного runner-а;

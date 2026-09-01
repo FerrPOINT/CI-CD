@@ -13,7 +13,7 @@ Forge CI/CD — self-hosted control plane для жизненного цикла
 | Identity & Access | Личности, сессии, membership, роли, токены, policy | Частично: users/roles/tokens + conditional auth/RBAC при непустом `CICD_AUTH_SECRET` | Да |
 | Project & Source | Project, repository connection, bare Git, refs, PR metadata | Да | Да |
 | Pipeline Definition | `.forge-ci.yml`, validation, plan/DAG, variables | Частично: legacy parser + v1 DAG MVP (`jobs.needs`) и immutable `pipeline_plans` snapshot; policy diagnostics/variables in plan target | Да |
-| Execution | Queue, attempts, dispatch, runner protocol, sandbox | Частично: embedded runner | Да |
+| Execution | Queue, attempts, dispatch, runner protocol, sandbox | Частично: embedded runner + external runner protocol/`forge-runner` shell MVP | Да |
 | Logs & Artifacts | Append-only logs, upload/download, integrity, retention | Частично | Да |
 | Environments & Deployments | Environment state, deploy history, approvals, rollback | Частично: metadata | Да |
 | Automation | Schedules, push events, webhooks, notifications, outbox | Частично: Git push, schedules MVP, outgoing webhooks MVP, bounded outbox history/requeue и `in_app`/`sse` notifications; inbound handlers и external adapters configuration/target-only | Да |
@@ -117,7 +117,7 @@ Dependency flow is one-way: `api → app → domain`, `infra → app/domain`, `s
 1. Workspace boundaries, typed config, safe errors, versioned migrations, real-DB tests.
 2. Identity/RBAC/token enforcement and project membership.
 3. Pipeline plan/DAG and execution-attempt model.
-4. External runner protocol and sandboxed executor; secret injection/redaction.
+4. External runner protocol, `forge-runner` shell MVP and sandboxed production executor; secret injection/redaction.
 5. Outbox, schedules, webhook/notification delivery and realtime projection.
 6. Artifact integrity/retention, environments/approvals, backup/DR, metrics and operational automation.
 7. OpenAPI-generated clients, Dashboard/CLI completion, E2E/mobile/visual evidence.

@@ -395,7 +395,7 @@ Foreign-key constraints:
 
 ## 5.1 job_leases
 
-Durable ledger владения execution attempt. Текущий MVP использует таблицу для embedded runner и external runner protocol: claim одним SQL statement переводит `jobs` и `execution_attempts` в `running`, создаёт active lease и фиксирует generation/expiry. Embedded runner закрывает lease при terminal result/cancel, reconciler закрывает expired/missing owner, а external protocol дополнительно хранит hash lease token, ack deadline, ack/renew state и protocol version. Full production runner binary, durable queue, log/secret/artifact protocol и lost-heartbeat policy остаются target.
+Durable ledger владения execution attempt. Текущий MVP использует таблицу для embedded runner и external runner protocol: claim одним SQL statement переводит `jobs` и `execution_attempts` в `running`, создаёт active lease и фиксирует generation/expiry. Embedded runner закрывает lease при terminal result/cancel, reconciler закрывает expired/missing owner, а external protocol дополнительно хранит hash lease token, ack deadline, ack/renew state и protocol version. `forge-runner` уже работает как отдельный shell process поверх этой модели; production durable queue, log/secret/artifact protocol, sandbox и lost-heartbeat policy остаются target.
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -836,7 +836,7 @@ idx_outbox_delivery_attempts_message ON outbox_delivery_attempts(message_id, att
 
 | Фаза | Таблицы | Назначение |
 |---|---|---|
-| External runner production boundary | `job_queue`, credential rotation/revocation tables, protocol log/artifact/secret delivery tables | `runners` + `job_leases` уже покрывают protocol MVP: runner credential hash, heartbeat metadata, lease token hash, ack/renew/complete и fencing generation; target добавляет durable queue, separate runner binary/process, richer identity lifecycle и protocol data planes |
+| External runner production boundary | `job_queue`, credential rotation/revocation tables, protocol log/artifact/secret delivery tables | `runners` + `job_leases` уже покрывают protocol MVP: runner credential hash, heartbeat metadata, lease token hash, `workspace.checkoutUrl`, ack/renew/complete, fencing generation и shell `forge-runner`; target добавляет durable queue, richer identity lifecycle, sandbox и protocol data planes |
 | Production outbox | `outbox_deliveries` / lease state | Full dispatcher snapshots, lease/fencing, crash recovery, response preview allowlist и operator dead-letter policy поверх current bounded history |
 | External notifications | delivery-specific tables | Email/Slack sender state, templates, preferences |
 

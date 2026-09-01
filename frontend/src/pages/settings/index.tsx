@@ -14,8 +14,17 @@ export function SettingsPage() {
     { key: 'CICD_GIT_TOKEN', descKey: 'settings.env.gitToken' },
     { key: 'CICD_GIT_INTERNAL_TOKEN', descKey: 'settings.env.gitInternalToken' },
     { key: 'CICD_ARTIFACTS_DIR', descKey: 'settings.env.artifactsDir' },
+    { key: 'CICD_EMBEDDED_RUNNER_ENABLED', descKey: 'settings.env.embeddedRunnerEnabled' },
     { key: 'CICD_RUNNER_MODE', descKey: 'settings.env.runnerMode' },
     { key: 'CICD_RUNNER_REGISTRATION_TOKEN', descKey: 'settings.env.runnerRegistrationToken' },
+    { key: 'CICD_RUNNER_CREDENTIAL', descKey: 'settings.env.runnerCredential' },
+    { key: 'CICD_RUNNER_NAME', descKey: 'settings.env.runnerName' },
+    { key: 'CICD_RUNNER_TAGS', descKey: 'settings.env.runnerTags' },
+    { key: 'CICD_RUNNER_TOTAL_SLOTS', descKey: 'settings.env.runnerTotalSlots' },
+    { key: 'CICD_RUNNER_POLL_INTERVAL_SECONDS', descKey: 'settings.env.runnerPollIntervalSeconds' },
+    { key: 'CICD_RUNNER_NO_CHECKOUT', descKey: 'settings.env.runnerNoCheckout' },
+    { key: 'CICD_RUNNER_WORK_DIR', descKey: 'settings.env.runnerWorkDir' },
+    { key: 'CICD_RUNNER_KEEP_WORKSPACE', descKey: 'settings.env.runnerKeepWorkspace' },
   ]
 
   return (

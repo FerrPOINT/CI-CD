@@ -6,7 +6,7 @@ COPY cli/Cargo.toml cli/Cargo.toml
 COPY migration/Cargo.toml migration/Cargo.toml
 RUN mkdir -p src/bin domain/src cli/src migration/src \
  && printf 'fn main() {}\n' > src/main.rs && printf '' > src/lib.rs \
- && printf 'fn main() {}\n' > src/bin/openapi-dump.rs && printf 'fn main() {}\n' > src/bin/dummy.rs \
+ && printf 'fn main() {}\n' > src/bin/openapi-dump.rs && printf 'fn main() {}\n' > src/bin/forge-runner.rs && printf 'fn main() {}\n' > src/bin/dummy.rs \
  && printf '\n' > domain/src/lib.rs \
  && printf 'fn main() {}\n' > cli/src/main.rs \
  && printf 'fn main() {}\n' > migration/src/main.rs \
@@ -23,6 +23,7 @@ RUN find src domain cli migration -name '*.rs' -exec touch {} + \
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends curl git git-lfs && rm -rf /var/lib/apt/lists/* && useradd --create-home --uid 10001 cicd
 COPY --from=build /app/target/release/cicd-server /usr/local/bin/cicd-server
+COPY --from=build /app/target/release/forge-runner /usr/local/bin/forge-runner
 RUN mkdir -p /var/lib/forge/git /var/lib/forge/artifacts && chown -R cicd:cicd /var/lib/forge
 USER cicd
 EXPOSE 22801

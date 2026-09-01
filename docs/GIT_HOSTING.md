@@ -130,7 +130,7 @@ curl -H "x-git-token: <TOKEN>" ...
 - Нет Git LFS HTTP endpoints несмотря на наличие `git-lfs` в образе.
 - Нет SSH transport: только Smart HTTP.
 - Hook делает best-effort запрос; он не блокирует push при временном сбое CI/CD API.
-- Embedded runner клонирует project repository в workspace перед выполнением job; external runner protocol MVP уже выдаёт lease, но отдельный runner checkout boundary и scoped repository credential class ещё не реализованы.
+- Embedded runner клонирует project repository в workspace перед выполнением job; external runner protocol MVP уже отдаёт `workspace.checkoutUrl`, а `forge-runner` использует его для checkout. Scoped repository credential class и production checkout policy ещё не реализованы.
 
 Следующая фаза: per-project repository mapping вместо URL suffix lookup, scoped Git credentials, signed internal events с one-time event ID, Git LFS, SSH transport, отдельный production runner checkout boundary и stricter checkout/commit identity guarantees.
 

@@ -62,7 +62,8 @@ Vite proxy направляет `/api` на `http://localhost:22801`; отдел
 | Compose database | `CICD_DATABASE_USER`, `CICD_DATABASE_PASSWORD`, `CICD_DATABASE_NAME`, `CICD_DATABASE_PORT` | PostgreSQL в Compose |
 | Публикация сервисов | `CICD_API_PORT`, `CICD_WEB_PORT`, `CICD_BIND` | Изменение host port или bind address |
 | Прямой backend запуск | `CICD_DATABASE_URL`, `RUST_LOG` | Сервер запущен вне Compose |
-| Git и embedded runner | `CICD_GIT_ROOT`, `CICD_GIT_TOKEN`, `CICD_GIT_INTERNAL_TOKEN`, `CICD_RUNNER_MODE`, `CICD_RUNNER_KEEP_WORKSPACE` | Local Git hosting и выполнение job |
+| Git и embedded runner | `CICD_GIT_ROOT`, `CICD_GIT_TOKEN`, `CICD_GIT_INTERNAL_TOKEN`, `CICD_EMBEDDED_RUNNER_ENABLED`, `CICD_RUNNER_MODE`, `CICD_RUNNER_KEEP_WORKSPACE` | Local Git hosting и встроенное выполнение job |
+| External runner | `CICD_API_URL`, `CICD_RUNNER_REGISTRATION_TOKEN`, `CICD_RUNNER_CREDENTIAL`, `CICD_RUNNER_NAME`, `CICD_RUNNER_TAGS`, `CICD_RUNNER_TOTAL_SLOTS`, `CICD_RUNNER_POLL_INTERVAL_SECONDS`, `CICD_RUNNER_NO_CHECKOUT`, `CICD_RUNNER_WORK_DIR`, `CICD_RUNNER_KEEP_WORKSPACE` | Отдельный `forge-runner` shell process поверх runner protocol MVP |
 | Secrets и artifacts | `CICD_SECRETS_KEY`, `CICD_ARTIFACTS_DIR` | Project secrets и локальные artifacts |
 | CLI | `CICD_API_URL` | `cicd-cli` вне контейнера |
 
@@ -90,12 +91,33 @@ pnpm dev
 
 Текущий backend применяет committed SQLx migrations из `backend/migrations/` при старте. `cicd-migrate` существует как отдельный migration binary; production target остаётся строже: pre-runtime migration under owner role, verify-only startup и runtime role без DDL.
 
+### Внешний `forge-runner` shell MVP
+
+Embedded runner включён по умолчанию. Чтобы проверить внешний процесс, отключите embedded execution и запустите runner отдельно:
+
+```bash
+CICD_EMBEDDED_RUNNER_ENABLED=false cargo run --bin cicd-server
+
+CICD_API_URL=http://127.0.0.1:22801 \
+  CICD_RUNNER_REGISTRATION_TOKEN="$CICD_RUNNER_REGISTRATION_TOKEN" \
+  cargo run --bin forge-runner -- --once
+```
+
+В Compose доступен профиль `external-runner`:
+
+```bash
+CICD_EMBEDDED_RUNNER_ENABLED=false docker compose --profile external-runner up --build
+```
+
+Current `forge-runner` регистрируется или использует `CICD_RUNNER_CREDENTIAL`, heartbeat-ит capacity/tags, получает `LeaseOffer`, клонирует `workspace.checkoutUrl`, выполняет команды shell и отправляет terminal result. Protocol logs/secrets/artifacts, Docker/Kubernetes isolation, durable queue и long-poll остаются target.
+
 ## Карта workspace и пакетов
 
 | Путь / package | Ответственность | Статус |
 |---|---|---|
 | `backend/Cargo.toml` | Cargo workspace root, общие Rust dependencies; members `.` / `domain` / `cli` | Current verified |
 | `backend/` -- `cicd-server` | Axum control plane, HTTP routes, SQLx store, Git hosting, embedded runner и composition root | Current verified |
+| `backend/src/bin/forge-runner.rs` | Отдельный shell-runner process для runner protocol MVP | Current verified MVP |
 | `backend/domain/` -- `cicd-domain` | Чистые доменные типы и state machine `JobStatus` | Current verified |
 | `backend/cli/` -- `cicd-cli` | HTTP-only CLI для `project`, `pipeline`, `job`; не линкует server code | Current verified |
 | `backend/tests/` | no-DB API/domain contracts, `integration_db` real PostgreSQL suite; `tests/sql/init-roles.sql` для runtime role fixture | Current verified |

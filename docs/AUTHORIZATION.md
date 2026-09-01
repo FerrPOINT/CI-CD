@@ -615,7 +615,7 @@ Masking является дополнительной защитой, а не г
 8. Перенести project/pipeline/job вертикаль в `app`/`infra`, включить enforcement для новых и migrated routes.
 9. Перевести secrets на application use-case и target encryption model до runner secret injection.
 10. Включить API token middleware, ограниченный compatibility window для legacy tokens и метрики их использования.
-11. Отделить external runner protocol от embedded runner; production server больше не запускает arbitrary job execution.
+11. Использовать `forge-runner`/external runner boundary вместо embedded execution; production server больше не запускает arbitrary job execution.
 12. Удалить permissive CORS, global Git token fallback и legacy unauthenticated routes.
 
 Миграция не должна автоматически делать всех существующих `maintainer` instance-admin. Bootstrap access выдаётся минимальному явно указанному owner из deployment configuration и требует первого login/password reset.
@@ -754,7 +754,7 @@ Route inventory test обязан сверять все `/api/v1/**` routes с d
 - Envelope encryption/key version, secret audit and rotation.
 - External runner registration, mTLS credential, job leases, claim/reconciliation.
 - Secret injection только в leased execution, log masking и runner isolation.
-- Embedded runner остаётся development-only либо удаляется из production server.
+- Embedded runner остаётся development-only либо отключается/удаляется из production server; current `forge-runner` shell MVP дорабатывается до sandboxed runner boundary.
 
 **Gate:** runner cannot access arbitrary project/job/secret; integration and isolated runner E2E green; plaintext secret absence verified in DB/logs/API/audit.
 

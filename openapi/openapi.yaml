@@ -3875,6 +3875,10 @@ components:
       properties:
         checkout:
           type: boolean
+        checkoutUrl:
+          type:
+          - string
+          - 'null'
     Schedule:
       type: object
       required:

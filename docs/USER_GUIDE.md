@@ -390,13 +390,13 @@ curl -fsS -X POST "http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines"
 
 **Статус процедуры: Current verified.**
 
-В деталях pipeline используйте **Cancel** для каскадной отмены нетерминальных jobs или **Retry** для нового запуска того же project/ref. Отдельную terminal job можно повторить её кнопкой **Retry**. Учитывайте, что secret injection работает только для текущего embedded runner и не заменяет target scoped leases.
+В деталях pipeline используйте **Cancel** для каскадной отмены нетерминальных jobs или **Retry** для нового запуска того же project/ref. Отдельную terminal job можно повторить её кнопкой **Retry**. Учитывайте, что secret injection работает только для текущего embedded runner; current `forge-runner` shell MVP выполняет checkout/commands/terminal completion, но ещё не заменяет target scoped secret/log/artifact leases.
 
 ### Где найти логи и почему они не меняются?
 
 **Статус процедуры: Current verified.**
 
-Откройте job и **Logs** или вызовите `GET /api/v1/jobs/{job_id}/attempts` вместе с `/attempts/{attempt_id}/logs`. Логи append-only в рамках выбранной attempt; у queued job может ещё не быть строк. Если после retry shortcut `/logs` показывает пустой текущий запуск, переключитесь на предыдущую attempt для старой диагностики и проверьте status job, image, command и доступность Docker/host shell для embedded runner.
+Откройте job и **Logs** или вызовите `GET /api/v1/jobs/{job_id}/attempts` вместе с `/attempts/{attempt_id}/logs`. Логи append-only в рамках выбранной attempt; у queued job может ещё не быть строк. Если после retry shortcut `/logs` показывает пустой текущий запуск, переключитесь на предыдущую attempt для старой диагностики и проверьте status job, image, command и доступность Docker/host shell для embedded runner. Для external `forge-runner` current MVP protocol log upload ещё target, поэтому terminal result уже возвращается, а централизованные stdout/stderr logs остаются следующим срезом.
 
 ### Как безопасно передать credential в job?
 

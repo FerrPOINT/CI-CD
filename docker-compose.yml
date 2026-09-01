@@ -29,7 +29,9 @@ services:
       CICD_ARTIFACTS_DIR: /var/lib/forge/artifacts
       # Local compose runs the embedded runner inside the backend container.
       # Set docker only when a Docker executor/socket setup is wired deliberately.
+      CICD_EMBEDDED_RUNNER_ENABLED: ${CICD_EMBEDDED_RUNNER_ENABLED:-true}
       CICD_RUNNER_MODE: ${CICD_RUNNER_MODE:-host}
+      CICD_RUNNER_KEEP_WORKSPACE: ${CICD_RUNNER_KEEP_WORKSPACE:-false}
       CICD_RUNNER_REGISTRATION_TOKEN: ${CICD_RUNNER_REGISTRATION_TOKEN:-}
       CICD_AUTH_SECRET: ${CICD_AUTH_SECRET:-}
       RUST_LOG: info
@@ -47,6 +49,29 @@ services:
       timeout: 5s
       retries: 10
 
+  runner:
+    profiles: ["external-runner"]
+    build:
+      context: ./backend
+    command: ["forge-runner"]
+    environment:
+      CICD_API_URL: http://backend:22801
+      CICD_RUNNER_CREDENTIAL: ${CICD_RUNNER_CREDENTIAL:-}
+      CICD_RUNNER_REGISTRATION_TOKEN: ${CICD_RUNNER_REGISTRATION_TOKEN:-}
+      CICD_RUNNER_NAME: ${CICD_RUNNER_NAME:-forge-runner}
+      CICD_RUNNER_TAGS: ${CICD_RUNNER_TAGS:-linux,host}
+      CICD_RUNNER_TOTAL_SLOTS: ${CICD_RUNNER_TOTAL_SLOTS:-1}
+      CICD_RUNNER_POLL_INTERVAL_SECONDS: ${CICD_RUNNER_POLL_INTERVAL_SECONDS:-5}
+      CICD_RUNNER_NO_CHECKOUT: ${CICD_RUNNER_NO_CHECKOUT:-false}
+      CICD_RUNNER_WORK_DIR: ${CICD_RUNNER_WORK_DIR:-/var/lib/forge/runner-work}
+      CICD_RUNNER_KEEP_WORKSPACE: ${CICD_RUNNER_KEEP_WORKSPACE:-false}
+      RUST_LOG: info
+    volumes:
+      - cicd_runner_work:/var/lib/forge/runner-work
+    depends_on:
+      backend:
+        condition: service_healthy
+
   frontend:
     build:
       context: ./frontend
@@ -60,3 +85,4 @@ volumes:
   cicd_postgres_data:
   cicd_git_repos:
   cicd_artifacts:
+  cicd_runner_work:

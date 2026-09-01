@@ -48,6 +48,10 @@ path = "src/main.rs"
 name = "openapi-dump"
 path = "src/bin/openapi-dump.rs"
 
+[[bin]]
+name = "forge-runner"
+path = "src/bin/forge-runner.rs"
+
 
 [features]
 integration = []
@@ -66,6 +70,7 @@ axum = { version = "0.8", features = ["macros"] }
 base64 = "0.22"
 chrono.workspace = true
 cicd-domain = { path = "domain" }
+clap.workspace = true
 flate2 = "1"
 git2 = { version = "0.20", default-features = false }
 serde.workspace = true

@@ -368,6 +368,7 @@ dependencies = [
  "base64",
  "chrono",
  "cicd-domain",
+ "clap",
  "flate2",
  "git2",
  "hmac",

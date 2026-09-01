@@ -35,13 +35,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // idempotently (IF NOT EXISTS).
     MIGRATOR.run(&pool).await?;
 
-    // Embedded runner: executes queued jobs stage by stage.
     let running = runner::RunningJobs::default();
-    let supervisor_pool = pool.clone();
-    let supervisor_running = running.clone();
-    tokio::spawn(async move {
-        runner::supervisor_loop(supervisor_pool, supervisor_running).await;
-    });
+    if embedded_runner_enabled_from_env(std::env::var("CICD_EMBEDDED_RUNNER_ENABLED").ok())? {
+        // Embedded runner: executes queued jobs stage by stage.
+        let supervisor_pool = pool.clone();
+        let supervisor_running = running.clone();
+        tokio::spawn(async move {
+            runner::supervisor_loop(supervisor_pool, supervisor_running).await;
+        });
+    } else {
+        tracing::warn!(
+            "CICD_EMBEDDED_RUNNER_ENABLED is false; queued jobs require an external forge-runner"
+        );
+    }
 
     // ADR-0006: outbox delivery + scheduler worker.
     let outbox_pool = pool.clone();
@@ -79,9 +85,28 @@ fn normalize_git_internal_token(raw: Option<String>) -> Result<Option<String>, s
     Ok(token)
 }
 
+fn embedded_runner_enabled_from_env(raw: Option<String>) -> Result<bool, std::io::Error> {
+    let Some(value) = raw
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(true);
+    };
+    match value.as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "CICD_EMBEDDED_RUNNER_ENABLED must be one of true/false, 1/0, yes/no or on/off",
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{INSECURE_GIT_INTERNAL_TOKEN, normalize_git_internal_token};
+    use super::{
+        INSECURE_GIT_INTERNAL_TOKEN, embedded_runner_enabled_from_env, normalize_git_internal_token,
+    };
 
     #[test]
     fn git_internal_token_normalization_rejects_known_insecure_default() {
@@ -98,5 +123,16 @@ mod tests {
         assert!(
             normalize_git_internal_token(Some(INSECURE_GIT_INTERNAL_TOKEN.to_string())).is_err()
         );
+    }
+
+    #[test]
+    fn embedded_runner_enabled_defaults_to_true_and_parses_boolish_values() {
+        assert!(embedded_runner_enabled_from_env(None).unwrap());
+        assert!(embedded_runner_enabled_from_env(Some(" ".to_string())).unwrap());
+        assert!(embedded_runner_enabled_from_env(Some("true".to_string())).unwrap());
+        assert!(embedded_runner_enabled_from_env(Some("1".to_string())).unwrap());
+        assert!(!embedded_runner_enabled_from_env(Some("false".to_string())).unwrap());
+        assert!(!embedded_runner_enabled_from_env(Some("off".to_string())).unwrap());
+        assert!(embedded_runner_enabled_from_env(Some("maybe".to_string())).is_err());
     }
 }

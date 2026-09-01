@@ -26,22 +26,22 @@
 
 | Область | Сейчас | Цель |
 |---|---|---|
-| Архитектура backend | Переходный monolith: `api.rs`, `platform.rs`, `runner.rs`, `store.rs`; `domain` и `cli` уже выделяются в workspace | Полный Cargo workspace `domain → app → infra → api`, отдельный `server` composition root и отдельный runner process (`forge-runner`) |
+| Архитектура backend | Переходный monolith: `api.rs`, `platform.rs`, `runner.rs`, `store.rs`; `domain` и `cli` уже выделяются в workspace; `forge-runner` существует как отдельный shell-runner binary | Полный Cargo workspace `domain → app → infra → api`, отдельный `server` composition root и production runner process |
 | Pipeline config | `.forge-ci.yml` уже читается из локального bare-репозитория по best-effort resolved commit; поддерживаются legacy линейные `stages/jobs` и v1 DAG MVP (`version: 1`, top-level `jobs.commands/needs`), при отсутствии файла используется `legacy_template`; `pipeline_plans` хранит raw config/template, parser version и SHA-256 hashes | Policy validation, triggers, tags/retry/artifacts/secrets и production diagnostics |
 | Планирование | Current `pipeline_plans` хранит normalised `legacy-linear` или `v1-dag` snapshot; v1 `needs` проходит topological validation и исполняется через runtime-стадии `dag-*` | Job-level DAG dispatcher с `needs`, матрицами, rules и неизменяемым policy-aware plan |
-| Выполнение | Embedded supervisor в `cicd-server`; Docker или host shell; PID map в памяти; `job_leases` фиксирует embedded owner/expiry/terminal outcome; external runner protocol MVP может claim/ack/renew/complete queued job через API | Отдельные runner-ы, pull protocol, leases, attempts, reconciliation; host shell отсутствует в production |
+| Выполнение | Embedded supervisor в `cicd-server`; Docker или host shell; PID map в памяти; `job_leases` фиксирует embedded owner/expiry/terminal outcome; external runner protocol MVP может claim/ack/renew/complete queued job через API; `forge-runner` shell MVP выполняет checkout/commands/terminal completion отдельным процессом | Отдельные sandboxed runner-ы, pull protocol, leases, attempts, reconciliation; host shell отсутствует в production |
 | Runner registry | Legacy `POST /runners` inventory плюс protocol register через `CICD_RUNNER_REGISTRATION_TOKEN`; runner credential hash, tags, heartbeat, capacity, capabilities, drain/disable metadata сохраняются в `runners` | Runner pools/scopes, credential rotation/revocation UI/API, mTLS/service identity, selection dispatcher |
-| Очередь | Polling queued jobs; атомарный `queued → running` создаёт active `job_leases`; external `work:poll` использует `SKIP LOCKED`, lease token, ack/renew/complete и fencing generation; нет durable `job_queue` и long-poll wakeup | PostgreSQL queue с scheduling eligibility, lease/ack/renew/expiry, outbox/event wakeup |
+| Очередь | Polling queued jobs; атомарный `queued → running` создаёт active `job_leases`; external `work:poll` использует `SKIP LOCKED`, lease token, `workspace.checkoutUrl`, ack/renew/complete и fencing generation; нет durable `job_queue` и long-poll wakeup | PostgreSQL queue с scheduling eligibility, lease/ack/renew/expiry, outbox/event wakeup |
 | Retry | API повторно ставит job/pipeline в `queued` и уже создаёт новую `execution_attempt`; external protocol lease fencing есть на generation/token, но policy retry/lost-heartbeat suite ещё target | Policy-driven immutable execution attempt; история предыдущих попыток, логов и artifact manifest сохраняется |
 | Cancel | API меняет статусы, закрывает active embedded lease и пытается остановить Docker/PID локального процесса | Cancel intent в БД, delivery к owner runner, grace period, forced backend termination, reconciliation |
 | Таймауты | Job timeout убивает локальный процесс; embedded lease получает expiry `timeout_seconds + 60s`, reconciler fail-ит expired/missing lease | Queue, startup, execution, idle-log, cancellation и lease deadlines - конфигурируемые и фиксируемые в attempt |
 | Secrets | AES-256-GCM at rest; API не возвращает значения; embedded runner умеет env injection и stdout/stderr masking | Ограниченная выдача secret bundle только lease owner; env/file injection; redaction до записи логов |
 | Logs | Строки `job_logs`, sequence по attempt, bounded page/search API, REST compatibility polling и SSE stream по current/latest attempt | Chunk protocol, idempotency, stream classification, monotonic sequence per attempt и durable append |
 | Artifacts | Local FS, metadata по `job_id` и active/latest `attempt_id`, лимит 50 MiB | Artifact manifest на attempt, checksum, staged upload, S3-compatible storage, retention, quarantine/cleanup |
-| Изоляция | API/backend может запускать Docker; есть host-shell fallback | Docker socket только у runner host; rootless/least privilege. Kubernetes runner создаёт ограниченный Job/Pod |
+| Изоляция | API/backend может запускать Docker; есть host-shell fallback; внешний `forge-runner` shell MVP можно запускать отдельно, но без production sandbox | Docker socket только у runner host; rootless/least privilege. Kubernetes runner создаёт ограниченный Job/Pod |
 | Тесты | Domain/API/CLI tests, real PostgreSQL integration для persistent paths, frontend unit/build gates | Unit, property, protocol compatibility, runner contract, Docker/K8s integration, chaos/e2e |
 
-В документации и пользовательском интерфейсе текущий механизм следует называть **embedded execution + external runner protocol MVP**, а не полноценной distributed runner platform: отдельный runner process, durable queue и protocol data planes ещё не завершены.
+В документации и пользовательском интерфейсе текущий механизм следует называть **embedded execution + external runner protocol/forge-runner shell MVP**, а не полноценной distributed runner platform: durable queue, production sandbox и protocol data planes ещё не завершены.
 
 ---
 
@@ -100,7 +100,7 @@ backend/
 ├── infra/        # PostgreSQL, Git, object storage, crypto, Docker/K8s adapters
 ├── api/          # Axum routes, DTO, auth middleware, OpenAPI
 ├── server/       # composition root, workers, graceful shutdown
-├── runner/       # отдельный бинарник forge-runner
+├── src/bin/forge-runner.rs # current external shell-runner binary
 ├── migration/    # SQLx migrations
 └── tests/        # black-box PostgreSQL and protocol tests
 ```
@@ -378,11 +378,13 @@ Lease защищает от двойного выполнения при раз�
 Runner запускается с token только для bootstrap:
 
 ```bash
-forge-runner register \
-  --server https://forge.example \
-  --token "$FORGE_RUNNER_REGISTRATION_TOKEN" \
+forge-runner \
+  --api-url https://forge.example \
+  --registration-token "$CICD_RUNNER_REGISTRATION_TOKEN" \
   --name "builder-a-01"
 ```
+
+Current binary запускается напрямую с `--registration-token` или с уже сохранённым `--credential`. Команды `register` как отдельного subcommand пока нет; registration выполняется при старте, если credential не передан.
 
 `POST /api/v1/runner/register` возвращает:
 
@@ -790,7 +792,7 @@ Reconciler должен быть идемпотентен, работать lock
 
 ## 14. API и runner protocol
 
-Версия runner protocol отделяется от user-facing REST: `/api/v1/runner/...`. Все тела документируются OpenAPI/JSON schema и имеют explicit `protocolVersion`. Current MVP реализует register/heartbeat/immediate poll/ack/renew/complete; остальные строки в таблицах ниже являются target contract.
+Версия runner protocol отделяется от user-facing REST: `/api/v1/runner/...`. Все тела документируются OpenAPI/JSON schema и имеют explicit `protocolVersion`. Current MVP реализует register/heartbeat/immediate poll/ack/renew/complete, `workspace.checkoutUrl` и `forge-runner` shell binary; остальные строки в таблицах ниже являются target contract.
 
 ### Control-plane API
 
@@ -837,10 +839,14 @@ Reconciler должен быть идемпотентен, работать lock
     "pipelineId": "p1...",
     "jobKey": "test",
     "commitSha": "0123456789abcdef...",
-    "executor": "docker",
+    "executor": "shell",
     "image": "rust@sha256:...",
     "commands": ["cargo test"],
     "timeoutSeconds": 900,
+    "workspace": {
+      "checkout": true,
+      "checkoutUrl": "https://forge.example/git/project.git"
+    },
     "requiredArtifacts": [
       { "name": "junit", "path": "target/junit.xml", "expireInSeconds": 604800 }
     ]
@@ -848,7 +854,7 @@ Reconciler должен быть идемпотентен, работать lock
 }
 ```
 
-В ответе нет секретов, project master credentials, DB URL, artifact storage credentials или Docker socket information.
+В ответе нет секретов, project master credentials, DB URL, artifact storage credentials или Docker socket information. Current `forge-runner` использует `checkoutUrl`, выполняет shell commands и пока не загружает protocol logs/artifacts.
 
 ### Ошибки protocol
 
@@ -996,7 +1002,7 @@ Kubernetes, при наличии test cluster:
 ## Фаза 2 - durable queue, attempts и leases
 
 - Current MVP: `job_leases` фиксирует embedded runner claim, generation, expiry и terminal close.
-- Current MVP: external runner protocol создаёт lease offer, проверяет lease token/fencing, поддерживает ack/renew/complete и heartbeat.
+- Current MVP: external runner protocol создаёт lease offer, проверяет lease token/fencing, поддерживает ack/renew/complete, heartbeat и отдаёт `workspace.checkoutUrl`.
 - Ввести `job_queue` и расширить lease-модель до внешнего dispatch.
 - Расширить lease expiry/reconciliation до lost-heartbeat/cancel races, durable `job_queue` и long-poll/event wakeup.
 - Сохранить текущую retry-модель с новой attempt и добавить policy/fencing поверх неё.
@@ -1007,7 +1013,7 @@ Kubernetes, при наличии test cluster:
 
 ## Фаза 3 - внешний Docker runner
 
-- Создать `forge-runner` binary поверх существующего registration/auth/heartbeat protocol MVP.
+- Current MVP: создать `forge-runner` shell binary поверх существующего registration/auth/heartbeat protocol MVP.
 - Подключить production-grade heartbeat, capabilities, tags, capacity и drain/revoke policy.
 - Перенести Docker socket/commands/workspace lifecycle из `cicd-server` в runner.
 - Удалить production host-shell execution.

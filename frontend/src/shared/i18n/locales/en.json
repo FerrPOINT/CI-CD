@@ -179,7 +179,7 @@
   "runners": {
     "title": "Runners",
     "capabilityTitle": "Runner registry",
-    "capabilityDescription": "This screen currently stores runners, tags, status, and heartbeat as operational inventory. The external runner protocol MVP now covers registration, heartbeat, and lease lifecycle; a separate production runner binary remains target.",
+    "capabilityDescription": "This screen currently stores runners, tags, status, and heartbeat as operational inventory. The external runner protocol MVP now covers registration, heartbeat, and lease lifecycle; forge-runner provides the shell MVP, while production sandboxing remains target.",
     "register": "Register runner",
     "name": "Name",
     "tags": "Tags (comma-separated)",
@@ -408,8 +408,17 @@
       "gitToken": "Optional Git Smart HTTP token",
       "gitInternalToken": "Internal post-receive hook token",
       "artifactsDir": "Local artifact storage path",
+      "embeddedRunnerEnabled": "Enables the embedded runner inside backend",
       "runnerMode": "Embedded runner mode: docker or host",
-      "runnerRegistrationToken": "Bootstrap token for external runner registration"
+      "runnerRegistrationToken": "Bootstrap token for external runner registration",
+      "runnerCredential": "Bearer credential for an already registered forge-runner",
+      "runnerName": "External forge-runner process name",
+      "runnerTags": "Comma-separated external runner tags",
+      "runnerTotalSlots": "External runner parallel slots",
+      "runnerPollIntervalSeconds": "Delay between empty external runner poll requests",
+      "runnerNoCheckout": "Skips git checkout and creates an empty workspace",
+      "runnerWorkDir": "forge-runner checkout workspace directory",
+      "runnerKeepWorkspace": "Keep job workspaces after completion"
     }
   },
   "dashboard": {

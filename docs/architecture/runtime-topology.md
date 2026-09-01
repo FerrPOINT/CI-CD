@@ -15,14 +15,16 @@
 │      ├── internal POST /api/v1/internal/git-push (X-Internal-Token)     │
 │      └── embedded runner: Docker API / host shell                       │
 │             └── workspace volume + forge-job-<id> containers            │
+│  runner profile (forge-runner)                                          │
+│      └── runner API poll/ack/renew/complete + shell workspace           │
 │  postgres :22543 (volume)          artifacts dir (volume)               │
 │  bare git repos (volume)                                                │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-Доверенная зона — весь compose-хост. Docker socket доступен backend-контейнеру (embedded runner).
+Доверенная зона — весь compose-хост. Docker socket доступен backend-контейнеру (embedded runner), если включён соответствующий executor. `forge-runner` доступен через Compose profile `external-runner`; для него обычно ставят `CICD_EMBEDDED_RUNNER_ENABLED=false`, чтобы работу не забирали два локальных executors.
 
-## Target (approved, не реализовано)
+## Target (approved, частично реализовано)
 
 ```text
 clients (browser/CLI) ── HTTPS ── control plane (api/app/infra/server)
@@ -34,7 +36,7 @@ external runners ── mTLS/bearer ── runner API (/api/v1/runner/*)
 git clients ── Smart HTTP ── git ingress ── domain_events ── scheduler
 ```
 
-Разделение доверия: control plane не исполняет jobs (ADR-0007); runner-ы — отдельная зона с lease-токенами; PostgreSQL не публикуется наружу.
+Разделение доверия: current `forge-runner` уже выносит shell execution в отдельный процесс, но production-цель остаётся строже: control plane не исполняет jobs и не имеет Docker socket, runner-ы — отдельная зона с lease-токенами и sandbox, PostgreSQL не публикуется наружу.
 
 ## Наблюдаемость
 

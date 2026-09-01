@@ -11,10 +11,10 @@
 | Git hosting (bare + Smart HTTP) | ✅ | public/private fetch ACL, optional token-protected push, code tree/blob, tags/releases; push → post-receive(old/new SHA) → idempotent pipeline per pushed object |
 | Pipeline/стадии/джобы | ✅ | `.forge-ci.yml` legacy `stages/jobs/image/command` или v1 `version: 1` + top-level `jobs.commands/needs`; fallback-шаблон при отсутствии config; trigger пытается читать config по resolved commit SHA; ручной trigger поддерживает `Idempotency-Key`; отмена/повтор в текущей job-модели |
 | Pipeline plan snapshot | ✅ MVP | `pipeline_plans` хранит immutable snapshot: raw config/fallback template, `config_sha256`, parser version, normalised plan JSON, `plan_sha256` и dependency edges. Current форматы: `legacy-linear` (`forge-legacy-linear/1`) и `v1-dag` (`forge-dsl/1.0.0`); v1 DAG исполняется через топологические `dag-*` стадии, а policy diagnostics/job-level dispatcher остаются target |
-| Embedded runner | ✅ | Docker (`forge-job-<id>`) или host shell; lease-aware claim, стриминг stdout → attempt-owned `job_logs`; cancel через PID-map |
+| Embedded runner | ✅ | Docker (`forge-job-<id>`) или host shell; lease-aware claim, стриминг stdout → attempt-owned `job_logs`; cancel через PID-map; можно отключить `CICD_EMBEDDED_RUNNER_ENABLED=false` |
 | Execution attempts | ✅ MVP | `execution_attempts` создаются для каждой job; retry job/pipeline создаёт новую attempt и не удаляет старые логи |
 | Job leases | ✅ MVP | embedded runner создаёт active `job_leases` при claim, закрывает lease при terminal result/cancel и reconciler переводит expired/missing lease в failed; внешний runner protocol MVP выдаёт lease token, ack/renew/complete и проверяет fencing generation |
-| External runner protocol | ✅ MVP | `/api/v1/runner/register`, heartbeat, immediate `work:poll`, ack/renew/complete; credential и lease token хранятся только hash-ами; отдельный runner binary, durable `job_queue`, secrets/logs/artifacts protocol и long-poll остаются target |
+| External runner protocol + `forge-runner` | ✅ MVP | `/api/v1/runner/register`, heartbeat, immediate `work:poll`, ack/renew/complete; credential и lease token хранятся только hash-ами; `work:poll` отдаёт `workspace.checkoutUrl`; отдельный `forge-runner` shell process умеет checkout, renew и terminal completion; durable `job_queue`, secrets/logs/artifacts protocol, Docker/Kubernetes sandbox и long-poll остаются target |
 | Логи | ✅ | append-only внутри attempt, sequence per attempt, совместимый REST array shortcut, bounded `/logs/page` с `limit/after/q` и SSE stream текущей/последней attempt |
 | Артефакты | ✅ MVP | upload/download ≤50 MiB, локальный `CICD_ARTIFACTS_DIR`; новые metadata привязаны к active/latest attempt и содержат SHA-256; download проверяет canonical path containment и checksum drift |
 | Секреты проектов | ✅ | AES-256-GCM at rest; значение не возвращается API |
@@ -39,7 +39,7 @@
 
 ## Не реализовано (Target approved — см. ADR + contracts)
 
-Отдельный production runner binary/dispatch, durable `job_queue`, long-poll/wakeup, protocol endpoints для secrets/logs/artifacts и pool policy (ADR-0007), policy-aware pipeline planner поверх v1 DAG (`on`, tags/retry/artifacts/secrets, line/column diagnostics, job-level dispatcher), general idempotency storage for all retryable mutations, command spans/stream classification для диагностических логов, artifact retention/object storage, off-site/PITR backup platform и verified restore drill, external notification channel adapters (email/Slack), inbound provider webhook handlers, tenant isolation, service-account tokens, scoped Git credentials, production cookie/CSRF/session-family policy, schedule IANA timezone/DST/misfire и multi-replica leases, outbox lease/fencing/crash recovery, full dead-letter operator policy/metrics и distributed/proxy rate limiting (сейчас in-process окно по forwarded client key).
+Production-grade runner dispatch, durable `job_queue`, long-poll/wakeup, protocol endpoints для secrets/logs/artifacts, Docker/Kubernetes sandbox и pool policy (ADR-0007), policy-aware pipeline planner поверх v1 DAG (`on`, tags/retry/artifacts/secrets, line/column diagnostics, job-level dispatcher), general idempotency storage for all retryable mutations, command spans/stream classification для диагностических логов, artifact retention/object storage, off-site/PITR backup platform и verified restore drill, external notification channel adapters (email/Slack), inbound provider webhook handlers, tenant isolation, service-account tokens, scoped Git credentials, production cookie/CSRF/session-family policy, schedule IANA timezone/DST/misfire и multi-replica leases, outbox lease/fencing/crash recovery, full dead-letter operator policy/metrics и distributed/proxy rate limiting (сейчас in-process окно по forwarded client key).
 
 ## Текущее runtime-дерево backend
 
@@ -53,6 +53,7 @@ backend/
 │   ├── pulls.rs        # refs/commits/compare/pull requests
 │   ├── runner.rs       # embedded executor (+job_leases, secret injection, маскирование)
 │   ├── runner_protocol.rs # external runner protocol MVP
+│   ├── bin/forge-runner.rs # external shell runner process MVP
 │   ├── outbox.rs       # ADR-0006: domain_events/outbox + scheduler worker
 │   ├── authz.rs        # role-политики роутов + project membership enforcement
 │   ├── rate_limit.rs   # in-process fixed-window route-class limiting
@@ -72,7 +73,7 @@ backend/
 - PostgreSQL в compose опубликован только на `127.0.0.1`, но API/Dashboard host ports нельзя открывать в недоверенную сеть.
 - `CICD_GIT_INTERNAL_TOKEN` пустой по умолчанию только для isolated local development; shared-деплой обязан задать уникальный токен, а legacy `forge-internal-dev-token` отклоняется при старте.
 - Auth/RBAC пока без tenant isolation, service-account tokens, scoped Git credentials и production-grade cookie/CSRF/session-family policy; session-bound access invalidation, refresh rotate/logout/revoke, project membership, scoped PAT и Git read/write checks реализованы как MVP-слой поверх глобальных ролей.
-- Execution attempts / job leases — MVP-слой: old `/jobs/{id}/logs` читает текущую или последнюю attempt, bounded `/jobs/{id}/logs/page` поддерживает `limit/after/q`, полный аудит попыток доступен через `/jobs/{id}/attempts`, embedded `job_leases` закрывают crash/restart risk локального backend worker-а, а внешний runner protocol уже проверяет runner credential, lease token и fencing generation без отдельного production runner binary.
+- Execution attempts / job leases — MVP-слой: old `/jobs/{id}/logs` читает текущую или последнюю attempt, bounded `/jobs/{id}/logs/page` поддерживает `limit/after/q`, полный аудит попыток доступен через `/jobs/{id}/attempts`, embedded `job_leases` закрывают crash/restart risk локального backend worker-а, а внешний runner protocol уже проверяет runner credential, lease token и fencing generation. `forge-runner` даёт отдельный shell process, но production sandbox, protocol logs/secrets/artifacts и lost-heartbeat policy ещё target.
 - Scheduler/outbox — MVP: есть строгий 5-польный UTC cron и уникальные fire slots, но нет IANA timezone/DST/misfire, lease/fencing/crash-safe dispatcher-а, full dead-letter operator policy/metrics и внешних notification adapters; bounded delivery history/requeue и `in_app`/`sse` local outbox projection уже работают.
 
 ## Верификационные команды

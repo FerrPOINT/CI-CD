@@ -2,7 +2,7 @@
 
 ## 1. Контекст
 
-Self-hosted CI/CD control plane: Git-хостинг (bare-репозитории + Smart HTTP + post-receive auto-trigger), пайплайны со стадиями и джобами, embedded runner (Docker/shell), платформенные ресурсы (runners, secrets, artifacts, environments, schedules, webhooks, notifications, reports, audit, users, tokens) и React Dashboard.
+Self-hosted CI/CD control plane: Git-хостинг (bare-репозитории + Smart HTTP + post-receive auto-trigger), пайплайны со стадиями и джобами, embedded runner (Docker/shell), внешний `forge-runner` shell MVP поверх runner protocol, платформенные ресурсы (runners, secrets, artifacts, environments, schedules, webhooks, notifications, reports, audit, users, tokens) и React Dashboard.
 
 > **Переходный период.** Backend мигрирует с монолитного crate на Cargo workspace со слоями (ADR-0005). Ниже описана целевая архитектура; текущее состояние каждого среза отмечено в «Статус миграции». До завершения миграции старые пути (`cicd::domain`, `backend/src/*`) работают через re-export shim и остаются источником истины для ещё не перенесённых вертикалей.
 
@@ -53,6 +53,7 @@ CI-CD/
 │   ├── domain/               # чистые бизнес-типы, port-trait'ы        [готово]
 │   ├── cli/                  # cicd-cli: HTTP-клиент control plane     [готово]
 │   ├── src/                  # серверный crate (мигрирует в app/infra/api/server)
+│   │   ├── bin/forge-runner.rs # external shell runner process MVP
 │   │   ├── api.rs            # HTTP-роуты проектов/пайплайнов/джобов
 │   │   ├── platform.rs       # HTTP-роуты платформенных ресурсов
 │   │   ├── git_host.rs       # bare-репо + Smart HTTP + post-receive
@@ -124,8 +125,13 @@ Composition root: чтение конфига, создание `PgPool`, реп
 | `CICD_GIT_INTERNAL_TOKEN` | токен post-receive → pipeline hook |
 | `CICD_SECRETS_KEY` | base64 32-byte ключ AES-256-GCM |
 | `CICD_ARTIFACTS_DIR` | локальное хранилище артефактов |
+| `CICD_EMBEDDED_RUNNER_ENABLED` | `true` по умолчанию; `false` отключает embedded execution в backend |
 | `CICD_RUNNER_MODE` | `host` в local compose; `docker`/`host` в backend binary |
 | `CICD_RUNNER_REGISTRATION_TOKEN` | bootstrap token для `/api/v1/runner/register`; пусто отключает external registration |
+| `CICD_RUNNER_CREDENTIAL` | bearer credential для уже зарегистрированного `forge-runner` |
+| `CICD_RUNNER_NAME` / `CICD_RUNNER_TAGS` / `CICD_RUNNER_TOTAL_SLOTS` | identity/capacity внешнего `forge-runner` |
+| `CICD_RUNNER_POLL_INTERVAL_SECONDS` / `CICD_RUNNER_NO_CHECKOUT` | poll cadence и dev/debug режим без Git checkout для внешнего `forge-runner` |
+| `CICD_RUNNER_WORK_DIR` | workspace root внешнего `forge-runner` |
 | `CICD_RUNNER_KEEP_WORKSPACE` | `1` — не удалять workspace джоба |
 
 Целевая модель — typed config (группы Database/Http/Git/Artifacts/Runner/Auth) по образцу task-tracker; сейчас — прямое чтение env.
@@ -146,7 +152,7 @@ Supervisor-полл queued-джобов, атомарный lease-aware claim (`
 
 ### 6.4 External runner protocol MVP
 
-`/api/v1/runner/*` реализует control-plane protocol slice для внешних runner-ов: register через `CICD_RUNNER_REGISTRATION_TOKEN`, heartbeat с tags/capacity/capabilities, immediate `work:poll`, lease `ack`, `renew` и `complete`. Сервер хранит только hash runner credential и lease token, а mutating lease endpoints проверяют runner identity, token, `job_leases.generation` и expiry. Отдельный production runner binary/process, durable `job_queue`, long-poll wakeup, secrets/logs/artifacts protocol и sandbox isolation остаются target.
+`/api/v1/runner/*` реализует control-plane protocol slice для внешних runner-ов: register через `CICD_RUNNER_REGISTRATION_TOKEN`, heartbeat с tags/capacity/capabilities, immediate `work:poll`, lease `ack`, `renew` и `complete`. Сервер хранит только hash runner credential и lease token, а mutating lease endpoints проверяют runner identity, token, `job_leases.generation` и expiry. `work:poll` отдаёт `workspace.checkoutUrl` из проекта, а `forge-runner` умеет зарегистрироваться, heartbeat-ить, подтвердить lease, продлевать её, выполнить команды в shell workspace и отправить terminal result. Durable `job_queue`, long-poll wakeup, protocol secrets/logs/artifacts, Docker/Kubernetes sandbox isolation и production runner policy остаются target.
 
 ### 6.5 Платформенные ресурсы (MVP)
 
@@ -178,7 +184,7 @@ Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-2
 | app/infra/api/server пакеты | ⬜ Phase C (strangler по вертикалям) |
 | OpenAPI + генерация клиента | ✅ current: `openapi/openapi.yaml` + `frontend/src/api/schema.d.ts` |
 | Auth/RBAC/token middleware | ◩ current conditional: JWT/scoped PAT/global roles + project memberships + session-bound access invalidation + refresh rotate/logout/revoke при `CICD_AUTH_SECRET`; tenant scope, service-account/scoped Git credentials и production cookie/CSRF/session-family policy target |
-| Distributed runner protocol | ◩ current MVP: `/api/v1/runner/*` register/heartbeat/poll/ack/renew/complete + hashed credentials/lease tokens + fencing generation; separate runner process, durable queue, long-poll, secrets/logs/artifacts protocol и sandbox boundary остаются Phase D |
+| Distributed runner protocol | ◩ current MVP: `/api/v1/runner/*` register/heartbeat/poll/ack/renew/complete + hashed credentials/lease tokens + fencing generation + `forge-runner` shell process; durable queue, long-poll, secrets/logs/artifacts protocol и sandbox boundary остаются Phase D |
 
 ## 10. Dev workflow
 
