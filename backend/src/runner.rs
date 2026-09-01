@@ -489,7 +489,7 @@ pub async fn reconcile_unacknowledged_leases(pool: &PgPool) -> Result<u64, sqlx:
         "WITH requeued AS ( \
              UPDATE job_leases l \
              SET lease_status = 'expired', \
-                 completed_at = COALESCE(completed_at, now()), \
+                 completed_at = COALESCE(l.completed_at, now()), \
                  terminal_status = 'failed', \
                  error_tail = COALESCE(error_tail, 'runner lease ack deadline exceeded') \
              FROM job_queue q \
