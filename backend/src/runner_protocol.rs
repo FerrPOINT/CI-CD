@@ -9,7 +9,7 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
 };
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -46,6 +46,10 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route(
             "/api/v1/runner/leases/{lease_id}/renew",
             post(renew_runner_lease),
+        )
+        .route(
+            "/api/v1/runner/leases/{lease_id}/control",
+            get(poll_runner_lease_control),
         )
         .route(
             "/api/v1/runner/leases/{lease_id}/secrets:resolve",
@@ -600,6 +604,72 @@ pub(crate) async fn renew_runner_lease(
 }
 
 #[utoipa::path(
+    get,
+    path = "/api/v1/runner/leases/{lease_id}/control",
+    tag = "runner-protocol",
+    params(
+        ("lease_id" = Uuid, Path),
+        ("X-Runner-Protocol-Version" = i32, Header),
+        ("X-Lease-Token" = String, Header),
+        ("X-Fencing-Token" = i64, Header)
+    ),
+    responses((status = 200, body = RunnerLeaseControlResponse), (status = 400), (status = 401), (status = 409), (status = 410))
+)]
+pub(crate) async fn poll_runner_lease_control(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(lease_id): Path<Uuid>,
+) -> Result<Json<RunnerLeaseControlResponse>, ApiError> {
+    let protocol_version = required_i32_header(
+        &headers,
+        "x-runner-protocol-version",
+        "runner protocol version header is required",
+    )?;
+    validate_protocol_version(protocol_version)?;
+    let lease_token =
+        required_text_header(&headers, "x-lease-token", "lease token header is required")?;
+    let fencing_token = required_i64_header(
+        &headers,
+        "x-fencing-token",
+        "fencing token header is required",
+    )?;
+    if fencing_token < 1 {
+        return Err(ApiError::bad_request(
+            "lease token and fencing token are required",
+        ));
+    }
+
+    let db = pool(&state)?;
+    let runner = authenticate_runner(db, &headers).await?;
+    let token_hash = crate::auth::hash_token(&lease_token);
+    let row = sqlx::query_as::<_, LeaseControlRow>(
+        "SELECT lease_expires_at, now() + ($5::bigint * interval '1 second') AS renew_after, \
+                cancel_requested_at IS NOT NULL AS cancel_requested \
+         FROM job_leases \
+         WHERE id = $1 \
+           AND runner_id = $2 \
+           AND lease_status = 'active' \
+           AND lease_token_hash = $3 \
+           AND generation = $4 \
+           AND lease_expires_at > now() \
+           AND acknowledged_at IS NOT NULL",
+    )
+    .bind(lease_id)
+    .bind(runner.id)
+    .bind(token_hash)
+    .bind(fencing_token)
+    .bind(RENEW_AFTER_SECONDS)
+    .fetch_optional(db)
+    .await
+    .map_err(ApiError::internal)?;
+
+    match row {
+        Some(row) => Ok(Json(control_response(row))),
+        None => Err(lease_mutation_error(db, lease_id).await),
+    }
+}
+
+#[utoipa::path(
     post,
     path = "/api/v1/runner/leases/{lease_id}/secrets:resolve",
     tag = "runner-protocol",
@@ -914,8 +984,10 @@ pub(crate) async fn complete_runner_lease(
            AND l.attempt_id = $5 \
            AND l.lease_expires_at > now() \
            AND l.acknowledged_at IS NOT NULL \
-           AND j.status IN ('queued','running') \
-           AND a.status IN ('queued','running') \
+           AND ( \
+             (j.status IN ('queued','running') AND a.status IN ('queued','running')) \
+             OR ($6 = 'canceled' AND j.status = 'canceled' AND a.status = 'canceled') \
+           ) \
          FOR UPDATE OF l, j, a",
     )
     .bind(lease_id)
@@ -923,6 +995,7 @@ pub(crate) async fn complete_runner_lease(
     .bind(token_hash)
     .bind(input.fencing_token)
     .bind(input.attempt_id)
+    .bind(terminal_status)
     .fetch_optional(&mut *tx)
     .await
     .map_err(ApiError::internal)?;

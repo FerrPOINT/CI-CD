@@ -454,7 +454,7 @@ Durable ledger владения execution attempt. Текущий MVP испол
 | `lease_token_hash` | TEXT | NULL | — | SHA-256 hash opaque lease token для external runner protocol |
 | `ack_deadline` | TIMESTAMPTZ | NULL | — | Deadline подтверждения lease external runner-ом |
 | `acknowledged_at` | TIMESTAMPTZ | NULL | — | Время успешного ack |
-| `cancel_requested_at` | TIMESTAMPTZ | NULL | — | Target поле для cancel control signal |
+| `cancel_requested_at` | TIMESTAMPTZ | NULL | — | Durable cancel control signal для external runner lease; embedded cancel закрывает lease сразу |
 | `runner_protocol_version` | INTEGER | NULL | — | Версия runner protocol, выдавшего lease |
 
 **CHECK constraints:** active lease не имеет `completed_at`/`terminal_status`; terminal lease обязан иметь `completed_at`.

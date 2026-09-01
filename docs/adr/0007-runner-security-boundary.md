@@ -15,7 +15,7 @@ Control-plane API никогда не исполняет пользовател�
 ## Consequences
 
 - `runner` registry уже участвует в protocol MVP, но legacy inventory endpoints сохраняются для оператора.
-- Текущий protocol MVP закрывает durable queue claim, внешний lease token/ack/renew/`secrets:resolve`/artifact upload/logs/complete, `workspace.checkoutUrl`, fencing generation и отдельный shell-runner process; ещё требуются cancellation signal/control endpoint, credential rotation/revocation, richer log chunks, resumable artifact sessions и sandbox policy.
+- Текущий protocol MVP закрывает durable queue claim, внешний lease token/ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, `workspace.checkoutUrl`, fencing generation, cancel signal delivery и отдельный shell-runner process; ещё требуются credential rotation/revocation, richer log chunks, resumable artifact sessions и sandbox policy.
 - Локальный embedded executor остаётся development adapter до готовности отдельного runner service; production docs не должны рекламировать его как безопасный runner pool.
 
 ## Related

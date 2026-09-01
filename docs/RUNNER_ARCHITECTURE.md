@@ -791,7 +791,7 @@ Reconciler должен быть идемпотентен, работать lock
 
 ## 14. API и runner protocol
 
-Версия runner protocol отделяется от user-facing REST: `/api/v1/runner/...`. Все тела документируются OpenAPI/JSON schema и имеют explicit `protocolVersion`. Current MVP реализует register/heartbeat/immediate poll/ack/`secrets:resolve`/renew/logs/complete, `workspace.checkoutUrl`, declared `attempt.secrets` и `forge-runner` shell binary; остальные строки в таблицах ниже являются target contract.
+Версия runner protocol отделяется от user-facing REST: `/api/v1/runner/...`. Все тела документируются OpenAPI/JSON schema и имеют explicit `protocolVersion`. Current MVP реализует register/heartbeat/immediate poll/ack/control/`secrets:resolve`/renew/logs/complete, `workspace.checkoutUrl`, declared `attempt.secrets`/`attempt.artifacts`, cancel signal delivery и `forge-runner` shell binary; остальные строки в таблицах ниже являются target contract.
 
 ### Control-plane API
 
@@ -816,13 +816,13 @@ Reconciler должен быть идемпотентен, работать lock
 | `POST` | `/api/v1/runner/work:poll` | Current MVP | Immediate poll for compatible LeaseOffer with `required_tags ⊆ runner.tags`; long-poll target |
 | `POST` | `/api/v1/runner/leases/{id}/ack` | Current MVP | Подтвердить lease |
 | `POST` | `/api/v1/runner/leases/{id}/renew` | Current MVP | Продлить active lease |
+| `GET` | `/api/v1/runner/leases/{id}/control` | Current MVP | Получить cancel control signal без продления lease |
 | `POST` | `/api/v1/runner/leases/{id}/secrets:resolve` | Current MVP | Получить declared secret bundle после ack lease |
 | `POST` | `/api/v1/runner/leases/{id}/artifacts` | Current MVP | One-shot upload declared artifact file после ack lease |
 | `POST` | `/api/v1/runner/leases/{id}/logs` | Current MVP | Server-sequenced stdout/stderr/system log lines; idempotent chunks target |
 | `POST` | `/api/v1/runner/leases/{id}/artifacts:init` | Target | Создать resumable/chunked artifact upload |
 | `POST` | `/api/v1/runner/leases/{id}/artifacts:finalize` | Target | Подтвердить resumable/chunked artifact |
 | `POST` | `/api/v1/runner/leases/{id}/complete` | Current MVP | Подтверждённый result attempt |
-| `GET` | `/api/v1/runner/leases/{id}/control` | Target | Cancel/drain control signal |
 
 ### Пример LeaseOffer
 

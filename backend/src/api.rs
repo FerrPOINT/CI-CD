@@ -90,7 +90,8 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::runner_protocol::register_runner_protocol,
         crate::runner_protocol::runner_protocol_heartbeat,
         crate::runner_protocol::poll_runner_work, crate::runner_protocol::ack_runner_lease,
-        crate::runner_protocol::renew_runner_lease, crate::runner_protocol::resolve_runner_lease_secrets,
+        crate::runner_protocol::renew_runner_lease, crate::runner_protocol::poll_runner_lease_control,
+        crate::runner_protocol::resolve_runner_lease_secrets,
         crate::runner_protocol::upload_runner_lease_artifact,
         crate::runner_protocol::append_runner_lease_logs,
         crate::runner_protocol::complete_runner_lease,
@@ -4119,6 +4120,13 @@ async fn retry_pipeline(
             "only failed or canceled pipelines can be retried",
         ));
     }
+    crate::runner::force_cancel_active_leases_for_pipeline(
+        pool,
+        pipeline_id,
+        "pipeline retry superseded canceled lease",
+    )
+    .await
+    .map_err(ApiError::internal)?;
     sqlx::query(
         "WITH retry_jobs AS ( \
              SELECT j.id \
@@ -4179,6 +4187,14 @@ async fn retry_job(State(state): State<Arc<AppState>>, Path(job_id): Path<Uuid>)
             "only failed or canceled jobs can be retried",
         ));
     }
+    crate::runner::complete_active_lease_for_job(
+        pool,
+        job_id,
+        "canceled",
+        Some("job retry superseded canceled lease"),
+    )
+    .await
+    .map_err(ApiError::internal)?;
     sqlx::query(
         "INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) \
          SELECT $2, $1, COALESCE(MAX(attempt_no), 0) + 1, 'queued', 'job_retry' \

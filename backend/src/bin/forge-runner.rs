@@ -18,6 +18,7 @@ use tokio::{
 use uuid::Uuid;
 
 const PROTOCOL_VERSION: i32 = 1;
+const CONTROL_POLL_INTERVAL_SECONDS: u64 = 2;
 const MAX_ARTIFACT_BYTES: u64 = 50 * 1024 * 1024;
 
 #[derive(Debug, Parser)]
@@ -102,6 +103,12 @@ struct LeaseMutation<'a> {
     fencing_token: i64,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LeaseControlResponse {
+    cancel_requested: bool,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct SecretResolveRequest<'a> {
@@ -149,6 +156,12 @@ struct ExecutionResult {
     outcome: &'static str,
     exit_code: Option<i32>,
     diagnostic: Option<String>,
+}
+
+#[derive(Debug)]
+enum CommandOutcome {
+    Exited(std::process::ExitStatus),
+    Canceled,
 }
 
 #[tokio::main]
@@ -523,7 +536,7 @@ async fn execute_attempt(
     };
 
     for command in &offer.attempt.commands {
-        let status = match run_shell_command(
+        let command_outcome = match run_shell_command(
             command,
             &workspace,
             offer.attempt.timeout_seconds,
@@ -538,6 +551,17 @@ async fn execute_attempt(
                     outcome: "failed",
                     exit_code: None,
                     diagnostic: Some(truncate_diagnostic(&format!("{error:#}"))),
+                };
+                break;
+            }
+        };
+        let status = match command_outcome {
+            CommandOutcome::Exited(status) => status,
+            CommandOutcome::Canceled => {
+                result = ExecutionResult {
+                    outcome: "canceled",
+                    exit_code: None,
+                    diagnostic: Some("runner cancellation requested".to_string()),
                 };
                 break;
             }
@@ -559,14 +583,18 @@ async fn execute_attempt(
         }
     }
 
-    let artifact_error = match log_context.as_ref() {
-        Some(context) => upload_declared_artifacts(context, offer, &workspace)
-            .await
-            .err(),
-        None if offer.attempt.artifacts.is_empty() => None,
-        None => Some(anyhow::anyhow!(
-            "artifact upload requires runner protocol log context"
-        )),
+    let artifact_error = if result.outcome == "canceled" {
+        None
+    } else {
+        match log_context.as_ref() {
+            Some(context) => upload_declared_artifacts(context, offer, &workspace)
+                .await
+                .err(),
+            None if offer.attempt.artifacts.is_empty() => None,
+            None => Some(anyhow::anyhow!(
+                "artifact upload requires runner protocol log context"
+            )),
+        }
     };
     if result.outcome == "success" {
         if let Some(error) = artifact_error {
@@ -658,7 +686,7 @@ async fn run_shell_command(
     timeout_seconds: i32,
     log_context: Option<&LogContext>,
     secret_env: &[(String, String)],
-) -> anyhow::Result<std::process::ExitStatus> {
+) -> anyhow::Result<CommandOutcome> {
     eprintln!("running: {command}");
     if let Some(context) = log_context {
         append_log_lines(
@@ -685,6 +713,7 @@ async fn run_shell_command(
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
     }
+    command_process.kill_on_drop(true);
     let mut child = command_process
         .spawn()
         .with_context(|| format!("spawn command in {}", cwd.display()))?;
@@ -706,25 +735,77 @@ async fn run_shell_command(
         _ => None,
     };
 
-    let status = match tokio::time::timeout(
-        Duration::from_secs(timeout_seconds.max(1) as u64),
-        child.wait(),
-    )
-    .await
-    {
-        Ok(status) => status.context("wait for command"),
-        Err(_) => {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
-            let _ = await_log_task(stdout_task).await;
-            let _ = await_log_task(stderr_task).await;
-            bail!("command timed out after {timeout_seconds}s");
+    let timeout = tokio::time::sleep(Duration::from_secs(timeout_seconds.max(1) as u64));
+    tokio::pin!(timeout);
+    let control_delay = tokio::time::sleep(Duration::from_secs(CONTROL_POLL_INTERVAL_SECONDS));
+    tokio::pin!(control_delay);
+
+    let status = loop {
+        tokio::select! {
+            status = child.wait() => break status.context("wait for command"),
+            _ = &mut timeout => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                let _ = await_log_task(stdout_task).await;
+                let _ = await_log_task(stderr_task).await;
+                bail!("command timed out after {timeout_seconds}s");
+            }
+            _ = &mut control_delay, if log_context.is_some() => {
+                if let Some(context) = log_context {
+                    match poll_lease_cancel_requested(context).await {
+                        Ok(true) => {
+                            eprintln!("runner cancellation requested, terminating command");
+                            let _ = append_log_lines(
+                                context,
+                                vec![RunnerLogLine {
+                                    stream: "system",
+                                    message: protocol_log_message(
+                                        "runner cancellation requested, terminating command",
+                                    ),
+                                }],
+                            )
+                            .await;
+                            let _ = child.kill().await;
+                            let _ = child.wait().await;
+                            let _ = await_log_task(stdout_task).await;
+                            let _ = await_log_task(stderr_task).await;
+                            return Ok(CommandOutcome::Canceled);
+                        }
+                        Ok(false) => {}
+                        Err(error) => eprintln!("lease control poll failed: {error:#}"),
+                    }
+                }
+                control_delay.as_mut().reset(
+                    tokio::time::Instant::now()
+                        + Duration::from_secs(CONTROL_POLL_INTERVAL_SECONDS),
+                );
+            }
         }
     }?;
 
     await_log_task(stdout_task).await?;
     await_log_task(stderr_task).await?;
-    Ok(status)
+    Ok(CommandOutcome::Exited(status))
+}
+
+async fn poll_lease_cancel_requested(context: &LogContext) -> anyhow::Result<bool> {
+    let response = context
+        .client
+        .get(format!(
+            "{}/api/v1/runner/leases/{}/control",
+            context.base, context.lease_id
+        ))
+        .bearer_auth(&context.credential)
+        .header("X-Runner-Protocol-Version", PROTOCOL_VERSION.to_string())
+        .header("X-Lease-Token", &context.lease_token)
+        .header("X-Fencing-Token", context.fencing_token.to_string())
+        .send()
+        .await
+        .context("poll lease control request failed")?;
+    let body: LeaseControlResponse = response_json(response)
+        .await
+        .context("poll lease control failed")?;
+    Ok(body.cancel_requested)
 }
 
 async fn upload_declared_artifacts(

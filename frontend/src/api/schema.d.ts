@@ -989,6 +989,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runner/leases/{lease_id}/control": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["poll_runner_lease_control"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runner/leases/{lease_id}/logs": {
         parameters: {
             query?: never;
@@ -4382,6 +4398,55 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunnerCompleteResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    poll_runner_lease_control: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Runner-Protocol-Version": number;
+                "X-Lease-Token": string;
+                "X-Fencing-Token": number;
+            };
+            path: {
+                lease_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerLeaseControlResponse"];
                 };
             };
             400: {

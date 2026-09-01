@@ -1061,6 +1061,24 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
     let response = app
         .clone()
         .oneshot(
+            Request::get(format!("/api/v1/runner/leases/{lease_id}/control"))
+                .header("authorization", format!("Bearer {credential}"))
+                .header("x-runner-protocol-version", "1")
+                .header("x-lease-token", &lease_token)
+                .header("x-fencing-token", "1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let control = response_json(response).await;
+    assert_eq!(control["protocolVersion"], 1);
+    assert_eq!(control["cancelRequested"], false);
+
+    let response = app
+        .clone()
+        .oneshot(
             Request::post(format!("/api/v1/runner/leases/{lease_id}/secrets:resolve"))
                 .header("authorization", format!("Bearer {credential}"))
                 .header("content-type", "application/json")
@@ -2950,6 +2968,306 @@ async fn cancel_pipeline_marks_open_attempts_canceled() {
     .await
     .expect("count canceled queue rows");
     assert_eq!(canceled_queue_rows, 2);
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup project");
+}
+
+#[tokio::test]
+async fn cancel_pipeline_signals_external_runner_until_confirmed() {
+    let pool = test_pool().await;
+    let namespace = Uuid::new_v4();
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let stage_id = Uuid::new_v4();
+    let job_id = Uuid::new_v4();
+    let attempt_id = Uuid::new_v4();
+    let runner_id = Uuid::new_v4();
+    let lease_id = Uuid::new_v4();
+    let project_name = format!("it-external-cancel-{}", namespace.simple());
+    let runner_credential = format!("cicd_runner_{}", namespace.simple());
+    let lease_token = format!("lease-{}", namespace.simple());
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/repo.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status, started_at) \
+         VALUES ($1, $2, 'main', 'running', now())",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert pipeline");
+    sqlx::query(
+        "INSERT INTO stages (id, pipeline_id, name, position, status) \
+         VALUES ($1, $2, 'build', 0, 'running')",
+    )
+    .bind(stage_id)
+    .bind(pipeline_id)
+    .execute(&pool)
+    .await
+    .expect("insert stage");
+    sqlx::query(
+        "INSERT INTO jobs (id, stage_id, name, image, command, position, status, started_at) \
+         VALUES ($1, $2, 'compile', 'alpine:3.21', 'sleep 30', 0, 'running', now())",
+    )
+    .bind(job_id)
+    .bind(stage_id)
+    .execute(&pool)
+    .await
+    .expect("insert job");
+    sqlx::query(
+        "INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger, started_at) \
+         VALUES ($1, $2, 1, 'running', 'runner', now())",
+    )
+    .bind(attempt_id)
+    .bind(job_id)
+    .execute(&pool)
+    .await
+    .expect("insert attempt");
+    sqlx::query(
+        "INSERT INTO runners \
+         (id, name, tags, status, last_seen_at, credential_hash, token_hint, credential_expires_at, capabilities) \
+         VALUES ($1, $2, ARRAY['linux'], 'online', now(), $3, 'cancel-test', now() + interval '1 day', '{}'::jsonb)",
+    )
+    .bind(runner_id)
+    .bind(format!("runner-{}", namespace.simple()))
+    .bind(cicd::auth::hash_token(&runner_credential))
+    .execute(&pool)
+    .await
+    .expect("insert runner");
+    sqlx::query(
+        "INSERT INTO job_leases \
+         (id, job_id, attempt_id, runner_id, runner_name, lease_status, generation, lease_expires_at, \
+          lease_token_hash, ack_deadline, acknowledged_at, runner_protocol_version) \
+         VALUES ($1, $2, $3, $4, 'external', 'active', 1, now() + interval '10 minutes', \
+                 $5, now() + interval '30 seconds', now(), 1)",
+    )
+    .bind(lease_id)
+    .bind(job_id)
+    .bind(attempt_id)
+    .bind(runner_id)
+    .bind(cicd::auth::hash_token(&lease_token))
+    .execute(&pool)
+    .await
+    .expect("insert external lease");
+    sqlx::query(
+        "INSERT INTO job_queue \
+         (id, job_id, attempt_id, pipeline_id, stage_id, state, leased_at, lease_id) \
+         VALUES ($1, $2, $3, $4, $5, 'leased', now(), $6)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(job_id)
+    .bind(attempt_id)
+    .bind(pipeline_id)
+    .bind(stage_id)
+    .bind(lease_id)
+    .execute(&pool)
+    .await
+    .expect("insert leased queue row");
+
+    let app = cicd::api::app(Some(pool.clone()));
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/pipelines/{pipeline_id}/cancel"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let (
+        job_status,
+        attempt_status,
+        pipeline_status,
+        queue_state,
+        lease_status,
+        terminal_status,
+        lease_completed_at,
+        cancel_requested_at,
+    ): (
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<chrono::DateTime<chrono::Utc>>,
+        Option<chrono::DateTime<chrono::Utc>>,
+    ) = sqlx::query_as(
+        "SELECT j.status, a.status, p.status, q.state, l.lease_status, l.terminal_status, \
+                l.completed_at, l.cancel_requested_at \
+         FROM jobs j \
+         JOIN execution_attempts a ON a.job_id = j.id \
+         JOIN job_leases l ON l.attempt_id = a.id \
+         JOIN job_queue q ON q.attempt_id = a.id \
+         JOIN stages s ON s.id = j.stage_id \
+         JOIN pipelines p ON p.id = s.pipeline_id \
+         WHERE j.id = $1",
+    )
+    .bind(job_id)
+    .fetch_one(&pool)
+    .await
+    .expect("fetch canceled external lease state");
+    assert_eq!(job_status, "canceled");
+    assert_eq!(attempt_status, "canceled");
+    assert_eq!(pipeline_status, "canceled");
+    assert_eq!(queue_state, "canceled");
+    assert_eq!(lease_status, "active");
+    assert!(terminal_status.is_none());
+    assert!(lease_completed_at.is_none());
+    assert!(cancel_requested_at.is_some());
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/runner/leases/{lease_id}/control"))
+                .header("authorization", format!("Bearer {runner_credential}"))
+                .header("x-runner-protocol-version", "1")
+                .header("x-lease-token", &lease_token)
+                .header("x-fencing-token", "1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let control = response_json(response).await;
+    assert_eq!(control["protocolVersion"], 1);
+    assert_eq!(control["cancelRequested"], true);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/runner/leases/{lease_id}/complete"))
+                .header("authorization", format!("Bearer {runner_credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "protocolVersion": 1,
+                        "leaseToken": lease_token,
+                        "fencingToken": 1,
+                        "attemptId": attempt_id,
+                        "outcome": "success",
+                        "exitCode": 0,
+                        "finishedAt": Utc::now()
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/runner/leases/{lease_id}/complete"))
+                .header("authorization", format!("Bearer {runner_credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "protocolVersion": 1,
+                        "leaseToken": lease_token,
+                        "fencingToken": 1,
+                        "attemptId": attempt_id,
+                        "outcome": "canceled",
+                        "finishedAt": Utc::now(),
+                        "diagnostic": "runner cancellation requested"
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let completed = response_json(response).await;
+    assert_eq!(completed["terminalStatus"], "canceled");
+
+    let (lease_status, terminal_status, completed_at): (
+        String,
+        Option<String>,
+        Option<chrono::DateTime<chrono::Utc>>,
+    ) = sqlx::query_as(
+        "SELECT lease_status, terminal_status, completed_at FROM job_leases WHERE id = $1",
+    )
+    .bind(lease_id)
+    .fetch_one(&pool)
+    .await
+    .expect("fetch confirmed canceled lease");
+    assert_eq!(lease_status, "canceled");
+    assert_eq!(terminal_status.as_deref(), Some("canceled"));
+    assert!(completed_at.is_some());
+
+    let stale_lease_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO job_leases \
+         (id, job_id, attempt_id, runner_id, runner_name, lease_status, generation, lease_expires_at, \
+          lease_token_hash, ack_deadline, acknowledged_at, runner_protocol_version) \
+         VALUES ($1, $2, $3, $4, 'external', 'active', 2, now() + interval '10 minutes', \
+                 $5, now() + interval '30 seconds', now(), 1)",
+    )
+    .bind(stale_lease_id)
+    .bind(job_id)
+    .bind(attempt_id)
+    .bind(runner_id)
+    .bind(cicd::auth::hash_token(&format!("stale-{lease_token}")))
+    .execute(&pool)
+    .await
+    .expect("insert stale active external lease");
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/pipelines/{pipeline_id}/retry"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let active_leases: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM job_leases WHERE job_id = $1 AND lease_status = 'active'",
+    )
+    .bind(job_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count active leases after retry");
+    assert_eq!(active_leases, 0);
+    let (retried_job_status, latest_attempt_status, queue_state): (String, String, String) =
+        sqlx::query_as(
+            "SELECT j.status, a.status, q.state \
+             FROM jobs j \
+             JOIN LATERAL ( \
+                 SELECT id, status \
+                 FROM execution_attempts \
+                 WHERE job_id = j.id \
+                 ORDER BY attempt_no DESC \
+                 LIMIT 1 \
+             ) a ON TRUE \
+             JOIN job_queue q ON q.attempt_id = a.id \
+             WHERE j.id = $1",
+        )
+        .bind(job_id)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch retried job state");
+    assert_eq!(retried_job_status, "queued");
+    assert_eq!(latest_attempt_status, "queued");
+    assert_eq!(queue_state, "queued");
 
     sqlx::query("DELETE FROM projects WHERE id = $1")
         .bind(project_id)

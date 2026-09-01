@@ -317,6 +317,54 @@ pub async fn cancel_active_leases_for_pipeline(
     reason: &str,
 ) -> Result<u64, sqlx::Error> {
     let bounded_reason = truncate_error_tail(reason.to_owned());
+    let signaled_external = sqlx::query(
+        "UPDATE job_leases \
+         SET cancel_requested_at = COALESCE(cancel_requested_at, now()), \
+             error_tail = COALESCE(error_tail, $2) \
+         WHERE lease_status = 'active' \
+           AND cancel_requested_at IS NULL \
+           AND runner_id IS NOT NULL \
+           AND lease_token_hash IS NOT NULL \
+           AND job_id IN ( \
+             SELECT j.id \
+             FROM jobs j \
+             JOIN stages s ON s.id = j.stage_id \
+             WHERE s.pipeline_id = $1 \
+           )",
+    )
+    .bind(pipeline_id)
+    .bind(&bounded_reason)
+    .execute(pool)
+    .await?;
+    let closed_embedded = sqlx::query(
+        "UPDATE job_leases \
+         SET lease_status = 'canceled', \
+             completed_at = COALESCE(completed_at, now()), \
+             terminal_status = 'canceled', \
+             error_tail = COALESCE(error_tail, $2) \
+         WHERE lease_status = 'active' \
+           AND NOT (runner_id IS NOT NULL AND lease_token_hash IS NOT NULL) \
+           AND job_id IN ( \
+             SELECT j.id \
+             FROM jobs j \
+             JOIN stages s ON s.id = j.stage_id \
+             WHERE s.pipeline_id = $1 \
+           )",
+    )
+    .bind(pipeline_id)
+    .bind(bounded_reason)
+    .execute(pool)
+    .await?;
+    crate::store::close_job_queue_for_pipeline(pool, pipeline_id, "canceled").await?;
+    Ok(signaled_external.rows_affected() + closed_embedded.rows_affected())
+}
+
+pub async fn force_cancel_active_leases_for_pipeline(
+    pool: &PgPool,
+    pipeline_id: Uuid,
+    reason: &str,
+) -> Result<u64, sqlx::Error> {
+    let bounded_reason = truncate_error_tail(reason.to_owned());
     let result = sqlx::query(
         "UPDATE job_leases \
          SET lease_status = 'canceled', \
@@ -340,13 +388,32 @@ pub async fn cancel_active_leases_for_pipeline(
 }
 
 async fn cancel_active_leases_for_canceled_pipelines(pool: &PgPool) -> Result<u64, sqlx::Error> {
-    let result = sqlx::query(
+    let signaled_external = sqlx::query(
+        "UPDATE job_leases \
+         SET cancel_requested_at = COALESCE(cancel_requested_at, now()), \
+             error_tail = COALESCE(error_tail, 'pipeline canceled') \
+         WHERE lease_status = 'active' \
+           AND cancel_requested_at IS NULL \
+           AND runner_id IS NOT NULL \
+           AND lease_token_hash IS NOT NULL \
+           AND job_id IN ( \
+             SELECT j.id \
+             FROM jobs j \
+             JOIN stages s ON s.id = j.stage_id \
+             JOIN pipelines p ON p.id = s.pipeline_id \
+             WHERE p.status = 'canceled' \
+           )",
+    )
+    .execute(pool)
+    .await?;
+    let closed_embedded = sqlx::query(
         "UPDATE job_leases \
          SET lease_status = 'canceled', \
              completed_at = COALESCE(completed_at, now()), \
              terminal_status = 'canceled', \
              error_tail = COALESCE(error_tail, 'pipeline canceled') \
          WHERE lease_status = 'active' \
+           AND NOT (runner_id IS NOT NULL AND lease_token_hash IS NOT NULL) \
            AND job_id IN ( \
              SELECT j.id \
              FROM jobs j \
@@ -365,36 +432,36 @@ async fn cancel_active_leases_for_canceled_pipelines(pool: &PgPool) -> Result<u6
     )
     .execute(pool)
     .await?;
-    Ok(result.rows_affected())
+    Ok(signaled_external.rows_affected() + closed_embedded.rows_affected())
 }
 
 pub async fn reconcile_expired_leases(pool: &PgPool) -> Result<u64, sqlx::Error> {
     let expired_jobs = sqlx::query_as::<_, (Uuid, Uuid)>(
         "WITH expired AS ( \
              UPDATE job_leases \
-             SET lease_status = 'expired', \
+             SET lease_status = CASE WHEN cancel_requested_at IS NOT NULL THEN 'canceled' ELSE 'expired' END, \
                  completed_at = COALESCE(completed_at, now()), \
-                 terminal_status = 'failed', \
-                 error_tail = COALESCE(error_tail, 'runner lease expired') \
+                 terminal_status = CASE WHEN cancel_requested_at IS NOT NULL THEN 'canceled' ELSE 'failed' END, \
+                 error_tail = COALESCE(error_tail, CASE WHEN cancel_requested_at IS NOT NULL THEN 'pipeline canceled' ELSE 'runner lease expired' END) \
              WHERE lease_status = 'active' AND lease_expires_at <= now() \
-             RETURNING id AS lease_id, job_id, attempt_id \
+             RETURNING id AS lease_id, job_id, attempt_id, terminal_status \
          ), updated_attempts AS ( \
              UPDATE execution_attempts a \
-             SET status = 'failed', \
+             SET status = e.terminal_status, \
                  finished_at = COALESCE(a.finished_at, now()), \
-                 error_tail = COALESCE(a.error_tail, 'runner lease expired') \
+                 error_tail = COALESCE(a.error_tail, CASE WHEN e.terminal_status = 'canceled' THEN 'pipeline canceled' ELSE 'runner lease expired' END) \
              FROM expired e \
              WHERE a.id = e.attempt_id AND a.status IN ('queued','running') \
              RETURNING a.job_id \
          ), updated_jobs AS ( \
              UPDATE jobs j \
-             SET status = 'failed', finished_at = COALESCE(j.finished_at, now()) \
+             SET status = e.terminal_status, finished_at = COALESCE(j.finished_at, now()) \
              FROM expired e \
              WHERE j.id = e.job_id AND j.status IN ('queued','running') \
              RETURNING j.id, j.stage_id \
          ), updated_queue AS ( \
              UPDATE job_queue q \
-             SET state = 'completed', \
+             SET state = CASE WHEN e.terminal_status = 'canceled' THEN 'canceled' ELSE 'completed' END, \
                  completed_at = COALESCE(q.completed_at, now()), \
                  updated_at = now() \
              FROM expired e \
@@ -1142,7 +1209,7 @@ async fn poll_and_dispatch(pool: &PgPool, running: RunningJobs) -> Result<(), sq
     if canceled_leases > 0 {
         tracing::info!(
             canceled_leases,
-            "runner closed active leases for canceled pipelines"
+            "runner signaled or closed active leases for canceled pipelines"
         );
     }
 

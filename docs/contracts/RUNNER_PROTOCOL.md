@@ -1,6 +1,6 @@
 # Runner protocol
 
-**Статус:** Current verified MVP + Target approved. Реализованный subset на 2026-09-01 покрывает `register`, `heartbeat`, immediate `work:poll`, basic tag matching, `ack`, lease-scoped `secrets:resolve`, one-shot artifact upload, `renew`, `logs`, `complete`, SHA-256 storage для runner credential/lease token, fencing по `job_leases.generation`, `workspace.checkoutUrl`, declared `attempt.secrets`/`attempt.artifacts` и отдельный `forge-runner` shell process. Остальные разделы описывают target-контракт production runner-а. Канонические путь и имена таблиц закреплены [ADR-0009](../adr/0009-canonical-registry.md).
+**Статус:** Current verified MVP + Target approved. Реализованный subset на 2026-09-01 покрывает `register`, `heartbeat`, immediate `work:poll`, basic tag matching, `ack`, lease-scoped `control`/`secrets:resolve`, one-shot artifact upload, `renew`, `logs`, `complete`, cancel signal delivery через `job_leases.cancel_requested_at`, SHA-256 storage для runner credential/lease token, fencing по `job_leases.generation`, `workspace.checkoutUrl`, declared `attempt.secrets`/`attempt.artifacts` и отдельный `forge-runner` shell process. Остальные разделы описывают target-контракт production runner-а. Канонические путь и имена таблиц закреплены [ADR-0009](../adr/0009-canonical-registry.md).
 
 ## 1. Область и общие правила
 
@@ -90,6 +90,8 @@ Offer содержит только имена declared secrets и relative path
 
 Ack допускается только до `ackDeadline`; ответ: `{protocolVersion, leaseExpiresAt, renewAfter, cancelRequested}`. Renew допускается только для active, неистёкшей lease и возвращает те же поля. Повтор корректного ack/renew идемпотентен; stale token/generation возвращает `409 lease_fenced` (или `410` после окончательного expiry).
 
+`GET /api/v1/runner/leases/{leaseId}/control` возвращает те же control fields без продления lease. В current MVP control fields передаются headers: `Authorization: Bearer <runner-credential>`, `X-Runner-Protocol-Version: 1`, `X-Lease-Token: <opaque>`, `X-Fencing-Token: <generation>`. Endpoint доступен только owner-у acknowledged active lease. User-facing cancel для external lease выставляет `cancel_requested_at`, после чего `control`, `ack` и `renew` возвращают `cancelRequested: true`; `forge-runner` polling-ит этот endpoint во время long-running shell command, завершает процесс и отправляет `complete` с `outcome: "canceled"`. Если user cancel уже перевёл job/attempt в `canceled`, сервер принимает только подтверждённый `outcome: "canceled"` от того же active lease; конкурентный `success` rejected как fenced/conflict.
+
 ## 4. Секреты, артефакты, логи и завершение
 
 После успешного ack owner получает declared secrets через `POST /api/v1/runner/leases/{leaseId}/secrets:resolve`. Current сервер принимает только active acknowledged lease, сверяет runner credential, lease token hash, `fencingToken` и возвращает только requested names из `jobs.required_secrets`; запрос чужого или не объявленного secret name возвращает `403`.
@@ -158,7 +160,7 @@ Target chunked upload заменяет server-generated sequence на idempotent
 },"additionalProperties":false}
 ```
 
-Completion terminal и идемпотентен только для идентичных данных той же active lease. Сервер применяет принятый cancel intent с приоритетом над конкурентным completion. `409`/`410` требуют от runner немедленно прекратить stale execution и удалить workspace/backend resource.
+Completion terminal и идемпотентен только для идентичных данных той же active lease. Сервер применяет принятый cancel intent с приоритетом над конкурентным completion: после user cancel external runner может закрыть active lease только `outcome: "canceled"`. `409`/`410` требуют от runner немедленно прекратить stale execution и удалить workspace/backend resource.
 
 ## 5. Lease, timeout и состояния
 
@@ -179,7 +181,7 @@ Completion terminal и идемпотентен только для иденти
 |---|---|
 | Runner | `registered -> online -> draining|unhealthy|offline|disabled|revoked`; только `online` получает work |
 | Queue | Current MVP: `queued -> leased -> completed|canceled`; target long-poll may split pre-ack `offered/abandoned`; claim выполняется транзакционно через `SKIP LOCKED` |
-| Lease | `offered -> active -> completed|expired`; `offered -> abandoned` при ack timeout |
+| Lease | Current MVP: `active -> completed|expired|canceled`; target может split-ить `offered -> active`, `offered -> abandoned` при ack timeout |
 | Attempt | `queued -> leasing -> assigned -> running -> success|failed|canceled|timed_out|lost`; retry создаёт следующий номер |
 
 Мутирующая операция проверяет одновременно authenticated `runnerId`, `leaseId`, HMAC token, `fencingToken`, owner, active state и `expiresAt > now()`. Для одного attempt существует не более одной active lease; `job_leases` хранит историю, а не один mutable lease.

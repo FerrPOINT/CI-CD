@@ -1997,6 +1997,50 @@ paths:
           description: ''
         '410':
           description: ''
+  /api/v1/runner/leases/{lease_id}/control:
+    get:
+      tags:
+      - runner-protocol
+      operationId: poll_runner_lease_control
+      parameters:
+      - name: lease_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Runner-Protocol-Version
+        in: header
+        required: true
+        schema:
+          type: integer
+          format: int32
+      - name: X-Lease-Token
+        in: header
+        required: true
+        schema:
+          type: string
+      - name: X-Fencing-Token
+        in: header
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunnerLeaseControlResponse'
+        '400':
+          description: ''
+        '401':
+          description: ''
+        '409':
+          description: ''
+        '410':
+          description: ''
   /api/v1/runner/leases/{lease_id}/logs:
     post:
       tags:

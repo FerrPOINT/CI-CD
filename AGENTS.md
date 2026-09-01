@@ -4,7 +4,7 @@
 
 - **Путь**: `/opt/dev/CI-CD`.
 - **GitHub**: `git@github.com:FerrPOINT/CI-CD.git`.
-- **Назначение**: self-hosted CI/CD control plane. В MVP jobs выполняет embedded runner (Docker/shell) с `job_queue` + `job_leases` ledger/reconciliation; внешний runner protocol MVP покрывает register/heartbeat/poll/ack/renew/`secrets:resolve`/artifact upload/logs/complete и basic runner tag matching, а `forge-runner` даёт отдельный shell-runner process поверх этого protocol. Production-grade dispatch policy, long-poll/wakeup, richer log chunks, resumable artifact sessions и sandbox hardening остаются target.
+- **Назначение**: self-hosted CI/CD control plane. В MVP jobs выполняет embedded runner (Docker/shell) с `job_queue` + `job_leases` ledger/reconciliation; внешний runner protocol MVP покрывает register/heartbeat/poll/ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, basic runner tag matching и cancel signal delivery, а `forge-runner` даёт отдельный shell-runner process поверх этого protocol. Production-grade dispatch policy, long-poll/wakeup, richer log chunks, resumable artifact sessions и sandbox hardening остаются target.
 - **Стек**: Rust 2024, Axum 0.8, SQLx 0.8, PostgreSQL 17; React 19, Vite 6, Tailwind CSS 4, shadcn/ui.
 - **Env prefix**: `CICD_`.
 - **Порты**: API `22801`, Dashboard `22802`, PostgreSQL `22543`.
