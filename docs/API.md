@@ -940,7 +940,7 @@ curl -sS -X POST http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/logs \
 
 ## CLI
 
-`cicd-cli` — отдельный бинарник, работает через публичный API. Глобальные настройки: `CICD_API_URL`/`--api-url`, `CICD_API_TOKEN`/`--token`, `CICD_OUTPUT`/`--output json|table`.
+`cicd-cli` — отдельный бинарник, работает через публичный API. Глобальные настройки: `CICD_API_URL`/`--api-url`, `CICD_API_TOKEN`/`--token`, `CICD_TIMEOUT_SECONDS`/`--timeout-seconds`, `CICD_OUTPUT`/`--output json|table`.
 
 ```bash
 # Project

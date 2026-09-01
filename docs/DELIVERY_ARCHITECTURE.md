@@ -31,7 +31,7 @@ Forge CI/CD развивается из MVP control plane в безопасну�
 | Идемпотентность | Current MVP: `POST /projects/{project_id}/pipelines` поддерживает `Idempotency-Key` и хранит `pipeline_triggers`; generated Git hook дедуплицируется по `repository/ref/new_rev`. General idempotency storage для всех retryable mutations остаётся target. |
 | Auth/RBAC | При `CICD_AUTH_SECRET` включены login/JWT/scoped PAT, argon2id credentials, sessions, route-level global roles и project memberships; без секрета остаётся trusted-network mode. Tenant scope, service-account/scoped Git credentials и production session policy остаются target. |
 | Frontend | React 19/Vite/TanStack Query; около 20 маршрутов + `/login`. DTO генерируются в `frontend/src/api/schema.d.ts`, API wrapper/hooks остаются handwritten. |
-| CLI | `backend/cli` уже отдельный package и работает через HTTP; реализованы группы `project`, `pipeline`, `job`. Конфигурация ограничена `CICD_API_URL`, stdout всегда pretty JSON, нет auth/profile/output policy. |
+| CLI | `backend/cli` уже отдельный package и работает через HTTP; реализованы runtime/platform группы `project`, `pipeline`, `job`, `runner`, `secret`, `artifact`, `environment`, `deployment`, `schedule`, `webhook`, `notification`, `outbox`, `report`, `audit`, `user`, `member`, `token`; есть `--api-url`/`CICD_API_URL`, `--token`/`CICD_API_TOKEN`, `--timeout-seconds`/`CICD_TIMEOUT_SECONDS`, `--output json|table`/`CICD_OUTPUT` и real-API smoke в CI. Profiles, keyring, generated DTO/client, request tracing, NDJSON и full auth/RBAC CLI E2E остаются target. |
 | Observability | Есть `/api/v1/health`, `/api/v1/readiness`, `/metrics`, `TraceLayer` и `tracing`. OTLP, alerting и корреляция API--CLI не реализованы. |
 | Quality | GitHub Actions запускает backend fmt/clippy/workspace tests, real PostgreSQL integration, OpenAPI drift/compatibility gate, frontend generated-client check/test/build, Compose startup/health smoke, representative Playwright/axe/performance E2E на seeded Compose stack, security и docs checks. Lighthouse/load budgets и полный evidence bundle остаются target. |
 
@@ -525,8 +525,8 @@ backend/cli/src/
 
 Приоритет конфигурации, от высшего к низшему:
 
-1. CLI flags: `--api-url`, `--profile`, `--token`, `--output`, `--timeout`;
-2. environment: `CICD_API_URL`, `CICD_API_TOKEN`, `CICD_PROFILE`, `CICD_OUTPUT`;
+1. CLI flags: `--api-url`, target `--profile`, `--token`, `--output`, `--timeout-seconds`;
+2. environment: `CICD_API_URL`, `CICD_API_TOKEN`, target `CICD_PROFILE`, `CICD_OUTPUT`, `CICD_TIMEOUT_SECONDS`;
 3. profile в config file;
 4. default profile;
 5. безопасные compile-time defaults.
@@ -887,8 +887,8 @@ Evidence requirements:
 
 - Разделить CLI на command/config/client/output/error modules.
 - Подключить generated API DTO/client или verified shared public contract package.
-- Реализовать `auth`, profiles, keyring/token-env policy.
-- Добавить table/json/ndjson modes, stable errors и exit code tests.
+- Реализовать profiles, keyring/token-env policy и request tracing.
+- Добавить NDJSON mode, stable errors и exit code tests.
 - Добавить pagination, `--all`, `--follow`, idempotency and safe confirmations.
 - Документировать shell completion и automation examples.
 

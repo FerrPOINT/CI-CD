@@ -19,12 +19,14 @@ docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" -w /workspac
 |---|---|---|
 | `CICD_API_URL` | `http://127.0.0.1:22801` | Базовый URL API |
 | `CICD_API_TOKEN` | - | Bearer PAT/JWT для auth-mode; эквивалентно `--token` |
+| `CICD_TIMEOUT_SECONDS` | `60` | Общий timeout HTTP-запроса; эквивалентно `--timeout-seconds` |
 | `CICD_OUTPUT` | `json` | Формат вывода: `json` или `table`; эквивалентно `--output` |
 
 Глобальные флаги:
 
 ```bash
-cicd-cli --api-url http://127.0.0.1:22801 --token "$CICD_API_TOKEN" --output table project list
+cicd-cli --api-url http://127.0.0.1:22801 --token "$CICD_API_TOKEN" \
+  --timeout-seconds 60 --output table project list
 ```
 
 ## Команды
@@ -162,13 +164,13 @@ cicd-cli token revoke --id <TOKEN_UUID>
 
 ## Контракт
 
-Группы команд и флаги зафиксированы тестом `backend/cli/tests/cli_contract.rs`: control-plane groups, `--token`, `--output`, pagination flags, job attempts/logs, `--idempotency-key` и ключевые platform mutations. Real HTTP/API/PostgreSQL smoke зафиксирован в `backend/cli/tests/cli_real_api.rs`: проект create/list, idempotent pipeline run, attempt history, protected deployment approval, env/flag config precedence, JSON output и non-zero API error exit. Изменение публичного CLI surface требует обновления тестов и этого документа.
+Группы команд и флаги зафиксированы тестом `backend/cli/tests/cli_contract.rs`: control-plane groups, `--token`, `--timeout-seconds`, `--output`, pagination flags, job attempts/logs, `--idempotency-key` и ключевые platform mutations. Real HTTP/API/PostgreSQL smoke зафиксирован в `backend/cli/tests/cli_real_api.rs`: проект create/list, idempotent pipeline run, attempt history, protected deployment approval, env/flag config precedence, bounded HTTP timeout, JSON output и non-zero API error exit. Изменение публичного CLI surface требует обновления тестов и этого документа.
 
 ## Границы MVP
 
 - CLI использует только публичный HTTP API и повторяет его текущие ограничения auth/RBAC, pagination и validation.
 - Stable JSON есть сейчас; `table` является lightweight TSV-like представлением для ручной работы, не production reporting format.
-- Profiles, OS keyring, shell completion, request tracing headers, timeout policy, YAML/NDJSON, token redaction fixtures и full auth/RBAC CLI E2E остаются target из `docs/DELIVERY_ARCHITECTURE.md`.
+- Profiles, OS keyring, shell completion, request tracing headers, YAML/NDJSON, token redaction fixtures и full auth/RBAC CLI E2E остаются target из `docs/DELIVERY_ARCHITECTURE.md`.
 - External email/Slack adapters и inbound provider webhooks по-прежнему target: CLI управляет текущими local notification/outbox/webhook MVP routes.
 
 ## References

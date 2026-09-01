@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use clap::{Parser, Subcommand, ValueEnum};
 use reqwest::{RequestBuilder, Url, header};
@@ -11,6 +11,8 @@ struct Cli {
     api_url: String,
     #[arg(long, env = "CICD_API_TOKEN")]
     token: Option<String>,
+    #[arg(long, env = "CICD_TIMEOUT_SECONDS", default_value_t = 60)]
+    timeout_seconds: u64,
     #[arg(
         long,
         value_enum,
@@ -509,15 +511,15 @@ struct ApiClient {
 }
 
 impl ApiClient {
-    fn new(api_url: String, token: Option<String>) -> Self {
-        Self {
+    fn new(api_url: String, token: Option<String>, timeout: Duration) -> anyhow::Result<Self> {
+        Ok(Self {
             base: api_url.trim_end_matches('/').to_string(),
             token: token.and_then(|token| {
                 let token = token.trim().to_string();
                 (!token.is_empty()).then_some(token)
             }),
-            client: reqwest::Client::new(),
-        }
+            client: reqwest::Client::builder().timeout(timeout).build()?,
+        })
     }
 
     fn endpoint(&self, path: &str) -> String {
@@ -603,8 +605,12 @@ impl ApiClient {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    if cli.timeout_seconds == 0 {
+        anyhow::bail!("--timeout-seconds must be greater than 0");
+    }
     let output = cli.output;
-    let api = ApiClient::new(cli.api_url, cli.token);
+    let timeout = Duration::from_secs(cli.timeout_seconds);
+    let api = ApiClient::new(cli.api_url, cli.token, timeout)?;
     let value = execute(&api, cli.command).await?;
     print_output(&value, output)?;
     Ok(())

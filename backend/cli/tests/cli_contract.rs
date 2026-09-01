@@ -43,6 +43,7 @@ fn cli_exposes_control_plane_groups_and_global_options() {
         "member",
         "token",
         "--token",
+        "--timeout-seconds",
         "--output",
     ] {
         assert_contains(&stdout, needle);

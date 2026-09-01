@@ -6,7 +6,7 @@
 
 #![cfg(feature = "integration")]
 
-use std::{process::Command, time::Duration};
+use std::process::Command;
 
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
@@ -28,9 +28,9 @@ impl ApiServer {
                 .await
                 .expect("serve disposable API");
         });
-        // Give the spawned server task one scheduler tick before the blocking
-        // CLI process tries to connect on slower CI workers.
-        std::thread::sleep(Duration::from_millis(50));
+        // Give the spawned server task one scheduler tick before the CLI
+        // process tries to connect on slower CI workers.
+        tokio::task::yield_now().await;
         Self {
             base_url: format!("http://{addr}"),
             handle,
@@ -68,6 +68,8 @@ fn cli_json_with_flags(api_url: &str, args: &[&str]) -> serde_json::Value {
         .arg(api_url)
         .arg("--output")
         .arg("json")
+        .arg("--timeout-seconds")
+        .arg("5")
         .args(args)
         .output()
         .expect("run cicd-cli");
@@ -86,6 +88,7 @@ fn cli_json_from_env(api_url: &str, args: &[&str]) -> serde_json::Value {
     let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
         .env("CICD_API_URL", api_url)
         .env("CICD_OUTPUT", "json")
+        .env("CICD_TIMEOUT_SECONDS", "5")
         .args(args)
         .output()
         .expect("run cicd-cli with env config");
@@ -104,6 +107,7 @@ fn cli_failure(api_url: &str, args: &[&str]) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
         .env("CICD_API_URL", api_url)
         .env("CICD_OUTPUT", "json")
+        .env("CICD_TIMEOUT_SECONDS", "5")
         .args(args)
         .output()
         .expect("run failing cicd-cli command");
@@ -117,7 +121,7 @@ fn cli_failure(api_url: &str, args: &[&str]) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cli_exercises_real_http_api_and_postgres_stack() {
     let pool = test_pool().await;
     let server = ApiServer::start(pool.clone()).await;

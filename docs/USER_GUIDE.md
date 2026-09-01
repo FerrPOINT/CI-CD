@@ -377,7 +377,7 @@ export CICD_CLI="$PWD/backend/target/debug/cicd-cli"
 | Reports/audit | `$CICD_CLI report summary --project <PROJECT_UUID>`; `$CICD_CLI audit list` |
 | Users/members/tokens | `$CICD_CLI user list`; `$CICD_CLI member upsert --project <PROJECT_UUID> --user <USER_UUID> --role developer`; `$CICD_CLI token create --name deploy-bot --user <USER_UUID> --project <PROJECT_UUID> --scope api:read --expires-in-days 30` |
 
-Глобальные флаги `--token`, `--output json|table`, `--api-url` и env-переменные `CICD_API_TOKEN`, `CICD_OUTPUT`, `CICD_API_URL` описаны в [CLI](CLI.md). Real-API smoke gate для CLI уже входит в CI; CLI profile/keyring, shell completion, YAML/NDJSON, token redaction fixtures и full auth/RBAC CLI E2E остаются **Target approved**.
+Глобальные флаги `--token`, `--timeout-seconds`, `--output json|table`, `--api-url` и env-переменные `CICD_API_TOKEN`, `CICD_TIMEOUT_SECONDS`, `CICD_OUTPUT`, `CICD_API_URL` описаны в [CLI](CLI.md). Real-API smoke gate для CLI уже входит в CI; CLI profile/keyring, shell completion, YAML/NDJSON, token redaction fixtures и full auth/RBAC CLI E2E остаются **Target approved**.
 
 ## 13. FAQ по типовым задачам
 

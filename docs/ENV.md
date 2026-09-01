@@ -57,6 +57,7 @@
 | `CICD_RUNNER_WORK_DIR` | temp dir `forge-runner` | Workspace root внешнего runner-а |
 | `CICD_RUNNER_KEEP_WORKSPACE` | `false` | Не удалять workspace после job |
 | `CICD_API_URL` | `http://127.0.0.1:22801` | Base URL для `cicd-cli` |
+| `CICD_TIMEOUT_SECONDS` | `60` | Общий HTTP timeout для `cicd-cli`; `--timeout-seconds` имеет приоритет |
 | `CICD_API_TOKEN` | пусто | Bearer PAT/JWT для `cicd-cli` в auth-mode |
 | `CICD_OUTPUT` | `json` | Формат вывода `cicd-cli`: `json` или `table` |
 | `CICD_ARTIFACT_RETENTION_DAYS` | `30` | TTL новых артефактов; пустое значение равно default, `0` не допускается |
