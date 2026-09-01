@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { usePipeline, useUpdateJobStatus, useJobLogPages, useAppendLog, useCancelPipeline, useRetryPipeline, useTestReport, useJobAttempts } from '@/api/hooks'
 import { Card } from '@/shared/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
-import type { TestReport } from '@/api/types'
+import type { Job, TestReport } from '@/api/types'
 import { Button } from '@/shared/ui/button'
 import { Input } from '@/shared/ui/input'
 import { ChevronRight, Terminal, ClipboardCheck, Play, CheckCircle2, XCircle, Square, Ban, RotateCcw, Package, FileCode2 } from 'lucide-react'
@@ -78,78 +78,12 @@ export function PipelineDetailPage() {
             </div>
             <div className="mt-3 space-y-3">
               {stage.jobs.map(job => (
-                <div key={job.id} className="min-w-0 rounded-md border border-border p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <span className={`h-2 w-2 rounded-full ${statusColors[job.status]}`} />
-                      <span className="break-words text-sm font-medium">{job.name}</span>
-                    </div>
-                    <span className="text-xs text-text-muted">{t(`pipelines.${job.status}`)}</span>
-                  </div>
-                  <p className="mt-2 min-w-0 break-words text-xs text-text-muted">
-                    <code className="rounded bg-surface-raised px-1 py-0.5">{job.image}</code>
-                    <span className="mx-1">·</span>
-                    <code className="break-all">{job.command}</code>
-                  </p>
-                  {job.required_tags.length > 0 && (
-                    <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-text-muted">
-                      <span>{t('jobs.runnerTags')}:</span>
-                      {job.required_tags.map(tag => (
-                        <code key={tag} className="rounded bg-surface-raised px-1.5 py-0.5 text-text-primary">
-                          {tag}
-                        </code>
-                      ))}
-                    </div>
-                  )}
-                  {job.required_secrets.length > 0 && (
-                    <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-text-muted">
-                      <span>{t('jobs.secrets')}:</span>
-                      {job.required_secrets.map(secret => (
-                        <code key={secret} className="rounded bg-surface-raised px-1.5 py-0.5 text-text-primary">
-                          {secret}
-                        </code>
-                      ))}
-                    </div>
-                  )}
-                  {job.artifact_paths.length > 0 && (
-                    <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-text-muted">
-                      <span>{t('jobs.artifacts')}:</span>
-                      {job.artifact_paths.map(path => (
-                        <code key={path} className="rounded bg-surface-raised px-1.5 py-0.5 text-text-primary">
-                          {path}
-                        </code>
-                      ))}
-                    </div>
-                  )}
-                  <div className="mt-3 flex flex-wrap items-center gap-1.5">
-                    {job.status === 'queued' && (
-                      <Button size="sm" variant="outline" onClick={() => handleStatus(job.id, 'running')}>
-                        <Play className="h-3 w-3" /> {t('jobs.start')}
-                      </Button>
-                    )}
-                    {job.status === 'running' && (
-                      <>
-                        <Button size="sm" variant="outline" onClick={() => handleStatus(job.id, 'success')}>
-                          <CheckCircle2 className="h-3 w-3" /> {t('jobs.pass')}
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => handleStatus(job.id, 'failed')}>
-                          <XCircle className="h-3 w-3" /> {t('jobs.fail')}
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => handleStatus(job.id, 'canceled')}>
-                          <Square className="h-3 w-3" /> {t('jobs.cancel')}
-                        </Button>
-                      </>
-                    )}
-                    <Button size="sm" variant="ghost" onClick={() => setSelectedJobId(job.id)}>
-                      <Terminal className="h-3 w-3" /> {t('jobs.logs')}
-                    </Button>
-                    <Button asChild size="sm" variant="ghost">
-                      <Link to={`/jobs/${job.id}/artifacts`}>
-                        <Package className="h-3 w-3" /> {t('artifacts.title')}
-                      </Link>
-                    </Button>
-                  </div>
-                </div>
+                <JobCard
+                  key={job.id}
+                  job={job}
+                  onStatus={handleStatus}
+                  onShowLogs={() => setSelectedJobId(job.id)}
+                />
               ))}
             </div>
           </Card>
@@ -169,6 +103,101 @@ export function PipelineDetailPage() {
         </Card>
       )}
       {selectedJob && <JobTestReportPanel jobId={selectedJob.id} />}
+    </div>
+  )
+}
+
+function JobCard({
+  job,
+  onStatus,
+  onShowLogs,
+}: {
+  job: Job
+  onStatus: (jobId: string, status: Status) => void
+  onShowLogs: () => void
+}) {
+  const { t } = useTranslation()
+  const terminalJobId = job.status === 'failed' || job.status === 'canceled' ? job.id : undefined
+  const { data: attempts = [] } = useJobAttempts(terminalJobId)
+  const latestDiagnostic = attempts.find(attempt => attempt.error_tail)?.error_tail
+
+  return (
+    <div className="min-w-0 rounded-md border border-border p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className={`h-2 w-2 rounded-full ${statusColors[job.status]}`} />
+          <span className="break-words text-sm font-medium">{job.name}</span>
+        </div>
+        <span className="text-xs text-text-muted">{t(`pipelines.${job.status}`)}</span>
+      </div>
+      <p className="mt-2 min-w-0 break-words text-xs text-text-muted">
+        <code className="rounded bg-surface-raised px-1 py-0.5">{job.image}</code>
+        <span className="mx-1">·</span>
+        <code className="break-all">{job.command}</code>
+      </p>
+      {job.required_tags.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-text-muted">
+          <span>{t('jobs.runnerTags')}:</span>
+          {job.required_tags.map(tag => (
+            <code key={tag} className="rounded bg-surface-raised px-1.5 py-0.5 text-text-primary">
+              {tag}
+            </code>
+          ))}
+        </div>
+      )}
+      {job.required_secrets.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-text-muted">
+          <span>{t('jobs.secrets')}:</span>
+          {job.required_secrets.map(secret => (
+            <code key={secret} className="rounded bg-surface-raised px-1.5 py-0.5 text-text-primary">
+              {secret}
+            </code>
+          ))}
+        </div>
+      )}
+      {job.artifact_paths.length > 0 && (
+        <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-text-muted">
+          <span>{t('jobs.artifacts')}:</span>
+          {job.artifact_paths.map(path => (
+            <code key={path} className="rounded bg-surface-raised px-1.5 py-0.5 text-text-primary">
+              {path}
+            </code>
+          ))}
+        </div>
+      )}
+      {latestDiagnostic && (
+        <p className="mt-2 min-w-0 break-words rounded border border-danger/30 bg-danger/10 px-2 py-1 text-xs text-danger">
+          {latestDiagnostic}
+        </p>
+      )}
+      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        {job.status === 'queued' && (
+          <Button size="sm" variant="outline" onClick={() => onStatus(job.id, 'running')}>
+            <Play className="h-3 w-3" /> {t('jobs.start')}
+          </Button>
+        )}
+        {job.status === 'running' && (
+          <>
+            <Button size="sm" variant="outline" onClick={() => onStatus(job.id, 'success')}>
+              <CheckCircle2 className="h-3 w-3" /> {t('jobs.pass')}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => onStatus(job.id, 'failed')}>
+              <XCircle className="h-3 w-3" /> {t('jobs.fail')}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => onStatus(job.id, 'canceled')}>
+              <Square className="h-3 w-3" /> {t('jobs.cancel')}
+            </Button>
+          </>
+        )}
+        <Button size="sm" variant="ghost" onClick={onShowLogs}>
+          <Terminal className="h-3 w-3" /> {t('jobs.logs')}
+        </Button>
+        <Button asChild size="sm" variant="ghost">
+          <Link to={`/jobs/${job.id}/artifacts`}>
+            <Package className="h-3 w-3" /> {t('artifacts.title')}
+          </Link>
+        </Button>
+      </div>
     </div>
   )
 }

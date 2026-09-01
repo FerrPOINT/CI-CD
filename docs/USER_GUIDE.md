@@ -145,7 +145,7 @@ stages:
 
 Детали pipeline также показывают **План запуска**: источник config (`repository` или `legacy_template`), parser version, resolved commit SHA, количество dependency edges и SHA-256 для raw config/normalised plan. Для v1 plan snapshot хранит `jobs.needs`, `required_tags`, `required_secrets`, `artifact_paths` и dependency edges, но current runner исполняет DAG через топологические стадии `dag-*`; policy snapshot, line/column parser diagnostics и job-level dispatcher остаются target.
 
-Embedded runner каждые две секунды выбирает доступные queued jobs, выполняет их последовательно по stages, пишет stdout/stderr в append-only log текущей `execution_attempt` и устанавливает результат по exit code. Статусы stage и pipeline агрегируются автоматически. Retry pipeline или отдельной terminal job создаёт новую attempt и сохраняет логи предыдущих attempts. Для диагностики можно вручную менять статус job через UI, API или CLI, но это не заменяет фактическое выполнение.
+Embedded runner каждые две секунды выбирает доступные queued jobs, выполняет их последовательно по stages, пишет stdout/stderr в append-only log текущей `execution_attempt` и устанавливает результат по exit code. Статусы stage и pipeline агрегируются автоматически. Retry pipeline или отдельной terminal job создаёт новую attempt и сохраняет логи предыдущих attempts. Terminal job card в деталях pipeline показывает latest attempt diagnostic (`error_tail`), если он есть. Для диагностики можно вручную менять статус job через UI, API или CLI, но это не заменяет фактическое выполнение.
 
 ![Список pipelines](screenshots/05-pipelines.png)
 
@@ -159,7 +159,7 @@ Embedded runner каждые две секунды выбирает доступ
 2. При наличии retry выберите нужную attempt: каждая attempt хранит собственные timestamps, terminal result и sequence логов.
 3. Для API используйте `GET /api/v1/jobs/{job_id}/attempts`, затем `GET /api/v1/jobs/{job_id}/attempts/{attempt_id}/logs`. Совместимый `GET /api/v1/jobs/{job_id}/logs` возвращает текущую open attempt, а если её нет — последнюю.
 4. Для live-tail доступен `GET /api/v1/jobs/{job_id}/logs/stream?after=<sequence>` по текущей/последней attempt.
-5. При анализе ошибки сопоставьте последнюю строку лога с image и command job; панель логов читает строки страницами и поддерживает поиск, а более богатые command spans и stream classification остаются target diagnostic logs.
+5. При анализе ошибки сначала проверьте diagnostic на terminal job card, затем сопоставьте последнюю строку лога с image и command job; панель логов читает строки страницами и поддерживает поиск, а более богатые command spans и stream classification остаются target diagnostic logs.
 
 > Значения project secrets передаются runner-у только для имён, объявленных job в `secrets`, и маскируются в stdout/stderr logs best-effort. Всё равно не выводите секреты намеренно: target redaction во всех audit/error/trace каналах ещё не завершён.
 

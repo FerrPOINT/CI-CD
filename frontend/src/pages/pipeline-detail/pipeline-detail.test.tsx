@@ -19,7 +19,12 @@ const jobId = '44444444-4444-4444-8444-444444444444'
 const attemptId = '55555555-5555-4555-8555-555555555555'
 const now = '2026-08-31T12:00:00Z'
 
-function renderPipelineDetail(requests: string[]) {
+function renderPipelineDetail(
+  requests: string[],
+  options: { jobStatus?: 'running' | 'failed'; attemptErrorTail?: string | null } = {},
+) {
+  const jobStatus = options.jobStatus ?? 'running'
+  const attemptErrorTail = options.attemptErrorTail ?? null
   vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input.toString()
     requests.push(url)
@@ -29,10 +34,10 @@ function renderPipelineDetail(requests: string[]) {
           id: pipelineId,
           project_id: projectId,
           git_ref: 'main',
-          status: 'running',
+          status: jobStatus,
           created_at: now,
           started_at: now,
-          finished_at: null,
+          finished_at: jobStatus === 'failed' ? now : null,
         },
         plan: {
           pipeline_id: pipelineId,
@@ -55,7 +60,7 @@ function renderPipelineDetail(requests: string[]) {
             pipeline_id: pipelineId,
             name: 'build',
             position: 0,
-            status: 'running',
+            status: jobStatus,
             jobs: [
               {
                 id: jobId,
@@ -67,9 +72,9 @@ function renderPipelineDetail(requests: string[]) {
                 required_secrets: ['DEPLOY_TOKEN'],
                 artifact_paths: ['target/release/app.tar.gz'],
                 position: 0,
-                status: 'running',
+                status: jobStatus,
                 started_at: now,
-                finished_at: null,
+                finished_at: jobStatus === 'failed' ? now : null,
               },
             ],
           },
@@ -82,13 +87,13 @@ function renderPipelineDetail(requests: string[]) {
           id: attemptId,
           job_id: jobId,
           attempt_no: 1,
-          status: 'running',
+          status: jobStatus,
           trigger: 'initial',
           exit_code: null,
-          error_tail: null,
+          error_tail: attemptErrorTail,
           created_at: now,
           started_at: now,
-          finished_at: null,
+          finished_at: jobStatus === 'failed' ? now : null,
         },
       ])
     }
@@ -199,6 +204,17 @@ describe('PipelineDetailPage logs', () => {
       expect(logOutput()).toContain('002  unit error: expected status')
       expect(logOutput()).not.toContain('001  checkout sources')
     })
+  })
+
+  it('shows latest attempt diagnostic on failed job cards', async () => {
+    const requests: string[] = []
+    renderPipelineDetail(requests, {
+      jobStatus: 'failed',
+      attemptErrorTail: 'no compatible runner before queue timeout',
+    })
+
+    expect(await screen.findByText('no compatible runner before queue timeout')).toBeInTheDocument()
+    expect(requests).toContain(`/api/v1/jobs/${jobId}/attempts`)
   })
 })
 
