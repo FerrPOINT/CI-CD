@@ -1067,6 +1067,7 @@ async fn start_deployment_pipeline(
         Some(&format!("{source}:{deployment_id}")),
     )
     .await?;
+    let deployment_status = deployment_status_from_pipeline(outcome.pipeline.status.as_str());
     sqlx::query(
         "UPDATE deployments SET pipeline_id = $2, status = $3 \
          WHERE id = $1 AND pipeline_id IS NULL AND status = 'pending' \
@@ -1074,7 +1075,7 @@ async fn start_deployment_pipeline(
     )
     .bind(deployment_id)
     .bind(outcome.pipeline.id)
-    .bind(outcome.pipeline.status.as_str())
+    .bind(deployment_status)
     .execute(db)
     .await
     .map_err(ApiError::internal)?;
@@ -1131,6 +1132,15 @@ fn validate_deployment_status(status: &str) -> Result<(), ApiError> {
         Ok(())
     } else {
         Err(ApiError::bad_request("invalid deployment status"))
+    }
+}
+
+fn deployment_status_from_pipeline(status: &str) -> &'static str {
+    match status {
+        "running" => "running",
+        "success" => "success",
+        "failed" | "canceled" => "failed",
+        _ => "pending",
     }
 }
 
@@ -2218,6 +2228,14 @@ mod tests {
             approval_actor(Some("release-manager"), None).unwrap(),
             "release-manager"
         );
+    }
+    #[test]
+    fn deployment_status_maps_pipeline_domain_to_deployment_domain() {
+        assert_eq!(deployment_status_from_pipeline("queued"), "pending");
+        assert_eq!(deployment_status_from_pipeline("running"), "running");
+        assert_eq!(deployment_status_from_pipeline("success"), "success");
+        assert_eq!(deployment_status_from_pipeline("failed"), "failed");
+        assert_eq!(deployment_status_from_pipeline("canceled"), "failed");
     }
     #[test]
     fn artifact_names_reject_path_and_header_breakers() {
