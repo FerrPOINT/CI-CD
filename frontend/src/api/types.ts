@@ -310,6 +310,13 @@ export interface User {
   created_at: string
 }
 
+export interface UserInput {
+  username: string
+  role: UserRole
+  enabled?: boolean
+  password?: string
+}
+
 export interface ApiToken {
   id: string
   name: string

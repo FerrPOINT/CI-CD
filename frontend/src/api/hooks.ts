@@ -44,7 +44,7 @@ import type {
   SecretMetadata,
   Status,
   User,
-  UserRole,
+  UserInput,
   Webhook,
 } from './types'
 
@@ -760,7 +760,7 @@ export function useUsers() {
 export function useCreateUser() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: { username: string; role: UserRole; enabled?: boolean }) =>
+    mutationFn: (input: UserInput) =>
       api<User>('/users', { method: 'POST', body: JSON.stringify(input) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.users }),
   })
@@ -769,7 +769,7 @@ export function useCreateUser() {
 export function useUpdateUser() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, ...input }: { id: string; username: string; role: UserRole; enabled?: boolean }) =>
+    mutationFn: ({ id, ...input }: { id: string } & UserInput) =>
       api<User>(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(input) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.users }),
   })

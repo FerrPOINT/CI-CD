@@ -11,6 +11,7 @@
 
 ### Added
 
+- Dashboard auth hardening: `/users` can create interactive users with optional password credentials, and `AppShell` restores a stored refresh session before redirecting to `/login`.
 - Git-server parity: code browsing `GET /api/v1/repos/{repo}/tree|blob` (safe bare-repository ref fallback and binary/512 KiB preview guard), tags read API, release CRUD, repository `public`/`private` visibility and Smart HTTP read access control.
 - CI parity: trigger-time pipeline variables stored in `pipelines.variables` and injected into jobs only as `CICD_VAR_<KEY>`; public SVG pipeline badge; JUnit XML report ingest/read API and dashboard summary.
 - Migration `0006_git_ci_details`: `repositories.visibility`, `releases`, `pipelines.variables`, `test_reports`.

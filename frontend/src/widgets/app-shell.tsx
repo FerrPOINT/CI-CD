@@ -45,7 +45,9 @@ export function AppShell() {
   useEffect(() => {
     let cancelled = false
     import('@/api/auth').then(async (m) => {
-      if (m.currentSession()) return
+      if (cancelled || m.currentSession()) return
+      const restored = await m.refresh().catch(() => null)
+      if (cancelled || restored || m.currentSession()) return
       const required = await m.authRequired()
       if (required && !cancelled) navigate('/login', { replace: true })
     })

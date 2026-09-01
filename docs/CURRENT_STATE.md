@@ -1,7 +1,7 @@
 # CURRENT STATE — Forge CI/CD
 
 > **Производный снимок текущего состояния.** Сгенерирован из кода; authority — код и коммит, не этот файл. Обновлять при каждом изменении capability.
-> Снято: `2026-09-01`, ветка `main`; visual evidence: 46 screenshots в `docs/assets/screens/manifest.md`.
+> Снято: `2026-09-02`, ветка `main`; visual evidence: 46 screenshots в `docs/assets/screens/manifest.md`.
 
 ## Что работает сейчас (Current verified)
 
@@ -21,13 +21,13 @@
 | Секреты проектов | ✅ | AES-256-GCM at rest; значение не возвращается user API; execution выдаёт только job-declared имена секретов |
 | Environments/deployments | ✅ MVP | metadata + append-only deployment history; protected environments require approval before backend starts the linked deployment pipeline, decisions are stored in `deployment_approvals`, and rollback creates a separate `rollback_of_id` deployment record. Richer policy rules, multi-approver workflows and rollback orchestration remain target |
 | Reports | ✅ | агрегаты success rate/duration |
-| Users/roles + API-токены | ✅ | хранение + enforcement при `CICD_AUTH_SECRET`; session-bound access JWT, refresh session rotate/logout; новые PAT требуют project scope, scopes и expiry; глобальная роль ограничивает максимум прав |
+| Users/roles + API-токены | ✅ | хранение + enforcement при `CICD_AUTH_SECRET`; Dashboard user-create передаёт optional password для interactive login; session-bound access JWT, refresh session rotate/logout; новые PAT требуют project scope, scopes и expiry; глобальная роль ограничивает максимум прав |
 | Audit log | ✅ | append-only, последние 200 |
 | Schedules | ✅ MVP | строгий 5-польный UTC cron, persisted `next_fire_at`, unique `schedule_fires` slot и idempotent pipeline trigger; строки с `last_fire_error` ждут явного PATCH/исправления; IANA timezone/DST/misfire и multi-replica leases остаются target |
 | Outgoing webhooks | ✅ MVP | terminal pipeline event -> `domain_events`/`outbox_messages`; basic retry/backoff, optional HMAC |
 | Outbox delivery history | ✅ MVP | project-scoped `/outbox-deliveries` API показывает статус, attempts, `failed_at`/`last_error`; failed delivery можно явно requeue новой generation |
 | Notifications | ✅ MVP | `in_app`/`sse` каналы создают durable local outbox event на terminal pipeline events; история доступна через `/notification-events`, live stream — через `/notifications/stream`; email/Slack adapters и inbound provider handlers остаются target |
-| Login UI | ✅ | `/login` вызывает auth API; redirect guard включается только при `401` |
+| Login UI | ✅ | `/login` вызывает auth API; Dashboard shell сначала восстанавливает access session через refresh token и включает redirect guard только при `401` |
 | Project membership RBAC | ✅ MVP | `project_memberships`, фильтрация списка проектов, deny-before-load для project-owned API и name-based repo API; `admin` bypass, tenant isolation/SAT ещё target |
 | Git auth/RBAC | ✅ conditional MVP | public repo read открыт; private read и receive-pack требуют legacy `CICD_GIT_TOKEN` либо JWT/PAT + `project_memberships` + `git:*` PAT scope при `CICD_AUTH_SECRET`; без секрета и Git token остаётся trusted local mode |
 | Auth/RBAC | ✅ conditional | если `CICD_AUTH_SECRET` задан непустым: argon2id+JWT+PAT, session-bound access invalidation, refresh rotate/logout/revoke, route role-политики, project memberships, Git Smart HTTP project checks, configurable CORS allowlist, аудит login/logout/denied; без секрета trusted-network mode |

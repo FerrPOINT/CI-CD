@@ -23,12 +23,17 @@ export function UsersPage() {
   const createUser = useCreateUser()
   const updateUser = useUpdateUser()
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ username: '', role: 'viewer' as UserRole })
+  const [form, setForm] = useState({ username: '', role: 'viewer' as UserRole, password: '' })
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    createUser.mutate(form, {
-      onSuccess: () => { setShowForm(false); setForm({ username: '', role: 'viewer' }); toast.success(t('users.created')) },
+    const input = {
+      username: form.username.trim(),
+      role: form.role,
+      ...(form.password ? { password: form.password } : {}),
+    }
+    createUser.mutate(input, {
+      onSuccess: () => { setShowForm(false); setForm({ username: '', role: 'viewer', password: '' }); toast.success(t('users.created')) },
       onError: (err) => toast.error(err.message),
     })
   }
@@ -58,6 +63,17 @@ export function UsersPage() {
               <select id="role" className="h-9 w-full rounded-md border border-border bg-surface px-3 text-sm" value={form.role} onChange={e => setForm({ ...form, role: e.target.value as UserRole })}>
                 {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
               </select>
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label htmlFor="user-password">{t('users.password')}</Label>
+              <Input
+                id="user-password"
+                type="password"
+                autoComplete="new-password"
+                value={form.password}
+                onChange={e => setForm({ ...form, password: e.target.value })}
+              />
+              <p className="text-xs text-text-muted">{t('users.passwordHint')}</p>
             </div>
             <div className="flex gap-2 sm:col-span-2">
               <Button type="submit" disabled={createUser.isPending}>{t('users.create')}</Button>

@@ -317,11 +317,11 @@ Embedded runner inject-ит только объявленные `jobs.required_s
 **Статус процедуры: Current verified.**
 
 1. Откройте **Users** (`/users`).
-2. Создайте или измените пользователя с username, ролью `admin`, `maintainer`, `developer` или `viewer` и флагом enabled.
-3. Используйте данные как подготовку к будущей policy-модели.
+2. Создайте пользователя с username, ролью `admin`, `maintainer`, `developer` или `viewer`; для интерактивного входа сразу укажите пароль.
+3. Включайте или отключайте пользователя через action в таблице; отключённый пользователь не проходит login/refresh/access-session checks.
 4. Роль ограничивает API только когда backend запущен с `CICD_AUTH_SECRET`; без него действует trusted-network режим.
 
-Пароли хранятся как `argon2id` credentials. Project membership, scoped PAT, session-bound access invalidation и refresh logout/revoke уже используются при включённом `CICD_AUTH_SECRET`; tenant boundary, service-account tokens и production cookie/CSRF/session-family policy относятся к **Target approved**.
+Пароли хранятся как `argon2id` credentials и не возвращаются через API. После перезагрузки Dashboard сначала пытается восстановить access session через refresh token и только затем отправляет пользователя на `/login`. Project membership, scoped PAT, session-bound access invalidation и refresh logout/revoke уже используются при включённом `CICD_AUTH_SECRET`; tenant boundary, service-account tokens и production cookie/CSRF/session-family policy относятся к **Target approved**.
 
 ### API-токены
 

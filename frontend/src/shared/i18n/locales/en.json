@@ -356,6 +356,8 @@
     "title": "Users & Roles",
     "create": "Create user",
     "username": "Username",
+    "password": "Password",
+    "passwordHint": "Optional in trusted-network mode; required for /login when CICD_AUTH_SECRET is enabled.",
     "role": "Role",
     "enabled": "Enabled",
     "created": "User created",

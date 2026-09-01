@@ -627,12 +627,11 @@ Masking является дополнительной защитой, а не г
 - [ADR-0001: Rust + Axum + SQLx](adr/0001-rust-axum-sqlx.md) — сохраняется как технологическая база.
 - [ADR-0004: Только PostgreSQL для постоянных данных](adr/0004-postgresql-only.md) — применяется к membership, token state, leases и audit.
 - [ADR-0005: Cargo workspace и слоистая архитектура](adr/0005-workspace-layered-architecture.md) — определяет dependency boundaries.
-- `ADR-0010 (reserved): Versioned SQLx migrations and security baseline` — production migration gate, checksum policy и legacy adoption для старых инсталляций.
-- `ADR-0010 (reserved): Authentication, tenancy, RBAC and API-token model` — principal types, scopes, role mapping, session/token revocation.
-- `ADR-0013 (reserved): Runner protocol, mTLS identity and job lease` — регистрация, certificate lifecycle, claim/reconciliation и sandbox boundary.
+- `ADR-0010 (reserved): Production auth, tenancy, service accounts and session hardening` — principal types, scopes, role mapping, session/token revocation.
 - `ADR-0011 (reserved): Envelope encryption and project-secret access` — key provider, encryption context, rotation и secret injection.
 - `ADR-0012 (reserved): Audit authorization, integrity and retention` — transaction semantics, metadata allowlist, hash checkpoints и export policy.
 - `ADR-0013 (reserved): Git repository authorization and signed internal events` — replacement общего `CICD_GIT_TOKEN` в production.
+- `ADR-0014 (reserved): Production runner pools, protected tags, fairness and sandbox backend` — регистрация, certificate lifecycle, claim/reconciliation и sandbox boundary.
 
 ## Тестовая стратегия
 

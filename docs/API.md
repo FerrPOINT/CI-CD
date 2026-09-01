@@ -1177,10 +1177,22 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 | Метод | Путь | Назначение |
 |---|---|---|
 | GET | `/users` | Список пользователей |
-| POST | `/users` | Создать (username, role: admin/maintainer/developer/viewer, enabled) |
-| PATCH | `/users/{user_id}` | Обновить |
+| POST | `/users` | Создать (username, role: admin/maintainer/developer/viewer, enabled, `password?`) |
+| PATCH | `/users/{user_id}` | Обновить username/role/enabled и при необходимости заменить `password` |
 
 > Users, `user_credentials` и sessions используются текущим auth middleware при `CICD_AUTH_SECRET`; глобальная роль задаёт верхнюю границу, project membership задаёт доступ к конкретному проекту.
+
+**Create/update request:**
+```json
+{
+  "username": "alice",
+  "role": "developer",
+  "enabled": true,
+  "password": "change-me"
+}
+```
+
+`password` опционален в trusted-network режиме, но нужен для интерактивного входа через `/login` при включённом `CICD_AUTH_SECRET`. API никогда не возвращает password hash или plaintext.
 
 ### API Tokens
 

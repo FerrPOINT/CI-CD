@@ -102,20 +102,18 @@ Proposed / Accepted / Deprecated / Superseded by ADR-NNNN
 
 ---
 
-## 7. Planned ADRs
+## 7. Reserved / Follow-up ADRs
 
-Следующие ADR будут созданы по мере реализации фаз roadmap:
+Эта очередь содержит только решения, которые ещё не закреплены отдельным accepted ADR. Уже реализованные MVP-возможности описаны в активных ADR, `docs/contracts/` и `docs/CURRENT_STATE.md`.
 
-| Фаза | Тема | Статус |
-|------|------|--------|
-| Phase 1 | Auth: JWT + Argon2id | Planned |
-| Phase 3 | YAML pipeline config format | Planned |
-| Phase 5 | Runner protocol and job queue | Planned |
-| Phase 6 | Webhook delivery and retry strategy | Planned |
-| Phase 7 | Secret encryption (AES-256-GCM) | Planned |
-| Phase 8 | Artifact storage backend (FS / S3) | Planned |
-| Future | RBAC model | Planned |
-| Future | Redis for cache and pub/sub | Planned |
+| Резерв | Тема | Основание | Статус |
+|------|------|------|--------|
+| ADR-0010 | Production auth, tenancy, service accounts и session hardening | `docs/AUTHORIZATION.md`, `docs/contracts/AUTHZ_CONTRACT.md` | Target approved |
+| ADR-0011 | Envelope encryption, key provider и rotation policy | `docs/SECRETS_MGMT.md`, `docs/contracts/DATA_LIFECYCLE.md` | Target approved |
+| ADR-0012 | Audit authorization, integrity checkpoints и export retention | `docs/AUTHORIZATION.md`, `docs/INCIDENT_RESPONSE.md` | Target approved |
+| ADR-0013 | Scoped Git credentials и signed internal Git events | `docs/GIT_HOSTING.md`, `docs/contracts/AUTHZ_CONTRACT.md` | Target approved |
+| ADR-0014 | Production runner pools, protected tags, fairness и sandbox backend | `docs/RUNNER_ARCHITECTURE.md`, ADR-0007 | Target approved |
+| ADR-0015 | Object storage adapter, legal hold и resumable artifact sessions | `docs/STORAGE_ARCHITECTURE.md`, `docs/ARTIFACTS.md` | Target approved |
 
 ---
 
