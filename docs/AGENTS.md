@@ -30,7 +30,7 @@
 - Conventional commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, `perf:`).
 - Один коммит = одна логическая единица.
 - Не amend/squash без явного запроса.
-- Push только после релевантного полного gate: backend `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, integration DB tests, `cargo build --release --workspace`; frontend `pnpm openapi:check`, `pnpm lint`, `pnpm test`, `pnpm build`.
+- Push только после релевантного полного gate: backend `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, integration DB tests, `cargo build --release --workspace`; frontend `pnpm openapi:check`, `pnpm openapi:compat --base-ref origin/main`, `pnpm lint`, `pnpm test`, `pnpm build`.
 
 ### 4. Тестирование
 
@@ -66,7 +66,7 @@
 ### 8. Проверка перед завершением
 
 - [ ] Backend gate чистый: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, integration DB tests, `cargo build --release --workspace`.
-- [ ] Frontend gate чистый: `pnpm openapi:check`, `pnpm lint`, `pnpm test`, `pnpm build`.
+- [ ] Frontend gate чистый: `pnpm openapi:check`, `pnpm openapi:compat --base-ref origin/main`, `pnpm lint`, `pnpm test`, `pnpm build`.
 - [ ] Документация актуальна.
 - [ ] OpenAPI/generated client актуальны, если менялся API.
 - [ ] Пользователь увидел результат (скриншот / curl / лог).

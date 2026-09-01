@@ -39,11 +39,12 @@
 - Frontend runtime image поднят до `nginx:1.31.4-alpine`, а compose-smoke frontend check теперь ждёт nginx retry-loop вместо одиночного раннего HEAD-запроса.
 - Evidence tooling: `shoot-evidence.mjs` корректно передаёт тему в browser context, frontend CI проверяет syntax evidence scripts, PR/contributor/agent checklists синхронизированы с текущими CI gates.
 - Artifact retention MVP: migration `0023_artifact_retention` добавляет `expires_at`/`purged_at`, `CICD_ARTIFACT_RETENTION_DAYS` задаёт TTL новых uploads, download блокирует expired/purged artifacts, backend retention worker удаляет expired local files и пишет `artifact.purged` audit.
+- OpenAPI compatibility gate: `pnpm openapi:compat` сравнивает bundled contract с base/default branch и блокирует удаление существующих paths/methods/responses/parameters/schema fields, смену типов/format и новые required request параметры в active compatibility surface.
 - CI actions: workflow переведён на Node 24-compatible `actions/checkout@v7`, `actions/setup-python@v7` и `pnpm/setup@v2` для pnpm v11/Node 22 runtime; target immutable digest pinning остаётся release hardening.
 - Compose smoke: CI теперь собирает production Docker images, поднимает `docker compose up --build -d`, проверяет backend health/readiness и frontend nginx; frontend Dockerfile использует frozen pnpm lockfile, а secret-scan pruning не заходит в generated dirs.
 - Browser E2E/a11y: добавлен Playwright Chromium gate против собранного Docker Compose stack с deterministic `seed:evidence`; critical journey проверяет Dashboard → project pipelines → pipeline plan/logs/artifacts, repository code browser и mobile drawer Escape/focus contract, а axe smoke падает на `serious`/`critical` violations representative pages. CI сохраняет Playwright report, traces, screenshots и video на failure через `actions/upload-artifact@v7`.
 - Dependency review: `git2 0.21.0` remediation проверен, но отложен из-за несовместимости с закреплённым Rust 1.86; `git2 0.20.4` warnings остаются documented accepted findings.
-- SBOM: `scripts/generate_sbom.py` → docs/assets/sbom.json (CycloneDX-lite, 343 компонента; CISA Minimum Elements).
+- SBOM: `scripts/generate_sbom.py` → docs/assets/sbom.json (CycloneDX-lite, 344 компонента; CISA Minimum Elements).
 - Пустой `CICD_AUTH_SECRET` теперь трактуется как не настроенный secret, поэтому compose default корректно оставляет локальный trusted-network mode.
 
 ### Fixed

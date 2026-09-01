@@ -17,9 +17,10 @@
 |---|---|---|
 | Генерация | `just openapi-generate` | Обновлён `openapi/openapi.yaml`; ручное изменение файла запрещено. |
 | Валидация | `just openapi-validate` | OpenAPI 3.1 и все examples валидны. |
-| Генерация frontend | `pnpm api:generate` | Обновлены только generated-файлы frontend. |
-| Проверка frontend | `pnpm api:check` | Сгенерированный transport компилируется. |
-| CI | generation, validation, generation client, `git diff --exit-code`, diff с default branch | Не остаётся незакоммиченного производного артефакта и нет breaking change в `v1`. |
+| Генерация frontend | `pnpm openapi:generate` | Обновлены только generated-файлы frontend. |
+| Проверка frontend | `pnpm openapi:check` | Сгенерированный transport компилируется. |
+| Совместимость | `pnpm openapi:compat --base-ref origin/main` | Нет breaking change в активном `v1`/Git compatibility surface. |
+| CI | generation, validation, generation client, `git diff --exit-code`, compatibility diff с default branch | Не остаётся незакоммиченного производного артефакта и нет breaking change в `v1`. |
 
 Каждая operation обязана иметь `operationId`, tags, request/response schemas, хотя бы один валидный example, security classification и ссылку на общую error schema для каждого применимого JSON error response. Внутренние routes остаются в том же spec с `x-forge-internal: true`; frontend generator их не использует.
 

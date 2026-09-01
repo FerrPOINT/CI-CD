@@ -239,13 +239,13 @@ python3 scripts/verify_docs.py --all
 | Job | Фактические проверки |
 |---|---|
 | `backend` | PostgreSQL 17 service; `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db -- --test-threads=1`, `cargo build --release --workspace`, OpenAPI drift gate |
-| `frontend` | `pnpm install --frozen-lockfile`, `pnpm openapi:generate` + clean diff для `src/api/schema.d.ts`, `pnpm lint`, `pnpm test`, `pnpm build` |
+| `frontend` | `pnpm install --frozen-lockfile`, `pnpm openapi:generate` + clean diff для `src/api/schema.d.ts`, `pnpm openapi:compat` self-test, OpenAPI backward compatibility diff с base commit/default branch, `pnpm lint`, `pnpm test`, `pnpm build` |
 | `compose-smoke` | `docker compose config -q`, `docker compose up --build -d`, backend health/readiness, frontend nginx smoke, failure logs и cleanup |
 | `e2e` | Playwright Chromium against built Compose stack: install browser, seed deterministic evidence, run critical journeys + representative axe smoke, upload Playwright report/traces/screenshots/video on failure, cleanup volumes |
 | `security` | SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm install --frozen-lockfile`, `pnpm audit --audit-level high`, `python3 scripts/scan_secrets.py`, `python3 scripts/generate_sbom.py --check`, production backend/frontend image build, pinned Trivy critical scan через `scripts/scan_container_images.sh` |
 | `docs` | `python3 -m py_compile scripts/verify_docs.py scripts/generate_sbom.py scripts/scan_secrets.py scripts/forge_backup.py`, backup helper self-test/dry-run, shell wrapper syntax, `python3 scripts/verify_docs.py --all` |
 
-В текущем workflow нет isolated owner/runtime migration matrix, prior-schema upgrade, OpenAPI backward compatibility diff, Lighthouse, `cargo-deny`, history/container secret scans или coverage ratchet. Backend release build и critical container image scan уже включены как MVP-gates; broader image policy остаётся target. Playwright/axe существуют как MVP-gate для representative flows; full auth/RBAC/CLI E2E, all-route a11y и performance budgets всё ещё target. Не утверждайте, что branch protection, approval policy или checks из устаревших narrative-доков фактически включены, пока это не подтверждено настройками GitHub.
+В текущем workflow нет isolated owner/runtime migration matrix, prior-schema upgrade, OpenAPI examples validation, Lighthouse, `cargo-deny`, history/container secret scans или coverage ratchet. Backend release build, OpenAPI backward compatibility diff и critical container image scan уже включены как MVP-gates; broader image policy остаётся target. Playwright/axe существуют как MVP-gate для representative flows; full auth/RBAC/CLI E2E, all-route a11y и performance budgets всё ещё target. Не утверждайте, что branch protection, approval policy или checks из устаревших narrative-доков фактически включены, пока это не подтверждено настройками GitHub.
 
 ### Target approved
 
@@ -254,7 +254,7 @@ python3 scripts/verify_docs.py --all
 | Gate | Требуемое evidence |
 |---|---|
 | `migration-test` | isolated test PostgreSQL, `cicd-migrate up/verify`, owner/runtime role matrix, prior-schema upgrade evidence, unconditional cleanup |
-| `openapi-contract` | current drift/codegen checks плюс backward compatibility diff с default branch |
+| `openapi-contract` | current drift/codegen/backward compatibility checks плюс OpenAPI validate/examples gate |
 | Backend | workspace fmt/clippy/test/release build, domain/app/API contract tests |
 | CLI | help/config/output/exit-code contracts против real API |
 | Frontend | frozen lockfile, lint, Vitest, generated-client typecheck и production build |

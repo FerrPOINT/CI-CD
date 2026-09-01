@@ -93,7 +93,7 @@ Forge **не является** и не должен развиваться ка
 | REQ-AUD-001 | Audit и отчётность | P1 | **Current verified** | Forge хранит append-only audit entries и показывает базовые агрегаты по успешности и длительности pipeline. Эти данные не заменяют полноценную observability-платформу. |
 | REQ-OBS-003 | Операционная наблюдаемость и восстановление | P1 | **Current verified MVP** | Оператор получает liveness, DB-aware readiness, metrics и локальный scripted backup/restore helper для PostgreSQL, Git и артефактов в Docker Compose. Off-site/PITR backup platform, регулярный restore drill, alert routing и reconciliation после перезапуска остаются target. |
 | REQ-UI-001 | Dashboard, CLI и API | P0 | **Current verified** | Основные рабочие сценарии доступны через Dashboard, CLI и API; представления не должны объявлять target- или configuration-only функцию завершённой. |
-| REQ-API-001 | Versioned совместимые контракты | P1 | **Target approved** | Публичные контракты версионируются, имеют единый формат ошибок, детерминированное получение списков и генерируемые типизированные клиенты; backward compatibility diff и полный cursor/idempotency contract ещё target. |
+| REQ-API-001 | Versioned совместимые контракты | P1 | **Current verified MVP** | Публичные контракты имеют committed OpenAPI 3.1 source of truth, generated frontend DTO, drift gate и backward compatibility diff с base/default branch. Полный cursor/idempotency contract, examples validation и major-version lifecycle остаются target. |
 
 ## 7. Нефункциональные требования
 

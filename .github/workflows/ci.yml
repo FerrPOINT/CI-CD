@@ -58,6 +58,8 @@ jobs:
         working-directory: frontend
     steps:
     - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
     - uses: pnpm/setup@v2
       with:
         version: 11
@@ -74,6 +76,14 @@ jobs:
       run: |
         pnpm openapi:generate
         git diff --exit-code -- src/api/schema.d.ts || (echo "schema.d.ts is stale; run pnpm openapi:generate" && exit 1)
+    - name: OpenAPI compatibility checker self-test
+      run: pnpm openapi:compat --self-test
+    - name: OpenAPI compatibility gate (pull request)
+      if: github.event_name == 'pull_request'
+      run: pnpm openapi:compat --base-ref origin/${{ github.base_ref }} --current ../openapi/openapi.yaml
+    - name: OpenAPI compatibility gate (push)
+      if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+      run: pnpm openapi:compat --base-ref ${{ github.event.before }} --current ../openapi/openapi.yaml
     - run: pnpm lint
     - run: pnpm test
     - run: pnpm build

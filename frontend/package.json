@@ -14,7 +14,8 @@
     "seed:evidence": "node scripts/seed-evidence.mjs",
     "shoot:evidence": "node scripts/shoot-evidence.mjs",
     "openapi:generate": "openapi-typescript ../openapi/openapi.yaml -o src/api/schema.d.ts",
-    "openapi:check": "node scripts/check-openapi.mjs"
+    "openapi:check": "node scripts/check-openapi.mjs",
+    "openapi:compat": "node scripts/check-openapi-compat.mjs"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.1.13",
@@ -58,6 +59,7 @@
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.68.0",
     "vite": "^6.2.0",
-    "vitest": "^3.1.4"
+    "vitest": "^3.1.4",
+    "yaml": "2.9.0"
   }
 }

@@ -63,8 +63,8 @@ No rollback SQL is executed automatically. A failed production migration stops d
 |---|---|---|
 | `cargo run --bin openapi-dump -- ../openapi/openapi.yaml` | `openapi/openapi.yaml` | Current backend CI generates `/tmp/openapi.yaml` and diffs |
 | `pnpm openapi:generate` | `frontend/src/api/schema.d.ts` | Current frontend CI checks clean diff |
+| `pnpm openapi:compat --base-ref origin/main` | OpenAPI compatibility report | Current frontend CI blocks breaking removal/type/format/required-request changes |
 | target `just openapi-validate` | OpenAPI validation + examples | zero errors |
-| target compatibility diff | backward diff against default branch | no breaking change |
 
 Pinned frontend package `openapi-typescript` generates `schema.d.ts`; handwritten API wrapper/client remains responsible for auth headers, error decoding, binary upload/download and SSE. A future generated transport boundary may add `openapi-fetch`.
 
@@ -75,10 +75,10 @@ Every operation needs: `operationId`, tags, DTO schemas, success/error refs, sec
 | Job | Sequence |
 |---|---|
 | current `backend` | PostgreSQL service → fmt → clippy → unit/workspace tests → real PostgreSQL tests → OpenAPI drift gate |
-| current `frontend` | frozen install → generate TS from OpenAPI → clean diff → Vitest → build |
+| current `frontend` | frozen install → generate TS from OpenAPI → clean diff → OpenAPI compatibility diff → Vitest → build |
 | current `docs` | `python3 scripts/verify_docs.py --all` |
 | target `migration-test` | isolated test DB up → `cicd-migrate up` → `cicd-migrate verify` → owner/runtime matrix → test DB down |
-| target `openapi-contract` | current drift/codegen checks + validate/examples + backward diff against `origin/main` |
+| target `openapi-contract` | current drift/codegen/backward compatibility checks + validate/examples |
 
 ## 6. First executable test matrix
 

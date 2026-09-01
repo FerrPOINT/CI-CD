@@ -151,7 +151,7 @@ Toast служит только вторичным кратким подтвер
 
 | Область | Минимальная проверка |
 |---|---|
-| Generated contract | `pnpm api:generate`, `pnpm api:check` и clean git diff. |
+| Generated contract | `pnpm openapi:generate`, `pnpm openapi:check`, `pnpm openapi:compat --base-ref origin/main` и clean git diff. |
 | Error mapping | Envelope, non-JSON HTTP, network и cancellation формируют разные `ApiError`. |
 | Query keys | Same logical parameters дают equal key; UI/transient values в key не попадают. |
 | Invalidation | Каждая mutation invalidates только утверждённые scopes; нет global invalidation. |

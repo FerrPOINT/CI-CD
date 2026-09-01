@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:00000000-0000-0000-0000-000000000000",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-09-01T13:53:21Z",
+    "timestamp": "2026-09-01T16:13:01Z",
     "component": {
       "type": "application",
       "name": "forge-ci-cd",
@@ -2456,6 +2456,14 @@
       "name": "vitest",
       "version": "3.1.4",
       "purl": "pkg:npm/vitest@3.1.4",
+      "license": "unknown",
+      "scope": "development"
+    },
+    {
+      "type": "library",
+      "name": "yaml",
+      "version": "2.9.0",
+      "purl": "pkg:npm/yaml@2.9.0",
       "license": "unknown",
       "scope": "development"
     }

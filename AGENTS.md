@@ -53,7 +53,7 @@ cd frontend && pnpm build
 
 - [ ] Изменения соответствуют существующей архитектуре и не затёрли чужую работу.
 - [ ] Backend-проверки проходят: fmt, clippy, test, release build.
-- [ ] Frontend-проверки проходят: `pnpm test`, `pnpm build`.
+- [ ] Frontend-проверки проходят: `pnpm openapi:check`, `pnpm openapi:compat --base-ref origin/main`, `pnpm test`, `pnpm build`.
 - [ ] `docker compose config` и `docker compose build` успешны при изменении контейнеров.
 - [ ] Для новых endpoint выполнена curl-проверка; для UI-изменений сделаны актуальные screenshots при необходимости.
 - [ ] Документация, `.env.example` и ADR обновлены, если изменились контракт, конфигурация или решение.

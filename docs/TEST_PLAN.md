@@ -127,20 +127,20 @@ Coverage измеряет поведение и риск, а не только l
 | Job | Обязательная проверка |
 |---|---|
 | `backend` | Rust 1.86 + PostgreSQL 17 service: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db -- --test-threads=1`, `cargo build --release --workspace`, OpenAPI drift gate. |
-| `frontend` | Node 22/pnpm 11: `pnpm install --frozen-lockfile`, `pnpm openapi:generate` + clean diff для `src/api/schema.d.ts`, `pnpm lint`, `pnpm test`, `pnpm build`. |
+| `frontend` | Node 22/pnpm 11: `pnpm install --frozen-lockfile`, `pnpm openapi:generate` + clean diff для `src/api/schema.d.ts`, `pnpm openapi:compat` self-test, OpenAPI backward compatibility diff с base commit/default branch, `pnpm lint`, `pnpm test`, `pnpm build`. |
 | `compose-smoke` | Docker Compose: config validation, production image build, healthy startup, backend health/readiness, frontend nginx smoke, failure logs and cleanup. |
 | `e2e` | Node 22/pnpm 11 + Playwright Chromium: installs browser dependencies, validates Compose config, starts production stack, seeds deterministic evidence, runs critical UI journeys and representative axe smoke, uploads Playwright report/traces/screenshots/video on failure and always cleans Compose volumes. |
 | `security` | Rust/Node advisory gate, committed-secret baseline, SBOM drift и container image scan: SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm install --frozen-lockfile`, `pnpm audit --audit-level high`, `python3 scripts/scan_secrets.py`, `python3 scripts/generate_sbom.py --check`, production backend/frontend image build и `bash scripts/scan_container_images.sh forge-cicd-backend:ci forge-cicd-frontend:ci`. |
 | `docs` | Python 3.12: Python syntax checks для docs/backup scripts, backup helper self-test/dry-run, shell wrapper syntax и `python3 scripts/verify_docs.py --all`. |
 
-Current CI не запускает isolated owner/runtime migration matrix, prior-schema upgrade, Lighthouse, OpenAPI backward compatibility, `cargo-deny`, history/container secret scan или coverage ratchet. Backend release build и critical container image scan уже включены как MVP-gates. Playwright/axe включены как MVP-gate для representative flows, но full auth/RBAC E2E, all-route a11y, Lighthouse budgets и coverage evidence остаются target.
+Current CI не запускает isolated owner/runtime migration matrix, prior-schema upgrade, Lighthouse, OpenAPI examples validation, `cargo-deny`, history/container secret scan или coverage ratchet. Backend release build, OpenAPI backward compatibility и critical container image scan уже включены как MVP-gates. Playwright/axe включены как MVP-gate для representative flows, но full auth/RBAC E2E, all-route a11y, Lighthouse budgets и coverage evidence остаются target.
 
 ### Target approved
 
 | Gate | Required evidence |
 |---|---|
 | `migration-test` | Current real-DB suite плюс isolated PostgreSQL lifecycle, owner/runtime roles, prior-schema upgrade, unconditional cleanup, logs и applied version/checksum. |
-| `openapi-contract` | Current generation/drift/codegen checks плюс validate/examples и compatibility diff с default branch. |
+| `openapi-contract` | Current generation/drift/codegen/backward compatibility checks плюс validate/examples. |
 | `backend` | Workspace fmt/clippy/test/release build, domain/app/API contract tests и coverage artifact. |
 | `cli-contract` | Help, config precedence, JSON output, exit codes, redaction и real API/PostgreSQL automation flow. |
 | `frontend` | Frozen lockfile, lint, Vitest, generated-client typecheck, production build и coverage artifact. |
