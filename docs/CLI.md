@@ -38,6 +38,8 @@ cicd-cli project create --name my-service \
   --branch main
 ```
 
+`repository-url` может указывать на Dashboard/Git proxy `:22802` или на прямой backend Git endpoint `:22801`; CLI API base по умолчанию остаётся `http://127.0.0.1:22801`.
+
 ### pipeline
 
 ```bash

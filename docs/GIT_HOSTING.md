@@ -55,7 +55,7 @@ curl -fsS -X POST http://127.0.0.1:22801/api/v1/repositories \
 git clone http://127.0.0.1:22802/git/platform-core.git
 ```
 
-В production заменить хост и порт на публичный URL reverse proxy.
+В local Compose это идёт через frontend nginx proxy (`:22802`), который проксирует `/git/*` в backend. Прямой backend Git endpoint также доступен на `http://127.0.0.1:22801/git/<repo>.git` для диагностики. В production заменить хост и порт на публичный URL reverse proxy.
 
 ## 4. Smart HTTP
 

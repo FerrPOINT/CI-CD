@@ -53,6 +53,7 @@
 
 ### Fixed
 
+- Environments Dashboard теперь явно помечает metadata/deployment-history как MVP без protected approvals/rollback, а `deployment` action переименован в запись deployment-record; user/CLI/Git docs уточняют current artifact TTL и Git proxy/direct ports.
 - Embedded runner secret injection now reads `project_secrets.key` and `encrypted_value`, so saved project secrets are actually decrypted and passed to jobs as runtime env variables.
 - Embedded runner now drains job stdout/stderr while the process is running and serializes log append sequence per attempt, avoiding blocked jobs on large output.
 - Runner and pipeline cancel paths now finish open `execution_attempts`, avoiding stale `queued`/`running` attempts after job failure, timeout or cancel.

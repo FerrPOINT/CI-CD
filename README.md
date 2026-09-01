@@ -39,7 +39,7 @@
 | Frontend | React 19, Vite 6, Tailwind CSS 4, shadcn/ui |
 | Data | PostgreSQL 17 |
 | Runtime | Docker Compose, embedded Docker/shell runner, Git Smart HTTP |
-| Ports | Dashboard `22802`, API/Git `22801`, PostgreSQL `22543` on `127.0.0.1` |
+| Ports | Dashboard/Git proxy `22802`, API/direct Git `22801`, PostgreSQL `22543` on `127.0.0.1` |
 | License | FerrPOINT Proprietary Source-Available Evaluation License v1.0 |
 
 <a name="features"></a>
@@ -103,7 +103,7 @@ curl -X POST http://127.0.0.1:22801/api/v1/repositories \
   -d '{"name":"my-service"}'
 
 git clone http://127.0.0.1:22802/git/my-service.git
-# add .forge-ci.yml, commit, push
+# add .forge-ci.yml, commit, push through the Dashboard/Git proxy
 git push
 ```
 

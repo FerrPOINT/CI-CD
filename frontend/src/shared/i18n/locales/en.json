@@ -227,6 +227,8 @@
   },
   "environments": {
     "title": "Environments",
+    "capabilityTitle": "Environments and delivery history",
+    "capabilityDescription": "This is currently environment metadata and append-only deployment records. Protected approvals, policy gates, and rollback through a separate traceable pipeline remain target.",
     "create": "Create environment",
     "name": "Name",
     "url": "URL",
@@ -237,10 +239,10 @@
     "empty": "No environments yet."
   },
   "deployments": {
-    "create": "Deploy",
+    "create": "Record deployment",
     "gitRef": "Git ref",
     "status": "Status",
-    "created": "Deployment created",
+    "created": "Deployment record created",
     "empty": "No deployments yet."
   },
   "schedules": {

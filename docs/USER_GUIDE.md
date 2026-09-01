@@ -47,7 +47,7 @@ Forge CI/CD - self-hosted control plane для Git-репозиториев и C
 Проект связывает репозиторий с pipelines, секретами, окружениями, отчётами и другими project-scoped ресурсами.
 
 1. Откройте **Projects** (`/projects`) и выберите **Create project**.
-2. Укажите уникальное имя, `repository_url` и default branch. Для локального Git-хостинга используйте URL вида `http://<host>:22802/git/<repo>.git`.
+2. Укажите уникальное имя, `repository_url` и default branch. Для локального Git-хостинга используйте URL вида `http://<host>:22802/git/<repo>.git` через Dashboard/Git proxy; прямой backend Git endpoint также доступен как `http://<host>:22801/git/<repo>.git`.
 3. Создайте проект и сохраните его UUID: он нужен для CLI и прямых запросов API.
 4. Откройте страницу проекта и перейдите к pipelines или соответствующему ресурсу.
 
@@ -116,7 +116,7 @@ git push -u origin main
 git clone http://any-user:<TOKEN>@<host>/git/my-service.git
 ```
 
-Pipeline читает `.forge-ci.yml`, если он доступен в локальном bare repository; иначе используется шаблон build/test/deploy. Поддерживаются две формы: legacy `stages` с jobs, `image`, одиночным `command`, basic `timeout`, `allow_failure` и `manual`; а также v1 DAG MVP с `version: 1`, top-level `jobs`, `commands`, `needs`, `tags`, `secrets`, `artifacts.paths`, defaults `image/timeout/tags` и `allow_failure`. V1 `tags` попадают в `required_tags`, external runner получает только совместимую работу по tags и current `shell` executor capability; `jobs.*.secrets` попадает в `required_secrets`, и runner получает только эти project secrets; `jobs.*.artifacts.paths` попадает в `artifact_paths`, и embedded/external runner загружает только эти relative file paths после выполнения команд. Protected tags/pools/advanced capabilities, ключи `on`, retry, `artifacts.expire_in`, directory/glob upload и retention policy остаются **Target approved**, см. `docs/contracts/PIPELINE_DSL.md`.
+Pipeline читает `.forge-ci.yml`, если он доступен в локальном bare repository; иначе используется шаблон build/test/deploy. Поддерживаются две формы: legacy `stages` с jobs, `image`, одиночным `command`, basic `timeout`, `allow_failure` и `manual`; а также v1 DAG MVP с `version: 1`, top-level `jobs`, `commands`, `needs`, `tags`, `secrets`, `artifacts.paths`, defaults `image/timeout/tags` и `allow_failure`. V1 `tags` попадают в `required_tags`, external runner получает только совместимую работу по tags и current `shell` executor capability; `jobs.*.secrets` попадает в `required_secrets`, и runner получает только эти project secrets; `jobs.*.artifacts.paths` попадает в `artifact_paths`, и embedded/external runner загружает только эти relative file paths после выполнения команд. Protected tags/pools/advanced capabilities, ключи `on`, retry, `artifacts.expire_in`, directory/glob upload и per-job/per-project retention policy остаются **Target approved**, см. `docs/contracts/PIPELINE_DSL.md`; глобальный TTL новых артефактов через `CICD_ARTIFACT_RETENTION_DAYS` уже работает.
 
 ```yaml
 stages:
@@ -183,7 +183,7 @@ curl -fsS -X POST "http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/artifacts" \
 curl -fsS "http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/artifacts"
 ```
 
-Retention/TTL, S3 и multipart upload - **Target approved**.
+Retention/TTL уже работает для новых локальных uploads через `CICD_ARTIFACT_RETENTION_DAYS`, `expires_at` и purge worker. S3/object storage, legal hold, quotas, directory/glob upload и multipart/resumable sessions - **Target approved**.
 
 ![Артефакты](screenshots/21-artifacts.png)
 
@@ -239,7 +239,7 @@ Embedded runner inject-ит только объявленные `jobs.required_s
 1. Откройте **Environments** (`/projects/{projectId}/environments`).
 2. Создайте окружения, например `staging` и `production`, с URL, если он известен.
 3. После выполнения вашей deploy-job добавьте запись deployment с реальным ref и статусом.
-4. Используйте историю deployments как журнал факта доставки, а не как механизм запуска инфраструктуры.
+4. Используйте историю deployments как журнал факта доставки, а не как механизм запуска инфраструктуры. Кнопка **Записать деплой** создаёт deployment-record.
 
 > Forge не выполняет deployment автоматически только из создания environment/deployment. Развёртывание должно быть частью job или внешней процедуры; protected environments, approvals и policy checks - **Target approved**.
 
@@ -420,7 +420,7 @@ curl -fsS -X POST "http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines"
 
 ### Как безопасно передать credential в job?
 
-**Статус процедуры: Current verified for embedded runner.**
+**Статус процедуры: Current verified for embedded and external runner MVP.**
 
 Сохраните secret в разделе **Secrets** проекта и обращайтесь к нему из command как к env-переменной с тем же key. Не помещайте credential в `.forge-ci.yml`, URL репозитория или логи; masking — best-effort и не является полноценной DLP-системой.
 

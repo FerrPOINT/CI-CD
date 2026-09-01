@@ -227,6 +227,8 @@
   },
   "environments": {
     "title": "Окружения",
+    "capabilityTitle": "Окружения и история доставки",
+    "capabilityDescription": "Сейчас это metadata окружений и append-only записи деплоев. Protected approvals, policy gates и rollback через отдельный traceable pipeline остаются target.",
     "create": "Создать окружение",
     "name": "Имя",
     "url": "URL",
@@ -237,10 +239,10 @@
     "empty": "Окружения не настроены."
   },
   "deployments": {
-    "create": "Деплой",
+    "create": "Записать деплой",
     "gitRef": "Git ref",
     "status": "Статус",
-    "created": "Деплой создан",
+    "created": "Запись деплоя создана",
     "empty": "Деплоев нет."
   },
   "schedules": {
