@@ -5,17 +5,17 @@
 import { cn } from '@/shared/lib/utils'
 
 const PALETTE = [
-  'bg-violet-600',
-  'bg-blue-600',
-  'bg-emerald-600',
-  'bg-amber-600',
-  'bg-rose-600',
-  'bg-cyan-600',
-  'bg-indigo-600',
-  'bg-teal-600',
-  'bg-orange-600',
-  'bg-pink-600',
-  'bg-lime-700',
+  'bg-violet-700',
+  'bg-blue-700',
+  'bg-emerald-700',
+  'bg-amber-700',
+  'bg-rose-700',
+  'bg-cyan-700',
+  'bg-indigo-700',
+  'bg-teal-700',
+  'bg-orange-700',
+  'bg-pink-700',
+  'bg-lime-800',
   'bg-sky-700',
 ]
 
