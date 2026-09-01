@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:00000000-0000-0000-0000-000000000000",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-09-01T12:47:59Z",
+    "timestamp": "2026-09-01T13:53:21Z",
     "component": {
       "type": "application",
       "name": "forge-ci-cd",
@@ -2237,14 +2237,6 @@
     },
     {
       "type": "library",
-      "name": "playwright",
-      "version": "1.62.1",
-      "purl": "pkg:npm/playwright@1.62.1",
-      "license": "unknown",
-      "scope": "required"
-    },
-    {
-      "type": "library",
       "name": "react",
       "version": "19.1.0",
       "purl": "pkg:npm/react@19.1.0",
@@ -2301,9 +2293,25 @@
     },
     {
       "type": "library",
+      "name": "@axe-core/playwright",
+      "version": "4.13.0",
+      "purl": "pkg:npm/@axe-core/playwright@4.13.0",
+      "license": "unknown",
+      "scope": "development"
+    },
+    {
+      "type": "library",
       "name": "@eslint/js",
       "version": "10.0.1",
       "purl": "pkg:npm/@eslint/js@10.0.1",
+      "license": "unknown",
+      "scope": "development"
+    },
+    {
+      "type": "library",
+      "name": "@playwright/test",
+      "version": "1.62.1",
+      "purl": "pkg:npm/@playwright/test@1.62.1",
       "license": "unknown",
       "scope": "development"
     },
@@ -2400,6 +2408,14 @@
       "name": "openapi-typescript",
       "version": "7.13.0",
       "purl": "pkg:npm/openapi-typescript@7.13.0",
+      "license": "unknown",
+      "scope": "development"
+    },
+    {
+      "type": "library",
+      "name": "playwright",
+      "version": "1.62.1",
+      "purl": "pkg:npm/playwright@1.62.1",
       "license": "unknown",
       "scope": "development"
     },

@@ -35,10 +35,11 @@
 ### 4. Тестирование
 
 - Backend: `cargo test --workspace`, `cargo test --features integration --test integration_db -- --test-threads=1`, API/CLI/domain contract tests.
-- Frontend: Vitest для unit-тестов компонентов, Playwright для E2E (целевое).
+- Frontend: Vitest для unit-тестов компонентов; Playwright Chromium + axe для текущего representative E2E/a11y MVP gate.
 - После UI-изменений — скриншоты full-page (375 / 1920 / 2560).
 - Все новые endpoint — curl-проверка.
 - Docker compose smoke: `docker compose up --build -d` + `curl /api/v1/health` + `curl /api/v1/readiness`.
+- Browser E2E: running Compose stack + `cd frontend && pnpm seed:evidence && pnpm e2e`.
 
 ### 5. Документация
 

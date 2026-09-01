@@ -1,6 +1,6 @@
 # Accessibility — Forge CI/CD
 
-> **Целевой стандарт:** WCAG 2.2 AA. **Статус:** частично Current verified; программная верификация Target approved. Скриншот не является доказательством доступности.
+> **Целевой стандарт:** WCAG 2.2 AA. **Статус:** Current verified MVP для representative Playwright/axe smoke; полный WCAG/Lighthouse аудит остаётся Target approved. Скриншот не является доказательством доступности.
 
 ## 1. Scope
 
@@ -16,24 +16,27 @@
 | Таблицы имеют `caption`/`sr-only` и column headers там, где реализовано | `runners/index.tsx` | Current verified |
 | Статусы не передаются только цветом: есть текст `Онлайн`, `Успешно`, `Открыт` | UI + `m-runners.png` | Current verified |
 | 375 px evidence для ключевых flows | `docs/assets/screens/manifest.md` | Current verified |
+| Playwright mobile drawer contract: открыть drawer, Escape закрывает, focus возвращается trigger | `frontend/e2e/critical-flows.spec.ts` | Current verified MVP |
+| Representative axe smoke без `serious`/`critical` violations на Dashboard, Projects, Repository browser, Pipeline detail и Artifacts | `frontend/e2e/accessibility.spec.ts`; CI job `e2e` | Current verified MVP |
 
 `min-h-9` (36 px) — текущий минимальный размер компактного элемента. Для primary mobile actions целевая норма — 44×44 CSS px; 36 px допускается только для вторичных dense-table действий с явным aria-label.
 
 ## 3. Известные пробелы
 
-- Нет автоматического axe-core теста и нет Lighthouse accessibility CI gate.
-- Контраст palette dark/light/gray не измерен программно; соответствие AA не заявляется.
+- Нет Lighthouse accessibility CI gate.
+- Контраст palette dark/light/gray не измерен полной программной матрицей; соответствие AA для всей UI-системы не заявляется.
 - Нет полного keyboard-only прохода по всем маршрутам и form validation/error announcements audit.
+- Нет all-route axe matrix для всех 21 маршрута и всех тем.
 - `aria-live` политика для async mutations/toasts не задокументирована.
 - Скриншоты доказывают responsive layout, но не screen-reader semantics, focus order или contrast.
 
-## 4. Программа верификации (Target approved)
+## 4. Программа верификации
 
 | Gate | Критерий | Evidence |
 |---|---|---|
-| axe in Playwright | 0 serious/critical violations на authenticated/public representative pages | `frontend/e2e/accessibility.spec.ts` report |
+| axe in Playwright | Current MVP: 0 serious/critical violations на representative pages; target: all-route/theme matrix | `frontend/e2e/accessibility.spec.ts` report |
 | Lighthouse | Accessibility score ≥95 на desktop и 375px mobile | CI artifact JSON/HTML |
-| Keyboard journey | Tab/Shift+Tab/Escape/Enter/Space работает: nav, drawer, create forms, dialogs, destructive action | Playwright scenario + manual checklist |
+| Keyboard journey | Current MVP: mobile drawer Escape/focus; target: Tab/Shift+Tab/Escape/Enter/Space работает для nav, drawer, create forms, dialogs, destructive action | Playwright scenario + manual checklist |
 | Contrast | text, controls, focus indicator проходят WCAG AA; non-text UI ≥3:1 | palette audit report |
 | Responsive | 375, 768, 1920 px без horizontal clip у critical flows | screenshots manifest + visual review |
 
@@ -45,7 +48,7 @@
 4. Primary touch target на mobile ≥44×44 px; compact secondary control ≥36×36 px только с достаточным spacing и accessible name.
 5. Формы имеют связанный `label`, required/error state и понятный текст ошибки; placeholder не заменяет label.
 6. Dialog/drawer обязаны иметь focus management, Escape close и восстановление focus; использовать Radix primitives вместо самодельного overlay.
-7. Новый маршрут или интерактивный flow добавляет a11y-case в Playwright после появления target harness и обновляет `TRACEABILITY.md` при затрагивании REQ-UI/NFR.
+7. Новый маршрут или интерактивный flow добавляет a11y-case в Playwright и обновляет `TRACEABILITY.md` при затрагивании REQ-UI/NFR.
 
 ## 6. Evidence ownership
 

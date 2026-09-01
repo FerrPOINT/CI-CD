@@ -143,8 +143,8 @@ Current `forge-runner` регистрируется или использует 
 | Compose smoke | Запуск образов, `GET /api/v1/health`, `GET /api/v1/readiness` и frontend nginx | `.github/workflows/ci.yml` job `compose-smoke`; локально `just up && just health && just readiness` | Current verified |
 | API + PostgreSQL | CRUD, constraints, migrations/readiness, persisted side effects, headers/error envelope, auth/PAT и current pagination cases | `cargo test --features integration --test integration_db -- --test-threads=1` с PostgreSQL service в CI | Current verified; isolated owner/runtime matrix всё ещё target |
 | CLI + real API | Automation flow, config precedence, JSON output, exit codes и redaction | CLI against real API/PostgreSQL stack | Target approved |
-| Browser E2E | Critical UI journeys against built frontend и real API/PostgreSQL | Playwright Chromium | Target approved; сценарии -- [UI API CONTRACT](contracts/UI_API_CONTRACT.md) |
-| Accessibility | Keyboard flow, semantic controls, colour contrast и serious/critical violations | Playwright + axe | Target approved; не установлен как current script/gate |
+| Browser E2E | Critical UI journeys against built frontend и real API/PostgreSQL | `.github/workflows/ci.yml` job `e2e`; локально `pnpm seed:evidence && pnpm e2e` на running Compose stack | Current verified MVP; full auth/RBAC/CLI journeys остаются target |
+| Accessibility | Keyboard flow, semantic controls, colour contrast и serious/critical violations | Playwright + axe representative pages; mobile drawer Escape/focus | Current verified MVP; all-route/theme/Lighthouse coverage остаётся target |
 | Performance | Key routes, regression budgets и report artifact | Lighthouse CI | Target approved; не установлен как current script/gate |
 
 Для нового endpoint добавьте focused test на нужном уровне и выполните `curl` against running stack. Для UI-изменения добавьте component/feature test; после внедрения E2E сохраняйте Playwright trace, screenshot, video при failure и compose logs. Скриншоты не заменяют interaction assertions.
@@ -195,6 +195,21 @@ docker run --rm -it \
 
 Если меняются frontend dependencies, оставьте обновлённый `pnpm-lock.yaml` в diff; CI устанавливает его только с `--frozen-lockfile`. Current GitHub Actions frontend job запускает generated-client drift gate, `pnpm lint`, `pnpm test` и `pnpm build`.
 
+Для браузерной проверки нужен поднятый disposable Compose stack и synthetic `CICD_SECRETS_KEY` для seeded secrets:
+
+```bash
+cd /opt/dev/CI-CD
+export CICD_SECRETS_KEY="$(openssl rand -base64 32)"
+docker compose up --build -d
+cd frontend
+pnpm install --frozen-lockfile
+pnpm e2e:install
+pnpm seed:evidence
+pnpm e2e
+cd ..
+docker compose down -v --remove-orphans
+```
+
 ### Compose и документация
 
 ```bash
@@ -225,10 +240,11 @@ python3 scripts/verify_docs.py --all
 | `backend` | PostgreSQL 17 service; `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db -- --test-threads=1`, OpenAPI drift gate |
 | `frontend` | `pnpm install --frozen-lockfile`, `pnpm openapi:generate` + clean diff для `src/api/schema.d.ts`, `pnpm lint`, `pnpm test`, `pnpm build` |
 | `compose-smoke` | `docker compose config -q`, `docker compose up --build -d`, backend health/readiness, frontend nginx smoke, failure logs и cleanup |
+| `e2e` | Playwright Chromium against built Compose stack: install browser, seed deterministic evidence, run critical journeys + representative axe smoke, upload Playwright report/traces/screenshots/video on failure, cleanup volumes |
 | `security` | SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm install --frozen-lockfile`, `pnpm audit --audit-level high`, `python3 scripts/scan_secrets.py`, `python3 scripts/generate_sbom.py --check` |
 | `docs` | `python3 -m py_compile scripts/verify_docs.py scripts/generate_sbom.py scripts/scan_secrets.py scripts/forge_backup.py`, backup helper self-test/dry-run, shell wrapper syntax, `python3 scripts/verify_docs.py --all` |
 
-В текущем workflow нет standalone backend release build, isolated owner/runtime migration matrix, prior-schema upgrade, OpenAPI backward compatibility diff, Playwright, axe, Lighthouse, `cargo-deny`, container scan, history/container secret scans или coverage ratchet. Не утверждайте, что branch protection, approval policy или checks из устаревших narrative-доков фактически включены, пока это не подтверждено настройками GitHub.
+В текущем workflow нет standalone backend release build, isolated owner/runtime migration matrix, prior-schema upgrade, OpenAPI backward compatibility diff, Lighthouse, `cargo-deny`, container scan, history/container secret scans или coverage ratchet. Playwright/axe существуют как MVP-gate для representative flows; full auth/RBAC/CLI E2E, all-route a11y и performance budgets всё ещё target. Не утверждайте, что branch protection, approval policy или checks из устаревших narrative-доков фактически включены, пока это не подтверждено настройками GitHub.
 
 ### Target approved
 
@@ -242,7 +258,7 @@ python3 scripts/verify_docs.py --all
 | CLI | help/config/output/exit-code contracts против real API |
 | Frontend | frozen lockfile, lint, Vitest, generated-client typecheck и production build |
 | Container smoke | current compose smoke плюс retained logs/artifacts, release image matrix, read-only API scenario и restore-drill binding |
-| E2E/accessibility/performance | Playwright critical journeys, axe without serious/critical violations, Lighthouse budgets и retained reports |
+| E2E/accessibility/performance | Current representative Playwright/axe gate плюс full auth/RBAC/CLI journeys, all-route a11y, Lighthouse budgets и retained reports |
 | Security | current dependency audit/secret/SBOM drift gate с SQLx optional false-positive guard плюс target `cargo-deny`, container scan и deeper history secret scan по согласованной severity policy |
 
 Полная целевая модель quality gates и CI artifacts приведена в [DELIVERY ARCHITECTURE](DELIVERY_ARCHITECTURE.md). Детали migration/test DB не дублируйте: они принадлежат [MIGRATION CONTRACT](contracts/MIGRATION_CONTRACT.md).

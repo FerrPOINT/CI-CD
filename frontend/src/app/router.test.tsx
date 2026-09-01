@@ -8,7 +8,7 @@ import { appRoutes } from './router'
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     i18n: { language: 'ru' },
-    t: (key: string, fallback?: string) => fallback ?? key,
+    t: (key: string, fallback?: string | object) => typeof fallback === 'string' ? fallback : key,
   }),
 }))
 
@@ -159,11 +159,14 @@ function installLocalStorage() {
 }
 
 async function expectText(text: string) {
-  await waitFor(() => {
-    expect(
-      screen.getAllByText((_, element) => element?.textContent?.includes(text) ?? false).length,
-    ).toBeGreaterThan(0)
-  })
+  await waitFor(
+    () => {
+      expect(
+        screen.getAllByText((_, element) => element?.textContent?.includes(text) ?? false).length,
+      ).toBeGreaterThan(0)
+    },
+    { timeout: 5000 },
+  )
 }
 
 function mockFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {

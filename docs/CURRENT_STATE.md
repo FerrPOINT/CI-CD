@@ -37,6 +37,7 @@
 | Rate limiting / body limits | ✅ MVP | in-process per-client fixed-window: auth, API read/write, Git Smart HTTP, internal hook и artifact upload возвращают `429`; явные body limits покрывают artifact uploads, Git RPC, JUnit upload и log append |
 | Health/readiness/metrics | ✅ | `/api/v1/health` liveness без БД; `/api/v1/readiness` проверяет PostgreSQL и SQLx migration versions/checksums; `/metrics` Prometheus text |
 | Compose packaging smoke | ✅ | CI job `compose-smoke` выполняет `docker compose config -q`, production image build, `docker compose up --build -d`, backend health/readiness и frontend nginx smoke с cleanup |
+| Browser E2E / accessibility smoke | ✅ MVP | CI job `e2e` поднимает собранный Docker Compose stack, запускает deterministic `frontend/scripts/seed-evidence.mjs`, проверяет Playwright Chromium critical journeys (Dashboard → project pipelines → pipeline plan/logs/artifacts, repository code browser, mobile drawer Escape/focus) и axe smoke без `serious`/`critical` violations на representative pages; Lighthouse, full keyboard audit и all-route a11y остаются target |
 | Backup/restore helper | ✅ MVP | `scripts/forge_backup.py` + wrappers создают/проверяют/restoring local Docker Compose backup: PostgreSQL custom dump, Git/artifact volume copy, `SHA256SUMS`, `manifest.json`; off-site/PITR/monthly drill остаются target |
 | Dependency audit / secret scan / SBOM hygiene | ✅ MVP | CI запускает SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`, `scripts/scan_secrets.py` и `scripts/generate_sbom.py --check`; `docs/assets/sbom.json` синхронизирован с Cargo/npm inventory; Cargo resolved graph не содержит deprecated `serde_yaml`/`unsafe-libyaml`; `cargo-deny`, container scan, deeper history secret scan и release SBOM publication остаются target |
 
@@ -89,6 +90,7 @@ docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" -w /workspac
   -e CARGO_TARGET_DIR=/workspace/target rust:1.86-bookworm \
   -lc '/usr/local/cargo/bin/cargo test --workspace'
 cd frontend && pnpm test && pnpm build
+cd frontend && pnpm e2e   # requires running seeded Compose stack
 cd frontend && pnpm lint
 python3 scripts/generate_sbom.py --check
 python3 scripts/verify_docs.py --canonical --links --current-state
@@ -96,4 +98,4 @@ python3 scripts/verify_docs.py --canonical --links --current-state
 
 ## Frontend: 21 маршрут / 20 рабочих страниц + /login
 
-Полный список базовых страниц — `docs/architecture/frontend-boundaries.md`; визуальный реестр — `docs/assets/screens/manifest.md`. Исполняемый route smoke — `frontend/src/app/router.test.tsx`: production `appRoutes` поднимаются в memory router, а 20 рабочих Dashboard-страниц + `/login` проверяются на первый рендер с mocked API DTO.
+Полный список базовых страниц — `docs/architecture/frontend-boundaries.md`; визуальный реестр — `docs/assets/screens/manifest.md`. Исполняемый route smoke — `frontend/src/app/router.test.tsx`: production `appRoutes` поднимаются в memory router, а 20 рабочих Dashboard-страниц + `/login` проверяются на первый рендер с mocked API DTO. Real-browser baseline — `frontend/e2e/critical-flows.spec.ts` и `frontend/e2e/accessibility.spec.ts` против собранного Compose stack с deterministic seed.

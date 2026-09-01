@@ -173,7 +173,7 @@ Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-2
 - Domain: unit-тесты переходов статусов (`domain/src/lib.rs`, `tests/domain_transitions.rs`).
 - API contract: no-DB тесты health/readiness/503/валидации (`tests/api_contract.rs`).
 - CLI: contract-тест help-групп (`cli/tests/cli_contract.rs`).
-- Real-PostgreSQL integration tests уже есть для migrations/readiness/project/auth paths, trigger idempotency, immutable `pipeline_plans`, v1 DAG config из bare repo с `required_tags`/`required_secrets`/`artifact_paths`, runner protocol register/heartbeat/poll/ack/control/`secrets:resolve`/artifact upload/renew/logs/complete с basic tag + executor capability matching, scoped secret delivery, attempt-owned artifacts и PostgreSQL `LISTEN/NOTIFY` long-poll wakeup; target остаётся для Playwright E2E, coverage gate и широких failure/protocol tests.
+- Real-PostgreSQL integration tests уже есть для migrations/readiness/project/auth paths, trigger idempotency, immutable `pipeline_plans`, v1 DAG config из bare repo с `required_tags`/`required_secrets`/`artifact_paths`, runner protocol register/heartbeat/poll/ack/control/`secrets:resolve`/artifact upload/renew/logs/complete с basic tag + executor capability matching, scoped secret delivery, attempt-owned artifacts и PostgreSQL `LISTEN/NOTIFY` long-poll wakeup. Playwright/axe current MVP покрывает representative browser journeys на собранном Compose stack; target остаётся для full auth/RBAC/CLI E2E, coverage gate и широких failure/protocol tests.
 
 ## 9. Статус миграции (ADR-0005)
 

@@ -24,8 +24,8 @@
 | Dependency/SBOM security | Rust/Node advisories, frozen dependency graph, committed-secret baseline и drift committed SBOM | `.github/workflows/ci.yml` job `security`: SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`, `scripts/scan_secrets.py`, `scripts/generate_sbom.py --check` | **Current verified MVP** |
 | Compose smoke | Собранные образы, startup сервисов, `GET /api/v1/health`, `GET /api/v1/readiness` и frontend nginx | `.github/workflows/ci.yml` job `compose-smoke`: `docker compose config -q`, `docker compose up --build -d`, API/frontend smoke и `docker compose down -v --remove-orphans` | **Current verified** |
 | Real-DB integration | PostgreSQL constraints, migrations/readiness, CRUD, persisted effects, immutable pipeline plan snapshots, auth/PAT и current API boundaries | GitHub Actions PostgreSQL service + `cargo test --features integration --test integration_db -- --test-threads=1`; local fixture `backend/docker-compose.test.yml` | **Current verified** |
-| Playwright E2E | Критические пользовательские journeys на собранном frontend и real API/PostgreSQL stack | Playwright Chromium; trace, screenshot и video для failed/retried flow | **Target approved** |
-| Accessibility | Keyboard journey, accessible names/roles, focus, contrast и серьёзные нарушения | Playwright + axe; без `serious`/`critical` violations | **Target approved** |
+| Playwright E2E | Критические пользовательские journeys на собранном frontend и real API/PostgreSQL stack | `.github/workflows/ci.yml` job `e2e`: Docker Compose + `pnpm seed:evidence` + `pnpm e2e`; traces/screenshots/video сохраняются на failure | **Current verified MVP** |
+| Accessibility | Keyboard journey, accessible names/roles, focus и серьёзные axe-нарушения | `frontend/e2e/accessibility.spec.ts`: representative pages без `serious`/`critical`; mobile drawer Escape/focus в `critical-flows.spec.ts` | **Current verified MVP; target расширение** |
 | Performance | Бюджеты ключевых routes и регрессии production build | Lighthouse CI с сохранённым report | **Target approved** |
 
 ### 2.1. Фактический реестр существующих тестов
@@ -40,6 +40,8 @@
 | Runner binary contract | `backend/tests/runner_binary_contract.rs` | `forge-runner --help` содержит protocol/config flags `--api-url`, `--credential`, `--registration-token`, `--tags`, `--total-slots`, `--poll-interval-seconds`, `--work-dir`, `--once`, `--no-checkout`, `--keep-workspace`. |
 | Dashboard unit | `frontend/src/pages/dashboard/dashboard.test.ts` | `statusLabel` форматирует known status и `success`. |
 | App router smoke | `frontend/src/app/router.test.tsx` | Поднимает production `appRoutes` в memory router и проверяет первый рендер 20 рабочих Dashboard-страниц + `/login` на реалистичных mocked API DTO. |
+| Browser E2E | `frontend/e2e/critical-flows.spec.ts` | Проверяет seeded Dashboard → project pipelines → pipeline plan/logs/artifacts, repository code browser и mobile drawer Escape/focus contract на собранном приложении. |
+| Accessibility smoke | `frontend/e2e/accessibility.spec.ts` | Запускает axe на representative pages против real API/PostgreSQL stack и блокирует `serious`/`critical` violations. |
 | Webhooks page unit | `frontend/src/pages/webhooks/webhooks.test.tsx` | Страница показывает delivered `in_app` notification events и запрашивает bounded notification history API. |
 | Pull request detail unit | `frontend/src/pages/pull-request-detail/pull-request-detail.test.ts` | `buildCompareHref` формирует направление compare и URL-encoding имени repository. |
 | Shared UI unit | `frontend/src/shared/ui/confirm-dialog.test.tsx` | `ConfirmDialog` скрыт до открытия, подтверждает действие и не подтверждает при cancel. |
@@ -57,6 +59,7 @@
 | Real-DB harness | Current CI применяет migrations к disposable PostgreSQL service под `forge_owner`. Полная owner/runtime role matrix, prior-schema upgrade и parallel isolated DB/schema остаются target. | **Current verified; target расширение** |
 | Evidence seed | `frontend/scripts/seed-evidence.mjs` создаёт детерминированные demo repositories, projects, pipelines, runners, secrets metadata, environments, deployments, users и tokens для disposable local evidence stack. Запуск: `cd frontend && pnpm seed:evidence`. | **Current verified** |
 | Screenshot evidence | `frontend/scripts/shoot-evidence.mjs` снимает predefined маршруты на `1920x1080` и `375x812`; это visual evidence, а не E2E assertion. | **Current verified** |
+| E2E Compose evidence | `CI job e2e` использует disposable Compose stack с synthetic `CICD_SECRETS_KEY`, seeded repositories/projects/pipelines/artifacts и Playwright Chromium assertions. | **Current verified MVP** |
 
 Fixture `seed:evidence` содержит только synthetic development values. Он не применяется к shared, staging или production окружению; значения секретов, password, bearer token, `CICD_SECRETS_KEY`, production URL и персональные данные не попадают в fixture output, test name, screenshot, trace или CI artifact.
 
@@ -126,10 +129,11 @@ Coverage измеряет поведение и риск, а не только l
 | `backend` | Rust 1.86 + PostgreSQL 17 service: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db -- --test-threads=1`, OpenAPI drift gate. |
 | `frontend` | Node 22/pnpm 11: `pnpm install --frozen-lockfile`, `pnpm openapi:generate` + clean diff для `src/api/schema.d.ts`, `pnpm lint`, `pnpm test`, `pnpm build`. |
 | `compose-smoke` | Docker Compose: config validation, production image build, healthy startup, backend health/readiness, frontend nginx smoke, failure logs and cleanup. |
+| `e2e` | Node 22/pnpm 11 + Playwright Chromium: installs browser dependencies, validates Compose config, starts production stack, seeds deterministic evidence, runs critical UI journeys and representative axe smoke, uploads Playwright report/traces/screenshots/video on failure and always cleans Compose volumes. |
 | `security` | Rust/Node advisory gate, committed-secret baseline и SBOM drift: SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm install --frozen-lockfile`, `pnpm audit --audit-level high`, `python3 scripts/scan_secrets.py`, `python3 scripts/generate_sbom.py --check`. |
 | `docs` | Python 3.12: Python syntax checks для docs/backup scripts, backup helper self-test/dry-run, shell wrapper syntax и `python3 scripts/verify_docs.py --all`. |
 
-Current CI не запускает standalone backend release build, isolated owner/runtime migration matrix, prior-schema upgrade, Playwright, axe, Lighthouse, OpenAPI backward compatibility, `cargo-deny`, container scan, history/container secret scan или coverage ratchet.
+Current CI не запускает standalone backend release build, isolated owner/runtime migration matrix, prior-schema upgrade, Lighthouse, OpenAPI backward compatibility, `cargo-deny`, container scan, history/container secret scan или coverage ratchet. Playwright/axe включены как MVP-gate для representative flows, но full auth/RBAC E2E, all-route a11y, Lighthouse budgets и coverage evidence остаются target.
 
 ### Target approved
 
@@ -141,7 +145,7 @@ Current CI не запускает standalone backend release build, isolated ow
 | `cli-contract` | Help, config precedence, JSON output, exit codes, redaction и real API/PostgreSQL automation flow. |
 | `frontend` | Frozen lockfile, lint, Vitest, generated-client typecheck, production build и coverage artifact. |
 | `compose-smoke-plus` | Current compose smoke плюс retained compose logs/artifacts, release tag/image matrix, read-only API scenario и restore-drill binding. |
-| `e2e-a11y-performance` | Playwright critical journeys, axe без serious/critical violations, Lighthouse budgets и retained reports. |
+| `e2e-a11y-performance` | Current representative Playwright/axe gate плюс full auth/RBAC/CLI journeys, all-route keyboard/a11y coverage, Lighthouse budgets и retained reports. |
 | `security` | Current dependency audit/secret/SBOM drift gate плюс target `cargo-deny`, container scan и deeper history secret scan по согласованной severity policy; confirmed secret или blocking vulnerability блокирует gate. |
 | `traceability` | `docs/TRACEABILITY.md` complete for changed requirements; REQ-ID links resolve to test/evidence and no changed normative behavior lacks mapping. |
 

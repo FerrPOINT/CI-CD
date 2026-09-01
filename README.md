@@ -58,6 +58,7 @@
 | Configurable CORS allowlist | Current verified MVP |
 | Liveness, DB-aware readiness and Prometheus metrics | Current verified |
 | Dependency audit, secret scan and SBOM drift gate | Current verified MVP |
+| Browser E2E and representative axe smoke on real Compose stack | Current verified MVP |
 | Schedules, outgoing webhooks, in-app/SSE notifications | MVP |
 | External adapters, tenant isolation, distributed runners | Target approved |
 
@@ -169,6 +170,7 @@ Full current-state cut: [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md). Security
 | Frontend tests | `just test-frontend` |
 | Frontend build | `just build-frontend` |
 | Compose smoke | `.github/workflows/ci.yml` job `compose-smoke` |
+| Browser E2E/a11y | `.github/workflows/ci.yml` job `e2e` |
 | Secret scan | `python3 scripts/scan_secrets.py` |
 | SBOM drift | `python3 scripts/generate_sbom.py --check` |
 | Docs verification | `python3 scripts/verify_docs.py --all` |
@@ -183,6 +185,7 @@ Full current-state cut: [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md). Security
 | `just test-backend` | Backend unit and contract tests through the pinned Rust image |
 | `just test-frontend` | Frontend Vitest suite |
 | `just build-frontend` | Production frontend build |
+| `cd frontend && pnpm e2e` | Playwright critical journeys + axe smoke against seeded Compose stack |
 | `python3 scripts/scan_secrets.py` | Fail on committed token/key/password patterns in repository text |
 | `python3 scripts/generate_sbom.py --check` | Verify committed SBOM inventory is in sync |
 | `python3 scripts/verify_docs.py --all` | Documentation links, canonical statuses and docs integrity |
