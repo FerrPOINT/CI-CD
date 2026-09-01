@@ -66,9 +66,9 @@ test.describe('accessibility smoke', () => {
         shell: true,
       },
       { name: 'Settings', path: '/settings', ready: page => page.getByText('CICD_RUNNER_REGISTRATION_TOKEN').first(), shell: true },
-      { name: 'Runners', path: '/runners', ready: page => page.getByText('docker-runner-01').first(), shell: true },
+      { name: 'Runners', path: '/runners', ready: page => page.getByRole('row', { name: /docker-runner-01/ }), shell: true },
       { name: 'Project secrets', path: `/projects/${evidence.project.id}/secrets`, ready: page => page.getByText('DEPLOY_TOKEN').first(), shell: true },
-      { name: 'Project members', path: `/projects/${evidence.project.id}/members`, ready: page => page.getByText('a.zhukov').first(), shell: true },
+      { name: 'Project members', path: `/projects/${evidence.project.id}/members`, ready: page => page.getByRole('row', { name: /a\.zhukov/ }), shell: true },
       { name: 'Artifacts', path: `/jobs/${evidence.job.id}/artifacts`, ready: page => page.getByText(expectedArtifactName).first(), shell: true },
       { name: 'Environments', path: `/projects/${evidence.project.id}/environments`, ready: page => page.getByText('staging').first(), shell: true },
       {
@@ -80,7 +80,7 @@ test.describe('accessibility smoke', () => {
       { name: 'Webhooks', path: `/projects/${evidence.project.id}/webhooks`, ready: page => page.getByRole('heading', { name: 'История доставок' }), shell: true },
       { name: 'Reports', path: `/projects/${evidence.project.id}/reports`, ready: page => page.getByText('Доля успехов').first(), shell: true },
       { name: 'Audit log', path: '/audit-log', ready: page => page.getByText(/project\.created|События аудита отсутствуют\./).first(), shell: true },
-      { name: 'Users', path: '/users', ready: page => page.getByText('a.zhukov').first(), shell: true },
+      { name: 'Users', path: '/users', ready: page => page.getByRole('row', { name: /a\.zhukov/ }), shell: true },
       { name: 'Login', path: '/login', ready: page => page.getByRole('heading', { name: 'Вход в Forge' }) },
     ]
 
