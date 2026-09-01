@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -186,7 +187,19 @@ def scan_file(path: Path) -> list[Finding]:
 
 
 def iter_files(root: Path) -> list[Path]:
-    return sorted(path for path in root.rglob("*") if path.is_file() and not should_skip(path, root))
+    files: list[Path] = []
+    for current, dirnames, filenames in os.walk(root):
+        current_path = Path(current)
+        dirnames[:] = [
+            dirname
+            for dirname in dirnames
+            if dirname not in SKIP_DIRS and not should_skip(current_path / dirname, root)
+        ]
+        for filename in filenames:
+            path = current_path / filename
+            if not should_skip(path, root):
+                files.append(path)
+    return sorted(files)
 
 
 def main() -> int:

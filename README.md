@@ -168,6 +168,7 @@ Full current-state cut: [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md). Security
 | Backend tests | `just test-backend` |
 | Frontend tests | `just test-frontend` |
 | Frontend build | `just build-frontend` |
+| Compose smoke | `.github/workflows/ci.yml` job `compose-smoke` |
 | Secret scan | `python3 scripts/scan_secrets.py` |
 | SBOM drift | `python3 scripts/generate_sbom.py --check` |
 | Docs verification | `python3 scripts/verify_docs.py --all` |

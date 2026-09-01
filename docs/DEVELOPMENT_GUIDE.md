@@ -140,7 +140,7 @@ Current `forge-runner` регистрируется или использует 
 | CLI contract | `cicd-cli --help`, public command groups | `cargo test -p cicd-cli --test cli_contract` | Current verified |
 | Frontend unit | Components, pages и UI behavior через Vitest/Testing Library | `pnpm test` | Current verified |
 | Dependency/SBOM security | Rust/Node advisories, committed-secret baseline и SBOM drift | SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`, `python3 scripts/scan_secrets.py`, `python3 scripts/generate_sbom.py --check` в CI job `security` | Current verified MVP |
-| Compose smoke | Запуск образов, `GET /api/v1/health` и `GET /api/v1/readiness` | `just up && just health && just readiness` | Current verified локально; не является current CI gate |
+| Compose smoke | Запуск образов, `GET /api/v1/health`, `GET /api/v1/readiness` и frontend nginx | `.github/workflows/ci.yml` job `compose-smoke`; локально `just up && just health && just readiness` | Current verified |
 | API + PostgreSQL | CRUD, constraints, migrations/readiness, persisted side effects, headers/error envelope, auth/PAT и current pagination cases | `cargo test --features integration --test integration_db -- --test-threads=1` с PostgreSQL service в CI | Current verified; isolated owner/runtime matrix всё ещё target |
 | CLI + real API | Automation flow, config precedence, JSON output, exit codes и redaction | CLI against real API/PostgreSQL stack | Target approved |
 | Browser E2E | Critical UI journeys against built frontend и real API/PostgreSQL | Playwright Chromium | Target approved; сценарии -- [UI API CONTRACT](contracts/UI_API_CONTRACT.md) |
@@ -224,10 +224,11 @@ python3 scripts/verify_docs.py --all
 |---|---|
 | `backend` | PostgreSQL 17 service; `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db -- --test-threads=1`, OpenAPI drift gate |
 | `frontend` | `pnpm install --frozen-lockfile`, `pnpm openapi:generate` + clean diff для `src/api/schema.d.ts`, `pnpm lint`, `pnpm test`, `pnpm build` |
+| `compose-smoke` | `docker compose config -q`, `docker compose up --build -d`, backend health/readiness, frontend nginx smoke, failure logs и cleanup |
 | `security` | SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm install --frozen-lockfile`, `pnpm audit --audit-level high`, `python3 scripts/scan_secrets.py`, `python3 scripts/generate_sbom.py --check` |
 | `docs` | `python3 -m py_compile scripts/verify_docs.py scripts/generate_sbom.py scripts/scan_secrets.py scripts/forge_backup.py`, backup helper self-test/dry-run, shell wrapper syntax, `python3 scripts/verify_docs.py --all` |
 
-В текущем workflow нет compose startup/health smoke, release build, OpenAPI backward compatibility diff, Playwright, axe, Lighthouse, `cargo-deny`, container scan, history/container secret scans или coverage ratchet. Не утверждайте, что branch protection, approval policy или checks из устаревших narrative-доков фактически включены, пока это не подтверждено настройками GitHub.
+В текущем workflow нет standalone backend release build, isolated owner/runtime migration matrix, prior-schema upgrade, OpenAPI backward compatibility diff, Playwright, axe, Lighthouse, `cargo-deny`, container scan, history/container secret scans или coverage ratchet. Не утверждайте, что branch protection, approval policy или checks из устаревших narrative-доков фактически включены, пока это не подтверждено настройками GitHub.
 
 ### Target approved
 
@@ -240,7 +241,7 @@ python3 scripts/verify_docs.py --all
 | Backend | workspace fmt/clippy/test/release build, domain/app/API contract tests |
 | CLI | help/config/output/exit-code contracts против real API |
 | Frontend | frozen lockfile, lint, Vitest, generated-client typecheck и production build |
-| Container smoke | `docker compose config`, build, healthy startup и API smoke |
+| Container smoke | current compose smoke плюс retained logs/artifacts, release image matrix, read-only API scenario и restore-drill binding |
 | E2E/accessibility/performance | Playwright critical journeys, axe without serious/critical violations, Lighthouse budgets и retained reports |
 | Security | current dependency audit/secret/SBOM drift gate с SQLx optional false-positive guard плюс target `cargo-deny`, container scan и deeper history secret scan по согласованной severity policy |
 
