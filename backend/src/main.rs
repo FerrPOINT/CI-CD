@@ -1,4 +1,4 @@
-use cicd::{api::app_with_git, git_host::GitConfig, outbox, runner};
+use cicd::{api::app_with_git, dispatch_signal, git_host::GitConfig, outbox, runner};
 
 /// Versioned SQLx migrations embedded from backend/migrations (ADR-0008).
 const MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
@@ -54,6 +54,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
         outbox::supervisor_loop(outbox_pool).await;
     });
+
+    let _runner_work_listener = dispatch_signal::spawn_runner_work_listener(pool.clone());
 
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!(%bind, "CI/CD API listening");

@@ -403,7 +403,7 @@ Foreign-key constraints:
 
 ## 5.1 job_queue
 
-Durable dispatch ledger для current queued attempts. Trigger/retry/manual start создают row на non-manual queued attempt и копируют `jobs.required_tags`; embedded supervisor выбирает только untagged row, external `work:poll` выбирает compatible row через `FOR UPDATE SKIP LOCKED` с правилом `job_queue.required_tags ⊆ runner.tags` и current `shell` executor compatibility по `runners.capabilities.executorKinds`, создаёт `job_leases` и переводит row в `leased`; terminal/cancel/expiry закрывают row в `completed` или `canceled`.
+Durable dispatch ledger для current queued attempts. Trigger/retry/manual start создают row на non-manual queued attempt и копируют `jobs.required_tags`; embedded supervisor выбирает только untagged row, external `work:poll` выбирает compatible row через `FOR UPDATE SKIP LOCKED` с правилом `job_queue.required_tags ⊆ runner.tags` и current `shell` executor compatibility по `runners.capabilities.executorKinds`, создаёт `job_leases` и переводит row в `leased`; terminal/cancel/expiry закрывают row в `completed` или `canceled`. Миграция `0022_runner_work_notifications.sql` добавляет PostgreSQL `pg_notify('runner_work_available', pipeline_id)` на queued `job_queue` rows и unblock-события `jobs.status/manual`, а серверный `PgListener` переводит это в process-local wakeup для long-poll runner-ов.
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -431,6 +431,8 @@ Durable dispatch ledger для current queued attempts. Trigger/retry/manual sta
 - `idx_job_queue_ready` — dispatch scan `(priority DESC, not_before, queued_at, id)` for `state='queued'`.
 - `idx_job_queue_required_tags_gin` — GIN index для tag containment matching.
 - `idx_job_queue_pipeline_state`, `idx_job_queue_stage_state` — cleanup/status lookups.
+
+**DB notifications:** channel `runner_work_available` является ускорителем, не источником истины. После любого wakeup runner всё равно повторяет durable claim через `job_queue` + `SKIP LOCKED`; потерянный `NOTIFY` приводит только к ожиданию следующего poll timeout, а не к потере работы.
 
 ## 5.2 job_leases
 

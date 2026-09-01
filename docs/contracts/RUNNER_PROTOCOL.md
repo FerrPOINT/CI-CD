@@ -1,6 +1,6 @@
 # Runner protocol
 
-**Статус:** Current verified MVP + Target approved. Реализованный subset на 2026-09-01 покрывает `register`, `heartbeat`, `work:poll` с optional long-poll `waitSeconds` и in-process wakeup, basic tag matching, current `shell` executor capability matching, `ack`, lease-scoped `control`/`secrets:resolve`, one-shot artifact upload, `renew`, `logs`, `complete`, cancel signal delivery через `job_leases.cancel_requested_at`, SHA-256 storage для runner credential/lease token, fencing по `job_leases.generation`, `workspace.checkoutUrl`, declared `attempt.secrets`/`attempt.artifacts` и отдельный `forge-runner` shell process. Остальные разделы описывают target-контракт production runner-а. Канонические путь и имена таблиц закреплены [ADR-0009](../adr/0009-canonical-registry.md).
+**Статус:** Current verified MVP + Target approved. Реализованный subset на 2026-09-01 покрывает `register`, `heartbeat`, `work:poll` с optional long-poll `waitSeconds` и wakeup через in-process signal + PostgreSQL `LISTEN/NOTIFY`, basic tag matching, current `shell` executor capability matching, `ack`, lease-scoped `control`/`secrets:resolve`, one-shot artifact upload, `renew`, `logs`, `complete`, cancel signal delivery через `job_leases.cancel_requested_at`, SHA-256 storage для runner credential/lease token, fencing по `job_leases.generation`, `workspace.checkoutUrl`, declared `attempt.secrets`/`attempt.artifacts` и отдельный `forge-runner` shell process. Остальные разделы описывают target-контракт production runner-а. Канонические путь и имена таблиц закреплены [ADR-0009](../adr/0009-canonical-registry.md).
 
 ## 1. Область и общие правила
 
@@ -75,7 +75,7 @@
 },"additionalProperties":false}
 ```
 
-Current MVP сначала делает immediate claim; если совместимой работы нет и `waitSeconds > 0`, сервер ждёт не дольше указанного бюджета и просыпается по in-process signal после committed enqueue или разблокировки следующей стадии. `204` означает, что за этот интервал совместимой работы не появилось. Optional `tags` в poll нормализуются; пустой список означает текущие stored runner tags, непустой список должен быть subset stored runner tags и может сузить выдачу. Текущий executor offer равен `shell`: runner получает работу, если `capabilities.executorKinds` отсутствует или явно содержит `shell`; runner с явным списком без `shell` считается несовместимым. Multi-replica PostgreSQL/LISTEN-based wakeup и broker-level fairness остаются target. При найденной работе ответ `200 LeaseOffer`:
+Current MVP сначала делает immediate claim; если совместимой работы нет и `waitSeconds > 0`, сервер ждёт не дольше указанного бюджета и просыпается по in-process signal после committed enqueue/разблокировки следующей стадии либо по PostgreSQL `LISTEN runner_work_available`, который создаётся DB-trigger-ами на queued `job_queue` rows и unblock-события `jobs.status/manual`. `204` означает, что за этот интервал совместимой работы не появилось. Optional `tags` в poll нормализуются; пустой список означает текущие stored runner tags, непустой список должен быть subset stored runner tags и может сузить выдачу. Текущий executor offer равен `shell`: runner получает работу, если `capabilities.executorKinds` отсутствует или явно содержит `shell`; runner с явным списком без `shell` считается несовместимым. `LISTEN/NOTIFY` является только wakeup-ускорителем; durable source of truth остаётся `job_queue` claim через `SKIP LOCKED`, а broker-level fairness остаётся target. При найденной работе ответ `200 LeaseOffer`:
 
 ```json
 {"protocolVersion":1,"leaseId":"uuid","leaseToken":"opaque","fencingToken":7,
@@ -177,7 +177,7 @@ Completion terminal и идемпотентен только для иденти
 |---|---:|---:|---|
 | registration token TTL | 1h | 5m..24h | атомарно расходуется при register |
 | heartbeat interval | 15s | 5s..60s | unhealthy после 45s, offline после 120s |
-| poll wait | 0s default / 30s max | 0s..30s | `0` immediate, `>0` bounded ожидание offer с in-process wakeup |
+| poll wait | 0s default / 30s max | 0s..30s | `0` immediate, `>0` bounded ожидание offer с in-process + PostgreSQL `LISTEN/NOTIFY` wakeup |
 | ack timeout | 30s | 10s..120s | offer без ack становится abandoned |
 | lease TTL | 120s | 30s..600s | продлевается только owner-ом |
 | renew interval | 40s | `< TTL / 2` | runner начинает renew до deadline |

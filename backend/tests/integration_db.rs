@@ -1566,6 +1566,163 @@ async fn external_runner_long_poll_wakes_when_work_is_enqueued() {
 }
 
 #[tokio::test]
+async fn external_runner_long_poll_wakes_from_postgres_notify() {
+    let pool = test_pool().await;
+    let notify_url = std::env::var("CICD_TEST_DATABASE_URL")
+        .expect("CICD_TEST_DATABASE_URL must point at the test-compose PostgreSQL");
+    let notify_pool = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&notify_url)
+        .await
+        .expect("connect notify writer pool");
+    let namespace = Uuid::new_v4();
+    let runner_id = Uuid::new_v4();
+    let credential = format!("credential-{}", namespace.simple());
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let stage_id = Uuid::new_v4();
+    let job_id = Uuid::new_v4();
+    let attempt_id = Uuid::new_v4();
+    let queue_id = Uuid::new_v4();
+
+    sqlx::query(
+        "INSERT INTO runners \
+         (id, name, tags, status, last_seen_at, credential_hash, credential_expires_at, capabilities, heartbeat_payload) \
+         VALUES ($1, $2, ARRAY['linux'], 'online', now(), $3, now() + interval '1 day', $4, '{}'::jsonb)",
+    )
+    .bind(runner_id)
+    .bind(format!("runner-pg-notify-{}", namespace.simple()))
+    .bind(cicd::auth::hash_token(&credential))
+    .bind(serde_json::json!({"executorKinds": ["shell"]}))
+    .execute(&pool)
+    .await
+    .expect("insert runner");
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(format!("it-runner-pg-notify-{}", namespace.simple()))
+        .bind("https://example.invalid/pg-notify.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status) VALUES ($1, $2, 'main', 'queued')",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert pipeline");
+    sqlx::query(
+        "INSERT INTO stages (id, pipeline_id, name, position, status) \
+         VALUES ($1, $2, 'build', 0, 'queued')",
+    )
+    .bind(stage_id)
+    .bind(pipeline_id)
+    .execute(&pool)
+    .await
+    .expect("insert stage");
+    sqlx::query(
+        "INSERT INTO jobs \
+         (id, stage_id, name, image, command, required_tags, required_secrets, artifact_paths, position, status, timeout_seconds, manual) \
+         VALUES ($1, $2, 'compile', 'alpine:3.21', 'echo ok', ARRAY['linux'], ARRAY[]::text[], ARRAY[]::text[], 0, 'queued', 30, true)",
+    )
+    .bind(job_id)
+    .bind(stage_id)
+    .execute(&pool)
+    .await
+    .expect("insert initially manual job");
+    sqlx::query(
+        "INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) \
+         VALUES ($1, $2, 1, 'queued', 'initial')",
+    )
+    .bind(attempt_id)
+    .bind(job_id)
+    .execute(&pool)
+    .await
+    .expect("insert attempt");
+
+    let listener = cicd::dispatch_signal::spawn_ready_runner_work_listener(pool.clone())
+        .await
+        .expect("runner work listener should subscribe before notifications");
+    let app = cicd::api::app_with_auth_secret(
+        Some(pool.clone()),
+        Some(format!("runner-pg-notify-secret-{namespace}")),
+    );
+    let poll_app = app.clone();
+    let poll_credential = credential.clone();
+    let mut poll = tokio::spawn(async move {
+        poll_app
+            .oneshot(
+                Request::post("/api/v1/runner/work:poll")
+                    .header("authorization", format!("Bearer {poll_credential}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "protocolVersion": 1,
+                            "capacity": {"freeSlots": 1},
+                            "waitSeconds": 5,
+                            "tags": ["linux"]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(
+        !poll.is_finished(),
+        "poll returned before cross-process notification"
+    );
+
+    let mut tx = notify_pool.begin().await.expect("start notify tx");
+    sqlx::query("UPDATE jobs SET manual = false WHERE id = $1")
+        .bind(job_id)
+        .execute(&mut *tx)
+        .await
+        .expect("release manual gate from notify writer");
+    sqlx::query(
+        "INSERT INTO job_queue (id, job_id, attempt_id, pipeline_id, stage_id, state, priority, required_tags) \
+         VALUES ($1, $2, $3, $4, $5, 'queued', 0, ARRAY['linux'])",
+    )
+    .bind(queue_id)
+    .bind(job_id)
+    .bind(attempt_id)
+    .bind(pipeline_id)
+    .bind(stage_id)
+    .execute(&mut *tx)
+    .await
+    .expect("insert queue row from notify writer");
+    tx.commit().await.expect("commit notify tx");
+
+    let response = tokio::time::timeout(std::time::Duration::from_secs(2), &mut poll)
+        .await
+        .expect("long poll should wake from postgres notify")
+        .expect("poll task should complete");
+    assert_eq!(response.status(), StatusCode::OK);
+    let offer = response_json(response).await;
+    assert_eq!(offer["attempt"]["id"], attempt_id.to_string());
+    assert_eq!(offer["attempt"]["jobId"], job_id.to_string());
+
+    listener.abort();
+    let _ = listener.await;
+    notify_pool.close().await;
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup pg notify project");
+    sqlx::query("DELETE FROM runners WHERE id = $1")
+        .bind(runner_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup pg notify runner");
+}
+
+#[tokio::test]
 async fn git_smart_http_uses_project_membership_when_auth_enabled() {
     let pool = test_pool().await;
     let namespace = Uuid::new_v4();
