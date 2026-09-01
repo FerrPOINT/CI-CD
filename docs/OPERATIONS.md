@@ -8,7 +8,7 @@
 - **Configuration only:** email/Slack notification adapters и inbound provider webhooks можно описать как target/config, но sender/handlers не исполняют внешнюю доставку.
 - **Target approved:** TLS-termination, tenant isolation/scoped policy, отдельные runner-ы с leases, production scheduler/outbox guarantees, alerting, off-site/PITR backup platform и production DR.
 
-> **Критическое ограничение MVP: только локальная или доверенная сеть.** Если `CICD_AUTH_SECRET` не задан или пустой, API и Dashboard работают open/trusted-network; при непустом секрете включаются JWT/scoped PAT, session-bound access invalidation, refresh rotate/logout/revoke, route roles и project memberships для project-owned ресурсов, но tenant isolation, service-account tokens, scoped Git credentials и production cookie/CSRF/session-family policy ещё не завершены. CORS permissive, TLS отсутствует. PostgreSQL в `docker-compose.yml` привязан к `127.0.0.1`, но API/Dashboard host ports нельзя публиковать в недоверенную сеть и нельзя считать этот Compose production-развёртыванием.
+> **Критическое ограничение MVP: только локальная или доверенная сеть.** Если `CICD_AUTH_SECRET` не задан или пустой, API и Dashboard работают open/trusted-network; при непустом секрете включаются JWT/scoped PAT, session-bound access invalidation, refresh rotate/logout/revoke, route roles и project memberships для project-owned ресурсов, но tenant isolation, service-account tokens, scoped Git credentials и production cookie/CSRF/session-family policy ещё не завершены. CORS по умолчанию permissive только для isolated dev; shared deployment обязан задать `CICD_CORS_ALLOWED_ORIGINS`. TLS отсутствует. PostgreSQL в `docker-compose.yml` привязан к `127.0.0.1`, но API/Dashboard host ports нельзя публиковать в недоверенную сеть и нельзя считать этот Compose production-развёртыванием.
 
 Доступ к Docker daemon, хостовой файловой системе, `.env`, bare Git-томам и backup-файлам считается привилегированным. Не передавайте реальные секреты через командную строку, Git, логи или скриншоты.
 
@@ -85,7 +85,7 @@ docker compose down -v
 
 Production-развёртывание не должно быть вариантом текущего файла Compose с открытыми портами. До его допуска требуются все следующие свойства:
 
-- enforced auth/RBAC, безопасные сессии или API-токены, audit и ограниченный CORS;
+- enforced auth/RBAC, безопасные сессии или API-токены, audit и `CICD_CORS_ALLOWED_ORIGINS`;
 - TLS на reverse proxy, ограничение ingress по сети; PostgreSQL не имеет опубликованного host port и доступен только runtime/maintenance-сетям;
 - отдельные `forge_owner` и `forge_runtime` credentials; owner используется только мигратором и backup/restore, runtime не имеет DDL-разрешений;
 - образы привязаны к immutable version tag и digest, конфигурация и секреты приходят из secret manager, а не из `.env` в рабочем каталоге;

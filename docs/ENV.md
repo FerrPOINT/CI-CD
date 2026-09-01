@@ -11,6 +11,7 @@
 | `CICD_GIT_ROOT` | `./.forge/git` вне compose | Корень bare-репозиториев при локальном запуске |
 | `CICD_GIT_TOKEN` | — | Legacy shared token для Git Smart HTTP; пусто отключает только этот token, а при непустом `CICD_AUTH_SECRET` private/read-write Git routes всё равно требуют JWT/PAT + project membership |
 | `CICD_GIT_INTERNAL_TOKEN` | — | `X-Internal-Token` для post-receive hook; пусто допустимо только для изолированного local development |
+| `CICD_CORS_ALLOWED_ORIGINS` | — | Comma-separated allowlist browser origins для API/Git Dashboard CORS; пусто сохраняет permissive trusted-local режим, explicit `*` запрещён |
 | `CICD_SECRETS_KEY` | — | Base64 32-byte ключ AES-256-GCM (обязателен для secrets) |
 | `CICD_ARTIFACTS_DIR` | `/var/lib/forge/artifacts` | Локальное хранилище артефактов |
 | `CICD_EMBEDDED_RUNNER_ENABLED` | `true` | Включает embedded runner внутри backend; поставьте `false`, когда работу должен забирать внешний `forge-runner` |

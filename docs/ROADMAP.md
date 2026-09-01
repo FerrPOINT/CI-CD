@@ -75,7 +75,7 @@ Deliverables:
 - Current MVP: scoped PAT с обязательным `project_id`, scopes `api:read|api:write|git:read|git:write`, expiry/revoke/last-used и без глобального доступа по умолчанию;
 - Target follow-up: refresh-cookie, CSRF и token-version/session-family reuse policy;
 - Target follow-up: service-account tokens, scoped Git credentials, tenant-bound repository mapping и delivery routes с repository/project binding;
-- CORS/CSRF policy для production deployment.
+- Current MVP: configurable `CICD_CORS_ALLOWED_ORIGINS` allowlist; target follow-up: обязательный non-empty production default, CSRF/cookie policy и TLS/reverse-proxy binding.
 
 Gate:
 

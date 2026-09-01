@@ -406,6 +406,7 @@
       "databaseUrl": "Строка подключения PostgreSQL",
       "bind": "Адрес API/Git, по умолчанию 0.0.0.0:22801",
       "authSecret": "Включает JWT/PAT auth; без него trusted-network режим",
+      "corsAllowedOrigins": "Разрешённые origin браузера для общего Dashboard/API",
       "secretsKey": "Base64 AES-ключ для секретов проектов",
       "gitRoot": "Путь к bare-репозиториям",
       "gitToken": "Опциональный токен Git Smart HTTP",

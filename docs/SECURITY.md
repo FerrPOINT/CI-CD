@@ -17,7 +17,7 @@ Forge CI/CD — self-hosted CI/CD control plane. Текущая версия о�
 | Artifacts storage | ✅ MVP | Локальная ФС, 50 MiB лимит |
 | SQL injection prevention | ✅ реализовано | parameterized queries через SQLx |
 | Input validation | ✅ частично | проверка `trim().is_empty()` на входе |
-| CORS | ⚠️ permissive | `CorsLayer::permissive()` — ограничить в production |
+| CORS | ✅ configurable MVP | Пустой `CICD_CORS_ALLOWED_ORIGINS` сохраняет permissive dev-режим; непустой список включает allowlist origins, credentials и запрещает explicit `*` |
 | Rate limiting | ✅ MVP | in-process fixed-window для auth, API, Git Smart HTTP, internal hook и artifact upload; distributed/proxy policy — target |
 | HTTPS/TLS | ❌ нет | через reverse proxy (nginx/Caddy) |
 
@@ -185,12 +185,12 @@ if let Some(status) = status_filter {
 
 ```rust
 // api.rs
-.layer(CorsLayer::permissive())
+cors_layer_from_allowed_origins(std::env::var("CICD_CORS_ALLOWED_ORIGINS").ok().as_deref())
 ```
 
-Permissive CORS — для разработки. **Ограничить в production.**
+Пустой `CICD_CORS_ALLOWED_ORIGINS` оставляет permissive CORS для isolated local development. Непустой comma-separated список включает allowlist origins, явные методы/заголовки и `Access-Control-Allow-Credentials: true`; explicit `*` отклоняется при старте.
 
-### 9.2 Планируемое (production)
+### 9.2 Production policy
 
 ```rust
 let cors = CorsLayer::new()
@@ -200,7 +200,7 @@ let cors = CorsLayer::new()
     .allow_credentials(true);
 ```
 
-Конфигурация через `CICD_CORS_ALLOWED_ORIGINS` env var. No wildcard (`*`) в production.
+Конфигурация через `CICD_CORS_ALLOWED_ORIGINS` env var. Для shared/production deployment задайте точный origin Dashboard/reverse proxy; wildcard (`*`) не допускается. CSRF/cookie policy остаётся target.
 
 ## 10. Rate Limiting
 

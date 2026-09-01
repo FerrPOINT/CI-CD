@@ -10,7 +10,8 @@
 │      │ /api proxy                                                       │
 │  backend (cicd-server, axum) :22801                                     │
 │      ├── public REST /api/v1/* (conditional auth; open trusted-network  │
-│      │   mode when CICD_AUTH_SECRET is unset/empty; CORS permissive)     │
+│      │   mode when CICD_AUTH_SECRET is unset/empty; CORS allowlist when  │
+│      │   CICD_CORS_ALLOWED_ORIGINS is set, otherwise dev-permissive)     │
 │      ├── Git Smart HTTP /git/<name>.git (public read or auth/project RBAC)│
 │      ├── internal POST /api/v1/internal/git-push (X-Internal-Token)     │
 │      └── embedded runner: Docker API / host shell                       │

@@ -123,6 +123,7 @@ Composition root: чтение конфига, создание `PgPool`, реп
 | `CICD_GIT_ROOT` | путь к bare-репозиториям |
 | `CICD_GIT_TOKEN` | legacy shared token Git Smart HTTP |
 | `CICD_GIT_INTERNAL_TOKEN` | токен post-receive → pipeline hook |
+| `CICD_CORS_ALLOWED_ORIGINS` | comma-separated allowlist browser origins для shared Dashboard/API; пусто = permissive isolated dev |
 | `CICD_SECRETS_KEY` | base64 32-byte ключ AES-256-GCM |
 | `CICD_ARTIFACTS_DIR` | локальное хранилище артефактов |
 | `CICD_EMBEDDED_RUNNER_ENABLED` | `true` по умолчанию; `false` отключает embedded execution в backend |

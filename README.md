@@ -55,6 +55,7 @@
 | Secrets encrypted at rest with runner injection and stdout masking | Current verified |
 | Environments, deployments, reports and audit trail | Current verified |
 | Auth/RBAC with `CICD_AUTH_SECRET` | Current verified |
+| Configurable CORS allowlist | Current verified MVP |
 | Liveness, DB-aware readiness and Prometheus metrics | Current verified |
 | Schedules, outgoing webhooks, in-app/SSE notifications | MVP |
 | External adapters, tenant isolation, distributed runners | Target approved |
@@ -146,7 +147,7 @@ flowchart TD
 - If `CICD_AUTH_SECRET` is missing or empty, API and Dashboard run in trusted-network mode without auth enforcement.
 - With `CICD_AUTH_SECRET`, login/JWT/scoped PAT, session-bound access JWT, refresh rotate/logout/revoke, global roles, project membership RBAC and Git Smart HTTP read/write checks are enforced for linked projects.
 - Tenant isolation, service-account tokens, scoped Git credentials and production cookie/CSRF/session-family policy remain target hardening.
-- TLS is not bundled, CORS is permissive by default, and in-process rate limiting is not a replacement for a reverse proxy or distributed limiter.
+- TLS is not bundled; CORS is permissive only when `CICD_CORS_ALLOWED_ORIGINS` is empty for isolated development, and shared deployments must set an explicit allowlist. In-process rate limiting is not a replacement for a reverse proxy or distributed limiter.
 - Embedded runner records job ownership in `job_leases`, injects only declared secrets, collects declared artifact files, and reconciles expired leases. The external runner protocol MVP exposes register/heartbeat/poll/ack/renew/`secrets:resolve`/artifact upload/logs/complete with bearer runner credentials and lease tokens; `forge-runner` can run as a separate shell runner process, append stdout/stderr to attempt-owned logs, resolve declared secrets, and upload declared artifacts. Richer log chunks, resumable artifact sessions, Docker/Kubernetes isolation and sandbox hardening remain target work.
 - Pipeline trigger stores immutable `pipeline_plans` snapshots for current `legacy-linear` and v1 `jobs.needs` DAG plans; policy diagnostics/job-level dispatch remain target hardening.
 - Schedules, outgoing webhooks and `in_app`/`sse` notifications work as MVP local delivery.

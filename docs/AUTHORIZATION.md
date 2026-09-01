@@ -42,7 +42,7 @@ Forge CI/CD является multi-tenant control plane: один экземпл
 | Runners | Registry + heartbeat; embedded supervisor выполняет jobs | Runner не обладает отдельной криптографической идентичностью; registry не является границей доступа |
 | Git | Public read для public repo; private read/write через legacy `CICD_GIT_TOKEN` либо JWT/PAT + project membership + `git:*` PAT scopes при `CICD_AUTH_SECRET`; hook token | Нет tenant-bound repository model, отдельного scoped Git credential class, signed push events и deny audit для Git |
 | Audit | `audit_log` с action/resource/actor text, login/denied и многие mutation events | Actor не является нормализованным principal, нет tenant/project scope и фильтров/export |
-| CORS и transport | permissive CORS, HTTP в dev | Для production необходим TLS и allowlist origins |
+| CORS и transport | `CICD_CORS_ALLOWED_ORIGINS` включает allowlist origins; пустое значение оставляет permissive CORS только для isolated dev; HTTP в dev | Для production необходим TLS, CSRF/cookie policy и непустой allowlist |
 
 До внедрения целевой модели open/trusted-network режим допустим только в изолированной локальной сети разработки. Публичный или shared deployment без непустого `CICD_AUTH_SECRET`, reverse proxy/network boundary и непустых Git/internal tokens запрещён.
 
@@ -426,7 +426,7 @@ PostgreSQL Row-Level Security можно добавить как defense-in-dept
 ```text
 TLS reverse proxy
   -> request-id / tracing / body-size limit
-  -> production CORS allowlist
+  -> configured CORS allowlist
   -> CSRF protection for cookie-authenticated unsafe methods
   -> rate limit
   -> authentication
@@ -444,7 +444,7 @@ TLS reverse proxy
 - unsafe browser requests требуют CSRF token или origin validation;
 - access JWT содержит только subject ID, token version, session ID, issued/expiry и минимальные claims; membership/role не кэшируются в долгоживущем JWT;
 - проверка `enabled`, session revocation, token revocation и membership выполняется server-side;
-- CORS origin allowlist задаётся `CICD_CORS_ALLOWED_ORIGINS`; wildcard запрещён в production;
+- CORS origin allowlist задаётся `CICD_CORS_ALLOWED_ORIGINS`; wildcard запрещён, пустое значение допустимо только для isolated dev;
 - request body limits отдельно на login, JSON, logs и artifact upload.
 
 ## API boundaries
@@ -616,7 +616,7 @@ Masking является дополнительной защитой, а не г
 9. Перевести secrets на application use-case и target encryption model до runner secret injection.
 10. Включить API token middleware, ограниченный compatibility window для legacy tokens и метрики их использования.
 11. Использовать `forge-runner`/external runner boundary вместо embedded execution; production server больше не запускает arbitrary job execution.
-12. Удалить permissive CORS, global Git token fallback и legacy unauthenticated routes.
+12. Требовать непустой CORS allowlist для shared/prod, удалить global Git token fallback и legacy unauthenticated routes.
 
 Миграция не должна автоматически делать всех существующих `maintainer` instance-admin. Bootstrap access выдаётся минимальному явно указанному owner из deployment configuration и требует первого login/password reset.
 
@@ -734,7 +734,7 @@ Route inventory test обязан сверять все `/api/v1/**` routes с d
 
 ### Phase B — Human authentication и tenancy
 
-- Argon2id, access/refresh session rotation, login rate limiting, CORS/CSRF policy.
+- Argon2id, access/refresh session rotation, login rate limiting, configurable CORS allowlist и target CSRF policy.
 - Tenant/project memberships и application `AuthorizationService`.
 - Project, pipeline, job, artifact и repository routes переводятся на deny-by-default.
 - Dashboard protected routes и tenant context.
@@ -778,4 +778,4 @@ Route inventory test обязан сверять все `/api/v1/**` routes с d
 - sensitive mutation имеет transactionally persisted audit event;
 - cross-tenant, expired credential, revoked credential и runner lease abuse покрыты автоматическими negative tests;
 - документация `API.md`, `DATA_MODEL.md`, `SECURITY.md`, `contracts/DATA_LIFECYCLE.md`, `GIT_HOSTING.md`, `DEVELOPMENT_GUIDE.md`, `ARCHITECTURE.md` и runbooks синхронизирована с реализацией;
-- production deployment использует TLS, non-permissive CORS, configured secrets/key provider и не экспонирует PostgreSQL или unauthenticated control-plane API.
+- production deployment использует TLS, непустой `CICD_CORS_ALLOWED_ORIGINS`, configured secrets/key provider и не экспонирует PostgreSQL или unauthenticated control-plane API.

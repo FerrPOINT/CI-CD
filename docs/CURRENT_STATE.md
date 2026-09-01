@@ -30,7 +30,7 @@
 | Login UI | ✅ | `/login` вызывает auth API; redirect guard включается только при `401` |
 | Project membership RBAC | ✅ MVP | `project_memberships`, фильтрация списка проектов, deny-before-load для project-owned API и name-based repo API; `admin` bypass, tenant isolation/SAT ещё target |
 | Git auth/RBAC | ✅ conditional MVP | public repo read открыт; private read и receive-pack требуют legacy `CICD_GIT_TOKEN` либо JWT/PAT + `project_memberships` + `git:*` PAT scope при `CICD_AUTH_SECRET`; без секрета и Git token остаётся trusted local mode |
-| Auth/RBAC | ✅ conditional | если `CICD_AUTH_SECRET` задан непустым: argon2id+JWT+PAT, session-bound access invalidation, refresh rotate/logout/revoke, route role-политики, project memberships, Git Smart HTTP project checks, аудит login/logout/denied; без секрета trusted-network mode |
+| Auth/RBAC | ✅ conditional | если `CICD_AUTH_SECRET` задан непустым: argon2id+JWT+PAT, session-bound access invalidation, refresh rotate/logout/revoke, route role-политики, project memberships, Git Smart HTTP project checks, configurable CORS allowlist, аудит login/logout/denied; без секрета trusted-network mode |
 | Secret injection | ✅ MVP | embedded runner передаёт в env только `jobs.required_secrets`; external runner получает declared secrets через lease-scoped `secrets:resolve` после ack; stdout/stderr masking best-effort |
 | Error envelope + request_id | ✅ | {error:{code,message,request_id}} + x-request-id |
 | Pagination | ✅ | limit/offset (cap 200) на проектах/пайплайнах |
@@ -70,10 +70,10 @@ backend/
 
 ## Известные dev-only риски
 
-- Без непустого `CICD_AUTH_SECRET` API и Dashboard полностью открыты в trusted-network режиме; CORS permissive.
+- Без непустого `CICD_AUTH_SECRET` API и Dashboard полностью открыты в trusted-network режиме. Пустой `CICD_CORS_ALLOWED_ORIGINS` оставляет permissive CORS для isolated development; shared deployment обязан задать allowlist origins.
 - PostgreSQL в compose опубликован только на `127.0.0.1`, но API/Dashboard host ports нельзя открывать в недоверенную сеть.
 - `CICD_GIT_INTERNAL_TOKEN` пустой по умолчанию только для isolated local development; shared-деплой обязан задать уникальный токен, а legacy `forge-internal-dev-token` отклоняется при старте.
-- Auth/RBAC пока без tenant isolation, service-account tokens, scoped Git credentials и production-grade cookie/CSRF/session-family policy; session-bound access invalidation, refresh rotate/logout/revoke, project membership, scoped PAT и Git read/write checks реализованы как MVP-слой поверх глобальных ролей.
+- Auth/RBAC пока без tenant isolation, service-account tokens, scoped Git credentials и production-grade cookie/CSRF/session-family policy; session-bound access invalidation, refresh rotate/logout/revoke, project membership, scoped PAT, configurable CORS allowlist и Git read/write checks реализованы как MVP-слой поверх глобальных ролей.
 - Execution attempts / job queue / job leases — MVP-слой: old `/jobs/{id}/logs` читает текущую или последнюю attempt, bounded `/jobs/{id}/logs/page` поддерживает `limit/after/q`, полный аудит попыток доступен через `/jobs/{id}/attempts`, `job_queue` переживает restart и является источником claim для embedded/external runners, embedded берёт только untagged rows, внешний runner protocol уже проверяет runner credential, lease token, fencing generation, tag compatibility и current `shell` executor compatibility по `capabilities.executorKinds`, принимает stdout/stderr log append, выдаёт только declared secrets после ack, принимает declared artifact upload и доставляет cancel signal через lease `control`. `forge-runner` даёт отдельный shell process со scoped secret env + masking + artifact upload + cancel polling, но production sandbox, richer log chunks, protected tags/pools/advanced capabilities и lost-heartbeat policy ещё target.
 - Scheduler/outbox — MVP: есть строгий 5-польный UTC cron и уникальные fire slots, но нет IANA timezone/DST/misfire, lease/fencing/crash-safe dispatcher-а, full dead-letter operator policy/metrics и внешних notification adapters; bounded delivery history/requeue и `in_app`/`sse` local outbox projection уже работают.
 

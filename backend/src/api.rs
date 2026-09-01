@@ -5,14 +5,17 @@ use std::time::Duration;
 use axum::{
     Json, Router,
     extract::{Path, State},
-    http::{HeaderMap, HeaderValue, Method, StatusCode},
+    http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri, header},
     response::IntoResponse,
     routing::{get, post},
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
-use tower_http::{cors::CorsLayer, trace::TraceLayer};
+use tower_http::{
+    cors::{AllowOrigin, CorsLayer},
+    trace::TraceLayer,
+};
 use uuid::Uuid;
 
 use crate::{
@@ -369,12 +372,12 @@ pub fn app_with_git(
     git: crate::git_host::GitConfig,
     running: Option<crate::runner::RunningJobs>,
 ) -> Router {
-    build_router(pool, git, running)
+    build_router_from_env(pool, git, running)
 }
 
 #[allow(dead_code)]
 fn app_with(pool: Option<PgPool>, running: Option<crate::runner::RunningJobs>) -> Router {
-    build_router(pool, crate::git_host::GitConfig::default(), running)
+    build_router_from_env(pool, crate::git_host::GitConfig::default(), running)
 }
 
 /// AUTHZ_CONTRACT current mode: when CICD_AUTH_SECRET is configured, every
@@ -970,7 +973,7 @@ pub(crate) async fn identity_for_bearer_token(
     }
 }
 
-fn build_router(
+fn build_router_from_env(
     pool: Option<PgPool>,
     git: crate::git_host::GitConfig,
     running: Option<crate::runner::RunningJobs>,
@@ -1002,6 +1005,19 @@ fn build_router_with_auth_secret(
     git: crate::git_host::GitConfig,
     running: Option<crate::runner::RunningJobs>,
     auth_secret: Option<String>,
+) -> Router {
+    let cors_allowed_origins = std::env::var("CICD_CORS_ALLOWED_ORIGINS").ok();
+    let cors = cors_layer_from_allowed_origins(cors_allowed_origins.as_deref())
+        .expect("invalid CICD_CORS_ALLOWED_ORIGINS");
+    build_router_with_cors(pool, git, running, auth_secret, cors)
+}
+
+fn build_router_with_cors(
+    pool: Option<PgPool>,
+    git: crate::git_host::GitConfig,
+    running: Option<crate::runner::RunningJobs>,
+    auth_secret: Option<String>,
+    cors: CorsLayer,
 ) -> Router {
     let state = Arc::new(AppState {
         pool: pool.clone(),
@@ -1121,9 +1137,81 @@ fn build_router_with_auth_secret(
             rate_limit_mw,
         ))
         .layer(axum::middleware::from_fn(request_id_mw))
-        .layer(CorsLayer::permissive())
+        .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(state)
+}
+
+fn cors_layer_from_allowed_origins(raw: Option<&str>) -> Result<CorsLayer, String> {
+    let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(CorsLayer::permissive());
+    };
+
+    let mut origins = Vec::new();
+    for value in raw
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if value == "*" {
+            return Err(
+                "wildcard is not allowed; leave CICD_CORS_ALLOWED_ORIGINS empty only for isolated development"
+                    .to_string(),
+            );
+        }
+        let uri = value
+            .parse::<Uri>()
+            .map_err(|_| format!("origin must be a valid URI: {value}"))?;
+        if !matches!(uri.scheme_str(), Some("http" | "https")) {
+            return Err(format!(
+                "origin must start with http:// or https://: {value}"
+            ));
+        }
+        let authority = uri
+            .authority()
+            .ok_or_else(|| format!("origin must include a host: {value}"))?;
+        let rest = value
+            .strip_prefix("https://")
+            .or_else(|| value.strip_prefix("http://"))
+            .ok_or_else(|| format!("origin must start with http:// or https://: {value}"))?;
+        if rest != authority.as_str() || authority.as_str().contains('@') {
+            return Err(format!(
+                "origin must include only scheme, host and optional port: {value}"
+            ));
+        }
+        origins.push(
+            value
+                .parse::<HeaderValue>()
+                .map_err(|_| format!("origin is not a valid header value: {value}"))?,
+        );
+    }
+    if origins.is_empty() {
+        return Err("CICD_CORS_ALLOWED_ORIGINS did not contain any origins".to_string());
+    }
+
+    Ok(CorsLayer::new()
+        .allow_origin(AllowOrigin::list(origins))
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([
+            header::ACCEPT,
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            HeaderName::from_static(IDEMPOTENCY_KEY_HEADER),
+            HeaderName::from_static("x-internal-token"),
+            HeaderName::from_static("x-runner-protocol-version"),
+            HeaderName::from_static("x-lease-token"),
+            HeaderName::from_static("x-fencing-token"),
+            HeaderName::from_static("x-attempt-id"),
+            HeaderName::from_static("x-artifact-path"),
+            HeaderName::from_static("x-artifact-name"),
+        ])
+        .allow_credentials(true))
 }
 
 #[utoipa::path(post, path="/api/v1/auth/login", tag="auth", request_body=crate::auth::LoginRequest, responses((status=200, body=crate::auth::TokenPair), (status=401)))]
@@ -3569,6 +3657,92 @@ mod tests {
         assert_eq!(rate_limit_client(&headers), "203.0.113.9");
     }
 
+    #[test]
+    fn cors_allowlist_rejects_wildcard_and_invalid_origins() {
+        assert!(cors_layer_from_allowed_origins(None).is_ok());
+        assert!(cors_layer_from_allowed_origins(Some(" ")).is_ok());
+        assert!(cors_layer_from_allowed_origins(Some("*")).is_err());
+        assert!(cors_layer_from_allowed_origins(Some("cicd.example.com")).is_err());
+        assert!(cors_layer_from_allowed_origins(Some("https://cicd.example.com/app")).is_err());
+        assert!(
+            cors_layer_from_allowed_origins(Some(
+                "https://cicd.example.com, http://localhost:22802",
+            ))
+            .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn cors_allowlist_marks_only_configured_origins() {
+        let app = build_router_with_cors(
+            None,
+            crate::git_host::GitConfig::default(),
+            None,
+            None,
+            cors_layer_from_allowed_origins(Some("https://cicd.example.com")).unwrap(),
+        );
+
+        let response = app
+            .clone()
+            .oneshot(cors_preflight("https://cicd.example.com"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .unwrap(),
+            "https://cicd.example.com"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_CREDENTIALS)
+                .unwrap(),
+            "true"
+        );
+
+        let response = app
+            .oneshot(cors_preflight("https://evil.example.com"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn cors_allowlist_preflight_bypasses_auth_on_protected_routes() {
+        let app = build_router_with_cors(
+            None,
+            crate::git_host::GitConfig::default(),
+            None,
+            Some("test-auth-secret".to_string()),
+            cors_layer_from_allowed_origins(Some("https://cicd.example.com")).unwrap(),
+        );
+
+        let response = app
+            .oneshot(cors_preflight_for(
+                "/api/v1/projects",
+                "https://cicd.example.com",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                .unwrap(),
+            "https://cicd.example.com"
+        );
+    }
+
     #[tokio::test]
     async fn login_rate_limit_returns_429_per_forwarded_client() {
         let app = app(None);
@@ -3597,6 +3771,18 @@ mod tests {
             .header("content-type", "application/json")
             .header("x-forwarded-for", client)
             .body(Body::from(r#"{"username":"nobody","password":"bad"}"#))
+            .unwrap()
+    }
+
+    fn cors_preflight(origin: &'static str) -> axum::http::Request<Body> {
+        cors_preflight_for("/api/v1/health", origin)
+    }
+
+    fn cors_preflight_for(path: &'static str, origin: &'static str) -> axum::http::Request<Body> {
+        axum::http::Request::options(path)
+            .header(header::ORIGIN, origin)
+            .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+            .body(Body::empty())
             .unwrap()
     }
 

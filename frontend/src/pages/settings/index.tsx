@@ -9,6 +9,7 @@ export function SettingsPage() {
     { key: 'CICD_DATABASE_URL', descKey: 'settings.env.databaseUrl' },
     { key: 'CICD_BIND', descKey: 'settings.env.bind' },
     { key: 'CICD_AUTH_SECRET', descKey: 'settings.env.authSecret' },
+    { key: 'CICD_CORS_ALLOWED_ORIGINS', descKey: 'settings.env.corsAllowedOrigins' },
     { key: 'CICD_SECRETS_KEY', descKey: 'settings.env.secretsKey' },
     { key: 'CICD_GIT_ROOT', descKey: 'settings.env.gitRoot' },
     { key: 'CICD_GIT_TOKEN', descKey: 'settings.env.gitToken' },

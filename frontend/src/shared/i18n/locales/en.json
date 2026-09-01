@@ -406,6 +406,7 @@
       "databaseUrl": "PostgreSQL connection string",
       "bind": "API/Git bind address, default 0.0.0.0:22801",
       "authSecret": "Enables JWT/PAT auth; trusted-network mode when absent",
+      "corsAllowedOrigins": "Browser origin allowlist for shared Dashboard/API",
       "secretsKey": "Base64 AES key for project secrets",
       "gitRoot": "Bare repository storage path",
       "gitToken": "Optional Git Smart HTTP token",
