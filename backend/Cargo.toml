@@ -72,7 +72,7 @@ chrono.workspace = true
 cicd-domain = { path = "domain" }
 clap.workspace = true
 flate2 = "1"
-git2 = { version = "0.21", default-features = false }
+git2 = { version = "0.20", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml = { package = "yaml_serde", version = "0.10" }

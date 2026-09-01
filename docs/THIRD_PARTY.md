@@ -48,7 +48,8 @@
 5. Lock-файлы коммитятся вместе с manifest; ручное редактирование lockfile запрещено.
 6. Current CI gate: SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high` и `scripts/generate_sbom.py --check`.
 7. `RUSTSEC-2023-0071` разрешён только как Cargo.lock false-positive: `sqlx-mysql`/`rsa` присутствуют в lockfile/SBOM как optional SQLx packages, но не должны появляться в активном `cargo tree` build graph.
-8. Перед релизом target: dependency update report, `cargo-deny`/license/source policy, secret/container scan и разбор accepted findings.
+8. `RUSTSEC-2026-0183`/`RUSTSEC-2026-0184` по `git2 0.20.4` являются allowed warnings до совместимого исправления; `git2 0.21.0` не проходит Rust 1.86 compile gate.
+9. Перед релизом target: dependency update report, `cargo-deny`/license/source policy, secret/container scan и разбор accepted findings.
 
 ## 4. SBOM policy
 
