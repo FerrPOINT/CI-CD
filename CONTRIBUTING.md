@@ -46,9 +46,10 @@ perf: кэшировать список пайплайнов
 Перед отправкой PR убедитесь:
 
 - [ ] Изменение capability/контракта: обновлены `TRACEABILITY.md` (REQ-ID) и, при новой границе доверия, `THREAT_MODEL.md`.
-- [ ] Тесты пройдены: backend `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --workspace`; frontend `pnpm test`, `pnpm build`.
+- [ ] Backend gate пройден: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, integration DB tests и `cargo build --release --workspace`.
+- [ ] Frontend gate пройден: `pnpm openapi:check`, `pnpm lint`, `pnpm test`, `pnpm build`; при изменении evidence tooling — `node --check scripts/seed-evidence.mjs scripts/shoot-evidence.mjs`.
 - [ ] Документация обновлена: `docs/API.md` при изменении API, `docs/DATA_MODEL.md` при изменении схемы БД, новый ADR в `docs/adr/` для архитектурных решений.
-- [ ] Скриншоты приложены для UI-изменений (full-page: 375 / 1920 / 2560, в `docs/screenshots/`).
+- [ ] Скриншоты приложены для UI-изменений (full-page: 375 / 1920 / 2560, индекс в `docs/assets/screens/manifest.md`).
 - [ ] В diff **нет** `.env`, токенов, паролей и других секретов — только `.env.example`.
 - [ ] Новые endpoint проверены curl-ом; `docker compose config -q` проходит.
 - [ ] `CHANGELOG.md` дополнен в `[Unreleased]`, если изменение пользовательское.
