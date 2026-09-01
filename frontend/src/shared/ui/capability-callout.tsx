@@ -32,7 +32,7 @@ export function CapabilityCallout({
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-sm font-semibold text-text-primary">{title}</h2>
-            <span className="rounded-full bg-current/10 px-2 py-0.5 text-xs font-medium">
+            <span className="rounded-full border border-border bg-surface-raised px-2 py-0.5 text-xs font-medium text-text-primary">
               {label}
             </span>
           </div>
