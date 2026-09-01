@@ -1,4 +1,4 @@
-import { lazy, Suspense } from 'react'
+import { lazy, Suspense, type ReactElement } from 'react'
 import { createBrowserRouter, Navigate } from 'react-router'
 import { AppShell } from '@/widgets/app-shell'
 
@@ -28,9 +28,9 @@ function PageLoader() {
   return <div className="flex items-center justify-center py-16 text-sm text-text-muted">Loading…</div>
 }
 
-const withSuspense = (el: React.ReactElement) => <Suspense fallback={<PageLoader />}>{el}</Suspense>
+const withSuspense = (el: ReactElement) => <Suspense fallback={<PageLoader />}>{el}</Suspense>
 
-export const router = createBrowserRouter([
+export const appRoutes = [
   {
     element: <AppShell />,
     children: [
@@ -58,4 +58,6 @@ export const router = createBrowserRouter([
   },
   { path: '/login', element: withSuspense(<LoginPage />) },
   { path: '*', element: <Navigate to="/" replace /> },
-])
+]
+
+export const router = createBrowserRouter(appRoutes)

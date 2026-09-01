@@ -93,4 +93,4 @@ python3 scripts/verify_docs.py --canonical --links --current-state
 
 ## Frontend: 21 маршрут / 20 рабочих страниц + /login
 
-Полный список базовых страниц — `docs/architecture/frontend-boundaries.md`; визуальный реестр — `docs/assets/screens/manifest.md`.
+Полный список базовых страниц — `docs/architecture/frontend-boundaries.md`; визуальный реестр — `docs/assets/screens/manifest.md`. Исполняемый route smoke — `frontend/src/app/router.test.tsx`: production `appRoutes` поднимаются в memory router, а 20 рабочих Dashboard-страниц + `/login` проверяются на первый рендер с mocked API DTO.

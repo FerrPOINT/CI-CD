@@ -7,7 +7,7 @@
 ```text
 frontend/src/
 ├── api/          # typed wrapper/hooks + generated OpenAPI DTO schema.d.ts
-├── app/          # router.tsx (21 маршрут), providers
+├── app/          # router.tsx (21 маршрут), route smoke, providers
 ├── pages/        # 20 рабочих страниц + login (feature-папки)
 ├── shared/       # ui-kit (shadcn), i18n (ru/en), theme
 └── widgets/      # AppShell (sidebar/header/Outlet)
@@ -23,6 +23,7 @@ frontend/src/
 - Для страниц с частично реализованной capability используется общий `CapabilityCallout` из `frontend/src/shared/ui/capability-callout.tsx`: `Runners` показывает registry/heartbeat как MVP, `Schedules` — scheduler MVP, `Webhooks` — outgoing delivery MVP, `Delivery history` — outbox history/requeue MVP, `Notifications` — `in_app`/`sse` delivery MVP.
 - Основной desktop layout — рабочий dashboard/sidebar с плотными таблицами и формами; mobile — карточный список без потери create/view/retry/cancel сценариев.
 - Новые страницы добавляются только для самостоятельного CI/CD workflow. Справка, issue tracking, registry и IDE-экраны остаются out-of-scope.
+- Каждый route из текущего baseline должен проходить `frontend/src/app/router.test.tsx`: тест использует production `appRoutes`, memory router и mocked API DTO для первого рендера 20 рабочих страниц + `/login`.
 
 ## Page-design baseline
 

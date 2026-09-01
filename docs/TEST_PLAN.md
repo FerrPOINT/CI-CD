@@ -20,7 +20,7 @@
 | Domain unit | Чистые доменные правила, прежде всего `JobStatus::transition_to()` | `cargo test -p cicd-server --test domain_transitions` | **Current verified** |
 | API contract | Router, HTTP method/path, status, extractor и поведение без pool через `app(None)`, включая liveness `200` и readiness `503` без БД | `cargo test -p cicd-server --test api_contract` | **Current verified** |
 | CLI/runner binary contract | Public command groups, help, стабильное пользовательское поведение CLI и `forge-runner` flags | `cargo test -p cicd-cli --test cli_contract`; `cargo test -p cicd-server --test runner_binary_contract` | **Current verified** |
-| Frontend unit | Компоненты, pure helpers и доступность UI в Vitest/Testing Library | `cd frontend && pnpm test` | **Current verified** |
+| Frontend unit | Компоненты, pure helpers, route smoke всех Dashboard-страниц и доступность UI в Vitest/Testing Library | `cd frontend && pnpm test` | **Current verified** |
 | Compose smoke | Собранные образы, startup сервисов, `GET /api/v1/health` и `GET /api/v1/readiness` | `docker compose up --build -d && just health && just readiness`; после проверки `docker compose down` | **Current verified** локально; не current CI-gate |
 | Real-DB integration | PostgreSQL constraints, migrations/readiness, CRUD, persisted effects, immutable pipeline plan snapshots, auth/PAT и current API boundaries | GitHub Actions PostgreSQL service + `cargo test --features integration --test integration_db -- --test-threads=1`; local fixture `backend/docker-compose.test.yml` | **Current verified** |
 | Playwright E2E | Критические пользовательские journeys на собранном frontend и real API/PostgreSQL stack | Playwright Chromium; trace, screenshot и video для failed/retried flow | **Target approved** |
@@ -38,6 +38,7 @@
 | CLI contract | `backend/cli/tests/cli_contract.rs` | `cicd-cli --help` содержит command groups `project`, `pipeline`, `job`. |
 | Runner binary contract | `backend/tests/runner_binary_contract.rs` | `forge-runner --help` содержит protocol/config flags `--api-url`, `--credential`, `--registration-token`, `--tags`, `--total-slots`, `--poll-interval-seconds`, `--work-dir`, `--once`, `--no-checkout`, `--keep-workspace`. |
 | Dashboard unit | `frontend/src/pages/dashboard/dashboard.test.ts` | `statusLabel` форматирует known status и `success`. |
+| App router smoke | `frontend/src/app/router.test.tsx` | Поднимает production `appRoutes` в memory router и проверяет первый рендер 20 рабочих Dashboard-страниц + `/login` на реалистичных mocked API DTO. |
 | Webhooks page unit | `frontend/src/pages/webhooks/webhooks.test.tsx` | Страница показывает delivered `in_app` notification events и запрашивает bounded notification history API. |
 | Pull request detail unit | `frontend/src/pages/pull-request-detail/pull-request-detail.test.ts` | `buildCompareHref` формирует направление compare и URL-encoding имени repository. |
 | Shared UI unit | `frontend/src/shared/ui/confirm-dialog.test.tsx` | `ConfirmDialog` скрыт до открытия, подтверждает действие и не подтверждает при cancel. |
@@ -90,7 +91,7 @@ Coverage измеряет поведение и риск, а не только l
 | Outbox и идемпотентность | Current `domain_events`/`outbox_messages` должны доказывать atomic terminal pipeline event, basic webhook retry, local `in_app`/`sse` notification fan-out/delivery, delivery attempt history и явный requeue failed-доставки новой generation; real-DB test проверяет replay/conflict для pipeline trigger `Idempotency-Key` и failed outbox delivery history/requeue. Target: general duplicate ingress, lease recovery, crash retry, full dead-letter policy и single observed outcome для всех async effects. |
 | Backup/restore | Current helper должен проходить Python syntax check, checksum/manifest self-test, dry-run backup/restore и wrapper shell syntax в CI. Target дополнительно требует disposable restore drill с PostgreSQL restore, Git fsck, artifact checksum, read-only API smoke, RTO/RPO measurement и retained DR report. |
 | Public contracts | Изменение API, CLI или generated client имеет focused contract test; breaking change в active `/api/v1` запрещён без новой версии и compatibility evidence. |
-| UI | Изменённый critical flow имеет component/feature test; после E2E rollout -- real-flow assertion, mobile `375 px` где применимо, и axe check. Скриншот сам по себе недостаточен. |
+| UI | Изменённый critical flow имеет component/feature test; current route smoke обязан проходить для всех 20 рабочих Dashboard-страниц + `/login`; после E2E rollout -- real-flow assertion, mobile `375 px` где применимо, и axe check. Скриншот сам по себе недостаточен. |
 
 Нет установленного числового coverage threshold или ratchet в текущем CI. Введение числового порога без baseline и owner считается **Target approved**; оно не отменяет обязательное risk-based покрытие из этой таблицы.
 
