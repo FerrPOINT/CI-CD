@@ -2,7 +2,7 @@
 
 ## 0. Фактическая схема реализованных таблиц
 
-Фактическая схема задаётся committed SQLx migrations в `backend/migrations/*.sql` и применяется backend при старте через `sqlx::migrate!("./migrations")`; тот же набор использует `cicd-migrate`. `backend/src/store.rs` остаётся историческим baseline-источником для `0001_bootstrap_v1.sql`, но новые изменения схемы должны идти только отдельными immutable migration files.
+Фактическая схема задаётся committed SQLx migrations в `backend/migrations/*.sql` и применяется backend при старте через runtime `sqlx::migrate::Migrator`; тот же набор использует `cicd-migrate`. `backend/src/store.rs` остаётся историческим baseline-источником для `0001_bootstrap_v1.sql`, но новые изменения схемы должны идти только отдельными immutable migration files.
 
 ### ER-диаграмма (логическая)
 

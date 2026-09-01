@@ -17,7 +17,7 @@
 - Зависимость должна быть привязана к конкретной границе: API, persistence, runner process, object storage, auth, observability, frontend UI.
 - Runtime dependency не добавляется ради одного helper, если стандартная библиотека или уже существующий crate закрывает задачу без ухудшения читаемости.
 - Backend dependency не должна повышать `rust-version` выше workspace `1.86` без отдельного решения по CI/runtime image.
-- Deprecated/unmaintained direct dependency не используется для новых capabilities. Если dependency уже находится в runtime path, она получает documented debt, replacement candidates и regression plan до production hardening.
+- Deprecated/unmaintained direct dependency не используется для новых capabilities. Если dependency уже находится в runtime path, она получает documented debt, replacement candidates и regression plan до production hardening либо удаляется отдельным reviewable change с lockfile/SBOM evidence.
 - TLS для внешних HTTP-клиентов по умолчанию — `rustls`; OpenSSL допускается только с явной причиной.
 - `default-features` отключаются, когда crate тянет лишние runtime, TLS, compression, native или cloud provider features.
 - Любая dependency на execution, auth, crypto, storage или network path требует threat-model review и теста на негативный сценарий.
@@ -37,15 +37,15 @@ pnpm test
 pnpm build
 ```
 
-Для security/release проверки добавляются SBOM refresh, dependency audit и secret scan по правилам [THIRD PARTY](THIRD_PARTY.md) и [DEVELOPMENT GUIDE](DEVELOPMENT_GUIDE.md#target-approved).
+Для security/release проверки используются current SBOM refresh/drift gate, SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`; `cargo-deny`, secret scan и container scan добавляются по правилам [THIRD PARTY](THIRD_PARTY.md) и [DEVELOPMENT GUIDE](DEVELOPMENT_GUIDE.md#target-approved).
 
 ## 4. Current Rust dependency groups
 
 | Группа | Crates | Правило применения |
 |---|---|---|
 | Async runtime/API | `tokio`, `axum`, `tower-http`, `tokio-stream` | Только HTTP/runtime границы; domain crate не зависит от Axum/Tokio. |
-| Persistence | `sqlx`, `uuid`, `chrono` | SQL остаётся параметризованным; schema changes идут через versioned migrations. |
-| Contracts/serialization | `serde`, `serde_json`, `serde_yaml`, `utoipa` | DTO и OpenAPI обновляются вместе с implementation/tests. `serde_yaml` — compatibility debt: crate deprecated/unmaintained, новые DSL/parser требования должны идти через отдельную миграцию. |
+| Persistence | `sqlx`, `uuid`, `chrono` | SQL остаётся параметризованным; schema changes идут через versioned migrations; SQLx подключается с `default-features = false`, `postgres`, `derive`, `migrate` без активного MySQL/SQLite build path. |
+| Contracts/serialization | `serde`, `serde_json`, `serde_yaml` alias -> `yaml_serde`, `utoipa` | DTO и OpenAPI обновляются вместе с implementation/tests. YAML path сохраняет совместимый API, но новые DSL/parser требования требуют отдельной миграции с diagnostics/limits. |
 | Git/archives | `git2`, `flate2` | Git hosting и archive helpers; не использовать для обхода auth/RBAC boundary. |
 | Auth/crypto | `argon2`, `jsonwebtoken`, `aes-gcm`, `hmac`, `sha2`, `subtle`, `base64`, `rand_core` | Не логировать secret material; rotation/key policy документируется до production use. |
 | Errors/logging | `anyhow`, `thiserror`, `tracing`, `tracing-subscriber` | `thiserror` для domain/application errors, `anyhow` только на composition/CLI style boundary. |
@@ -66,10 +66,10 @@ pnpm build
 
 | Область | Кандидаты | Зачем | Правило ввода |
 |---|---|---|---|
-| Supply-chain gate | `cargo-audit`, `cargo-deny`, npm audit, secret/container scan | Закрыть advisory/license/source policy и RISK-008 | Начать с advisory/license gate и documented exceptions; deprecated parser debt не прятать ignore-ом без remediation task. |
+| Supply-chain gate | `cargo-deny`, secret/container scan | Закрыть license/source/ban policy и image/secret exposure для RISK-008 | Добавлять после current feature guard, `cargo audit`, `pnpm audit --audit-level high` и SBOM drift gate; исключения фиксировать с owner/remediation. |
 | Rust CI speed/diagnostics | `cargo-nextest` | Быстрее и удобнее гонять workspace tests, JUnit/reporting, flaky diagnostics | Сначала настроить профили для real-DB tests (`--test-threads=1`, serial/heavy), затем делать CI gate. |
 | Rust Docker builds | `cargo-chef`, `sccache` | Сократить время build без runtime-кода | Только build tooling; Rust version должен совпадать во всех stages. |
-| YAML parser hardening | `yaml_serde`, `serde-saphyr`, `yaml-rust2` | Уйти от deprecated `serde_yaml`, получить безопасные parser limits/diagnostics | Отдельный TDD-срез: fixture parity, unknown/duplicate keys, anchors/aliases, size/depth limits, line/column diagnostics. |
+| YAML parser hardening | `serde-saphyr`, `yaml-rust2`, custom parser wrapper поверх текущего `yaml_serde` | Получить безопасные parser limits/diagnostics сверх compatibility API | Отдельный TDD-срез: fixture parity, unknown/duplicate keys, anchors/aliases, size/depth limits, line/column diagnostics. |
 | Artifact storage | `object_store`, Apache OpenDAL | S3/GCS/Azure/S3-compatible adapter и retention lifecycle | Вводить через storage port, не протаскивать provider-типы в domain/API DTO. |
 | Docker/test harness | `bollard`, `testcontainers` | Runner Docker API и disposable integration dependencies | `bollard` только в runner process; `testcontainers` только в tests/harness. |
 | Generic workers | `apalis-postgres` | Cleanup/notification/background housekeeping | Не переносить core runner dispatch, пока не доказаны attempts/leases/fencing/cancel/audit invariants. |

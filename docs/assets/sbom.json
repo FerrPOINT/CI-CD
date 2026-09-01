@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:00000000-0000-0000-0000-000000000000",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-08-27T15:42:11Z",
+    "timestamp": "2026-09-01T12:37:37Z",
     "component": {
       "type": "application",
       "name": "forge-ci-cd",
@@ -238,8 +238,8 @@
     {
       "type": "library",
       "name": "chacha20",
-      "version": "0.10.1",
-      "purl": "pkg:cargo/chacha20@0.10.1",
+      "version": "0.10.2",
+      "purl": "pkg:cargo/chacha20@0.10.2",
       "license": "unknown"
     },
     {
@@ -315,8 +315,8 @@
     {
       "type": "library",
       "name": "cpufeatures",
-      "version": "0.3.0",
-      "purl": "pkg:cargo/cpufeatures@0.3.0",
+      "version": "0.3.1",
+      "purl": "pkg:cargo/cpufeatures@0.3.1",
       "license": "unknown"
     },
     {
@@ -373,13 +373,6 @@
       "name": "der",
       "version": "0.7.10",
       "purl": "pkg:cargo/der@0.7.10",
-      "license": "unknown"
-    },
-    {
-      "type": "library",
-      "name": "deranged",
-      "version": "0.4.0",
-      "purl": "pkg:cargo/deranged@0.4.0",
       "license": "unknown"
     },
     {
@@ -448,8 +441,8 @@
     {
       "type": "library",
       "name": "flate2",
-      "version": "1.1.9",
-      "purl": "pkg:cargo/flate2@1.1.9",
+      "version": "1.1.10",
+      "purl": "pkg:cargo/flate2@1.1.10",
       "license": "unknown"
     },
     {
@@ -560,8 +553,8 @@
     {
       "type": "library",
       "name": "git2",
-      "version": "0.20.4",
-      "purl": "pkg:cargo/git2@0.20.4",
+      "version": "0.21.0",
+      "purl": "pkg:cargo/git2@0.21.0",
       "license": "unknown"
     },
     {
@@ -658,8 +651,8 @@
     {
       "type": "library",
       "name": "hyper",
-      "version": "1.11.0",
-      "purl": "pkg:cargo/hyper@1.11.0",
+      "version": "1.11.1",
+      "purl": "pkg:cargo/hyper@1.11.1",
       "license": "unknown"
     },
     {
@@ -756,8 +749,8 @@
     {
       "type": "library",
       "name": "indexmap",
-      "version": "2.14.0",
-      "purl": "pkg:cargo/indexmap@2.14.0",
+      "version": "2.14.1",
+      "purl": "pkg:cargo/indexmap@2.14.1",
       "license": "unknown"
     },
     {
@@ -840,8 +833,8 @@
     {
       "type": "library",
       "name": "libredox",
-      "version": "0.1.20",
-      "purl": "pkg:cargo/libredox@0.1.20",
+      "version": "0.1.21",
+      "purl": "pkg:cargo/libredox@0.1.21",
       "license": "unknown"
     },
     {
@@ -849,6 +842,13 @@
       "name": "libsqlite3-sys",
       "version": "0.30.1",
       "purl": "pkg:cargo/libsqlite3-sys@0.30.1",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "libyaml-rs",
+      "version": "0.3.0",
+      "purl": "pkg:cargo/libyaml-rs@0.3.0",
       "license": "unknown"
     },
     {
@@ -924,8 +924,8 @@
     {
       "type": "library",
       "name": "miniz_oxide",
-      "version": "0.8.9",
-      "purl": "pkg:cargo/miniz_oxide@0.8.9",
+      "version": "0.9.1",
+      "purl": "pkg:cargo/miniz_oxide@0.9.1",
       "license": "unknown"
     },
     {
@@ -944,23 +944,9 @@
     },
     {
       "type": "library",
-      "name": "num-bigint",
-      "version": "0.4.8",
-      "purl": "pkg:cargo/num-bigint@0.4.8",
-      "license": "unknown"
-    },
-    {
-      "type": "library",
       "name": "num-bigint-dig",
       "version": "0.8.6",
       "purl": "pkg:cargo/num-bigint-dig@0.8.6",
-      "license": "unknown"
-    },
-    {
-      "type": "library",
-      "name": "num-conv",
-      "version": "0.1.0",
-      "purl": "pkg:cargo/num-conv@0.1.0",
       "license": "unknown"
     },
     {
@@ -1035,13 +1021,6 @@
     },
     {
       "type": "library",
-      "name": "pem",
-      "version": "3.0.6",
-      "purl": "pkg:cargo/pem@3.0.6",
-      "license": "unknown"
-    },
-    {
-      "type": "library",
       "name": "pem-rfc7468",
       "version": "0.7.0",
       "purl": "pkg:cargo/pem-rfc7468@0.7.0",
@@ -1101,13 +1080,6 @@
       "name": "potential_utf",
       "version": "0.1.6",
       "purl": "pkg:cargo/potential_utf@0.1.6",
-      "license": "unknown"
-    },
-    {
-      "type": "library",
-      "name": "powerfmt",
-      "version": "0.2.0",
-      "purl": "pkg:cargo/powerfmt@0.2.0",
       "license": "unknown"
     },
     {
@@ -1350,13 +1322,6 @@
     },
     {
       "type": "library",
-      "name": "serde_yaml",
-      "version": "0.9.34+deprecated",
-      "purl": "pkg:cargo/serde_yaml@0.9.34+deprecated",
-      "license": "unknown"
-    },
-    {
-      "type": "library",
       "name": "sha1",
       "version": "0.10.7",
       "purl": "pkg:cargo/sha1@0.10.7",
@@ -1402,13 +1367,6 @@
       "name": "simd-adler32",
       "version": "0.3.10",
       "purl": "pkg:cargo/simd-adler32@0.3.10",
-      "license": "unknown"
-    },
-    {
-      "type": "library",
-      "name": "simple_asn1",
-      "version": "0.6.3",
-      "purl": "pkg:cargo/simple_asn1@0.6.3",
       "license": "unknown"
     },
     {
@@ -1574,27 +1532,6 @@
     },
     {
       "type": "library",
-      "name": "time",
-      "version": "0.3.41",
-      "purl": "pkg:cargo/time@0.3.41",
-      "license": "unknown"
-    },
-    {
-      "type": "library",
-      "name": "time-core",
-      "version": "0.1.4",
-      "purl": "pkg:cargo/time-core@0.1.4",
-      "license": "unknown"
-    },
-    {
-      "type": "library",
-      "name": "time-macros",
-      "version": "0.2.22",
-      "purl": "pkg:cargo/time-macros@0.2.22",
-      "license": "unknown"
-    },
-    {
-      "type": "library",
       "name": "tinystr",
       "version": "0.8.4",
       "purl": "pkg:cargo/tinystr@0.8.4",
@@ -1756,13 +1693,6 @@
     },
     {
       "type": "library",
-      "name": "unsafe-libyaml",
-      "version": "0.2.11",
-      "purl": "pkg:cargo/unsafe-libyaml@0.2.11",
-      "license": "unknown"
-    },
-    {
-      "type": "library",
       "name": "untrusted",
       "version": "0.9.0",
       "purl": "pkg:cargo/untrusted@0.9.0",
@@ -1806,8 +1736,8 @@
     {
       "type": "library",
       "name": "uuid",
-      "version": "1.25.0",
-      "purl": "pkg:cargo/uuid@1.25.0",
+      "version": "1.26.0",
+      "purl": "pkg:cargo/uuid@1.26.0",
       "license": "unknown"
     },
     {
@@ -2120,6 +2050,13 @@
     },
     {
       "type": "library",
+      "name": "yaml_serde",
+      "version": "0.10.7",
+      "purl": "pkg:cargo/yaml_serde@0.10.7",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
       "name": "yoke",
       "version": "0.8.3",
       "purl": "pkg:cargo/yoke@0.8.3",
@@ -2186,6 +2123,13 @@
       "name": "zerovec-derive",
       "version": "0.11.6",
       "purl": "pkg:cargo/zerovec-derive@0.11.6",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "zlib-rs",
+      "version": "0.6.7",
+      "purl": "pkg:cargo/zlib-rs@0.6.7",
       "license": "unknown"
     },
     {
@@ -2357,6 +2301,14 @@
     },
     {
       "type": "library",
+      "name": "@eslint/js",
+      "version": "10.0.1",
+      "purl": "pkg:npm/@eslint/js@10.0.1",
+      "license": "unknown",
+      "scope": "development"
+    },
+    {
+      "type": "library",
       "name": "@tailwindcss/vite",
       "version": "4.1.0",
       "purl": "pkg:npm/@tailwindcss/vite@4.1.0",
@@ -2413,6 +2365,30 @@
     },
     {
       "type": "library",
+      "name": "eslint",
+      "version": "10.9.1",
+      "purl": "pkg:npm/eslint@10.9.1",
+      "license": "unknown",
+      "scope": "development"
+    },
+    {
+      "type": "library",
+      "name": "eslint-plugin-react-hooks",
+      "version": "7.1.1",
+      "purl": "pkg:npm/eslint-plugin-react-hooks@7.1.1",
+      "license": "unknown",
+      "scope": "development"
+    },
+    {
+      "type": "library",
+      "name": "globals",
+      "version": "17.11.0",
+      "purl": "pkg:npm/globals@17.11.0",
+      "license": "unknown",
+      "scope": "development"
+    },
+    {
+      "type": "library",
       "name": "jsdom",
       "version": "26.1.0",
       "purl": "pkg:npm/jsdom@26.1.0",
@@ -2440,6 +2416,14 @@
       "name": "typescript",
       "version": "5.9.3",
       "purl": "pkg:npm/typescript@5.9.3",
+      "license": "unknown",
+      "scope": "development"
+    },
+    {
+      "type": "library",
+      "name": "typescript-eslint",
+      "version": "8.68.0",
+      "purl": "pkg:npm/typescript-eslint@8.68.0",
       "license": "unknown",
       "scope": "development"
     },

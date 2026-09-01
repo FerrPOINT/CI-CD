@@ -22,8 +22,10 @@ RUN find src domain cli migration -name '*.rs' -exec touch {} + \
 
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends curl git git-lfs && rm -rf /var/lib/apt/lists/* && useradd --create-home --uid 10001 cicd
+WORKDIR /app
 COPY --from=build /app/target/release/cicd-server /usr/local/bin/cicd-server
 COPY --from=build /app/target/release/forge-runner /usr/local/bin/forge-runner
+COPY --from=build /app/migrations /app/migrations
 RUN mkdir -p /var/lib/forge/git /var/lib/forge/artifacts && chown -R cicd:cicd /var/lib/forge
 USER cicd
 EXPOSE 22801

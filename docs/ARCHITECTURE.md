@@ -119,6 +119,7 @@ Composition root: чтение конфига, создание `PgPool`, реп
 | Переменная | Назначение |
 |---|---|
 | `CICD_DATABASE_URL` | PostgreSQL connection string |
+| `CICD_MIGRATIONS_DIR` | каталог committed SQLx migrations (`/app/migrations` в compose image) |
 | `CICD_BIND` | адрес API (по умолчанию `0.0.0.0:22801`) |
 | `CICD_GIT_ROOT` | путь к bare-репозиториям |
 | `CICD_GIT_TOKEN` | legacy shared token Git Smart HTTP |
@@ -181,7 +182,7 @@ Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-2
 | Workspace + `domain` пакет | ✅ готово |
 | `cli` отдельный пакет | ✅ готово |
 | typed config + `AppError` | ◩ частично: `AppError`/error envelope current, full typed config target |
-| SQLx версионные миграции | ✅ current: `backend/migrations/*.sql` + `sqlx::migrate!`/`cicd-migrate` |
+| SQLx версионные миграции | ✅ current: `backend/migrations/*.sql` + runtime `sqlx::migrate::Migrator`/`cicd-migrate` |
 | app/infra/api/server пакеты | ⬜ Phase C (strangler по вертикалям) |
 | OpenAPI + генерация клиента | ✅ current: `openapi/openapi.yaml` + `frontend/src/api/schema.d.ts` |
 | Auth/RBAC/token middleware | ◩ current conditional: JWT/scoped PAT/global roles + project memberships + session-bound access invalidation + refresh rotate/logout/revoke при `CICD_AUTH_SECRET`; tenant scope, service-account/scoped Git credentials и production cookie/CSRF/session-family policy target |

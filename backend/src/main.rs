@@ -1,7 +1,5 @@
 use cicd::{api::app_with_git, dispatch_signal, git_host::GitConfig, outbox, runner};
 
-/// Versioned SQLx migrations embedded from backend/migrations (ADR-0008).
-const MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
 use sqlx::postgres::PgPoolOptions;
 use tracing_subscriber::EnvFilter;
 
@@ -39,7 +37,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ADR-0008: apply versioned migrations; legacy databases created by the
     // historical startup bootstrap adopt cleanly because 0001 reproduces it
     // idempotently (IF NOT EXISTS).
-    MIGRATOR.run(&pool).await?;
+    let migrator = cicd::migrations().await?;
+    migrator.run(&pool).await?;
 
     let running = runner::RunningJobs::default();
     if embedded_runner_enabled {

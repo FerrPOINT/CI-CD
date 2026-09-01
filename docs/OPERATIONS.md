@@ -138,7 +138,7 @@ docker compose up -d
 
 ### Current verified
 
-Версионируемые SQLx migration-файлы находятся в `backend/migrations/`, а binary `cicd-migrate` входит в workspace. Backend применяет pending migrations при старте через `sqlx::migrate!("./migrations")`; это удобно для локального MVP, но ещё не равно production rollout с отдельной owner/runtime ролью и pre-deploy verification gate.
+Версионируемые SQLx migration-файлы находятся в `backend/migrations/`, а binary `cicd-migrate` входит в workspace. Backend применяет pending migrations при старте через runtime `sqlx::migrate::Migrator`, загружая каталог из `CICD_MIGRATIONS_DIR` или дефолта `backend/migrations`; это удобно для локального MVP, но ещё не равно production rollout с отдельной owner/runtime ролью и pre-deploy verification gate.
 
 Для проверки текущей базы используйте только read-only диагностику:
 
@@ -218,7 +218,7 @@ Target backup включает physical PostgreSQL base backup и continuous WAL
 |---|---|---|
 | Compose services | `docker compose ps` | PostgreSQL должен быть `healthy`; backend должен быть running/healthy. |
 | API liveness | `curl -fsS http://127.0.0.1:22801/api/v1/health` | Процесс backend отвечает; это не DB readiness. |
-| API readiness | `curl -fsS http://127.0.0.1:22801/api/v1/readiness` | PostgreSQL отвечает, `_sqlx_migrations` совпадает с embedded SQLx migrations. |
+| API readiness | `curl -fsS http://127.0.0.1:22801/api/v1/readiness` | PostgreSQL отвечает, `_sqlx_migrations` совпадает с configured SQLx migrations. |
 | Metrics | `curl -fsS http://127.0.0.1:22801/metrics` | Prometheus text endpoint; в MVP не защищён отдельно от общей сетевой/auth границы. |
 | PostgreSQL | `docker compose exec -T postgres pg_isready -U "$CICD_DATABASE_USER" -d "$CICD_DATABASE_NAME"` | База принимает подключения. |
 | Dashboard | `curl -fsS http://127.0.0.1:22802/ >/dev/null` | nginx отвечает статическим приложением. |

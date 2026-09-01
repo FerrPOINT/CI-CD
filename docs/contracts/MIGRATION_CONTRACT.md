@@ -7,7 +7,7 @@
 ## 1. Toolchain и source of truth
 
 - Единственный каталог SQL migration -- `backend/migrations/*.sql`. Migration после merge не редактируется, не переименовывается и не удаляется; исправление всегда является следующей migration.
-- Инструмент -- crate `backend/migration` с binary `cicd-migrate`. Он использует `sqlx::migrate!`, PostgreSQL и advisory lock `forge_migration_lock` с timeout 60 секунд.
+- Инструмент -- crate `backend/migration` с binary `cicd-migrate`. Он использует runtime `sqlx::migrate::Migrator`, PostgreSQL и advisory lock `forge_migration_lock` с timeout 60 секунд.
 - Версия `sqlx-cli` совпадает с workspace major/minor: `0.8.x`. CI запускает toolchain в `rust:1.86-bookworm`; host installation не требуется.
 - SQLx history/checksum хранится в `forge._sqlx_migrations`. Pending migration, checksum mismatch или недоступный lock делают migration/verify failure.
 - `cicd-server` не применяет DDL. Его startup verify только проверяет отсутствие pending migrations и завершает запуск ошибкой при несоответствии.

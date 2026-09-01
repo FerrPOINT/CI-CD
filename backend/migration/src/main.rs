@@ -6,6 +6,7 @@
 
 use anyhow::Context;
 use clap::Parser;
+use std::path::PathBuf;
 
 #[derive(clap::Parser)]
 #[command(name = "cicd-migrate", about = "Forge CI/CD migration runner", version)]
@@ -23,8 +24,6 @@ struct Args {
     verify: bool,
 }
 
-const MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../migrations");
-
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -41,7 +40,8 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("acquire migration advisory lock")?;
 
-    let result = run(&pool, &args).await;
+    let migrator = load_migrator().await?;
+    let result = run(&pool, &args, &migrator).await;
 
     let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
         .bind(lock)
@@ -50,17 +50,21 @@ async fn main() -> anyhow::Result<()> {
     result
 }
 
-async fn run(pool: &sqlx::PgPool, args: &Args) -> anyhow::Result<()> {
+async fn run(
+    pool: &sqlx::PgPool,
+    args: &Args,
+    migrator: &sqlx::migrate::Migrator,
+) -> anyhow::Result<()> {
     let applied = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM _sqlx_migrations")
         .fetch_one(pool)
         .await
         .unwrap_or(0);
-    let total = MIGRATOR.iter().count() as i64;
+    let total = migrator.iter().count() as i64;
     let pending = total - applied;
 
     if args.dry_run {
         println!("applied: {applied}, pending: {pending} of {total}");
-        for m in MIGRATOR.iter().skip(applied as usize) {
+        for m in migrator.iter().skip(applied as usize) {
             println!("pending: {} {}", m.version, m.description);
         }
         return Ok(());
@@ -74,10 +78,26 @@ async fn run(pool: &sqlx::PgPool, args: &Args) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    MIGRATOR
+    migrator
         .run(pool)
         .await
         .with_context(|| format!("apply migrations ({pending} pending)"))?;
     println!("applied {pending} migration(s), total {total}");
     Ok(())
+}
+
+fn migrations_path() -> PathBuf {
+    std::env::var("CICD_MIGRATIONS_DIR")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../migrations"))
+}
+
+async fn load_migrator() -> anyhow::Result<sqlx::migrate::Migrator> {
+    let path = migrations_path();
+    sqlx::migrate::Migrator::new(path.as_path())
+        .await
+        .with_context(|| format!("load migrations from {}", path.display()))
 }

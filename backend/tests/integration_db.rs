@@ -40,7 +40,12 @@ async fn test_pool() -> sqlx::PgPool {
         .await
         .expect("connect to test database");
     // Apply migrations (idempotent; also validates the migration chain).
-    cicd::migrations().run(&pool).await.expect("run migrations");
+    cicd::migrations()
+        .await
+        .expect("load migrations")
+        .run(&pool)
+        .await
+        .expect("run migrations");
     pool
 }
 
@@ -49,6 +54,8 @@ async fn migrations_apply_and_reapply_idempotently() {
     let pool = test_pool().await;
     // Second run must be a no-op.
     cicd::migrations()
+        .await
+        .expect("load migrations")
         .run(&pool)
         .await
         .expect("re-run migrations idempotently");

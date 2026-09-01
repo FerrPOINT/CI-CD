@@ -73,6 +73,46 @@ jobs:
     - run: pnpm test
     - run: pnpm build
 
+  security:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: "1.86"
+    - name: Rust dependency audit
+      working-directory: backend
+      run: |
+        set -euo pipefail
+        cargo install cargo-audit --locked --version 0.22.1
+        if cargo tree -i sqlx-mysql --edges features --target all --prefix none 2>&1 | grep -q '^sqlx-mysql v'; then
+          echo "sqlx-mysql is enabled in the build graph; remove RUSTSEC-2023-0071 ignore before shipping"
+          exit 1
+        fi
+        if cargo tree -i rsa --target all --prefix none 2>&1 | grep -q '^rsa v'; then
+          echo "rsa is enabled in the build graph; remove RUSTSEC-2023-0071 ignore before shipping"
+          exit 1
+        fi
+        cargo audit --ignore RUSTSEC-2023-0071
+    - uses: pnpm/action-setup@v4
+      with:
+        version: 11
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: pnpm
+        cache-dependency-path: frontend/pnpm-lock.yaml
+    - name: Node dependency audit
+      working-directory: frontend
+      run: |
+        pnpm install --frozen-lockfile
+        pnpm audit --audit-level high
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+    - name: SBOM drift gate
+      run: python3 scripts/generate_sbom.py --check
+
   docs:
     runs-on: ubuntu-latest
     steps:
@@ -82,7 +122,7 @@ jobs:
         python-version: "3.12"
     - name: script checks
       run: |
-        python3 -m py_compile scripts/verify_docs.py scripts/forge_backup.py
+        python3 -m py_compile scripts/verify_docs.py scripts/generate_sbom.py scripts/forge_backup.py
         python3 scripts/forge_backup.py self-test
         python3 scripts/forge_backup.py backup --dry-run --skip-git-fsck --backup-dir /tmp/forge-backup-smoke
         python3 scripts/forge_backup.py restore --dry-run --confirm-restore --skip-git-fsck /tmp/forge-backup-smoke

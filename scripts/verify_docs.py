@@ -105,7 +105,6 @@ FORBIDDEN_STALE_STATUS = [
     (r"история доставок остаются target", "bounded delivery history/requeue is current MVP; clarify remaining scheduler or dead-letter target scope"),
     (r"full deliveries table/replay ещё target", "bounded outbox attempt history/requeue is current MVP; production delivery snapshots/leases remain target"),
     (r"delivery history, audited replay/dead letters", "bounded delivery history/requeue is current MVP; audited full dead-letter workflow remains target"),
-    (r"`cargo audit` в CI \(GitHub Actions\)", "cargo audit is target, not a current CI gate"),
 ]
 
 problems: list[str] = []

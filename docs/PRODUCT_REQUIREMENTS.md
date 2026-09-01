@@ -104,6 +104,7 @@ Forge **не является** и не должен развиваться ка
 - **NFR-SEC-03** Секреты передаются только через выделенные секретные каналы и конфигурацию; plaintext не сохраняется в логах, audit trail, ответах API или UI.
 - **NFR-SEC-04** Credential classes пользователя, API automation, внутреннего worker и runner должны быть раздельны и иметь минимальные scopes.
 - **NFR-SEC-05** Все изменяющие действия, имеющие административное или delivery-значение, оставляют неизменяемый audit след без чувствительных данных.
+- **NFR-SEC-06** Зависимости, lockfile, CI actions, container images и SBOM управляются как часть trusted supply chain: current baseline блокирует known Rust/Node advisories и drift SBOM, target дополняет это license/source policy, secret/container scan и release SBOM artifact.
 
 ### Надёжность и целостность
 

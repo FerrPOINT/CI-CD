@@ -62,7 +62,7 @@ curl -sS http://127.0.0.1:22801/api/v1/health
 
 #### GET /api/v1/readiness
 
-Readiness-проверка backend dependency boundary. Endpoint требует подключённый PostgreSQL pool, выполняет короткий `SELECT 1` и сверяет `_sqlx_migrations` с embedded SQLx migrations по version/checksum.
+Readiness-проверка backend dependency boundary. Endpoint требует подключённый PostgreSQL pool, выполняет короткий `SELECT 1` и сверяет `_sqlx_migrations` с configured SQLx migrations (`CICD_MIGRATIONS_DIR` или `backend/migrations`) по version/checksum.
 
 **Response 200:**
 ```json

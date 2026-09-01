@@ -38,7 +38,7 @@ Roadmap фиксирует порядок доведения Forge до базо
 - embedded execution всё ещё встроен в backend process по умолчанию; для shared/prod режима нужно отключать его и доводить external runner boundary до production sandbox;
 - webhooks/notifications имеют bounded delivery history/requeue MVP, но без production leases/fencing, full dead-letter policy/metrics и external adapters; email/Slack notification adapters не реализованы;
 - backup/restore имеет local scripted MVP helper и CI self-test/dry-run, но ещё не является off-site/PITR production platform или verified restore drill gate.
-- dependency/secret/container scans и release SBOM ещё не являются current CI gate; `serde_yaml` остаётся deprecated/unmaintained compatibility dependency в parser path и должен быть заменён в parser-hardening срезе.
+- dependency audit (SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`) и SBOM drift gate уже являются current CI gate; secret/container scan, `cargo-deny` policy и release SBOM publication остаются target hardening.
 
 ## 4. Базовый roadmap
 
@@ -54,7 +54,7 @@ Deliverables:
 - Current MVP: retry pipeline/job создаёт новую attempt, старые логи и timestamps остаются доступными;
 - Current MVP: API, UI и CLI показывают attempts и логи выбранной attempt;
 - Current MVP: bounded `/logs/page` для current/latest и concrete attempt с `limit/after/q`; UI читает логи страницами и поддерживает поиск;
-- Target follow-up: v1 policy diagnostics/job-level dispatch; YAML parser уходит с deprecated `serde_yaml`, получает line/column diagnostics, duplicate-key/anchors policy и size/depth limits; лог делится минимум на command span, stream, exit code, started/finished timestamps и error tail;
+- Target follow-up: v1 policy diagnostics/job-level dispatch; YAML parser получает line/column diagnostics, duplicate-key/anchors policy и size/depth limits; лог делится минимум на command span, stream, exit code, started/finished timestamps и error tail;
 - Target follow-up: richer empty/error states и отдельные UI tests переключения attempts.
 
 Gate:
@@ -180,7 +180,7 @@ Gate:
 Эти функции полезны, но не должны раздувать текущий baseline:
 
 - flaky test tracking и quarantine;
-- advanced organization-wide dependency governance beyond the baseline release security gate;
+- advanced organization-wide dependency governance beyond the baseline dependency audit/SBOM drift gate;
 - DORA/advanced reports, percentiles, dashboards и exports;
 - matrix builds и сложный policy/DAG planner сверх текущего `v1-dag` MVP;
 - SSO/OIDC;

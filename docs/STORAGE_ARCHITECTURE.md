@@ -185,9 +185,9 @@ ALTER DEFAULT PRIVILEGES FOR ROLE forge_owner IN SCHEMA forge
 - migration после merge **не редактируется и не переименовывается**;
 - любая корректировка создаётся следующей migration;
 - SQLx сохраняет checksum и историю в `_sqlx_migrations` в schema `forge`;
-- current MVP применяет `sqlx::migrate!()` при старте backend;
+- current MVP применяет runtime `sqlx::migrate::Migrator` при старте backend;
 - production target: migration job запускается до запуска новых app pods;
-- production target: runtime запускает `sqlx::migrate!()` только в режиме verify и завершает startup с ошибкой при pending migration/checksum mismatch.
+- production target: runtime запускает SQLx migration verification только в режиме verify и завершает startup с ошибкой при pending migration/checksum mismatch.
 
 ### Bootstrap и существующие инсталляции
 

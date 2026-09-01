@@ -10,7 +10,7 @@
 | `cicd-migrate` (`backend/migration`) | `up`, `verify`, `inspect-legacy`, `adopt-legacy` |
 | `cicd-api` (`backend/api`, target) | HTTP routes/DTO/OpenAPI generation |
 
-Используется `sqlx-cli` версии, совпадающей с workspace major/minor (`0.8.x`), через контейнер `rust:1.86-bookworm`; host installation не требуется. `cicd-migrate` использует `sqlx::migrate!` и PostgreSQL advisory lock `forge_migration_lock`, timeout 60 seconds.
+Используется `sqlx-cli` версии, совпадающей с workspace major/minor (`0.8.x`), через контейнер `rust:1.86-bookworm`; host installation не требуется. `cicd-migrate` использует runtime `sqlx::migrate::Migrator` и PostgreSQL advisory lock `forge_migration_lock`, timeout 60 seconds.
 
 `cicd-migrate` и migrations уже находятся в workspace. Just targets для полного isolated migration lifecycle остаются target; current CI запускает real-DB suite через GitHub Actions PostgreSQL service.
 

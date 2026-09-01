@@ -14,7 +14,7 @@
 | Rust runtime | axum, tower, tower-http | HTTP/control plane | MIT | security-relevant |
 | Rust runtime | tokio | async runtime/processes | MIT | critical runtime |
 | Rust runtime | sqlx | PostgreSQL access/migrations | MIT OR Apache-2.0 | data boundary |
-| Rust runtime | serde, serde_json, serde_yaml | API/DSL parsing | MIT OR Apache-2.0 | parser; `serde_yaml` deprecated/unmaintained compatibility debt |
+| Rust runtime | serde, serde_json, yaml_serde (`serde_yaml` alias) | API/DSL parsing | MIT OR Apache-2.0 | parser compatibility path; diagnostics/limits hardening target |
 | Rust runtime | uuid, chrono | IDs/time | MIT OR Apache-2.0 | data integrity |
 | Rust runtime | aes-gcm | secrets encryption at rest | Apache-2.0 OR MIT | cryptography |
 | Rust target | argon2, jsonwebtoken, hmac | passwords/JWT/signatures | MIT OR Apache-2.0 | authentication/crypto |
@@ -46,16 +46,22 @@
 3. Deprecated/unmaintained direct dependency в runtime path считается security-relevant debt: фиксируется в [RISK_REGISTER](RISK_REGISTER.md), получает replacement candidates в [TECH_CHOICES](TECH_CHOICES.md) и не используется для новых capabilities.
 4. SemVer-major обновление требует: compatibility review, changelog, тесты и, если меняется внешний контракт, API/ADR/RTM.
 5. Lock-файлы коммитятся вместе с manifest; ручное редактирование lockfile запрещено.
-6. Перед релизом: dependency update report, `cargo audit`/эквивалент и npm audit с разбором accepted findings (Target approved CI gate).
+6. Current CI gate: SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high` и `scripts/generate_sbom.py --check`.
+7. `RUSTSEC-2023-0071` разрешён только как Cargo.lock false-positive: `sqlx-mysql`/`rsa` присутствуют в lockfile/SBOM как optional SQLx packages, но не должны появляться в активном `cargo tree` build graph.
+8. Перед релизом target: dependency update report, `cargo-deny`/license/source policy, secret/container scan и разбор accepted findings.
 
 ## 4. SBOM policy
 
-**Target approved:** каждый release публикует CycloneDX SBOM (JSON) как release artifact. Формат выбран для security use case; SPDX допускается дополнительно для license/compliance потребителей.
+**Current verified:** `docs/assets/sbom.json` содержит CycloneDX-lite lockfile inventory из `backend/Cargo.lock` и `frontend/package.json`, а CI проверяет drift через `scripts/generate_sbom.py --check`.
+
+**Target approved:** каждый release публикует полный CycloneDX SBOM (JSON) как release artifact. Формат выбран для security use case; SPDX допускается дополнительно для license/compliance потребителей.
 
 Минимальный набор записи соответствует CISA SBOM Minimum Elements: supplier/author, component name, version, unique identifier (purl/CPE где применимо), hashes, dependency relationship, timestamp и SBOM author.
 
 | Шаг | Инструмент / evidence | Статус |
 |---|---|---|
+| Lite inventory | `scripts/generate_sbom.py` + `docs/assets/sbom.json` | Current verified |
+| Drift gate | `scripts/generate_sbom.py --check` в `.github/workflows/ci.yml` | Current verified |
 | Rust SBOM | `cargo-cyclonedx` по Cargo.lock | Target approved |
 | Frontend SBOM | CycloneDX npm/pnpm generator по pnpm-lock.yaml | Target approved |
 | Merge | один root BOM с services (backend/frontend) и infrastructure inventory | Target approved |

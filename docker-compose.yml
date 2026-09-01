@@ -22,6 +22,7 @@ services:
     environment:
       CICD_DATABASE_URL: postgresql://${CICD_DATABASE_USER:-cicd}:${CICD_DATABASE_PASSWORD:-cicd_local_only}@postgres:5432/${CICD_DATABASE_NAME:-cicd}
       CICD_BIND: 0.0.0.0:22801
+      CICD_MIGRATIONS_DIR: /app/migrations
       CICD_GIT_ROOT: /var/lib/forge/git
       CICD_GIT_TOKEN: ${CICD_GIT_TOKEN:-}
       CICD_GIT_INTERNAL_TOKEN: ${CICD_GIT_INTERNAL_TOKEN:-}

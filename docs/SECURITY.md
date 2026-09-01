@@ -219,9 +219,11 @@ let cors = CorsLayer::new()
 ## 11. Dependency Security
 
 - Current: Dependabot weekly проверяет Cargo, npm и GitHub Actions по `.github/dependabot.yml`.
-- Current: `.github/workflows/ci.yml` выполняет frozen lockfile install, Rust fmt/clippy/tests, frontend lint/test/build и docs checks, но не содержит dependency/secret/container scan gate.
-- Current debt: `serde_yaml` остаётся direct runtime dependency для `.forge-ci.yml`/OpenAPI YAML compatibility, но crate deprecated/unmaintained; новые parser/security требования должны идти через отдельную миграцию.
-- Target: добавить `cargo-audit`/`cargo-deny`, npm audit с agreed severity policy, secret scan, container image scan, SBOM release artifact и documented exceptions/remediation.
+- Current: `.github/workflows/ci.yml` выполняет frozen lockfile install, Rust fmt/clippy/tests, frontend lint/test/build, docs checks, `cargo audit`, `pnpm audit --audit-level high` и SBOM drift gate.
+- Current: YAML compatibility path использует dependency alias `serde_yaml = { package = "yaml_serde" }`; resolved graph больше не содержит deprecated crate `serde_yaml` или `unsafe-libyaml`.
+- Current: `RUSTSEC-2023-0071` игнорируется только после guard-команд `cargo tree -i sqlx-mysql --edges features --target all` и `cargo tree -i rsa --target all`; это компенсирует Cargo.lock false-positive от optional SQLx MySQL path, который не активен в Postgres-only build.
+- Target: добавить `cargo-deny` с license/source/ban policy, secret scan, container image scan, SBOM release artifact и documented exceptions/remediation.
+- Target: убрать `RUSTSEC-2023-0071` ignore после SQLx upgrade/замены macro path либо при любом намеренном включении MySQL/RSA.
 - Target: pin GitHub Actions/container images до reviewed versions или immutable digests там, где это нужно release policy.
 
 ## 12. Container Security

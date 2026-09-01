@@ -7,6 +7,7 @@
 | Переменная | Default (compose) | Назначение |
 |---|---|---|
 | `CICD_DATABASE_URL` | нет вне compose | Полный URL PostgreSQL для прямого backend/test запуска |
+| `CICD_MIGRATIONS_DIR` | `/app/migrations` в compose | Каталог committed SQLx migrations; прямой cargo-run по умолчанию использует `backend/migrations` |
 | `CICD_BIND` | `0.0.0.0:22801` | Адрес API + Git Smart HTTP |
 | `CICD_GIT_ROOT` | `./.forge/git` вне compose | Корень bare-репозиториев при локальном запуске |
 | `CICD_GIT_TOKEN` | — | Legacy shared token для Git Smart HTTP; пусто отключает только этот token, а при непустом `CICD_AUTH_SECRET` private/read-write Git routes всё равно требуют JWT/PAT + project membership |

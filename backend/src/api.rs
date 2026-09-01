@@ -1370,7 +1370,17 @@ struct ExpectedMigration {
     )
 )]
 async fn readiness(State(state): State<Arc<AppState>>) -> axum::response::Response {
-    let expected = expected_migrations();
+    let expected = match expected_migrations().await {
+        Ok(expected) => expected,
+        Err(_) => {
+            return readiness_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "not_ready",
+                "unknown",
+                migration_readiness_error(&[], "unknown", "migration source failed"),
+            );
+        }
+    };
     let Some(db) = state.pool.as_ref() else {
         return readiness_response(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -1441,15 +1451,16 @@ fn readiness_response(
         .into_response()
 }
 
-fn expected_migrations() -> Vec<ExpectedMigration> {
-    crate::migrations()
+async fn expected_migrations() -> Result<Vec<ExpectedMigration>, sqlx::migrate::MigrateError> {
+    Ok(crate::migrations()
+        .await?
         .iter()
         .filter(|migration| migration.migration_type.is_up_migration())
         .map(|migration| ExpectedMigration {
             version: migration.version,
             checksum: migration.checksum.to_vec(),
         })
-        .collect()
+        .collect())
 }
 
 async fn migration_readiness(db: &PgPool, expected: &[ExpectedMigration]) -> MigrationReadiness {
