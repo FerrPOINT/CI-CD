@@ -4073,6 +4073,239 @@ async fn unacknowledged_external_lease_is_requeued_after_ack_deadline() {
 }
 
 #[tokio::test]
+async fn queued_job_without_compatible_runner_fails_after_queue_timeout() {
+    let pool = test_pool().await;
+    let namespace = Uuid::new_v4();
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let stage_id = Uuid::new_v4();
+    let job_id = Uuid::new_v4();
+    let attempt_id = Uuid::new_v4();
+    let queue_id = Uuid::new_v4();
+    let project_name = format!("it-queue-timeout-{}", namespace.simple());
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/queue-timeout.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status) \
+         VALUES ($1, $2, 'main', 'queued')",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert pipeline");
+    sqlx::query(
+        "INSERT INTO stages (id, pipeline_id, name, position, status) \
+         VALUES ($1, $2, 'build', 0, 'queued')",
+    )
+    .bind(stage_id)
+    .bind(pipeline_id)
+    .execute(&pool)
+    .await
+    .expect("insert stage");
+    sqlx::query(
+        "INSERT INTO jobs (id, stage_id, name, image, command, required_tags, position, status) \
+         VALUES ($1, $2, 'compile', 'alpine:3.21', 'echo ok', ARRAY['gpu']::text[], 0, 'queued')",
+    )
+    .bind(job_id)
+    .bind(stage_id)
+    .execute(&pool)
+    .await
+    .expect("insert job");
+    sqlx::query(
+        "INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger, created_at) \
+         VALUES ($1, $2, 1, 'queued', 'initial', now() - interval '2 minutes')",
+    )
+    .bind(attempt_id)
+    .bind(job_id)
+    .execute(&pool)
+    .await
+    .expect("insert queued attempt");
+    sqlx::query(
+        "INSERT INTO job_queue \
+         (id, job_id, attempt_id, pipeline_id, stage_id, state, required_tags, queued_at) \
+         VALUES ($1, $2, $3, $4, $5, 'queued', ARRAY['gpu']::text[], now() - interval '2 minutes')",
+    )
+    .bind(queue_id)
+    .bind(job_id)
+    .bind(attempt_id)
+    .bind(pipeline_id)
+    .bind(stage_id)
+    .execute(&pool)
+    .await
+    .expect("insert queued row");
+
+    let timed_out = cicd::runner::reconcile_queue_timeouts_with_config(&pool, Some(60), true)
+        .await
+        .expect("reconcile queue timeouts");
+    assert_eq!(timed_out, 1);
+
+    let (job_status, attempt_status, attempt_error, pipeline_status, queue_state): (
+        String,
+        String,
+        Option<String>,
+        String,
+        String,
+    ) = sqlx::query_as(
+        "SELECT j.status, a.status, a.error_tail, p.status, q.state \
+         FROM jobs j \
+         JOIN execution_attempts a ON a.job_id = j.id \
+         JOIN job_queue q ON q.attempt_id = a.id \
+         JOIN stages s ON s.id = j.stage_id \
+         JOIN pipelines p ON p.id = s.pipeline_id \
+         WHERE j.id = $1",
+    )
+    .bind(job_id)
+    .fetch_one(&pool)
+    .await
+    .expect("fetch timed out state");
+    assert_eq!(job_status, "failed");
+    assert_eq!(attempt_status, "failed");
+    assert_eq!(
+        attempt_error.as_deref(),
+        Some("no compatible runner before queue timeout")
+    );
+    assert_eq!(pipeline_status, "failed");
+    assert_eq!(queue_state, "completed");
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup timed out project");
+}
+
+#[tokio::test]
+async fn queue_timeout_keeps_old_work_when_compatible_protocol_runner_exists() {
+    let pool = test_pool().await;
+    let namespace = Uuid::new_v4();
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let stage_id = Uuid::new_v4();
+    let job_id = Uuid::new_v4();
+    let attempt_id = Uuid::new_v4();
+    let queue_id = Uuid::new_v4();
+    let runner_id = Uuid::new_v4();
+    let runner_credential = format!("cicd_runner_{}", namespace.simple());
+    let project_name = format!("it-queue-compatible-{}", namespace.simple());
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/queue-compatible.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status) \
+         VALUES ($1, $2, 'main', 'queued')",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert pipeline");
+    sqlx::query(
+        "INSERT INTO stages (id, pipeline_id, name, position, status) \
+         VALUES ($1, $2, 'build', 0, 'queued')",
+    )
+    .bind(stage_id)
+    .bind(pipeline_id)
+    .execute(&pool)
+    .await
+    .expect("insert stage");
+    sqlx::query(
+        "INSERT INTO jobs (id, stage_id, name, image, command, required_tags, position, status) \
+         VALUES ($1, $2, 'compile', 'alpine:3.21', 'echo ok', ARRAY['linux']::text[], 0, 'queued')",
+    )
+    .bind(job_id)
+    .bind(stage_id)
+    .execute(&pool)
+    .await
+    .expect("insert job");
+    sqlx::query(
+        "INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger, created_at) \
+         VALUES ($1, $2, 1, 'queued', 'initial', now() - interval '2 minutes')",
+    )
+    .bind(attempt_id)
+    .bind(job_id)
+    .execute(&pool)
+    .await
+    .expect("insert queued attempt");
+    sqlx::query(
+        "INSERT INTO job_queue \
+         (id, job_id, attempt_id, pipeline_id, stage_id, state, required_tags, queued_at) \
+         VALUES ($1, $2, $3, $4, $5, 'queued', ARRAY['linux']::text[], now() - interval '2 minutes')",
+    )
+    .bind(queue_id)
+    .bind(job_id)
+    .bind(attempt_id)
+    .bind(pipeline_id)
+    .bind(stage_id)
+    .execute(&pool)
+    .await
+    .expect("insert queued row");
+    sqlx::query(
+        "INSERT INTO runners \
+         (id, name, tags, status, last_seen_at, credential_hash, token_hint, credential_expires_at, \
+          draining, capacity_total_slots, capacity_busy_slots, capabilities, heartbeat_payload) \
+         VALUES ($1, $2, ARRAY['linux'], 'online', now(), $3, 'queue-test', \
+                 now() + interval '1 day', false, 1, 1, '{\"executorKinds\":[\"shell\"]}'::jsonb, '{}'::jsonb)",
+    )
+    .bind(runner_id)
+    .bind(format!("runner-queue-compatible-{}", namespace.simple()))
+    .bind(cicd::auth::hash_token(&runner_credential))
+    .execute(&pool)
+    .await
+    .expect("insert compatible runner");
+
+    let timed_out = cicd::runner::reconcile_queue_timeouts_with_config(&pool, Some(60), false)
+        .await
+        .expect("reconcile queue timeouts");
+    assert_eq!(timed_out, 0);
+
+    let (job_status, attempt_status, pipeline_status, queue_state): (
+        String,
+        String,
+        String,
+        String,
+    ) = sqlx::query_as(
+        "SELECT j.status, a.status, p.status, q.state \
+         FROM jobs j \
+         JOIN execution_attempts a ON a.job_id = j.id \
+         JOIN job_queue q ON q.attempt_id = a.id \
+         JOIN stages s ON s.id = j.stage_id \
+         JOIN pipelines p ON p.id = s.pipeline_id \
+         WHERE j.id = $1",
+    )
+    .bind(job_id)
+    .fetch_one(&pool)
+    .await
+    .expect("fetch queued state");
+    assert_eq!(job_status, "queued");
+    assert_eq!(attempt_status, "queued");
+    assert_eq!(pipeline_status, "queued");
+    assert_eq!(queue_state, "queued");
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup compatible project");
+    sqlx::query("DELETE FROM runners WHERE id = $1")
+        .bind(runner_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup runner");
+}
+
+#[tokio::test]
 async fn stale_runner_without_active_lease_is_marked_offline() {
     let pool = test_pool().await;
     let namespace = Uuid::new_v4();

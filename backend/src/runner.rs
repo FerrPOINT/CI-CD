@@ -21,6 +21,8 @@ use crate::api::ApiError;
 
 const RUNNER_RECONCILE_INTERVAL_SECONDS: u64 = 2;
 const RUNNER_STALE_OFFLINE_AFTER_SECONDS: i64 = 120;
+const DEFAULT_RUNNER_QUEUE_TIMEOUT_SECONDS: i64 = 86_400;
+const MAX_RUNNER_QUEUE_TIMEOUT_SECONDS: i64 = 2_592_000;
 
 /// Job processes currently executed by the embedded runner.
 /// Maps job_id -> child process id so that cancel can kill it.
@@ -46,6 +48,74 @@ fn runner_mode() -> RunnerMode {
     match std::env::var("CICD_RUNNER_MODE").ok().as_deref() {
         Some("host") => RunnerMode::HostShell,
         _ => RunnerMode::Docker,
+    }
+}
+
+pub fn embedded_runner_enabled_from_env(raw: Option<String>) -> Result<bool, std::io::Error> {
+    let Some(value) = raw
+        .map(|value| value.trim().to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(true);
+    };
+    match value.as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "CICD_EMBEDDED_RUNNER_ENABLED must be one of true/false, 1/0, yes/no or on/off",
+        )),
+    }
+}
+
+fn embedded_runner_enabled() -> bool {
+    match embedded_runner_enabled_from_env(std::env::var("CICD_EMBEDDED_RUNNER_ENABLED").ok()) {
+        Ok(enabled) => enabled,
+        Err(error) => {
+            tracing::warn!(%error, "invalid embedded runner env; assuming enabled");
+            true
+        }
+    }
+}
+
+pub fn runner_queue_timeout_seconds_from_env(
+    raw: Option<String>,
+) -> Result<Option<i64>, std::io::Error> {
+    let Some(value) = raw
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(Some(DEFAULT_RUNNER_QUEUE_TIMEOUT_SECONDS));
+    };
+    let seconds = value.parse::<i64>().map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "CICD_RUNNER_QUEUE_TIMEOUT_SECONDS must be an integer number of seconds",
+        )
+    })?;
+    if seconds == 0 {
+        return Ok(None);
+    }
+    if !(1..=MAX_RUNNER_QUEUE_TIMEOUT_SECONDS).contains(&seconds) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "CICD_RUNNER_QUEUE_TIMEOUT_SECONDS must be 0 or 1..{MAX_RUNNER_QUEUE_TIMEOUT_SECONDS}"
+            ),
+        ));
+    }
+    Ok(Some(seconds))
+}
+
+fn runner_queue_timeout_seconds() -> Option<i64> {
+    match runner_queue_timeout_seconds_from_env(
+        std::env::var("CICD_RUNNER_QUEUE_TIMEOUT_SECONDS").ok(),
+    ) {
+        Ok(timeout) => timeout,
+        Err(error) => {
+            tracing::warn!(%error, "invalid queue timeout env; using default");
+            Some(DEFAULT_RUNNER_QUEUE_TIMEOUT_SECONDS)
+        }
     }
 }
 
@@ -565,6 +635,117 @@ pub async fn reconcile_stale_runners(pool: &PgPool) -> Result<u64, sqlx::Error> 
     .execute(pool)
     .await?;
     Ok(result.rows_affected())
+}
+
+pub async fn reconcile_queue_timeouts(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    reconcile_queue_timeouts_with_config(
+        pool,
+        runner_queue_timeout_seconds(),
+        embedded_runner_enabled(),
+    )
+    .await
+}
+
+pub async fn reconcile_queue_timeouts_with_config(
+    pool: &PgPool,
+    timeout_seconds: Option<i64>,
+    embedded_enabled: bool,
+) -> Result<u64, sqlx::Error> {
+    let Some(timeout_seconds) = timeout_seconds else {
+        return Ok(0);
+    };
+    let timed_out_jobs = sqlx::query_as::<_, (Uuid, Uuid)>(
+        "WITH timed_out AS ( \
+             SELECT q.id AS queue_id, q.job_id, q.attempt_id, q.stage_id \
+             FROM job_queue q \
+             JOIN jobs j ON j.id = q.job_id \
+             JOIN execution_attempts a ON a.id = q.attempt_id \
+             JOIN stages s ON s.id = q.stage_id \
+             JOIN pipelines p ON p.id = q.pipeline_id \
+             WHERE q.state = 'queued' \
+               AND q.not_before <= now() \
+               AND q.queued_at <= now() - ($1::bigint * interval '1 second') \
+               AND j.status = 'queued' \
+               AND a.status = 'queued' \
+               AND NOT j.manual \
+               AND p.status IN ('queued','running') \
+               AND NOT EXISTS ( \
+                 SELECT 1 FROM job_leases l \
+                 WHERE l.job_id = q.job_id AND l.lease_status = 'active' \
+               ) \
+               AND NOT EXISTS ( \
+                 SELECT 1 FROM jobs x JOIN stages xs ON xs.id = x.stage_id \
+                 WHERE xs.pipeline_id = p.id AND xs.position < s.position \
+                   AND x.status NOT IN ('success') \
+                   AND NOT (x.status = 'failed' AND x.allow_failure) \
+               ) \
+               AND NOT EXISTS ( \
+                 SELECT 1 FROM jobs y JOIN stages ys ON ys.id = y.stage_id \
+                 WHERE ys.pipeline_id = p.id AND ys.position = s.position \
+                   AND y.status = 'failed' AND NOT y.allow_failure \
+               ) \
+               AND NOT ($2::boolean AND cardinality(q.required_tags) = 0) \
+               AND NOT EXISTS ( \
+                 SELECT 1 \
+                 FROM runners r \
+                 WHERE r.disabled_at IS NULL \
+                   AND r.status = 'online' \
+                   AND NOT r.draining \
+                   AND r.credential_hash IS NOT NULL \
+                   AND (r.credential_expires_at IS NULL OR r.credential_expires_at > now()) \
+                   AND q.required_tags <@ r.tags \
+                   AND ( \
+                     NOT (r.capabilities ? 'executorKinds') \
+                     OR EXISTS ( \
+                       SELECT 1 \
+                       FROM jsonb_array_elements_text( \
+                         CASE \
+                           WHEN jsonb_typeof(r.capabilities->'executorKinds') = 'array' \
+                           THEN r.capabilities->'executorKinds' \
+                           ELSE '[]'::jsonb \
+                         END \
+                       ) AS executor(kind) \
+                       WHERE btrim(executor.kind) = 'shell' \
+                     ) \
+                   ) \
+               ) \
+         ), updated_attempts AS ( \
+             UPDATE execution_attempts a \
+             SET status = 'failed', \
+                 finished_at = COALESCE(a.finished_at, now()), \
+                 error_tail = COALESCE(a.error_tail, 'no compatible runner before queue timeout') \
+             FROM timed_out t \
+             WHERE a.id = t.attempt_id AND a.status = 'queued' \
+             RETURNING a.job_id \
+         ), updated_jobs AS ( \
+             UPDATE jobs j \
+             SET status = 'failed', finished_at = COALESCE(j.finished_at, now()) \
+             FROM timed_out t \
+             WHERE j.id = t.job_id AND j.status = 'queued' \
+             RETURNING j.id, j.stage_id \
+         ), updated_queue AS ( \
+             UPDATE job_queue q \
+             SET state = 'completed', \
+                 completed_at = COALESCE(q.completed_at, now()), \
+                 updated_at = now() \
+             FROM timed_out t \
+             WHERE q.id = t.queue_id AND q.state = 'queued' \
+             RETURNING q.id \
+         ) \
+         SELECT id, stage_id FROM updated_jobs",
+    )
+    .bind(timeout_seconds)
+    .bind(embedded_enabled)
+    .fetch_all(pool)
+    .await?;
+
+    for (job_id, stage_id) in &timed_out_jobs {
+        if let Err(error) = crate::api::refresh_statuses(pool, *stage_id).await {
+            tracing::warn!(%job_id, %stage_id, error = ?error, "could not refresh statuses after queue timeout reconciliation");
+        }
+    }
+
+    Ok(timed_out_jobs.len() as u64)
 }
 
 async fn reconcile_unleased_running_jobs(pool: &PgPool) -> Result<u64, sqlx::Error> {
@@ -1359,6 +1540,11 @@ async fn reconcile_runtime_state(pool: &PgPool) -> Result<(), sqlx::Error> {
         tracing::warn!(stale_runners, "runner marked stale runners offline");
     }
 
+    let queue_timeouts = reconcile_queue_timeouts(pool).await?;
+    if queue_timeouts > 0 {
+        tracing::warn!(queue_timeouts, "runner reconciled queue timeouts");
+    }
+
     let unleased = reconcile_unleased_running_jobs(pool).await?;
     if unleased > 0 {
         tracing::warn!(
@@ -1556,6 +1742,45 @@ mod tests {
             shell_capture_command("set -e\ncargo test\ncargo clippy"),
             "{\nset -e\ncargo test\ncargo clippy\n} 2>&1"
         );
+    }
+
+    #[test]
+    fn embedded_runner_enabled_defaults_to_true_and_parses_boolish_values() {
+        assert!(embedded_runner_enabled_from_env(None).unwrap());
+        assert!(embedded_runner_enabled_from_env(Some(" ".to_string())).unwrap());
+        assert!(embedded_runner_enabled_from_env(Some("true".to_string())).unwrap());
+        assert!(embedded_runner_enabled_from_env(Some("1".to_string())).unwrap());
+        assert!(!embedded_runner_enabled_from_env(Some("false".to_string())).unwrap());
+        assert!(!embedded_runner_enabled_from_env(Some("off".to_string())).unwrap());
+        assert!(embedded_runner_enabled_from_env(Some("maybe".to_string())).is_err());
+    }
+
+    #[test]
+    fn runner_queue_timeout_defaults_to_one_day_and_can_be_disabled() {
+        assert_eq!(
+            runner_queue_timeout_seconds_from_env(None).unwrap(),
+            Some(DEFAULT_RUNNER_QUEUE_TIMEOUT_SECONDS)
+        );
+        assert_eq!(
+            runner_queue_timeout_seconds_from_env(Some(" ".to_string())).unwrap(),
+            Some(DEFAULT_RUNNER_QUEUE_TIMEOUT_SECONDS)
+        );
+        assert_eq!(
+            runner_queue_timeout_seconds_from_env(Some("0".to_string())).unwrap(),
+            None
+        );
+        assert_eq!(
+            runner_queue_timeout_seconds_from_env(Some("900".to_string())).unwrap(),
+            Some(900)
+        );
+        assert!(runner_queue_timeout_seconds_from_env(Some("-1".to_string())).is_err());
+        assert!(
+            runner_queue_timeout_seconds_from_env(Some(
+                (MAX_RUNNER_QUEUE_TIMEOUT_SECONDS + 1).to_string()
+            ))
+            .is_err()
+        );
+        assert!(runner_queue_timeout_seconds_from_env(Some("oops".to_string())).is_err());
     }
 
     #[test]
