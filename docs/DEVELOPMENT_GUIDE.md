@@ -173,12 +173,13 @@ docker run --rm --entrypoint /bin/bash \
   -w /workspace \
   -e CARGO_TARGET_DIR=/workspace/target \
   rust:1.86-bookworm \
-  -lc '/usr/local/cargo/bin/cargo fmt --check && \
+  -lc '/usr/local/cargo/bin/cargo fmt --all -- --check && \
        /usr/local/cargo/bin/cargo clippy --workspace --all-targets -- -D warnings && \
-       /usr/local/cargo/bin/cargo test --workspace'
+       /usr/local/cargo/bin/cargo test --workspace && \
+       /usr/local/cargo/bin/cargo build --release --workspace'
 ```
 
-Для real-DB проверки нужен PostgreSQL и `CICD_TEST_DATABASE_URL`; CI запускает `cargo test --features integration --test integration_db -- --test-threads=1`, потому что scheduler/runner dispatch тесты используют глобальные due/queued scans. Release build остаётся локальной/release-проверкой, но не current CI step.
+Для real-DB проверки нужен PostgreSQL и `CICD_TEST_DATABASE_URL`; CI запускает `cargo test --features integration --test integration_db -- --test-threads=1`, потому что scheduler/runner dispatch тесты используют глобальные due/queued scans. Backend release build входит в current CI gate.
 
 ### Frontend через Node Docker image
 

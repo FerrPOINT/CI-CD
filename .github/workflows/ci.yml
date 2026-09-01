@@ -66,6 +66,10 @@ jobs:
         cache-dependency-path: frontend/pnpm-lock.yaml
         install: false
     - run: pnpm install --frozen-lockfile
+    - name: evidence script syntax
+      run: |
+        node --check scripts/seed-evidence.mjs
+        node --check scripts/shoot-evidence.mjs
     - name: generated client up to date
       run: |
         pnpm openapi:generate

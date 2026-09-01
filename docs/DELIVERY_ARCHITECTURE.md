@@ -744,7 +744,7 @@ Target `/health/*` routes остаются будущим split для productio
 |---|---|---|
 | Contract | OpenAPI validate, lint, bundle, examples validation | Неизвестная schema, отсутствующие error/security responses, invalid examples. |
 | Contract compatibility | Diff against default branch | Breaking change в `v1`. |
-| Backend static | `cargo fmt --check`, clippy workspace/all-targets/all-features | Formatting или warning. |
+| Backend static | `cargo fmt --all -- --check`, clippy workspace/all-targets, release build | Formatting, warning или release build failure. |
 | Backend test | Domain/app unit, real PostgreSQL integration, API contract | Любой failing test или недоступная required migration. |
 | CLI | Help snapshot/contract, config precedence, output and exit-code tests | Изменён public CLI behaviour без explicit update. |
 | Frontend static | frozen lockfile, lint, TypeScript build | Lint/type/build failure. |

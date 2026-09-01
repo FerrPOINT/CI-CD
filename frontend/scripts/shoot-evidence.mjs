@@ -125,11 +125,11 @@ async function shoot(shot) {
     locale: 'ru-RU',
   })
   const page = await ctx.newPage()
-  await page.addInitScript(() => {
-    localStorage.setItem('theme', THEME)
-    localStorage.setItem('forge.theme', THEME)
+  await page.addInitScript((theme) => {
+    localStorage.setItem('theme', theme)
+    localStorage.setItem('forge.theme', theme)
     localStorage.setItem('i18nextLng', 'ru')
-  })
+  }, THEME)
   try {
     await page.goto(BASE + shot.path, { waitUntil: 'networkidle', timeout: 30000 })
     await page.addStyleTag({

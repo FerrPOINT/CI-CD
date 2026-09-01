@@ -342,7 +342,7 @@ cd /opt/dev/CI-CD
 
 docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" \
   -w /workspace rust:1.86-bookworm \
-  -lc '/usr/local/cargo/bin/cargo fmt --check && /usr/local/cargo/bin/cargo clippy --all-targets -- -D warnings && /usr/local/cargo/bin/cargo test --workspace && /usr/local/cargo/bin/cargo build --release'
+  -lc '/usr/local/cargo/bin/cargo fmt --all -- --check && /usr/local/cargo/bin/cargo clippy --workspace --all-targets -- -D warnings && /usr/local/cargo/bin/cargo test --workspace && /usr/local/cargo/bin/cargo build --release --workspace'
 
 cd frontend
 pnpm install --frozen-lockfile

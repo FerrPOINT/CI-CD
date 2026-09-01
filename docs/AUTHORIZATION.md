@@ -712,7 +712,7 @@ Route inventory test обязан сверять все `/api/v1/**` routes с d
 
 В CI добавляются:
 
-- `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`;
+- `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo build --release --workspace`;
 - real PostgreSQL migration and integration job;
 - dependency vulnerability scan;
 - secret scanning в diff и repository history policy;
