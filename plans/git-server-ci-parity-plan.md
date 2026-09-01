@@ -1,10 +1,12 @@
 # Git Server and CI Parity Implementation Plan
 
-> **For Hermes:** Execute with TDD: add a focused regression test, observe RED, implement the smallest change, run GREEN, then verify the real API/UI.
+> **Status 2026-09-01:** historical working plan. Code browsing, tags/releases, Git Smart HTTP auth checks, pipeline plan evidence, artifacts and JUnit/test-report UI are already represented in current docs/tests/screenshots. Use `docs/CURRENT_STATE.md`, `docs/ROADMAP.md` and `docs/TRACEABILITY.md` for the live backlog before executing any remaining item.
+>
+> **For agents:** if a remaining Git/CI parity slice is reopened, use TDD and preserve current REST paths plus `openapi/openapi.yaml`.
 
 **Goal:** Close the high-value Git-server and CI/CD gaps required for a serious self-hosted Forge control plane.
 
-**Architecture:** Keep Git reads shelling out only against validated bare repositories. Store release metadata, visibility, pipeline variables and parsed JUnit summaries in PostgreSQL migration `0006`; expose typed Axum endpoints and React-query hooks. Keep clone authorization at Smart HTTP boundaries, and pass user variables to runner jobs only under a `CICD_VAR_` namespace.
+**Architecture:** Keep Git reads shelling out only against validated bare repositories. Current release metadata, visibility, pipeline details and parsed JUnit summaries live behind committed SQLx migrations and typed Axum/OpenAPI endpoints. Keep clone authorization at Smart HTTP boundaries, and pass any future user variables to runner jobs only under a `CICD_VAR_` namespace.
 
 **Tech Stack:** Rust 2024, Axum, SQLx/PostgreSQL, Git Smart HTTP, React 19, TanStack Query, Vite, Playwright evidence.
 

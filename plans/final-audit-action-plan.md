@@ -2,6 +2,8 @@
 
 Дата: 2026-08-26. Основание: автоматическая сверка исходников ↔ docs ↔ screenshots.
 
+> **Статус 2026-09-01:** исторический план аудита. Основные группы уже выполнены или замещены текущими `docs/CURRENT_STATE.md`, `docs/TRACEABILITY.md`, `docs/ROADMAP.md` и `scripts/verify_docs.py --all`. Не использовать как актуальный backlog без повторной сверки с кодом и current-state.
+
 **Цель:** закрыть все найденные пробелы документации и скриншотов; привести их к единому стандарту task-tracker.
 
 ---
@@ -41,8 +43,8 @@ API.md не содержит ~15 реализованных endpoint-ов. До�
 | STORAGE.md | артефакты реализованы (CICD_ARTIFACTS_DIR, volume, 50 MiB) |
 | DATABASE_INDEXES.md | 9 индексов создаются store.rs — убрать «нет индексов» |
 | DEPLOYMENT.md / RESILIENCE.md / CI_CD.md | embedded runner реален; «runners postponed» → фактический статус + ссылка на RUNNER_ARCHITECTURE.md |
-| EVENTS.md | статус SSE: не реализован (честно), ссылка на AUTOMATION_ARCHITECTURE.md |
-| FRONTEND_ARCHITECTURE.md / UI_UX.md | 20 страниц/21 роут фактически; admin/settings — статические заглушки (честно пометить) |
+| EVENTS.md | актуальный статус: `in_app`/`sse` notifications реализованы как MVP; external adapters и inbound provider handlers остаются target |
+| FRONTEND_ARCHITECTURE.md / UI_UX.md | 20 рабочих Dashboard-страниц + `/login`; отдельный `/admin` не входит в baseline, системный срез находится в `/settings` |
 
 Проверка: `rg -i 'planned|не реализован' docs/` → только легитимные target-маркеры.
 
@@ -67,5 +69,5 @@ API.md не содержит ~15 реализованных endpoint-ов. До�
 
 ## Что НЕ входит (осознанно)
 
-- Реализация auth/RBAC/outbox/runner-protocol — это код, не доки; порядок в `docs/ROADMAP.md` + `plans/architecture-rebuild-plan.md`.
-- OpenAPI-генерация, mobile UX-переделка — Phase C/D целевой архитектуры.
+- Дальнейшее production hardening auth/RBAC/outbox/runner-protocol — это код, не доки; порядок в `docs/ROADMAP.md` и целевых contracts.
+- OpenAPI drift gate, generated frontend schema и mobile baseline уже current; backward-compatibility diff, Playwright/axe/Lighthouse gate и production screenshot pipeline остаются target.

@@ -3,9 +3,9 @@
 
 Checks: markdown link/anchor integrity, canonical naming (ADR-0009),
 status taxonomy, orphan docs, current-state cross-check, screenshot manifest,
-and router/OpenAPI path drift.
+plans status notes, and router/OpenAPI path drift.
 
-Usage: python3 scripts/verify_docs.py [--all | --links --anchors --canonical --status-labels --orphan-docs --current-state --screenshots --manifest --openapi-routes --api-doc-routes]
+Usage: python3 scripts/verify_docs.py [--all | --links --anchors --canonical --status-labels --orphan-docs --current-state --screenshots --manifest --plans --openapi-routes --api-doc-routes]
 Exit code 0 = clean; non-zero with a report otherwise.
 """
 from __future__ import annotations
@@ -21,6 +21,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
+PLANS = ROOT / "plans"
 
 FORBIDDEN_CANONICAL = [
     (r"\boutbox_events\b", "use outbox_messages (ADR-0009)"),
@@ -356,6 +357,19 @@ def check_manifest() -> None:
         fail(f"README visual registry count drift: documented {m.group(1)}, manifest has {count}")
 
 
+def check_plans() -> None:
+    if not PLANS.exists():
+        return
+    for p in sorted(PLANS.glob("*.md")):
+        rel = p.relative_to(ROOT).as_posix()
+        lines = read_text(p).splitlines()
+        head = "\n".join(lines[:8])
+        if not re.search(r"\*\*(Статус|Status)\s+20\d{2}-\d{2}-\d{2}:", head):
+            fail(f"plan lacks dated status note near top: {rel}")
+        if re.search(r"^>\s+\*\*For Hermes:\*\*", "\n".join(lines[:5]), re.MULTILINE):
+            fail(f"plan starts with active Hermes instruction before status: {rel}")
+
+
 def extract_router_paths() -> set[str]:
     paths: set[str] = set()
     for rel in BACKEND_ROUTE_FILES:
@@ -418,6 +432,7 @@ def main() -> int:
         "current-state",
         "screenshots",
         "manifest",
+        "plans",
         "openapi-routes",
         "api-doc-routes",
     ):
@@ -432,6 +447,7 @@ def main() -> int:
         "current-state": check_current_state,
         "screenshots": check_screenshots,
         "manifest": check_manifest,
+        "plans": check_plans,
         "openapi-routes": check_openapi_routes,
         "api-doc-routes": check_api_doc_routes,
     }

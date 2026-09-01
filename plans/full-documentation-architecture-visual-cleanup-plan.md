@@ -1,6 +1,8 @@
 # Полное приведение в порядок документации, архитектуры и визуальной части
 
-> **For Hermes:** выполнять последовательно, не смешивать current facts, approved target contracts и планы. Каждый блок завершать проверяемым evidence и отдельным commit.
+> **Статус 2026-09-01:** исторический master-plan. Большая часть authority/current-state/contracts/screenshots cleanup уже выполнена, а оставшиеся target-gates перенесены в `docs/ROADMAP.md`, `docs/TRACEABILITY.md` и профильные contracts. Не выполнять этот файл буквально; использовать его только как историю решений и источник идей после сверки с current-state.
+>
+> **For agents:** не смешивать current facts, approved target contracts и планы. Каждый новый блок работы завершать проверяемым evidence и отдельным commit.
 
 **Goal:** сделать CI-CD понятным для пользователя, разработчика и оператора: один источник истины на каждую тему, честно обозначенный MVP/target status, воспроизводимые visual evidence и готовая к старту разработки архитектурная база.
 
@@ -241,4 +243,4 @@ python3 scripts/verify_docs.py --screenshots --manifest
 
 ## Order And Dependency Rule
 
-Execute strictly: Gate 0 → 1 → 2 → 3 → 4 → 5 → 6. Do not rebuild visuals before the UI is responsive/accessibility-verified, and do not consolidate or delete documents before canonical contracts/ADRs are reconciled.
+Historical ordering was Gate 0 → 1 → 2 → 3 → 4 → 5 → 6. For new work, follow `docs/ROADMAP.md` and current contracts; do not rebuild visuals before the affected UI is responsive/accessibility-verified, and do not consolidate/delete documents before canonical contracts/ADRs are reconciled.

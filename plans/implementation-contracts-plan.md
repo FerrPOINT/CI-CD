@@ -2,6 +2,8 @@
 
 Дата: 2026-08-27. Основание: независимое ревью AUTHORIZATION, RUNNER/AUTOMATION, STORAGE/DELIVERY и проверка исходников.
 
+> **Статус 2026-09-01:** исторический bootstrap-план. Исполнимые contracts уже созданы и включены в архитектурный индекс; часть перечисленного стала current MVP. Для актуального исполнения брать `docs/CURRENT_STATE.md`, `docs/TRACEABILITY.md`, `docs/ROADMAP.md` и соответствующий contract, а не этот список.
+
 ## Вердикт
 
 Целевые документы полны на уровне design/ADR, но до этой доработки не были достаточно детерминированными для первого production implementation PR. Отсутствовали исполнимые contracts для migrations, auth, runner wire protocol, outbox и OpenAPI/codegen.
@@ -23,8 +25,8 @@
 5. External Docker runner protocol, no secrets/artifacts in first external runner release.
 6. Secret injection/artifacts/webhook delivery only after runner lease/reconciliation is proven.
 
-## Non-goals in first protocol release
+## Non-goals / remaining target после current MVP
 
-- Kubernetes executor, S3 backend, outbound webhook delivery, notification senders.
+- Kubernetes executor, S3 backend, production sandbox/resource policy, external email/Slack adapters and inbound provider webhook handlers.
 - Legacy token dual acceptance beyond documented sunset window.
 - Pagination migration of all existing array endpoints before additive `/v1` collection contract has an adopted compatibility path.
