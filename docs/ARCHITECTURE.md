@@ -131,7 +131,7 @@ Composition root: чтение конфига, создание `PgPool`, реп
 | `CICD_RUNNER_REGISTRATION_TOKEN` | bootstrap token для `/api/v1/runner/register`; пусто отключает external registration |
 | `CICD_RUNNER_CREDENTIAL` | bearer credential для уже зарегистрированного `forge-runner` |
 | `CICD_RUNNER_NAME` / `CICD_RUNNER_TAGS` / `CICD_RUNNER_TOTAL_SLOTS` | identity/capacity внешнего `forge-runner` |
-| `CICD_RUNNER_POLL_INTERVAL_SECONDS` / `CICD_RUNNER_NO_CHECKOUT` | poll cadence и dev/debug режим без Git checkout для внешнего `forge-runner` |
+| `CICD_RUNNER_POLL_INTERVAL_SECONDS` / `CICD_RUNNER_NO_CHECKOUT` | empty-poll cadence с server `waitSeconds` cap 30s и dev/debug режим без Git checkout для внешнего `forge-runner` |
 | `CICD_RUNNER_WORK_DIR` | workspace root внешнего `forge-runner` |
 | `CICD_RUNNER_KEEP_WORKSPACE` | `1` — не удалять workspace джоба |
 

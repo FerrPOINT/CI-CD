@@ -1,6 +1,6 @@
 # Runner protocol
 
-**Статус:** Current verified MVP + Target approved. Реализованный subset на 2026-09-01 покрывает `register`, `heartbeat`, immediate `work:poll`, basic tag matching, current `shell` executor capability matching, `ack`, lease-scoped `control`/`secrets:resolve`, one-shot artifact upload, `renew`, `logs`, `complete`, cancel signal delivery через `job_leases.cancel_requested_at`, SHA-256 storage для runner credential/lease token, fencing по `job_leases.generation`, `workspace.checkoutUrl`, declared `attempt.secrets`/`attempt.artifacts` и отдельный `forge-runner` shell process. Остальные разделы описывают target-контракт production runner-а. Канонические путь и имена таблиц закреплены [ADR-0009](../adr/0009-canonical-registry.md).
+**Статус:** Current verified MVP + Target approved. Реализованный subset на 2026-09-01 покрывает `register`, `heartbeat`, `work:poll` с optional long-poll `waitSeconds` и in-process wakeup, basic tag matching, current `shell` executor capability matching, `ack`, lease-scoped `control`/`secrets:resolve`, one-shot artifact upload, `renew`, `logs`, `complete`, cancel signal delivery через `job_leases.cancel_requested_at`, SHA-256 storage для runner credential/lease token, fencing по `job_leases.generation`, `workspace.checkoutUrl`, declared `attempt.secrets`/`attempt.artifacts` и отдельный `forge-runner` shell process. Остальные разделы описывают target-контракт production runner-а. Канонические путь и имена таблиц закреплены [ADR-0009](../adr/0009-canonical-registry.md).
 
 ## 1. Область и общие правила
 
@@ -51,6 +51,8 @@
 
 Успешный `201` возвращает `{protocolVersion, runnerId, credential, credentialExpiresAt, heartbeatIntervalSeconds, pollWaitMaxSeconds}`. `credential` показывается ровно один раз. Current MVP сверяет `registrationToken` с `CICD_RUNNER_REGISTRATION_TOKEN`, нормализует optional `tags`, принимает optional object `capabilities`, валидирует optional `capabilities.executorKinds` и хранит credential hash + hint; одноразовые/scoped registration tokens, protected tags и registration-token audit остаются target.
 
+`pollWaitMaxSeconds` равен `30`: runner может запросить long-poll wait от `0` до `30` секунд, а `0` сохраняет immediate-poll совместимость.
+
 `POST /api/v1/runner/heartbeat` принимает:
 
 ```json
@@ -67,12 +69,13 @@
 {"type":"object","required":["protocolVersion","capacity"],"properties":{
   "protocolVersion":{"const":1},
   "capacity":{"type":"object","required":["freeSlots"],"properties":{"freeSlots":{"type":"integer","minimum":0,"maximum":1024}},"additionalProperties":false},
+  "waitSeconds":{"type":"integer","minimum":0,"maximum":30},
   "tags":{"type":"array","maxItems":64,"items":{"type":"string","pattern":"^[a-z0-9][a-z0-9._-]{0,62}$"}},
   "capabilityDigest":{"type":"string","maxLength":128}
 },"additionalProperties":false}
 ```
 
-Current MVP отвечает сразу и возвращает `204`, если совместимой работы нет. Optional `tags` в poll нормализуются; пустой список означает текущие stored runner tags, непустой список должен быть subset stored runner tags и может сузить выдачу. Текущий executor offer равен `shell`: runner получает работу, если `capabilities.executorKinds` отсутствует или явно содержит `shell`; runner с явным списком без `shell` считается несовместимым. Target сервер long-poll-ит не более `pollWait`. При найденной работе ответ `200 LeaseOffer`:
+Current MVP сначала делает immediate claim; если совместимой работы нет и `waitSeconds > 0`, сервер ждёт не дольше указанного бюджета и просыпается по in-process signal после committed enqueue или разблокировки следующей стадии. `204` означает, что за этот интервал совместимой работы не появилось. Optional `tags` в poll нормализуются; пустой список означает текущие stored runner tags, непустой список должен быть subset stored runner tags и может сузить выдачу. Текущий executor offer равен `shell`: runner получает работу, если `capabilities.executorKinds` отсутствует или явно содержит `shell`; runner с явным списком без `shell` считается несовместимым. Multi-replica PostgreSQL/LISTEN-based wakeup и broker-level fairness остаются target. При найденной работе ответ `200 LeaseOffer`:
 
 ```json
 {"protocolVersion":1,"leaseId":"uuid","leaseToken":"opaque","fencingToken":7,
@@ -174,7 +177,7 @@ Completion terminal и идемпотентен только для иденти
 |---|---:|---:|---|
 | registration token TTL | 1h | 5m..24h | атомарно расходуется при register |
 | heartbeat interval | 15s | 5s..60s | unhealthy после 45s, offline после 120s |
-| poll wait | 0s current / 25s target | 0s..30s | current immediate poll; target ожидание offer |
+| poll wait | 0s default / 30s max | 0s..30s | `0` immediate, `>0` bounded ожидание offer с in-process wakeup |
 | ack timeout | 30s | 10s..120s | offer без ack становится abandoned |
 | lease TTL | 120s | 30s..600s | продлевается только owner-ом |
 | renew interval | 40s | `< TTL / 2` | runner начинает renew до deadline |
@@ -186,7 +189,7 @@ Completion terminal и идемпотентен только для иденти
 | Сущность | Состояния и допустимый переход |
 |---|---|
 | Runner | `registered -> online -> draining|unhealthy|offline|disabled|revoked`; только `online` получает work |
-| Queue | Current MVP: `queued -> leased -> completed|canceled`; target long-poll may split pre-ack `offered/abandoned`; claim выполняется транзакционно через `SKIP LOCKED` |
+| Queue | Current MVP: `queued -> leased -> completed|canceled`; long-poll ждёт только до claim и не вводит отдельное состояние; target может split-ить pre-ack `offered/abandoned`; claim выполняется транзакционно через `SKIP LOCKED` |
 | Lease | Current MVP: `active -> completed|expired|canceled`; target может split-ить `offered -> active`, `offered -> abandoned` при ack timeout |
 | Attempt | `queued -> leasing -> assigned -> running -> success|failed|canceled|timed_out|lost`; retry создаёт следующий номер |
 

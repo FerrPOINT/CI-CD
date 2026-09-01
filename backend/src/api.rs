@@ -2115,6 +2115,7 @@ pub(crate) async fn create_pipeline_with_vars_idempotent(
         .map_err(ApiError::internal)?;
     }
     tx.commit().await.map_err(ApiError::internal)?;
+    crate::dispatch_signal::notify_runner_work_available();
     Ok(PipelineTriggerOutcome {
         pipeline,
         replayed: false,
@@ -4453,6 +4454,9 @@ pub(crate) async fn refresh_statuses(pool: &PgPool, stage_id: Uuid) -> Result<()
         .await
         .map_err(ApiError::internal)?;
     sqlx::query("UPDATE pipelines SET status = $2, started_at = CASE WHEN $2 = 'running' THEN COALESCE(started_at, now()) ELSE started_at END, finished_at = CASE WHEN $2 IN ('success','failed','canceled') THEN now() ELSE finished_at END WHERE id = $1").bind(pipeline_id).bind(&pipeline_status).execute(pool).await.map_err(ApiError::internal)?;
+    if matches!(pipeline_status.as_str(), "queued" | "running") {
+        crate::dispatch_signal::notify_runner_work_available();
+    }
     // Emit a domain event exactly once, on the terminal transition, so
     // outbox webhook fan-out fires (ADR-0006).
     if matches!(pipeline_status.as_str(), "success" | "failed" | "canceled")

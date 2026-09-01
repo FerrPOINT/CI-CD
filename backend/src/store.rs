@@ -303,6 +303,9 @@ pub async fn enqueue_job_attempt(
     let mut tx = pool.begin().await?;
     let affected = enqueue_job_attempt_tx(&mut tx, job_id, attempt_id).await?;
     tx.commit().await?;
+    if affected > 0 {
+        crate::dispatch_signal::notify_runner_work_available();
+    }
     Ok(affected)
 }
 
@@ -357,6 +360,9 @@ pub async fn enqueue_missing_ready_jobs(pool: &PgPool) -> Result<u64, sqlx::Erro
     )
     .execute(pool)
     .await?;
+    if result.rows_affected() > 0 {
+        crate::dispatch_signal::notify_runner_work_available();
+    }
     Ok(result.rows_affected())
 }
 

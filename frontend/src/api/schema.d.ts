@@ -1924,6 +1924,8 @@ export interface components {
             /** Format: int32 */
             protocolVersion: number;
             tags?: string[];
+            /** Format: int32 */
+            waitSeconds?: number;
         };
         RunnerRegisterRequest: {
             capabilities?: unknown;

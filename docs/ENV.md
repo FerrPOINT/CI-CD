@@ -22,7 +22,7 @@
 | `CICD_RUNNER_NAME` | `forge-runner` | Имя внешнего runner process |
 | `CICD_RUNNER_TAGS` | `linux,host` | Теги внешнего runner process, через запятую |
 | `CICD_RUNNER_TOTAL_SLOTS` | `1` | Количество параллельных слотов, которое внешний runner сообщает в heartbeat/poll |
-| `CICD_RUNNER_POLL_INTERVAL_SECONDS` | `5` | Пауза между пустыми `work:poll` запросами внешнего `forge-runner` |
+| `CICD_RUNNER_POLL_INTERVAL_SECONDS` | `5` | Интервал пустого poll внешнего `forge-runner`: server long-poll wait capped at 30s + fallback sleep для мгновенного `204` |
 | `CICD_RUNNER_NO_CHECKOUT` | `false` | Отключает Git checkout и создаёт пустой workspace для команд |
 | `CICD_RUNNER_WORK_DIR` | `/var/lib/forge/runner-work` в compose runner profile | Корень checkout workspace внешнего `forge-runner` |
 
@@ -48,7 +48,7 @@
 | `CICD_RUNNER_NAME` | `forge-runner` | Имя внешнего runner-а |
 | `CICD_RUNNER_TAGS` | `linux,host` | Теги внешнего runner-а |
 | `CICD_RUNNER_TOTAL_SLOTS` | `1` | Capacity внешнего runner-а |
-| `CICD_RUNNER_POLL_INTERVAL_SECONDS` | `5` | Пауза между пустыми poll-запросами |
+| `CICD_RUNNER_POLL_INTERVAL_SECONDS` | `5` | Интервал пустого poll: `forge-runner` передаёт `waitSeconds=min(value,30)` и досыпает остаток только после мгновенного `204` |
 | `CICD_RUNNER_NO_CHECKOUT` | `false` | Запускать команды в пустом workspace без Git checkout |
 | `CICD_RUNNER_WORK_DIR` | temp dir `forge-runner` | Workspace root внешнего runner-а |
 | `CICD_RUNNER_KEEP_WORKSPACE` | `false` | Не удалять workspace после job |

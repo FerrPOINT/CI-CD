@@ -746,7 +746,7 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
     let credential = registered["credential"].as_str().unwrap().to_owned();
     assert!(credential.starts_with("cicd_runner_"));
     assert_eq!(registered["protocolVersion"], 1);
-    assert_eq!(registered["pollWaitMaxSeconds"], 0);
+    assert_eq!(registered["pollWaitMaxSeconds"], 30);
 
     let (stored_hash, token_hint): (Option<String>, Option<String>) =
         sqlx::query_as("SELECT credential_hash, token_hint FROM runners WHERE id = $1")
@@ -1430,6 +1430,139 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
         }
     }
     let _ = std::fs::remove_dir_all(&artifact_root);
+}
+
+#[tokio::test]
+async fn external_runner_long_poll_wakes_when_work_is_enqueued() {
+    let pool = test_pool().await;
+    let namespace = Uuid::new_v4();
+    let runner_id = Uuid::new_v4();
+    let credential = format!("credential-{}", namespace.simple());
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let stage_id = Uuid::new_v4();
+    let job_id = Uuid::new_v4();
+    let attempt_id = Uuid::new_v4();
+
+    sqlx::query(
+        "INSERT INTO runners \
+         (id, name, tags, status, last_seen_at, credential_hash, credential_expires_at, capabilities, heartbeat_payload) \
+         VALUES ($1, $2, ARRAY['linux'], 'online', now(), $3, now() + interval '1 day', $4, '{}'::jsonb)",
+    )
+    .bind(runner_id)
+    .bind(format!("runner-long-poll-{}", namespace.simple()))
+    .bind(cicd::auth::hash_token(&credential))
+    .bind(serde_json::json!({"executorKinds": ["shell"]}))
+    .execute(&pool)
+    .await
+    .expect("insert runner");
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(format!("it-runner-long-poll-{}", namespace.simple()))
+        .bind("https://example.invalid/long-poll.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status) VALUES ($1, $2, 'main', 'queued')",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert pipeline");
+    sqlx::query(
+        "INSERT INTO stages (id, pipeline_id, name, position, status) \
+         VALUES ($1, $2, 'build', 0, 'queued')",
+    )
+    .bind(stage_id)
+    .bind(pipeline_id)
+    .execute(&pool)
+    .await
+    .expect("insert stage");
+    sqlx::query(
+        "INSERT INTO jobs \
+         (id, stage_id, name, image, command, required_tags, required_secrets, artifact_paths, position, status, timeout_seconds, manual) \
+         VALUES ($1, $2, 'compile', 'alpine:3.21', 'echo ok', ARRAY['linux'], ARRAY[]::text[], ARRAY[]::text[], 0, 'queued', 30, true)",
+    )
+    .bind(job_id)
+    .bind(stage_id)
+    .execute(&pool)
+    .await
+    .expect("insert initially manual job");
+    sqlx::query(
+        "INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) \
+         VALUES ($1, $2, 1, 'queued', 'initial')",
+    )
+    .bind(attempt_id)
+    .bind(job_id)
+    .execute(&pool)
+    .await
+    .expect("insert attempt");
+
+    let app = cicd::api::app_with_auth_secret(
+        Some(pool.clone()),
+        Some(format!("runner-long-poll-secret-{namespace}")),
+    );
+    let poll_app = app.clone();
+    let poll_credential = credential.clone();
+    let mut poll = tokio::spawn(async move {
+        poll_app
+            .oneshot(
+                Request::post("/api/v1/runner/work:poll")
+                    .header("authorization", format!("Bearer {poll_credential}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "protocolVersion": 1,
+                            "capacity": {"freeSlots": 1},
+                            "waitSeconds": 5,
+                            "tags": ["linux"]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(
+        !poll.is_finished(),
+        "poll returned before work was enqueued"
+    );
+
+    sqlx::query("UPDATE jobs SET manual = false WHERE id = $1")
+        .bind(job_id)
+        .execute(&pool)
+        .await
+        .expect("release manual gate");
+    let enqueued = cicd::store::enqueue_job_attempt(&pool, job_id, attempt_id)
+        .await
+        .expect("enqueue released job");
+    assert_eq!(enqueued, 1);
+
+    let response = tokio::time::timeout(std::time::Duration::from_secs(2), &mut poll)
+        .await
+        .expect("long poll should wake after enqueue")
+        .expect("poll task should complete");
+    assert_eq!(response.status(), StatusCode::OK);
+    let offer = response_json(response).await;
+    assert_eq!(offer["attempt"]["id"], attempt_id.to_string());
+    assert_eq!(offer["attempt"]["jobId"], job_id.to_string());
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup long poll project");
+    sqlx::query("DELETE FROM runners WHERE id = $1")
+        .bind(runner_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup long poll runner");
 }
 
 #[tokio::test]

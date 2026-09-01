@@ -1,6 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::Arc,
+    time::Duration as StdDuration,
 };
 
 use axum::{
@@ -24,7 +25,7 @@ use crate::{
 
 const PROTOCOL_VERSION: i32 = 1;
 const HEARTBEAT_INTERVAL_SECONDS: i32 = 15;
-const POLL_WAIT_MAX_SECONDS: i32 = 0;
+const POLL_WAIT_MAX_SECONDS: i32 = 30;
 const ACK_DEADLINE_SECONDS: i64 = 30;
 const LEASE_TTL_SECONDS: i64 = 120;
 const RENEW_AFTER_SECONDS: i64 = 40;
@@ -126,6 +127,9 @@ pub(crate) struct RunnerCapacity {
 pub(crate) struct RunnerPollRequest {
     protocol_version: i32,
     capacity: RunnerPollCapacity,
+    #[serde(default)]
+    #[schema(minimum = 0, maximum = 30)]
+    wait_seconds: i32,
     #[serde(default)]
     tags: Vec<String>,
     #[serde(default)]
@@ -504,9 +508,26 @@ pub(crate) async fn poll_runner_work(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
 
-    match claim_next_work(db, &runner, &runner_tags).await? {
-        Some(offer) => Ok(Json(offer).into_response()),
-        None => Ok(StatusCode::NO_CONTENT.into_response()),
+    let poll_started = tokio::time::Instant::now();
+    let wait_budget = StdDuration::from_secs(input.wait_seconds as u64);
+    loop {
+        let notified = crate::dispatch_signal::runner_work_notifier().notified();
+        match claim_next_work(db, &runner, &runner_tags).await? {
+            Some(offer) => return Ok(Json(offer).into_response()),
+            None if input.wait_seconds == 0 => {
+                return Ok(StatusCode::NO_CONTENT.into_response());
+            }
+            None => {}
+        }
+        let Some(remaining) = wait_budget.checked_sub(poll_started.elapsed()) else {
+            return Ok(StatusCode::NO_CONTENT.into_response());
+        };
+        if remaining.is_zero() {
+            return Ok(StatusCode::NO_CONTENT.into_response());
+        }
+        if tokio::time::timeout(remaining, notified).await.is_err() {
+            return Ok(StatusCode::NO_CONTENT.into_response());
+        }
     }
 }
 
@@ -1540,6 +1561,11 @@ fn validate_poll_request(input: &RunnerPollRequest) -> Result<(), ApiError> {
             "free_slots must be between 0 and 1024",
         ));
     }
+    if !(0..=POLL_WAIT_MAX_SECONDS).contains(&input.wait_seconds) {
+        return Err(ApiError::bad_request(
+            "wait_seconds must be between 0 and 30",
+        ));
+    }
     if input
         .capability_digest
         .as_deref()
@@ -1652,6 +1678,33 @@ mod tests {
             vec!["linux".to_string()]
         );
         assert!(poll_runner_tags(&runner, &["prod".to_string()]).is_err());
+    }
+
+    #[test]
+    fn runner_poll_wait_defaults_and_is_bounded() {
+        let default_wait: RunnerPollRequest = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "capacity": {"freeSlots": 1}
+        }))
+        .unwrap();
+        assert_eq!(default_wait.wait_seconds, 0);
+        assert!(validate_poll_request(&default_wait).is_ok());
+
+        let max_wait: RunnerPollRequest = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "capacity": {"freeSlots": 1},
+            "waitSeconds": 30
+        }))
+        .unwrap();
+        assert!(validate_poll_request(&max_wait).is_ok());
+
+        let too_long: RunnerPollRequest = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "capacity": {"freeSlots": 1},
+            "waitSeconds": 31
+        }))
+        .unwrap();
+        assert!(validate_poll_request(&too_long).is_err());
     }
 
     #[test]

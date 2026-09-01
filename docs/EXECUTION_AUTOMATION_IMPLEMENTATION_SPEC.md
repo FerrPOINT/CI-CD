@@ -4,9 +4,9 @@
 
 ## 1. Первая поставка и границы
 
-Этот документ описывает target-срез external runner/production scheduler/outbox. Current MVP уже имеет embedded runner, runner protocol register/heartbeat/immediate poll/ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, basic tag + current executor capability matching, `forge-runner` shell process, scheduler/outgoing webhook/local notification worker, bounded `outbox_delivery_attempts` history и explicit requeue failed delivery.
+Этот документ описывает target-срез external runner/production scheduler/outbox. Current MVP уже имеет embedded runner, runner protocol register/heartbeat/bounded long-poll `work:poll`/ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, basic tag + current executor capability matching, `forge-runner` shell process, scheduler/outgoing webhook/local notification worker, bounded `outbox_delivery_attempts` history и explicit requeue failed delivery.
 
-Уже реализовано в runner protocol MVP: env bootstrap registration token, heartbeat, durable `job_queue` claim, basic tag + current executor capability matching, immediate `work:poll`, `workspace.checkoutUrl`, ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, attempt/lease/log writes, fencing generation и отдельный shell runner binary. В target external-runner поставку остаются Docker-only/sandboxed runner, long-poll/wakeup, credential lifecycle, advanced pool/protected-tag/capability policy, lost-runner reconciliation и production sandbox boundary.
+Уже реализовано в runner protocol MVP: env bootstrap registration token, heartbeat, durable `job_queue` claim, basic tag + current executor capability matching, bounded long-poll `work:poll` с `waitSeconds` `0..30` и in-process wakeup, `workspace.checkoutUrl`, ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, attempt/lease/log writes, fencing generation и отдельный shell runner binary. В target external-runner поставку остаются Docker-only/sandboxed runner, multi-replica wakeup/fairness, credential lifecycle, advanced pool/protected-tag/capability policy, lost-runner reconciliation и production sandbox boundary.
 
 Исключено из этого target-среза: Kubernetes, external-runner secret injection, artifact streaming, email/Slack adapters и inbound provider webhooks. Они остаются feature-flagged до отдельного contract PR.
 
@@ -17,7 +17,7 @@
 | registration token TTL | 1 hour | 5m..24h |
 | runner heartbeat interval | 15s | 5s..60s |
 | unhealthy/offline threshold | 45s / 120s | 3x / 8x heartbeat |
-| poll wait | 0s current / 25s target | 0..30s |
+| poll wait | 0s default / 30s max | 0..30s |
 | offer ACK TTL | 30s | 10..120s |
 | lease TTL | 120s | 30..600s |
 | renewal interval | 40s | `< lease TTL / 2` |

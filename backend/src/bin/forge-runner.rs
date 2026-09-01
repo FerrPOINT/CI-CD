@@ -20,6 +20,7 @@ use uuid::Uuid;
 const PROTOCOL_VERSION: i32 = 1;
 const CONTROL_POLL_INTERVAL_SECONDS: u64 = 2;
 const MAX_ARTIFACT_BYTES: u64 = 50 * 1024 * 1024;
+const SERVER_POLL_WAIT_MAX_SECONDS: u64 = 30;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -170,13 +171,14 @@ async fn main() -> anyhow::Result<()> {
     validate_cli(&cli)?;
     let base = normalize_api_base(&cli.api_url);
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(45))
         .build()
         .context("build runner HTTP client")?;
     let credential = ensure_credential(&client, &base, &cli).await?;
 
     loop {
         heartbeat(&client, &base, &credential, &cli, 0, &[]).await?;
+        let poll_started = tokio::time::Instant::now();
         match poll_work(&client, &base, &credential, &cli).await? {
             Some(offer) => {
                 run_offer(&client, &base, &credential, &cli, offer).await?;
@@ -185,7 +187,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
             None if cli.once => return Ok(()),
-            None => tokio::time::sleep(Duration::from_secs(cli.poll_interval_seconds)).await,
+            None => sleep_after_empty_poll(&cli, poll_started.elapsed()).await,
         }
     }
 }
@@ -290,6 +292,7 @@ async fn poll_work(
         .json(&json!({
             "protocolVersion": PROTOCOL_VERSION,
             "capacity": {"freeSlots": cli.total_slots},
+            "waitSeconds": runner_poll_wait_seconds(cli),
             "tags": &cli.tags,
         }))
         .send()
@@ -299,6 +302,22 @@ async fn poll_work(
         return Ok(None);
     }
     Ok(Some(response_json(response).await?))
+}
+
+fn runner_poll_wait_seconds(cli: &Cli) -> u64 {
+    cli.poll_interval_seconds.min(SERVER_POLL_WAIT_MAX_SECONDS)
+}
+
+async fn sleep_after_empty_poll(cli: &Cli, elapsed: Duration) {
+    if let Some(remaining) = empty_poll_sleep_duration(cli, elapsed) {
+        tokio::time::sleep(remaining).await;
+    }
+}
+
+fn empty_poll_sleep_duration(cli: &Cli, elapsed: Duration) -> Option<Duration> {
+    Duration::from_secs(cli.poll_interval_seconds)
+        .checked_sub(elapsed)
+        .filter(|remaining| !remaining.is_zero())
 }
 
 async fn run_offer(
@@ -1112,6 +1131,28 @@ mod tests {
     #[test]
     fn protocol_log_message_escapes_internal_line_breaks() {
         assert_eq!(protocol_log_message("one\rtwo\nthree"), "one\\rtwo\\nthree");
+    }
+
+    #[test]
+    fn runner_long_poll_wait_is_capped_and_empty_sleep_preserves_interval() {
+        let mut cli = test_cli(std::env::temp_dir());
+        cli.poll_interval_seconds = 5;
+        assert_eq!(runner_poll_wait_seconds(&cli), 5);
+        assert_eq!(
+            empty_poll_sleep_duration(&cli, Duration::from_secs(2)),
+            Some(Duration::from_secs(3))
+        );
+        assert_eq!(
+            empty_poll_sleep_duration(&cli, Duration::from_secs(5)),
+            None
+        );
+
+        cli.poll_interval_seconds = 300;
+        assert_eq!(runner_poll_wait_seconds(&cli), 30);
+        assert_eq!(
+            empty_poll_sleep_duration(&cli, Duration::from_secs(30)),
+            Some(Duration::from_secs(270))
+        );
     }
 
     #[test]
