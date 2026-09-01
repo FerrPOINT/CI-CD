@@ -1309,11 +1309,15 @@ export interface components {
             content_type: string;
             /** Format: date-time */
             created_at: string;
+            /** Format: date-time */
+            expires_at: string;
             /** Format: uuid */
             id: string;
             /** Format: uuid */
             job_id: string;
             name: string;
+            /** Format: date-time */
+            purged_at?: string | null;
             sha256?: string | null;
             /** Format: int64 */
             size_bytes: number;

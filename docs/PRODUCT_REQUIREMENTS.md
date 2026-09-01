@@ -78,7 +78,7 @@ Forge **не является** и не должен развиваться ка
 | REQ-OBS-001 | Логи | P0 | **Current verified** | Логи job append-only, упорядочены внутри `execution_attempt` и доступны для диагностики. Текущий просмотр использует polling и совместимый latest/open shortcut. |
 | REQ-OBS-002 | Диагностические логи | P1 | **Current verified MVP** | Длинные логи доступны через bounded page/search (`limit`/`after`/`q`) и SSE stream; attempts хранят exit code, timestamps и error tail. Command span и stream classification остаются target. |
 | REQ-ART-001 | Артефакты | P0 | **Current verified** | Пользователь может сохранить и получить артефакт job из локального хранилища в рамках текущего лимита размера; новые uploads получают metadata текущей/latest attempt. |
-| REQ-ART-002 | Надёжное хранилище и retention артефактов | P1 | **Current verified MVP** | Новые артефакты получают SHA-256 и download отвергает checksum drift. Retention policy, cleanup worker, object storage adapter и tenant/object isolation остаются target. |
+| REQ-ART-002 | Надёжное хранилище и retention артефактов | P1 | **Current verified MVP** | Новые артефакты получают SHA-256, `expires_at` по `CICD_ARTIFACT_RETENTION_DAYS` и download отвергает checksum drift/expired/purged записи. Retention worker удаляет expired local files и оставляет `purged_at` + audit evidence. Object storage adapter, tenant/object isolation, legal hold и resumable artifact sessions остаются target. |
 | REQ-SEC-001 | Secrets | P0 | **Current verified** | Проектные секреты шифруются при хранении, их значения не возвращаются пользователю после сохранения, execution path выдаёт только job-declared names и маскирует известные значения в stdout/stderr best-effort. |
 | REQ-SEC-002 | Scoped secret delivery и full redaction | P1 | **Current verified MVP** | Авторизованный runner получает только `jobs.required_secrets` на время active acknowledged lease через `secrets:resolve`; `forge-runner` inject-ит их в env и маскирует stdout/stderr. Full redaction во всех API/audit/error/trace каналах, KMS/rotation policy и environment-scoped approvals остаются target. |
 | REQ-ENV-001 | Environments и deployments | P1 | **Current verified** | Пользователь ведёт metadata окружений и историю развёртываний для проекта. Текущий capability не означает автоматическую оркестрацию инфраструктуры, approvals или rollback. |
@@ -108,7 +108,7 @@ Forge **не является** и не должен развиваться ка
 
 ### Надёжность и целостность
 
-- **NFR-REL-01** Pipeline plan, execution attempts, логи, metadata артефактов, deployment history и audit entries являются доказательствами и не переписываются задним числом; исправление создаёт новую запись. Current MVP закрывает immutable `pipeline_plans` snapshot для legacy и v1 DAG, retry history для attempts/logs/artifact metadata и checksum для новых artifacts; policy-aware plan и full storage lifecycle остаются target.
+- **NFR-REL-01** Pipeline plan, execution attempts, логи, metadata артефактов, deployment history и audit entries являются доказательствами и не переписываются задним числом; исправление создаёт новую запись. Current MVP закрывает immutable `pipeline_plans` snapshot для legacy и v1 DAG, retry history для attempts/logs/artifact metadata, checksum и local retention cleanup для новых artifacts; policy-aware plan и full object-storage lifecycle остаются target.
 - **NFR-REL-02** Асинхронные эффекты допускают повтор доставки, но наблюдаемый итог остаётся идемпотентным. Current MVP покрывает pipeline trigger replay/conflict, embedded runner lease expiry reconciliation, local notification delivery и bounded outbox delivery history/requeue; full external lease recovery/crash retry для всех async effects остаётся target.
 - **NFR-REL-03** Статус pipeline должен быть согласован с состоянием дочерних сущностей и не может обходить доменные правила переходов.
 - **NFR-REL-04** Хранилища PostgreSQL, Git и артефактов имеют документированную и проверяемую процедуру backup/restore; запуск после сбоя восстанавливает согласованное рабочее состояние.
@@ -118,7 +118,7 @@ Forge **не является** и не должен развиваться ка
 
 - **NFR-PERF-01** Типичные интерактивные операции Dashboard и API должны иметь измеримые SLO, определённые эксплуатационным контрактом; показатели не объявляются выполненными до нагрузочного evidence.
 - **NFR-PERF-02** Списки и потоки данных имеют детерминированный порядок, pagination или cursor, лимиты запроса и ответа; система не загружает неограниченный объём логов или артефактов в память.
-- **NFR-PERF-03** Ограничения на размер логов, артефактов, параллелизм и retention настраиваются и наблюдаемы оператором.
+- **NFR-PERF-03** Ограничения на размер логов, артефактов, параллелизм и retention настраиваются и наблюдаемы оператором. Current MVP задаёт 50 MiB upload limit и `CICD_ARTIFACT_RETENTION_DAYS` TTL; quota/metrics/concurrency budgets остаются target.
 
 ### Совместимость и удобство
 

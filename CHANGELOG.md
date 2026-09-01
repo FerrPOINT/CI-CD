@@ -38,6 +38,7 @@
 - Release/security hardening: backend CI теперь выполняет `cargo build --release --workspace`; security job строит production backend/frontend images и запускает pinned Trivy CLI (`aquasec/trivy@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969`) через `scripts/scan_container_images.sh` как blocking critical fixable CVE gate.
 - Frontend runtime image поднят до `nginx:1.31.4-alpine`, а compose-smoke frontend check теперь ждёт nginx retry-loop вместо одиночного раннего HEAD-запроса.
 - Evidence tooling: `shoot-evidence.mjs` корректно передаёт тему в browser context, frontend CI проверяет syntax evidence scripts, PR/contributor/agent checklists синхронизированы с текущими CI gates.
+- Artifact retention MVP: migration `0023_artifact_retention` добавляет `expires_at`/`purged_at`, `CICD_ARTIFACT_RETENTION_DAYS` задаёт TTL новых uploads, download блокирует expired/purged artifacts, backend retention worker удаляет expired local files и пишет `artifact.purged` audit.
 - CI actions: workflow переведён на Node 24-compatible `actions/checkout@v7`, `actions/setup-python@v7` и `pnpm/setup@v2` для pnpm v11/Node 22 runtime; target immutable digest pinning остаётся release hardening.
 - Compose smoke: CI теперь собирает production Docker images, поднимает `docker compose up --build -d`, проверяет backend health/readiness и frontend nginx; frontend Dockerfile использует frozen pnpm lockfile, а secret-scan pruning не заходит в generated dirs.
 - Browser E2E/a11y: добавлен Playwright Chromium gate против собранного Docker Compose stack с deterministic `seed:evidence`; critical journey проверяет Dashboard → project pipelines → pipeline plan/logs/artifacts, repository code browser и mobile drawer Escape/focus contract, а axe smoke падает на `serious`/`critical` violations representative pages. CI сохраняет Playwright report, traces, screenshots и video на failure через `actions/upload-artifact@v7`.
@@ -99,7 +100,7 @@
 
 ### Planned
 
-- Baseline roadmap: immutable pipeline plan/DAG; diagnostic command spans/stream classification; external runner + durable queue/leases/fencing; schedule timezone/DST/misfire policies; production outbox lease/reconciliation/full dead-letter policy/metrics; external notification adapters/inbound provider webhooks; off-site/PITR backup platform with verified restore drill; artifact retention/object storage; tenant isolation/service accounts/scoped Git credentials/production session hardening.
+- Baseline roadmap: immutable pipeline plan/DAG; diagnostic command spans/stream classification; external runner + durable queue/leases/fencing; schedule timezone/DST/misfire policies; production outbox lease/reconciliation/full dead-letter policy/metrics; external notification adapters/inbound provider webhooks; off-site/PITR backup platform with verified restore drill; artifact object storage/legal hold/quotas; tenant isolation/service accounts/scoped Git credentials/production session hardening.
 
 ## [0.1.0] — 2026-08-26
 

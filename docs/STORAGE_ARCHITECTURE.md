@@ -27,11 +27,11 @@
 | Тестовая БД | GitHub Actions PostgreSQL service + `cargo test --features integration --test integration_db -- --test-threads=1`; local `backend/docker-compose.test.yml` fixture | Изолированная PostgreSQL lifecycle/roles для integration-тестов и prior-schema upgrade; scheduler/runner dispatch тесты используют глобальные scans, поэтому CI real-DB suite выполняется serial |
 | Репозитории | Строка `repositories` и bare-directory в volume; удаление сначала удаляет строку, затем best-effort директорию | Реестр с состояниями provision/delete, стабильным `storage_key`, saga/reconciler, проверка `git fsck`, backup-aware purge |
 | Связь project/repository | Поиск проекта по URL suffix `LIKE '%name.git'` | Явный `repositories.project_id`, уникальная связь и Git push event с repository ID/commit SHA |
-| Артефакты | Локальная ФС, лимит одного upload 50 MiB, DB-row после записи файла, SHA-256 для новых uploads; download project-scoped при включённом `CICD_AUTH_SECRET` и проверяет checksum drift | Порт object storage; потоковая загрузка во temporary object, квоты/резервы, retention worker, tenant/project storage key, авторизованная загрузка |
+| Артефакты | Локальная ФС, лимит одного upload 50 MiB, DB-row после записи файла, SHA-256/`expires_at` для новых uploads; download project-scoped при включённом `CICD_AUTH_SECRET`, проверяет expiry/purged state и checksum drift; local retention worker ставит `purged_at` после удаления файла | Порт object storage; потоковая загрузка во temporary object, квоты/резервы, legal hold, tenant/project storage key, авторизованная загрузка |
 | Секреты | AES-256-GCM под единым `CICD_SECRETS_KEY`; формат `v1:nonce:ciphertext` | Envelope encryption: per-secret DEK, KMS/KEK key ID, AAD, версии, rewrap и безопасная ротация |
 | Пагинация | Projects и pipelines имеют `limit/offset` с cap 200; часть списков всё ещё без unified cursor/envelope | Единый bounded keyset pagination и составные индексы под каждый список |
 | Backup | `scripts/backup.sh`/`scripts/verify-backup.sh`/`scripts/restore.sh` для локального Docker Compose: `pg_dump` + копирование Git/artifact volumes + checksum manifest | Координированный off-site/PITR backup manifest для PG, Git, objects и ключевых версий; регулярный restore drill |
-| Retention/удаление | CASCADE удаляет DB-строки; файлы артефактов и Git могут остаться | Политики хранения, soft-delete/tombstone, outbox/reconciler, криптографическое и физическое удаление |
+| Retention/удаление | Артефакты имеют configurable TTL и local purge worker; project deletion всё ещё полагается на CASCADE, а Git directory cleanup остаётся best-effort | Политики хранения, soft-delete/tombstone, outbox/reconciler, legal hold, криптографическое и физическое удаление |
 | DR | RPO/RTO и процедура восстановления не определены | Документированные RPO/RTO, off-site копия, immutable backup, проверка восстановления по расписанию |
 
 ### Выявленные ограничения текущей реализации
@@ -39,7 +39,7 @@
 - Startup migration в current MVP применяет DDL из runtime-процесса; production target требует отдельную owner-role migration job и verify-only startup.
 - `next_log_sequence()` вычисляет `MAX(sequence) + 1`; конкурентная запись логов одного job может получить один sequence.
 - Артефакт сначала пишется в локальный файл, затем создаётся DB-строка. Ошибка INSERT оставляет orphan file; ошибка удаления строки не удаляет файл.
-- Artifact download уже проходит project membership RBAC при включённом `CICD_AUTH_SECRET`, но без него остаётся trusted-network; signed URLs, lease-bound runner access и object-storage policy ещё target.
+- Artifact download уже проходит project membership RBAC при включённом `CICD_AUTH_SECRET`, проверяет expiry/purged state и checksum, но без auth остаётся trusted-network; signed URLs, lease-bound runner access, legal hold и object-storage policy ещё target.
 - `storage_path` хранит путь ФС, а не логический ключ object storage.
 - Удаление bare-репозитория не имеет состояния, повторяемости, quarantine-периода и надёжной компенсации.
 - Один глобальный AES-ключ не содержит ID версии ключа в модели данных и не даёт безопасно выполнить ротацию без одномоментного массового перешифрования.
@@ -440,6 +440,7 @@ Production backend — приватный versioned S3-compatible bucket. Bucket
 ```text
 CICD_ARTIFACT_STORAGE=local|s3
 CICD_ARTIFACTS_DIR=/var/lib/forge/artifacts        # только local
+CICD_ARTIFACT_RETENTION_DAYS=30                    # current local TTL, 1..3650
 CICD_S3_BUCKET=forge-artifacts
 CICD_S3_ENDPOINT=...
 ```

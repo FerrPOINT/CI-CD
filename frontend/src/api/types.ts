@@ -190,6 +190,8 @@ export interface Artifact {
   sha256: string | null
   size_bytes: number
   created_at: string
+  expires_at: string
+  purged_at: string | null
 }
 
 export type EnvironmentStatus = 'available' | 'stopped' | 'degraded'

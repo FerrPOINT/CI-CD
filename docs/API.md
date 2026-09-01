@@ -72,8 +72,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 20,
-    "latest_required_version": 20,
+    "latest_applied_version": 23,
+    "latest_required_version": 23,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],
@@ -1041,7 +1041,7 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 | POST | `/jobs/{job_id}/artifacts` | Загрузить артефакт (raw body, `X-Artifact-Name`) |
 | GET | `/artifacts/{artifact_id}/download` | Скачать артефакт |
 
-> Артефакты хранятся в локальной ФС (`CICD_ARTIFACTS_DIR`, default `/var/lib/forge/artifacts`). Лимит — 50 MiB на файл. Метаданные новых uploads содержат `sha256`; download перед чтением canonicalize-ит `storage_path` и возвращает `404`, если файл не находится внутри artifact root, либо `409`, если bytes не совпадают с сохранённым checksum.
+> Артефакты хранятся в локальной ФС (`CICD_ARTIFACTS_DIR`, default `/var/lib/forge/artifacts`). Лимит — 50 MiB на файл. Метаданные новых uploads содержат `sha256`, `expires_at` и `purged_at`; TTL задаётся `CICD_ARTIFACT_RETENTION_DAYS` (default 30, диапазон `1..3650`). Download перед чтением canonicalize-ит `storage_path` и возвращает `404`, если файл не находится внутри artifact root, истёк или уже очищен retention worker-ом, либо `409`, если bytes не совпадают с сохранённым checksum.
 
 ### Environments & Deployments
 
@@ -1250,8 +1250,8 @@ Runner protocol обслуживается на `/api/v1/runner/*` и не ис�
 |---|---|---|
 | GET/POST | `/projects/{project_id}/secrets` | Метаданные / `{key,value}`; значение никогда не возвращается |
 | DELETE | `/secrets/{secret_id}` | Удаляет секрет |
-| GET/POST | `/jobs/{job_id}/artifacts` | Метаданные с `sha256` / raw body с `X-Artifact-Name` |
-| GET | `/artifacts/{artifact_id}/download` | Файл с сохранённым content type/name и checksum check |
+| GET/POST | `/jobs/{job_id}/artifacts` | Метаданные с `sha256`, `expires_at`, `purged_at` / raw body с `X-Artifact-Name` |
+| GET | `/artifacts/{artifact_id}/download` | Файл с сохранённым content type/name, expiry/purge gate и checksum check |
 
 ### Git repositories и Smart HTTP
 

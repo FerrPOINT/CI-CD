@@ -293,7 +293,7 @@ function mockFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respon
   if (path === `/jobs/${jobId}/artifacts`) {
     return json([
       {
-        id: 'artifact-1',
+        id: '66666666-6666-4666-8666-666666666666',
         job_id: jobId,
         attempt_id: attemptId,
         name: 'app.tar.gz',
@@ -301,6 +301,8 @@ function mockFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respon
         sha256: 'a'.repeat(64),
         size_bytes: 4096,
         created_at: now,
+        expires_at: '2026-09-30T12:00:00Z',
+        purged_at: null,
       },
     ])
   }

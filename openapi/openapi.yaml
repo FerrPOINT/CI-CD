@@ -2585,6 +2585,7 @@ components:
       - content_type
       - size_bytes
       - created_at
+      - expires_at
       properties:
         attempt_id:
           type:
@@ -2596,6 +2597,9 @@ components:
         created_at:
           type: string
           format: date-time
+        expires_at:
+          type: string
+          format: date-time
         id:
           type: string
           format: uuid
@@ -2604,6 +2608,11 @@ components:
           format: uuid
         name:
           type: string
+        purged_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
         sha256:
           type:
           - string

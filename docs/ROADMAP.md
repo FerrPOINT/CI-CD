@@ -24,7 +24,7 @@ Roadmap фиксирует порядок доведения Forge до базо
 - external runner protocol MVP: register через `CICD_RUNNER_REGISTRATION_TOKEN`, heartbeat, immediate/bounded `work:poll` с process-local + PostgreSQL `LISTEN/NOTIFY` wakeup, basic tag + current executor capability matching, lease token, ack-timeout requeue, ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, `workspace.checkoutUrl`, fencing generation, stale-runner offline reconciliation и отдельный `forge-runner` shell process с active-lease heartbeat;
 - `execution_attempts`: каждая job получает initial attempt, retry job/pipeline создаёт новую attempt и сохраняет старые логи;
 - REST logs, attempts API и SSE stream логов job;
-- local artifacts до 50 MiB с metadata текущей/latest attempt и SHA-256 для новых uploads;
+- local artifacts до 50 MiB с metadata текущей/latest attempt, SHA-256 для новых uploads, `expires_at` и retention cleanup worker;
 - project secrets: AES-256-GCM at rest, job-declared env injection в embedded/external runner, lease-scoped `secrets:resolve`, best-effort masking stdout/stderr;
 - environments/deployments metadata, reports, audit log;
 - users, roles, argon2id credentials, session-bound access JWT, sessions, refresh rotate/logout/revoke, scoped PAT и project memberships при `CICD_AUTH_SECRET`;
@@ -147,14 +147,14 @@ Gate:
 
 Deliverables:
 
-- retention/TTL policies и cleanup worker;
+- Current MVP: default 30-day TTL via `CICD_ARTIFACT_RETENTION_DAYS`, `expires_at`, expired download block, local file cleanup worker, `purged_at` и audit evidence;
 - checksum reconciliation и backfill digest для legacy metadata;
 - S3-compatible object storage adapter с tenant/project isolation;
 - project-scoped access checks для metadata и bytes.
 
 Gate:
 
-- upload/download/size/retention integration tests;
+- Current gate: upload/download/size/retention integration tests;
 - object-storage adapter smoke;
 - restore drill учитывает artifacts.
 

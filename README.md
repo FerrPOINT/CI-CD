@@ -51,7 +51,7 @@
 | Immutable pipeline plan snapshots | Current verified MVP |
 | Bare Git hosting + Smart HTTP + `post-receive` trigger | Current verified |
 | Branch/tag browser, compare and pull request flow | Current verified |
-| Artifacts up to 50 MiB in local storage | Current verified |
+| Artifacts up to 50 MiB in local storage with SHA-256 and retention cleanup | Current verified MVP |
 | Secrets encrypted at rest with runner injection and stdout masking | Current verified |
 | Environments, deployments, reports and audit trail | Current verified |
 | Auth/RBAC with `CICD_AUTH_SECRET` | Current verified |
@@ -153,6 +153,7 @@ flowchart TD
 - Embedded runner records job ownership in `job_leases`, injects only declared secrets, collects declared artifact files, and reconciles expired leases. The external runner protocol MVP exposes register/heartbeat/bounded long-poll with in-process + PostgreSQL `LISTEN/NOTIFY` wakeup/ack/renew/`secrets:resolve`/artifact upload/logs/complete with bearer runner credentials and lease tokens; `forge-runner` can run as a separate shell runner process, keep active-lease heartbeat while commands run, append stdout/stderr to attempt-owned logs, resolve declared secrets, and upload declared artifacts. The API maintenance loop requeues unacknowledged offers after `ackDeadline`, fails dispatch-eligible queued jobs after configurable queue timeout when no compatible execution path exists, and marks stale online runners offline when no unexpired active lease protects them. Richer log chunks, resumable artifact sessions, Docker/Kubernetes isolation and sandbox hardening remain target work.
 - Pipeline trigger stores immutable `pipeline_plans` snapshots for current `legacy-linear` and v1 `jobs.needs` DAG plans; policy diagnostics/job-level dispatch remain target hardening.
 - Current CI runs SQLx optional MySQL/RSA feature guard, Rust release build, Rust/Node dependency audits, secret scan, SBOM drift checks and pinned Trivy critical container image scan; `cargo-deny`, history secret scan and release SBOM publication remain target hardening.
+- Local artifacts get SHA-256 metadata and default 30-day expiry via `CICD_ARTIFACT_RETENTION_DAYS`; expired/purged artifacts are not downloadable and the backend retention worker purges local files. Object storage, legal hold and tenant/object isolation remain target hardening.
 - Schedules, outgoing webhooks and `in_app`/`sse` notifications work as MVP local delivery.
 - Outbox delivery history, attempt log and failed-delivery requeue are bounded MVP features; inbound provider webhooks, external notification adapters and crash-safe distributed delivery guarantees are not complete.
 

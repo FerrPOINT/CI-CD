@@ -1,4 +1,4 @@
-use cicd::{api::app_with_git, dispatch_signal, git_host::GitConfig, outbox, runner};
+use cicd::{api::app_with_git, dispatch_signal, git_host::GitConfig, outbox, platform, runner};
 
 use sqlx::postgres::PgPoolOptions;
 use tracing_subscriber::EnvFilter;
@@ -26,6 +26,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let _runner_queue_timeout_seconds = runner::runner_queue_timeout_seconds_from_env(
         std::env::var("CICD_RUNNER_QUEUE_TIMEOUT_SECONDS").ok(),
+    )?;
+    let _artifact_retention_days = platform::artifact_retention_days_from_env(
+        std::env::var("CICD_ARTIFACT_RETENTION_DAYS").ok(),
     )?;
     let embedded_runner_enabled = runner::embedded_runner_enabled_from_env(
         std::env::var("CICD_EMBEDDED_RUNNER_ENABLED").ok(),
@@ -62,6 +65,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let outbox_pool = pool.clone();
     tokio::spawn(async move {
         outbox::supervisor_loop(outbox_pool).await;
+    });
+
+    let artifact_retention_pool = pool.clone();
+    tokio::spawn(async move {
+        platform::artifact_retention_loop(artifact_retention_pool).await;
     });
 
     let _runner_work_listener = dispatch_signal::spawn_runner_work_listener(pool.clone());

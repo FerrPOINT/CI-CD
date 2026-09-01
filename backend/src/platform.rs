@@ -1,6 +1,7 @@
 use std::{
     path::{Path as FsPath, PathBuf},
     sync::Arc,
+    time::Duration as StdDuration,
 };
 
 use aes_gcm::{
@@ -11,12 +12,12 @@ use axum::{
     Json, Router,
     body::Bytes,
     extract::{DefaultBodyLimit, Path, Query, State},
-    http::HeaderMap,
+    http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, patch, post},
 };
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{FromRow, PgPool};
@@ -28,6 +29,10 @@ use crate::{
 };
 
 pub(crate) const MAX_ARTIFACT_BYTES: usize = body_limits::ARTIFACT_UPLOAD_BYTES;
+const DEFAULT_ARTIFACT_RETENTION_DAYS: i64 = 30;
+const MAX_ARTIFACT_RETENTION_DAYS: i64 = 3650;
+const ARTIFACT_RETENTION_BATCH_LIMIT: i64 = 100;
+const ARTIFACT_RETENTION_INTERVAL_SECONDS: u64 = 60;
 const DEFAULT_TOKEN_LIFETIME_DAYS: i32 = 30;
 const MAX_TOKEN_LIFETIME_DAYS: i32 = 365;
 const DEFAULT_TOKEN_SCOPES: &[&str] = &["api:read", "api:write", "git:read", "git:write"];
@@ -272,13 +277,15 @@ pub(crate) struct Artifact {
     sha256: Option<String>,
     size_bytes: i64,
     created_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+    purged_at: Option<DateTime<Utc>>,
 }
 #[utoipa::path(get, path = "/api/v1/jobs/{job_id}/artifacts", tag = "artifacts", params(("job_id" = Uuid, Path)), responses((status = 200, body = [Artifact])))]
 async fn list_artifacts(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
 ) -> ApiResult<Vec<Artifact>> {
-    Ok(Json(sqlx::query_as("SELECT id, job_id, attempt_id, name, content_type, sha256, size_bytes, created_at FROM artifacts WHERE job_id = $1 ORDER BY created_at DESC")
+    Ok(Json(sqlx::query_as("SELECT id, job_id, attempt_id, name, content_type, sha256, size_bytes, created_at, expires_at, purged_at FROM artifacts WHERE job_id = $1 ORDER BY created_at DESC")
         .bind(job_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
 #[utoipa::path(post, path = "/api/v1/jobs/{job_id}/artifacts", tag = "artifacts", params(("job_id" = Uuid, Path), ("X-Artifact-Name" = String, Header)), request_body = Vec<u8>, responses((status = 200, body = Artifact), (status = 400), (status = 413, description = "artifact body exceeds 50 MiB")))]
@@ -335,10 +342,11 @@ pub(crate) async fn store_job_artifact(
     };
     let id = Uuid::new_v4();
     let artifact_sha256 = sha256_bytes(body.as_ref());
+    let expires_at = artifact_expires_at()?;
     let path = new_artifact_path(id)?;
     std::fs::write(&path, &body).map_err(io_error)?;
-    let artifact = sqlx::query_as("INSERT INTO artifacts (id, job_id, attempt_id, name, storage_path, content_type, sha256, size_bytes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, job_id, attempt_id, name, content_type, sha256, size_bytes, created_at")
-        .bind(id).bind(job_id).bind(attempt_id).bind(name).bind(path.to_string_lossy().as_ref()).bind(content_type).bind(&artifact_sha256).bind(body.len() as i64).fetch_one(db).await.map_err(ApiError::internal)?;
+    let artifact = sqlx::query_as("INSERT INTO artifacts (id, job_id, attempt_id, name, storage_path, content_type, sha256, size_bytes, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, job_id, attempt_id, name, content_type, sha256, size_bytes, created_at, expires_at, purged_at")
+        .bind(id).bind(job_id).bind(attempt_id).bind(name).bind(path.to_string_lossy().as_ref()).bind(content_type).bind(&artifact_sha256).bind(body.len() as i64).bind(expires_at).fetch_one(db).await.map_err(ApiError::internal)?;
     audit(db, "artifact.uploaded", "artifact", id, None).await?;
     Ok(artifact)
 }
@@ -348,7 +356,7 @@ async fn download_artifact(
     Path(artifact_id): Path<Uuid>,
 ) -> Result<Response, ApiError> {
     let row: (String, String, String, Option<String>) = sqlx::query_as(
-        "SELECT storage_path, name, content_type, sha256 FROM artifacts WHERE id = $1",
+        "SELECT storage_path, name, content_type, sha256 FROM artifacts WHERE id = $1 AND purged_at IS NULL AND expires_at > now()",
     )
     .bind(artifact_id)
     .fetch_optional(pool(&state)?)
@@ -371,6 +379,121 @@ async fn download_artifact(
         bytes,
     )
         .into_response())
+}
+
+pub fn artifact_retention_days_from_env(raw: Option<String>) -> Result<i64, std::io::Error> {
+    let Some(raw) = raw else {
+        return Ok(DEFAULT_ARTIFACT_RETENTION_DAYS);
+    };
+    let value = raw.trim();
+    if value.is_empty() {
+        return Ok(DEFAULT_ARTIFACT_RETENTION_DAYS);
+    }
+    let days: i64 = value.parse().map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "CICD_ARTIFACT_RETENTION_DAYS must be an integer number of days",
+        )
+    })?;
+    if !(1..=MAX_ARTIFACT_RETENTION_DAYS).contains(&days) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("CICD_ARTIFACT_RETENTION_DAYS must be 1..={MAX_ARTIFACT_RETENTION_DAYS}"),
+        ));
+    }
+    Ok(days)
+}
+
+fn artifact_expires_at() -> Result<DateTime<Utc>, ApiError> {
+    let retention_days =
+        artifact_retention_days_from_env(std::env::var("CICD_ARTIFACT_RETENTION_DAYS").ok())
+            .map_err(|error| config_error(error.to_string()))?;
+    Ok(Utc::now() + ChronoDuration::days(retention_days))
+}
+
+#[derive(Debug, FromRow)]
+struct ExpiredArtifactCandidate {
+    id: Uuid,
+    storage_path: String,
+}
+
+pub async fn purge_expired_artifacts(db: &PgPool, batch_limit: i64) -> Result<u64, ApiError> {
+    let batch_limit = batch_limit.clamp(1, 1000);
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
+    let candidates = sqlx::query_as::<_, ExpiredArtifactCandidate>(
+        "SELECT id, storage_path \
+         FROM artifacts \
+         WHERE purged_at IS NULL AND expires_at <= now() \
+         ORDER BY expires_at ASC, id ASC \
+         LIMIT $1 \
+         FOR UPDATE SKIP LOCKED",
+    )
+    .bind(batch_limit)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let mut purged = 0;
+    for candidate in candidates {
+        let path = match artifact_path_for_delete(&candidate.storage_path) {
+            Ok(path) => path,
+            Err(error) => {
+                tracing::warn!(
+                    artifact_id = %candidate.id,
+                    storage_path = %candidate.storage_path,
+                    reason = %error.message,
+                    "artifact retention skipped unsafe path"
+                );
+                continue;
+            }
+        };
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                tracing::warn!(
+                    artifact_id = %candidate.id,
+                    path = %path.display(),
+                    %error,
+                    "artifact retention failed to remove file"
+                );
+                continue;
+            }
+        }
+        let result = sqlx::query(
+            "UPDATE artifacts \
+             SET purged_at = now() \
+             WHERE id = $1 AND purged_at IS NULL AND expires_at <= now()",
+        )
+        .bind(candidate.id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+        if result.rows_affected() > 0 {
+            sqlx::query(
+                "INSERT INTO audit_log (action, resource_type, resource_id, actor) \
+                 VALUES ('artifact.purged', 'artifact', $1, NULL)",
+            )
+            .bind(candidate.id)
+            .execute(&mut *tx)
+            .await
+            .map_err(ApiError::internal)?;
+            purged += 1;
+        }
+    }
+    tx.commit().await.map_err(ApiError::internal)?;
+    Ok(purged)
+}
+
+pub async fn artifact_retention_loop(pool: PgPool) {
+    loop {
+        tokio::time::sleep(StdDuration::from_secs(ARTIFACT_RETENTION_INTERVAL_SECONDS)).await;
+        match purge_expired_artifacts(&pool, ARTIFACT_RETENTION_BATCH_LIMIT).await {
+            Ok(0) => {}
+            Ok(purged) => tracing::info!(purged, "artifact retention purged expired files"),
+            Err(error) => tracing::error!(message = %error.message, "artifact retention failed"),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
@@ -1343,6 +1466,17 @@ fn contained_artifact_path(raw_path: &str) -> Result<PathBuf, ApiError> {
     Ok(path)
 }
 
+fn artifact_path_for_delete(raw_path: &str) -> Result<PathBuf, ApiError> {
+    let root = canonical_artifacts_root()?;
+    let path = FsPath::new(raw_path);
+    let parent = path.parent().ok_or_else(ApiError::not_found)?;
+    let parent = parent.canonicalize().map_err(|_| ApiError::not_found())?;
+    if !parent.starts_with(&root) {
+        return Err(ApiError::not_found());
+    }
+    Ok(path.to_path_buf())
+}
+
 fn canonical_artifacts_root() -> Result<PathBuf, ApiError> {
     artifacts_root()
         .canonicalize()
@@ -1350,6 +1484,12 @@ fn canonical_artifacts_root() -> Result<PathBuf, ApiError> {
 }
 fn io_error(error: std::io::Error) -> ApiError {
     ApiError::internal(sqlx::Error::Io(error))
+}
+fn config_error(message: impl Into<String>) -> ApiError {
+    ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        message: message.into(),
+    }
 }
 fn valid_artifact_name(name: &str) -> bool {
     !name.is_empty()
@@ -1522,5 +1662,16 @@ mod tests {
         assert!(header.contains("filename=\""));
         assert!(header.contains("filename*=UTF-8''"));
         assert!(header.contains("%D0%BE%D1%82%D1%87"));
+    }
+    #[test]
+    fn artifact_retention_env_defaults_and_bounds() {
+        assert_eq!(artifact_retention_days_from_env(None).unwrap(), 30);
+        assert_eq!(
+            artifact_retention_days_from_env(Some(" 45 ".to_string())).unwrap(),
+            45
+        );
+        assert!(artifact_retention_days_from_env(Some("0".to_string())).is_err());
+        assert!(artifact_retention_days_from_env(Some("3651".to_string())).is_err());
+        assert!(artifact_retention_days_from_env(Some("soon".to_string())).is_err());
     }
 }

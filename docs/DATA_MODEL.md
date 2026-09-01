@@ -621,8 +621,10 @@ Runtime maintenance переводит `status='online'` в `offline`, когд�
 | `sha256` | TEXT | NULL | — | SHA-256 hex для новых uploads; NULL допустим только для legacy metadata |
 | `size_bytes` | BIGINT | NOT NULL | — | Размер в байтах |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
+| `expires_at` | TIMESTAMPTZ | NOT NULL | `now() + interval '30 days'` | Deadline доступности; новые uploads задают его по `CICD_ARTIFACT_RETENTION_DAYS` |
+| `purged_at` | TIMESTAMPTZ | NULL | — | Время успешного physical purge локального файла retention worker-ом |
 
-> Хранилище: `CICD_ARTIFACTS_DIR` (default `/var/lib/forge/artifacts`). Лимит — 50 MiB. Runtime не считает `storage_path` доверенным: перед чтением путь и root canonicalize-ятся, нарушение containment возвращает `404`, а checksum drift для записей с `sha256` — `409`.
+> Хранилище: `CICD_ARTIFACTS_DIR` (default `/var/lib/forge/artifacts`). Лимит — 50 MiB. Runtime не считает `storage_path` доверенным: перед чтением путь и root canonicalize-ятся, нарушение containment возвращает `404`, checksum drift для записей с `sha256` — `409`, а expired/purged artifact download — `404`. Retention worker выбирает due rows через `FOR UPDATE SKIP LOCKED`, удаляет local file и только после этого ставит `purged_at` + `artifact.purged` audit.
 
 ### 9.4 environments
 
@@ -838,6 +840,8 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 idx_runners_status          ON runners(status)
 idx_project_secrets_project ON project_secrets(project_id)
 idx_artifacts_job            ON artifacts(job_id)
+idx_artifacts_expired_unpurged ON artifacts(expires_at, id) WHERE purged_at IS NULL
+idx_artifacts_job_created    ON artifacts(job_id, created_at DESC, id DESC)
 idx_deployments_environment  ON deployments(environment_id)
 idx_schedules_project        ON schedules(project_id)
 idx_schedules_due            ON schedules(next_fire_at) WHERE enabled AND last_fire_error IS NULL
@@ -882,7 +886,7 @@ idx_outbox_delivery_attempts_message ON outbox_delivery_attempts(message_id, att
 
 | Фаза | Таблицы | Назначение |
 |---|---|---|
-| External runner production boundary | credential rotation/revocation tables, richer artifact sessions, richer log chunks | `runners` + `job_queue` + `job_leases` уже покрывают protocol MVP: runner credential hash, heartbeat metadata, durable dispatch row с basic tag + current executor capability matching, lease token hash, `workspace.checkoutUrl`, ack-timeout requeue, queue-timeout diagnostic без compatible runner-а, ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, fencing generation, stale offline reconciliation и shell `forge-runner` с active-lease heartbeat; target добавляет richer identity lifecycle, protected tags/pools, advanced capability matching, sandbox и chunked protocol data planes |
+| External runner production boundary | credential rotation/revocation tables, richer artifact sessions, richer log chunks | `runners` + `job_queue` + `job_leases` уже покрывают protocol MVP: runner credential hash, heartbeat metadata, durable dispatch row с basic tag + current executor capability matching, lease token hash, `workspace.checkoutUrl`, ack-timeout requeue, queue-timeout diagnostic без compatible runner-а, ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, fencing generation, stale offline reconciliation и shell `forge-runner` с active-lease heartbeat; target добавляет richer identity lifecycle, protected tags/pools, advanced capability matching, sandbox и chunked/resumable protocol data planes |
 | Production outbox | `outbox_deliveries` / lease state | Full dispatcher snapshots, lease/fencing, crash recovery, response preview allowlist и operator dead-letter policy поверх current bounded history |
 | External notifications | delivery-specific tables | Email/Slack sender state, templates, preferences |
 

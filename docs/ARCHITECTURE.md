@@ -127,6 +127,7 @@ Composition root: чтение конфига, создание `PgPool`, реп
 | `CICD_CORS_ALLOWED_ORIGINS` | comma-separated allowlist browser origins для shared Dashboard/API; пусто = permissive isolated dev |
 | `CICD_SECRETS_KEY` | base64 32-byte ключ AES-256-GCM |
 | `CICD_ARTIFACTS_DIR` | локальное хранилище артефактов |
+| `CICD_ARTIFACT_RETENTION_DAYS` | TTL новых артефактов; default 30, диапазон `1..3650` |
 | `CICD_EMBEDDED_RUNNER_ENABLED` | `true` по умолчанию; `false` отключает embedded execution в backend |
 | `CICD_RUNNER_MODE` | `host` в local compose; `docker`/`host` в backend binary |
 | `CICD_RUNNER_REGISTRATION_TOKEN` | bootstrap token для `/api/v1/runner/register`; пусто отключает external registration |
@@ -158,7 +159,7 @@ Supervisor-полл queued-джобов, атомарный lease-aware claim (`
 
 ### 6.5 Платформенные ресурсы (MVP)
 
-Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-256-GCM at rest + job-declared embedded/external env injection/masking), artifacts (upload/download + локальное хранилище, 50 MiB лимит), environments/deployments, schedules MVP (strict 5-field UTC cron, `next_fire_at`, unique fire slots), outgoing webhooks MVP (terminal pipeline events через outbox/basic retry/HMAC), `in_app`/`sse` notifications MVP (local outbox history + Dashboard stream), reports (агрегаты success rate/duration), audit log (последние 200 событий), users/roles, project memberships, argon2id credentials, session-bound access JWT, refresh sessions с rotate/logout, project-scoped PAT enforcement и Git Smart HTTP project checks при `CICD_AUTH_SECRET`.
+Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-256-GCM at rest + job-declared embedded/external env injection/masking), artifacts (upload/download + локальное хранилище, 50 MiB лимит, SHA-256, `expires_at` и retention purge worker), environments/deployments, schedules MVP (strict 5-field UTC cron, `next_fire_at`, unique fire slots), outgoing webhooks MVP (terminal pipeline events через outbox/basic retry/HMAC), `in_app`/`sse` notifications MVP (local outbox history + Dashboard stream), reports (агрегаты success rate/duration), audit log (последние 200 событий), users/roles, project memberships, argon2id credentials, session-bound access JWT, refresh sessions с rotate/logout, project-scoped PAT enforcement и Git Smart HTTP project checks при `CICD_AUTH_SECRET`.
 
 ## 7. Frontend архитектура
 
@@ -173,7 +174,7 @@ Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-2
 - Domain: unit-тесты переходов статусов (`domain/src/lib.rs`, `tests/domain_transitions.rs`).
 - API contract: no-DB тесты health/readiness/503/валидации (`tests/api_contract.rs`).
 - CLI: contract-тест help-групп (`cli/tests/cli_contract.rs`).
-- Real-PostgreSQL integration tests уже есть для migrations/readiness/project/auth paths, trigger idempotency, immutable `pipeline_plans`, v1 DAG config из bare repo с `required_tags`/`required_secrets`/`artifact_paths`, runner protocol register/heartbeat/poll/ack/control/`secrets:resolve`/artifact upload/renew/logs/complete с basic tag + executor capability matching, scoped secret delivery, attempt-owned artifacts и PostgreSQL `LISTEN/NOTIFY` long-poll wakeup. Playwright/axe current MVP покрывает representative browser journeys на собранном Compose stack; target остаётся для full auth/RBAC/CLI E2E, coverage gate и широких failure/protocol tests.
+- Real-PostgreSQL integration tests уже есть для migrations/readiness/project/auth paths, trigger idempotency, immutable `pipeline_plans`, v1 DAG config из bare repo с `required_tags`/`required_secrets`/`artifact_paths`, runner protocol register/heartbeat/poll/ack/control/`secrets:resolve`/artifact upload/renew/logs/complete с basic tag + executor capability matching, scoped secret delivery, attempt-owned artifacts, artifact expiry/purge и PostgreSQL `LISTEN/NOTIFY` long-poll wakeup. Playwright/axe current MVP покрывает representative browser journeys на собранном Compose stack; target остаётся для full auth/RBAC/CLI E2E, coverage gate и широких failure/protocol tests.
 
 ## 9. Статус миграции (ADR-0005)
 

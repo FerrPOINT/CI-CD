@@ -219,7 +219,10 @@
     "type": "Type",
     "digest": "SHA-256",
     "created": "Created",
+    "expires": "Expires",
     "download": "Download",
+    "expired": "Expired",
+    "purged": "Purged",
     "empty": "No artifacts for this job."
   },
   "environments": {
@@ -412,6 +415,7 @@
       "gitToken": "Optional Git Smart HTTP token",
       "gitInternalToken": "Internal post-receive hook token",
       "artifactsDir": "Local artifact storage path",
+      "artifactRetentionDays": "TTL for new artifacts in days",
       "embeddedRunnerEnabled": "Enables the embedded runner inside backend",
       "runnerMode": "Embedded runner mode: docker or host",
       "runnerRegistrationToken": "Bootstrap token for external runner registration",

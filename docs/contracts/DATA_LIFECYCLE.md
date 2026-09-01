@@ -2,7 +2,7 @@
 
 Статус: Accepted target contract. Основание: [ADR-0009](../adr/0009-canonical-registry.md).
 
-Этот контракт определяет хранение, ownership, retention, восстановление и ротацию. Current MVP покрывает только часть модели (`domain_events`/`outbox_messages`/`outbox_delivery_attempts`, local artifacts, encrypted project secrets); полный контракт не считается production-ready без retention workers, backup/restore drill и target storage/key policy.
+Этот контракт определяет хранение, ownership, retention, восстановление и ротацию. Current MVP покрывает только часть модели (`domain_events`/`outbox_messages`/`outbox_delivery_attempts`, local artifacts с TTL/purge worker, encrypted project secrets); полный контракт не считается production-ready без object storage, legal hold, backup/restore drill и target storage/key policy.
 
 ## 1. Границы владения и размещение
 
@@ -45,7 +45,7 @@
 | Superseded secret versions | До конца rollback window и retention всех использующих backup | Затем cryptographic erasure. |
 | Backups | Daily не менее 35 дней, monthly не менее 12 месяцев | Immutable off-site copy; lifecycle не удаляет referenced object version раньше backup retention. |
 
-Retention worker выбирает due rows с lease и `FOR UPDATE SKIP LOCKED`. Он не удаляет shared artifact object при active reference, не снимает hold, не удаляет audit cascade и не объявляет success до подтверждения physical deletion. Temporary storage error создаёт retry с bounded backoff и alert после порога.
+Current local retention worker выбирает expired artifact rows через `FOR UPDATE SKIP LOCKED`, удаляет файл внутри `CICD_ARTIFACTS_DIR` и только после этого ставит `purged_at` + audit. Target worker расширяет это до lease/fencing state, legal/incident hold, shared object reference checks, bounded backoff и operator alert после порога ошибок.
 
 Удаление tenant/project выполняется как asynchronous lifecycle: `active -> delete_requested -> access_revoked -> purging -> deleted`, либо `delete_failed`. Сначала блокируются новые pipelines, uploads, secret injection, clone/push и downloads; затем создаются deletion jobs, сохраняется минимальный tombstone и производится идемпотентный purge. Access не возвращается при failed purge.
 
@@ -90,7 +90,7 @@ DEK/plaintext существует в памяти только на время 
 
 ## 7. Проверяемые требования
 
-- Real PostgreSQL tests проверяют tenant isolation, runtime DDL denial, retention retry/hold, artifact checksum и non-orphan publish/purge.
+- Real PostgreSQL tests проверяют current artifact checksum/expiry/local purge; target suite добавляет tenant isolation, runtime DDL denial, retention retry/hold и non-orphan object publish/purge.
 - Backup test проверяет неполный manifest, checksum/key-unavailable error и isolated restore smoke.
 - Security tests проверяют отсутствие secret в API/audit/log payload, AAD mismatch, KEK rewrap, secret-value rotation и запрет раннего key retirement.
 - Operations evidence включает последний verified backup, restore report, retention queue age, checksum/Git integrity alerts и число envelope/key versions в use.

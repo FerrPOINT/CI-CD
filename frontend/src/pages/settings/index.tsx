@@ -15,6 +15,7 @@ export function SettingsPage() {
     { key: 'CICD_GIT_TOKEN', descKey: 'settings.env.gitToken' },
     { key: 'CICD_GIT_INTERNAL_TOKEN', descKey: 'settings.env.gitInternalToken' },
     { key: 'CICD_ARTIFACTS_DIR', descKey: 'settings.env.artifactsDir' },
+    { key: 'CICD_ARTIFACT_RETENTION_DAYS', descKey: 'settings.env.artifactRetentionDays' },
     { key: 'CICD_EMBEDDED_RUNNER_ENABLED', descKey: 'settings.env.embeddedRunnerEnabled' },
     { key: 'CICD_RUNNER_MODE', descKey: 'settings.env.runnerMode' },
     { key: 'CICD_RUNNER_REGISTRATION_TOKEN', descKey: 'settings.env.runnerRegistrationToken' },

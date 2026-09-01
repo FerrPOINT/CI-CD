@@ -2660,6 +2660,177 @@ async fn artifact_download_rejects_storage_paths_outside_artifact_root() {
 }
 
 #[tokio::test]
+async fn artifact_retention_expires_download_and_purges_file() {
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let stage_id = Uuid::new_v4();
+    let job_id = Uuid::new_v4();
+    let attempt_id = Uuid::new_v4();
+    let project_name = format!("it-artifact-retention-{}", project_id.simple());
+    let artifact_root =
+        std::env::temp_dir().join(format!("forge-artifacts-retention-{project_id}"));
+    let previous_artifacts_dir = std::env::var("CICD_ARTIFACTS_DIR").ok();
+    let previous_retention_days = std::env::var("CICD_ARTIFACT_RETENTION_DAYS").ok();
+
+    std::fs::create_dir_all(&artifact_root).expect("create artifact root");
+    // SAFETY: CI runs this integration file with --test-threads=1; this test
+    // restores the process-wide artifact env after its isolated scenario.
+    unsafe {
+        std::env::set_var("CICD_ARTIFACTS_DIR", &artifact_root);
+        std::env::set_var("CICD_ARTIFACT_RETENTION_DAYS", "1");
+    }
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/repo.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status) VALUES ($1, $2, 'main', 'queued')",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert pipeline");
+    sqlx::query(
+        "INSERT INTO stages (id, pipeline_id, name, position, status) VALUES ($1, $2, 'build', 0, 'queued')",
+    )
+    .bind(stage_id)
+    .bind(pipeline_id)
+    .execute(&pool)
+    .await
+    .expect("insert stage");
+    sqlx::query(
+        "INSERT INTO jobs (id, stage_id, name, image, command, position, status) VALUES \
+         ($1, $2, 'compile', 'alpine:3.21', 'echo ok', 0, 'queued')",
+    )
+    .bind(job_id)
+    .bind(stage_id)
+    .execute(&pool)
+    .await
+    .expect("insert job");
+    sqlx::query(
+        "INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) \
+         VALUES ($1, $2, 1, 'queued', 'initial')",
+    )
+    .bind(attempt_id)
+    .bind(job_id)
+    .execute(&pool)
+    .await
+    .expect("insert attempt");
+
+    let app = cicd::api::app(Some(pool.clone()));
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/jobs/{job_id}/artifacts"))
+                .header("x-artifact-name", "retained.log")
+                .header("content-type", "text/plain")
+                .body(Body::from("retained artifact"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let uploaded = response_json(response).await;
+    let artifact_id = Uuid::parse_str(uploaded["id"].as_str().unwrap()).unwrap();
+    assert!(uploaded["expires_at"].as_str().is_some());
+    assert!(uploaded["purged_at"].is_null());
+
+    let storage_path: String =
+        sqlx::query_scalar("SELECT storage_path FROM artifacts WHERE id = $1")
+            .bind(artifact_id)
+            .fetch_one(&pool)
+            .await
+            .expect("artifact storage path");
+    assert!(std::path::Path::new(&storage_path).exists());
+
+    sqlx::query(
+        "UPDATE artifacts \
+         SET expires_at = now() + interval '30 days' \
+         WHERE id <> $1 AND purged_at IS NULL",
+    )
+    .bind(artifact_id)
+    .execute(&pool)
+    .await
+    .expect("keep unrelated artifacts out of purge batch");
+
+    sqlx::query("UPDATE artifacts SET expires_at = now() - interval '1 second' WHERE id = $1")
+        .bind(artifact_id)
+        .execute(&pool)
+        .await
+        .expect("expire artifact");
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/artifacts/{artifact_id}/download"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+    let purged = cicd::platform::purge_expired_artifacts(&pool, 10)
+        .await
+        .expect("purge expired artifacts");
+    assert_eq!(purged, 1);
+    assert!(!std::path::Path::new(&storage_path).exists());
+
+    let purged_at: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT purged_at FROM artifacts WHERE id = $1")
+            .bind(artifact_id)
+            .fetch_one(&pool)
+            .await
+            .expect("purged_at");
+    assert!(purged_at.is_some());
+    let audit_count: i64 = sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM audit_log WHERE action = 'artifact.purged' AND resource_id = $1",
+    )
+    .bind(artifact_id)
+    .fetch_one(&pool)
+    .await
+    .expect("artifact purge audit count");
+    assert_eq!(audit_count, 1);
+
+    let response = app
+        .oneshot(
+            Request::get(format!("/api/v1/jobs/{job_id}/artifacts"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let listed = response_json(response).await;
+    let artifact_id_text = artifact_id.to_string();
+    assert_eq!(listed[0]["id"].as_str(), Some(artifact_id_text.as_str()));
+    assert!(listed[0]["purged_at"].as_str().is_some());
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup project");
+    let _ = std::fs::remove_dir_all(&artifact_root);
+    unsafe {
+        match previous_artifacts_dir {
+            Some(value) => std::env::set_var("CICD_ARTIFACTS_DIR", value),
+            None => std::env::remove_var("CICD_ARTIFACTS_DIR"),
+        }
+        match previous_retention_days {
+            Some(value) => std::env::set_var("CICD_ARTIFACT_RETENTION_DAYS", value),
+            None => std::env::remove_var("CICD_ARTIFACT_RETENTION_DAYS"),
+        }
+    }
+}
+
+#[tokio::test]
 async fn project_memberships_enforce_project_roles_and_cascade() {
     let pool = test_pool().await;
     let project_id = Uuid::new_v4();

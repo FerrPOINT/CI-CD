@@ -219,7 +219,10 @@
     "type": "Тип",
     "digest": "SHA-256",
     "created": "Создан",
+    "expires": "Истекает",
     "download": "Скачать",
+    "expired": "Истёк",
+    "purged": "Очищен",
     "empty": "Артефакты для этой задачи отсутствуют."
   },
   "environments": {
@@ -412,6 +415,7 @@
       "gitToken": "Опциональный токен Git Smart HTTP",
       "gitInternalToken": "Внутренний токен post-receive hook",
       "artifactsDir": "Локальное хранилище артефактов",
+      "artifactRetentionDays": "TTL новых артефактов в днях",
       "embeddedRunnerEnabled": "Включает embedded runner внутри backend",
       "runnerMode": "Режим embedded runner: docker или host",
       "runnerRegistrationToken": "Bootstrap token для регистрации внешнего runner-а",
