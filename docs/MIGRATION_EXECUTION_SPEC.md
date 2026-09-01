@@ -21,7 +21,7 @@
 - Test database name starts `forge_test_`; harness refuses any URL without this prefix.
 - `CICD_TEST_DATABASE_URL` is mandatory for integration tests. It must use `forge_owner` only for migration setup; test runtime uses a second `forge_runtime` URL.
 
-`backend/docker-compose.test.yml` uses `postgres:17-alpine`, no host port, tmpfs/ephemeral volume, healthcheck `pg_isready`, test roles from `backend/tests/sql/init-roles.sql`. It is a committed local fixture. Current GitHub Actions instead uses a PostgreSQL service and runs `cargo test --features integration --test integration_db`; compose lifecycle with unconditional `down -v` is still a target CI hardening step.
+`backend/docker-compose.test.yml` uses `postgres:17-alpine`, no host port, tmpfs/ephemeral volume, healthcheck `pg_isready`, test roles from `backend/tests/sql/init-roles.sql`. It is a committed local fixture. Current GitHub Actions instead uses a PostgreSQL service and runs `cargo test --features integration --test integration_db -- --test-threads=1`; compose lifecycle with unconditional `down -v` is still a target CI hardening step.
 
 ## 3. Legacy adoption and first migrations
 

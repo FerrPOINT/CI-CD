@@ -43,7 +43,7 @@ jobs:
     - name: unit tests
       run: cargo test --workspace
     - name: integration tests (real PostgreSQL)
-      run: cargo test --features integration --test integration_db
+      run: cargo test --features integration --test integration_db -- --test-threads=1
     - name: openapi drift gate
       run: |
         cargo run --bin openapi-dump -- /tmp/openapi.yaml

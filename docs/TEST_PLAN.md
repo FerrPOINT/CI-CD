@@ -22,7 +22,7 @@
 | CLI/runner binary contract | Public command groups, help, стабильное пользовательское поведение CLI и `forge-runner` flags | `cargo test -p cicd-cli --test cli_contract`; `cargo test -p cicd-server --test runner_binary_contract` | **Current verified** |
 | Frontend unit | Компоненты, pure helpers и доступность UI в Vitest/Testing Library | `cd frontend && pnpm test` | **Current verified** |
 | Compose smoke | Собранные образы, startup сервисов, `GET /api/v1/health` и `GET /api/v1/readiness` | `docker compose up --build -d && just health && just readiness`; после проверки `docker compose down` | **Current verified** локально; не current CI-gate |
-| Real-DB integration | PostgreSQL constraints, migrations/readiness, CRUD, persisted effects, immutable pipeline plan snapshots, auth/PAT и current API boundaries | GitHub Actions PostgreSQL service + `cargo test --features integration --test integration_db`; local fixture `backend/docker-compose.test.yml` | **Current verified** |
+| Real-DB integration | PostgreSQL constraints, migrations/readiness, CRUD, persisted effects, immutable pipeline plan snapshots, auth/PAT и current API boundaries | GitHub Actions PostgreSQL service + `cargo test --features integration --test integration_db -- --test-threads=1`; local fixture `backend/docker-compose.test.yml` | **Current verified** |
 | Playwright E2E | Критические пользовательские journeys на собранном frontend и real API/PostgreSQL stack | Playwright Chromium; trace, screenshot и video для failed/retried flow | **Target approved** |
 | Accessibility | Keyboard journey, accessible names/roles, focus, contrast и серьёзные нарушения | Playwright + axe; без `serious`/`critical` violations | **Target approved** |
 | Performance | Бюджеты ключевых routes и регрессии production build | Lighthouse CI с сохранённым report | **Target approved** |
@@ -121,7 +121,7 @@ Coverage измеряет поведение и риск, а не только l
 
 | Job | Обязательная проверка |
 |---|---|
-| `backend` | Rust 1.86 + PostgreSQL 17 service: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db`, OpenAPI drift gate. |
+| `backend` | Rust 1.86 + PostgreSQL 17 service: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db -- --test-threads=1`, OpenAPI drift gate. |
 | `frontend` | Node 22/pnpm 11: `pnpm install --frozen-lockfile`, `pnpm openapi:generate` + clean diff для `src/api/schema.d.ts`, `pnpm test`, `pnpm build`. |
 | `docs` | Python 3.12: `python3 scripts/verify_docs.py --all`. |
 

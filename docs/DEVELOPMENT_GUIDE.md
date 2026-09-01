@@ -140,7 +140,7 @@ Current `forge-runner` регистрируется или использует 
 | CLI contract | `cicd-cli --help`, public command groups | `cargo test -p cicd-cli --test cli_contract` | Current verified |
 | Frontend unit | Components, pages и UI behavior через Vitest/Testing Library | `pnpm test` | Current verified |
 | Compose smoke | Запуск образов, `GET /api/v1/health` и `GET /api/v1/readiness` | `just up && just health && just readiness` | Current verified локально; не является current CI gate |
-| API + PostgreSQL | CRUD, constraints, migrations/readiness, persisted side effects, headers/error envelope, auth/PAT и current pagination cases | `cargo test --features integration --test integration_db` с PostgreSQL service в CI | Current verified; isolated owner/runtime matrix всё ещё target |
+| API + PostgreSQL | CRUD, constraints, migrations/readiness, persisted side effects, headers/error envelope, auth/PAT и current pagination cases | `cargo test --features integration --test integration_db -- --test-threads=1` с PostgreSQL service в CI | Current verified; isolated owner/runtime matrix всё ещё target |
 | CLI + real API | Automation flow, config precedence, JSON output, exit codes и redaction | CLI against real API/PostgreSQL stack | Target approved |
 | Browser E2E | Critical UI journeys against built frontend и real API/PostgreSQL | Playwright Chromium | Target approved; сценарии -- [UI API CONTRACT](contracts/UI_API_CONTRACT.md) |
 | Accessibility | Keyboard flow, semantic controls, colour contrast и serious/critical violations | Playwright + axe | Target approved; не установлен как current script/gate |
@@ -177,7 +177,7 @@ docker run --rm --entrypoint /bin/bash \
        /usr/local/cargo/bin/cargo test --workspace'
 ```
 
-Для real-DB проверки нужен PostgreSQL и `CICD_TEST_DATABASE_URL`; CI запускает `cargo test --features integration --test integration_db`. Release build остаётся локальной/release-проверкой, но не current CI step.
+Для real-DB проверки нужен PostgreSQL и `CICD_TEST_DATABASE_URL`; CI запускает `cargo test --features integration --test integration_db -- --test-threads=1`, потому что scheduler/runner dispatch тесты используют глобальные due/queued scans. Release build остаётся локальной/release-проверкой, но не current CI step.
 
 ### Frontend через Node Docker image
 
@@ -220,7 +220,7 @@ python3 scripts/verify_docs.py --all
 
 | Job | Фактические проверки |
 |---|---|
-| `backend` | PostgreSQL 17 service; `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db`, OpenAPI drift gate |
+| `backend` | PostgreSQL 17 service; `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db -- --test-threads=1`, OpenAPI drift gate |
 | `frontend` | `pnpm install --frozen-lockfile`, `pnpm openapi:generate` + clean diff для `src/api/schema.d.ts`, `pnpm lint`, `pnpm test`, `pnpm build` |
 | `docs` | `python3 scripts/verify_docs.py --all` |
 

@@ -24,7 +24,7 @@
 | Область | Сейчас | Целевое состояние |
 |---|---|---|
 | Схема PostgreSQL | Committed SQLx migrations в `backend/migrations/*.sql`; backend применяет их при старте, `cicd-migrate` использует тот же набор | Pre-runtime migration runner, verify-only startup и запрет DDL для runtime-роли |
-| Тестовая БД | GitHub Actions PostgreSQL service + `cargo test --features integration --test integration_db`; local `backend/docker-compose.test.yml` fixture | Изолированная PostgreSQL lifecycle/roles для integration-тестов, prior-schema upgrade, параллельные тесты не делят данные |
+| Тестовая БД | GitHub Actions PostgreSQL service + `cargo test --features integration --test integration_db -- --test-threads=1`; local `backend/docker-compose.test.yml` fixture | Изолированная PostgreSQL lifecycle/roles для integration-тестов и prior-schema upgrade; scheduler/runner dispatch тесты используют глобальные scans, поэтому CI real-DB suite выполняется serial |
 | Репозитории | Строка `repositories` и bare-directory в volume; удаление сначала удаляет строку, затем best-effort директорию | Реестр с состояниями provision/delete, стабильным `storage_key`, saga/reconciler, проверка `git fsck`, backup-aware purge |
 | Связь project/repository | Поиск проекта по URL suffix `LIKE '%name.git'` | Явный `repositories.project_id`, уникальная связь и Git push event с repository ID/commit SHA |
 | Артефакты | Локальная ФС, лимит одного upload 50 MiB, DB-row после записи файла, SHA-256 для новых uploads; download project-scoped при включённом `CICD_AUTH_SECRET` и проверяет checksum drift | Порт object storage; потоковая загрузка во temporary object, квоты/резервы, retention worker, tenant/project storage key, авторизованная загрузка |

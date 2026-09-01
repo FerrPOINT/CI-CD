@@ -3,8 +3,9 @@
 //! Requires a running test-compose PostgreSQL:
 //!   docker compose -f backend/docker-compose.test.yml up -d postgres-test
 //!   CICD_TEST_DATABASE_URL=postgres://forge_owner:...@postgres-test:5432/forge_test_cicd
-//! Each test uses an isolated schema-unique UUID namespace; tables are shared
-//! but rows are UUID-scoped, so parallel runs do not collide.
+//! Most rows use an isolated schema-unique UUID namespace. The scheduler and
+//! runner dispatch paths intentionally scan global due/queued work, so the CI
+//! integration gate runs this file with one test thread.
 
 #![cfg(feature = "integration")]
 
@@ -13,7 +14,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use base64::Engine;
-use chrono::{TimeZone, Utc};
+use chrono::{Duration, Timelike, Utc};
 use sha2::{Digest, Sha256};
 use sqlx::postgres::PgPoolOptions;
 use tower::ServiceExt;
@@ -3002,6 +3003,11 @@ async fn cron_schedule_materializes_unique_fire_slots() {
     let pool = test_pool().await;
     let project_id = Uuid::new_v4();
     let project_name = format!("it-schedule-{}", project_id.simple());
+    let due_slot = (Utc::now() - Duration::minutes(1))
+        .with_second(0)
+        .and_then(|value| value.with_nanosecond(0))
+        .unwrap();
+    let cron = due_slot.format("%M %H * * *").to_string();
 
     sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
         .bind(project_id)
@@ -3016,9 +3022,9 @@ async fn cron_schedule_materializes_unique_fire_slots() {
         .oneshot(
             Request::post(format!("/api/v1/projects/{project_id}/schedules"))
                 .header("content-type", "application/json")
-                .body(Body::from(
-                    r#"{"cron":"0 4 * * *","git_ref":"main","enabled":true}"#,
-                ))
+                .body(Body::from(format!(
+                    r#"{{"cron":"{cron}","git_ref":"main","enabled":true}}"#
+                )))
                 .unwrap(),
         )
         .await
@@ -3039,7 +3045,6 @@ async fn cron_schedule_materializes_unique_fire_slots() {
             .expect("count project pipelines before due");
     assert_eq!(pipeline_count_before_due, 0);
 
-    let due_slot = Utc.with_ymd_and_hms(2026, 8, 31, 4, 0, 0).unwrap();
     sqlx::query("UPDATE schedules SET next_fire_at = $2 WHERE id = $1")
         .bind(schedule_id)
         .bind(due_slot)

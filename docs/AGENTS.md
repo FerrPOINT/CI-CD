@@ -34,7 +34,7 @@
 
 ### 4. Тестирование
 
-- Backend: `cargo test --workspace`, `cargo test --features integration --test integration_db`, API/CLI/domain contract tests.
+- Backend: `cargo test --workspace`, `cargo test --features integration --test integration_db -- --test-threads=1`, API/CLI/domain contract tests.
 - Frontend: Vitest для unit-тестов компонентов, Playwright для E2E (целевое).
 - После UI-изменений — скриншоты full-page (375 / 1920 / 2560).
 - Все новые endpoint — curl-проверка.
