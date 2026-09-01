@@ -38,7 +38,7 @@ Roadmap фиксирует порядок доведения Forge до базо
 - embedded execution всё ещё встроен в backend process по умолчанию; для shared/prod режима нужно отключать его и доводить external runner boundary до production sandbox;
 - webhooks/notifications имеют bounded delivery history/requeue MVP, но без production leases/fencing, full dead-letter policy/metrics и external adapters; email/Slack notification adapters не реализованы;
 - backup/restore имеет local scripted MVP helper и CI self-test/dry-run, но ещё не является off-site/PITR production platform или verified restore drill gate.
-- dependency audit (SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`), committed-secret scan и SBOM drift gate уже являются current CI gate; container scan, deeper history secret scan, `cargo-deny` policy и release SBOM publication остаются target hardening.
+- dependency audit (SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`), committed-secret scan, SBOM drift gate, backend release build и pinned Trivy critical container image scan уже являются current CI gate; deeper history/container secret scan, `cargo-deny` policy, broader image policy и release SBOM publication остаются target hardening.
 
 ## 4. Базовый roadmap
 

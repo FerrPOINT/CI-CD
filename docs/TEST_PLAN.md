@@ -126,14 +126,14 @@ Coverage измеряет поведение и риск, а не только l
 
 | Job | Обязательная проверка |
 |---|---|
-| `backend` | Rust 1.86 + PostgreSQL 17 service: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db -- --test-threads=1`, OpenAPI drift gate. |
+| `backend` | Rust 1.86 + PostgreSQL 17 service: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db -- --test-threads=1`, `cargo build --release --workspace`, OpenAPI drift gate. |
 | `frontend` | Node 22/pnpm 11: `pnpm install --frozen-lockfile`, `pnpm openapi:generate` + clean diff для `src/api/schema.d.ts`, `pnpm lint`, `pnpm test`, `pnpm build`. |
 | `compose-smoke` | Docker Compose: config validation, production image build, healthy startup, backend health/readiness, frontend nginx smoke, failure logs and cleanup. |
 | `e2e` | Node 22/pnpm 11 + Playwright Chromium: installs browser dependencies, validates Compose config, starts production stack, seeds deterministic evidence, runs critical UI journeys and representative axe smoke, uploads Playwright report/traces/screenshots/video on failure and always cleans Compose volumes. |
-| `security` | Rust/Node advisory gate, committed-secret baseline и SBOM drift: SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm install --frozen-lockfile`, `pnpm audit --audit-level high`, `python3 scripts/scan_secrets.py`, `python3 scripts/generate_sbom.py --check`. |
+| `security` | Rust/Node advisory gate, committed-secret baseline, SBOM drift и container image scan: SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm install --frozen-lockfile`, `pnpm audit --audit-level high`, `python3 scripts/scan_secrets.py`, `python3 scripts/generate_sbom.py --check`, production backend/frontend image build и `bash scripts/scan_container_images.sh forge-cicd-backend:ci forge-cicd-frontend:ci`. |
 | `docs` | Python 3.12: Python syntax checks для docs/backup scripts, backup helper self-test/dry-run, shell wrapper syntax и `python3 scripts/verify_docs.py --all`. |
 
-Current CI не запускает standalone backend release build, isolated owner/runtime migration matrix, prior-schema upgrade, Lighthouse, OpenAPI backward compatibility, `cargo-deny`, container scan, history/container secret scan или coverage ratchet. Playwright/axe включены как MVP-gate для representative flows, но full auth/RBAC E2E, all-route a11y, Lighthouse budgets и coverage evidence остаются target.
+Current CI не запускает isolated owner/runtime migration matrix, prior-schema upgrade, Lighthouse, OpenAPI backward compatibility, `cargo-deny`, history/container secret scan или coverage ratchet. Backend release build и critical container image scan уже включены как MVP-gates. Playwright/axe включены как MVP-gate для representative flows, но full auth/RBAC E2E, all-route a11y, Lighthouse budgets и coverage evidence остаются target.
 
 ### Target approved
 
@@ -146,7 +146,7 @@ Current CI не запускает standalone backend release build, isolated ow
 | `frontend` | Frozen lockfile, lint, Vitest, generated-client typecheck, production build и coverage artifact. |
 | `compose-smoke-plus` | Current compose smoke плюс retained compose logs/artifacts, release tag/image matrix, read-only API scenario и restore-drill binding. |
 | `e2e-a11y-performance` | Current representative Playwright/axe gate плюс full auth/RBAC/CLI journeys, all-route keyboard/a11y coverage, Lighthouse budgets и retained reports. |
-| `security` | Current dependency audit/secret/SBOM drift gate плюс target `cargo-deny`, container scan и deeper history secret scan по согласованной severity policy; confirmed secret или blocking vulnerability блокирует gate. |
+| `security` | Current dependency audit/secret/SBOM drift gate и critical container image scan плюс target `cargo-deny`, broader image policy и deeper history/container secret scan по согласованной severity policy; confirmed secret или blocking vulnerability блокирует gate. |
 | `traceability` | `docs/TRACEABILITY.md` complete for changed requirements; REQ-ID links resolve to test/evidence and no changed normative behavior lacks mapping. |
 
 CI сохраняет artifacts для failed и required target runs: JUnit/coverage, Compose logs, migration evidence, OpenAPI compatibility report, Playwright report/trace/screenshots/video и Lighthouse reports. Успешная сборка без этих обязательных доказательств не является приёмкой target capability.

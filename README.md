@@ -152,7 +152,7 @@ flowchart TD
 - TLS is not bundled; CORS is permissive only when `CICD_CORS_ALLOWED_ORIGINS` is empty for isolated development, and shared deployments must set an explicit allowlist. In-process rate limiting is not a replacement for a reverse proxy or distributed limiter.
 - Embedded runner records job ownership in `job_leases`, injects only declared secrets, collects declared artifact files, and reconciles expired leases. The external runner protocol MVP exposes register/heartbeat/bounded long-poll with in-process + PostgreSQL `LISTEN/NOTIFY` wakeup/ack/renew/`secrets:resolve`/artifact upload/logs/complete with bearer runner credentials and lease tokens; `forge-runner` can run as a separate shell runner process, keep active-lease heartbeat while commands run, append stdout/stderr to attempt-owned logs, resolve declared secrets, and upload declared artifacts. The API maintenance loop requeues unacknowledged offers after `ackDeadline`, fails dispatch-eligible queued jobs after configurable queue timeout when no compatible execution path exists, and marks stale online runners offline when no unexpired active lease protects them. Richer log chunks, resumable artifact sessions, Docker/Kubernetes isolation and sandbox hardening remain target work.
 - Pipeline trigger stores immutable `pipeline_plans` snapshots for current `legacy-linear` and v1 `jobs.needs` DAG plans; policy diagnostics/job-level dispatch remain target hardening.
-- Current CI runs SQLx optional MySQL/RSA feature guard, Rust/Node dependency audits, secret scan and SBOM drift checks; `cargo-deny`, container scan and release SBOM publication remain target hardening.
+- Current CI runs SQLx optional MySQL/RSA feature guard, Rust release build, Rust/Node dependency audits, secret scan, SBOM drift checks and pinned Trivy critical container image scan; `cargo-deny`, history secret scan and release SBOM publication remain target hardening.
 - Schedules, outgoing webhooks and `in_app`/`sse` notifications work as MVP local delivery.
 - Outbox delivery history, attempt log and failed-delivery requeue are bounded MVP features; inbound provider webhooks, external notification adapters and crash-safe distributed delivery guarantees are not complete.
 
@@ -173,6 +173,7 @@ Full current-state cut: [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md). Security
 | Browser E2E/a11y | `.github/workflows/ci.yml` job `e2e` |
 | Secret scan | `python3 scripts/scan_secrets.py` |
 | SBOM drift | `python3 scripts/generate_sbom.py --check` |
+| Container image scan | `bash scripts/scan_container_images.sh forge-cicd-backend:ci forge-cicd-frontend:ci` |
 | Docs verification | `python3 scripts/verify_docs.py --all` |
 
 ## 🧰 Commands
@@ -188,6 +189,7 @@ Full current-state cut: [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md). Security
 | `cd frontend && pnpm e2e` | Playwright critical journeys + axe smoke against seeded Compose stack |
 | `python3 scripts/scan_secrets.py` | Fail on committed token/key/password patterns in repository text |
 | `python3 scripts/generate_sbom.py --check` | Verify committed SBOM inventory is in sync |
+| `bash scripts/scan_container_images.sh <image> [...]` | Scan already built container images with pinned Trivy CLI for critical fixable vulnerabilities |
 | `python3 scripts/verify_docs.py --all` | Documentation links, canonical statuses and docs integrity |
 
 ## 🧭 Project Map

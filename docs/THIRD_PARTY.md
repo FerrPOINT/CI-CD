@@ -46,10 +46,10 @@
 3. Deprecated/unmaintained direct dependency в runtime path считается security-relevant debt: фиксируется в [RISK_REGISTER](RISK_REGISTER.md), получает replacement candidates в [TECH_CHOICES](TECH_CHOICES.md) и не используется для новых capabilities.
 4. SemVer-major обновление требует: compatibility review, changelog, тесты и, если меняется внешний контракт, API/ADR/RTM.
 5. Lock-файлы коммитятся вместе с manifest; ручное редактирование lockfile запрещено.
-6. Current CI gate: SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`, `scripts/scan_secrets.py` и `scripts/generate_sbom.py --check`; GitHub JavaScript actions используют Node 24-compatible majors, а pnpm v11 ставится через `pnpm/setup`.
+6. Current CI gate: SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`, `scripts/scan_secrets.py`, `scripts/generate_sbom.py --check` и pinned Trivy critical container image scan через `scripts/scan_container_images.sh`; GitHub JavaScript actions используют Node 24-compatible majors, а pnpm v11 ставится через `pnpm/setup`.
 7. `RUSTSEC-2023-0071` разрешён только как Cargo.lock false-positive: `sqlx-mysql`/`rsa` присутствуют в lockfile/SBOM как optional SQLx packages, но не должны появляться в активном `cargo tree` build graph.
 8. `RUSTSEC-2026-0183`/`RUSTSEC-2026-0184` по `git2 0.20.4` являются allowed warnings до совместимого исправления; `git2 0.21.0` не проходит Rust 1.86 compile gate.
-9. Перед релизом target: dependency update report, `cargo-deny`/license/source policy, immutable action/image digest policy, container scan, deeper history/container secret scan и разбор accepted findings.
+9. Перед релизом target: dependency update report, `cargo-deny`/license/source policy, broader immutable action/image digest policy, expanded container severity/exception policy, deeper history/container secret scan и разбор accepted findings.
 
 ## 4. SBOM policy
 
