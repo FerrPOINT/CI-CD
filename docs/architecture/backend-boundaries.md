@@ -8,7 +8,7 @@
 |---|---|---|
 | `cicd-server` (`backend/src`) | монолит: HTTP + SQL + runner + git | — (мигрирует) |
 | `cicd-domain` (`backend/domain`) | чистые типы, `JobStatus::transition_to()` | axum/sqlx/docker/git/FS |
-| `cicd-cli` (`backend/cli`) | HTTP-клиент control plane | линковка серверного кода |
+| `cicd-cli` (`backend/cli`) | HTTP-клиент control plane | runtime-линковка серверного кода; test-only harness может импортировать server crate только для disposable HTTP fixture |
 
 ## Целевые пакеты (approved, ADR-0005)
 
@@ -20,7 +20,7 @@
 | `api` | DTO, роуты, middleware, OpenAPI (utoipa) | `router()` | app, domain | sqlx напрямую |
 | `server` | composition root, config, запуск supervisor | `main` | все | — |
 | `migration` | `cicd-migrate` (up/verify/adopt-legacy) | CLI | sqlx | axum, app |
-| `cli` | пользовательский CLI | CLI | reqwest, generated DTO | серверные крейты |
+| `cli` | пользовательский CLI | CLI | reqwest, generated DTO; integration-test harness может импортировать server crate только для запуска disposable HTTP API | серверные крейты в runtime-коде |
 
 Dependency flow односторонняя: `api → app → domain`; `infra → app/domain`; `server → all`. Тесты: `domain` unit; `app` unit c in-memory портами; `infra/api` — real-PostgreSQL (compose.test.yml); protocol compatibility — `migration`/`cli` smoke.
 

@@ -119,9 +119,9 @@ Current `forge-runner` регистрируется или использует 
 | `backend/` -- `cicd-server` | Axum control plane, HTTP routes, SQLx store, Git hosting, embedded runner и composition root | Current verified |
 | `backend/src/bin/forge-runner.rs` | Отдельный shell-runner process для runner protocol MVP | Current verified MVP |
 | `backend/domain/` -- `cicd-domain` | Чистые доменные типы и state machine `JobStatus` | Current verified |
-| `backend/cli/` -- `cicd-cli` | HTTP-only CLI для runtime и platform операций; не линкует server code | Current verified MVP |
+| `backend/cli/` -- `cicd-cli` | HTTP-only CLI для runtime и platform операций; runtime binary не линкует server code, test-only harness использует server crate только как disposable HTTP fixture | Current verified MVP |
 | `backend/tests/` | no-DB API/domain contracts, `integration_db` real PostgreSQL suite; `tests/sql/init-roles.sql` для runtime role fixture | Current verified |
-| `backend/cli/tests/` | CLI contract tests для command groups/help/global flags/platform mutations | Current verified |
+| `backend/cli/tests/` | CLI contract tests для command groups/help/global flags/platform mutations и real HTTP/API/PostgreSQL smoke | Current verified |
 | `backend/docker-compose.test.yml` | Ephemeral PostgreSQL 17 fixture без host port | Current verified fixture |
 | `frontend/` -- `cicd-dashboard` | React SPA, Vite, Tailwind, i18n, pages/widgets/entities/shared UI | Current verified |
 | `frontend/src/api/` | Typed API wrapper/hooks + generated OpenAPI DTO `schema.d.ts` | Current verified |
@@ -142,7 +142,7 @@ Current `forge-runner` регистрируется или использует 
 | Dependency/SBOM security | Rust/Node advisories, committed-secret baseline и SBOM drift | SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`, `python3 scripts/scan_secrets.py`, `python3 scripts/generate_sbom.py --check` в CI job `security` | Current verified MVP |
 | Compose smoke | Запуск образов, `GET /api/v1/health`, `GET /api/v1/readiness` и frontend nginx | `.github/workflows/ci.yml` job `compose-smoke`; локально `just up && just health && just readiness` | Current verified |
 | API + PostgreSQL | CRUD, constraints, migrations/readiness, persisted side effects, headers/error envelope, auth/PAT и current pagination cases | `cargo test --features integration --test integration_db -- --test-threads=1` с PostgreSQL service в CI | Current verified; isolated owner/runtime matrix всё ещё target |
-| CLI + real API | Automation flow, config precedence, JSON output, exit codes и redaction | CLI against real API/PostgreSQL stack | Target approved |
+| CLI + real API | Current smoke: project create/list, idempotent pipeline run, attempts, protected deployment approval, env/flag config precedence, JSON output и non-zero API error exit; target hardening: redaction fixtures, profiles/keyring и full auth/RBAC CLI E2E | `cargo test -p cicd-cli --features integration --test cli_real_api -- --test-threads=1` с `CICD_TEST_DATABASE_URL`; CI backend job | Current verified MVP |
 | Browser E2E | Critical UI journeys, representative accessibility и seeded performance smoke against built frontend и real API/PostgreSQL | `.github/workflows/ci.yml` job `e2e`; локально `pnpm seed:evidence && pnpm e2e` на running Compose stack | Current verified MVP; full auth/RBAC/CLI journeys остаются target |
 | Accessibility | Keyboard flow, semantic controls, colour contrast и serious/critical violations | Playwright + axe representative pages; mobile drawer Escape/focus | Current verified MVP; all-route/theme/Lighthouse coverage остаётся target |
 | Performance | Seeded API read p95 и Dashboard route ready-time regression budgets | `frontend/e2e/performance.spec.ts` в `pnpm e2e`; Lighthouse/load/30-day SLO evidence target | Current verified MVP |
@@ -179,7 +179,7 @@ docker run --rm --entrypoint /bin/bash \
        /usr/local/cargo/bin/cargo build --release --workspace'
 ```
 
-Для real-DB проверки нужен PostgreSQL и `CICD_TEST_DATABASE_URL`; CI запускает `cargo test --features integration --test integration_db -- --test-threads=1`, потому что scheduler/runner dispatch тесты используют глобальные due/queued scans. Backend release build входит в current CI gate.
+Для real-DB проверки нужен PostgreSQL и `CICD_TEST_DATABASE_URL`; CI запускает `cargo test --features integration --test integration_db -- --test-threads=1`, потому что scheduler/runner dispatch тесты используют глобальные due/queued scans. CLI real-API smoke запускается тем же PostgreSQL service командой `cargo test -p cicd-cli --features integration --test cli_real_api -- --test-threads=1`. Backend release build входит в current CI gate.
 
 ### Frontend через Node Docker image
 
@@ -238,14 +238,14 @@ python3 scripts/verify_docs.py --all
 
 | Job | Фактические проверки |
 |---|---|
-| `backend` | PostgreSQL 17 service; `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db -- --test-threads=1`, `cargo build --release --workspace`, OpenAPI drift gate |
+| `backend` | PostgreSQL 17 service; `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db -- --test-threads=1`, `cargo test -p cicd-cli --features integration --test cli_real_api -- --test-threads=1`, `cargo build --release --workspace`, OpenAPI drift gate |
 | `frontend` | `pnpm install --frozen-lockfile`, `pnpm openapi:generate` + clean diff для `src/api/schema.d.ts`, `pnpm openapi:compat` self-test, OpenAPI backward compatibility diff с base commit/default branch, `pnpm lint`, `pnpm test`, `pnpm build` |
 | `compose-smoke` | `docker compose config -q`, `docker compose up --build -d`, backend health/readiness, frontend nginx smoke, failure logs и cleanup |
 | `e2e` | Playwright Chromium against built Compose stack: install browser, seed deterministic evidence, run critical journeys + representative axe/performance smoke, upload Playwright report/traces/screenshots/video on failure, cleanup volumes |
 | `security` | SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm install --frozen-lockfile`, `pnpm audit --audit-level high`, `python3 scripts/scan_secrets.py`, `python3 scripts/generate_sbom.py --check`, production backend/frontend image build, pinned Trivy critical scan через `scripts/scan_container_images.sh` |
 | `docs` | `python3 -m py_compile scripts/verify_docs.py scripts/generate_sbom.py scripts/scan_secrets.py scripts/forge_backup.py`, backup helper self-test/dry-run, shell wrapper syntax, `python3 scripts/verify_docs.py --all` |
 
-В текущем workflow нет isolated owner/runtime migration matrix, prior-schema upgrade, OpenAPI examples validation, Lighthouse, `cargo-deny`, history/container secret scans или coverage ratchet. Backend release build, OpenAPI backward compatibility diff, RU/EN i18n contract, seeded performance smoke и critical container image scan уже включены как MVP-gates; broader image policy остаётся target. Playwright/axe существуют как MVP-gate для representative flows; full auth/RBAC/CLI E2E, all-route a11y, full locale E2E, load/30-day SLO evidence и Lighthouse budgets всё ещё target. Не утверждайте, что branch protection, approval policy или checks из устаревших narrative-доков фактически включены, пока это не подтверждено настройками GitHub.
+В текущем workflow нет isolated owner/runtime migration matrix, prior-schema upgrade, OpenAPI examples validation, Lighthouse, `cargo-deny`, history/container secret scans или coverage ratchet. Backend release build, CLI real-API smoke, OpenAPI backward compatibility diff, RU/EN i18n contract, seeded performance smoke и critical container image scan уже включены как MVP-gates; broader image policy остаётся target. Playwright/axe существуют как MVP-gate для representative flows; full auth/RBAC CLI E2E, all-route a11y, full locale E2E, load/30-day SLO evidence и Lighthouse budgets всё ещё target. Не утверждайте, что branch protection, approval policy или checks из устаревших narrative-доков фактически включены, пока это не подтверждено настройками GitHub.
 
 ### Target approved
 

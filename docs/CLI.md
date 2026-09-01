@@ -162,18 +162,19 @@ cicd-cli token revoke --id <TOKEN_UUID>
 
 ## Контракт
 
-Группы команд и флаги зафиксированы тестом `backend/cli/tests/cli_contract.rs`: control-plane groups, `--token`, `--output`, pagination flags, job attempts/logs, `--idempotency-key` и ключевые platform mutations. Изменение публичного CLI surface требует обновления теста и этого документа.
+Группы команд и флаги зафиксированы тестом `backend/cli/tests/cli_contract.rs`: control-plane groups, `--token`, `--output`, pagination flags, job attempts/logs, `--idempotency-key` и ключевые platform mutations. Real HTTP/API/PostgreSQL smoke зафиксирован в `backend/cli/tests/cli_real_api.rs`: проект create/list, idempotent pipeline run, attempt history, protected deployment approval, env/flag config precedence, JSON output и non-zero API error exit. Изменение публичного CLI surface требует обновления тестов и этого документа.
 
 ## Границы MVP
 
 - CLI использует только публичный HTTP API и повторяет его текущие ограничения auth/RBAC, pagination и validation.
 - Stable JSON есть сейчас; `table` является lightweight TSV-like представлением для ручной работы, не production reporting format.
-- Profiles, OS keyring, shell completion, request tracing headers, timeout policy, YAML/NDJSON и full real-API CLI integration gate остаются target из `docs/DELIVERY_ARCHITECTURE.md`.
+- Profiles, OS keyring, shell completion, request tracing headers, timeout policy, YAML/NDJSON, token redaction fixtures и full auth/RBAC CLI E2E остаются target из `docs/DELIVERY_ARCHITECTURE.md`.
 - External email/Slack adapters и inbound provider webhooks по-прежнему target: CLI управляет текущими local notification/outbox/webhook MVP routes.
 
 ## References
 
 - `backend/cli/src/main.rs`
 - `backend/cli/tests/cli_contract.rs`
+- `backend/cli/tests/cli_real_api.rs`
 - `docs/API.md`
 - `docs/adr/0005-workspace-layered-architecture.md`

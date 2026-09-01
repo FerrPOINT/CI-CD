@@ -44,6 +44,8 @@ jobs:
       run: cargo test --workspace
     - name: integration tests (real PostgreSQL)
       run: cargo test --features integration --test integration_db -- --test-threads=1
+    - name: CLI integration smoke (real HTTP API and PostgreSQL)
+      run: cargo test -p cicd-cli --features integration --test cli_real_api -- --test-threads=1
     - name: release build
       run: cargo build --release --workspace
     - name: openapi drift gate

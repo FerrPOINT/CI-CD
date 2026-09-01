@@ -507,7 +507,7 @@ Toast используется как вторичное подтвержден�
 
 ### 8.1 Назначение и границы
 
-`cicd-cli` остаётся отдельным Rust workspace package. Он зависит от `clap`, HTTP transport, generated/public contract types и локальных CLI helpers, но никогда не зависит от server, app, infra, SQLx, Git storage или runner implementation.
+`cicd-cli` остаётся отдельным Rust workspace package. Runtime-код зависит от `clap`, HTTP transport, generated/public contract types и локальных CLI helpers, но не зависит от server, app, infra, SQLx, Git storage или runner implementation. Integration-test harness может импортировать server crate только для запуска disposable HTTP API fixture; проверяемый CLI binary при этом всё равно общается по публичному HTTP contract.
 
 ```text
 backend/cli/src/

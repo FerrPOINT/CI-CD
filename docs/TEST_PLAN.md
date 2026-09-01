@@ -20,6 +20,7 @@
 | Domain unit | Чистые доменные правила, прежде всего `JobStatus::transition_to()` | `cargo test -p cicd-server --test domain_transitions` | **Current verified** |
 | API contract | Router, HTTP method/path, status, extractor и поведение без pool через `app(None)`, включая liveness `200` и readiness `503` без БД | `cargo test -p cicd-server --test api_contract` | **Current verified** |
 | CLI/runner binary contract | Public command groups, help, стабильное пользовательское поведение CLI и `forge-runner` flags | `cargo test -p cicd-cli --test cli_contract`; `cargo test -p cicd-server --test runner_binary_contract` | **Current verified** |
+| CLI real API smoke | Настоящий `cicd-cli` против disposable HTTP API/PostgreSQL stack: config precedence, JSON output, idempotent pipeline run, attempts, protected deployment approval и non-zero API error exit | `cargo test -p cicd-cli --features integration --test cli_real_api -- --test-threads=1` с `CICD_TEST_DATABASE_URL`; CI backend job | **Current verified MVP** |
 | Frontend unit | Компоненты, pure helpers, route smoke всех Dashboard-страниц, i18n contract и доступность UI в Vitest/Testing Library | `cd frontend && pnpm test` | **Current verified** |
 | Dependency/SBOM security | Rust/Node advisories, frozen dependency graph, committed-secret baseline и drift committed SBOM | `.github/workflows/ci.yml` job `security`: SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`, `scripts/scan_secrets.py`, `scripts/generate_sbom.py --check` | **Current verified MVP** |
 | Compose smoke | Собранные образы, startup сервисов, `GET /api/v1/health`, `GET /api/v1/readiness` и frontend nginx | `.github/workflows/ci.yml` job `compose-smoke`: `docker compose config -q`, `docker compose up --build -d`, API/frontend smoke и `docker compose down -v --remove-orphans` | **Current verified** |
@@ -36,7 +37,7 @@
 |---|---|---|
 | Domain unit | `backend/tests/domain_transitions.rs` | `queued -> running -> success`; terminal `failed` не перезапускается; `queued -> success` отклоняется. |
 | API contract без БД | `backend/tests/api_contract.rs` | Health возвращает `200`; readiness без pool возвращает `503`; project CRUD без pool возвращает `503`; пустой body PATCH отклоняется. |
-| CLI contract | `backend/cli/tests/cli_contract.rs` | `cicd-cli --help` содержит runtime/platform command groups, `--token`, `--output`, pagination flags, job attempt history, `--idempotency-key` и key mutation subcommands. |
+| CLI contract | `backend/cli/tests/cli_contract.rs`; `backend/cli/tests/cli_real_api.rs` | `cicd-cli --help` содержит runtime/platform command groups, `--token`, `--output`, pagination flags, job attempt history, `--idempotency-key` и key mutation subcommands. Real-API smoke проверяет публичный HTTP path, env/flag precedence, JSON output и non-zero API error exit. |
 | Runner binary contract | `backend/tests/runner_binary_contract.rs` | `forge-runner --help` содержит protocol/config flags `--api-url`, `--credential`, `--registration-token`, `--tags`, `--total-slots`, `--poll-interval-seconds`, `--work-dir`, `--once`, `--no-checkout`, `--keep-workspace`. |
 | Dashboard unit | `frontend/src/pages/dashboard/dashboard.test.ts` | `statusLabel` форматирует known status и `success`. |
 | App router smoke | `frontend/src/app/router.test.tsx` | Поднимает production `appRoutes` в memory router и проверяет первый рендер 20 рабочих Dashboard-страниц + `/login` на реалистичных mocked API DTO. |
@@ -71,7 +72,7 @@ Fixture `seed:evidence` содержит только synthetic development valu
 |---|---|---|
 | Domain unit | Изменены domain rule, status enum или transition caller; тест изолирован от I/O. | Happy path, invalid transition и terminal-state boundary покрыты; focused test и relevant Cargo suite green. |
 | API contract | Изменены route, DTO, HTTP status, validation или error behavior; router можно создать с требуемой fixture. | Проверены method/path, status и body/headers для changed public behavior; любой новый endpoint дополнительно проверен `curl` на running stack. |
-| CLI contract | Изменены command, option, default, config precedence, output или exit code. | Help, parsing и изменённый наблюдаемый CLI contract green; для real API flow действует также target real-DB/CLI integration gate. |
+| CLI contract | Изменены command, option, default, config precedence, output или exit code. | Help, parsing и изменённый наблюдаемый CLI contract green; для runtime/API flow также проходит `cli_real_api` integration smoke. |
 | Frontend unit | Изменены component, page, helper, mutation state или accessibility semantics. | Покрыты normal, empty/error и permission/interaction boundary в затронутой области; `pnpm test` и `pnpm build` green. |
 | Compose smoke | Изменены Dockerfile, Compose, image, startup/configuration или health/readiness route. | `docker compose config -q`, build, healthy startup, `GET /api/v1/health` и `GET /api/v1/readiness` успешны; временный stack остановлен. |
 | Real-DB integration | Изменены SQL, migration, store, transaction, persistence, auth enforcement или side effect. | Clean DB мигрируется; prior-schema path применим, required DML работает под `forge_runtime`, DDL под ним отклонён, committed effects и cleanup доказаны. |
@@ -144,7 +145,7 @@ Current CI не запускает isolated owner/runtime migration matrix, prio
 | `migration-test` | Current real-DB suite плюс isolated PostgreSQL lifecycle, owner/runtime roles, prior-schema upgrade, unconditional cleanup, logs и applied version/checksum. |
 | `openapi-contract` | Current generation/drift/codegen/backward compatibility checks плюс validate/examples. |
 | `backend` | Workspace fmt/clippy/test/release build, domain/app/API contract tests и coverage artifact. |
-| `cli-contract` | Help, config precedence, JSON output, exit codes, redaction и real API/PostgreSQL automation flow. |
+| `cli-contract` | Help, config precedence, JSON output, exit codes, token redaction fixtures и real API/PostgreSQL automation flow. |
 | `frontend` | Frozen lockfile, lint, Vitest, generated-client typecheck, production build и coverage artifact. |
 | `compose-smoke-plus` | Current compose smoke плюс retained compose logs/artifacts, release tag/image matrix, read-only API scenario и restore-drill binding. |
 | `e2e-a11y-performance` | Current representative Playwright/axe gate плюс full auth/RBAC/CLI journeys, all-route keyboard/a11y coverage, Lighthouse budgets и retained reports. |

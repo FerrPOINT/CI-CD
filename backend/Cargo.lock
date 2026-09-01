@@ -331,9 +331,12 @@ name = "cicd-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
+ "cicd-server",
  "clap",
  "reqwest",
  "serde_json",
+ "sqlx",
  "tokio",
  "uuid",
 ]
