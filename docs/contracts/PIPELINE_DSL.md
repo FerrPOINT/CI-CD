@@ -16,7 +16,7 @@ Forge читает `.forge-ci.yml` только из полного immutable `r
 | Job | legacy `name`/`image`/один `command`; v1 `jobs.<key>` с `commands`, `needs`, `defaults.image/timeout/tags`, `jobs.*.tags`, `jobs.*.secrets`, `jobs.*.artifacts.paths`, `allow_failure` | mapping `jobs.<key>` с `commands`, `needs`, policy и metadata |
 | Порядок | legacy порядок stages; v1 `needs` валидируется и проецируется в топологические runtime-стадии `dag-*`; snapshot хранит dependency edges | `needs` определяет DAG; stages не задают зависимости |
 | Trigger | pipeline создаётся manual или текущим Git push hook | `on.push`, `on.pull_request`, `on.schedule` |
-| Parser | `serde_yaml`, durable `pipeline_plans` snapshot с parser version `forge-legacy-linear/1` или `forge-dsl/1.0.0`, config/plan SHA-256 | safe parser, line/column diagnostics, full policy-aware immutable plan |
+| Parser | `serde_yaml` compatibility path, durable `pipeline_plans` snapshot с parser version `forge-legacy-linear/1` или `forge-dsl/1.0.0`, config/plan SHA-256 | maintained safe parser, line/column diagnostics, full policy-aware immutable plan |
 | Fallback | если локальный config не прочитан, сохраняется `legacy_template` source и template YAML snapshot | только явный `legacy_template` source для migration/demo |
 
 Текущий parser принимает два совместимых режима. Legacy shape остаётся для существующих проектов:

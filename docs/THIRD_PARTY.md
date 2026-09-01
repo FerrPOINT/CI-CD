@@ -14,7 +14,7 @@
 | Rust runtime | axum, tower, tower-http | HTTP/control plane | MIT | security-relevant |
 | Rust runtime | tokio | async runtime/processes | MIT | critical runtime |
 | Rust runtime | sqlx | PostgreSQL access/migrations | MIT OR Apache-2.0 | data boundary |
-| Rust runtime | serde, serde_json, serde_yaml | API/DSL parsing | MIT OR Apache-2.0 | parser |
+| Rust runtime | serde, serde_json, serde_yaml | API/DSL parsing | MIT OR Apache-2.0 | parser; `serde_yaml` deprecated/unmaintained compatibility debt |
 | Rust runtime | uuid, chrono | IDs/time | MIT OR Apache-2.0 | data integrity |
 | Rust runtime | aes-gcm | secrets encryption at rest | Apache-2.0 OR MIT | cryptography |
 | Rust target | argon2, jsonwebtoken, hmac | passwords/JWT/signatures | MIT OR Apache-2.0 | authentication/crypto |
@@ -43,9 +43,10 @@
 
 1. Dependabot проверяет Cargo и npm weekly (`.github/dependabot.yml`).
 2. Security advisory в crypto/auth/parser/HTTP/SQL компоненте: triage в течение 24 часов, patch или documented mitigation до следующего релиза.
-3. SemVer-major обновление требует: compatibility review, changelog, тесты и, если меняется внешний контракт, API/ADR/RTM.
-4. Lock-файлы коммитятся вместе с manifest; ручное редактирование lockfile запрещено.
-5. Перед релизом: dependency update report, `cargo audit`/эквивалент и npm audit с разбором accepted findings (Target approved CI gate).
+3. Deprecated/unmaintained direct dependency в runtime path считается security-relevant debt: фиксируется в [RISK_REGISTER](RISK_REGISTER.md), получает replacement candidates в [TECH_CHOICES](TECH_CHOICES.md) и не используется для новых capabilities.
+4. SemVer-major обновление требует: compatibility review, changelog, тесты и, если меняется внешний контракт, API/ADR/RTM.
+5. Lock-файлы коммитятся вместе с manifest; ручное редактирование lockfile запрещено.
+6. Перед релизом: dependency update report, `cargo audit`/эквивалент и npm audit с разбором accepted findings (Target approved CI gate).
 
 ## 4. SBOM policy
 

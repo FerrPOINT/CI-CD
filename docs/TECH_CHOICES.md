@@ -1,7 +1,7 @@
 # Выбор технологий и библиотек — Forge CI/CD
 
 > **Статус:** архитектурный справочник. Фактические версии фиксируются в `backend/Cargo.toml`, `backend/Cargo.lock`, `frontend/package.json` и `frontend/pnpm-lock.yaml`. Новая зависимость не становится разрешённой только из-за упоминания здесь: её добавляет отдельный reviewable change с тестами.
-> Проверено: `2026-08-28`.
+> Проверено: `2026-09-01`.
 
 ## 1. Принципы выбора
 
@@ -18,6 +18,7 @@
 | HTTP API | Axum 0.8 + Tokio 1 + Tower HTTP | Current verified | Небольшой async API, middleware ecosystem, понятные extractors, простой OpenAPI слой. |
 | Persistence | PostgreSQL 17 + SQLx 0.8 | Current verified | Compile-time-friendly SQL, async pool, migrations, явные запросы без ORM magic. |
 | API contract | utoipa 5 + committed `openapi/openapi.yaml` | Current verified | Code-first спецификация рядом с Rust DTO и drift gate для frontend types. |
+| Pipeline DSL parser | `serde_yaml` 0.9 | Current verified | Используется для текущего `.forge-ci.yml` и OpenAPI YAML dump, но crate deprecated/unmaintained. Новые parser-capability на него не опирать; миграция нужна отдельным TDD-срезом с diagnostics/limits. |
 | Git storage | bare repositories + Smart HTTP + `git2` для локальных операций | Current verified | Достаточно для встроенного Git цикла MVP; полная code-review платформа не является целью. |
 | Execution MVP | Embedded runner через Docker CLI или host shell | Current verified transitional | Полезно для локального MVP, но не является production execution boundary. |
 | Secrets | `aes-gcm`, `argon2`, `hmac`, `sha2`, `subtle`, `jsonwebtoken` 9 | Current verified | Закрывает текущее хранение секретов, пароли, PAT/JWT и HMAC webhook signing. |
@@ -28,7 +29,14 @@
 | Кандидат | Где использовать | Фаза | Решение |
 |---|---|---|---|
 | [`object_store`](https://docs.rs/object_store/latest/object_store/) | Artifact backend: local FS сейчас, затем S3/GCS/Azure-compatible adapter | Phase 4 | Предпочтительный кандидат. Даёт единый async API и conditional/object-store semantics без раскрытия provider в domain. |
+| [Apache OpenDAL](https://opendal.apache.org/docs/rust/opendal_service_s3/index.html) | Альтернатива artifact/object-storage adapter, особенно при широкой матрице storage services | Phase 4 evaluation | Рассматривать рядом с `object_store`; выбирать по feature set, MSRV, зависимостям и нужным provider-ам, не подключать оба без измеренной причины. |
 | [`bollard`](https://docs.rs/bollard/latest/bollard/) | Docker executor внутри отдельного `forge-runner` process | Phase 3 | Кандидат вместо shell-вызовов `docker`. Не добавлять в API/server crate. |
+| [`cargo-nextest`](https://nexte.st/) | Rust test runner для CI/local, JUnit/reporting и per-test isolation | Quality hardening | Хороший кандидат после разметки serial/heavy real-DB tests; не заменяет текущий `cargo test` для doc-tests и простого baseline до настройки профилей. |
+| [`cargo-audit`](https://crates.io/crates/cargo-audit) + [`cargo-deny`](https://github.com/embarkstudios/cargo-deny) | Dependency advisories, licenses, bans, duplicate crates, source policy | Security/release hardening | Важно для базового shared-приложения. Первым шагом добавить advisory/license gate с documented exceptions; затем закрыть deprecated `serde_yaml` debt. |
+| [`cargo-chef`](https://github.com/LukeMathWalker/cargo-chef) + [`sccache`](https://github.com/mozilla/sccache) | Ускорение Docker/CI Rust builds | Build hardening | Операционное улучшение, не runtime-dependency. Добавлять после baseline CI, с тем же Rust version во всех build stages. |
+| [`yaml_serde`](https://docs.rs/yaml_serde/latest/yaml_serde/) / [`serde-saphyr`](https://crates.io/crates/serde-saphyr) / [`yaml-rust2`](https://crates.io/crates/yaml-rust2) | Замена deprecated `serde_yaml` и parser hardening для `.forge-ci.yml` | Phase 1 follow-up | Не делать blind swap. Нужен parser contract: duplicate keys, aliases/anchors, unknown keys, size/depth limits, line/column diagnostics и fixture parity для legacy/v1 DSL. |
+| [`apalis-postgres`](https://docs.rs/apalis-postgres/latest/apalis_postgres/) | Generic background jobs: notifications, cleanup, housekeeping | Automation evaluation | Может заменить часть generic workers. Core `job_queue`/runner leases не переносить, пока framework не сохраняет наши invariants: attempts, fencing, compatibility claim, cancel и audit. |
+| [Testcontainers for Rust](https://rust.testcontainers.org/) | Programmatic integration/smoke fixtures для PostgreSQL/object storage/runner tests | Quality hardening | Кандидат для локального/CI harness после стабилизации Docker на dev-машинах; текущий GitHub Actions service остаётся baseline. |
 | `tracing-opentelemetry` + `opentelemetry-otlp` | Distributed traces и export в observability backend | Phase E/operations | Добавлять после появления стабильных spans, metrics names и privacy policy. |
 | Cron parser / [`tokio-cron-scheduler`](https://docs.rs/tokio-cron-scheduler/latest/tokio_cron_scheduler/) | Scheduler semantics | Phase automation hardening | Current MVP использует локальный strict 5-field UTC parser без новой зависимости; external crate рассмотреть для IANA timezone/DST, но dedup, claim и missed-fire recovery остаются в PostgreSQL. |
 | [`tower-sessions`](https://docs.rs/tower-sessions/latest/tower_sessions/) | Cookie sessions для UI | Auth hardening | Рассмотреть только если browser-session policy переходит от stateless JWT к server-side session store. PAT остаются отдельной credential class. |
@@ -36,11 +44,15 @@
 | [`lapin`](https://docs.rs/lapin/latest/lapin/) / RabbitMQ | AMQP integration для существующей инфраструктуры заказчика | Future | Не baseline; выбирать вместо NATS только при внешнем AMQP-стандарте. |
 | `kube` | Kubernetes executor adapter | Phase 5 | Добавлять за общим `ExecutionBackend` port после Docker runner protocol. |
 | `gix` | Чисто Rust Git operations | Future | Не нужен в MVP. Рассмотреть, если `git2`/system Git станут ограничением для portability или security hardening. |
+| [`cedar-policy`](https://docs.rs/cedar-policy/latest/cedar_policy/) | Fine-grained authorization policy engine | Future auth/tenant | Не baseline. Рассматривать только когда project RBAC/tenant policy перестанет помещаться в простую DB-backed модель. |
 
 ## 4. Что не добавляем в базовое приложение
 
 - Отдельный broker до доказанной нагрузки: PostgreSQL queue, leases и outbox проще, проверяемее и соответствуют ADR-0004/0006.
 - Полноценный workflow engine вместо собственного pipeline planner: Forge должен хранить свой immutable plan, attempts, policy snapshot и audit.
+- Внешний background-job framework для core runner dispatch до доказанной совместимости с `job_queue`, attempts, leases, fencing, cancel и audit.
+- Политический движок уровня Cedar/OPA в baseline auth: текущий project RBAC остаётся проще и проверяемее до появления tenant/ABAC требований.
+- Слепую замену `serde_yaml` на совместимый fork без parser contract и regression fixtures.
 - Kubernetes executor до Docker runner protocol: иначе появятся две границы исполнения до стабилизации одной.
 - General-purpose admin portal: экран появляется только вместе с реальным workflow управления instance/tenant/policy.
 - Host shell execution в production: допустим только как local development adapter.
@@ -53,7 +65,7 @@
 | [WRKFLW](https://github.com/bahdotsh/wrkflw) | Локальный запуск/валидация GitHub Actions/GitLab pipelines | Полезен как reference для local workflow validation; не заменяет Forge runtime model. |
 | [Fluent CI](https://docs.fluentci.io/) | Local-first pipelines, registry/prebuilt pipelines, Web UI, Dagger/Wasm execution | Полезен как benchmark UX/integrations; не является прямой базой для self-hosted Forge control plane. |
 
-На август 2026 нет очевидного зрелого Rust-продукта, который можно взять как готовую замену GitLab/Jenkins и одновременно сохранить требования Forge: встроенный Git, RBAC, audit, execution attempts, leases, artifacts, OpenAPI и self-hosted deployment. Поэтому правильная стратегия — не искать монолитную замену, а брать зрелые crates по инфраструктурным границам.
+На сентябрь 2026 нет очевидного зрелого Rust-продукта, который можно взять как готовую замену GitLab/Jenkins и одновременно сохранить требования Forge: встроенный Git, RBAC, audit, execution attempts, leases, artifacts, OpenAPI и self-hosted deployment. Поэтому правильная стратегия — не искать монолитную замену, а брать зрелые crates по инфраструктурным границам.
 
 ## 6. Upgrade policy
 

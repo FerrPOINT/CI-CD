@@ -218,10 +218,11 @@ let cors = CorsLayer::new()
 
 ## 11. Dependency Security
 
-- `cargo audit` в CI (GitHub Actions).
-- Dependabot / Renovate alerts.
-- Pin major версии.
-- Регулярное обновление зависимостей.
+- Current: Dependabot weekly проверяет Cargo, npm и GitHub Actions по `.github/dependabot.yml`.
+- Current: `.github/workflows/ci.yml` выполняет frozen lockfile install, Rust fmt/clippy/tests, frontend lint/test/build и docs checks, но не содержит dependency/secret/container scan gate.
+- Current debt: `serde_yaml` остаётся direct runtime dependency для `.forge-ci.yml`/OpenAPI YAML compatibility, но crate deprecated/unmaintained; новые parser/security требования должны идти через отдельную миграцию.
+- Target: добавить `cargo-audit`/`cargo-deny`, npm audit с agreed severity policy, secret scan, container image scan, SBOM release artifact и documented exceptions/remediation.
+- Target: pin GitHub Actions/container images до reviewed versions или immutable digests там, где это нужно release policy.
 
 ## 12. Container Security
 
