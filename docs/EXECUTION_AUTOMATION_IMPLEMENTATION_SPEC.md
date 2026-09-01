@@ -6,7 +6,7 @@
 
 Этот документ описывает target-срез external runner/production scheduler/outbox. Current MVP уже имеет embedded runner, runner protocol register/heartbeat/immediate poll/ack/renew/logs/complete, `forge-runner` shell process, scheduler/outgoing webhook/local notification worker, bounded `outbox_delivery_attempts` history и explicit requeue failed delivery.
 
-Уже реализовано в runner protocol MVP: env bootstrap registration token, heartbeat, immediate `work:poll`, `workspace.checkoutUrl`, ack/renew/logs/complete, attempt/lease/log writes, fencing generation и отдельный shell runner binary. В target external-runner поставку остаются Docker-only/sandboxed runner, durable `job_queue`, long-poll/wakeup, credential lifecycle, lost-runner reconciliation и production sandbox boundary.
+Уже реализовано в runner protocol MVP: env bootstrap registration token, heartbeat, durable `job_queue` claim, immediate `work:poll`, `workspace.checkoutUrl`, ack/renew/logs/complete, attempt/lease/log writes, fencing generation и отдельный shell runner binary. В target external-runner поставку остаются Docker-only/sandboxed runner, long-poll/wakeup, credential lifecycle, lost-runner reconciliation и production sandbox boundary.
 
 Исключено из этого target-среза: Kubernetes, external-runner secret injection, artifact streaming, email/Slack adapters и inbound provider webhooks. Они остаются feature-flagged до отдельного contract PR.
 
@@ -39,7 +39,7 @@ Required versioned migrations create these tables (UUID id unless noted):
 | `runner_credentials` | runner_id, hash/key id, issued/expiry/revoked; one active partial unique index |
 | `runners` | pool_id, status, capabilities JSONB, last_heartbeat_at, drain_requested_at; current legacy registry migrated here |
 | `execution_attempts` | job_id, number, status, queued_at/started_at/finished_at, config snapshot, retry_of; unique `(job_id,number)` |
-| `job_queue` | attempt_id unique, priority, not_before, required_tags, state; partial index ready rows `(not_before,priority)` where state='queued' |
+| `job_queue` | Current: attempt_id unique, open-job uniqueness, priority, not_before, required_tags, state, lease_id, queued/leased/completed timestamps; partial index ready rows `(priority DESC, not_before, queued_at, id)` where state='queued' |
 | `job_leases` | attempt_id, runner_id, generation, status, offered/ack/expires timestamps, lease_token_hmac; unique `(attempt_id,generation)` and partial unique active lease per attempt |
 | `domain_events` | aggregate_type/id, event_type, version, payload JSONB, occurred_at, causation/idempotency key |
 | `outbox_messages` | event_id unique, topic, payload JSONB, state, attempts, next_attempt_at, worker_generation, lease_expires_at, last_error |

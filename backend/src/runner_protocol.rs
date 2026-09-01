@@ -729,6 +729,10 @@ pub(crate) async fn complete_runner_lease(
     .await
     .map_err(ApiError::internal)?;
 
+    crate::store::close_job_queue_for_attempt_tx(&mut tx, row.attempt_id, terminal_status)
+        .await
+        .map_err(ApiError::internal)?;
+
     tx.commit().await.map_err(ApiError::internal)?;
     crate::api::refresh_statuses(db, row.stage_id).await?;
 
@@ -743,20 +747,29 @@ async fn claim_next_work(
     db: &PgPool,
     runner: &AuthenticatedRunner,
 ) -> Result<Option<RunnerLeaseOffer>, ApiError> {
+    crate::store::enqueue_missing_ready_jobs(db)
+        .await
+        .map_err(ApiError::internal)?;
     let lease_id = Uuid::new_v4();
     let lease_token = new_opaque_token("cicd_lease");
     let lease_token_hash = crate::auth::hash_token(&lease_token);
     let row = sqlx::query_as::<_, ClaimedWork>(
         "WITH candidate AS ( \
-             SELECT j.id AS job_id, j.stage_id, j.name AS job_name, j.image, j.command, \
+             SELECT q.id AS queue_id, q.attempt_id, \
+                    j.id AS job_id, j.stage_id, j.name AS job_name, j.image, j.command, \
                     LEAST(GREATEST(COALESCE(j.timeout_seconds, 3600), 5), 86400)::integer AS timeout_seconds, \
                     s.pipeline_id, p.git_ref, p.commit_sha, pr.repository_url, pp.plan_sha256 \
-             FROM jobs j \
+             FROM job_queue q \
+             JOIN jobs j ON j.id = q.job_id \
+             JOIN execution_attempts a ON a.id = q.attempt_id \
              JOIN stages s ON s.id = j.stage_id \
              JOIN pipelines p ON p.id = s.pipeline_id \
              JOIN projects pr ON pr.id = p.project_id \
              LEFT JOIN pipeline_plans pp ON pp.pipeline_id = p.id \
-             WHERE j.status = 'queued' \
+             WHERE q.state = 'queued' \
+               AND q.not_before <= now() \
+               AND j.status = 'queued' \
+               AND a.status = 'queued' \
                AND NOT j.manual \
                AND p.status IN ('queued','running') \
                AND NOT EXISTS ( \
@@ -774,29 +787,22 @@ async fn claim_next_work(
                  WHERE ys.pipeline_id = p.id AND ys.position = s.position \
                    AND y.status = 'failed' AND NOT y.allow_failure \
                ) \
-             ORDER BY p.created_at, s.position, j.position \
+             ORDER BY q.priority DESC, q.not_before, q.queued_at, p.created_at, s.position, j.position, q.id \
              LIMIT 1 \
-             FOR UPDATE OF j SKIP LOCKED \
-         ), current_attempt AS ( \
-             SELECT a.id, a.attempt_no \
-             FROM execution_attempts a \
-             JOIN candidate c ON c.job_id = a.job_id \
-             WHERE a.status = 'queued' \
-             ORDER BY a.attempt_no DESC \
-             LIMIT 1 \
-             FOR UPDATE OF a \
+             FOR UPDATE OF q SKIP LOCKED \
          ), claimed_job AS ( \
              UPDATE jobs j \
              SET status = 'running', started_at = COALESCE(started_at, now()) \
              FROM candidate c \
              WHERE j.id = c.job_id \
-               AND EXISTS (SELECT 1 FROM current_attempt) \
+               AND j.status = 'queued' \
              RETURNING j.id \
          ), claimed_attempt AS ( \
              UPDATE execution_attempts a \
              SET status = 'running', trigger = 'external_runner', started_at = COALESCE(started_at, now()) \
-             FROM current_attempt ca \
-             WHERE a.id = ca.id \
+             FROM candidate c \
+             WHERE a.id = c.attempt_id \
+               AND a.status = 'queued' \
                AND EXISTS (SELECT 1 FROM claimed_job) \
              RETURNING a.id, a.attempt_no \
          ), next_generation AS ( \
@@ -814,14 +820,22 @@ async fn claim_next_work(
              CROSS JOIN claimed_attempt ca \
              CROSS JOIN next_generation ng \
              RETURNING id AS lease_id, generation, lease_expires_at, ack_deadline \
+         ), claimed_queue AS ( \
+             UPDATE job_queue q \
+             SET state = 'leased', lease_id = cl.lease_id, leased_at = now(), updated_at = now() \
+             FROM candidate c \
+             CROSS JOIN created_lease cl \
+             WHERE q.id = c.queue_id \
+               AND q.state = 'queued' \
+             RETURNING cl.lease_id, cl.generation, cl.lease_expires_at, cl.ack_deadline \
          ) \
-         SELECT cl.lease_id, c.job_id, c.stage_id, ca.id AS attempt_id, ca.attempt_no, \
+         SELECT cq.lease_id, c.job_id, c.stage_id, ca.id AS attempt_id, ca.attempt_no, \
                 c.pipeline_id, c.job_name, c.image, c.command, c.timeout_seconds, \
-                c.git_ref, c.commit_sha, c.repository_url, cl.generation, cl.lease_expires_at, \
-                cl.ack_deadline, c.plan_sha256 \
+                c.git_ref, c.commit_sha, c.repository_url, cq.generation, cq.lease_expires_at, \
+                cq.ack_deadline, c.plan_sha256 \
          FROM candidate c \
          CROSS JOIN claimed_attempt ca \
-         CROSS JOIN created_lease cl",
+         CROSS JOIN claimed_queue cq",
     )
     .bind(lease_id)
     .bind(runner.id)

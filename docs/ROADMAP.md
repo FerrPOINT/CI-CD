@@ -127,8 +127,8 @@ Gate:
 
 Deliverables:
 
-- Current MVP: `/api/v1/runner/*` register/heartbeat/immediate poll/ack/renew/logs/complete, hashed runner credential, lease token hash, `workspace.checkoutUrl`, fencing generation и отдельный `forge-runner` shell process;
-- durable `job_queue`, long-poll/wakeup, claim expiry/requeue и production lease reconciliation;
+- Current MVP: durable `job_queue`, `/api/v1/runner/*` register/heartbeat/immediate poll/ack/renew/logs/complete, hashed runner credential, lease token hash, `workspace.checkoutUrl`, fencing generation и отдельный `forge-runner` shell process;
+- long-poll/wakeup, pool-aware claim policy, lost-runner requeue и production lease reconciliation;
 - runner registration credentials rotation/revoke, heartbeat, tags/capacity/drain policy;
 - cancel/timeout/reconciliation для потерянного runner-а;
 - secret delivery, log chunks и artifact upload только owner-у lease.

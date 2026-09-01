@@ -72,8 +72,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 17,
-    "latest_required_version": 17,
+    "latest_applied_version": 18,
+    "latest_required_version": 18,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],
@@ -1214,11 +1214,11 @@ Runner protocol обслуживается на `/api/v1/runner/*` и не ис�
 | POST | `/api/v1/runner/leases/{lease_id}/logs` | `{protocolVersion,leaseToken,fencingToken,attemptId,lines:[{stream,message}]}` → append stdout/stderr/system строк в attempt-owned `job_logs` |
 | POST | `/api/v1/runner/leases/{lease_id}/complete` | `{protocolVersion,leaseToken,fencingToken,attemptId,outcome,finishedAt,exitCode?,diagnostic?}` → terminal result job/attempt/lease |
 
-`work:poll` атомарно выбирает queued job, создаёт active `job_leases`, генерирует opaque `leaseToken`, хранит только hash, фиксирует `ackDeadline`, `leaseExpiresAt`, `runnerProtocolVersion=1`, переводит job/attempt в `running` и возвращает `fencingToken = job_leases.generation`. `ack`, `renew`, `logs` и `complete` одновременно проверяют runner identity, lease token hash, generation, active state и expiry; stale или fenced mutation возвращает `409`, expired lease — `410`.
+`work:poll` атомарно выбирает queued `job_queue` row через `SKIP LOCKED`, создаёт active `job_leases`, генерирует opaque `leaseToken`, хранит только hash, фиксирует `ackDeadline`, `leaseExpiresAt`, `runnerProtocolVersion=1`, переводит queue row/job/attempt в `leased`/`running` и возвращает `fencingToken = job_leases.generation`. `ack`, `renew`, `logs` и `complete` одновременно проверяют runner identity, lease token hash, generation, active state и expiry; stale или fenced mutation возвращает `409`, expired lease — `410`.
 
 `LeaseOffer.attempt.workspace.checkoutUrl` содержит `projects.repository_url`, чтобы внешний `forge-runner` мог выполнить checkout без доступа к БД. Current `forge-runner` — отдельный shell-runner process: он умеет register/heartbeat/poll/ack/renew/logs/complete, checkout по `checkoutUrl`, запуск команд в workspace, отправку stdout/stderr в `job_logs` и terminal completion.
 
-Ограничения MVP: нет durable `job_queue`, long-poll wakeup, protocol endpoints для secrets/artifacts, idempotent chunked log upload, pool policy, Docker/Kubernetes isolation и production sandbox. Эти границы остаются в `docs/RUNNER_ARCHITECTURE.md` и `docs/contracts/RUNNER_PROTOCOL.md`.
+Ограничения MVP: immediate poll без long-poll wakeup, нет protocol endpoints для secrets/artifacts, idempotent chunked log upload, pool policy, Docker/Kubernetes isolation и production sandbox. Durable `job_queue` уже есть как базовый dispatch ledger, но matching по tags/capabilities и production runner policy остаются target в `docs/RUNNER_ARCHITECTURE.md` и `docs/contracts/RUNNER_PROTOCOL.md`.
 
 ### Secrets и artifacts
 

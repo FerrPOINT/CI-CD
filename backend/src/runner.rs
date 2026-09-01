@@ -107,74 +107,97 @@ async fn claim_embedded_job_lease(
     pool: &PgPool,
     job_id: Uuid,
 ) -> Result<Option<EmbeddedJobLease>, ApiError> {
+    crate::store::enqueue_missing_ready_jobs(pool)
+        .await
+        .map_err(ApiError::internal)?;
     let row = sqlx::query_as::<_, (Uuid, Uuid, i64)>(
         r#"
-        WITH job_row AS (
+        WITH queue_row AS (
             SELECT
-                j.id,
+                q.id AS queue_id,
+                j.id AS job_id,
+                q.attempt_id,
                 LEAST(GREATEST(COALESCE(j.timeout_seconds, 3600), 5), 86400)::bigint
                     AS lease_ttl_seconds
-            FROM jobs j
+            FROM job_queue q
+            JOIN jobs j ON j.id = q.job_id
+            JOIN execution_attempts a ON a.id = q.attempt_id
+            JOIN stages s ON s.id = j.stage_id
+            JOIN pipelines p ON p.id = s.pipeline_id
             WHERE j.id = $1
+              AND q.state = 'queued'
+              AND q.not_before <= now()
               AND j.status = 'queued'
+              AND a.status = 'queued'
               AND NOT j.manual
+              AND p.status IN ('queued','running')
               AND NOT EXISTS (
                   SELECT 1
                   FROM job_leases l
                   WHERE l.job_id = j.id AND l.lease_status = 'active'
               )
-            FOR UPDATE
-        ),
-        current_attempt AS (
-            SELECT a.id
-            FROM execution_attempts a
-            WHERE a.job_id = $1 AND a.status = 'queued'
-            ORDER BY a.attempt_no DESC
-            LIMIT 1
-            FOR UPDATE
+            FOR UPDATE OF q SKIP LOCKED
         ),
         claimed_job AS (
-            UPDATE jobs
+            UPDATE jobs j
             SET status = 'running', started_at = now()
-            WHERE id IN (SELECT id FROM job_row)
-              AND EXISTS (SELECT 1 FROM current_attempt)
-            RETURNING id
+            FROM queue_row q
+            WHERE j.id = q.job_id
+              AND j.status = 'queued'
+            RETURNING j.id
         ),
         claimed_attempt AS (
-            UPDATE execution_attempts
+            UPDATE execution_attempts a
             SET status = 'running',
                 trigger = 'runner',
                 started_at = COALESCE(started_at, now())
-            WHERE id IN (SELECT id FROM current_attempt)
+            FROM queue_row q
+            WHERE a.id = q.attempt_id
+              AND a.status = 'queued'
               AND EXISTS (SELECT 1 FROM claimed_job)
-            RETURNING id
+            RETURNING a.id
         ),
         next_generation AS (
             SELECT COALESCE(MAX(generation), 0) + 1 AS generation
             FROM job_leases
             WHERE job_id = $1
+        ),
+        created_lease AS (
+            INSERT INTO job_leases (
+                id,
+                job_id,
+                attempt_id,
+                runner_name,
+                lease_status,
+                generation,
+                lease_expires_at
+            )
+            SELECT
+                $2,
+                q.job_id,
+                claimed_attempt.id,
+                'embedded',
+                'active',
+                next_generation.generation,
+                now() + ((q.lease_ttl_seconds + 60) * interval '1 second')
+            FROM queue_row q
+            CROSS JOIN claimed_attempt
+            CROSS JOIN next_generation
+            RETURNING id, attempt_id, generation
+        ),
+        claimed_queue AS (
+            UPDATE job_queue q
+            SET state = 'leased',
+                lease_id = created_lease.id,
+                leased_at = now(),
+                updated_at = now()
+            FROM queue_row qr
+            CROSS JOIN created_lease
+            WHERE q.id = qr.queue_id
+              AND q.state = 'queued'
+            RETURNING created_lease.id, created_lease.attempt_id, created_lease.generation
         )
-        INSERT INTO job_leases (
-            id,
-            job_id,
-            attempt_id,
-            runner_name,
-            lease_status,
-            generation,
-            lease_expires_at
-        )
-        SELECT
-            $2,
-            $1,
-            claimed_attempt.id,
-            'embedded',
-            'active',
-            next_generation.generation,
-            now() + ((job_row.lease_ttl_seconds + 60) * interval '1 second')
-        FROM claimed_attempt
-        CROSS JOIN next_generation
-        CROSS JOIN job_row
-        RETURNING id, attempt_id, generation
+        SELECT id, attempt_id, generation FROM claimed_queue
         "#,
     )
     .bind(job_id)
@@ -246,6 +269,9 @@ async fn complete_lease_by_id(
     .bind(bounded_tail.as_deref())
     .execute(pool)
     .await?;
+    if result.rows_affected() > 0 {
+        crate::store::close_job_queue_for_lease(pool, lease_id, terminal_status).await?;
+    }
     Ok(result.rows_affected())
 }
 
@@ -271,6 +297,7 @@ pub async fn complete_active_lease_for_job(
     .bind(bounded_tail.as_deref())
     .execute(pool)
     .await?;
+    crate::store::close_job_queue_for_job(pool, job_id, terminal_status).await?;
     Ok(result.rows_affected())
 }
 
@@ -298,6 +325,7 @@ pub async fn cancel_active_leases_for_pipeline(
     .bind(bounded_reason)
     .execute(pool)
     .await?;
+    crate::store::close_job_queue_for_pipeline(pool, pipeline_id, "canceled").await?;
     Ok(result.rows_affected())
 }
 
@@ -319,6 +347,14 @@ async fn cancel_active_leases_for_canceled_pipelines(pool: &PgPool) -> Result<u6
     )
     .execute(pool)
     .await?;
+    sqlx::query(
+        "UPDATE job_queue \
+         SET state = 'canceled', completed_at = COALESCE(completed_at, now()), updated_at = now() \
+         WHERE state IN ('queued','leased') \
+           AND pipeline_id IN (SELECT id FROM pipelines WHERE status = 'canceled')",
+    )
+    .execute(pool)
+    .await?;
     Ok(result.rows_affected())
 }
 
@@ -331,7 +367,7 @@ pub async fn reconcile_expired_leases(pool: &PgPool) -> Result<u64, sqlx::Error>
                  terminal_status = 'failed', \
                  error_tail = COALESCE(error_tail, 'runner lease expired') \
              WHERE lease_status = 'active' AND lease_expires_at <= now() \
-             RETURNING job_id, attempt_id \
+             RETURNING id AS lease_id, job_id, attempt_id \
          ), updated_attempts AS ( \
              UPDATE execution_attempts a \
              SET status = 'failed', \
@@ -346,6 +382,15 @@ pub async fn reconcile_expired_leases(pool: &PgPool) -> Result<u64, sqlx::Error>
              FROM expired e \
              WHERE j.id = e.job_id AND j.status IN ('queued','running') \
              RETURNING j.id, j.stage_id \
+         ), updated_queue AS ( \
+             UPDATE job_queue q \
+             SET state = 'completed', \
+                 completed_at = COALESCE(q.completed_at, now()), \
+                 updated_at = now() \
+             FROM expired e \
+             WHERE q.state IN ('queued','leased') \
+               AND (q.lease_id = e.lease_id OR q.attempt_id = e.attempt_id) \
+             RETURNING q.id \
          ) \
          SELECT id, stage_id FROM updated_jobs",
     )
@@ -386,6 +431,14 @@ async fn reconcile_unleased_running_jobs(pool: &PgPool) -> Result<u64, sqlx::Err
              FROM stale s \
              WHERE j.id = s.id AND j.status = 'running' \
              RETURNING j.id, j.stage_id \
+         ), updated_queue AS ( \
+             UPDATE job_queue q \
+             SET state = 'completed', \
+                 completed_at = COALESCE(q.completed_at, now()), \
+                 updated_at = now() \
+             FROM stale s \
+             WHERE q.job_id = s.id AND q.state IN ('queued','leased') \
+             RETURNING q.id \
          ) \
          SELECT id, stage_id FROM updated_jobs",
     )
@@ -1006,13 +1059,31 @@ async fn poll_and_dispatch(pool: &PgPool, running: RunningJobs) -> Result<(), sq
     )
     .execute(pool)
     .await?;
+    sqlx::query(
+        "UPDATE job_queue \
+         SET state = 'canceled', completed_at = COALESCE(completed_at, now()), updated_at = now() \
+         WHERE state IN ('queued','leased') \
+           AND pipeline_id IN (SELECT id FROM pipelines WHERE status = 'canceled')",
+    )
+    .execute(pool)
+    .await?;
+
+    let enqueued = crate::store::enqueue_missing_ready_jobs(pool).await?;
+    if enqueued > 0 {
+        tracing::debug!(enqueued, "runner materialized missing job queue rows");
+    }
 
     let candidates = sqlx::query_as::<_, Candidate>(
         "SELECT j.id, j.stage_id \
-         FROM jobs j \
+         FROM job_queue q \
+         JOIN jobs j ON j.id = q.job_id \
+         JOIN execution_attempts a ON a.id = q.attempt_id \
          JOIN stages s ON s.id = j.stage_id \
          JOIN pipelines p ON p.id = s.pipeline_id \
-         WHERE j.status = 'queued' \
+         WHERE q.state = 'queued' \
+           AND q.not_before <= now() \
+           AND j.status = 'queued' \
+           AND a.status = 'queued' \
            AND NOT j.manual \
            AND p.status IN ('queued','running') \
            AND NOT EXISTS ( \
@@ -1030,7 +1101,7 @@ async fn poll_and_dispatch(pool: &PgPool, running: RunningJobs) -> Result<(), sq
              WHERE ys.pipeline_id = p.id AND ys.position = s.position \
                AND y.status = 'failed' AND NOT y.allow_failure \
            ) \
-         ORDER BY p.created_at, s.position, j.position \
+         ORDER BY q.priority DESC, q.not_before, q.queued_at, p.created_at, s.position, j.position, q.id \
          LIMIT 16",
     )
     .fetch_all(pool)

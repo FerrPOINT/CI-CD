@@ -1971,8 +1971,12 @@ pub(crate) async fn create_pipeline_with_vars_idempotent(
                 .bind(job_id).bind(stage_id).bind(&job.name).bind(&job.image).bind(&job.command).bind(job_position as i32)
                 .bind(job.timeout_seconds).bind(job.allow_failure).bind(job.manual)
                 .execute(&mut *tx).await.map_err(ApiError::internal)?;
+            let attempt_id = Uuid::new_v4();
             sqlx::query("INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) VALUES ($1, $2, 1, 'queued', 'initial')")
-                .bind(Uuid::new_v4()).bind(job_id).execute(&mut *tx).await.map_err(ApiError::internal)?;
+                .bind(attempt_id).bind(job_id).execute(&mut *tx).await.map_err(ApiError::internal)?;
+            crate::store::enqueue_job_attempt_tx(&mut tx, job_id, attempt_id)
+                .await
+                .map_err(ApiError::internal)?;
         }
     }
     if let Some(idempotency_key) = idempotency_key {
@@ -3752,6 +3756,11 @@ pub(crate) async fn transition_open_attempt(
     .execute(pool)
     .await
     .map_err(ApiError::internal)?;
+    if finished_status {
+        crate::store::close_job_queue_for_attempt(pool, attempt_id, status)
+            .await
+            .map_err(ApiError::internal)?;
+    }
     Ok(attempt_id)
 }
 
@@ -3919,6 +3928,9 @@ async fn retry_pipeline(
     .execute(pool)
     .await
     .map_err(ApiError::internal)?;
+    crate::store::enqueue_missing_ready_jobs(pool)
+        .await
+        .map_err(ApiError::internal)?;
     Ok(Json(RetriedPipelineResult {
         retried: pipeline_id,
     }))
@@ -3963,6 +3975,9 @@ async fn retry_job(State(state): State<Arc<AppState>>, Path(job_id): Path<Uuid>)
     sqlx::query("UPDATE pipelines SET status = 'running', finished_at = NULL WHERE id = (SELECT pipeline_id FROM stages WHERE id = $1) AND status IN ('failed','canceled')")
         .bind(job.stage_id)
         .execute(pool)
+        .await
+        .map_err(ApiError::internal)?;
+    crate::store::enqueue_current_job_attempt(pool, job_id)
         .await
         .map_err(ApiError::internal)?;
     Ok(Json(updated))
@@ -4092,26 +4107,31 @@ async fn start_manual_job(
     Path(job_id): Path<Uuid>,
 ) -> ApiResult<ManualJobStartResult> {
     let pool = pool(&state)?;
-    let manual: Option<bool> = sqlx::query_scalar("SELECT manual FROM jobs WHERE id = $1")
+    let manual_job: Option<(bool, String)> =
+        sqlx::query_as("SELECT manual, status FROM jobs WHERE id = $1")
+            .bind(job_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(ApiError::internal)?;
+    match manual_job {
+        Some((true, status)) if status == "queued" => {}
+        Some((true, _)) => return Err(ApiError::conflict("manual job is not waiting")),
+        Some((false, _)) => return Err(ApiError::conflict("job is not manual")),
+        None => return Err(ApiError::not_found()),
+    }
+    let updated = sqlx::query_scalar::<_, bool>(
+        "UPDATE jobs SET manual = false WHERE id = $1 AND manual AND status = 'queued' RETURNING TRUE",
+    )
         .bind(job_id)
         .fetch_optional(pool)
         .await
         .map_err(ApiError::internal)?;
-    match manual {
-        Some(true) => {}
-        Some(false) => return Err(ApiError::conflict("job is not manual")),
-        None => return Err(ApiError::not_found()),
-    }
-    let updated = sqlx::query_scalar::<_, bool>(
-        "UPDATE jobs SET manual = false WHERE id = $1 AND manual RETURNING TRUE",
-    )
-    .bind(job_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(ApiError::internal)?;
     if !updated.unwrap_or(false) {
         return Err(ApiError::conflict("job already started"));
     }
+    crate::store::enqueue_current_job_attempt(pool, job_id)
+        .await
+        .map_err(ApiError::internal)?;
     crate::metrics::PIPELINES_CREATED_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     Ok(Json(ManualJobStartResult { started: true }))
 }

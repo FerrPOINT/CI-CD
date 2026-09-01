@@ -346,7 +346,7 @@ Referenced by:
 
 **FK:** `stage_id` → `stages(id)` ON DELETE CASCADE.
 
-**Referenced by:** `execution_attempts.job_id`, `job_leases.job_id` и совместимый `job_logs.job_id` → `jobs(id)` ON DELETE CASCADE.
+**Referenced by:** `execution_attempts.job_id`, `job_queue.job_id`, `job_leases.job_id` и совместимый `job_logs.job_id` → `jobs(id)` ON DELETE CASCADE.
 
 ---
 
@@ -391,11 +391,41 @@ Foreign-key constraints:
 | `started_at` | TIMESTAMPTZ | NULL | — | Время перехода attempt в `running` |
 | `finished_at` | TIMESTAMPTZ | NULL | — | Время terminal result |
 
-**Referenced by:** `job_logs.attempt_id`, `artifacts.attempt_id`, `job_leases.attempt_id`.
+**Referenced by:** `job_logs.attempt_id`, `artifacts.attempt_id`, `job_queue.attempt_id`, `job_leases.attempt_id`.
 
-## 5.1 job_leases
+## 5.1 job_queue
 
-Durable ledger владения execution attempt. Текущий MVP использует таблицу для embedded runner и external runner protocol: claim одним SQL statement переводит `jobs` и `execution_attempts` в `running`, создаёт active lease и фиксирует generation/expiry. Embedded runner закрывает lease при terminal result/cancel, reconciler закрывает expired/missing owner, а external protocol дополнительно хранит hash lease token, ack deadline, ack/renew state и protocol version. `forge-runner` уже работает как отдельный shell process поверх этой модели; production durable queue, log/secret/artifact protocol, sandbox и lost-heartbeat policy остаются target.
+Durable dispatch ledger для current queued attempts. Trigger/retry/manual start создают row на non-manual queued attempt; embedded supervisor и external `work:poll` выбирают row через `FOR UPDATE SKIP LOCKED`, создают `job_leases` и переводят row в `leased`; terminal/cancel/expiry закрывают row в `completed` или `canceled`.
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | UUID | NOT NULL | — | PK queue item |
+| `job_id` | UUID | NOT NULL | — | FK → `jobs.id`, CASCADE |
+| `attempt_id` | UUID | NOT NULL | — | FK → `execution_attempts.id`, CASCADE; unique |
+| `pipeline_id` | UUID | NOT NULL | — | FK → `pipelines.id`, CASCADE |
+| `stage_id` | UUID | NOT NULL | — | FK → `stages.id`, CASCADE |
+| `state` | TEXT | NOT NULL | `queued` | `queued` / `leased` / `completed` / `canceled` |
+| `priority` | INTEGER | NOT NULL | `0` | Stable priority before FIFO fields |
+| `not_before` | TIMESTAMPTZ | NOT NULL | `now()` | Earliest claim time |
+| `required_tags` | TEXT[] | NOT NULL | `'{}'` | Reserved for runner matching |
+| `queued_at` | TIMESTAMPTZ | NOT NULL | `now()` | Enqueue timestamp |
+| `leased_at` | TIMESTAMPTZ | NULL | — | Set when claim succeeds |
+| `lease_id` | UUID | NULL | — | FK → `job_leases.id`, SET NULL |
+| `completed_at` | TIMESTAMPTZ | NULL | — | Set for `completed`/`canceled` rows |
+| `updated_at` | TIMESTAMPTZ | NOT NULL | `now()` | Last queue state update |
+
+**CHECK constraints:** `queued` rows have no lease/completion timestamps; `leased` rows must have `leased_at` and no completion timestamp; terminal rows must have `completed_at`.
+
+**Индексы:**
+- `idx_job_queue_attempt` — UNIQUE queue row на attempt.
+- `idx_job_queue_open_job` — UNIQUE open row на job при `state IN ('queued','leased')`.
+- `idx_job_queue_lease` — UNIQUE non-null `lease_id`.
+- `idx_job_queue_ready` — dispatch scan `(priority DESC, not_before, queued_at, id)` for `state='queued'`.
+- `idx_job_queue_pipeline_state`, `idx_job_queue_stage_state` — cleanup/status lookups.
+
+## 5.2 job_leases
+
+Durable ledger владения execution attempt. Текущий MVP использует таблицу для embedded runner и external runner protocol: claim одним SQL statement переводит `job_queue` в `leased`, `jobs` и `execution_attempts` в `running`, создаёт active lease и фиксирует generation/expiry. Embedded runner закрывает lease при terminal result/cancel, reconciler закрывает expired/missing owner, а external protocol дополнительно хранит hash lease token, ack deadline, ack/renew state и protocol version. `forge-runner` уже работает как отдельный shell process поверх этой модели; production log/secret/artifact protocol, sandbox и lost-heartbeat policy остаются target.
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -530,7 +560,7 @@ Foreign-key constraints:
 
 ## 9. Platform tables (MVP)
 
-Platform tables создаются и расширяются через `backend/migrations/*.sql`; `0001_bootstrap_v1.sql` содержит исторический baseline, последующие файлы добавляют auth, outbox, execution gaps, project memberships, execution attempts/leases и pipeline plan snapshots.
+Platform tables создаются и расширяются через `backend/migrations/*.sql`; `0001_bootstrap_v1.sql` содержит исторический baseline, последующие файлы добавляют auth, outbox, execution gaps, project memberships, execution attempts/queue/leases и pipeline plan snapshots.
 
 ### 9.1 runners
 
@@ -836,7 +866,7 @@ idx_outbox_delivery_attempts_message ON outbox_delivery_attempts(message_id, att
 
 | Фаза | Таблицы | Назначение |
 |---|---|---|
-| External runner production boundary | `job_queue`, credential rotation/revocation tables, artifact/secret delivery tables, richer log chunks | `runners` + `job_leases` уже покрывают protocol MVP: runner credential hash, heartbeat metadata, lease token hash, `workspace.checkoutUrl`, ack/renew/logs/complete, fencing generation и shell `forge-runner`; target добавляет durable queue, richer identity lifecycle, sandbox и protocol data planes |
+| External runner production boundary | credential rotation/revocation tables, artifact/secret delivery tables, richer log chunks | `runners` + `job_queue` + `job_leases` уже покрывают protocol MVP: runner credential hash, heartbeat metadata, durable dispatch row, lease token hash, `workspace.checkoutUrl`, ack/renew/logs/complete, fencing generation и shell `forge-runner`; target добавляет richer identity lifecycle, sandbox и protocol data planes |
 | Production outbox | `outbox_deliveries` / lease state | Full dispatcher snapshots, lease/fencing, crash recovery, response preview allowlist и operator dead-letter policy поверх current bounded history |
 | External notifications | delivery-specific tables | Email/Slack sender state, templates, preferences |
 

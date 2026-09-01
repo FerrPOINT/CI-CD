@@ -259,6 +259,202 @@ pub async fn open_attempt_id(
     .await
 }
 
+pub async fn enqueue_job_attempt_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    job_id: Uuid,
+    attempt_id: Uuid,
+) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        "INSERT INTO job_queue (id, job_id, attempt_id, pipeline_id, stage_id, state) \
+         SELECT $3, j.id, a.id, s.pipeline_id, s.id, 'queued' \
+         FROM jobs j \
+         JOIN execution_attempts a ON a.job_id = j.id \
+         JOIN stages s ON s.id = j.stage_id \
+         JOIN pipelines p ON p.id = s.pipeline_id \
+         WHERE j.id = $1 \
+           AND a.id = $2 \
+           AND j.status = 'queued' \
+           AND a.status = 'queued' \
+           AND NOT j.manual \
+           AND p.status IN ('queued','running') \
+         ON CONFLICT (attempt_id) DO UPDATE \
+         SET state = 'queued', \
+             lease_id = NULL, \
+             leased_at = NULL, \
+             completed_at = NULL, \
+             not_before = now(), \
+             updated_at = now() \
+         WHERE job_queue.state IN ('queued','completed','canceled')",
+    )
+    .bind(job_id)
+    .bind(attempt_id)
+    .bind(Uuid::new_v4())
+    .execute(&mut **tx)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn enqueue_job_attempt(
+    pool: &PgPool,
+    job_id: Uuid,
+    attempt_id: Uuid,
+) -> Result<u64, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let affected = enqueue_job_attempt_tx(&mut tx, job_id, attempt_id).await?;
+    tx.commit().await?;
+    Ok(affected)
+}
+
+pub async fn enqueue_current_job_attempt(pool: &PgPool, job_id: Uuid) -> Result<u64, sqlx::Error> {
+    let attempt_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id \
+         FROM execution_attempts \
+         WHERE job_id = $1 AND status = 'queued' \
+         ORDER BY attempt_no DESC \
+         LIMIT 1",
+    )
+    .bind(job_id)
+    .fetch_optional(pool)
+    .await?;
+
+    match attempt_id {
+        Some(attempt_id) => enqueue_job_attempt(pool, job_id, attempt_id).await,
+        None => Ok(0),
+    }
+}
+
+pub async fn enqueue_missing_ready_jobs(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        "INSERT INTO job_queue (id, job_id, attempt_id, pipeline_id, stage_id, state, queued_at) \
+         SELECT gen_random_uuid(), j.id, a.id, s.pipeline_id, s.id, 'queued', a.created_at \
+         FROM jobs j \
+         JOIN stages s ON s.id = j.stage_id \
+         JOIN pipelines p ON p.id = s.pipeline_id \
+         JOIN LATERAL ( \
+             SELECT id, created_at \
+             FROM execution_attempts \
+             WHERE job_id = j.id AND status = 'queued' \
+             ORDER BY attempt_no DESC \
+             LIMIT 1 \
+         ) a ON TRUE \
+         WHERE j.status = 'queued' \
+           AND NOT j.manual \
+           AND p.status IN ('queued','running') \
+           AND NOT EXISTS ( \
+               SELECT 1 \
+               FROM job_leases l \
+               WHERE l.job_id = j.id AND l.lease_status = 'active' \
+           ) \
+         ON CONFLICT (attempt_id) DO UPDATE \
+         SET state = 'queued', \
+             lease_id = NULL, \
+             leased_at = NULL, \
+             completed_at = NULL, \
+             updated_at = now() \
+         WHERE job_queue.state IN ('queued','completed','canceled')",
+    )
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn close_job_queue_for_attempt_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    attempt_id: Uuid,
+    terminal_status: &str,
+) -> Result<u64, sqlx::Error> {
+    let queue_state = queue_state_for_terminal(terminal_status);
+    let result = sqlx::query(
+        "UPDATE job_queue \
+         SET state = $2, completed_at = COALESCE(completed_at, now()), updated_at = now() \
+         WHERE attempt_id = $1 AND state IN ('queued','leased')",
+    )
+    .bind(attempt_id)
+    .bind(queue_state)
+    .execute(&mut **tx)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn close_job_queue_for_attempt(
+    pool: &PgPool,
+    attempt_id: Uuid,
+    terminal_status: &str,
+) -> Result<u64, sqlx::Error> {
+    let queue_state = queue_state_for_terminal(terminal_status);
+    let result = sqlx::query(
+        "UPDATE job_queue \
+         SET state = $2, completed_at = COALESCE(completed_at, now()), updated_at = now() \
+         WHERE attempt_id = $1 AND state IN ('queued','leased')",
+    )
+    .bind(attempt_id)
+    .bind(queue_state)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn close_job_queue_for_job(
+    pool: &PgPool,
+    job_id: Uuid,
+    terminal_status: &str,
+) -> Result<u64, sqlx::Error> {
+    let queue_state = queue_state_for_terminal(terminal_status);
+    let result = sqlx::query(
+        "UPDATE job_queue \
+         SET state = $2, completed_at = COALESCE(completed_at, now()), updated_at = now() \
+         WHERE job_id = $1 AND state IN ('queued','leased')",
+    )
+    .bind(job_id)
+    .bind(queue_state)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn close_job_queue_for_lease(
+    pool: &PgPool,
+    lease_id: Uuid,
+    terminal_status: &str,
+) -> Result<u64, sqlx::Error> {
+    let queue_state = queue_state_for_terminal(terminal_status);
+    let result = sqlx::query(
+        "UPDATE job_queue \
+         SET state = $2, completed_at = COALESCE(completed_at, now()), updated_at = now() \
+         WHERE lease_id = $1 AND state IN ('queued','leased')",
+    )
+    .bind(lease_id)
+    .bind(queue_state)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn close_job_queue_for_pipeline(
+    pool: &PgPool,
+    pipeline_id: Uuid,
+    terminal_status: &str,
+) -> Result<u64, sqlx::Error> {
+    let queue_state = queue_state_for_terminal(terminal_status);
+    let result = sqlx::query(
+        "UPDATE job_queue \
+         SET state = $2, completed_at = COALESCE(completed_at, now()), updated_at = now() \
+         WHERE pipeline_id = $1 AND state IN ('queued','leased')",
+    )
+    .bind(pipeline_id)
+    .bind(queue_state)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+fn queue_state_for_terminal(terminal_status: &str) -> &'static str {
+    match terminal_status {
+        "canceled" => "canceled",
+        _ => "completed",
+    }
+}
+
 pub async fn next_attempt_log_sequence(
     pool: &PgPool,
     attempt_id: Uuid,

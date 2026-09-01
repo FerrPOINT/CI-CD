@@ -164,7 +164,7 @@ Completion terminal и идемпотентен только для иденти
 | Сущность | Состояния и допустимый переход |
 |---|---|
 | Runner | `registered -> online -> draining|unhealthy|offline|disabled|revoked`; только `online` получает work |
-| Queue | `queued -> offered -> queued|completed|canceled`; claim выполняется транзакционно через `SKIP LOCKED` |
+| Queue | Current MVP: `queued -> leased -> completed|canceled`; target long-poll may split pre-ack `offered/abandoned`; claim выполняется транзакционно через `SKIP LOCKED` |
 | Lease | `offered -> active -> completed|expired`; `offered -> abandoned` при ack timeout |
 | Attempt | `queued -> leasing -> assigned -> running -> success|failed|canceled|timed_out|lost`; retry создаёт следующий номер |
 
