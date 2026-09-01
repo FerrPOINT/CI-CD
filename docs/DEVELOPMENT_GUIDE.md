@@ -119,9 +119,9 @@ Current `forge-runner` регистрируется или использует 
 | `backend/` -- `cicd-server` | Axum control plane, HTTP routes, SQLx store, Git hosting, embedded runner и composition root | Current verified |
 | `backend/src/bin/forge-runner.rs` | Отдельный shell-runner process для runner protocol MVP | Current verified MVP |
 | `backend/domain/` -- `cicd-domain` | Чистые доменные типы и state machine `JobStatus` | Current verified |
-| `backend/cli/` -- `cicd-cli` | HTTP-only CLI для `project`, `pipeline`, `job`; не линкует server code | Current verified |
+| `backend/cli/` -- `cicd-cli` | HTTP-only CLI для runtime и platform операций; не линкует server code | Current verified MVP |
 | `backend/tests/` | no-DB API/domain contracts, `integration_db` real PostgreSQL suite; `tests/sql/init-roles.sql` для runtime role fixture | Current verified |
-| `backend/cli/tests/` | CLI contract tests для public command groups/help | Current verified |
+| `backend/cli/tests/` | CLI contract tests для command groups/help/global flags/platform mutations | Current verified |
 | `backend/docker-compose.test.yml` | Ephemeral PostgreSQL 17 fixture без host port | Current verified fixture |
 | `frontend/` -- `cicd-dashboard` | React SPA, Vite, Tailwind, i18n, pages/widgets/entities/shared UI | Current verified |
 | `frontend/src/api/` | Typed API wrapper/hooks + generated OpenAPI DTO `schema.d.ts` | Current verified |
@@ -137,7 +137,7 @@ Current `forge-runner` регистрируется или использует 
 |---|---|---|---|
 | Rust unit | `JobStatus::transition_to()` и чистые domain правила | `cargo test -p cicd-server --test domain_transitions` | Current verified |
 | API contract без БД | router wiring, liveness/readiness no-DB behavior и extractor behavior через `app(None)` | `cargo test -p cicd-server --test api_contract` | Current verified; не заменяет persistence tests |
-| CLI contract | `cicd-cli --help`, public command groups | `cargo test -p cicd-cli --test cli_contract` | Current verified |
+| CLI contract | `cicd-cli --help`, public command groups, auth/output flags, pagination и ключевые platform mutations | `cargo test -p cicd-cli --test cli_contract` | Current verified |
 | Frontend unit | Components, pages, i18n contract и UI behavior через Vitest/Testing Library | `pnpm test` | Current verified |
 | Dependency/SBOM security | Rust/Node advisories, committed-secret baseline и SBOM drift | SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`, `python3 scripts/scan_secrets.py`, `python3 scripts/generate_sbom.py --check` в CI job `security` | Current verified MVP |
 | Compose smoke | Запуск образов, `GET /api/v1/health`, `GET /api/v1/readiness` и frontend nginx | `.github/workflows/ci.yml` job `compose-smoke`; локально `just up && just health && just readiness` | Current verified |

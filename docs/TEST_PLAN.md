@@ -36,7 +36,7 @@
 |---|---|---|
 | Domain unit | `backend/tests/domain_transitions.rs` | `queued -> running -> success`; terminal `failed` не перезапускается; `queued -> success` отклоняется. |
 | API contract без БД | `backend/tests/api_contract.rs` | Health возвращает `200`; readiness без pool возвращает `503`; project CRUD без pool возвращает `503`; пустой body PATCH отклоняется. |
-| CLI contract | `backend/cli/tests/cli_contract.rs` | `cicd-cli --help` содержит command groups `project`, `pipeline`, `job`. |
+| CLI contract | `backend/cli/tests/cli_contract.rs` | `cicd-cli --help` содержит runtime/platform command groups, `--token`, `--output`, pagination flags, job attempt history, `--idempotency-key` и key mutation subcommands. |
 | Runner binary contract | `backend/tests/runner_binary_contract.rs` | `forge-runner --help` содержит protocol/config flags `--api-url`, `--credential`, `--registration-token`, `--tags`, `--total-slots`, `--poll-interval-seconds`, `--work-dir`, `--once`, `--no-checkout`, `--keep-workspace`. |
 | Dashboard unit | `frontend/src/pages/dashboard/dashboard.test.ts` | `statusLabel` форматирует known status и `success`. |
 | App router smoke | `frontend/src/app/router.test.tsx` | Поднимает production `appRoutes` в memory router и проверяет первый рендер 20 рабочих Dashboard-страниц + `/login` на реалистичных mocked API DTO. |

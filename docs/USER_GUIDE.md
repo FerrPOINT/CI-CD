@@ -340,7 +340,7 @@ Embedded runner inject-ит только объявленные `jobs.required_s
 
 **Статус процедуры: Current verified.**
 
-CLI `cicd-cli` работает только через HTTP API и сейчас покрывает projects, pipelines, jobs и logs. Соберите его из корня репозитория, если binary ещё отсутствует:
+CLI `cicd-cli` работает только через HTTP API и покрывает основные runtime и platform операции: projects, pipelines, jobs/logs/attempts, runners, secrets, artifacts, environments/deployments, schedules, webhooks/outbox, notifications, reports, audit, users, project members и API tokens. Соберите его из корня репозитория, если binary ещё отсутствует:
 
 ```bash
 docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" -w /workspace \
@@ -348,14 +348,15 @@ docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" -w /workspac
   -lc '/usr/local/cargo/bin/cargo build -p cicd-cli'
 
 export CICD_API_URL=http://127.0.0.1:22801
+export CICD_API_TOKEN="$TOKEN"   # нужен только при включённом CICD_AUTH_SECRET
 export CICD_CLI="$PWD/backend/target/debug/cicd-cli"
 ```
 
 | Задача | Команда |
 |---|---|
-| Список проектов | `$CICD_CLI project list` |
+| Список проектов | `$CICD_CLI project list --limit 50 --offset 0` |
 | Создать проект | `$CICD_CLI project create --name my-service --repository-url http://127.0.0.1:22802/git/my-service.git --branch main` |
-| Список запусков | `$CICD_CLI pipeline list --project <PROJECT_UUID>` |
+| Список запусков | `$CICD_CLI pipeline list --project <PROJECT_UUID> --limit 50 --offset 0` |
 | Запустить pipeline | `$CICD_CLI pipeline run --project <PROJECT_UUID> --git-ref main` |
 | Детали pipeline | `$CICD_CLI pipeline show --id <PIPELINE_UUID>` |
 | Запустить job | `$CICD_CLI job start --id <JOB_UUID>` |
@@ -365,8 +366,17 @@ export CICD_CLI="$PWD/backend/target/debug/cicd-cli"
 | Прочитать логи | `$CICD_CLI job logs --id <JOB_UUID>` |
 | Прочитать логи attempt | `$CICD_CLI job logs --id <JOB_UUID> --attempt <ATTEMPT_UUID>` |
 | Добавить строку лога | `$CICD_CLI job log --id <JOB_UUID> --message 'diagnostic line'` |
+| Runner-ы | `$CICD_CLI runner list`; `$CICD_CLI runner register --name shell-01 --tag shell` |
+| Секреты | `$CICD_CLI secret list --project <PROJECT_UUID>`; `$CICD_CLI secret set --project <PROJECT_UUID> --key NPM_TOKEN --value "$NPM_TOKEN"` |
+| Артефакты | `$CICD_CLI artifact list --job <JOB_UUID>`; `$CICD_CLI artifact upload --job <JOB_UUID> --file ./build.zip --name build.zip` |
+| Окружения и deployments | `$CICD_CLI environment list --project <PROJECT_UUID>`; `$CICD_CLI deployment list --environment <ENV_UUID>` |
+| Schedules | `$CICD_CLI schedule create --project <PROJECT_UUID> --cron "0 2 * * *" --git-ref main --enabled true` |
+| Webhooks/outbox | `$CICD_CLI webhook create --project <PROJECT_UUID> --url https://example.com/hook --event pipeline.finished`; `$CICD_CLI outbox requeue --id <DELIVERY_UUID>` |
+| Notifications | `$CICD_CLI notification replace --project <PROJECT_UUID> --config in_app=dashboard`; `$CICD_CLI notification events --project <PROJECT_UUID> --limit 50` |
+| Reports/audit | `$CICD_CLI report summary --project <PROJECT_UUID>`; `$CICD_CLI audit list` |
+| Users/members/tokens | `$CICD_CLI user list`; `$CICD_CLI member upsert --project <PROJECT_UUID> --user <USER_UUID> --role developer`; `$CICD_CLI token create --name deploy-bot --user <USER_UUID> --project <PROJECT_UUID> --scope api:read --expires-in-days 30` |
 
-CLI-команды для runners, secrets, artifacts, environments, schedules, webhooks, users и tokens - **Target approved**. Также пока нет `CICD_API_TOKEN`/`--token`, JSON/table formatting и pagination.
+Глобальные флаги `--token`, `--output json|table`, `--api-url` и env-переменные `CICD_API_TOKEN`, `CICD_OUTPUT`, `CICD_API_URL` описаны в [CLI](CLI.md). CLI profile/keyring, shell completion, YAML/NDJSON и полноценный real-API CLI integration gate остаются **Target approved**.
 
 ## 13. FAQ по типовым задачам
 

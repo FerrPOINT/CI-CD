@@ -39,6 +39,7 @@
 | Compose packaging smoke | ✅ | CI job `compose-smoke` выполняет `docker compose config -q`, production image build, `docker compose up --build -d`, backend health/readiness и frontend nginx smoke с cleanup |
 | Browser E2E / accessibility / performance smoke | ✅ MVP | CI job `e2e` поднимает собранный Docker Compose stack, запускает deterministic `frontend/scripts/seed-evidence.mjs`, проверяет Playwright Chromium critical journeys (Dashboard → project pipelines → pipeline plan/logs/artifacts, repository code browser, mobile drawer Escape/focus), axe smoke без `serious`/`critical` violations на representative pages, seeded API read p95 и Dashboard route ready-time against MVP regression budgets; Lighthouse, full keyboard audit, all-route a11y, load test и 30-day SLO evidence остаются target |
 | RU/EN i18n contract | ✅ MVP | `frontend/src/shared/i18n/i18n-contract.test.ts` проверяет parity ключей `ru`/`en`, непустые значения, отсутствие raw-key fallback, runtime switch i18next и динамические переводы для стабильных API contract values: pipeline/change/PR/runner/delivery/notification statuses, PR actions и PAT scopes; full locale E2E и полный stable identifier contract suite остаются target |
+| CLI | ✅ MVP | `cicd-cli` остаётся HTTP-only и покрывает runtime/platform операции: projects/pipelines/jobs/logs/attempts, runners, secrets, artifacts, environments/deployments, schedules, webhooks/outbox, notifications, reports/audit, users, project members и API tokens; поддержаны `CICD_API_TOKEN`/`--token`, `CICD_OUTPUT`/`--output json|table`, `--limit`/`--offset` для projects/pipelines; profile/keyring/YAML/NDJSON/real-API CLI integration gate остаются target |
 | Backup/restore helper | ✅ MVP | `scripts/forge_backup.py` + wrappers создают/проверяют/restoring local Docker Compose backup: PostgreSQL custom dump, Git/artifact volume copy, `SHA256SUMS`, `manifest.json`; off-site/PITR/monthly drill остаются target |
 | Dependency audit / secret scan / SBOM hygiene | ✅ MVP | CI запускает OpenAPI backward compatibility diff, SQLx optional MySQL/RSA feature guard, `cargo build --release --workspace`, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`, `scripts/scan_secrets.py`, `scripts/generate_sbom.py --check` и pinned Trivy critical container image scan через `scripts/scan_container_images.sh`; `docs/assets/sbom.json` синхронизирован с Cargo/npm inventory; Cargo resolved graph не содержит deprecated `serde_yaml`/`unsafe-libyaml`; OpenAPI examples validation, `cargo-deny`, deeper history/container secret scan и release SBOM publication остаются target |
 
@@ -66,7 +67,7 @@ backend/
 │   └── domain.rs       # re-export shim → cicd-domain
 ├── migrations/         # versioned SQLx migrations incl. 0023 artifact retention
 ├── domain/             # cicd-domain: чистые типы + JobStatus
-├── cli/                # cicd-cli: HTTP-only (project/pipeline/job)
+├── cli/                # cicd-cli: HTTP-only runtime/platform commands
 ├── tests/              # api_contract, domain_transitions, integration_db (+ sql/init-roles.sql)
 ├── cli/tests/          # cli_contract
 └── docker-compose.test.yml
@@ -90,6 +91,9 @@ just readiness
 docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" -w /workspace \
   -e CARGO_TARGET_DIR=/workspace/target rust:1.86-bookworm \
   -lc '/usr/local/cargo/bin/cargo test --workspace'
+docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" -w /workspace \
+  -e CARGO_TARGET_DIR=/workspace/target rust:1.86-bookworm \
+  -lc '/usr/local/cargo/bin/cargo test -p cicd-cli --test cli_contract'
 cd frontend && pnpm test && pnpm build
 cd frontend && pnpm e2e   # requires running seeded Compose stack
 cd frontend && pnpm lint

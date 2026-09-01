@@ -940,15 +940,16 @@ curl -sS -X POST http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/logs \
 
 ## CLI
 
-`cicd-cli` — отдельный бинарник, работает через публичный API.
+`cicd-cli` — отдельный бинарник, работает через публичный API. Глобальные настройки: `CICD_API_URL`/`--api-url`, `CICD_API_TOKEN`/`--token`, `CICD_OUTPUT`/`--output json|table`.
 
 ```bash
 # Project
 cicd-cli project list
+cicd-cli project list --limit 50 --offset 0
 cicd-cli project create --name "my-service" --repository-url "git@..." --branch main
 
 # Pipeline
-cicd-cli pipeline list --project <uuid>
+cicd-cli pipeline list --project <uuid> --limit 50 --offset 0
 cicd-cli pipeline run --project <uuid> --git-ref main
 cicd-cli pipeline show --id <uuid>
 
@@ -960,9 +961,25 @@ cicd-cli job logs --id <uuid>      # GET logs
 cicd-cli job attempts --id <uuid>  # GET attempts
 cicd-cli job logs --id <uuid> --attempt <attempt-uuid>
 cicd-cli job log --id <uuid> --message "..."  # POST log
+
+# Platform resources
+cicd-cli runner list
+cicd-cli secret list --project <uuid>
+cicd-cli artifact list --job <uuid>
+cicd-cli environment list --project <uuid>
+cicd-cli deployment list --environment <uuid>
+cicd-cli schedule list --project <uuid>
+cicd-cli webhook list --project <uuid>
+cicd-cli notification events --project <uuid> --limit 50
+cicd-cli outbox list --project <uuid> --limit 50
+cicd-cli report summary --project <uuid>
+cicd-cli audit list
+cicd-cli user list
+cicd-cli member list --project <uuid>
+cicd-cli token list
 ```
 
-`CICD_API_URL` env var задаёт URL API (default `http://127.0.0.1:22801`).
+Полный набор CLI-команд и MVP-ограничения описаны в [CLI](CLI.md).
 
 ---
 

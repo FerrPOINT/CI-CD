@@ -1,49 +1,94 @@
 use std::process::Command;
 
-#[test]
-fn cli_exposes_project_pipeline_and_job_groups() {
+fn cli_help(args: &[&str]) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
-        .arg("--help")
+        .args(args)
         .output()
         .unwrap();
-    let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(
         output.status.success(),
-        "failed to run cicd-cli --help: {}",
+        "failed to run cicd-cli {}: {}",
+        args.join(" "),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(stdout.contains("project"));
-    assert!(stdout.contains("pipeline"));
-    assert!(stdout.contains("job"));
+    String::from_utf8(output.stdout).unwrap()
+}
+
+fn assert_contains(stdout: &str, needle: &str) {
+    assert!(
+        stdout.contains(needle),
+        "missing {needle:?} in help output:\n{stdout}"
+    );
+}
+
+#[test]
+fn cli_exposes_control_plane_groups_and_global_options() {
+    let stdout = cli_help(&["--help"]);
+    for needle in [
+        "project",
+        "pipeline",
+        "job",
+        "runner",
+        "secret",
+        "artifact",
+        "environment",
+        "deployment",
+        "schedule",
+        "webhook",
+        "notification",
+        "outbox",
+        "report",
+        "audit",
+        "user",
+        "member",
+        "token",
+        "--token",
+        "--output",
+    ] {
+        assert_contains(&stdout, needle);
+    }
 }
 
 #[test]
 fn cli_exposes_job_attempt_history_commands() {
-    let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
-        .args(["job", "--help"])
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(
-        output.status.success(),
-        "failed to run cicd-cli job --help: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(stdout.contains("attempts"));
-    assert!(stdout.contains("logs"));
+    let stdout = cli_help(&["job", "--help"]);
+    assert_contains(&stdout, "attempts");
+    assert_contains(&stdout, "logs");
 }
 
 #[test]
 fn cli_exposes_pipeline_run_idempotency_key() {
-    let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
-        .args(["pipeline", "run", "--help"])
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(
-        output.status.success(),
-        "failed to run cicd-cli pipeline run --help: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(stdout.contains("--idempotency-key"));
+    let stdout = cli_help(&["pipeline", "run", "--help"]);
+    assert_contains(&stdout, "--idempotency-key");
+}
+
+#[test]
+fn cli_exposes_pagination_on_list_commands() {
+    let project = cli_help(&["project", "list", "--help"]);
+    assert_contains(&project, "--limit");
+    assert_contains(&project, "--offset");
+
+    let pipeline = cli_help(&["pipeline", "list", "--help"]);
+    assert_contains(&pipeline, "--limit");
+    assert_contains(&pipeline, "--offset");
+}
+
+#[test]
+fn cli_exposes_platform_resource_mutations() {
+    let runner = cli_help(&["runner", "register", "--help"]);
+    assert_contains(&runner, "--tag");
+
+    let artifact = cli_help(&["artifact", "upload", "--help"]);
+    assert_contains(&artifact, "--file");
+    assert_contains(&artifact, "--content-type");
+
+    let member = cli_help(&["member", "upsert", "--help"]);
+    assert_contains(&member, "--role");
+
+    let notification = cli_help(&["notification", "replace", "--help"]);
+    assert_contains(&notification, "CHANNEL=TARGET");
+
+    let token = cli_help(&["token", "create", "--help"]);
+    assert_contains(&token, "--scope");
+    assert_contains(&token, "--expires-in-days");
 }

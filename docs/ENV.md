@@ -56,7 +56,9 @@
 | `CICD_RUNNER_NO_CHECKOUT` | `false` | Запускать команды в пустом workspace без Git checkout |
 | `CICD_RUNNER_WORK_DIR` | temp dir `forge-runner` | Workspace root внешнего runner-а |
 | `CICD_RUNNER_KEEP_WORKSPACE` | `false` | Не удалять workspace после job |
-| `CICD_API_URL` | `http://127.0.0.1:22801` | Base URL для cicd-cli |
+| `CICD_API_URL` | `http://127.0.0.1:22801` | Base URL для `cicd-cli` |
+| `CICD_API_TOKEN` | пусто | Bearer PAT/JWT для `cicd-cli` в auth-mode |
+| `CICD_OUTPUT` | `json` | Формат вывода `cicd-cli`: `json` или `table` |
 | `CICD_ARTIFACT_RETENTION_DAYS` | `30` | TTL новых артефактов; пустое значение равно default, `0` не допускается |
 
 ## Генерация ключа

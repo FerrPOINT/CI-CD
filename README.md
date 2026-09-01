@@ -54,6 +54,7 @@
 | Artifacts up to 50 MiB in local storage with SHA-256 and retention cleanup | Current verified MVP |
 | Secrets encrypted at rest with runner injection and stdout masking | Current verified |
 | Environments, deployments, reports and audit trail | Current verified |
+| HTTP-only CLI for runtime and platform operations | Current verified MVP |
 | Auth/RBAC with `CICD_AUTH_SECRET` | Current verified |
 | Configurable CORS allowlist | Current verified MVP |
 | Liveness, DB-aware readiness and Prometheus metrics | Current verified |

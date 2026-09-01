@@ -111,7 +111,7 @@ Composition root: чтение конфига, создание `PgPool`, реп
 
 ### 4.6 CLI (`cli/`)
 
-`cicd-cli` — отдельный workspace-пакет: clap-команды `project`/`pipeline`/`job`, общается с API по HTTP (`CICD_API_URL`), не линкует серверный код.
+`cicd-cli` — отдельный workspace-пакет: clap-команды для runtime и platform операций (`project`, `pipeline`, `job`, `runner`, `secret`, `artifact`, `environment`, `deployment`, `schedule`, `webhook`, `notification`, `outbox`, `report`, `audit`, `user`, `member`, `token`), общается с API по HTTP (`CICD_API_URL`, `CICD_API_TOKEN`) и не линкует серверный код.
 
 ## 5. Конфигурация
 

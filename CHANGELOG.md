@@ -46,6 +46,7 @@
 - I18n contract: Vitest проверяет parity ключей `ru`/`en`, непустые leaf-значения, runtime language switch и динамические переводы для стабильных API contract values, включая status/action ключи.
 - Performance smoke: Playwright E2E теперь проверяет seeded API read p95 и Dashboard route ready-time против MVP regression budgets; 30-day SLO, Lighthouse и load reports остаются target.
 - Documentation cleanup: удалена лишняя служебная страница из продуктовых docs; рабочие проверки теперь ссылаются на `docs/DEVELOPMENT_GUIDE.md`.
+- CLI operational surface: `cicd-cli` теперь поддерживает `CICD_API_TOKEN`/`--token`, `CICD_OUTPUT`/`--output json|table`, pagination для projects/pipelines и HTTP-only команды для runners, secrets, artifacts, environments/deployments, schedules, webhooks/outbox, notifications, reports/audit, users, project members и API tokens.
 - Dependency review: `git2 0.21.0` remediation проверен, но отложен из-за несовместимости с закреплённым Rust 1.86; `git2 0.20.4` warnings остаются documented accepted findings.
 - SBOM: `scripts/generate_sbom.py` → docs/assets/sbom.json (CycloneDX-lite, 344 компонента; CISA Minimum Elements).
 - Пустой `CICD_AUTH_SECRET` теперь трактуется как не настроенный secret, поэтому compose default корректно оставляет локальный trusted-network mode.
