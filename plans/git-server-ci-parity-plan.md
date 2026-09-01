@@ -2,7 +2,7 @@
 
 > **Status 2026-09-01:** historical working plan. Code browsing, tags/releases, Git Smart HTTP auth checks, pipeline plan evidence, artifacts and JUnit/test-report UI are already represented in current docs/tests/screenshots. Use `docs/CURRENT_STATE.md`, `docs/ROADMAP.md` and `docs/TRACEABILITY.md` for the live backlog before executing any remaining item.
 >
-> **For agents:** if a remaining Git/CI parity slice is reopened, use TDD and preserve current REST paths plus `openapi/openapi.yaml`.
+> **For maintainers:** if a remaining Git/CI parity slice is reopened, use TDD and preserve current REST paths plus `openapi/openapi.yaml`.
 
 **Goal:** Close the high-value Git-server and CI/CD gaps required for a serious self-hosted Forge control plane.
 

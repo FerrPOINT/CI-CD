@@ -161,7 +161,7 @@ jobs:
     - name: Seed evidence data
       working-directory: frontend
       run: pnpm seed:evidence
-    - name: Playwright E2E
+    - name: Playwright E2E/a11y/performance
       working-directory: frontend
       env:
         E2E_BASE_URL: http://127.0.0.1:22802

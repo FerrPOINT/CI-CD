@@ -2,7 +2,7 @@
 
 > **Статус 2026-09-01:** исторический master-plan. Большая часть authority/current-state/contracts/screenshots cleanup уже выполнена, а оставшиеся target-gates перенесены в `docs/ROADMAP.md`, `docs/TRACEABILITY.md` и профильные contracts. Не выполнять этот файл буквально; использовать его только как историю решений и источник идей после сверки с current-state.
 >
-> **For agents:** не смешивать current facts, approved target contracts и планы. Каждый новый блок работы завершать проверяемым evidence и отдельным commit.
+> **For maintainers:** не смешивать current facts, approved target contracts и планы. Каждый новый блок работы завершать проверяемым evidence и отдельным commit.
 
 **Goal:** сделать CI-CD понятным для пользователя, разработчика и оператора: один источник истины на каждую тему, честно обозначенный MVP/target status, воспроизводимые visual evidence и готовая к старту разработки архитектурная база.
 
@@ -80,7 +80,7 @@ Expected: every remaining occurrence is explicitly historical/deprecated or abse
 
 **Files:**
 - Create: `docs/USER_GUIDE.md`, `docs/DEVELOPMENT_GUIDE.md`, `docs/OPERATIONS.md`, `docs/PRODUCT_REQUIREMENTS.md`
-- Modify: `README.md`, `docs/ARCHITECTURE_INDEX.md`, `AGENTS.md`
+- Modify: `README.md`, `docs/ARCHITECTURE_INDEX.md`, `docs/DEVELOPMENT_GUIDE.md`
 - Merge/deprecate source docs according to map below
 
 **Actions:**
@@ -107,7 +107,7 @@ Expected: every remaining occurrence is explicitly historical/deprecated or abse
 | `LOCAL_SETUP.md`, `TESTING.md`, `CI_CD.md`, `CODE_STYLE.md`, `CODE_REVIEW.md`, `REVIEW.md`, `LIBRARIES.md` | `DEVELOPMENT_GUIDE.md` |
 | `DEPLOYMENT.md`, `RUNTIME.md`, `OPS_RUNBOOK.md`, `RELEASE.md`, `MONITORING.md`, `PERFORMANCE.md`, `RESILIENCE.md` | `OPERATIONS.md` |
 | `SECURITY.md` | split into AUTHZ/DATA_LIFECYCLE/API_CONTRACT/OPERATIONS; retain a short `SECURITY.md` policy/disclosure pointer |
-| `GLOSSARY.md`, `TECH_CHOICES.md`, `docs/AGENTS.md` | index canonical terminology + ADRs/development guide + root `AGENTS.md` only |
+| `GLOSSARY.md`, `TECH_CHOICES.md` | index canonical terminology + ADRs/development guide |
 
 8. Publish one-line redirect stubs for one release cycle; delete only after inbound link report is zero and migration notice enters changelog.
 

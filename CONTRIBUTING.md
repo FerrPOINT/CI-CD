@@ -21,7 +21,7 @@ docker compose up -d --build
 curl -sS http://localhost:22801/api/v1/health
 ```
 
-Быстрая справка по проверкам — `AGENTS.md` (раздел «Docker и команды проверки») и `justfile` (`just test-backend`, `just test-frontend`).
+Быстрая справка по проверкам — [`docs/DEVELOPMENT_GUIDE.md`](docs/DEVELOPMENT_GUIDE.md) и `justfile` (`just test-backend`, `just test-frontend`).
 
 ## Conventional Commits
 

@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const API = 'http://127.0.0.1:22801/api/v1'
+const API = process.env.E2E_API_URL ?? 'http://127.0.0.1:22801/api/v1'
+const HTTP_BASE = API.replace(/\/api\/v1\/?$/, '')
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const demoRunnerNames = new Set(['docker-runner-01', 'shell-runner-02'])
 
@@ -51,7 +52,7 @@ async function seedRepository(name, commits, branches = {}) {
   git(dir, 'init', '-b', 'main')
   git(dir, 'config', 'user.email', 'azhukov@forge.local')
   git(dir, 'config', 'user.name', 'Александр Жуков')
-  const repoUrl = 'http://127.0.0.1:22801/git/' + name + '.git'
+  const repoUrl = `${HTTP_BASE}/git/${name}.git`
   git(dir, 'remote', 'add', 'origin', repoUrl)
   writeFileSync(join(dir, 'README.md'), `# ${name}\n\nForge CI/CD demo repository.\n`)
   git(dir, 'add', '.')

@@ -69,8 +69,7 @@ CI-CD/
 ├── docs/                     # guides, contracts, adr/ + screenshots/
 ├── plans/                    # committed working plans; non-normative
 ├── docker-compose.yml        # postgres + backend + frontend
-├── justfile                  # unified commands
-└── AGENTS.md                 # правила работы с репозиторием
+└── justfile                  # unified commands
 ```
 
 Целевая структура backend (полностью — в ADR-0005 и `plans/architecture-rebuild-plan.md`):
@@ -200,7 +199,7 @@ just test-frontend  # pnpm test
 just build-frontend # pnpm build
 ```
 
-Backend-проверки без cargo на хосте — через Docker (см. `AGENTS.md`). Полный gate: fmt + clippy `--workspace --all-targets -D warnings` + test workspace + release build.
+Backend-проверки без cargo на хосте описаны в `docs/DEVELOPMENT_GUIDE.md`; полный gate: fmt + clippy `--workspace --all-targets -D warnings` + test workspace + release build.
 
 ## 11. Deployment
 

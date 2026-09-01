@@ -2,7 +2,7 @@
 
 > **Status 2026-09-01:** historical/non-normative working plan. Several slices from this plan are already current MVP (workspace root, `domain`, `cli`, SQLx migrations, auth/RBAC MVP, outbox/schedules MVP, runner protocol MVP, OpenAPI YAML drift gate). Do not execute this file as-is; reconcile any new slice against `docs/CURRENT_STATE.md`, `docs/ROADMAP.md`, `docs/TRACEABILITY.md` and the relevant `docs/contracts/*` owner first.
 >
-> **For agents:** preserve current public REST paths and `openapi/openapi.yaml`; treat remaining work as strangler migration/hardening, not a blank rebuild.
+> **For maintainers:** preserve current public REST paths and `openapi/openapi.yaml`; treat remaining work as strangler migration/hardening, not a blank rebuild.
 
 **Goal:** Turn Forge CI/CD from a single Rust crate into a testable workspace with clear API/application/domain/infrastructure boundaries, a dedicated CLI package, versioned migrations, and a safe base for authentication and distributed runners.
 

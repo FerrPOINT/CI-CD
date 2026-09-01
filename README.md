@@ -60,6 +60,7 @@
 | Dependency audit, secret scan and SBOM drift gate | Current verified MVP |
 | Browser E2E and representative axe smoke on real Compose stack | Current verified MVP |
 | RU/EN Dashboard i18n contract parity and dynamic status/action keys | Current verified MVP |
+| Seeded API/Dashboard performance smoke budgets | Current verified MVP |
 | Schedules, outgoing webhooks, in-app/SSE notifications | MVP |
 | External adapters, tenant isolation, distributed runners | Target approved |
 
@@ -172,7 +173,7 @@ Full current-state cut: [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md). Security
 | Frontend tests | `just test-frontend` |
 | Frontend build | `just build-frontend` |
 | Compose smoke | `.github/workflows/ci.yml` job `compose-smoke` |
-| Browser E2E/a11y | `.github/workflows/ci.yml` job `e2e` |
+| Browser E2E/a11y/performance smoke | `.github/workflows/ci.yml` job `e2e` |
 | Secret scan | `python3 scripts/scan_secrets.py` |
 | SBOM drift | `python3 scripts/generate_sbom.py --check` |
 | Container image scan | `bash scripts/scan_container_images.sh forge-cicd-backend:ci forge-cicd-frontend:ci` |

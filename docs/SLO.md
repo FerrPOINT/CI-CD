@@ -1,6 +1,6 @@
 # SLO — Service Level Objectives
 
-> **Статус:** Target approved. SLO не считаются достигнутыми до появления измеримого evidence (метрики, нагрузочные прогоны). Количественные цели зафиксированы заранее, чтобы реализация observability (см. `ROADMAP.md`, Phase наблюдаемости) сразу попадала в контракт, а не подбиралась задним числом.
+> **Статус:** Current verified MVP для synthetic CI regression smoke; production SLO остаются Target approved. `frontend/e2e/performance.spec.ts` измеряет seeded API read p95 и Dashboard route ready-time на disposable Compose stack, но SLO ниже не считаются достигнутыми без 30 дней реальных метрик и нагрузочного evidence.
 > Основание: [ADR-0009](adr/0009-canonical-registry.md). Потребности продукта: `PRODUCT_REQUIREMENTS.md` §7.
 
 ## 1. Модель
@@ -8,7 +8,7 @@
 - **SLI** — измеримый индикатор (доля хороших событий / измерений).
 - **SLO** — целевой уровень SLI за окно 30 дней.
 - **Error budget** = 100% − SLO. Бюджет тратится на инновации; при исчерпании — приоритет надёжности (freeze рискованных изменений, см. `INCIDENT_RESPONSE.md`).
-- Измерение — только на реальных данных мониторинга (target: Prometheus-совместимые метрики, см. `docs/contracts/EVENT_CONTRACT.md` §observability и `TECH_CHOICES.md`).
+- Текущий CI performance smoke — регрессионный guard для seeded MVP, а не production SLO-доказательство. Production-измерение — только на реальных данных мониторинга (target: Prometheus-совместимые метрики, см. `docs/contracts/EVENT_CONTRACT.md` §observability и `TECH_CHOICES.md`).
 
 ## 2. Сервисные SLO (control plane)
 
@@ -21,6 +21,17 @@
 | Pipeline dispatch latency | время push → job `running` (p95) | ≤ 30 s | target: с внешними runner-ами |
 | Job scheduling latency | время lease-offer → job start (p95) | ≤ 10 s | target-протокол `RUNNER_PROTOCOL.md` |
 | Webhook delivery success | доля доставок в пределах 8 попыток | ≥ 99.0% | target outbox `EVENT_CONTRACT.md` |
+
+## 2.1. MVP regression budgets
+
+Эти пороги используются только в `frontend/e2e/performance.spec.ts` на synthetic seeded Compose stack:
+
+| SLI | Порог CI smoke | Переопределение |
+|---|---|---|
+| Seeded API read p95 | ≤ 1000 ms | `E2E_API_READ_P95_BUDGET_MS` |
+| Dashboard route ready-time max | ≤ 5000 ms | `E2E_DASHBOARD_READY_BUDGET_MS` |
+
+Падение этих budget-ов считается регрессией MVP. Прохождение не означает соблюдение 30-day SLO из разделов ниже.
 
 ## 3. Инфраструктурные SLO
 

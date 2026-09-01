@@ -18,7 +18,7 @@ Current: DORA считается вручную из reports/audit; автома
 
 | Метрика | Источник | Статус |
 |---|---|---|
-| HTTP requests: rate / errors / latency p50-p99 (per route) | axum middleware | Target (axum-prometheus, `TECH_CHOICES.md`) |
+| HTTP requests: rate / errors / latency p50-p99 (per route) | axum middleware | Target (axum-prometheus, `TECH_CHOICES.md`); current CI has synthetic API read p95 smoke in `frontend/e2e/performance.spec.ts` |
 | Pipeline queue depth (jobs `queued`) | SQL | Target (gauge в метриках) |
 | Job duration p50/p95 по проекту | reports | Current (агрегат в UI) |
 | Runner heartbeats / online count | runners registry | Current (UI); метрики — Target |

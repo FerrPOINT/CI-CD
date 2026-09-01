@@ -33,7 +33,7 @@ Forge CI/CD развивается из MVP control plane в безопасну�
 | Frontend | React 19/Vite/TanStack Query; около 20 маршрутов + `/login`. DTO генерируются в `frontend/src/api/schema.d.ts`, API wrapper/hooks остаются handwritten. |
 | CLI | `backend/cli` уже отдельный package и работает через HTTP; реализованы группы `project`, `pipeline`, `job`. Конфигурация ограничена `CICD_API_URL`, stdout всегда pretty JSON, нет auth/profile/output policy. |
 | Observability | Есть `/api/v1/health`, `/api/v1/readiness`, `/metrics`, `TraceLayer` и `tracing`. OTLP, alerting и корреляция API--CLI не реализованы. |
-| Quality | GitHub Actions запускает backend fmt/clippy/workspace tests, real PostgreSQL integration, OpenAPI drift gate, frontend generated-client check/test/build, Compose startup/health smoke, representative Playwright/axe E2E на seeded Compose stack, security и docs checks. OpenAPI compatibility gate, Lighthouse budgets и полный evidence bundle остаются target. |
+| Quality | GitHub Actions запускает backend fmt/clippy/workspace tests, real PostgreSQL integration, OpenAPI drift/compatibility gate, frontend generated-client check/test/build, Compose startup/health smoke, representative Playwright/axe/performance E2E на seeded Compose stack, security и docs checks. Lighthouse/load budgets и полный evidence bundle остаются target. |
 
 ## 3. Целевые принципы
 
