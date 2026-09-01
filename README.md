@@ -59,7 +59,7 @@
 | Configurable CORS allowlist | Current verified MVP |
 | Liveness, DB-aware readiness and Prometheus metrics | Current verified |
 | Dependency audit, secret scan and SBOM drift gate | Current verified MVP |
-| Browser E2E and representative axe smoke on real Compose stack | Current verified MVP |
+| Browser E2E and all-route axe smoke on real Compose stack | Current verified MVP |
 | RU/EN Dashboard i18n contract parity and dynamic status/action keys | Current verified MVP |
 | Seeded API/Dashboard performance smoke budgets | Current verified MVP |
 | Schedules, outgoing webhooks, in-app/SSE notifications | MVP |
@@ -191,7 +191,7 @@ Full current-state cut: [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md). Security
 | `just test-backend` | Backend unit and contract tests through the pinned Rust image |
 | `just test-frontend` | Frontend Vitest suite |
 | `just build-frontend` | Production frontend build |
-| `cd frontend && pnpm e2e` | Playwright critical journeys + axe smoke against seeded Compose stack |
+| `cd frontend && pnpm e2e` | Playwright critical journeys + all-route axe smoke against seeded Compose stack |
 | `python3 scripts/scan_secrets.py` | Fail on committed token/key/password patterns in repository text |
 | `python3 scripts/generate_sbom.py --check` | Verify committed SBOM inventory is in sync |
 | `bash scripts/scan_container_images.sh <image> [...]` | Scan already built container images with pinned Trivy CLI for critical fixable vulnerabilities |
