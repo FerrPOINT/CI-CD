@@ -21,7 +21,7 @@
 | API contract | Router, HTTP method/path, status, extractor и поведение без pool через `app(None)`, включая liveness `200` и readiness `503` без БД | `cargo test -p cicd-server --test api_contract` | **Current verified** |
 | CLI/runner binary contract | Public command groups, help, стабильное пользовательское поведение CLI и `forge-runner` flags | `cargo test -p cicd-cli --test cli_contract`; `cargo test -p cicd-server --test runner_binary_contract` | **Current verified** |
 | Frontend unit | Компоненты, pure helpers, route smoke всех Dashboard-страниц и доступность UI в Vitest/Testing Library | `cd frontend && pnpm test` | **Current verified** |
-| Dependency/SBOM security | Rust/Node advisories, frozen dependency graph и drift committed SBOM | `.github/workflows/ci.yml` job `security`: SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`, `scripts/generate_sbom.py --check` | **Current verified MVP** |
+| Dependency/SBOM security | Rust/Node advisories, frozen dependency graph, committed-secret baseline и drift committed SBOM | `.github/workflows/ci.yml` job `security`: SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`, `scripts/scan_secrets.py`, `scripts/generate_sbom.py --check` | **Current verified MVP** |
 | Compose smoke | Собранные образы, startup сервисов, `GET /api/v1/health` и `GET /api/v1/readiness` | `docker compose up --build -d && just health && just readiness`; после проверки `docker compose down` | **Current verified** локально; не current CI-gate |
 | Real-DB integration | PostgreSQL constraints, migrations/readiness, CRUD, persisted effects, immutable pipeline plan snapshots, auth/PAT и current API boundaries | GitHub Actions PostgreSQL service + `cargo test --features integration --test integration_db -- --test-threads=1`; local fixture `backend/docker-compose.test.yml` | **Current verified** |
 | Playwright E2E | Критические пользовательские journeys на собранном frontend и real API/PostgreSQL stack | Playwright Chromium; trace, screenshot и video для failed/retried flow | **Target approved** |
@@ -125,10 +125,10 @@ Coverage измеряет поведение и риск, а не только l
 |---|---|
 | `backend` | Rust 1.86 + PostgreSQL 17 service: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db -- --test-threads=1`, OpenAPI drift gate. |
 | `frontend` | Node 22/pnpm 11: `pnpm install --frozen-lockfile`, `pnpm openapi:generate` + clean diff для `src/api/schema.d.ts`, `pnpm lint`, `pnpm test`, `pnpm build`. |
-| `security` | Rust/Node advisory gate и SBOM drift: SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm install --frozen-lockfile`, `pnpm audit --audit-level high`, `python3 scripts/generate_sbom.py --check`. |
+| `security` | Rust/Node advisory gate, committed-secret baseline и SBOM drift: SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm install --frozen-lockfile`, `pnpm audit --audit-level high`, `python3 scripts/scan_secrets.py`, `python3 scripts/generate_sbom.py --check`. |
 | `docs` | Python 3.12: Python syntax checks для docs/backup scripts, backup helper self-test/dry-run, shell wrapper syntax и `python3 scripts/verify_docs.py --all`. |
 
-Current CI не запускает compose startup/health smoke, release build, isolated owner/runtime migration matrix, prior-schema upgrade, Playwright, axe, Lighthouse, OpenAPI backward compatibility, `cargo-deny`, secret/container scan или coverage ratchet.
+Current CI не запускает compose startup/health smoke, release build, isolated owner/runtime migration matrix, prior-schema upgrade, Playwright, axe, Lighthouse, OpenAPI backward compatibility, `cargo-deny`, container scan, history/container secret scan или coverage ratchet.
 
 ### Target approved
 
@@ -141,7 +141,7 @@ Current CI не запускает compose startup/health smoke, release build, 
 | `frontend` | Frozen lockfile, lint, Vitest, generated-client typecheck, production build и coverage artifact. |
 | `compose-smoke` | `docker compose config -q`, build, healthy startup и API smoke с cleanup. |
 | `e2e-a11y-performance` | Playwright critical journeys, axe без serious/critical violations, Lighthouse budgets и retained reports. |
-| `security` | Current dependency audit/SBOM drift gate плюс target `cargo-deny`, secret и container scan по согласованной severity policy; confirmed secret или blocking vulnerability блокирует gate. |
+| `security` | Current dependency audit/secret/SBOM drift gate плюс target `cargo-deny`, container scan и deeper history secret scan по согласованной severity policy; confirmed secret или blocking vulnerability блокирует gate. |
 | `traceability` | `docs/TRACEABILITY.md` complete for changed requirements; REQ-ID links resolve to test/evidence and no changed normative behavior lacks mapping. |
 
 CI сохраняет artifacts для failed и required target runs: JUnit/coverage, Compose logs, migration evidence, OpenAPI compatibility report, Playwright report/trace/screenshots/video и Lighthouse reports. Успешная сборка без этих обязательных доказательств не является приёмкой target capability.

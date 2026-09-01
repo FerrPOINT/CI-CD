@@ -110,6 +110,8 @@ jobs:
     - uses: actions/setup-python@v5
       with:
         python-version: "3.12"
+    - name: Secret scan
+      run: python3 scripts/scan_secrets.py
     - name: SBOM drift gate
       run: python3 scripts/generate_sbom.py --check
 
@@ -122,7 +124,7 @@ jobs:
         python-version: "3.12"
     - name: script checks
       run: |
-        python3 -m py_compile scripts/verify_docs.py scripts/generate_sbom.py scripts/forge_backup.py
+        python3 -m py_compile scripts/verify_docs.py scripts/generate_sbom.py scripts/scan_secrets.py scripts/forge_backup.py
         python3 scripts/forge_backup.py self-test
         python3 scripts/forge_backup.py backup --dry-run --skip-git-fsck --backup-dir /tmp/forge-backup-smoke
         python3 scripts/forge_backup.py restore --dry-run --confirm-restore --skip-git-fsck /tmp/forge-backup-smoke

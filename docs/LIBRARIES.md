@@ -37,7 +37,7 @@ pnpm test
 pnpm build
 ```
 
-Для security/release проверки используются current SBOM refresh/drift gate, SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high`; `cargo-deny`, secret scan и container scan добавляются по правилам [THIRD PARTY](THIRD_PARTY.md) и [DEVELOPMENT GUIDE](DEVELOPMENT_GUIDE.md#target-approved).
+Для security/release проверки используются current SBOM refresh/drift gate, SQLx optional MySQL/RSA feature guard, `cargo audit --ignore RUSTSEC-2023-0071`, `pnpm audit --audit-level high` и `scripts/scan_secrets.py`; `cargo-deny`, container scan и deeper history secret scan добавляются по правилам [THIRD PARTY](THIRD_PARTY.md) и [DEVELOPMENT GUIDE](DEVELOPMENT_GUIDE.md#target-approved).
 
 ## 4. Current Rust dependency groups
 
@@ -66,7 +66,7 @@ pnpm build
 
 | Область | Кандидаты | Зачем | Правило ввода |
 |---|---|---|---|
-| Supply-chain gate | `cargo-deny`, secret/container scan | Закрыть license/source/ban policy и image/secret exposure для RISK-008 | Добавлять после current feature guard, `cargo audit`, `pnpm audit --audit-level high` и SBOM drift gate; исключения фиксировать с owner/remediation. |
+| Supply-chain gate | `cargo-deny`, container/history secret scan | Закрыть license/source/ban policy и image/secret exposure для RISK-008 | Добавлять после current feature guard, `cargo audit`, `pnpm audit --audit-level high`, baseline secret scan и SBOM drift gate; исключения фиксировать с owner/remediation. |
 | Rust CI speed/diagnostics | `cargo-nextest` | Быстрее и удобнее гонять workspace tests, JUnit/reporting, flaky diagnostics | Сначала настроить профили для real-DB tests (`--test-threads=1`, serial/heavy), затем делать CI gate. |
 | Rust Docker builds | `cargo-chef`, `sccache` | Сократить время build без runtime-кода | Только build tooling; Rust version должен совпадать во всех stages. |
 | YAML parser hardening | `serde-saphyr`, `yaml-rust2`, custom parser wrapper поверх текущего `yaml_serde` | Получить безопасные parser limits/diagnostics сверх compatibility API | Отдельный TDD-срез: fixture parity, unknown/duplicate keys, anchors/aliases, size/depth limits, line/column diagnostics. |

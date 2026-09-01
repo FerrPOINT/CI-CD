@@ -57,7 +57,7 @@
 | Auth/RBAC with `CICD_AUTH_SECRET` | Current verified |
 | Configurable CORS allowlist | Current verified MVP |
 | Liveness, DB-aware readiness and Prometheus metrics | Current verified |
-| Dependency audit and SBOM drift gate | Current verified MVP |
+| Dependency audit, secret scan and SBOM drift gate | Current verified MVP |
 | Schedules, outgoing webhooks, in-app/SSE notifications | MVP |
 | External adapters, tenant isolation, distributed runners | Target approved |
 
@@ -151,7 +151,7 @@ flowchart TD
 - TLS is not bundled; CORS is permissive only when `CICD_CORS_ALLOWED_ORIGINS` is empty for isolated development, and shared deployments must set an explicit allowlist. In-process rate limiting is not a replacement for a reverse proxy or distributed limiter.
 - Embedded runner records job ownership in `job_leases`, injects only declared secrets, collects declared artifact files, and reconciles expired leases. The external runner protocol MVP exposes register/heartbeat/bounded long-poll with in-process + PostgreSQL `LISTEN/NOTIFY` wakeup/ack/renew/`secrets:resolve`/artifact upload/logs/complete with bearer runner credentials and lease tokens; `forge-runner` can run as a separate shell runner process, keep active-lease heartbeat while commands run, append stdout/stderr to attempt-owned logs, resolve declared secrets, and upload declared artifacts. The API maintenance loop requeues unacknowledged offers after `ackDeadline`, fails dispatch-eligible queued jobs after configurable queue timeout when no compatible execution path exists, and marks stale online runners offline when no unexpired active lease protects them. Richer log chunks, resumable artifact sessions, Docker/Kubernetes isolation and sandbox hardening remain target work.
 - Pipeline trigger stores immutable `pipeline_plans` snapshots for current `legacy-linear` and v1 `jobs.needs` DAG plans; policy diagnostics/job-level dispatch remain target hardening.
-- Current CI runs SQLx optional MySQL/RSA feature guard, Rust/Node dependency audits and SBOM drift checks; `cargo-deny`, secret/container scan and release SBOM publication remain target hardening.
+- Current CI runs SQLx optional MySQL/RSA feature guard, Rust/Node dependency audits, secret scan and SBOM drift checks; `cargo-deny`, container scan and release SBOM publication remain target hardening.
 - Schedules, outgoing webhooks and `in_app`/`sse` notifications work as MVP local delivery.
 - Outbox delivery history, attempt log and failed-delivery requeue are bounded MVP features; inbound provider webhooks, external notification adapters and crash-safe distributed delivery guarantees are not complete.
 
@@ -168,6 +168,7 @@ Full current-state cut: [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md). Security
 | Backend tests | `just test-backend` |
 | Frontend tests | `just test-frontend` |
 | Frontend build | `just build-frontend` |
+| Secret scan | `python3 scripts/scan_secrets.py` |
 | SBOM drift | `python3 scripts/generate_sbom.py --check` |
 | Docs verification | `python3 scripts/verify_docs.py --all` |
 
@@ -181,6 +182,7 @@ Full current-state cut: [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md). Security
 | `just test-backend` | Backend unit and contract tests through the pinned Rust image |
 | `just test-frontend` | Frontend Vitest suite |
 | `just build-frontend` | Production frontend build |
+| `python3 scripts/scan_secrets.py` | Fail on committed token/key/password patterns in repository text |
 | `python3 scripts/generate_sbom.py --check` | Verify committed SBOM inventory is in sync |
 | `python3 scripts/verify_docs.py --all` | Documentation links, canonical statuses and docs integrity |
 
