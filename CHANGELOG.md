@@ -11,7 +11,7 @@
 
 ### Added
 
-- Auth/RBAC route-policy inventory: backend now keeps executable `ROUTE_POLICIES` for every generated OpenAPI/Git/metrics operation, denies unpublished API/Git routes under auth middleware and has a unit gate that fails when a new route ships without policy.
+- Auth/RBAC route-policy inventory: backend now keeps executable `ROUTE_POLICIES` for every generated OpenAPI/Git/metrics operation, cross-checks router path literals against that registry, denies unpublished API/Git routes under auth middleware and has a unit gate that fails when a new route ships without policy.
 - CI reliability guard: workflow runs are concurrency-bound per ref and all jobs have `timeout-minutes`; production image build and Trivy container scan also have step-level timeouts to avoid stuck security gates.
 - Frontend API transport hardening: `ApiError` now preserves server envelope fields (`code`, `message`, `request_id`, details, status and `Retry-After`) and separates API, network and cancelled failures for UI/RBAC diagnostics.
 - Dashboard auth hardening: `/users` can create interactive users with optional password credentials, and `AppShell` restores a stored refresh session before redirecting to `/login`.

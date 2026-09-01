@@ -698,6 +698,26 @@ mod tests {
     }
 
     #[test]
+    fn route_policy_inventory_covers_router_path_literals() {
+        let mut route_paths = BTreeSet::new();
+        collect_router_paths(include_str!("api.rs"), &mut route_paths);
+        collect_router_paths(include_str!("platform.rs"), &mut route_paths);
+        collect_router_paths(include_str!("runner_protocol.rs"), &mut route_paths);
+
+        let missing = route_paths
+            .iter()
+            .copied()
+            .filter(|path| ROUTE_POLICIES.iter().all(|policy| policy.path != *path))
+            .collect::<Vec<_>>();
+
+        assert!(
+            missing.is_empty(),
+            "router paths missing route policies:\n{}",
+            missing.join("\n")
+        );
+    }
+
+    #[test]
     fn route_policy_inventory_has_no_duplicates() {
         let mut seen = BTreeSet::new();
 
@@ -716,5 +736,27 @@ mod tests {
     fn unpublished_api_routes_are_not_user_allowed() {
         assert_eq!(route_access("GET", "/api/v1/not-published"), None);
         assert!(!allows(Role::Admin, "GET", "/api/v1/not-published"));
+    }
+
+    fn collect_router_paths(source: &'static str, paths: &mut BTreeSet<&'static str>) {
+        let mut rest = source;
+        while let Some(index) = rest.find(".route(") {
+            rest = &rest[index + ".route(".len()..];
+            let Some(after_quote) = rest.trim_start().strip_prefix('"') else {
+                continue;
+            };
+            let Some(end) = after_quote.find('"') else {
+                break;
+            };
+            let path = &after_quote[..end];
+            if is_published_route_path(path) {
+                paths.insert(path);
+            }
+            rest = &after_quote[end + 1..];
+        }
+    }
+
+    fn is_published_route_path(path: &str) -> bool {
+        path == "/metrics" || path.starts_with("/api/v1/") || path.starts_with("/git/")
     }
 }
