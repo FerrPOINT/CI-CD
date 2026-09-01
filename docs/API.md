@@ -72,8 +72,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 18,
-    "latest_required_version": 18,
+    "latest_applied_version": 19,
+    "latest_required_version": 19,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],
@@ -480,6 +480,7 @@ curl -sS http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines
           "name": "deploy",
           "image": "alpine:3.21",
           "command": "echo deploy",
+          "required_tags": [],
           "position": 0,
           "status": "queued",
           "started_at": null,
@@ -491,7 +492,7 @@ curl -sS http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines
 }
 ```
 
-Для v1 `.forge-ci.yml` plan имеет `format: "v1-dag"`, `version: 1`, `parser_version: "forge-dsl/1.0.0"`, массив `jobs[]` с `key`, исходными `commands[]`, runtime `command` (`set -e` script), `needs[]`, resolved runtime stage/position и массив `dependencies[]` вида `{from,to}`. Unsupported v1 ключи (`on`, `tags`, `retry`, `artifacts`, `secrets`) пока отклоняются `400`, а не игнорируются.
+Для v1 `.forge-ci.yml` plan имеет `format: "v1-dag"`, `version: 1`, `parser_version: "forge-dsl/1.0.0"`, массив `jobs[]` с `key`, исходными `commands[]`, runtime `command` (`set -e` script), `needs[]`, `required_tags[]`, resolved runtime stage/position и массив `dependencies[]` вида `{from,to}`. `defaults.tags` наследуется job-ами, `jobs.*.tags` заменяет defaults; tags сохраняются в `jobs.required_tags`/`job_queue.required_tags` и учитываются external runner claim. Unsupported v1 ключи (`on`, `retry`, `artifacts`, `secrets`) пока отклоняются `400`, а не игнорируются.
 
 **Errors:**
 - `400` — некорректный `Idempotency-Key` или pipeline config.
@@ -1207,18 +1208,18 @@ Runner protocol обслуживается на `/api/v1/runner/*` и не ис�
 | Метод | Путь | Body / результат |
 |---|---|---|
 | POST | `/api/v1/runner/register` | `{protocolVersion,registrationToken,name,tags?,capabilities?}` → `{protocolVersion,runnerId,credential,credentialExpiresAt,heartbeatIntervalSeconds,pollWaitMaxSeconds}` |
-| POST | `/api/v1/runner/heartbeat` | `{protocolVersion,status,draining,capacity,tags?,capabilities?,activeLeaseIds?}` → `204`; обновляет `last_seen_at`, tags, capacity, capabilities и heartbeat snapshot |
+| POST | `/api/v1/runner/heartbeat` | `{protocolVersion,status,draining,capacity,tags?,capabilities?,activeLeaseIds?}` → `204`; обновляет `last_seen_at`, capacity, capabilities и heartbeat snapshot; если `tags` переданы, заменяет stored tags, если нет — сохраняет текущие |
 | POST | `/api/v1/runner/work:poll` | `{protocolVersion,capacity,tags?,capabilityDigest?}` → `204` если работы нет или `200 LeaseOffer`; текущий MVP выполняет immediate poll без long-poll |
 | POST | `/api/v1/runner/leases/{lease_id}/ack` | `{protocolVersion,leaseToken,fencingToken}` → `{protocolVersion,leaseExpiresAt,renewAfter,cancelRequested}` |
 | POST | `/api/v1/runner/leases/{lease_id}/renew` | `{protocolVersion,leaseToken,fencingToken}` → продлевает active lease |
 | POST | `/api/v1/runner/leases/{lease_id}/logs` | `{protocolVersion,leaseToken,fencingToken,attemptId,lines:[{stream,message}]}` → append stdout/stderr/system строк в attempt-owned `job_logs` |
 | POST | `/api/v1/runner/leases/{lease_id}/complete` | `{protocolVersion,leaseToken,fencingToken,attemptId,outcome,finishedAt,exitCode?,diagnostic?}` → terminal result job/attempt/lease |
 
-`work:poll` атомарно выбирает queued `job_queue` row через `SKIP LOCKED`, создаёт active `job_leases`, генерирует opaque `leaseToken`, хранит только hash, фиксирует `ackDeadline`, `leaseExpiresAt`, `runnerProtocolVersion=1`, переводит queue row/job/attempt в `leased`/`running` и возвращает `fencingToken = job_leases.generation`. `ack`, `renew`, `logs` и `complete` одновременно проверяют runner identity, lease token hash, generation, active state и expiry; stale или fenced mutation возвращает `409`, expired lease — `410`.
+`work:poll` атомарно выбирает compatible queued `job_queue` row через `SKIP LOCKED`, проверяя `job_queue.required_tags ⊆ runner.tags`, создаёт active `job_leases`, генерирует opaque `leaseToken`, хранит только hash, фиксирует `ackDeadline`, `leaseExpiresAt`, `runnerProtocolVersion=1`, переводит queue row/job/attempt в `leased`/`running` и возвращает `fencingToken = job_leases.generation`. `ack`, `renew`, `logs` и `complete` одновременно проверяют runner identity, lease token hash, generation, active state и expiry; stale или fenced mutation возвращает `409`, expired lease — `410`.
 
 `LeaseOffer.attempt.workspace.checkoutUrl` содержит `projects.repository_url`, чтобы внешний `forge-runner` мог выполнить checkout без доступа к БД. Current `forge-runner` — отдельный shell-runner process: он умеет register/heartbeat/poll/ack/renew/logs/complete, checkout по `checkoutUrl`, запуск команд в workspace, отправку stdout/stderr в `job_logs` и terminal completion.
 
-Ограничения MVP: immediate poll без long-poll wakeup, нет protocol endpoints для secrets/artifacts, idempotent chunked log upload, pool policy, Docker/Kubernetes isolation и production sandbox. Durable `job_queue` уже есть как базовый dispatch ledger, но matching по tags/capabilities и production runner policy остаются target в `docs/RUNNER_ARCHITECTURE.md` и `docs/contracts/RUNNER_PROTOCOL.md`.
+Ограничения MVP: immediate poll без long-poll wakeup, нет protocol endpoints для secrets/artifacts, idempotent chunked log upload, pool/protected-tag policy, capability matching, Docker/Kubernetes isolation и production sandbox. Durable `job_queue` и basic tag matching уже есть как базовый dispatch ledger; production runner policy остаётся target в `docs/RUNNER_ARCHITECTURE.md` и `docs/contracts/RUNNER_PROTOCOL.md`.
 
 ### Secrets и artifacts
 

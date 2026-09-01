@@ -1430,6 +1430,7 @@ export interface components {
             name: string;
             /** Format: int32 */
             position: number;
+            required_tags: string[];
             /** Format: uuid */
             stage_id: string;
             /** Format: date-time */
@@ -1808,7 +1809,7 @@ export interface components {
             /** Format: int32 */
             protocolVersion: number;
             status: string;
-            tags?: string[];
+            tags?: string[] | null;
         };
         RunnerLeaseControlRequest: {
             /** Format: int64 */

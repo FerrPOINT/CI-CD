@@ -140,7 +140,7 @@ Composition root: чтение конфига, создание `PgPool`, реп
 
 ### 6.1 Pipeline lifecycle
 
-`projects → pipelines → pipeline_plans` и `projects → pipelines → stages → jobs → execution_attempts → job_logs` (CASCADE). Статусы `queued → running → success/failed/canceled`; правила — `JobStatus::transition_to()`. Агрегация job → stage → pipeline (`refresh_statuses`). Ручной trigger pipeline поддерживает `Idempotency-Key`, а `pipeline_triggers` хранит replay/fingerprint для защиты от duplicate run при повторе запроса. Текущий `pipeline_plans` фиксирует immutable snapshot с raw config/template, parser version, config/plan SHA-256 и dependency edges: `legacy-linear` для старого `stages/jobs` и `v1-dag` для `version: 1` + top-level `jobs.needs`. V1 DAG пока исполняется через топологические runtime-стадии `dag-*`; policy diagnostics, triggers и job-level dispatcher остаются target.
+`projects → pipelines → pipeline_plans` и `projects → pipelines → stages → jobs → execution_attempts → job_logs` (CASCADE). Статусы `queued → running → success/failed/canceled`; правила — `JobStatus::transition_to()`. Агрегация job → stage → pipeline (`refresh_statuses`). Ручной trigger pipeline поддерживает `Idempotency-Key`, а `pipeline_triggers` хранит replay/fingerprint для защиты от duplicate run при повторе запроса. Текущий `pipeline_plans` фиксирует immutable snapshot с raw config/template, parser version, config/plan SHA-256 и dependency edges: `legacy-linear` для старого `stages/jobs` и `v1-dag` для `version: 1` + top-level `jobs.needs`/`tags`. V1 DAG пока исполняется через топологические runtime-стадии `dag-*`; policy diagnostics, triggers и job-level dispatcher остаются target.
 
 ### 6.2 Git-хостинг
 
@@ -152,7 +152,7 @@ Supervisor-полл queued-джобов, атомарный lease-aware claim (`
 
 ### 6.4 External runner protocol MVP
 
-`/api/v1/runner/*` реализует control-plane protocol slice для внешних runner-ов: register через `CICD_RUNNER_REGISTRATION_TOKEN`, heartbeat с tags/capacity/capabilities, immediate `work:poll`, lease `ack`, `renew`, `logs` и `complete`. Сервер хранит только hash runner credential и lease token, а mutating lease endpoints проверяют runner identity, token, `job_leases.generation` и expiry. `work:poll` claim-ит durable `job_queue` row, отдаёт `workspace.checkoutUrl` из проекта, а `forge-runner` умеет зарегистрироваться, heartbeat-ить, подтвердить lease, продлевать её, выполнить команды в shell workspace, отправить stdout/stderr в attempt-owned `job_logs` и отправить terminal result. Long-poll wakeup, protocol secrets/artifacts, richer log chunks, Docker/Kubernetes sandbox isolation и production runner policy остаются target.
+`/api/v1/runner/*` реализует control-plane protocol slice для внешних runner-ов: register через `CICD_RUNNER_REGISTRATION_TOKEN`, heartbeat с tags/capacity/capabilities, immediate `work:poll`, lease `ack`, `renew`, `logs` и `complete`. Сервер хранит только hash runner credential и lease token, а mutating lease endpoints проверяют runner identity, token, `job_leases.generation` и expiry. `work:poll` claim-ит compatible durable `job_queue` row с `required_tags ⊆ runner.tags`, отдаёт `workspace.checkoutUrl` из проекта, а `forge-runner` умеет зарегистрироваться, heartbeat-ить, подтвердить lease, продлевать её, выполнить команды в shell workspace, отправить stdout/stderr в attempt-owned `job_logs` и отправить terminal result. Long-poll wakeup, protocol secrets/artifacts, richer log chunks, Docker/Kubernetes sandbox isolation и production runner policy остаются target.
 
 ### 6.5 Платформенные ресурсы (MVP)
 
@@ -171,7 +171,7 @@ Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-2
 - Domain: unit-тесты переходов статусов (`domain/src/lib.rs`, `tests/domain_transitions.rs`).
 - API contract: no-DB тесты health/readiness/503/валидации (`tests/api_contract.rs`).
 - CLI: contract-тест help-групп (`cli/tests/cli_contract.rs`).
-- Real-PostgreSQL integration tests уже есть для migrations/readiness/project/auth paths, trigger idempotency, immutable `pipeline_plans`, v1 DAG config из bare repo и runner protocol register/heartbeat/poll/ack/renew/logs/complete; target остаётся для Playwright E2E, coverage gate и широких failure/protocol tests.
+- Real-PostgreSQL integration tests уже есть для migrations/readiness/project/auth paths, trigger idempotency, immutable `pipeline_plans`, v1 DAG config из bare repo с `required_tags` и runner protocol register/heartbeat/poll/ack/renew/logs/complete с basic tag matching; target остаётся для Playwright E2E, coverage gate и широких failure/protocol tests.
 
 ## 9. Статус миграции (ADR-0005)
 
@@ -184,7 +184,7 @@ Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-2
 | app/infra/api/server пакеты | ⬜ Phase C (strangler по вертикалям) |
 | OpenAPI + генерация клиента | ✅ current: `openapi/openapi.yaml` + `frontend/src/api/schema.d.ts` |
 | Auth/RBAC/token middleware | ◩ current conditional: JWT/scoped PAT/global roles + project memberships + session-bound access invalidation + refresh rotate/logout/revoke при `CICD_AUTH_SECRET`; tenant scope, service-account/scoped Git credentials и production cookie/CSRF/session-family policy target |
-| Distributed runner protocol | ◩ current MVP: `/api/v1/runner/*` register/heartbeat/poll/ack/renew/logs/complete + durable `job_queue` + hashed credentials/lease tokens + fencing generation + `forge-runner` shell process; long-poll, secrets/artifacts protocol, richer log chunks и sandbox boundary остаются Phase D |
+| Distributed runner protocol | ◩ current MVP: `/api/v1/runner/*` register/heartbeat/poll/ack/renew/logs/complete + durable `job_queue` + basic tag matching + hashed credentials/lease tokens + fencing generation + `forge-runner` shell process; long-poll, secrets/artifacts protocol, richer log chunks и sandbox boundary остаются Phase D |
 
 ## 10. Dev workflow
 

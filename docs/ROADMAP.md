@@ -19,9 +19,9 @@ Roadmap фиксирует порядок доведения Forge до базо
 На 2026-09-01 в коде уже есть:
 
 - проекты, встроенный bare Git hosting, Smart HTTP и auto-trigger pipeline на push;
-- pipeline из `.forge-ci.yml` с legacy линейными stages/jobs и v1 DAG MVP (`version: 1`, top-level `jobs.commands/needs`), fallback-шаблон, immutable `pipeline_plans` snapshot (`legacy-linear`/`v1-dag`), manual legacy jobs, basic timeout и `allow_failure`;
+- pipeline из `.forge-ci.yml` с legacy линейными stages/jobs и v1 DAG MVP (`version: 1`, top-level `jobs.commands/needs/tags`, `defaults.tags`), fallback-шаблон, immutable `pipeline_plans` snapshot (`legacy-linear`/`v1-dag`), manual legacy jobs, basic timeout и `allow_failure`;
 - embedded runner в `cicd-server`: Docker/host shell, stdout/stderr в attempt-owned `job_logs`, cancel/retry, embedded `job_leases` claim/close/expiry reconciliation;
-- external runner protocol MVP: register через `CICD_RUNNER_REGISTRATION_TOKEN`, heartbeat, immediate `work:poll`, lease token, ack/renew/logs/complete, `workspace.checkoutUrl`, fencing generation и отдельный `forge-runner` shell process;
+- external runner protocol MVP: register через `CICD_RUNNER_REGISTRATION_TOKEN`, heartbeat, immediate `work:poll`, basic tag matching, lease token, ack/renew/logs/complete, `workspace.checkoutUrl`, fencing generation и отдельный `forge-runner` shell process;
 - `execution_attempts`: каждая job получает initial attempt, retry job/pipeline создаёт новую attempt и сохраняет старые логи;
 - REST logs, attempts API и SSE stream логов job;
 - local artifacts до 50 MiB с metadata текущей/latest attempt и SHA-256 для новых uploads;
@@ -47,7 +47,7 @@ Roadmap фиксирует порядок доведения Forge до базо
 
 Deliverables:
 
-- Current MVP: `pipeline_plans` immutable snapshot с raw config/fallback template, parser version, config/plan SHA-256, legacy-linear dependency edges и v1 `jobs.needs` DAG plan;
+- Current MVP: `pipeline_plans` immutable snapshot с raw config/fallback template, parser version, config/plan SHA-256, legacy-linear dependency edges и v1 `jobs.needs`/`required_tags` DAG plan;
 - Current MVP: таблицы `execution_attempts` и attempt-owned log/artifact metadata;
 - Current MVP: таблица `job_leases` для embedded claim, terminal close, cancel close и expiry reconciliation;
 - Current MVP: retry pipeline/job создаёт новую attempt, старые логи и timestamps остаются доступными;
@@ -127,9 +127,9 @@ Gate:
 
 Deliverables:
 
-- Current MVP: durable `job_queue`, `/api/v1/runner/*` register/heartbeat/immediate poll/ack/renew/logs/complete, hashed runner credential, lease token hash, `workspace.checkoutUrl`, fencing generation и отдельный `forge-runner` shell process;
-- long-poll/wakeup, pool-aware claim policy, lost-runner requeue и production lease reconciliation;
-- runner registration credentials rotation/revoke, heartbeat, tags/capacity/drain policy;
+- Current MVP: durable `job_queue`, `/api/v1/runner/*` register/heartbeat/immediate poll/ack/renew/logs/complete, basic tag matching, hashed runner credential, lease token hash, `workspace.checkoutUrl`, fencing generation и отдельный `forge-runner` shell process;
+- long-poll/wakeup, pool/protected-tag/capability claim policy, lost-runner requeue и production lease reconciliation;
+- runner registration credentials rotation/revoke, heartbeat, capacity/drain policy;
 - cancel/timeout/reconciliation для потерянного runner-а;
 - secret delivery, log chunks и artifact upload только owner-у lease.
 

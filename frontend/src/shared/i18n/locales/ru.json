@@ -137,6 +137,7 @@
     "logs": "Логи",
     "image": "Образ",
     "command": "Команда",
+    "runnerTags": "Теги runner",
     "attempt": "Попытка",
     "trigger": "Источник",
     "exitCode": "Код выхода",

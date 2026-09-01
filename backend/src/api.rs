@@ -1780,6 +1780,7 @@ struct Job {
     name: String,
     image: String,
     command: String,
+    required_tags: Vec<String>,
     position: i32,
     status: String,
     started_at: Option<DateTime<Utc>>,
@@ -1967,9 +1968,9 @@ pub(crate) async fn create_pipeline_with_vars_idempotent(
             .bind(stage_id).bind(pipeline.id).bind(&stage.name).bind(position as i32).execute(&mut *tx).await.map_err(ApiError::internal)?;
         for (job_position, job) in stage.jobs.iter().enumerate() {
             let job_id = Uuid::new_v4();
-            sqlx::query("INSERT INTO jobs (id, stage_id, name, image, command, position, status, timeout_seconds, allow_failure, manual) VALUES ($1, $2, $3, $4, $5, $6, 'queued', $7, $8, $9)")
-                .bind(job_id).bind(stage_id).bind(&job.name).bind(&job.image).bind(&job.command).bind(job_position as i32)
-                .bind(job.timeout_seconds).bind(job.allow_failure).bind(job.manual)
+            sqlx::query("INSERT INTO jobs (id, stage_id, name, image, command, required_tags, position, status, timeout_seconds, allow_failure, manual) VALUES ($1, $2, $3, $4, $5, $6, $7, 'queued', $8, $9, $10)")
+                .bind(job_id).bind(stage_id).bind(&job.name).bind(&job.image).bind(&job.command).bind(&job.required_tags)
+                .bind(job_position as i32).bind(job.timeout_seconds).bind(job.allow_failure).bind(job.manual)
                 .execute(&mut *tx).await.map_err(ApiError::internal)?;
             let attempt_id = Uuid::new_v4();
             sqlx::query("INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) VALUES ($1, $2, 1, 'queued', 'initial')")
@@ -2091,6 +2092,7 @@ struct LegacyPlanJob {
     position: i32,
     image: String,
     command: String,
+    required_tags: Vec<String>,
     timeout_seconds: Option<i32>,
     allow_failure: bool,
     manual: bool,
@@ -2130,6 +2132,7 @@ struct V1PlanJob {
     image: String,
     commands: Vec<String>,
     command: String,
+    required_tags: Vec<String>,
     timeout_seconds: Option<i32>,
     allow_failure: bool,
     needs: Vec<String>,
@@ -2205,6 +2208,7 @@ fn build_legacy_execution_plan(
                 position: job_position,
                 image: job.image.clone(),
                 command: job.command.clone(),
+                required_tags: job.required_tags.clone(),
                 timeout_seconds: job.timeout_seconds,
                 allow_failure: job.allow_failure,
                 manual: job.manual,
@@ -2258,6 +2262,7 @@ struct CiJob {
     name: String,
     image: String,
     command: String,
+    required_tags: Vec<String>,
     timeout_seconds: Option<i32>,
     allow_failure: bool,
     manual: bool,
@@ -2399,6 +2404,7 @@ fn parse_legacy_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, Strin
                     name: job.name,
                     image: job.image,
                     command: job.command,
+                    required_tags: Vec::new(),
                     timeout_seconds: parse_timeout(job.timeout.as_deref()),
                     allow_failure: job.allow_failure,
                     manual: job.when.as_deref() == Some("manual"),
@@ -2420,6 +2426,7 @@ struct NormalizedV1Job {
     key: String,
     image: String,
     commands: Vec<String>,
+    required_tags: Vec<String>,
     timeout_seconds: Option<i32>,
     allow_failure: bool,
     needs: Vec<String>,
@@ -2440,6 +2447,8 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
     struct YamlV1Defaults {
         image: Option<String>,
         timeout: Option<String>,
+        #[serde(default)]
+        tags: Vec<String>,
     }
 
     #[derive(serde::Deserialize)]
@@ -2450,6 +2459,7 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
         image: Option<String>,
         commands: Vec<String>,
         timeout: Option<String>,
+        tags: Option<Vec<String>>,
         #[serde(default)]
         allow_failure: bool,
     }
@@ -2474,6 +2484,7 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
         return Err(".forge-ci.yml v1 defaults.image must be a safe image reference".into());
     }
     let default_timeout = parse_v1_timeout("defaults.timeout", parsed.defaults.timeout.as_deref())?;
+    let default_tags = normalize_v1_tags("defaults.tags", parsed.defaults.tags)?;
 
     let mut jobs = BTreeMap::new();
     let mut edge_count = 0usize;
@@ -2505,6 +2516,10 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
         let timeout_seconds = match job.timeout.as_deref() {
             Some(raw) => parse_v1_timeout(&format!("jobs.{key}.timeout"), Some(raw))?,
             None => default_timeout,
+        };
+        let required_tags = match job.tags {
+            Some(tags) => normalize_v1_tags(&format!("jobs.{key}.tags"), tags)?,
+            None => default_tags.clone(),
         };
 
         if job.needs.len() > 64 {
@@ -2539,6 +2554,7 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
                 key,
                 image,
                 commands: job.commands,
+                required_tags,
                 timeout_seconds,
                 allow_failure: job.allow_failure,
                 needs,
@@ -2585,6 +2601,7 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
                 name: job.key.clone(),
                 image: job.image.clone(),
                 command: command.clone(),
+                required_tags: job.required_tags.clone(),
                 timeout_seconds: job.timeout_seconds,
                 allow_failure: job.allow_failure,
                 manual: false,
@@ -2597,6 +2614,7 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
                 image: job.image,
                 commands: job.commands,
                 command,
+                required_tags: job.required_tags,
                 timeout_seconds: job.timeout_seconds,
                 allow_failure: job.allow_failure,
                 needs: job.needs,
@@ -2729,6 +2747,37 @@ fn parse_v1_timeout(field: &str, raw: Option<&str>) -> Result<Option<i32>, Strin
     Ok(Some(seconds))
 }
 
+fn normalize_v1_tags(field: &str, tags: Vec<String>) -> Result<Vec<String>, String> {
+    if tags.len() > 64 {
+        return Err(format!(".forge-ci.yml v1 {field} supports at most 64 tags"));
+    }
+    let mut normalized = BTreeSet::new();
+    for tag in tags {
+        let tag = tag.trim();
+        if !is_valid_runner_tag(tag) {
+            return Err(format!(
+                ".forge-ci.yml v1 {field} tag '{tag}' must match ^[a-z0-9][a-z0-9._-]{{0,62}}$"
+            ));
+        }
+        normalized.insert(tag.to_string());
+    }
+    Ok(normalized.into_iter().collect())
+}
+
+fn is_valid_runner_tag(tag: &str) -> bool {
+    let bytes = tag.as_bytes();
+    if bytes.is_empty() || bytes.len() > 63 {
+        return false;
+    }
+    let first = bytes[0];
+    if !first.is_ascii_lowercase() && !first.is_ascii_digit() {
+        return false;
+    }
+    bytes
+        .iter()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-'))
+}
+
 fn is_valid_v1_job_key(key: &str) -> bool {
     let mut chars = key.chars();
     let Some(first) = chars.next() else {
@@ -2749,6 +2798,7 @@ fn default_pipeline() -> Vec<CiStage> {
                 name: "checkout".into(),
                 image: "alpine/git:latest".into(),
                 command: "git fetch --all".into(),
+                required_tags: Vec::new(),
                 timeout_seconds: None,
                 allow_failure: false,
                 manual: false,
@@ -2760,6 +2810,7 @@ fn default_pipeline() -> Vec<CiStage> {
                 name: "unit-tests".into(),
                 image: "rust:1.86".into(),
                 command: "cargo test".into(),
+                required_tags: Vec::new(),
                 timeout_seconds: None,
                 allow_failure: false,
                 manual: false,
@@ -2770,6 +2821,7 @@ fn default_pipeline() -> Vec<CiStage> {
             jobs: vec![CiJob {
                 name: "deploy".into(),
                 image: "alpine:3.21".into(),
+                required_tags: Vec::new(),
                 timeout_seconds: None,
                 allow_failure: false,
                 manual: false,
@@ -2791,8 +2843,15 @@ fn validate_ci_stages(stages: &[CiStage]) -> Result<(), String> {
             if job.name.trim().is_empty()
                 || job.command.trim().is_empty()
                 || !is_safe_image_reference(&job.image)
+                || job
+                    .required_tags
+                    .iter()
+                    .any(|tag| !is_valid_runner_tag(tag))
             {
-                return Err("every job needs a name, command, and safe image reference".into());
+                return Err(
+                    "every job needs a name, command, safe image reference and safe runner tags"
+                        .into(),
+                );
             }
         }
     }
@@ -3513,6 +3572,7 @@ version: 1
 defaults:
   image: alpine:3.21
   timeout: 20m
+  tags: [linux, docker]
 jobs:
   build:
     commands:
@@ -3525,6 +3585,7 @@ jobs:
     needs: [build, lint]
     image: rust:1.86
     timeout: 45m
+    tags: [linux]
     commands:
       - cargo test
       - cargo clippy --all-targets
@@ -3550,10 +3611,22 @@ jobs:
             ["build", "lint"]
         );
         assert_eq!(parsed.stages[0].jobs[0].timeout_seconds, Some(1200));
+        assert_eq!(
+            parsed.stages[0].jobs[0].required_tags,
+            vec!["docker".to_string(), "linux".to_string()]
+        );
         assert!(parsed.stages[0].jobs[1].allow_failure);
+        assert_eq!(
+            parsed.stages[0].jobs[1].required_tags,
+            vec!["docker".to_string(), "linux".to_string()]
+        );
         assert_eq!(parsed.stages[1].jobs[0].name, "test");
         assert_eq!(parsed.stages[1].jobs[0].image, "rust:1.86");
         assert_eq!(parsed.stages[1].jobs[0].timeout_seconds, Some(2700));
+        assert_eq!(
+            parsed.stages[1].jobs[0].required_tags,
+            vec!["linux".to_string()]
+        );
         assert_eq!(
             parsed.stages[1].jobs[0].command,
             "set -e\ncargo test\ncargo clippy --all-targets"
@@ -3596,6 +3669,10 @@ jobs:
         assert_eq!(first.plan["format"], "v1-dag");
         assert_eq!(first.plan["version"], 1);
         assert_eq!(first.plan["jobs"].as_array().unwrap().len(), 3);
+        assert_eq!(
+            first.plan["jobs"][0]["required_tags"],
+            serde_json::json!([])
+        );
         assert_eq!(first.plan["dependencies"].as_array().unwrap().len(), 2);
         assert_eq!(first.plan["dependencies"][0]["from"], "build");
         assert_eq!(first.plan["dependencies"][0]["to"], "test");
@@ -3612,6 +3689,7 @@ jobs:
             "version: 1\njobs:\n  build:\n    needs: [test]\n    commands: [echo build]\n  test:\n    needs: [build]\n    commands: [echo test]\n",
             "version: 1\njobs:\n  build:\n    commands: []\n",
             "version: 1\njobs:\n  build:\n    timeout: 25h\n    commands: [echo build]\n",
+            "version: 1\njobs:\n  build:\n    tags: [Prod]\n    commands: [echo build]\n",
             "version: 1\njobs:\n  build:\n    artifacts:\n      paths: [target]\n    commands: [echo build]\n",
         ] {
             assert!(parse_pipeline_config(Some(source)).is_err(), "{source}");
@@ -3688,7 +3766,7 @@ async fn pipeline_detail(pool: &PgPool, pipeline_id: Uuid) -> Result<PipelineDet
     let stages = sqlx::query_as::<_, Stage>("SELECT id, pipeline_id, name, position, status FROM stages WHERE pipeline_id = $1 ORDER BY position").bind(pipeline_id).fetch_all(pool).await.map_err(ApiError::internal)?;
     let mut details = Vec::with_capacity(stages.len());
     for stage in stages {
-        let jobs = sqlx::query_as::<_, Job>("SELECT id, stage_id, name, image, command, position, status, started_at, finished_at FROM jobs WHERE stage_id = $1 ORDER BY position").bind(stage.id).fetch_all(pool).await.map_err(ApiError::internal)?;
+        let jobs = sqlx::query_as::<_, Job>("SELECT id, stage_id, name, image, command, required_tags, position, status, started_at, finished_at FROM jobs WHERE stage_id = $1 ORDER BY position").bind(stage.id).fetch_all(pool).await.map_err(ApiError::internal)?;
         details.push(StageDetail { stage, jobs });
     }
     Ok(PipelineDetail {
@@ -3709,13 +3787,13 @@ async fn change_job_status(
     Json(input): Json<ChangeStatus>,
 ) -> ApiResult<Job> {
     let pool = pool(&state)?;
-    let job = sqlx::query_as::<_, Job>("SELECT id, stage_id, name, image, command, position, status, started_at, finished_at FROM jobs WHERE id = $1").bind(job_id).fetch_optional(pool).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?;
+    let job = sqlx::query_as::<_, Job>("SELECT id, stage_id, name, image, command, required_tags, position, status, started_at, finished_at FROM jobs WHERE id = $1").bind(job_id).fetch_optional(pool).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?;
     let current = JobStatus::try_from(job.status.as_str()).map_err(ApiError::bad_request)?;
     current
         .transition_to(input.status)
         .map_err(|error| ApiError::bad_request(error.to_string()))?;
     transition_open_attempt(pool, job_id, input.status.as_str(), "manual_status").await?;
-    let updated = sqlx::query_as::<_, Job>("UPDATE jobs SET status = $2, started_at = CASE WHEN $2 = 'running' THEN now() ELSE started_at END, finished_at = CASE WHEN $2 IN ('success','failed','canceled') THEN now() ELSE finished_at END WHERE id = $1 RETURNING id, stage_id, name, image, command, position, status, started_at, finished_at").bind(job_id).bind(input.status.as_str()).fetch_one(pool).await.map_err(ApiError::internal)?;
+    let updated = sqlx::query_as::<_, Job>("UPDATE jobs SET status = $2, started_at = CASE WHEN $2 = 'running' THEN now() ELSE started_at END, finished_at = CASE WHEN $2 IN ('success','failed','canceled') THEN now() ELSE finished_at END WHERE id = $1 RETURNING id, stage_id, name, image, command, required_tags, position, status, started_at, finished_at").bind(job_id).bind(input.status.as_str()).fetch_one(pool).await.map_err(ApiError::internal)?;
     if matches!(
         input.status,
         JobStatus::Success | JobStatus::Failed | JobStatus::Canceled
@@ -3939,7 +4017,7 @@ async fn retry_pipeline(
 #[utoipa::path(post, path="/api/v1/jobs/{job_id}/retry", tag="jobs", params(("job_id"=Uuid, Path)), responses((status=200, body=Job), (status=404)))]
 async fn retry_job(State(state): State<Arc<AppState>>, Path(job_id): Path<Uuid>) -> ApiResult<Job> {
     let pool = pool(&state)?;
-    let job = sqlx::query_as::<_, Job>("SELECT id, stage_id, name, image, command, position, status, started_at, finished_at FROM jobs WHERE id = $1")
+    let job = sqlx::query_as::<_, Job>("SELECT id, stage_id, name, image, command, required_tags, position, status, started_at, finished_at FROM jobs WHERE id = $1")
         .bind(job_id)
         .fetch_optional(pool)
         .await
@@ -3960,7 +4038,7 @@ async fn retry_job(State(state): State<Arc<AppState>>, Path(job_id): Path<Uuid>)
     .execute(pool)
     .await
     .map_err(ApiError::internal)?;
-    let updated = sqlx::query_as::<_, Job>("UPDATE jobs SET status = 'queued', started_at = NULL, finished_at = NULL WHERE id = $1 RETURNING id, stage_id, name, image, command, position, status, started_at, finished_at")
+    let updated = sqlx::query_as::<_, Job>("UPDATE jobs SET status = 'queued', started_at = NULL, finished_at = NULL WHERE id = $1 RETURNING id, stage_id, name, image, command, required_tags, position, status, started_at, finished_at")
         .bind(job_id)
         .fetch_one(pool)
         .await

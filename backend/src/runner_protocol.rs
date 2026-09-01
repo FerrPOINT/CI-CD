@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use axum::{
     Json, Router,
@@ -59,7 +62,7 @@ pub(crate) struct RunnerRegisterRequest {
     name: String,
     #[serde(default)]
     tags: Vec<String>,
-    #[serde(default)]
+    #[serde(default = "default_capabilities")]
     capabilities: serde_json::Value,
 }
 
@@ -83,8 +86,8 @@ pub(crate) struct RunnerHeartbeatRequest {
     draining: bool,
     capacity: RunnerCapacity,
     #[serde(default)]
-    tags: Vec<String>,
-    #[serde(default)]
+    tags: Option<Vec<String>>,
+    #[serde(default = "default_capabilities")]
     capabilities: serde_json::Value,
     #[serde(default)]
     active_lease_ids: Vec<Uuid>,
@@ -226,6 +229,7 @@ pub(crate) struct RunnerCompleteResponse {
 struct AuthenticatedRunner {
     id: Uuid,
     name: String,
+    tags: Vec<String>,
     status: String,
     draining: bool,
 }
@@ -293,7 +297,7 @@ pub(crate) async fn register_runner_protocol(
     validate_registration_token(&input.registration_token)?;
     let name = input.name.trim();
     validate_name(name)?;
-    validate_tags(&input.tags)?;
+    let tags = normalize_tags(&input.tags)?;
     validate_capabilities(&input.capabilities)?;
 
     let credential = new_opaque_token("cicd_runner");
@@ -311,7 +315,7 @@ pub(crate) async fn register_runner_protocol(
     )
     .bind(runner_id)
     .bind(name)
-    .bind(&input.tags)
+    .bind(&tags)
     .bind(&credential_hash)
     .bind(&token_hint)
     .bind(credential_expires_at)
@@ -349,16 +353,20 @@ pub(crate) async fn runner_protocol_heartbeat(
 ) -> Result<StatusCode, ApiError> {
     validate_protocol_version(input.protocol_version)?;
     validate_capacity(input.capacity.total_slots, input.capacity.busy_slots)?;
-    validate_tags(&input.tags)?;
     validate_capabilities(&input.capabilities)?;
     let runner = authenticate_runner(pool(&state)?, &headers).await?;
+    let tags = input
+        .tags
+        .as_ref()
+        .map(|tags| normalize_tags(tags))
+        .transpose()?
+        .unwrap_or_else(|| runner.tags.clone());
     if !matches!(input.status.as_str(), "online" | "draining") {
         return Err(ApiError::bad_request(
             "runner status must be online or draining",
         ));
     }
     let status = input.status;
-    let tags = input.tags;
     let capabilities = input.capabilities;
     let active_lease_ids = input.active_lease_ids;
     let draining = input.draining || status == "draining";
@@ -414,6 +422,7 @@ pub(crate) async fn poll_runner_work(
     validate_poll_request(&input)?;
     let db = pool(&state)?;
     let runner = authenticate_runner(db, &headers).await?;
+    let runner_tags = poll_runner_tags(&runner, &input.tags)?;
     if runner.status != "online" || runner.draining || input.capacity.free_slots == 0 {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
@@ -428,7 +437,7 @@ pub(crate) async fn poll_runner_work(
         .await
         .map_err(ApiError::internal)?;
 
-    match claim_next_work(db, &runner).await? {
+    match claim_next_work(db, &runner, &runner_tags).await? {
         Some(offer) => Ok(Json(offer).into_response()),
         None => Ok(StatusCode::NO_CONTENT.into_response()),
     }
@@ -746,6 +755,7 @@ pub(crate) async fn complete_runner_lease(
 async fn claim_next_work(
     db: &PgPool,
     runner: &AuthenticatedRunner,
+    runner_tags: &[String],
 ) -> Result<Option<RunnerLeaseOffer>, ApiError> {
     crate::store::enqueue_missing_ready_jobs(db)
         .await
@@ -768,6 +778,7 @@ async fn claim_next_work(
              LEFT JOIN pipeline_plans pp ON pp.pipeline_id = p.id \
              WHERE q.state = 'queued' \
                AND q.not_before <= now() \
+               AND q.required_tags <@ $8::text[] \
                AND j.status = 'queued' \
                AND a.status = 'queued' \
                AND NOT j.manual \
@@ -844,6 +855,7 @@ async fn claim_next_work(
     .bind(&lease_token_hash)
     .bind(ACK_DEADLINE_SECONDS)
     .bind(PROTOCOL_VERSION)
+    .bind(runner_tags)
     .fetch_optional(db)
     .await
     .map_err(ApiError::internal)?;
@@ -890,7 +902,7 @@ async fn authenticate_runner(
     let token = bearer_token(headers)?;
     let token_hash = crate::auth::hash_token(token);
     let runner = sqlx::query_as::<_, AuthenticatedRunner>(
-        "SELECT id, name, status, draining \
+        "SELECT id, name, tags, status, draining \
          FROM runners \
          WHERE credential_hash = $1 \
            AND disabled_at IS NULL \
@@ -978,12 +990,46 @@ fn validate_name(name: &str) -> Result<(), ApiError> {
 }
 
 fn validate_tags(tags: &[String]) -> Result<(), ApiError> {
-    if tags.len() > MAX_TAGS || tags.iter().any(|tag| !valid_tag(tag.trim())) {
+    normalize_tags(tags).map(|_| ())
+}
+
+fn normalize_tags(tags: &[String]) -> Result<Vec<String>, ApiError> {
+    if tags.len() > MAX_TAGS {
         return Err(ApiError::bad_request(
             "runner tags must match ^[a-z0-9][a-z0-9._-]{0,62}$ and max 64 items",
         ));
     }
-    Ok(())
+    let mut normalized = BTreeSet::new();
+    for tag in tags {
+        let tag = tag.trim();
+        if !valid_tag(tag) {
+            return Err(ApiError::bad_request(
+                "runner tags must match ^[a-z0-9][a-z0-9._-]{0,62}$ and max 64 items",
+            ));
+        }
+        normalized.insert(tag.to_string());
+    }
+    Ok(normalized.into_iter().collect())
+}
+
+fn poll_runner_tags(
+    runner: &AuthenticatedRunner,
+    requested_tags: &[String],
+) -> Result<Vec<String>, ApiError> {
+    let requested = normalize_tags(requested_tags)?;
+    if requested.is_empty() {
+        return Ok(runner.tags.clone());
+    }
+    let stored: BTreeSet<&str> = runner.tags.iter().map(String::as_str).collect();
+    if requested
+        .iter()
+        .any(|requested| !stored.contains(requested.as_str()))
+    {
+        return Err(ApiError::bad_request(
+            "poll tags must be a subset of current runner tags",
+        ));
+    }
+    Ok(requested)
 }
 
 fn valid_tag(value: &str) -> bool {
@@ -1006,6 +1052,10 @@ fn validate_capabilities(value: &serde_json::Value) -> Result<(), ApiError> {
     } else {
         Err(ApiError::bad_request("capabilities must be an object"))
     }
+}
+
+fn default_capabilities() -> serde_json::Value {
+    serde_json::Value::Object(serde_json::Map::new())
 }
 
 fn validate_log_lines(lines: &[RunnerLogLine]) -> Result<(), ApiError> {
@@ -1142,6 +1192,50 @@ mod tests {
         assert!(!valid_tag("Docker"));
         assert!(!valid_tag("-docker"));
         assert!(!valid_tag("docker/linux"));
+    }
+
+    #[test]
+    fn runner_poll_tags_are_normalized_and_scoped() {
+        let runner = AuthenticatedRunner {
+            id: Uuid::nil(),
+            name: "runner-1".to_string(),
+            tags: vec!["docker".to_string(), "linux".to_string()],
+            status: "online".to_string(),
+            draining: false,
+        };
+
+        assert_eq!(
+            poll_runner_tags(&runner, &[]).unwrap(),
+            vec!["docker".to_string(), "linux".to_string()]
+        );
+        assert_eq!(
+            poll_runner_tags(&runner, &[" linux ".to_string()]).unwrap(),
+            vec!["linux".to_string()]
+        );
+        assert!(poll_runner_tags(&runner, &["prod".to_string()]).is_err());
+    }
+
+    #[test]
+    fn runner_capabilities_default_to_empty_object() {
+        let register: RunnerRegisterRequest = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "registrationToken": "registration-token",
+            "name": "runner-1",
+            "tags": ["linux"]
+        }))
+        .unwrap();
+        assert_eq!(register.capabilities, serde_json::json!({}));
+        assert!(validate_capabilities(&register.capabilities).is_ok());
+
+        let heartbeat: RunnerHeartbeatRequest = serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "status": "online",
+            "capacity": {"totalSlots": 1, "busySlots": 0}
+        }))
+        .unwrap();
+        assert!(heartbeat.tags.is_none());
+        assert_eq!(heartbeat.capabilities, serde_json::json!({}));
+        assert!(validate_capabilities(&heartbeat.capabilities).is_ok());
     }
 
     #[test]

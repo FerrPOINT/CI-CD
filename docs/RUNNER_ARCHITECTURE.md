@@ -27,11 +27,11 @@
 | Область | Сейчас | Цель |
 |---|---|---|
 | Архитектура backend | Переходный monolith: `api.rs`, `platform.rs`, `runner.rs`, `store.rs`; `domain` и `cli` уже выделяются в workspace; `forge-runner` существует как отдельный shell-runner binary | Полный Cargo workspace `domain → app → infra → api`, отдельный `server` composition root и production runner process |
-| Pipeline config | `.forge-ci.yml` уже читается из локального bare-репозитория по best-effort resolved commit; поддерживаются legacy линейные `stages/jobs` и v1 DAG MVP (`version: 1`, top-level `jobs.commands/needs`), при отсутствии файла используется `legacy_template`; `pipeline_plans` хранит raw config/template, parser version и SHA-256 hashes | Policy validation, triggers, tags/retry/artifacts/secrets и production diagnostics |
+| Pipeline config | `.forge-ci.yml` уже читается из локального bare-репозитория по best-effort resolved commit; поддерживаются legacy линейные `stages/jobs` и v1 DAG MVP (`version: 1`, top-level `jobs.commands/needs/tags` + `defaults.tags`), при отсутствии файла используется `legacy_template`; `pipeline_plans` хранит raw config/template, parser version и SHA-256 hashes | Policy validation, triggers, retry/artifacts/secrets и production diagnostics |
 | Планирование | Current `pipeline_plans` хранит normalised `legacy-linear` или `v1-dag` snapshot; v1 `needs` проходит topological validation и исполняется через runtime-стадии `dag-*` | Job-level DAG dispatcher с `needs`, матрицами, rules и неизменяемым policy-aware plan |
 | Выполнение | Embedded supervisor в `cicd-server`; Docker или host shell; PID map в памяти; `job_leases` фиксирует embedded owner/expiry/terminal outcome; external runner protocol MVP может claim/ack/renew/logs/complete queued job через API; `forge-runner` shell MVP выполняет checkout/commands/log append/terminal completion отдельным процессом | Отдельные sandboxed runner-ы, pull protocol, leases, attempts, reconciliation; host shell отсутствует в production |
 | Runner registry | Legacy `POST /runners` inventory плюс protocol register через `CICD_RUNNER_REGISTRATION_TOKEN`; runner credential hash, tags, heartbeat, capacity, capabilities, drain/disable metadata сохраняются в `runners` | Runner pools/scopes, credential rotation/revocation UI/API, mTLS/service identity, selection dispatcher |
-| Очередь | Durable `job_queue` материализует dispatch row для current queued attempt; trigger/retry/manual start enqueue-ят non-manual work; embedded и external `work:poll` claim-ят queue row через `SKIP LOCKED`, создают active `job_leases`, lease token/`workspace.checkoutUrl`, ack/renew/logs/complete и fencing generation; long-poll wakeup ещё target | PostgreSQL queue с richer scheduling eligibility, pool policy, tag/capability matching и outbox/event wakeup |
+| Очередь | Durable `job_queue` материализует dispatch row для current queued attempt и хранит `required_tags`; trigger/retry/manual start enqueue-ят non-manual work; embedded claim берёт только untagged rows, external `work:poll` claim-ит compatible queue row через `SKIP LOCKED` + `required_tags ⊆ runner.tags`, создаёт active `job_leases`, lease token/`workspace.checkoutUrl`, ack/renew/logs/complete и fencing generation; long-poll wakeup ещё target | PostgreSQL queue с richer scheduling eligibility, pool/protected-tag policy, capability matching и outbox/event wakeup |
 | Retry | API повторно ставит job/pipeline в `queued` и уже создаёт новую `execution_attempt`; external protocol lease fencing есть на generation/token, но policy retry/lost-heartbeat suite ещё target | Policy-driven immutable execution attempt; история предыдущих попыток, логов и artifact manifest сохраняется |
 | Cancel | API меняет статусы, закрывает active embedded lease и пытается остановить Docker/PID локального процесса | Cancel intent в БД, delivery к owner runner, grace period, forced backend termination, reconciliation |
 | Таймауты | Job timeout убивает локальный процесс; embedded lease получает expiry `timeout_seconds + 60s`, reconciler fail-ит expired/missing lease | Queue, startup, execution, idle-log, cancellation и lease deadlines - конфигурируемые и фиксируемые в attempt |
@@ -291,7 +291,7 @@ Job становится eligible, когда:
 | `lease_id` | Текущая lease, nullable |
 | `leased_at`, `completed_at`, `updated_at` | Audit/reconciliation timestamps |
 
-Current MVP indexes: unique `attempt_id`, partial unique open row per `job_id`, unique non-null `lease_id`, ready scan `(priority DESC, not_before, queued_at, id)` where `state='queued'`, and pipeline/stage state indexes. `required_capabilities`, GIN tags/capabilities и pool-aware matching остаются target extension.
+Current MVP indexes: unique `attempt_id`, partial unique open row per `job_id`, unique non-null `lease_id`, ready scan `(priority DESC, not_before, queued_at, id)` where `state='queued'`, GIN `required_tags`, and pipeline/stage state indexes. `required_capabilities`, GIN capabilities, pool-aware matching и protected-tag policy остаются target extension.
 
 ## 6.2 Pull protocol
 
@@ -813,7 +813,7 @@ Reconciler должен быть идемпотентен, работать lock
 | `POST` | `/api/v1/runner/register` | Current MVP | Registration через `CICD_RUNNER_REGISTRATION_TOKEN`; credential возвращается один раз |
 | `POST` | `/api/v1/runner/credentials:rotate` | Target | Credential rotation |
 | `POST` | `/api/v1/runner/heartbeat` | Current MVP | Liveness, capacity, inventory |
-| `POST` | `/api/v1/runner/work:poll` | Current MVP | Immediate poll for compatible LeaseOffer; long-poll target |
+| `POST` | `/api/v1/runner/work:poll` | Current MVP | Immediate poll for compatible LeaseOffer with `required_tags ⊆ runner.tags`; long-poll target |
 | `POST` | `/api/v1/runner/leases/{id}/ack` | Current MVP | Подтвердить lease |
 | `POST` | `/api/v1/runner/leases/{id}/renew` | Current MVP | Продлить active lease |
 | `POST` | `/api/v1/runner/leases/{id}/secrets:resolve` | Target | Получить short-lived secret bundle |
@@ -1000,10 +1000,10 @@ Kubernetes, при наличии test cluster:
 
 ## Фаза 2 - durable queue, attempts и leases
 
-- Current MVP: `job_queue` материализует dispatch row для current queued attempt, поддерживает claim через `SKIP LOCKED` и terminal/cancel cleanup.
+- Current MVP: `job_queue` материализует dispatch row для current queued attempt, поддерживает claim через `SKIP LOCKED`, basic tag matching и terminal/cancel cleanup.
 - Current MVP: `job_leases` фиксирует embedded runner claim, generation, expiry и terminal close.
 - Current MVP: external runner protocol создаёт lease offer, проверяет lease token/fencing, поддерживает ack/renew/logs/complete, heartbeat и отдаёт `workspace.checkoutUrl`.
-- Расширить `job_queue` до pool/tag/capability matching, priorities/backoff и observability.
+- Расширить `job_queue` до pool/protected-tag/capability matching, priorities/backoff и observability.
 - Расширить lease expiry/reconciliation до lost-heartbeat/cancel races и long-poll/event wakeup.
 - Сохранить текущую retry-модель с новой attempt и добавить policy/fencing поверх неё.
 - Добавить reconciliation/outbox workers.

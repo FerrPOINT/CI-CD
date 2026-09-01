@@ -63,6 +63,7 @@ function renderPipelineDetail(requests: string[]) {
                 name: 'compile',
                 image: 'alpine:3.21',
                 command: 'echo test',
+                required_tags: ['docker', 'linux'],
                 position: 0,
                 status: 'running',
                 started_at: now,
@@ -165,6 +166,9 @@ describe('PipelineDetailPage logs', () => {
     expect(screen.getByText('a'.repeat(64))).toBeInTheDocument()
     expect(screen.getByText('b'.repeat(64))).toBeInTheDocument()
     expect(screen.getByText('1')).toBeInTheDocument()
+    expect(screen.getByText('jobs.runnerTags:')).toBeInTheDocument()
+    expect(screen.getByText('docker')).toBeInTheDocument()
+    expect(screen.getByText('linux')).toBeInTheDocument()
   })
 
   it('loads log pages and refetches them with search', async () => {

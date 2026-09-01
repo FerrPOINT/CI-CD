@@ -806,8 +806,8 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
     .await
     .expect("insert stage");
     sqlx::query(
-        "INSERT INTO jobs (id, stage_id, name, image, command, position, status, timeout_seconds) \
-         VALUES ($1, $2, 'compile', 'alpine:3.21', 'echo ok', 0, 'queued', 30)",
+        "INSERT INTO jobs (id, stage_id, name, image, command, required_tags, position, status, timeout_seconds) \
+         VALUES ($1, $2, 'compile', 'alpine:3.21', 'echo ok', ARRAY['docker','linux'], 0, 'queued', 30)",
     )
     .bind(job_id)
     .bind(stage_id)
@@ -824,8 +824,8 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
     .await
     .expect("insert attempt");
     sqlx::query(
-        "INSERT INTO job_queue (id, job_id, attempt_id, pipeline_id, stage_id, state, priority) \
-         VALUES ($1, $2, $3, $4, $5, 'queued', 100)",
+        "INSERT INTO job_queue (id, job_id, attempt_id, pipeline_id, stage_id, state, priority, required_tags) \
+         VALUES ($1, $2, $3, $4, $5, 'queued', 100, ARRAY['docker','linux'])",
     )
     .bind(Uuid::new_v4())
     .bind(job_id)
@@ -835,6 +835,33 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
     .execute(&pool)
     .await
     .expect("insert protocol queue row");
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/runner/work:poll")
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "protocolVersion": 1,
+                        "capacity": {"freeSlots": 1},
+                        "tags": ["linux"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let queue_still_waiting: String =
+        sqlx::query_scalar("SELECT state FROM job_queue WHERE attempt_id = $1")
+            .bind(attempt_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch queue state after incompatible poll");
+    assert_eq!(queue_still_waiting, "queued");
 
     let response = app
         .clone()
@@ -1645,6 +1672,7 @@ async fn pipeline_trigger_reads_v1_dag_config_from_bare_repository() {
 version: 1
 defaults:
   image: alpine:3.21
+  tags: [linux, docker]
 jobs:
   build:
     commands: ["cargo build --release"]
@@ -1655,6 +1683,7 @@ jobs:
     needs: [build, lint]
     image: rust:1.86
     timeout: 45m
+    tags: [linux]
     commands:
       - cargo test
       - cargo clippy --all-targets
@@ -1760,6 +1789,14 @@ jobs:
     assert_eq!(stages[0]["name"], "dag-0");
     assert_eq!(stages[1]["name"], "dag-1");
     assert_eq!(
+        stages[0]["jobs"][0]["required_tags"],
+        serde_json::json!(["docker", "linux"])
+    );
+    assert_eq!(
+        stages[1]["jobs"][0]["required_tags"],
+        serde_json::json!(["linux"])
+    );
+    assert_eq!(
         stages[0]["jobs"]
             .as_array()
             .unwrap()
@@ -1770,9 +1807,10 @@ jobs:
     );
     assert_eq!(stages[1]["jobs"][0]["name"], "test");
 
-    let persisted_jobs = sqlx::query_as::<_, (String, Option<i32>, bool, String)>(
-        "SELECT j.name, j.timeout_seconds, j.allow_failure, j.command \
+    let persisted_jobs = sqlx::query_as::<_, (String, Option<i32>, bool, String, Vec<String>, Vec<String>)>(
+        "SELECT j.name, j.timeout_seconds, j.allow_failure, j.command, j.required_tags, q.required_tags \
          FROM jobs j JOIN stages s ON s.id = j.stage_id \
+         JOIN job_queue q ON q.job_id = j.id \
          WHERE s.pipeline_id = $1 ORDER BY s.position, j.position",
     )
     .bind(pipeline_id)
@@ -1782,10 +1820,24 @@ jobs:
     assert_eq!(persisted_jobs[0].0, "build");
     assert_eq!(persisted_jobs[0].1, None);
     assert!(!persisted_jobs[0].2);
+    assert_eq!(
+        persisted_jobs[0].4,
+        vec!["docker".to_string(), "linux".to_string()]
+    );
+    assert_eq!(
+        persisted_jobs[0].5,
+        vec!["docker".to_string(), "linux".to_string()]
+    );
     assert_eq!(persisted_jobs[1].0, "lint");
     assert!(persisted_jobs[1].2);
+    assert_eq!(
+        persisted_jobs[1].4,
+        vec!["docker".to_string(), "linux".to_string()]
+    );
     assert_eq!(persisted_jobs[2].0, "test");
     assert_eq!(persisted_jobs[2].1, Some(2700));
+    assert_eq!(persisted_jobs[2].4, vec!["linux".to_string()]);
+    assert_eq!(persisted_jobs[2].5, vec!["linux".to_string()]);
     assert_eq!(
         persisted_jobs[2].3,
         "set -e\ncargo test\ncargo clippy --all-targets"

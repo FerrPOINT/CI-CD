@@ -298,6 +298,7 @@ Referenced by:
  name         | text                     | not null |
  image        | text                     | not null |
  command      | text                     | not null |
+ required_tags | text[]                  | not null | '{}'
  position     | integer                  | not null |
  status       | text                     | not null |
  timeout_seconds | integer               |          |
@@ -327,6 +328,7 @@ Referenced by:
 | `name` | TEXT | NOT NULL | — | Название задачи (e.g. `checkout`, `unit-tests`, `deploy`) |
 | `image` | TEXT | NOT NULL | — | Docker-образ для выполнения (e.g. `rust:1.86`, `alpine:3.21`) |
 | `command` | TEXT | NOT NULL | — | Команда выполнения (e.g. `cargo test`, `git fetch --all`) |
+| `required_tags` | TEXT[] | NOT NULL | `'{}'` | Нормализованные placement tags из v1 `defaults.tags` / `jobs.*.tags`; legacy jobs остаются untagged |
 | `position` | INTEGER | NOT NULL | — | Порядок выполнения внутри стадии |
 | `status` | TEXT | NOT NULL | — | Статус: `queued` / `running` / `success` / `failed` / `canceled` |
 | `timeout_seconds` | INTEGER | NULL | — | Optional timeout из `.forge-ci.yml` |
@@ -343,6 +345,7 @@ Referenced by:
 - `jobs_pkey` — PRIMARY KEY (id)
 - `jobs_stage_id_position_key` — UNIQUE (stage_id, position)
 - `idx_jobs_stage_id` — lookup jobs внутри stage для `pipeline_detail`.
+- `idx_jobs_required_tags_gin` — GIN index для диагностики и будущих placement-запросов по tags.
 
 **FK:** `stage_id` → `stages(id)` ON DELETE CASCADE.
 
@@ -395,7 +398,7 @@ Foreign-key constraints:
 
 ## 5.1 job_queue
 
-Durable dispatch ledger для current queued attempts. Trigger/retry/manual start создают row на non-manual queued attempt; embedded supervisor и external `work:poll` выбирают row через `FOR UPDATE SKIP LOCKED`, создают `job_leases` и переводят row в `leased`; terminal/cancel/expiry закрывают row в `completed` или `canceled`.
+Durable dispatch ledger для current queued attempts. Trigger/retry/manual start создают row на non-manual queued attempt и копируют `jobs.required_tags`; embedded supervisor выбирает только untagged row, external `work:poll` выбирает compatible row через `FOR UPDATE SKIP LOCKED` с правилом `job_queue.required_tags ⊆ runner.tags`, создаёт `job_leases` и переводит row в `leased`; terminal/cancel/expiry закрывают row в `completed` или `canceled`.
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -407,7 +410,7 @@ Durable dispatch ledger для current queued attempts. Trigger/retry/manual sta
 | `state` | TEXT | NOT NULL | `queued` | `queued` / `leased` / `completed` / `canceled` |
 | `priority` | INTEGER | NOT NULL | `0` | Stable priority before FIFO fields |
 | `not_before` | TIMESTAMPTZ | NOT NULL | `now()` | Earliest claim time |
-| `required_tags` | TEXT[] | NOT NULL | `'{}'` | Reserved for runner matching |
+| `required_tags` | TEXT[] | NOT NULL | `'{}'` | Нормализованные runner tags, которые должны быть subset текущих tags внешнего runner-а; copied from `jobs.required_tags` |
 | `queued_at` | TIMESTAMPTZ | NOT NULL | `now()` | Enqueue timestamp |
 | `leased_at` | TIMESTAMPTZ | NULL | — | Set when claim succeeds |
 | `lease_id` | UUID | NULL | — | FK → `job_leases.id`, SET NULL |
@@ -421,11 +424,12 @@ Durable dispatch ledger для current queued attempts. Trigger/retry/manual sta
 - `idx_job_queue_open_job` — UNIQUE open row на job при `state IN ('queued','leased')`.
 - `idx_job_queue_lease` — UNIQUE non-null `lease_id`.
 - `idx_job_queue_ready` — dispatch scan `(priority DESC, not_before, queued_at, id)` for `state='queued'`.
+- `idx_job_queue_required_tags_gin` — GIN index для tag containment matching.
 - `idx_job_queue_pipeline_state`, `idx_job_queue_stage_state` — cleanup/status lookups.
 
 ## 5.2 job_leases
 
-Durable ledger владения execution attempt. Текущий MVP использует таблицу для embedded runner и external runner protocol: claim одним SQL statement переводит `job_queue` в `leased`, `jobs` и `execution_attempts` в `running`, создаёт active lease и фиксирует generation/expiry. Embedded runner закрывает lease при terminal result/cancel, reconciler закрывает expired/missing owner, а external protocol дополнительно хранит hash lease token, ack deadline, ack/renew state и protocol version. `forge-runner` уже работает как отдельный shell process поверх этой модели; production log/secret/artifact protocol, sandbox и lost-heartbeat policy остаются target.
+Durable ledger владения execution attempt. Текущий MVP использует таблицу для embedded runner и external runner protocol: claim одним SQL statement переводит compatible `job_queue` row в `leased`, `jobs` и `execution_attempts` в `running`, создаёт active lease и фиксирует generation/expiry. Embedded runner закрывает lease при terminal result/cancel, reconciler закрывает expired/missing owner, а external protocol дополнительно хранит hash lease token, ack deadline, ack/renew state и protocol version. `forge-runner` уже работает как отдельный shell process поверх этой модели; production log/secret/artifact protocol, protected tag/pool policy, capability matching, sandbox и lost-heartbeat policy остаются target.
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -835,6 +839,7 @@ idx_audit_log_created        ON audit_log(created_at DESC)
 idx_pipelines_project_id     ON pipelines(project_id)
 idx_stages_pipeline_id       ON stages(pipeline_id)
 idx_jobs_stage_id            ON jobs(stage_id)
+idx_jobs_required_tags_gin   ON jobs USING GIN(required_tags)
 idx_execution_attempts_job   ON execution_attempts(job_id, attempt_no DESC)
 idx_execution_attempts_active_job ON execution_attempts(job_id) WHERE status IN ('queued','running')
 idx_job_leases_active_job    ON job_leases(job_id) WHERE lease_status = 'active'
@@ -843,6 +848,7 @@ idx_job_leases_active_expiry ON job_leases(lease_expires_at) WHERE lease_status 
 idx_job_leases_runner_active ON job_leases(runner_id, lease_status) WHERE runner_id IS NOT NULL
 idx_job_leases_active_token_hash ON job_leases(lease_token_hash) WHERE lease_status = 'active' AND lease_token_hash IS NOT NULL
 idx_job_leases_ack_deadline ON job_leases(ack_deadline) WHERE lease_status = 'active' AND acknowledged_at IS NULL
+idx_job_queue_required_tags_gin ON job_queue USING GIN(required_tags)
 idx_runners_active_credential_hash ON runners(credential_hash) WHERE credential_hash IS NOT NULL AND disabled_at IS NULL
 idx_runners_last_seen       ON runners(last_seen_at DESC) WHERE disabled_at IS NULL
 idx_job_logs_attempt_sequence ON job_logs(attempt_id, sequence)
@@ -866,7 +872,7 @@ idx_outbox_delivery_attempts_message ON outbox_delivery_attempts(message_id, att
 
 | Фаза | Таблицы | Назначение |
 |---|---|---|
-| External runner production boundary | credential rotation/revocation tables, artifact/secret delivery tables, richer log chunks | `runners` + `job_queue` + `job_leases` уже покрывают protocol MVP: runner credential hash, heartbeat metadata, durable dispatch row, lease token hash, `workspace.checkoutUrl`, ack/renew/logs/complete, fencing generation и shell `forge-runner`; target добавляет richer identity lifecycle, sandbox и protocol data planes |
+| External runner production boundary | credential rotation/revocation tables, artifact/secret delivery tables, richer log chunks | `runners` + `job_queue` + `job_leases` уже покрывают protocol MVP: runner credential hash, heartbeat metadata, durable dispatch row с basic tag matching, lease token hash, `workspace.checkoutUrl`, ack/renew/logs/complete, fencing generation и shell `forge-runner`; target добавляет richer identity lifecycle, protected tags/pools, capability matching, sandbox и protocol data planes |
 | Production outbox | `outbox_deliveries` / lease state | Full dispatcher snapshots, lease/fencing, crash recovery, response preview allowlist и operator dead-letter policy поверх current bounded history |
 | External notifications | delivery-specific tables | Email/Slack sender state, templates, preferences |
 

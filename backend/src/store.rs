@@ -265,8 +265,8 @@ pub async fn enqueue_job_attempt_tx(
     attempt_id: Uuid,
 ) -> Result<u64, sqlx::Error> {
     let result = sqlx::query(
-        "INSERT INTO job_queue (id, job_id, attempt_id, pipeline_id, stage_id, state) \
-         SELECT $3, j.id, a.id, s.pipeline_id, s.id, 'queued' \
+        "INSERT INTO job_queue (id, job_id, attempt_id, pipeline_id, stage_id, state, required_tags) \
+         SELECT $3, j.id, a.id, s.pipeline_id, s.id, 'queued', j.required_tags \
          FROM jobs j \
          JOIN execution_attempts a ON a.job_id = j.id \
          JOIN stages s ON s.id = j.stage_id \
@@ -283,6 +283,7 @@ pub async fn enqueue_job_attempt_tx(
              leased_at = NULL, \
              completed_at = NULL, \
              not_before = now(), \
+             required_tags = EXCLUDED.required_tags, \
              updated_at = now() \
          WHERE job_queue.state IN ('queued','completed','canceled')",
     )
@@ -325,8 +326,8 @@ pub async fn enqueue_current_job_attempt(pool: &PgPool, job_id: Uuid) -> Result<
 
 pub async fn enqueue_missing_ready_jobs(pool: &PgPool) -> Result<u64, sqlx::Error> {
     let result = sqlx::query(
-        "INSERT INTO job_queue (id, job_id, attempt_id, pipeline_id, stage_id, state, queued_at) \
-         SELECT gen_random_uuid(), j.id, a.id, s.pipeline_id, s.id, 'queued', a.created_at \
+        "INSERT INTO job_queue (id, job_id, attempt_id, pipeline_id, stage_id, state, required_tags, queued_at) \
+         SELECT gen_random_uuid(), j.id, a.id, s.pipeline_id, s.id, 'queued', j.required_tags, a.created_at \
          FROM jobs j \
          JOIN stages s ON s.id = j.stage_id \
          JOIN pipelines p ON p.id = s.pipeline_id \
@@ -350,6 +351,7 @@ pub async fn enqueue_missing_ready_jobs(pool: &PgPool) -> Result<u64, sqlx::Erro
              lease_id = NULL, \
              leased_at = NULL, \
              completed_at = NULL, \
+             required_tags = EXCLUDED.required_tags, \
              updated_at = now() \
          WHERE job_queue.state IN ('queued','completed','canceled')",
     )

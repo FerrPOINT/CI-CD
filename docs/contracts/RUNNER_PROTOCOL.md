@@ -1,6 +1,6 @@
 # Runner protocol
 
-**Статус:** Current verified MVP + Target approved. Реализованный subset на 2026-09-01 покрывает `register`, `heartbeat`, immediate `work:poll`, `ack`, `renew`, `logs`, `complete`, SHA-256 storage для runner credential/lease token, fencing по `job_leases.generation`, `workspace.checkoutUrl` и отдельный `forge-runner` shell process. Остальные разделы описывают target-контракт production runner-а. Канонические путь и имена таблиц закреплены [ADR-0009](../adr/0009-canonical-registry.md).
+**Статус:** Current verified MVP + Target approved. Реализованный subset на 2026-09-01 покрывает `register`, `heartbeat`, immediate `work:poll`, basic tag matching, `ack`, `renew`, `logs`, `complete`, SHA-256 storage для runner credential/lease token, fencing по `job_leases.generation`, `workspace.checkoutUrl` и отдельный `forge-runner` shell process. Остальные разделы описывают target-контракт production runner-а. Канонические путь и имена таблиц закреплены [ADR-0009](../adr/0009-canonical-registry.md).
 
 ## 1. Область и общие правила
 
@@ -32,22 +32,18 @@
 
 ```json
 {
-  "type":"object","required":["protocolVersion","registrationToken","name","tags","capabilities"],
+  "type":"object","required":["protocolVersion","registrationToken","name"],
   "properties":{
     "protocolVersion":{"const":1},
     "registrationToken":{"type":"string","minLength":1},
     "name":{"type":"string","minLength":1,"maxLength":128},
     "tags":{"type":"array","maxItems":64,"items":{"type":"string","pattern":"^[a-z0-9][a-z0-9._-]{0,62}$"}},
-    "capabilities":{"type":"object","required":["executorKinds","os","arch"],"properties":{
-      "executorKinds":{"type":"array","minItems":1,"items":{"enum":["shell","docker","kubernetes"]}},
-      "os":{"const":"linux"},"arch":{"enum":["amd64","arm64"]},
-      "maxCpuMillis":{"type":"integer","minimum":1},"maxMemoryMiB":{"type":"integer","minimum":1}
-    },"additionalProperties":true}
+    "capabilities":{"type":"object","additionalProperties":true}
   },"additionalProperties":false
 }
 ```
 
-Успешный `201` возвращает `{protocolVersion, runnerId, credential, credentialExpiresAt, heartbeatIntervalSeconds, pollWaitMaxSeconds}`. `credential` показывается ровно один раз. Current MVP сверяет `registrationToken` с `CICD_RUNNER_REGISTRATION_TOKEN` и хранит credential hash + hint; одноразовые/scoped registration tokens, protected tags и registration-token audit остаются target.
+Успешный `201` возвращает `{protocolVersion, runnerId, credential, credentialExpiresAt, heartbeatIntervalSeconds, pollWaitMaxSeconds}`. `credential` показывается ровно один раз. Current MVP сверяет `registrationToken` с `CICD_RUNNER_REGISTRATION_TOKEN`, нормализует optional `tags`, принимает optional object `capabilities` и хранит credential hash + hint; одноразовые/scoped registration tokens, protected tags и registration-token audit остаются target.
 
 `POST /api/v1/runner/heartbeat` принимает:
 
@@ -55,22 +51,22 @@
 {"protocolVersion":1,"status":"online","draining":false,"capacity":{"totalSlots":4,"busySlots":1},"tags":["linux","docker"],"capabilities":{},"activeLeaseIds":["uuid"]}
 ```
 
-Схема: `status` равен `online` или `draining`; `totalSlots` - 1..1024, `busySlots` - 0..`totalSlots`; tags/capabilities должны соответствовать зарегистрированному scope. Ответ `204`. Heartbeat не продлевает lease и не разрешает изменение protected tags.
+Схема: `status` равен `online` или `draining`; `totalSlots` - 1..1024, `busySlots` - 0..`totalSlots`; current MVP нормализует optional tags, при наличии заменяет stored tags, при отсутствии сохраняет текущие tags, сохраняет optional object capabilities и обновляет heartbeat snapshot. Ответ `204`. Protected-tag scope, capability allowlist и запрет изменения protected tags остаются target policy.
 
 ## 3. Получение и подтверждение работы
 
 `POST /api/v1/runner/work:poll`:
 
 ```json
-{"type":"object","required":["protocolVersion","capacity","tags"],"properties":{
+{"type":"object","required":["protocolVersion","capacity"],"properties":{
   "protocolVersion":{"const":1},
   "capacity":{"type":"object","required":["freeSlots"],"properties":{"freeSlots":{"type":"integer","minimum":0,"maximum":1024}},"additionalProperties":false},
-  "tags":{"type":"array","maxItems":64,"items":{"type":"string"}},
+  "tags":{"type":"array","maxItems":64,"items":{"type":"string","pattern":"^[a-z0-9][a-z0-9._-]{0,62}$"}},
   "capabilityDigest":{"type":"string","maxLength":128}
 },"additionalProperties":false}
 ```
 
-Current MVP отвечает сразу и возвращает `204`, если совместимой работы нет; target сервер long-poll-ит не более `pollWait`. При найденной работе ответ `200 LeaseOffer`:
+Current MVP отвечает сразу и возвращает `204`, если совместимой работы нет. Optional `tags` в poll нормализуются; пустой список означает текущие stored runner tags, непустой список должен быть subset stored runner tags и может сузить выдачу. Target сервер long-poll-ит не более `pollWait`. При найденной работе ответ `200 LeaseOffer`:
 
 ```json
 {"protocolVersion":1,"leaseId":"uuid","leaseToken":"opaque","fencingToken":7,
@@ -81,7 +77,7 @@ Current MVP отвечает сразу и возвращает `204`, если 
  "planSignature":{"kid":"string","signature":"base64url"}}
 ```
 
-Offer не содержит секреты. Current `forge-runner` использует `workspace.checkoutUrl` для `git clone`, затем выполняет команды shell в workspace, отправляет stdout/stderr через protocol log append и отправляет terminal result; `image` остаётся compatibility field до Docker/Kubernetes runner. Target runner проверяет `planSignature`, не запускает работу до ack и не сохраняет `leaseToken` в log/metadata. Несовместимый/disabled/draining/offline runner не получает offer.
+Offer не содержит секреты. Current `forge-runner` использует `workspace.checkoutUrl` для `git clone`, затем выполняет команды shell в workspace, отправляет stdout/stderr через protocol log append и отправляет terminal result; `image` остаётся compatibility field до Docker/Kubernetes runner. Target runner проверяет `planSignature`, не запускает работу до ack и не сохраняет `leaseToken` в log/metadata. Несовместимый/disabled/draining/offline runner или runner без нужных `required_tags` не получает offer.
 
 `POST /api/v1/runner/leases/{leaseId}/ack` и `POST /api/v1/runner/leases/{leaseId}/renew` используют одну схему:
 

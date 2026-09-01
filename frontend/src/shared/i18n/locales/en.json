@@ -137,6 +137,7 @@
     "logs": "Logs",
     "image": "Image",
     "command": "Command",
+    "runnerTags": "Runner tags",
     "attempt": "Attempt",
     "trigger": "Trigger",
     "exitCode": "Exit code",

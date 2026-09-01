@@ -91,6 +91,16 @@ export function PipelineDetailPage() {
                     <span className="mx-1">·</span>
                     <code className="break-all">{job.command}</code>
                   </p>
+                  {job.required_tags.length > 0 && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-text-muted">
+                      <span>{t('jobs.runnerTags')}:</span>
+                      {job.required_tags.map(tag => (
+                        <code key={tag} className="rounded bg-surface-raised px-1.5 py-0.5 text-text-primary">
+                          {tag}
+                        </code>
+                      ))}
+                    </div>
+                  )}
                   <div className="mt-3 flex flex-wrap items-center gap-1.5">
                     {job.status === 'queued' && (
                       <Button size="sm" variant="outline" onClick={() => handleStatus(job.id, 'running')}>

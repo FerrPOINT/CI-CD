@@ -2821,6 +2821,7 @@ components:
       - name
       - image
       - command
+      - required_tags
       - position
       - status
       properties:
@@ -2841,6 +2842,10 @@ components:
         position:
           type: integer
           format: int32
+        required_tags:
+          type: array
+          items:
+            type: string
         stage_id:
           type: string
           format: uuid
@@ -3757,7 +3762,9 @@ components:
         status:
           type: string
         tags:
-          type: array
+          type:
+          - array
+          - 'null'
           items:
             type: string
     RunnerLeaseControlRequest:

@@ -127,6 +127,7 @@ async fn claim_embedded_job_lease(
             WHERE j.id = $1
               AND q.state = 'queued'
               AND q.not_before <= now()
+              AND cardinality(q.required_tags) = 0
               AND j.status = 'queued'
               AND a.status = 'queued'
               AND NOT j.manual
@@ -1082,6 +1083,7 @@ async fn poll_and_dispatch(pool: &PgPool, running: RunningJobs) -> Result<(), sq
          JOIN pipelines p ON p.id = s.pipeline_id \
          WHERE q.state = 'queued' \
            AND q.not_before <= now() \
+           AND cardinality(q.required_tags) = 0 \
            AND j.status = 'queued' \
            AND a.status = 'queued' \
            AND NOT j.manual \
