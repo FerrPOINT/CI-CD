@@ -234,14 +234,15 @@ Embedded runner inject-ит только объявленные `jobs.required_s
 
 **Статус процедуры: Current verified.**
 
-Окружение - metadata-объект проекта с именем, URL и состоянием `available`, `stopped` или `degraded`. Запись deployment связывает окружение с `git_ref`, опционально с pipeline и статусом `pending`, `running`, `success` или `failed`.
+Окружение - metadata-объект проекта с именем, URL, состоянием `available`, `stopped` или `degraded`, optional protected-флагом и числом required approvals. Запись deployment связывает окружение с `git_ref`, опционально с pipeline и статусом `pending`, `running`, `success` или `failed`.
 
 1. Откройте **Environments** (`/projects/{projectId}/environments`).
 2. Создайте окружения, например `staging` и `production`, с URL, если он известен.
-3. После выполнения вашей deploy-job добавьте запись deployment с реальным ref и статусом.
-4. Используйте историю deployments как журнал факта доставки, а не как механизм запуска инфраструктуры. Кнопка **Записать деплой** создаёт deployment-record.
+3. Для обычного окружения после выполнения deploy-job добавьте запись deployment с реальным ref и статусом.
+4. Для protected окружения создайте pending deployment-record, затем approve/reject сохранит append-only decision; после нужного числа approvals backend запускает связанный pipeline.
+5. Для rollback нажмите **Rollback** на успешной записи: Forge создаст новую deployment запись с `rollback_of_id` и не изменит исходную историю.
 
-> Forge не выполняет deployment автоматически только из создания environment/deployment. Развёртывание должно быть частью job или внешней процедуры; protected environments, approvals и policy checks - **Target approved**.
+> Forge не выполняет произвольную инфраструктурную оркестрацию только из создания environment/deployment. Protected approval gate и traceable rollback через pipeline уже есть как MVP; расширенные policy rules, multi-approver workflows и rollback orchestration остаются **Target approved**.
 
 ![Окружения](screenshots/15-environments.png)
 
@@ -369,7 +370,7 @@ export CICD_CLI="$PWD/backend/target/debug/cicd-cli"
 | Runner-ы | `$CICD_CLI runner list`; `$CICD_CLI runner register --name shell-01 --tag shell` |
 | Секреты | `$CICD_CLI secret list --project <PROJECT_UUID>`; `$CICD_CLI secret set --project <PROJECT_UUID> --key NPM_TOKEN --value "$NPM_TOKEN"` |
 | Артефакты | `$CICD_CLI artifact list --job <JOB_UUID>`; `$CICD_CLI artifact upload --job <JOB_UUID> --file ./build.zip --name build.zip` |
-| Окружения и deployments | `$CICD_CLI environment list --project <PROJECT_UUID>`; `$CICD_CLI deployment list --environment <ENV_UUID>` |
+| Окружения и deployments | `$CICD_CLI environment create --project <PROJECT_UUID> --name production --protected --required-approvals 1`; `$CICD_CLI deployment approve --id <DEPLOYMENT_UUID>`; `$CICD_CLI deployment rollback --id <DEPLOYMENT_UUID>` |
 | Schedules | `$CICD_CLI schedule create --project <PROJECT_UUID> --cron "0 2 * * *" --git-ref main --enabled true` |
 | Webhooks/outbox | `$CICD_CLI webhook create --project <PROJECT_UUID> --url https://example.com/hook --event pipeline.finished`; `$CICD_CLI outbox requeue --id <DELIVERY_UUID>` |
 | Notifications | `$CICD_CLI notification replace --project <PROJECT_UUID> --config in_app=dashboard`; `$CICD_CLI notification events --project <PROJECT_UUID> --limit 50` |

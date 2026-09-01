@@ -53,7 +53,7 @@
 | Branch/tag browser, compare and pull request flow | Current verified |
 | Artifacts up to 50 MiB in local storage with SHA-256 and retention cleanup | Current verified MVP |
 | Secrets encrypted at rest with runner injection and stdout masking | Current verified |
-| Environments, deployments, reports and audit trail | Current verified |
+| Environments, protected approvals, rollback records, reports and audit trail | Current verified MVP |
 | HTTP-only CLI for runtime and platform operations | Current verified MVP |
 | Auth/RBAC with `CICD_AUTH_SECRET` | Current verified |
 | Configurable CORS allowlist | Current verified MVP |
@@ -157,6 +157,7 @@ flowchart TD
 - Pipeline trigger stores immutable `pipeline_plans` snapshots for current `legacy-linear` and v1 `jobs.needs` DAG plans; policy diagnostics/job-level dispatch remain target hardening.
 - Current CI runs OpenAPI generation/drift and backward-compatibility checks, SQLx optional MySQL/RSA feature guard, Rust release build, Rust/Node dependency audits, secret scan, SBOM drift checks and pinned Trivy critical container image scan; OpenAPI examples validation, `cargo-deny`, history secret scan and release SBOM publication remain target hardening.
 - Local artifacts get SHA-256 metadata and default 30-day expiry via `CICD_ARTIFACT_RETENTION_DAYS`; expired/purged artifacts are not downloadable and the backend retention worker purges local files. Object storage, legal hold and tenant/object isolation remain target hardening.
+- Protected environments create pending deployment records, store append-only approval decisions and start the linked deployment pipeline only after `required_approvals`; rollback creates a separate `rollback_of_id` deployment record. Richer policy rules, multi-approver workflow and orchestration hardening remain target.
 - Schedules, outgoing webhooks and `in_app`/`sse` notifications work as MVP local delivery.
 - Outbox delivery history, attempt log and failed-delivery requeue are bounded MVP features; inbound provider webhooks, external notification adapters and crash-safe distributed delivery guarantees are not complete.
 

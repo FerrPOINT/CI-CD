@@ -164,15 +164,16 @@ Gate:
 
 Deliverables:
 
-- protected environments;
-- approval gates для production-like окружений;
-- deploy history с actor, pipeline/ref, status и evidence;
-- rollback запускается как отдельный traceable pipeline/action.
+- Current MVP: protected environments, required approvals, append-only approval decisions, deployment history и rollback как отдельная `rollback_of_id` запись через pipeline;
+- deploy history с расширенным actor/evidence context;
+- richer policy rules и multi-approver workflow beyond simple required count;
+- rollback orchestration/runbook automation вместо только traceable pipeline record.
 
 Gate:
 
-- approval policy tests;
-- audit trail для approval/deploy/rollback;
+- Current gate: backend integration tests на protected approval before pipeline и rollback trace record; frontend test на approve/rollback controls;
+- target approval policy tests;
+- расширенный audit trail для approval/deploy/rollback;
 - UI не позволяет обойти required approval.
 
 ## 5. Later, не базовый слой

@@ -58,6 +58,7 @@ Principal недействителен при disable владельца, revoke
 | `artifact.read`, `report.read` | yes | yes | yes | yes | no |
 | `secret.read_metadata`, `secret.manage` | yes | yes | no | no | no |
 | `environment.read`, `environment.manage`, `deployment.create` | yes | yes | policy | no | no |
+| `deployment.approve`, `deployment.rollback` | yes | yes | no | no | no |
 | `automation.read`, `automation.manage` | yes | yes | no | no | no |
 | `repository.read`, `pull_request.read` | yes | yes | yes | yes | no |
 | `repository.write`, `pull_request.manage` | yes | yes | yes | no | no |
@@ -91,6 +92,8 @@ Tenant roles: `owner` управляет tenant, projects, memberships, service 
 | GET, POST | `/api/v1/projects/{project_id}/environments` | `environment.read` / `environment.manage` |
 | PATCH, DELETE | `/api/v1/environments/{environment_id}` | `environment.manage` |
 | GET, POST | `/api/v1/environments/{environment_id}/deployments` | `environment.read` / `deployment.create` |
+| GET, POST | `/api/v1/deployments/{deployment_id}/approvals` | `environment.read` / `deployment.approve` via deployment environment |
+| POST | `/api/v1/deployments/{deployment_id}/rollback` | `deployment.rollback` via deployment environment |
 | GET, POST | `/api/v1/projects/{project_id}/schedules` | `automation.read` / `automation.manage` |
 | PATCH, DELETE | `/api/v1/schedules/{schedule_id}` | `automation.manage` |
 | GET, POST | `/api/v1/projects/{project_id}/webhooks` | `automation.read` / `automation.manage` |

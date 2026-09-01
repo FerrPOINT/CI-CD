@@ -91,4 +91,14 @@ fn cli_exposes_platform_resource_mutations() {
     let token = cli_help(&["token", "create", "--help"]);
     assert_contains(&token, "--scope");
     assert_contains(&token, "--expires-in-days");
+
+    let environment = cli_help(&["environment", "create", "--help"]);
+    assert_contains(&environment, "--protected");
+    assert_contains(&environment, "--required-approvals");
+
+    let deployment = cli_help(&["deployment", "--help"]);
+    assert_contains(&deployment, "approvals");
+    assert_contains(&deployment, "approve");
+    assert_contains(&deployment, "reject");
+    assert_contains(&deployment, "rollback");
 }

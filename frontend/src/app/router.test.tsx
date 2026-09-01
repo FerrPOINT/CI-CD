@@ -307,10 +307,22 @@ function mockFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respon
     ])
   }
   if (path === `/projects/${projectId}/environments`) {
-    return json([{ id: environmentId, project_id: projectId, name: 'production', url: 'https://prod.example.com', status: 'available', created_at: now }])
+    return json([{ id: environmentId, project_id: projectId, name: 'production', url: 'https://prod.example.com', status: 'available', protected: true, required_approvals: 1, created_at: now }])
   }
   if (path === `/environments/${environmentId}/deployments`) {
-    return json([{ id: 'deploy-1', environment_id: environmentId, pipeline_id: pipelineId, git_ref: 'main', status: 'success', created_at: now }])
+    return json([{
+      id: 'deploy-1',
+      environment_id: environmentId,
+      pipeline_id: pipelineId,
+      rollback_of_id: null,
+      git_ref: 'main',
+      status: 'success',
+      approval_required: true,
+      approval_state: 'approved',
+      approval_count: 1,
+      required_approvals: 1,
+      created_at: now,
+    }])
   }
   if (path === `/projects/${projectId}/schedules`) {
     return json([

@@ -103,6 +103,9 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::platform::list_environments, crate::platform::create_environment,
         crate::platform::update_environment, crate::platform::delete_environment,
         crate::platform::list_deployments, crate::platform::create_deployment,
+        crate::platform::list_deployment_approvals,
+        crate::platform::record_deployment_approval,
+        crate::platform::rollback_deployment,
         crate::platform::list_schedules, crate::platform::create_schedule,
         crate::platform::update_schedule, crate::platform::delete_schedule,
         crate::platform::list_webhooks, crate::platform::create_webhook, crate::platform::delete_webhook,
@@ -146,6 +149,8 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::platform::Artifact,
         crate::platform::Environment, crate::platform::CreateEnvironment, crate::platform::UpdateEnvironment,
         crate::platform::Deployment, crate::platform::CreateDeployment,
+        crate::platform::DeploymentApproval, crate::platform::RecordDeploymentApproval,
+        crate::platform::RollbackDeployment,
         crate::platform::Schedule, crate::platform::ScheduleInput,
         crate::platform::Webhook, crate::platform::CreateWebhook,
         crate::platform::OutboxDelivery, crate::platform::OutboxDeliveryAttempt,
@@ -594,6 +599,7 @@ enum ProjectScopeRef {
     Artifact(Uuid),
     Secret(Uuid),
     Environment(Uuid),
+    Deployment(Uuid),
     Schedule(Uuid),
     Webhook(Uuid),
     OutboxDelivery(Uuid),
@@ -691,6 +697,7 @@ fn project_scope_ref(path: &str) -> Option<ProjectScopeRef> {
                 "artifacts" => Some(ProjectScopeRef::Artifact(id)),
                 "secrets" => Some(ProjectScopeRef::Secret(id)),
                 "environments" => Some(ProjectScopeRef::Environment(id)),
+                "deployments" => Some(ProjectScopeRef::Deployment(id)),
                 "schedules" => Some(ProjectScopeRef::Schedule(id)),
                 "webhooks" => Some(ProjectScopeRef::Webhook(id)),
                 "outbox-deliveries" => Some(ProjectScopeRef::OutboxDelivery(id)),
@@ -865,6 +872,15 @@ async fn project_id_for_scope_ref(
                 .await
                 .map_err(ApiError::internal)
         }
+        ProjectScopeRef::Deployment(id) => sqlx::query_scalar(
+            "SELECT e.project_id FROM deployments d \
+             JOIN environments e ON e.id = d.environment_id \
+             WHERE d.id = $1",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(ApiError::internal),
         ProjectScopeRef::Schedule(id) => {
             sqlx::query_scalar("SELECT project_id FROM schedules WHERE id = $1")
                 .bind(id)
@@ -3479,6 +3495,7 @@ mod tests {
         let artifact_id = Uuid::new_v4();
         let secret_id = Uuid::new_v4();
         let environment_id = Uuid::new_v4();
+        let deployment_id = Uuid::new_v4();
         let schedule_id = Uuid::new_v4();
         let webhook_id = Uuid::new_v4();
 
@@ -3535,6 +3552,14 @@ mod tests {
                 "/api/v1/environments/{environment_id}/deployments"
             )),
             Some(ProjectScopeRef::Environment(environment_id))
+        );
+        assert_eq!(
+            project_scope_ref(&format!("/api/v1/deployments/{deployment_id}/approvals")),
+            Some(ProjectScopeRef::Deployment(deployment_id))
+        );
+        assert_eq!(
+            project_scope_ref(&format!("/api/v1/deployments/{deployment_id}/rollback")),
+            Some(ProjectScopeRef::Deployment(deployment_id))
         );
         assert_eq!(
             project_scope_ref(&format!("/api/v1/schedules/{schedule_id}")),

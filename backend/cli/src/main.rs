@@ -252,6 +252,10 @@ enum EnvironmentCommand {
         name: String,
         #[arg(long)]
         url: Option<String>,
+        #[arg(long)]
+        protected: bool,
+        #[arg(long)]
+        required_approvals: Option<i32>,
     },
     Update {
         #[arg(long)]
@@ -262,6 +266,10 @@ enum EnvironmentCommand {
         url: Option<String>,
         #[arg(long)]
         status: Option<String>,
+        #[arg(long)]
+        protected: Option<bool>,
+        #[arg(long)]
+        required_approvals: Option<i32>,
     },
     Delete {
         #[arg(long)]
@@ -284,6 +292,32 @@ enum DeploymentCommand {
         pipeline: Option<String>,
         #[arg(long)]
         status: Option<String>,
+    },
+    Approvals {
+        #[arg(long)]
+        id: String,
+    },
+    Approve {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        actor: Option<String>,
+        #[arg(long)]
+        comment: Option<String>,
+    },
+    Reject {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        actor: Option<String>,
+        #[arg(long)]
+        comment: Option<String>,
+    },
+    Rollback {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        git_ref: Option<String>,
     },
 }
 
@@ -772,10 +806,21 @@ async fn environment(api: &ApiClient, command: EnvironmentCommand) -> anyhow::Re
             api.json(api.get(&format!("/projects/{project}/environments")))
                 .await
         }
-        EnvironmentCommand::Create { project, name, url } => {
+        EnvironmentCommand::Create {
+            project,
+            name,
+            url,
+            protected,
+            required_approvals,
+        } => {
             api.json(
                 api.post(&format!("/projects/{project}/environments"))
-                    .json(&json!({"name": name, "url": url})),
+                    .json(&json!({
+                        "name": name,
+                        "url": url,
+                        "protected": protected,
+                        "required_approvals": required_approvals,
+                    })),
             )
             .await
         }
@@ -784,11 +829,15 @@ async fn environment(api: &ApiClient, command: EnvironmentCommand) -> anyhow::Re
             name,
             url,
             status,
+            protected,
+            required_approvals,
         } => {
             let mut body = Map::new();
             insert_optional(&mut body, "name", name);
             insert_optional(&mut body, "url", url);
             insert_optional(&mut body, "status", status);
+            insert_optional_bool(&mut body, "protected", protected);
+            insert_optional_i32(&mut body, "required_approvals", required_approvals);
             api.json(
                 api.patch(&format!("/environments/{id}"))
                     .json(&Value::Object(body)),
@@ -823,7 +872,44 @@ async fn deployment(api: &ApiClient, command: DeploymentCommand) -> anyhow::Resu
             )
             .await
         }
+        DeploymentCommand::Approvals { id } => {
+            api.json(api.get(&format!("/deployments/{id}/approvals")))
+                .await
+        }
+        DeploymentCommand::Approve { id, actor, comment } => {
+            deployment_approval(api, &id, "approved", actor, comment).await
+        }
+        DeploymentCommand::Reject { id, actor, comment } => {
+            deployment_approval(api, &id, "rejected", actor, comment).await
+        }
+        DeploymentCommand::Rollback { id, git_ref } => {
+            let mut body = Map::new();
+            insert_optional(&mut body, "git_ref", git_ref);
+            api.json(
+                api.post(&format!("/deployments/{id}/rollback"))
+                    .json(&Value::Object(body)),
+            )
+            .await
+        }
     }
+}
+
+async fn deployment_approval(
+    api: &ApiClient,
+    id: &str,
+    decision: &str,
+    actor: Option<String>,
+    comment: Option<String>,
+) -> anyhow::Result<Value> {
+    let mut body = Map::new();
+    body.insert("decision".into(), Value::String(decision.to_owned()));
+    insert_optional(&mut body, "actor", actor);
+    insert_optional(&mut body, "comment", comment);
+    api.json(
+        api.post(&format!("/deployments/{id}/approvals"))
+            .json(&Value::Object(body)),
+    )
+    .await
 }
 
 async fn schedule(api: &ApiClient, command: ScheduleCommand) -> anyhow::Result<Value> {
@@ -1053,6 +1139,12 @@ fn insert_optional(body: &mut Map<String, Value>, key: &str, value: Option<Strin
 fn insert_optional_i32(body: &mut Map<String, Value>, key: &str, value: Option<i32>) {
     if let Some(value) = value {
         body.insert(key.to_string(), Value::Number(value.into()));
+    }
+}
+
+fn insert_optional_bool(body: &mut Map<String, Value>, key: &str, value: Option<bool>) {
+    if let Some(value) = value {
+        body.insert(key.to_string(), Value::Bool(value));
     }
 }
 

@@ -171,7 +171,8 @@
     "search": "Search",
     "clear": "Clear",
     "dismiss": "Dismiss",
-    "create": "Create"
+    "create": "Create",
+    "actions": "Actions"
   },
   "capability": {
     "currentVerified": "Current verified",
@@ -228,10 +229,12 @@
   "environments": {
     "title": "Environments",
     "capabilityTitle": "Environments and delivery history",
-    "capabilityDescription": "This is currently environment metadata and append-only deployment records. Protected approvals, policy gates, and rollback through a separate traceable pipeline remain target.",
+    "capabilityDescription": "This now covers environment metadata, append-only deployment history, a protected approval gate, and rollback through a separate pipeline record. Richer policy rules, multi-approver workflows, and rollback orchestration remain target.",
     "create": "Create environment",
     "name": "Name",
     "url": "URL",
+    "protected": "Protected",
+    "requiredApprovals": "Approvals",
     "created": "Environment created",
     "deleted": "Environment deleted",
     "deleteConfirm": "Delete environment",
@@ -242,6 +245,18 @@
     "create": "Record deployment",
     "gitRef": "Git ref",
     "status": "Status",
+    "approval": "Approval",
+    "trace": "Trace",
+    "approvalNotRequired": "Not required",
+    "approvalPending": "Pending",
+    "approved": "Approved",
+    "rejected": "Rejected",
+    "approve": "Approve",
+    "reject": "Reject",
+    "rollback": "Rollback",
+    "rollbackOf": "Rollback of",
+    "rollbackCreated": "Rollback record created",
+    "approvalRecorded": "Approval recorded",
     "created": "Deployment record created",
     "empty": "No deployments yet."
   },

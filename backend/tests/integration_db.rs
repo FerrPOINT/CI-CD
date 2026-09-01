@@ -5121,6 +5121,188 @@ async fn failed_outbox_delivery_records_attempt_and_can_be_requeued() {
         .expect("cleanup project");
 }
 
+#[tokio::test]
+async fn protected_environment_deployment_requires_approval_before_pipeline() {
+    let pool = test_pool().await;
+    let namespace = Uuid::new_v4();
+    let project_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(format!("it-env-approval-{}", namespace.simple()))
+        .bind("https://example.invalid/env-approval.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    let app = cicd::api::app(Some(pool.clone()));
+
+    let environment_response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/projects/{project_id}/environments"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"name":"production","protected":true,"required_approvals":1}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(environment_response.status(), StatusCode::OK);
+    let environment = response_json(environment_response).await;
+    assert_eq!(environment["protected"], true);
+    assert_eq!(environment["required_approvals"], 1);
+    let environment_id = environment["id"].as_str().unwrap();
+
+    let terminal_response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/environments/{environment_id}/deployments"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"git_ref":"main","status":"success"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(terminal_response.status(), StatusCode::BAD_REQUEST);
+
+    let deployment_response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/environments/{environment_id}/deployments"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"git_ref":"main"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(deployment_response.status(), StatusCode::OK);
+    let deployment = response_json(deployment_response).await;
+    assert_eq!(deployment["status"], "pending");
+    assert_eq!(deployment["pipeline_id"], serde_json::Value::Null);
+    assert_eq!(deployment["approval_required"], true);
+    assert_eq!(deployment["approval_state"], "pending");
+    assert_eq!(deployment["approval_count"], 0);
+    let deployment_id = deployment["id"].as_str().unwrap();
+
+    let approval_response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/deployments/{deployment_id}/approvals"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"decision":"approved","actor":"release-manager","comment":"ship it"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(approval_response.status(), StatusCode::OK);
+    let approved = response_json(approval_response).await;
+    assert_eq!(approved["approval_state"], "approved");
+    assert_eq!(approved["approval_count"], 1);
+    assert!(approved["pipeline_id"].as_str().is_some());
+
+    let approvals_response = app
+        .oneshot(
+            Request::get(format!("/api/v1/deployments/{deployment_id}/approvals"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(approvals_response.status(), StatusCode::OK);
+    let approvals = response_json(approvals_response).await;
+    assert_eq!(approvals.as_array().unwrap().len(), 1);
+    assert_eq!(approvals[0]["decision"], "approved");
+    assert_eq!(approvals[0]["actor"], "release-manager");
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup project");
+}
+
+#[tokio::test]
+async fn deployment_rollback_creates_separate_traceable_pipeline_record() {
+    let pool = test_pool().await;
+    let namespace = Uuid::new_v4();
+    let project_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(format!("it-env-rollback-{}", namespace.simple()))
+        .bind("https://example.invalid/env-rollback.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    let app = cicd::api::app(Some(pool.clone()));
+
+    let environment_response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/projects/{project_id}/environments"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"name":"staging","url":"https://staging.example.invalid"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(environment_response.status(), StatusCode::OK);
+    let environment = response_json(environment_response).await;
+    let environment_id = environment["id"].as_str().unwrap();
+
+    let source_response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/environments/{environment_id}/deployments"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"git_ref":"release-2026-08","status":"success"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(source_response.status(), StatusCode::OK);
+    let source = response_json(source_response).await;
+    let source_id = source["id"].as_str().unwrap();
+
+    let rollback_response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/deployments/{source_id}/rollback"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"git_ref":"release-2026-07"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rollback_response.status(), StatusCode::OK);
+    let rollback = response_json(rollback_response).await;
+    assert_ne!(rollback["id"], source["id"]);
+    assert_eq!(rollback["rollback_of_id"], source["id"]);
+    assert_eq!(rollback["git_ref"], "release-2026-07");
+    assert_eq!(rollback["approval_state"], "not_required");
+    assert!(rollback["pipeline_id"].as_str().is_some());
+
+    let source_after: (String, Option<Uuid>) =
+        sqlx::query_as("SELECT status, rollback_of_id FROM deployments WHERE id = $1")
+            .bind(Uuid::parse_str(source_id).unwrap())
+            .fetch_one(&pool)
+            .await
+            .expect("source deployment remains");
+    assert_eq!(source_after.0, "success");
+    assert_eq!(source_after.1, None);
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup project");
+}
+
 async fn response_json(response: axum::response::Response) -> serde_json::Value {
     let body = to_bytes(response.into_body(), usize::MAX)
         .await

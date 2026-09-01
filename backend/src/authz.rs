@@ -80,6 +80,12 @@ pub fn required_role(method: &str, path: &str) -> (Action, Role) {
     if path.starts_with("/api/v1/outbox-deliveries") && !read_only {
         return (Action::Admin, Role::Maintainer);
     }
+    if path.starts_with("/api/v1/deployments/")
+        && (path.ends_with("/approvals") || path.ends_with("/rollback"))
+        && !read_only
+    {
+        return (Action::Admin, Role::Maintainer);
+    }
     // Everything else: reads for viewer+, writes for developer+.
     if read_only {
         (Action::Read, Role::Viewer)
@@ -131,5 +137,9 @@ mod tests {
         let requeue_path = "/api/v1/outbox-deliveries/018f3c59-38f6-7c2a-bc55-081eb78cbf17/requeue";
         assert!(!allows(Role::Developer, "POST", requeue_path));
         assert!(allows(Role::Maintainer, "POST", requeue_path));
+
+        let approval_path = "/api/v1/deployments/018f3c59-38f6-7c2a-bc55-081eb78cbf17/approvals";
+        assert!(!allows(Role::Developer, "POST", approval_path));
+        assert!(allows(Role::Maintainer, "POST", approval_path));
     }
 }

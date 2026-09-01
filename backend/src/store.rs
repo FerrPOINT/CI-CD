@@ -103,6 +103,14 @@ pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
             name TEXT NOT NULL,
             url TEXT,
             status TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available','stopped','degraded')),
+            protected BOOLEAN NOT NULL DEFAULT FALSE,
+            required_approvals INTEGER NOT NULL DEFAULT 0 CHECK (
+                required_approvals BETWEEN 0 AND 10
+                AND (
+                    (protected = FALSE AND required_approvals = 0)
+                    OR (protected = TRUE AND required_approvals >= 1)
+                )
+            ),
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             UNIQUE(project_id, name)
         );
@@ -110,9 +118,19 @@ pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
             id UUID PRIMARY KEY,
             environment_id UUID NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
             pipeline_id UUID REFERENCES pipelines(id) ON DELETE SET NULL,
+            rollback_of_id UUID REFERENCES deployments(id) ON DELETE SET NULL,
             git_ref TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','running','success','failed')),
             created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        CREATE TABLE IF NOT EXISTS deployment_approvals (
+            id UUID PRIMARY KEY,
+            deployment_id UUID NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+            decision TEXT NOT NULL CHECK (decision IN ('approved','rejected')),
+            actor TEXT NOT NULL,
+            comment TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            UNIQUE (deployment_id, actor)
         );
         CREATE TABLE IF NOT EXISTS schedules (
             id UUID PRIMARY KEY,
@@ -184,6 +202,8 @@ pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
         CREATE INDEX IF NOT EXISTS idx_project_secrets_project ON project_secrets(project_id);
         CREATE INDEX IF NOT EXISTS idx_artifacts_job ON artifacts(job_id);
         CREATE INDEX IF NOT EXISTS idx_deployments_environment ON deployments(environment_id);
+        CREATE INDEX IF NOT EXISTS idx_deployments_rollback_of ON deployments(rollback_of_id);
+        CREATE INDEX IF NOT EXISTS idx_deployment_approvals_deployment ON deployment_approvals(deployment_id, created_at, id);
         CREATE INDEX IF NOT EXISTS idx_schedules_project ON schedules(project_id);
         CREATE INDEX IF NOT EXISTS idx_schedules_due ON schedules(next_fire_at) WHERE enabled AND last_fire_error IS NULL;
         CREATE INDEX IF NOT EXISTS idx_schedule_fires_schedule_created ON schedule_fires(schedule_id, scheduled_for DESC);

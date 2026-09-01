@@ -146,6 +146,90 @@ paths:
                 $ref: '#/components/schemas/TokenPair'
         '401':
           description: ''
+  /api/v1/deployments/{deployment_id}/approvals:
+    get:
+      tags:
+      - environments
+      operationId: list_deployment_approvals
+      parameters:
+      - name: deployment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DeploymentApproval'
+        '404':
+          description: ''
+    post:
+      tags:
+      - environments
+      operationId: record_deployment_approval
+      parameters:
+      - name: deployment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecordDeploymentApproval'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+        '400':
+          description: ''
+        '404':
+          description: ''
+        '409':
+          description: ''
+  /api/v1/deployments/{deployment_id}/rollback:
+    post:
+      tags:
+      - environments
+      operationId: rollback_deployment
+      parameters:
+      - name: deployment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RollbackDeployment'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Deployment'
+        '400':
+          description: ''
+        '404':
+          description: ''
+        '409':
+          description: ''
   /api/v1/environments/{environment_id}:
     delete:
       tags:
@@ -2730,6 +2814,15 @@ components:
       properties:
         name:
           type: string
+        protected:
+          type:
+          - boolean
+          - 'null'
+        required_approvals:
+          type:
+          - integer
+          - 'null'
+          format: int32
         url:
           type:
           - string
@@ -2882,8 +2975,19 @@ components:
       - environment_id
       - git_ref
       - status
+      - approval_required
+      - approval_state
+      - approval_count
+      - required_approvals
       - created_at
       properties:
+        approval_count:
+          type: integer
+          format: int64
+        approval_required:
+          type: boolean
+        approval_state:
+          type: string
         created_at:
           type: string
           format: date-time
@@ -2900,8 +3004,42 @@ components:
           - string
           - 'null'
           format: uuid
+        required_approvals:
+          type: integer
+          format: int32
+        rollback_of_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
         status:
           type: string
+    DeploymentApproval:
+      type: object
+      required:
+      - id
+      - deployment_id
+      - decision
+      - actor
+      - created_at
+      properties:
+        actor:
+          type: string
+        comment:
+          type:
+          - string
+          - 'null'
+        created_at:
+          type: string
+          format: date-time
+        decision:
+          type: string
+        deployment_id:
+          type: string
+          format: uuid
+        id:
+          type: string
+          format: uuid
     DiffFile:
       type: object
       required:
@@ -2950,6 +3088,8 @@ components:
       - project_id
       - name
       - status
+      - protected
+      - required_approvals
       - created_at
       properties:
         created_at:
@@ -2963,6 +3103,11 @@ components:
         project_id:
           type: string
           format: uuid
+        protected:
+          type: boolean
+        required_approvals:
+          type: integer
+          format: int32
         status:
           type: string
         url:
@@ -3642,6 +3787,21 @@ components:
           type: string
         status:
           type: string
+    RecordDeploymentApproval:
+      type: object
+      required:
+      - decision
+      properties:
+        actor:
+          type:
+          - string
+          - 'null'
+        comment:
+          type:
+          - string
+          - 'null'
+        decision:
+          type: string
     RefInfo:
       type: object
       required:
@@ -3767,6 +3927,13 @@ components:
         retried:
           type: string
           format: uuid
+    RollbackDeployment:
+      type: object
+      properties:
+        git_ref:
+          type:
+          - string
+          - 'null'
     Runner:
       type: object
       required:
@@ -4434,6 +4601,15 @@ components:
           type:
           - string
           - 'null'
+        protected:
+          type:
+          - boolean
+          - 'null'
+        required_approvals:
+          type:
+          - integer
+          - 'null'
+          format: int32
         status:
           type:
           - string

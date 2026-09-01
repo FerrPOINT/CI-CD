@@ -2,7 +2,7 @@
 
 > Скриншоты сняты Playwright (Chromium) с живого стенда и deterministic seed (`frontend/scripts/seed-evidence.mjs`). Viewport: desktop 1920×1080, mobile 375×812; итоговая высота full-page PNG указана в таблице. Локаль ru, тема dark, DPR 1. Пересъёмка: `node frontend/scripts/shoot-evidence.mjs`.
 >
-> Исключение текущего прохода: `06-pipeline-detail.png`, `m-pipeline-detail.png`, `16-schedules.png`, `20-users.png`, `21-artifacts.png`, `32-user-create.png` и `33-job-logs.png` пересняты через local Vite + мокированные API-ответы, потому что локальный Docker/API на машине недоступен или требовалась изолированная проверка изменённого UI; полный live evidence переснимается командой выше при доступном стенде.
+> Исключение текущего прохода: `06-pipeline-detail.png`, `m-pipeline-detail.png`, `15-environments.png`, `16-schedules.png`, `20-users.png`, `21-artifacts.png`, `28-env-create.png`, `32-user-create.png`, `33-job-logs.png` и `41-env-approval-controls.png` пересняты через local Vite + мокированные API-ответы, потому что локальный Docker/API на машине недоступен или требовалась изолированная проверка изменённого UI; полный live evidence переснимается командой выше при доступном стенде.
 >
 > Номер `08` зарезервирован за удалённым статичным `/admin` screen. Отдельный `/admin` не входит в текущий baseline; системный срез находится в `/settings`.
 
@@ -54,6 +54,7 @@
 | [37-repo-tags.png](../../screenshots/37-repo-tags.png) | Репозиторий → «Теги» | Список Git tags | 1920×1080 |
 | [38-releases-create.png](../../screenshots/38-releases-create.png) | Репозиторий → Релизы → «Создать релиз» | Диалог release metadata | 1920×1080 |
 | [39-repo-code-src.png](../../screenshots/39-repo-code-src.png) | Репозиторий → Код → `src` | Навигация по подкаталогу | 1920×1080 |
+| [41-env-approval-controls.png](../../screenshots/41-env-approval-controls.png) | Окружения → «Деплои» | Protected deployment approval controls и rollback action | 1920×1080 |
 
 ## Мобильные версии
 

@@ -18,6 +18,7 @@ import type {
   CreatedApiToken,
   CreatePullRequestInput,
   Deployment,
+  DeploymentApproval,
   Environment,
   Job,
   JobAttempt,
@@ -372,6 +373,7 @@ const PLATFORM_KEYS = {
   artifacts: (jobId: string) => ['artifacts', jobId] as const,
   environments: (projectId: string) => ['environments', projectId] as const,
   deployments: (environmentId: string) => ['deployments', environmentId] as const,
+  deploymentApprovals: (deploymentId: string) => ['deployment-approvals', deploymentId] as const,
   schedules: (projectId: string) => ['schedules', projectId] as const,
   webhooks: (projectId: string) => ['webhooks', projectId] as const,
   outboxDeliveries: (projectId: string) => ['outbox-deliveries', projectId] as const,
@@ -489,7 +491,7 @@ export function useEnvironments(projectId: string | undefined) {
 export function useCreateEnvironment(projectId: string | undefined) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (input: { name: string; url?: string }) =>
+    mutationFn: (input: { name: string; url?: string; protected?: boolean; required_approvals?: number }) =>
       api<Environment>(`/projects/${projectId}/environments`, { method: 'POST', body: JSON.stringify(input) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.environments(projectId ?? '') }),
   })
@@ -517,6 +519,43 @@ export function useCreateDeployment(environmentId: string | undefined) {
     mutationFn: (input: { git_ref: string; status?: 'pending' | 'running' | 'success' | 'failed' }) =>
       api<Deployment>(`/environments/${environmentId}/deployments`, { method: 'POST', body: JSON.stringify(input) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.deployments(environmentId ?? '') }),
+  })
+}
+
+export function useDeploymentApprovals(deploymentId: string | undefined) {
+  return useQuery({
+    queryKey: PLATFORM_KEYS.deploymentApprovals(deploymentId ?? ''),
+    queryFn: () => api<DeploymentApproval[]>(`/deployments/${deploymentId}/approvals`),
+    enabled: Boolean(deploymentId),
+  })
+}
+
+export function useRecordDeploymentApproval(environmentId: string | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { deploymentId: string; decision: 'approved' | 'rejected'; actor?: string; comment?: string }) =>
+      api<Deployment>(`/deployments/${input.deploymentId}/approvals`, {
+        method: 'POST',
+        body: JSON.stringify({ decision: input.decision, actor: input.actor, comment: input.comment }),
+      }),
+    onSuccess: (deployment) => {
+      qc.invalidateQueries({ queryKey: PLATFORM_KEYS.deployments(environmentId ?? deployment.environment_id) })
+      qc.invalidateQueries({ queryKey: PLATFORM_KEYS.deploymentApprovals(deployment.id) })
+    },
+  })
+}
+
+export function useRollbackDeployment(environmentId: string | undefined) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: { deploymentId: string; git_ref?: string }) =>
+      api<Deployment>(`/deployments/${input.deploymentId}/rollback`, {
+        method: 'POST',
+        body: JSON.stringify({ git_ref: input.git_ref }),
+      }),
+    onSuccess: (deployment) => {
+      qc.invalidateQueries({ queryKey: PLATFORM_KEYS.deployments(environmentId ?? deployment.environment_id) })
+    },
   })
 }
 

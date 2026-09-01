@@ -1,7 +1,7 @@
 # CURRENT STATE — Forge CI/CD
 
 > **Производный снимок текущего состояния.** Сгенерирован из кода; authority — код и коммит, не этот файл. Обновлять при каждом изменении capability.
-> Снято: `2026-09-01`, ветка `main`; visual evidence: 45 screenshots в `docs/assets/screens/manifest.md`.
+> Снято: `2026-09-01`, ветка `main`; visual evidence: 46 screenshots в `docs/assets/screens/manifest.md`.
 
 ## Что работает сейчас (Current verified)
 
@@ -19,7 +19,7 @@
 | Логи | ✅ | append-only внутри attempt, sequence per attempt, совместимый REST array shortcut, bounded `/logs/page` с `limit/after/q`, SSE stream текущей/последней attempt, latest attempt diagnostic на terminal job card в деталях pipeline и явный 1 MiB body limit на append endpoints |
 | Артефакты | ✅ MVP | upload/download ≤50 MiB, route-level body limit 50 MiB, локальный `CICD_ARTIFACTS_DIR`; новые metadata привязаны к active/latest attempt, содержат SHA-256 и `expires_at`; download проверяет canonical path containment, checksum drift и не отдаёт expired/purged записи; retention worker удаляет expired local files и ставит `purged_at` |
 | Секреты проектов | ✅ | AES-256-GCM at rest; значение не возвращается user API; execution выдаёт только job-declared имена секретов |
-| Environments/deployments | ✅ | metadata + history |
+| Environments/deployments | ✅ MVP | metadata + append-only deployment history; protected environments require approval before backend starts the linked deployment pipeline, decisions are stored in `deployment_approvals`, and rollback creates a separate `rollback_of_id` deployment record. Richer policy rules, multi-approver workflows and rollback orchestration remain target |
 | Reports | ✅ | агрегаты success rate/duration |
 | Users/roles + API-токены | ✅ | хранение + enforcement при `CICD_AUTH_SECRET`; session-bound access JWT, refresh session rotate/logout; новые PAT требуют project scope, scopes и expiry; глобальная роль ограничивает максимум прав |
 | Audit log | ✅ | append-only, последние 200 |
@@ -45,7 +45,7 @@
 
 ## Не реализовано (Target approved — см. ADR + contracts)
 
-Production-grade runner dispatch fairness, resumable/chunked artifact sessions, idempotent chunked log upload, Docker/Kubernetes sandbox, pool/protected-tag policy и advanced capability matching (ADR-0007), policy-aware pipeline planner поверх v1 DAG (`on`, retry, `artifacts.expire_in`, line/column diagnostics, job-level dispatcher), full secret redaction/rotation/environment policy, general idempotency storage for all retryable mutations, command spans/stream classification для диагностических логов, artifact object storage/tenant isolation/legal hold, off-site/PITR backup platform и verified restore drill, external notification channel adapters (email/Slack), inbound provider webhook handlers, tenant isolation, service-account tokens, scoped Git credentials, production cookie/CSRF/session-family policy, schedule IANA timezone/DST/misfire и multi-replica leases, outbox lease/fencing/crash recovery, full dead-letter operator policy/metrics, OpenAPI examples validation/deprecation lifecycle, full locale E2E/stable identifier suite, Lighthouse/load reports и 30-day SLO evidence, `cargo-deny` license/source policy, broader container/image policy beyond current critical CVE scan, deeper history/container secret scan, release SBOM publication и distributed/proxy rate/time/concurrency limiting (сейчас in-process окно по forwarded client key и route-level body limits).
+Production-grade runner dispatch fairness, resumable/chunked artifact sessions, idempotent chunked log upload, Docker/Kubernetes sandbox, pool/protected-tag policy и advanced capability matching (ADR-0007), policy-aware pipeline planner поверх v1 DAG (`on`, retry, `artifacts.expire_in`, line/column diagnostics, job-level dispatcher), full secret redaction/rotation/environment policy, richer protected-environment policy rules, multi-approver delivery workflows и rollback orchestration, general idempotency storage for all retryable mutations, command spans/stream classification для диагностических логов, artifact object storage/tenant isolation/legal hold, off-site/PITR backup platform и verified restore drill, external notification channel adapters (email/Slack), inbound provider webhook handlers, tenant isolation, service-account tokens, scoped Git credentials, production cookie/CSRF/session-family policy, schedule IANA timezone/DST/misfire и multi-replica leases, outbox lease/fencing/crash recovery, full dead-letter operator policy/metrics, OpenAPI examples validation/deprecation lifecycle, full locale E2E/stable identifier suite, Lighthouse/load reports и 30-day SLO evidence, `cargo-deny` license/source policy, broader container/image policy beyond current critical CVE scan, deeper history/container secret scan, release SBOM publication и distributed/proxy rate/time/concurrency limiting (сейчас in-process окно по forwarded client key и route-level body limits).
 
 ## Текущее runtime-дерево backend
 

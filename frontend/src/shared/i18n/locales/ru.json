@@ -171,7 +171,8 @@
     "search": "Поиск",
     "clear": "Очистить",
     "dismiss": "Закрыть",
-    "create": "Создать"
+    "create": "Создать",
+    "actions": "Действия"
   },
   "capability": {
     "currentVerified": "Проверено сейчас",
@@ -228,10 +229,12 @@
   "environments": {
     "title": "Окружения",
     "capabilityTitle": "Окружения и история доставки",
-    "capabilityDescription": "Сейчас это metadata окружений и append-only записи деплоев. Protected approvals, policy gates и rollback через отдельный traceable pipeline остаются target.",
+    "capabilityDescription": "Сейчас это metadata окружений, неизменяемая история деплоев, approval-гейт для protected окружений и rollback через отдельную запись pipeline. Расширенные правила policy, многоэтапные approvals и оркестрация rollback остаются target.",
     "create": "Создать окружение",
     "name": "Имя",
     "url": "URL",
+    "protected": "Protected-режим",
+    "requiredApprovals": "Подтверждений",
     "created": "Окружение создано",
     "deleted": "Окружение удалено",
     "deleteConfirm": "Удалить окружение",
@@ -242,6 +245,18 @@
     "create": "Записать деплой",
     "gitRef": "Git ref",
     "status": "Статус",
+    "approval": "Подтверждение",
+    "trace": "Связь",
+    "approvalNotRequired": "Не требуется",
+    "approvalPending": "Ожидает",
+    "approved": "Подтверждено",
+    "rejected": "Отклонено",
+    "approve": "Подтвердить",
+    "reject": "Отклонить",
+    "rollback": "Откат",
+    "rollbackOf": "Откат от",
+    "rollbackCreated": "Запись отката создана",
+    "approvalRecorded": "Решение записано",
     "created": "Запись деплоя создана",
     "empty": "Деплоев нет."
   },

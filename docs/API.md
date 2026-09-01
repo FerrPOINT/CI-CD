@@ -967,7 +967,11 @@ cicd-cli runner list
 cicd-cli secret list --project <uuid>
 cicd-cli artifact list --job <uuid>
 cicd-cli environment list --project <uuid>
+cicd-cli environment create --project <uuid> --name production --protected --required-approvals 1
 cicd-cli deployment list --environment <uuid>
+cicd-cli deployment approvals --id <deployment-uuid>
+cicd-cli deployment approve --id <deployment-uuid>
+cicd-cli deployment rollback --id <deployment-uuid>
 cicd-cli schedule list --project <uuid>
 cicd-cli webhook list --project <uuid>
 cicd-cli notification events --project <uuid> --limit 50
@@ -1065,11 +1069,16 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 | Метод | Путь | Назначение |
 |---|---|---|
 | GET | `/projects/{project_id}/environments` | Список окружений проекта |
-| POST | `/projects/{project_id}/environments` | Создать окружение (name, url) |
+| POST | `/projects/{project_id}/environments` | Создать окружение (name, url, optional `protected`, `required_approvals`) |
 | PATCH | `/environments/{environment_id}` | Обновить окружение |
 | DELETE | `/environments/{environment_id}` | Удалить окружение |
 | GET | `/environments/{environment_id}/deployments` | Список деплоев |
 | POST | `/environments/{environment_id}/deployments` | Создать деплой (git_ref, status) |
+| GET | `/deployments/{deployment_id}/approvals` | Append-only решения по protected deployment |
+| POST | `/deployments/{deployment_id}/approvals` | Записать approval decision (`approved`/`rejected`, optional actor/comment) |
+| POST | `/deployments/{deployment_id}/rollback` | Создать отдельную rollback delivery запись |
+
+`Environment` содержит `protected` и `required_approvals`. Для protected environment deployment нельзя сразу создать как terminal `success`/`failed` или связать с уже запущенным pipeline: запись стартует как `pending`, а `POST /deployments/{deployment_id}/approvals` сохраняет immutable decision. При включённой auth-схеме actor берётся из JWT/PAT subject; body `actor` используется только в trusted-network режиме. Когда набрано `required_approvals`, backend запускает pipeline через тот же idempotent trigger helper и связывает его с deployment. Rollback не переписывает исходный deployment: создаётся новая запись с `rollback_of_id`; для обычного окружения pipeline стартует сразу, для protected окружения rollback также ждёт approval.
 
 ### Schedules
 
@@ -1317,6 +1326,8 @@ Git Smart HTTP допускает unauthenticated read только для `repo
 | `/api/v1/auth/login` | Auth |
 | `/api/v1/auth/refresh` | Auth |
 | `/api/v1/auth/logout` | Auth |
+| `/api/v1/deployments/{deployment_id}/approvals` | Environments |
+| `/api/v1/deployments/{deployment_id}/rollback` | Environments |
 | `/api/v1/environments/{environment_id}` | Environments |
 | `/api/v1/environments/{environment_id}/deployments` | Environments |
 | `/api/v1/health` | Health |

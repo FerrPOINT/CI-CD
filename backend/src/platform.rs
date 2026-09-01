@@ -81,6 +81,14 @@ pub fn routes() -> Router<Arc<AppState>> {
             get(list_deployments).post(create_deployment),
         )
         .route(
+            "/api/v1/deployments/{deployment_id}/approvals",
+            get(list_deployment_approvals).post(record_deployment_approval),
+        )
+        .route(
+            "/api/v1/deployments/{deployment_id}/rollback",
+            post(rollback_deployment),
+        )
+        .route(
             "/api/v1/projects/{project_id}/schedules",
             get(list_schedules).post(create_schedule),
         )
@@ -503,25 +511,33 @@ pub(crate) struct Environment {
     name: String,
     url: Option<String>,
     status: String,
+    protected: bool,
+    required_approvals: i32,
     created_at: DateTime<Utc>,
 }
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct CreateEnvironment {
     name: String,
     url: Option<String>,
+    #[serde(default)]
+    protected: Option<bool>,
+    #[serde(default)]
+    required_approvals: Option<i32>,
 }
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct UpdateEnvironment {
     name: Option<String>,
     url: Option<String>,
     status: Option<String>,
+    protected: Option<bool>,
+    required_approvals: Option<i32>,
 }
 #[utoipa::path(get, path = "/api/v1/projects/{project_id}/environments", tag = "environments", params(("project_id" = Uuid, Path)), responses((status = 200, body = [Environment])))]
 async fn list_environments(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
 ) -> ApiResult<Vec<Environment>> {
-    Ok(Json(sqlx::query_as("SELECT id, project_id, name, url, status, created_at FROM environments WHERE project_id = $1 ORDER BY name").bind(project_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
+    Ok(Json(sqlx::query_as("SELECT id, project_id, name, url, status, protected, required_approvals, created_at FROM environments WHERE project_id = $1 ORDER BY name").bind(project_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
 #[utoipa::path(post, path = "/api/v1/projects/{project_id}/environments", tag = "environments", request_body = CreateEnvironment, params(("project_id" = Uuid, Path)), responses((status = 200, body = Environment), (status = 400)))]
 async fn create_environment(
@@ -532,7 +548,19 @@ async fn create_environment(
     if input.name.trim().is_empty() {
         return Err(ApiError::bad_request("environment name is required"));
     }
-    let value = sqlx::query_as("INSERT INTO environments (id, project_id, name, url) VALUES ($1, $2, $3, $4) RETURNING id, project_id, name, url, status, created_at").bind(Uuid::new_v4()).bind(project_id).bind(input.name.trim()).bind(input.url).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
+    let protected = input.protected.unwrap_or(false);
+    let required_approvals =
+        normalize_required_approvals(protected, input.required_approvals, None)?;
+    let value = sqlx::query_as("INSERT INTO environments (id, project_id, name, url, protected, required_approvals) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, project_id, name, url, status, protected, required_approvals, created_at")
+        .bind(Uuid::new_v4())
+        .bind(project_id)
+        .bind(input.name.trim())
+        .bind(trim_optional(input.url))
+        .bind(protected)
+        .bind(required_approvals)
+        .fetch_one(pool(&state)?)
+        .await
+        .map_err(ApiError::internal)?;
     Ok(Json(value))
 }
 #[utoipa::path(patch, path = "/api/v1/environments/{environment_id}", tag = "environments", request_body = UpdateEnvironment, params(("environment_id" = Uuid, Path)), responses((status = 200, body = Environment), (status = 404)))]
@@ -541,12 +569,31 @@ async fn update_environment(
     Path(id): Path<Uuid>,
     Json(input): Json<UpdateEnvironment>,
 ) -> ApiResult<Environment> {
+    let name = input.name.as_deref().map(str::trim);
+    if name == Some("") {
+        return Err(ApiError::bad_request("environment name is required"));
+    }
     if let Some(status) = &input.status {
         if !matches!(status.as_str(), "available" | "stopped" | "degraded") {
             return Err(ApiError::bad_request("invalid environment status"));
         }
     }
-    let value = sqlx::query_as("UPDATE environments SET name = COALESCE($2, name), url = COALESCE($3, url), status = COALESCE($4, status) WHERE id = $1 RETURNING id, project_id, name, url, status, created_at").bind(id).bind(input.name.as_deref().map(str::trim)).bind(input.url).bind(input.status).fetch_optional(pool(&state)?).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?;
+    let db = pool(&state)?;
+    let current = fetch_environment_policy(db, id).await?;
+    let protected = input.protected.unwrap_or(current.protected);
+    let required_approvals =
+        normalize_required_approvals(protected, input.required_approvals, Some(&current))?;
+    let value = sqlx::query_as("UPDATE environments SET name = COALESCE($2, name), url = COALESCE($3, url), status = COALESCE($4, status), protected = $5, required_approvals = $6 WHERE id = $1 RETURNING id, project_id, name, url, status, protected, required_approvals, created_at")
+        .bind(id)
+        .bind(name)
+        .bind(trim_optional(input.url))
+        .bind(input.status)
+        .bind(protected)
+        .bind(required_approvals)
+        .fetch_optional(db)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(ApiError::not_found)?;
     Ok(Json(value))
 }
 #[utoipa::path(delete, path = "/api/v1/environments/{environment_id}", tag = "environments", params(("environment_id" = Uuid, Path)), responses((status = 200), (status = 404)))]
@@ -568,8 +615,13 @@ pub(crate) struct Deployment {
     id: Uuid,
     environment_id: Uuid,
     pipeline_id: Option<Uuid>,
+    rollback_of_id: Option<Uuid>,
     git_ref: String,
     status: String,
+    approval_required: bool,
+    approval_state: String,
+    approval_count: i64,
+    required_approvals: i32,
     created_at: DateTime<Utc>,
 }
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -583,7 +635,17 @@ async fn list_deployments(
     State(state): State<Arc<AppState>>,
     Path(environment_id): Path<Uuid>,
 ) -> ApiResult<Vec<Deployment>> {
-    Ok(Json(sqlx::query_as("SELECT id, environment_id, pipeline_id, git_ref, status, created_at FROM deployments WHERE environment_id = $1 ORDER BY created_at DESC LIMIT 50").bind(environment_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
+    let sql = deployment_select(
+        "d.environment_id = $1",
+        "ORDER BY d.created_at DESC, d.id DESC LIMIT 50",
+    );
+    Ok(Json(
+        sqlx::query_as(sql.as_str())
+            .bind(environment_id)
+            .fetch_all(pool(&state)?)
+            .await
+            .map_err(ApiError::internal)?,
+    ))
 }
 #[utoipa::path(post, path = "/api/v1/environments/{environment_id}/deployments", tag = "environments", request_body = CreateDeployment, params(("environment_id" = Uuid, Path)), responses((status = 200, body = Deployment), (status = 400)))]
 async fn create_deployment(
@@ -594,15 +656,513 @@ async fn create_deployment(
     if input.git_ref.trim().is_empty() {
         return Err(ApiError::bad_request("git_ref is required"));
     }
-    let status = input.status.unwrap_or_else(|| "success".into());
-    if !matches!(
-        status.as_str(),
-        "pending" | "running" | "success" | "failed"
-    ) {
-        return Err(ApiError::bad_request("invalid deployment status"));
+    let db = pool(&state)?;
+    let policy = fetch_environment_policy(db, environment_id).await?;
+    validate_pipeline_project(db, input.pipeline_id, policy.project_id).await?;
+    let approval_required = policy.requires_approval();
+    if approval_required && input.pipeline_id.is_some() {
+        return Err(ApiError::bad_request(
+            "protected environment deployment must be approved before pipeline execution",
+        ));
     }
-    let value = sqlx::query_as("INSERT INTO deployments (id, environment_id, pipeline_id, git_ref, status) VALUES ($1, $2, $3, $4, $5) RETURNING id, environment_id, pipeline_id, git_ref, status, created_at").bind(Uuid::new_v4()).bind(environment_id).bind(input.pipeline_id).bind(input.git_ref.trim()).bind(status).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
+    let status = input.status.unwrap_or_else(|| {
+        if approval_required {
+            "pending".into()
+        } else {
+            "success".into()
+        }
+    });
+    validate_deployment_status(&status)?;
+    if approval_required && status != "pending" {
+        return Err(ApiError::bad_request(
+            "protected environment deployment must start as pending approval",
+        ));
+    }
+    let id = Uuid::new_v4();
+    sqlx::query("INSERT INTO deployments (id, environment_id, pipeline_id, git_ref, status) VALUES ($1, $2, $3, $4, $5)")
+        .bind(id)
+        .bind(environment_id)
+        .bind(input.pipeline_id)
+        .bind(input.git_ref.trim())
+        .bind(status)
+        .execute(db)
+        .await
+        .map_err(ApiError::internal)?;
+    audit(db, "deployment.created", "deployment", id, None).await?;
+    let value = fetch_deployment(db, id).await?;
     Ok(Json(value))
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct DeploymentApproval {
+    id: Uuid,
+    deployment_id: Uuid,
+    decision: String,
+    actor: String,
+    comment: Option<String>,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct RecordDeploymentApproval {
+    decision: String,
+    actor: Option<String>,
+    comment: Option<String>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct RollbackDeployment {
+    git_ref: Option<String>,
+}
+
+#[utoipa::path(get, path = "/api/v1/deployments/{deployment_id}/approvals", tag = "environments", params(("deployment_id" = Uuid, Path)), responses((status = 200, body = [DeploymentApproval]), (status = 404)))]
+async fn list_deployment_approvals(
+    State(state): State<Arc<AppState>>,
+    Path(deployment_id): Path<Uuid>,
+) -> ApiResult<Vec<DeploymentApproval>> {
+    let db = pool(&state)?;
+    ensure_deployment_exists(db, deployment_id).await?;
+    Ok(Json(sqlx::query_as("SELECT id, deployment_id, decision, actor, comment, created_at FROM deployment_approvals WHERE deployment_id = $1 ORDER BY created_at ASC, id ASC")
+        .bind(deployment_id)
+        .fetch_all(db)
+        .await
+        .map_err(ApiError::internal)?))
+}
+
+#[utoipa::path(post, path = "/api/v1/deployments/{deployment_id}/approvals", tag = "environments", request_body = RecordDeploymentApproval, params(("deployment_id" = Uuid, Path)), responses((status = 200, body = Deployment), (status = 400), (status = 404), (status = 409)))]
+async fn record_deployment_approval(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+    Path(deployment_id): Path<Uuid>,
+    Json(input): Json<RecordDeploymentApproval>,
+) -> ApiResult<Deployment> {
+    let db = pool(&state)?;
+    let decision = normalize_approval_decision(&input.decision)?;
+    let actor = approval_actor(input.actor.as_deref(), claims.as_ref().map(|c| c.0.sub))?;
+    let comment = trim_optional(input.comment);
+    if comment.as_ref().is_some_and(|value| value.len() > 1000) {
+        return Err(ApiError::bad_request("approval comment is too long"));
+    }
+
+    let target = record_approval_decision(db, deployment_id, &decision, &actor, comment).await?;
+    if target.should_start_pipeline {
+        start_deployment_pipeline(
+            db,
+            deployment_id,
+            target.project_id,
+            target.environment_id,
+            target.git_ref,
+            target.rollback_of_id,
+            "deployment-approval",
+        )
+        .await?;
+    }
+    let value = fetch_deployment(db, deployment_id).await?;
+    Ok(Json(value))
+}
+
+#[utoipa::path(post, path = "/api/v1/deployments/{deployment_id}/rollback", tag = "environments", request_body = RollbackDeployment, params(("deployment_id" = Uuid, Path)), responses((status = 200, body = Deployment), (status = 400), (status = 404), (status = 409)))]
+async fn rollback_deployment(
+    State(state): State<Arc<AppState>>,
+    Path(deployment_id): Path<Uuid>,
+    Json(input): Json<RollbackDeployment>,
+) -> ApiResult<Deployment> {
+    let db = pool(&state)?;
+    let source = fetch_rollback_source(db, deployment_id).await?;
+    if source.status != "success" {
+        return Err(ApiError::conflict(
+            "only successful deployments can be rollback targets",
+        ));
+    }
+    let git_ref = input
+        .git_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(source.git_ref.as_str())
+        .to_owned();
+    let new_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO deployments (id, environment_id, pipeline_id, rollback_of_id, git_ref, status) VALUES ($1, $2, $3, $4, $5, $6)")
+        .bind(new_id)
+        .bind(source.environment_id)
+        .bind(None::<Uuid>)
+        .bind(deployment_id)
+        .bind(&git_ref)
+        .bind("pending")
+        .execute(db)
+        .await
+        .map_err(ApiError::internal)?;
+    if !source.requires_approval() {
+        start_deployment_pipeline(
+            db,
+            new_id,
+            source.project_id,
+            source.environment_id,
+            git_ref,
+            Some(deployment_id),
+            "deployment-rollback",
+        )
+        .await?;
+    }
+    audit(
+        db,
+        "deployment.rollback.created",
+        "deployment",
+        new_id,
+        None,
+    )
+    .await?;
+    Ok(Json(fetch_deployment(db, new_id).await?))
+}
+
+#[derive(Debug, FromRow)]
+struct EnvironmentPolicy {
+    project_id: Uuid,
+    protected: bool,
+    required_approvals: i32,
+}
+
+impl EnvironmentPolicy {
+    fn requires_approval(&self) -> bool {
+        self.protected && self.required_approvals > 0
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct ApprovalTarget {
+    environment_id: Uuid,
+    project_id: Uuid,
+    git_ref: String,
+    status: String,
+    pipeline_id: Option<Uuid>,
+    rollback_of_id: Option<Uuid>,
+    protected: bool,
+    required_approvals: i32,
+}
+
+impl ApprovalTarget {
+    fn requires_approval(&self) -> bool {
+        self.protected && self.required_approvals > 0
+    }
+}
+
+#[derive(Debug)]
+struct RecordedApprovalTarget {
+    environment_id: Uuid,
+    project_id: Uuid,
+    git_ref: String,
+    rollback_of_id: Option<Uuid>,
+    should_start_pipeline: bool,
+}
+
+#[derive(Debug, FromRow)]
+struct RollbackSource {
+    environment_id: Uuid,
+    project_id: Uuid,
+    git_ref: String,
+    status: String,
+    protected: bool,
+    required_approvals: i32,
+}
+
+impl RollbackSource {
+    fn requires_approval(&self) -> bool {
+        self.protected && self.required_approvals > 0
+    }
+}
+
+async fn fetch_environment_policy(
+    db: &PgPool,
+    environment_id: Uuid,
+) -> Result<EnvironmentPolicy, ApiError> {
+    sqlx::query_as(
+        "SELECT project_id, protected, required_approvals FROM environments WHERE id = $1",
+    )
+    .bind(environment_id)
+    .fetch_optional(db)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)
+}
+
+async fn validate_pipeline_project(
+    db: &PgPool,
+    pipeline_id: Option<Uuid>,
+    project_id: Uuid,
+) -> Result<(), ApiError> {
+    let Some(pipeline_id) = pipeline_id else {
+        return Ok(());
+    };
+    let pipeline_project_id: Uuid =
+        sqlx::query_scalar("SELECT project_id FROM pipelines WHERE id = $1")
+            .bind(pipeline_id)
+            .fetch_optional(db)
+            .await
+            .map_err(ApiError::internal)?
+            .ok_or_else(ApiError::not_found)?;
+    if pipeline_project_id != project_id {
+        return Err(ApiError::bad_request(
+            "pipeline belongs to a different project than environment",
+        ));
+    }
+    Ok(())
+}
+
+async fn ensure_deployment_exists(db: &PgPool, deployment_id: Uuid) -> Result<(), ApiError> {
+    let exists =
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM deployments WHERE id = $1)")
+            .bind(deployment_id)
+            .fetch_one(db)
+            .await
+            .map_err(ApiError::internal)?;
+    if exists {
+        Ok(())
+    } else {
+        Err(ApiError::not_found())
+    }
+}
+
+fn deployment_select(where_clause: &str, tail_clause: &str) -> String {
+    format!(
+        "SELECT d.id, d.environment_id, d.pipeline_id, d.rollback_of_id, d.git_ref, d.status, d.created_at, \
+                (e.protected AND e.required_approvals > 0) AS approval_required, \
+                e.required_approvals, \
+                COALESCE(COUNT(a.id) FILTER (WHERE a.decision = 'approved'), 0)::bigint AS approval_count, \
+                CASE \
+                    WHEN NOT (e.protected AND e.required_approvals > 0) THEN 'not_required' \
+                    WHEN COALESCE(COUNT(a.id) FILTER (WHERE a.decision = 'rejected'), 0) > 0 THEN 'rejected' \
+                    WHEN COALESCE(COUNT(a.id) FILTER (WHERE a.decision = 'approved'), 0) >= e.required_approvals THEN 'approved' \
+                    ELSE 'pending' \
+                END AS approval_state \
+         FROM deployments d \
+         JOIN environments e ON e.id = d.environment_id \
+         LEFT JOIN deployment_approvals a ON a.deployment_id = d.id \
+         WHERE {where_clause} \
+         GROUP BY d.id, e.protected, e.required_approvals \
+         {tail_clause}"
+    )
+}
+
+async fn fetch_deployment(db: &PgPool, deployment_id: Uuid) -> Result<Deployment, ApiError> {
+    let sql = deployment_select("d.id = $1", "");
+    sqlx::query_as(sql.as_str())
+        .bind(deployment_id)
+        .fetch_optional(db)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(ApiError::not_found)
+}
+
+async fn record_approval_decision(
+    db: &PgPool,
+    deployment_id: Uuid,
+    decision: &str,
+    actor: &str,
+    comment: Option<String>,
+) -> Result<RecordedApprovalTarget, ApiError> {
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
+    let target: ApprovalTarget = sqlx::query_as(
+        "SELECT d.environment_id, e.project_id, d.git_ref, d.status, d.pipeline_id, d.rollback_of_id, e.protected, e.required_approvals \
+         FROM deployments d \
+         JOIN environments e ON e.id = d.environment_id \
+         WHERE d.id = $1 \
+         FOR UPDATE OF d",
+    )
+    .bind(deployment_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)?;
+    if !target.requires_approval() {
+        return Err(ApiError::bad_request(
+            "deployment does not require environment approval",
+        ));
+    }
+    if target.status != "pending" || target.pipeline_id.is_some() {
+        return Err(ApiError::conflict("deployment is not pending approval"));
+    }
+    let existing_by_actor = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM deployment_approvals WHERE deployment_id = $1 AND actor = $2)",
+    )
+    .bind(deployment_id)
+    .bind(actor)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+    if existing_by_actor {
+        return Err(ApiError::conflict(
+            "actor already recorded a deployment approval decision",
+        ));
+    }
+    let (approved_count, rejected_count): (i64, i64) = sqlx::query_as(
+        "SELECT \
+            COALESCE(COUNT(*) FILTER (WHERE decision = 'approved'), 0)::bigint, \
+            COALESCE(COUNT(*) FILTER (WHERE decision = 'rejected'), 0)::bigint \
+         FROM deployment_approvals WHERE deployment_id = $1",
+    )
+    .bind(deployment_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+    if rejected_count > 0 || approved_count >= i64::from(target.required_approvals) {
+        return Err(ApiError::conflict("deployment approval is already decided"));
+    }
+    sqlx::query("INSERT INTO deployment_approvals (id, deployment_id, decision, actor, comment) VALUES ($1, $2, $3, $4, $5)")
+        .bind(Uuid::new_v4())
+        .bind(deployment_id)
+        .bind(decision)
+        .bind(actor)
+        .bind(comment)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    let should_start_pipeline =
+        decision == "approved" && approved_count + 1 >= i64::from(target.required_approvals);
+    if decision == "rejected" {
+        sqlx::query(
+            "UPDATE deployments SET status = 'failed' WHERE id = $1 AND status = 'pending'",
+        )
+        .bind(deployment_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    }
+    tx.commit().await.map_err(ApiError::internal)?;
+    audit(
+        db,
+        "deployment.approval.recorded",
+        "deployment",
+        deployment_id,
+        None,
+    )
+    .await?;
+    Ok(RecordedApprovalTarget {
+        environment_id: target.environment_id,
+        project_id: target.project_id,
+        git_ref: target.git_ref,
+        rollback_of_id: target.rollback_of_id,
+        should_start_pipeline,
+    })
+}
+
+async fn start_deployment_pipeline(
+    db: &PgPool,
+    deployment_id: Uuid,
+    project_id: Uuid,
+    environment_id: Uuid,
+    git_ref: String,
+    rollback_of_id: Option<Uuid>,
+    source: &str,
+) -> Result<Uuid, ApiError> {
+    let outcome = crate::api::create_pipeline_with_vars_idempotent(
+        db,
+        project_id,
+        git_ref,
+        serde_json::json!({
+            "deployment_id": deployment_id.to_string(),
+            "environment_id": environment_id.to_string(),
+            "rollback_of_deployment_id": rollback_of_id.map(|id| id.to_string()),
+        }),
+        source,
+        Some(&format!("{source}:{deployment_id}")),
+    )
+    .await?;
+    sqlx::query(
+        "UPDATE deployments SET pipeline_id = $2, status = $3 \
+         WHERE id = $1 AND pipeline_id IS NULL AND status = 'pending' \
+           AND NOT EXISTS (SELECT 1 FROM deployment_approvals WHERE deployment_id = $1 AND decision = 'rejected')",
+    )
+    .bind(deployment_id)
+    .bind(outcome.pipeline.id)
+    .bind(outcome.pipeline.status.as_str())
+    .execute(db)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(outcome.pipeline.id)
+}
+
+async fn fetch_rollback_source(
+    db: &PgPool,
+    deployment_id: Uuid,
+) -> Result<RollbackSource, ApiError> {
+    sqlx::query_as(
+        "SELECT d.environment_id, e.project_id, d.git_ref, d.status, e.protected, e.required_approvals \
+         FROM deployments d \
+         JOIN environments e ON e.id = d.environment_id \
+         WHERE d.id = $1",
+    )
+    .bind(deployment_id)
+    .fetch_optional(db)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)
+}
+
+fn normalize_required_approvals(
+    protected: bool,
+    requested: Option<i32>,
+    current: Option<&EnvironmentPolicy>,
+) -> Result<i32, ApiError> {
+    if !protected {
+        if requested.is_some_and(|value| value != 0) {
+            return Err(ApiError::bad_request(
+                "required_approvals must be 0 for unprotected environments",
+            ));
+        }
+        return Ok(0);
+    }
+    let value = requested
+        .or_else(|| {
+            current
+                .filter(|policy| policy.protected)
+                .map(|policy| policy.required_approvals)
+        })
+        .unwrap_or(1);
+    if !(1..=10).contains(&value) {
+        return Err(ApiError::bad_request(
+            "required_approvals must be between 1 and 10",
+        ));
+    }
+    Ok(value)
+}
+
+fn validate_deployment_status(status: &str) -> Result<(), ApiError> {
+    if matches!(status, "pending" | "running" | "success" | "failed") {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request("invalid deployment status"))
+    }
+}
+
+fn normalize_approval_decision(raw: &str) -> Result<String, ApiError> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "approved" | "approve" => Ok("approved".to_owned()),
+        "rejected" | "reject" => Ok("rejected".to_owned()),
+        _ => Err(ApiError::bad_request(
+            "approval decision must be approved or rejected",
+        )),
+    }
+}
+
+fn approval_actor(raw: Option<&str>, claims_user_id: Option<Uuid>) -> Result<String, ApiError> {
+    let actor = claims_user_id
+        .map(|id| id.to_string())
+        .or_else(|| {
+            raw.map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "trusted-network".to_owned());
+    if actor.len() > 128 {
+        return Err(ApiError::bad_request("approval actor is too long"));
+    }
+    Ok(actor)
+}
+
+fn trim_optional(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 #[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
@@ -1646,6 +2206,18 @@ mod tests {
     fn roles_are_allowlisted() {
         assert!(valid_role("admin"));
         assert!(!valid_role("owner"));
+    }
+    #[test]
+    fn approval_actor_uses_authenticated_subject_over_body_actor() {
+        let user_id = Uuid::parse_str("018f3c59-38f6-7c2a-bc55-081eb78cbf17").unwrap();
+        assert_eq!(
+            approval_actor(Some("release-manager"), Some(user_id)).unwrap(),
+            user_id.to_string()
+        );
+        assert_eq!(
+            approval_actor(Some("release-manager"), None).unwrap(),
+            "release-manager"
+        );
     }
     #[test]
     fn artifact_names_reject_path_and_header_breakers() {

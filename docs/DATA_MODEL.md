@@ -635,6 +635,8 @@ Runtime maintenance переводит `status='online'` в `offline`, когд�
 | `name` | TEXT | NOT NULL | — | `UNIQUE(project_id, name)` |
 | `url` | TEXT | NULL | — | URL окружения |
 | `status` | TEXT | NOT NULL | `'available'` | CHECK: `available`, `stopped`, `degraded` |
+| `protected` | BOOLEAN | NOT NULL | `FALSE` | Включает approval gate для deployment/rollback |
+| `required_approvals` | INTEGER | NOT NULL | `0` | `0` для unprotected, `1..10` для protected |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
 
 ### 9.5 deployments
@@ -644,9 +646,23 @@ Runtime maintenance переводит `status='online'` в `offline`, когд�
 | `id` | UUID | NOT NULL | — | PK |
 | `environment_id` | UUID | NOT NULL | — | FK → `environments(id)` CASCADE |
 | `pipeline_id` | UUID | NULL | — | FK → `pipelines(id)` SET NULL |
+| `rollback_of_id` | UUID | NULL | — | FK → `deployments(id)` SET NULL; исходная delivery-запись для rollback |
 | `git_ref` | TEXT | NOT NULL | — | Деплойимый Git-реф |
 | `status` | TEXT | NOT NULL | `'pending'` | CHECK: `pending`, `running`, `success`, `failed` |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
+
+### 9.5.1 deployment_approvals
+
+Append-only журнал решений для protected deployment. API выводит derived `approval_required`, `approval_state`, `approval_count` и `required_approvals` на deployment DTO; сами решения не обновляются задним числом.
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | UUID | NOT NULL | — | PK |
+| `deployment_id` | UUID | NOT NULL | — | FK → `deployments(id)` CASCADE |
+| `decision` | TEXT | NOT NULL | — | CHECK: `approved`, `rejected` |
+| `actor` | TEXT | NOT NULL | — | Уникален внутри deployment |
+| `comment` | TEXT | NULL | — | Optional human context |
+| `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | Время решения |
 
 ### 9.6 schedules
 
@@ -843,6 +859,8 @@ idx_artifacts_job            ON artifacts(job_id)
 idx_artifacts_expired_unpurged ON artifacts(expires_at, id) WHERE purged_at IS NULL
 idx_artifacts_job_created    ON artifacts(job_id, created_at DESC, id DESC)
 idx_deployments_environment  ON deployments(environment_id)
+idx_deployments_rollback_of  ON deployments(rollback_of_id)
+idx_deployment_approvals_deployment ON deployment_approvals(deployment_id, created_at, id)
 idx_schedules_project        ON schedules(project_id)
 idx_schedules_due            ON schedules(next_fire_at) WHERE enabled AND last_fire_error IS NULL
 idx_schedule_fires_schedule_created ON schedule_fires(schedule_id, scheduled_for DESC)

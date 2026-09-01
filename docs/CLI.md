@@ -95,11 +95,17 @@ cicd-cli artifact download --id <ARTIFACT_UUID> --output ./build.zip
 ```bash
 cicd-cli environment list --project <PROJECT_UUID>
 cicd-cli environment create --project <PROJECT_UUID> --name staging --url https://staging.example.com
+cicd-cli environment create --project <PROJECT_UUID> --name production --protected --required-approvals 1
 cicd-cli environment update --id <ENV_UUID> --status degraded
+cicd-cli environment update --id <ENV_UUID> --protected true --required-approvals 2
 cicd-cli environment delete --id <ENV_UUID>
 
 cicd-cli deployment list --environment <ENV_UUID>
 cicd-cli deployment create --environment <ENV_UUID> --git-ref main --pipeline <PIPELINE_UUID> --status success
+cicd-cli deployment approvals --id <DEPLOYMENT_UUID>
+cicd-cli deployment approve --id <DEPLOYMENT_UUID> --comment "approved for production"
+cicd-cli deployment reject --id <DEPLOYMENT_UUID> --comment "missing evidence"
+cicd-cli deployment rollback --id <DEPLOYMENT_UUID>
 ```
 
 ### schedule

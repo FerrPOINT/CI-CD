@@ -116,6 +116,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/deployments/{deployment_id}/approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_deployment_approvals"];
+        put?: never;
+        post: operations["record_deployment_approval"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/deployments/{deployment_id}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["rollback_deployment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/environments/{environment_id}": {
         parameters: {
             query?: never;
@@ -1365,6 +1397,9 @@ export interface components {
         };
         CreateEnvironment: {
             name: string;
+            protected?: boolean | null;
+            /** Format: int32 */
+            required_approvals?: number | null;
             url?: string | null;
         };
         CreateProject: {
@@ -1429,6 +1464,10 @@ export interface components {
             deleted: string;
         };
         Deployment: {
+            /** Format: int64 */
+            approval_count: number;
+            approval_required: boolean;
+            approval_state: string;
             /** Format: date-time */
             created_at: string;
             /** Format: uuid */
@@ -1438,7 +1477,22 @@ export interface components {
             id: string;
             /** Format: uuid */
             pipeline_id?: string | null;
+            /** Format: int32 */
+            required_approvals: number;
+            /** Format: uuid */
+            rollback_of_id?: string | null;
             status: string;
+        };
+        DeploymentApproval: {
+            actor: string;
+            comment?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            decision: string;
+            /** Format: uuid */
+            deployment_id: string;
+            /** Format: uuid */
+            id: string;
         };
         DiffFile: {
             /** Format: int32 */
@@ -1463,6 +1517,9 @@ export interface components {
             name: string;
             /** Format: uuid */
             project_id: string;
+            protected: boolean;
+            /** Format: int32 */
+            required_approvals: number;
             status: string;
             url?: string | null;
         };
@@ -1736,6 +1793,11 @@ export interface components {
             service: string;
             status: string;
         };
+        RecordDeploymentApproval: {
+            actor?: string | null;
+            comment?: string | null;
+            decision: string;
+        };
         RefInfo: {
             name: string;
             sha: string;
@@ -1790,6 +1852,9 @@ export interface components {
         RetriedPipelineResult: {
             /** Format: uuid */
             retried: string;
+        };
+        RollbackDeployment: {
+            git_ref?: string | null;
         };
         Runner: {
             /** Format: date-time */
@@ -2071,6 +2136,9 @@ export interface components {
         };
         UpdateEnvironment: {
             name?: string | null;
+            protected?: boolean | null;
+            /** Format: int32 */
+            required_approvals?: number | null;
             status?: string | null;
             url?: string | null;
         };
@@ -2307,6 +2375,119 @@ export interface operations {
                 };
             };
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_deployment_approvals: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeploymentApproval"][];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    record_deployment_approval: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecordDeploymentApproval"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deployment"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    rollback_deployment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RollbackDeployment"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Deployment"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

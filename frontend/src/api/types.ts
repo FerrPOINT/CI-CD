@@ -202,17 +202,34 @@ export interface Environment {
   name: string
   url: string | null
   status: EnvironmentStatus
+  protected: boolean
+  required_approvals: number
   created_at: string
 }
 
 export type DeploymentStatus = 'pending' | 'running' | 'success' | 'failed'
+export type DeploymentApprovalState = 'not_required' | 'pending' | 'approved' | 'rejected'
 
 export interface Deployment {
   id: string
   environment_id: string
   pipeline_id: string | null
+  rollback_of_id: string | null
   git_ref: string
   status: DeploymentStatus
+  approval_required: boolean
+  approval_state: DeploymentApprovalState
+  approval_count: number
+  required_approvals: number
+  created_at: string
+}
+
+export interface DeploymentApproval {
+  id: string
+  deployment_id: string
+  decision: 'approved' | 'rejected'
+  actor: string
+  comment: string | null
   created_at: string
 }
 
