@@ -61,7 +61,7 @@
 - Пересоздание контейнера: `docker compose up -d` (не `docker compose restart`).
 - Проверка: `docker compose ps`, `curl http://127.0.0.1:22801/api/v1/health` и `curl http://127.0.0.1:22801/api/v1/readiness`.
 - Backend Dockerfile: multi-stage `rust:1.86-slim` → `debian:bookworm-slim`, runs as `uid 10001`.
-- Frontend Dockerfile: multi-stage `node:22-bookworm-slim` → `nginx:1.27-alpine`.
+- Frontend Dockerfile: multi-stage `node:22-bookworm-slim` → `nginx:1.31.4-alpine`.
 
 ### 8. Проверка перед завершением
 

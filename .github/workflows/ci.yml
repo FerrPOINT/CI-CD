@@ -99,7 +99,13 @@ jobs:
         docker compose ps
         exit 1
     - name: Frontend nginx
-      run: curl -fsSI http://127.0.0.1:22802/
+      run: |
+        for i in {1..60}; do
+          curl -fsS http://127.0.0.1:22802/ >/tmp/forge-frontend-index.html && exit 0
+          sleep 2
+        done
+        docker compose ps
+        exit 1
     - name: Compose logs
       if: failure()
       run: docker compose logs --no-color

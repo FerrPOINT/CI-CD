@@ -6,7 +6,7 @@
 
 ```text
 ┌──────────────────────────── docker compose ────────────────────────────┐
-│  frontend (nginx:1.27) :22802                                           │
+│  frontend (nginx:1.31.4) :22802                                         │
 │      │ /api proxy                                                       │
 │  backend (cicd-server, axum) :22801                                     │
 │      ├── public REST /api/v1/* (conditional auth; open trusted-network  │

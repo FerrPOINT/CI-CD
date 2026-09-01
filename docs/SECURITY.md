@@ -238,7 +238,7 @@ let cors = CorsLayer::new()
 
 ### 12.2 Frontend Dockerfile
 
-- Multi-stage build: `node:22-bookworm-slim` → `nginx:1.27-alpine`.
+- Multi-stage build: `node:22-bookworm-slim` → `nginx:1.31.4-alpine`.
 - Статические файлы, без runtime Node.js.
 
 ### 12.3 PostgreSQL

@@ -25,7 +25,7 @@
 | Frontend | radix/shadcn primitives | accessible UI primitives | MIT | accessibility |
 | Frontend | vite, typescript, vitest | build/test | MIT | build supply chain |
 | Infrastructure | postgres:17.6-alpine | primary database | PostgreSQL License | critical data store |
-| Infrastructure | nginx:1.27-alpine | SPA delivery/proxy | BSD-2-Clause | ingress |
+| Infrastructure | nginx:1.31.4-alpine | SPA delivery/proxy | BSD-2-Clause | ingress |
 | Toolchain | rust:1.86-bookworm | reproducible Rust build | Apache-2.0/MIT ecosystem | build |
 | Toolchain | node:22-bookworm-slim | frontend build | MIT ecosystem | build |
 
