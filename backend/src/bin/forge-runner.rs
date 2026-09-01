@@ -9,7 +9,11 @@ use chrono::Utc;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::{process::Command, sync::watch};
+use tokio::{
+    io::{AsyncBufReadExt, AsyncRead, BufReader},
+    process::Command,
+    sync::watch,
+};
 use uuid::Uuid;
 
 const PROTOCOL_VERSION: i32 = 1;
@@ -92,6 +96,24 @@ struct LeaseMutation<'a> {
     fencing_token: i64,
 }
 
+#[derive(Debug, Clone)]
+struct LogContext {
+    client: reqwest::Client,
+    base: String,
+    credential: String,
+    lease_id: Uuid,
+    lease_token: String,
+    fencing_token: i64,
+    attempt_id: Uuid,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RunnerLogLine {
+    stream: &'static str,
+    message: String,
+}
+
 #[derive(Debug)]
 struct ExecutionResult {
     outcome: &'static str,
@@ -104,7 +126,10 @@ async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     validate_cli(&cli)?;
     let base = normalize_api_base(&cli.api_url);
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .context("build runner HTTP client")?;
     let credential = ensure_credential(&client, &base, &cli).await?;
 
     loop {
@@ -257,7 +282,16 @@ async fn run_offer(
         offer.fencing_token,
         stop_rx,
     ));
-    let result = execute_attempt(cli, &offer).await;
+    let log_context = LogContext {
+        client: client.clone(),
+        base: base.to_owned(),
+        credential: credential.to_owned(),
+        lease_id: offer.lease_id,
+        lease_token: offer.lease_token.clone(),
+        fencing_token: offer.fencing_token,
+        attempt_id: offer.attempt.id,
+    };
+    let result = execute_attempt(cli, &offer, Some(log_context)).await;
     let _ = stop_tx.send(true);
     let _ = renew_task.await;
 
@@ -375,7 +409,11 @@ async fn complete_lease(
     ensure_success(response).await.context("complete failed")
 }
 
-async fn execute_attempt(cli: &Cli, offer: &LeaseOffer) -> anyhow::Result<ExecutionResult> {
+async fn execute_attempt(
+    cli: &Cli,
+    offer: &LeaseOffer,
+    log_context: Option<LogContext>,
+) -> anyhow::Result<ExecutionResult> {
     let workspace = prepare_workspace(cli, offer).await?;
     let cleanup_path = workspace.clone();
     let mut last_exit_code = None;
@@ -386,18 +424,24 @@ async fn execute_attempt(cli: &Cli, offer: &LeaseOffer) -> anyhow::Result<Execut
     };
 
     for command in &offer.attempt.commands {
-        let status =
-            match run_shell_command(command, &workspace, offer.attempt.timeout_seconds).await {
-                Ok(status) => status,
-                Err(error) => {
-                    result = ExecutionResult {
-                        outcome: "failed",
-                        exit_code: None,
-                        diagnostic: Some(truncate_diagnostic(&format!("{error:#}"))),
-                    };
-                    break;
-                }
-            };
+        let status = match run_shell_command(
+            command,
+            &workspace,
+            offer.attempt.timeout_seconds,
+            log_context.as_ref(),
+        )
+        .await
+        {
+            Ok(status) => status,
+            Err(error) => {
+                result = ExecutionResult {
+                    outcome: "failed",
+                    exit_code: None,
+                    diagnostic: Some(truncate_diagnostic(&format!("{error:#}"))),
+                };
+                break;
+            }
+        };
         last_exit_code = status.code();
         if !status.success() {
             result = ExecutionResult {
@@ -491,16 +535,53 @@ async fn run_shell_command(
     command: &str,
     cwd: &Path,
     timeout_seconds: i32,
+    log_context: Option<&LogContext>,
 ) -> anyhow::Result<std::process::ExitStatus> {
     eprintln!("running: {command}");
-    let mut child = shell(command)
-        .current_dir(cwd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
+    if let Some(context) = log_context {
+        append_log_lines(
+            context,
+            vec![RunnerLogLine {
+                stream: "system",
+                message: protocol_log_message(&format!("running: {command}")),
+            }],
+        )
+        .await?;
+    }
+
+    let mut command_process = shell(command);
+    command_process.current_dir(cwd).stdin(Stdio::null());
+    if log_context.is_some() {
+        command_process
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+    } else {
+        command_process
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+    }
+    let mut child = command_process
         .spawn()
         .with_context(|| format!("spawn command in {}", cwd.display()))?;
-    match tokio::time::timeout(
+
+    let stdout_task = match (log_context, child.stdout.take()) {
+        (Some(context), Some(stdout)) => Some(tokio::spawn(stream_output_to_logs(
+            context.clone(),
+            "stdout",
+            stdout,
+        ))),
+        _ => None,
+    };
+    let stderr_task = match (log_context, child.stderr.take()) {
+        (Some(context), Some(stderr)) => Some(tokio::spawn(stream_output_to_logs(
+            context.clone(),
+            "stderr",
+            stderr,
+        ))),
+        _ => None,
+    };
+
+    let status = match tokio::time::timeout(
         Duration::from_secs(timeout_seconds.max(1) as u64),
         child.wait(),
     )
@@ -509,9 +590,97 @@ async fn run_shell_command(
         Ok(status) => status.context("wait for command"),
         Err(_) => {
             let _ = child.kill().await;
+            let _ = child.wait().await;
+            let _ = await_log_task(stdout_task).await;
+            let _ = await_log_task(stderr_task).await;
             bail!("command timed out after {timeout_seconds}s");
         }
+    }?;
+
+    await_log_task(stdout_task).await?;
+    await_log_task(stderr_task).await?;
+    Ok(status)
+}
+
+async fn await_log_task(
+    task: Option<tokio::task::JoinHandle<anyhow::Result<()>>>,
+) -> anyhow::Result<()> {
+    if let Some(task) = task {
+        task.await.context("log stream task panicked")??;
     }
+    Ok(())
+}
+
+async fn stream_output_to_logs<R>(
+    context: LogContext,
+    stream: &'static str,
+    output: R,
+) -> anyhow::Result<()>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut reader = BufReader::new(output);
+    let mut line = String::new();
+    let mut upload_error = None;
+    loop {
+        line.clear();
+        let bytes = reader
+            .read_line(&mut line)
+            .await
+            .context("read process output")?;
+        if bytes == 0 {
+            break;
+        }
+        let raw_message = line.trim_end_matches(&['\r', '\n'][..]);
+        let message = protocol_log_message(raw_message);
+        if stream == "stderr" {
+            eprintln!("{raw_message}");
+        } else {
+            println!("{raw_message}");
+        }
+        if upload_error.is_none() {
+            if let Err(error) =
+                append_log_lines(&context, vec![RunnerLogLine { stream, message }]).await
+            {
+                upload_error = Some(error);
+            }
+        }
+    }
+    if let Some(error) = upload_error {
+        return Err(error);
+    }
+    Ok(())
+}
+
+async fn append_log_lines(context: &LogContext, lines: Vec<RunnerLogLine>) -> anyhow::Result<()> {
+    let response = context
+        .client
+        .post(format!(
+            "{}/api/v1/runner/leases/{}/logs",
+            context.base, context.lease_id
+        ))
+        .bearer_auth(&context.credential)
+        .json(&json!({
+            "protocolVersion": PROTOCOL_VERSION,
+            "leaseToken": &context.lease_token,
+            "fencingToken": context.fencing_token,
+            "attemptId": context.attempt_id,
+            "lines": lines,
+        }))
+        .send()
+        .await
+        .context("append runner logs request failed")?;
+    ensure_success(response)
+        .await
+        .context("append runner logs failed")
+}
+
+fn truncate_log_message(value: &str) -> String {
+    value.chars().take(8192).collect()
+}
+
+fn protocol_log_message(value: &str) -> String {
+    truncate_log_message(&value.replace('\r', "\\r").replace('\n', "\\n"))
 }
 
 fn shell(command: &str) -> Command {
@@ -632,6 +801,11 @@ mod tests {
         assert_eq!(truncate_diagnostic(&input).len(), 4096);
     }
 
+    #[test]
+    fn protocol_log_message_escapes_internal_line_breaks() {
+        assert_eq!(protocol_log_message("one\rtwo\nthree"), "one\\rtwo\\nthree");
+    }
+
     #[tokio::test]
     async fn failed_command_reports_process_exit_code() {
         let work_dir =
@@ -639,7 +813,7 @@ mod tests {
         let cli = test_cli(work_dir.clone());
         let offer = test_offer("exit 7", 5);
 
-        let result = execute_attempt(&cli, &offer).await.unwrap();
+        let result = execute_attempt(&cli, &offer, None).await.unwrap();
 
         assert_eq!(result.outcome, "failed");
         assert_eq!(result.exit_code, Some(7));
@@ -658,7 +832,7 @@ mod tests {
         };
         let offer = test_offer(command, 1);
 
-        let result = execute_attempt(&cli, &offer).await.unwrap();
+        let result = execute_attempt(&cli, &offer, None).await.unwrap();
 
         assert_eq!(result.outcome, "failed");
         assert_eq!(result.exit_code, None);

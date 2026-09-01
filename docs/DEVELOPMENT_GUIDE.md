@@ -109,7 +109,7 @@ CICD_API_URL=http://127.0.0.1:22801 \
 CICD_EMBEDDED_RUNNER_ENABLED=false docker compose --profile external-runner up --build
 ```
 
-Current `forge-runner` регистрируется или использует `CICD_RUNNER_CREDENTIAL`, heartbeat-ит capacity/tags, получает `LeaseOffer`, клонирует `workspace.checkoutUrl`, выполняет команды shell и отправляет terminal result. Protocol logs/secrets/artifacts, Docker/Kubernetes isolation, durable queue и long-poll остаются target.
+Current `forge-runner` регистрируется или использует `CICD_RUNNER_CREDENTIAL`, heartbeat-ит capacity/tags, получает `LeaseOffer`, клонирует `workspace.checkoutUrl`, выполняет команды shell, отправляет stdout/stderr в attempt-owned `job_logs` и отправляет terminal result. Protocol secrets/artifacts, idempotent chunked logs, Docker/Kubernetes isolation, durable queue и long-poll остаются target.
 
 ## Карта workspace и пакетов
 

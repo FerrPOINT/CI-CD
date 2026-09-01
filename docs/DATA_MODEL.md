@@ -836,7 +836,7 @@ idx_outbox_delivery_attempts_message ON outbox_delivery_attempts(message_id, att
 
 | Фаза | Таблицы | Назначение |
 |---|---|---|
-| External runner production boundary | `job_queue`, credential rotation/revocation tables, protocol log/artifact/secret delivery tables | `runners` + `job_leases` уже покрывают protocol MVP: runner credential hash, heartbeat metadata, lease token hash, `workspace.checkoutUrl`, ack/renew/complete, fencing generation и shell `forge-runner`; target добавляет durable queue, richer identity lifecycle, sandbox и protocol data planes |
+| External runner production boundary | `job_queue`, credential rotation/revocation tables, artifact/secret delivery tables, richer log chunks | `runners` + `job_leases` уже покрывают protocol MVP: runner credential hash, heartbeat metadata, lease token hash, `workspace.checkoutUrl`, ack/renew/logs/complete, fencing generation и shell `forge-runner`; target добавляет durable queue, richer identity lifecycle, sandbox и protocol data planes |
 | Production outbox | `outbox_deliveries` / lease state | Full dispatcher snapshots, lease/fencing, crash recovery, response preview allowlist и operator dead-letter policy поверх current bounded history |
 | External notifications | delivery-specific tables | Email/Slack sender state, templates, preferences |
 

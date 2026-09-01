@@ -1,6 +1,6 @@
 # Runner protocol
 
-**Статус:** Current verified MVP + Target approved. Реализованный subset на 2026-09-01 покрывает `register`, `heartbeat`, immediate `work:poll`, `ack`, `renew`, `complete`, SHA-256 storage для runner credential/lease token, fencing по `job_leases.generation`, `workspace.checkoutUrl` и отдельный `forge-runner` shell process. Остальные разделы описывают target-контракт production runner-а. Канонические путь и имена таблиц закреплены [ADR-0009](../adr/0009-canonical-registry.md).
+**Статус:** Current verified MVP + Target approved. Реализованный subset на 2026-09-01 покрывает `register`, `heartbeat`, immediate `work:poll`, `ack`, `renew`, `logs`, `complete`, SHA-256 storage для runner credential/lease token, fencing по `job_leases.generation`, `workspace.checkoutUrl` и отдельный `forge-runner` shell process. Остальные разделы описывают target-контракт production runner-а. Канонические путь и имена таблиц закреплены [ADR-0009](../adr/0009-canonical-registry.md).
 
 ## 1. Область и общие правила
 
@@ -81,7 +81,7 @@ Current MVP отвечает сразу и возвращает `204`, если 
  "planSignature":{"kid":"string","signature":"base64url"}}
 ```
 
-Offer не содержит секреты. Current `forge-runner` использует `workspace.checkoutUrl` для `git clone`, затем выполняет команды shell в workspace и отправляет terminal result; `image` остаётся compatibility field до Docker/Kubernetes runner. Target runner проверяет `planSignature`, не запускает работу до ack и не сохраняет `leaseToken` в log/metadata. Несовместимый/disabled/draining/offline runner не получает offer.
+Offer не содержит секреты. Current `forge-runner` использует `workspace.checkoutUrl` для `git clone`, затем выполняет команды shell в workspace, отправляет stdout/stderr через protocol log append и отправляет terminal result; `image` остаётся compatibility field до Docker/Kubernetes runner. Target runner проверяет `planSignature`, не запускает работу до ack и не сохраняет `leaseToken` в log/metadata. Несовместимый/disabled/draining/offline runner не получает offer.
 
 `POST /api/v1/runner/leases/{leaseId}/ack` и `POST /api/v1/runner/leases/{leaseId}/renew` используют одну схему:
 
@@ -107,6 +107,21 @@ Ack допускается только до `ackDeadline`; ответ: `{protoc
 Ответ `200` имеет `{protocolVersion, expiresAt, items:[{name, injection:"env"|"file", value}]}`. `value` существует только в защищённом TLS-ответе, не записывается в БД/аудит/логи и очищается runner-ом из памяти или temporary `0600` file после attempt. Сервер возвращает только ключи immutable plan; ответ `Cache-Control: no-store`.
 
 `POST /api/v1/runner/leases/{leaseId}/logs`:
+
+Current MVP принимает server-sequenced строки и пишет их в существующие `job_logs` с префиксом stream:
+
+```json
+{"type":"object","required":["protocolVersion","leaseToken","fencingToken","attemptId","lines"],"properties":{
+ "protocolVersion":{"const":1},"leaseToken":{"type":"string"},"fencingToken":{"type":"integer","minimum":1},"attemptId":{"type":"string","format":"uuid"},
+ "lines":{"type":"array","minItems":1,"maxItems":100,"items":{"type":"object","required":["message"],"properties":{
+   "stream":{"enum":["stdout","stderr","system"],"default":"stdout"},"message":{"type":"string","maxLength":8192}
+ },"additionalProperties":false}}
+},"additionalProperties":false}
+```
+
+Ответ `200` имеет `{protocolVersion, accepted, nextAfter}`. `message` является одной строкой лога: trailing CR/LF от stream-reader допускается и обрезается, вложенные переводы строк отклоняются. Запрос принимается только после `ack`, пока lease active, `job` и `attempt` находятся в `running`, а `leaseToken`, `fencingToken` и `attemptId` совпадают. После completion/expiry stale log append возвращает `409` или `410`.
+
+Target chunked upload заменяет server-generated sequence на idempotent runner sequence:
 
 ```json
 {"type":"object","required":["protocolVersion","leaseToken","fencingToken","attemptId","chunks"],"properties":{

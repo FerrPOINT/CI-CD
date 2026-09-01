@@ -4,9 +4,9 @@
 
 ## 1. Первая поставка и границы
 
-Этот документ описывает target-срез external runner/production scheduler/outbox. Current MVP уже имеет embedded runner, runner protocol register/heartbeat/immediate poll/ack/renew/complete, `forge-runner` shell process, scheduler/outgoing webhook/local notification worker, bounded `outbox_delivery_attempts` history и explicit requeue failed delivery.
+Этот документ описывает target-срез external runner/production scheduler/outbox. Current MVP уже имеет embedded runner, runner protocol register/heartbeat/immediate poll/ack/renew/logs/complete, `forge-runner` shell process, scheduler/outgoing webhook/local notification worker, bounded `outbox_delivery_attempts` history и explicit requeue failed delivery.
 
-Уже реализовано в runner protocol MVP: env bootstrap registration token, heartbeat, immediate `work:poll`, `workspace.checkoutUrl`, ack/renew/complete, attempt/lease writes, fencing generation и отдельный shell runner binary. В target external-runner поставку остаются Docker-only/sandboxed runner, durable `job_queue`, long-poll/wakeup, credential lifecycle, lost-runner reconciliation и production sandbox boundary.
+Уже реализовано в runner protocol MVP: env bootstrap registration token, heartbeat, immediate `work:poll`, `workspace.checkoutUrl`, ack/renew/logs/complete, attempt/lease/log writes, fencing generation и отдельный shell runner binary. В target external-runner поставку остаются Docker-only/sandboxed runner, durable `job_queue`, long-poll/wakeup, credential lifecycle, lost-runner reconciliation и production sandbox boundary.
 
 Исключено из этого target-среза: Kubernetes, external-runner secret injection, artifact streaming, email/Slack adapters и inbound provider webhooks. Они остаются feature-flagged до отдельного contract PR.
 
@@ -92,7 +92,7 @@ Outbox claim uses `FOR UPDATE SKIP LOCKED`, sets `state=processing`, `worker_gen
 ## 7. First acceptance suite
 
 - registration token one-use/max-use/expiry/revoke races;
-- duplicate poll returns one offer, stale ack/renew/complete fenced;
+- duplicate poll returns one offer, stale ack/renew/logs/complete fenced;
 - server restart expires lease and creates exactly one next attempt;
 - cancel versus complete deterministic precedence;
 - scheduler DST/missed/restart/multi-instance yields exactly one schedule_fire;

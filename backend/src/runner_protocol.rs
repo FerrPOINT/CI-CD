@@ -25,6 +25,8 @@ const CREDENTIAL_TTL_DAYS: i64 = 30;
 const MAX_TAGS: usize = 64;
 const MAX_NAME_LEN: usize = 128;
 const MAX_DIAGNOSTIC_LEN: usize = 4096;
+const MAX_LOG_LINES: usize = 100;
+const MAX_LOG_MESSAGE_LEN: usize = 8192;
 
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
@@ -38,6 +40,10 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route(
             "/api/v1/runner/leases/{lease_id}/renew",
             post(renew_runner_lease),
+        )
+        .route(
+            "/api/v1/runner/leases/{lease_id}/logs",
+            post(append_runner_lease_logs),
         )
         .route(
             "/api/v1/runner/leases/{lease_id}/complete",
@@ -169,6 +175,32 @@ pub(crate) struct RunnerLeaseControlResponse {
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct RunnerLogAppendRequest {
+    protocol_version: i32,
+    lease_token: String,
+    fencing_token: i64,
+    attempt_id: Uuid,
+    lines: Vec<RunnerLogLine>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RunnerLogLine {
+    #[serde(default = "default_log_stream")]
+    stream: String,
+    message: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RunnerLogAppendResponse {
+    protocol_version: i32,
+    accepted: usize,
+    next_after: Option<i32>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct RunnerCompleteRequest {
     protocol_version: i32,
     lease_token: String,
@@ -237,6 +269,12 @@ struct LeaseStateRow {
 struct CompleteLeaseRow {
     job_id: Uuid,
     stage_id: Uuid,
+    attempt_id: Uuid,
+}
+
+#[derive(Debug, FromRow)]
+struct RunnerLogLeaseRow {
+    job_id: Uuid,
     attempt_id: Uuid,
 }
 
@@ -498,6 +536,82 @@ pub(crate) async fn renew_runner_lease(
         Some(row) => Ok(Json(control_response(row))),
         None => Err(lease_mutation_error(db, lease_id).await),
     }
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/runner/leases/{lease_id}/logs",
+    tag = "runner-protocol",
+    request_body = RunnerLogAppendRequest,
+    params(("lease_id" = Uuid, Path)),
+    responses((status = 200, body = RunnerLogAppendResponse), (status = 400), (status = 401), (status = 409), (status = 410))
+)]
+pub(crate) async fn append_runner_lease_logs(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(lease_id): Path<Uuid>,
+    Json(input): Json<RunnerLogAppendRequest>,
+) -> Result<Json<RunnerLogAppendResponse>, ApiError> {
+    validate_protocol_version(input.protocol_version)?;
+    if input.fencing_token < 1 || input.lease_token.trim().is_empty() {
+        return Err(ApiError::bad_request(
+            "lease token and fencing token are required",
+        ));
+    }
+    validate_log_lines(&input.lines)?;
+
+    let db = pool(&state)?;
+    let runner = authenticate_runner(db, &headers).await?;
+    let token_hash = crate::auth::hash_token(input.lease_token.trim());
+    let row = sqlx::query_as::<_, RunnerLogLeaseRow>(
+        "SELECT l.job_id, l.attempt_id \
+         FROM job_leases l \
+         JOIN jobs j ON j.id = l.job_id \
+         JOIN execution_attempts a ON a.id = l.attempt_id \
+         WHERE l.id = $1 \
+           AND l.runner_id = $2 \
+           AND l.lease_status = 'active' \
+           AND l.lease_token_hash = $3 \
+           AND l.generation = $4 \
+           AND l.attempt_id = $5 \
+           AND l.lease_expires_at > now() \
+           AND l.acknowledged_at IS NOT NULL \
+           AND j.status = 'running' \
+           AND a.status = 'running'",
+    )
+    .bind(lease_id)
+    .bind(runner.id)
+    .bind(token_hash)
+    .bind(input.fencing_token)
+    .bind(input.attempt_id)
+    .fetch_optional(db)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let Some(row) = row else {
+        return Err(lease_mutation_error(db, lease_id).await);
+    };
+
+    let mut accepted = 0;
+    let mut next_after = None;
+    for line in &input.lines {
+        let record = crate::store::append_job_log(
+            db,
+            row.job_id,
+            row.attempt_id,
+            &format_runner_log_line(line),
+        )
+        .await
+        .map_err(ApiError::internal)?;
+        accepted += 1;
+        next_after = Some(record.sequence);
+    }
+
+    Ok(Json(RunnerLogAppendResponse {
+        protocol_version: PROTOCOL_VERSION,
+        accepted,
+        next_after,
+    }))
 }
 
 #[utoipa::path(
@@ -880,6 +994,34 @@ fn validate_capabilities(value: &serde_json::Value) -> Result<(), ApiError> {
     }
 }
 
+fn validate_log_lines(lines: &[RunnerLogLine]) -> Result<(), ApiError> {
+    if lines.is_empty() || lines.len() > MAX_LOG_LINES {
+        return Err(ApiError::bad_request(
+            "log append requires 1..100 lines per request",
+        ));
+    }
+    for line in lines {
+        let stream = normalize_log_stream(&line.stream);
+        if !matches!(stream, "stdout" | "stderr" | "system") {
+            return Err(ApiError::bad_request(
+                "log stream must be stdout, stderr or system",
+            ));
+        }
+        if line.message.chars().count() > MAX_LOG_MESSAGE_LEN {
+            return Err(ApiError::bad_request(
+                "log message must be at most 8192 characters",
+            ));
+        }
+        let trimmed = line.message.trim_end_matches(&['\r', '\n'][..]);
+        if trimmed.contains(['\r', '\n']) {
+            return Err(ApiError::bad_request(
+                "log message must contain a single line",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn validate_capacity(total_slots: i32, busy_slots: i32) -> Result<(), ApiError> {
     if !(1..=1024).contains(&total_slots) || busy_slots < 0 || busy_slots > total_slots {
         return Err(ApiError::bad_request(
@@ -926,6 +1068,21 @@ fn lease_status_for_terminal(terminal_status: &str) -> &'static str {
 
 fn truncate_diagnostic(value: &str) -> String {
     value.chars().take(MAX_DIAGNOSTIC_LEN).collect()
+}
+
+fn default_log_stream() -> String {
+    "stdout".to_string()
+}
+
+fn normalize_log_stream(value: &str) -> &str {
+    let stream = value.trim();
+    if stream.is_empty() { "stdout" } else { stream }
+}
+
+fn format_runner_log_line(line: &RunnerLogLine) -> String {
+    let stream = normalize_log_stream(&line.stream);
+    let message = line.message.trim_end_matches(&['\r', '\n'][..]);
+    format!("[{stream}] {message}")
 }
 
 fn new_opaque_token(prefix: &str) -> String {
@@ -981,5 +1138,31 @@ mod tests {
         assert_eq!(terminal_status_for_outcome("lost").unwrap(), "failed");
         assert_eq!(terminal_status_for_outcome("canceled").unwrap(), "canceled");
         assert!(terminal_status_for_outcome("skipped").is_err());
+    }
+
+    #[test]
+    fn runner_log_lines_are_prefixed_and_validated() {
+        let line = RunnerLogLine {
+            stream: " stderr ".to_string(),
+            message: "warning\n".to_string(),
+        };
+
+        assert_eq!(format_runner_log_line(&line), "[stderr] warning");
+        assert!(validate_log_lines(&[line]).is_ok());
+        assert!(validate_log_lines(&[]).is_err());
+        assert!(
+            validate_log_lines(&[RunnerLogLine {
+                stream: "debug".to_string(),
+                message: "x".to_string(),
+            }])
+            .is_err()
+        );
+        assert!(
+            validate_log_lines(&[RunnerLogLine {
+                stream: "stdout".to_string(),
+                message: "first\nsecond".to_string(),
+            }])
+            .is_err()
+        );
     }
 }

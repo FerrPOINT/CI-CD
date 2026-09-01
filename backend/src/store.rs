@@ -293,22 +293,27 @@ pub async fn append_job_log(
     attempt_id: Uuid,
     message: &str,
 ) -> Result<StoredJobLog, sqlx::Error> {
-    sqlx::query_as::<_, StoredJobLog>(
-        "WITH locked AS ( \
-             SELECT pg_advisory_xact_lock(hashtextextended($2::text, 0)) \
-         ), target_attempt AS ( \
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))")
+        .bind(attempt_id)
+        .execute(&mut *tx)
+        .await?;
+    let record = sqlx::query_as::<_, StoredJobLog>(
+        "WITH target_attempt AS ( \
              SELECT id FROM execution_attempts WHERE id = $2 AND job_id = $1 \
          ), next_log AS ( \
              SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence \
              FROM job_logs WHERE attempt_id = $2 \
          ) \
          INSERT INTO job_logs (job_id, attempt_id, sequence, message) \
-         SELECT $1, target_attempt.id, next_log.sequence, $3 FROM locked, target_attempt, next_log \
+         SELECT $1, target_attempt.id, next_log.sequence, $3 FROM target_attempt, next_log \
          RETURNING id, job_id, attempt_id, sequence, message, created_at",
     )
     .bind(job_id)
     .bind(attempt_id)
     .bind(message)
-    .fetch_one(pool)
-    .await
+    .fetch_one(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(record)
 }

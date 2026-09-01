@@ -179,7 +179,7 @@
   "runners": {
     "title": "Runners",
     "capabilityTitle": "Runner registry",
-    "capabilityDescription": "This screen currently stores runners, tags, status, and heartbeat as operational inventory. The external runner protocol MVP now covers registration, heartbeat, and lease lifecycle; forge-runner provides the shell MVP, while production sandboxing remains target.",
+    "capabilityDescription": "This screen currently stores runners, tags, status, and heartbeat as operational inventory. The external runner protocol MVP now covers registration, heartbeat, logs, and lease lifecycle; forge-runner provides the shell MVP, while production sandboxing remains target.",
     "register": "Register runner",
     "name": "Name",
     "tags": "Tags (comma-separated)",

@@ -88,6 +88,94 @@ async fn readiness_reports_database_and_migrations() {
 }
 
 #[tokio::test]
+async fn job_log_append_serializes_concurrent_attempt_writes() {
+    let pool = test_pool().await;
+    let namespace = Uuid::new_v4();
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let stage_id = Uuid::new_v4();
+    let job_id = Uuid::new_v4();
+    let attempt_id = Uuid::new_v4();
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(format!("it-log-race-{}", namespace.simple()))
+        .bind("https://example.invalid/log-race.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status) \
+         VALUES ($1, $2, 'main', 'running')",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert pipeline");
+    sqlx::query(
+        "INSERT INTO stages (id, pipeline_id, name, position, status) \
+         VALUES ($1, $2, 'build', 0, 'running')",
+    )
+    .bind(stage_id)
+    .bind(pipeline_id)
+    .execute(&pool)
+    .await
+    .expect("insert stage");
+    sqlx::query(
+        "INSERT INTO jobs (id, stage_id, name, image, command, position, status, started_at) \
+         VALUES ($1, $2, 'compile', 'alpine:3.21', 'echo test', 0, 'running', now())",
+    )
+    .bind(job_id)
+    .bind(stage_id)
+    .execute(&pool)
+    .await
+    .expect("insert job");
+    sqlx::query(
+        "INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger, started_at) \
+         VALUES ($1, $2, 1, 'running', 'race-test', now())",
+    )
+    .bind(attempt_id)
+    .bind(job_id)
+    .execute(&pool)
+    .await
+    .expect("insert attempt");
+
+    let first_pool = pool.clone();
+    let second_pool = pool.clone();
+    let first = tokio::spawn(async move {
+        cicd::store::append_job_log(&first_pool, job_id, attempt_id, "stdout").await
+    });
+    let second = tokio::spawn(async move {
+        cicd::store::append_job_log(&second_pool, job_id, attempt_id, "stderr").await
+    });
+    let mut records = vec![
+        first.await.expect("first task join").expect("first append"),
+        second
+            .await
+            .expect("second task join")
+            .expect("second append"),
+    ];
+    records.sort_by_key(|record| record.sequence);
+
+    assert_eq!(records[0].sequence, 1);
+    assert_eq!(records[1].sequence, 2);
+    let sequences: Vec<i32> =
+        sqlx::query_scalar("SELECT sequence FROM job_logs WHERE attempt_id = $1 ORDER BY sequence")
+            .bind(attempt_id)
+            .fetch_all(&pool)
+            .await
+            .expect("fetch log sequences");
+    assert_eq!(sequences, vec![1, 2]);
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup project");
+}
+
+#[tokio::test]
 async fn project_crud_roundtrip() {
     let pool = test_pool().await;
     let id = Uuid::new_v4();
@@ -843,6 +931,48 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
     let response = app
         .clone()
         .oneshot(
+            Request::post(format!("/api/v1/runner/leases/{lease_id}/logs"))
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "protocolVersion": 1,
+                        "leaseToken": lease_token,
+                        "fencingToken": 1,
+                        "attemptId": attempt_id,
+                        "lines": [
+                            {"stream": "stdout", "message": "compile started\n"},
+                            {"stream": "stderr", "message": "warning: cached dependency"}
+                        ]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let appended_logs = response_json(response).await;
+    assert_eq!(appended_logs["accepted"], 2);
+    assert_eq!(appended_logs["nextAfter"], 2);
+
+    let log_messages: Vec<String> =
+        sqlx::query_scalar("SELECT message FROM job_logs WHERE attempt_id = $1 ORDER BY sequence")
+            .bind(attempt_id)
+            .fetch_all(&pool)
+            .await
+            .expect("fetch runner protocol logs");
+    assert_eq!(
+        log_messages,
+        vec![
+            "[stdout] compile started".to_string(),
+            "[stderr] warning: cached dependency".to_string()
+        ]
+    );
+
+    let response = app
+        .clone()
+        .oneshot(
             Request::post(format!("/api/v1/runner/leases/{lease_id}/renew"))
                 .header("authorization", format!("Bearer {credential}"))
                 .header("content-type", "application/json")
@@ -911,6 +1041,28 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
     assert_eq!(lease_status, "completed");
     assert_eq!(terminal_status.as_deref(), Some("success"));
     assert_eq!(pipeline_status, "success");
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/runner/leases/{lease_id}/logs"))
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "protocolVersion": 1,
+                        "leaseToken": lease_token,
+                        "fencingToken": 1,
+                        "attemptId": attempt_id,
+                        "lines": [{"stream": "stdout", "message": "too late"}]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
 
     sqlx::query("DELETE FROM projects WHERE id = $1")
         .bind(project_id)

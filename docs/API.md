@@ -72,8 +72,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 16,
-    "latest_required_version": 16,
+    "latest_applied_version": 17,
+    "latest_required_version": 17,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],
@@ -1211,13 +1211,14 @@ Runner protocol обслуживается на `/api/v1/runner/*` и не ис�
 | POST | `/api/v1/runner/work:poll` | `{protocolVersion,capacity,tags?,capabilityDigest?}` → `204` если работы нет или `200 LeaseOffer`; текущий MVP выполняет immediate poll без long-poll |
 | POST | `/api/v1/runner/leases/{lease_id}/ack` | `{protocolVersion,leaseToken,fencingToken}` → `{protocolVersion,leaseExpiresAt,renewAfter,cancelRequested}` |
 | POST | `/api/v1/runner/leases/{lease_id}/renew` | `{protocolVersion,leaseToken,fencingToken}` → продлевает active lease |
+| POST | `/api/v1/runner/leases/{lease_id}/logs` | `{protocolVersion,leaseToken,fencingToken,attemptId,lines:[{stream,message}]}` → append stdout/stderr/system строк в attempt-owned `job_logs` |
 | POST | `/api/v1/runner/leases/{lease_id}/complete` | `{protocolVersion,leaseToken,fencingToken,attemptId,outcome,finishedAt,exitCode?,diagnostic?}` → terminal result job/attempt/lease |
 
-`work:poll` атомарно выбирает queued job, создаёт active `job_leases`, генерирует opaque `leaseToken`, хранит только hash, фиксирует `ackDeadline`, `leaseExpiresAt`, `runnerProtocolVersion=1`, переводит job/attempt в `running` и возвращает `fencingToken = job_leases.generation`. `ack`, `renew` и `complete` одновременно проверяют runner identity, lease token hash, generation, active state и expiry; stale или fenced mutation возвращает `409`, expired lease — `410`.
+`work:poll` атомарно выбирает queued job, создаёт active `job_leases`, генерирует opaque `leaseToken`, хранит только hash, фиксирует `ackDeadline`, `leaseExpiresAt`, `runnerProtocolVersion=1`, переводит job/attempt в `running` и возвращает `fencingToken = job_leases.generation`. `ack`, `renew`, `logs` и `complete` одновременно проверяют runner identity, lease token hash, generation, active state и expiry; stale или fenced mutation возвращает `409`, expired lease — `410`.
 
-`LeaseOffer.attempt.workspace.checkoutUrl` содержит `projects.repository_url`, чтобы внешний `forge-runner` мог выполнить checkout без доступа к БД. Current `forge-runner` — отдельный shell-runner process: он умеет register/heartbeat/poll/ack/renew/complete, checkout по `checkoutUrl`, запуск команд в workspace и terminal completion.
+`LeaseOffer.attempt.workspace.checkoutUrl` содержит `projects.repository_url`, чтобы внешний `forge-runner` мог выполнить checkout без доступа к БД. Current `forge-runner` — отдельный shell-runner process: он умеет register/heartbeat/poll/ack/renew/logs/complete, checkout по `checkoutUrl`, запуск команд в workspace, отправку stdout/stderr в `job_logs` и terminal completion.
 
-Ограничения MVP: нет durable `job_queue`, long-poll wakeup, protocol endpoints для secrets/logs/artifacts, pool policy, Docker/Kubernetes isolation и production sandbox. Эти границы остаются в `docs/RUNNER_ARCHITECTURE.md` и `docs/contracts/RUNNER_PROTOCOL.md`.
+Ограничения MVP: нет durable `job_queue`, long-poll wakeup, protocol endpoints для secrets/artifacts, idempotent chunked log upload, pool policy, Docker/Kubernetes isolation и production sandbox. Эти границы остаются в `docs/RUNNER_ARCHITECTURE.md` и `docs/contracts/RUNNER_PROTOCOL.md`.
 
 ### Secrets и artifacts
 
@@ -1328,6 +1329,7 @@ Git Smart HTTP допускает unauthenticated read только для `repo
 | `/api/v1/runner/heartbeat` | Runner protocol |
 | `/api/v1/runner/leases/{lease_id}/ack` | Runner protocol |
 | `/api/v1/runner/leases/{lease_id}/complete` | Runner protocol |
+| `/api/v1/runner/leases/{lease_id}/logs` | Runner protocol |
 | `/api/v1/runner/leases/{lease_id}/renew` | Runner protocol |
 | `/api/v1/runner/register` | Runner protocol |
 | `/api/v1/runner/work:poll` | Runner protocol |

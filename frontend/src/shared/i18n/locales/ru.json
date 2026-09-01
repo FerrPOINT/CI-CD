@@ -179,7 +179,7 @@
   "runners": {
     "title": "Runner-ы",
     "capabilityTitle": "Реестр runner-ов",
-    "capabilityDescription": "Сейчас экран хранит runner-ы, теги, статус и heartbeat для операционного инвентаря. Внешний runner protocol MVP уже покрывает регистрацию, heartbeat и lease lifecycle; forge-runner даёт shell-MVP, а production sandbox остаётся target.",
+    "capabilityDescription": "Сейчас экран хранит runner-ы, теги, статус и heartbeat для операционного инвентаря. Внешний runner protocol MVP уже покрывает регистрацию, heartbeat, logs и lease lifecycle; forge-runner даёт shell-MVP, а production sandbox остаётся target.",
     "register": "Зарегистрировать runner",
     "name": "Имя",
     "tags": "Теги (через запятую)",

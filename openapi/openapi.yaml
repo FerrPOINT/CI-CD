@@ -1925,6 +1925,39 @@ paths:
           description: ''
         '410':
           description: ''
+  /api/v1/runner/leases/{lease_id}/logs:
+    post:
+      tags:
+      - runner-protocol
+      operationId: append_runner_lease_logs
+      parameters:
+      - name: lease_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunnerLogAppendRequest'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunnerLogAppendResponse'
+        '400':
+          description: ''
+        '401':
+          description: ''
+        '409':
+          description: ''
+        '410':
+          description: ''
   /api/v1/runner/leases/{lease_id}/renew:
     post:
       tags:
@@ -3795,6 +3828,56 @@ components:
         protocolVersion:
           type: integer
           format: int32
+    RunnerLogAppendRequest:
+      type: object
+      required:
+      - protocolVersion
+      - leaseToken
+      - fencingToken
+      - attemptId
+      - lines
+      properties:
+        attemptId:
+          type: string
+          format: uuid
+        fencingToken:
+          type: integer
+          format: int64
+        leaseToken:
+          type: string
+        lines:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunnerLogLine'
+        protocolVersion:
+          type: integer
+          format: int32
+    RunnerLogAppendResponse:
+      type: object
+      required:
+      - protocolVersion
+      - accepted
+      properties:
+        accepted:
+          type: integer
+          minimum: 0
+        nextAfter:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        protocolVersion:
+          type: integer
+          format: int32
+    RunnerLogLine:
+      type: object
+      required:
+      - message
+      properties:
+        message:
+          type: string
+        stream:
+          type: string
     RunnerPollCapacity:
       type: object
       required:

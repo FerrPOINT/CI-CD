@@ -24,7 +24,7 @@
 
 | Legacy | Target |
 |---|---|
-| embedded runner в cicd-server | внешний runner через `/api/v1/runner/*` (register/poll/ack/renew/complete) |
+| embedded runner в cicd-server | внешний runner через `/api/v1/runner/*` (register/poll/ack/renew/logs/complete) |
 | jobs.status только | + `execution_attempts`, `job_queue` |
 | логи только поллингом | SSE + поллинг fallback |
 

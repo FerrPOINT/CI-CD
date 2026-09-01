@@ -61,7 +61,7 @@ SEV1 и SEV2 требуют немедленного incident channel, назн�
 - очередь доставок -- [Outbox backlog](OPERATIONS.md#outbox-backlog);
 - backup, restore и проверка целостности -- [Backup и восстановление](OPERATIONS.md#backup-и-восстановление).
 
-Текущий MVP использует embedded runner, external runner protocol slice для register/heartbeat/poll/ack/renew/complete и `forge-runner` shell process. Не заявляйте, что это уже production distributed runner platform: durable queue, sandboxed runner, lost-runner auto-dispatch, inbound handlers и external notification adapters ещё не восстанавливают исполнение или доставку автоматически.
+Текущий MVP использует embedded runner, external runner protocol slice для register/heartbeat/poll/ack/renew/logs/complete и `forge-runner` shell process. Не заявляйте, что это уже production distributed runner platform: durable queue, sandboxed runner, lost-runner auto-dispatch, inbound handlers и external notification adapters ещё не восстанавливают исполнение или доставку автоматически.
 
 ### 4. Resolution
 
