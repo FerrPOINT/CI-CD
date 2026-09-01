@@ -1,7 +1,14 @@
 #![allow(dead_code)]
 
-use std::{collections::HashMap, process::Stdio, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    path::{Component, Path, PathBuf},
+    process::Stdio,
+    sync::Arc,
+    time::Duration,
+};
 
+use axum::body::Bytes;
 use sqlx::PgPool;
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
@@ -15,6 +22,8 @@ use crate::api::ApiError;
 /// Job processes currently executed by the embedded runner.
 /// Maps job_id -> child process id so that cancel can kill it.
 pub type RunningJobs = Arc<Mutex<HashMap<Uuid, u32>>>;
+
+const MAX_ARTIFACT_BYTES: u64 = 50 * 1024 * 1024;
 
 #[derive(Debug)]
 struct EmbeddedJobLease {
@@ -464,7 +473,7 @@ fn lease_status_for_terminal(terminal_status: &str) -> &'static str {
 
 async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Result<(), ApiError> {
     let job = sqlx::query_as::<_, JobRow>(
-        "SELECT j.id, j.stage_id, j.name, j.image, j.command, j.required_secrets, j.status, \
+        "SELECT j.id, j.stage_id, j.name, j.image, j.command, j.required_secrets, j.artifact_paths, j.status, \
                 s.pipeline_id, p.project_id, s.name AS stage_name, \
                 p.git_ref, p.commit_sha, pr.name AS project_name \
          FROM jobs j JOIN stages s ON s.id = j.stage_id \
@@ -688,11 +697,6 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
         await_stdout_task(task).await?;
     }
 
-    // Cleanup workspace unless CICD_RUNNER_KEEP_WORKSPACE=1.
-    if std::env::var("CICD_RUNNER_KEEP_WORKSPACE").ok().as_deref() != Some("1") {
-        let _ = tokio::fs::remove_dir_all(&workspace).await;
-    }
-
     let (final_status, exit_code, error_tail) = match exit_status {
         Ok(status) if status.success() => ("success", status.code(), None),
         Ok(status) => (
@@ -706,6 +710,29 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
             Some(format!("runner: failed to wait for process: {error}")),
         ),
     };
+    let mut final_status = final_status;
+    let mut exit_code = exit_code;
+    let mut error_tail = error_tail;
+    let artifact_error =
+        collect_declared_artifacts(&pool, job_id, attempt_id, &workspace, &job.artifact_paths)
+            .await
+            .err();
+    if final_status == "success" {
+        if let Some(error) = artifact_error {
+            final_status = "failed";
+            exit_code = None;
+            error_tail = Some(truncate_error_tail(format!(
+                "runner: artifact upload failed: {}",
+                error.message
+            )));
+        }
+    }
+
+    // Cleanup workspace unless CICD_RUNNER_KEEP_WORKSPACE=1.
+    if std::env::var("CICD_RUNNER_KEEP_WORKSPACE").ok().as_deref() != Some("1") {
+        let _ = tokio::fs::remove_dir_all(&workspace).await;
+    }
+
     let updated = sqlx::query(
         "UPDATE jobs SET status = $2, finished_at = now() \
          WHERE id = $1 AND status NOT IN ('canceled')",
@@ -828,6 +855,91 @@ async fn stream_stdout_to_attempt(
     Ok(())
 }
 
+async fn collect_declared_artifacts(
+    pool: &PgPool,
+    job_id: Uuid,
+    attempt_id: Uuid,
+    workspace: &Path,
+    artifact_paths: &[String],
+) -> Result<(), ApiError> {
+    if artifact_paths.is_empty() {
+        return Ok(());
+    }
+    let workspace = tokio::fs::canonicalize(workspace)
+        .await
+        .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
+    for artifact_path in artifact_paths {
+        let file = resolve_workspace_artifact(&workspace, artifact_path).await?;
+        let metadata = tokio::fs::metadata(&file)
+            .await
+            .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
+        if metadata.len() == 0 || metadata.len() > MAX_ARTIFACT_BYTES {
+            return Err(ApiError::bad_request(
+                "artifact must be between 1 byte and 50 MiB",
+            ));
+        }
+        let bytes = tokio::fs::read(&file)
+            .await
+            .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
+        let name = artifact_name_from_declared_path(artifact_path);
+        crate::platform::store_job_artifact(
+            pool,
+            job_id,
+            Some(attempt_id),
+            &name,
+            "application/octet-stream",
+            Bytes::from(bytes),
+        )
+        .await?;
+        append_attempt_log(
+            pool,
+            job_id,
+            attempt_id,
+            &format!("runner: uploaded artifact {artifact_path}"),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn resolve_workspace_artifact(
+    workspace: &Path,
+    artifact_path: &str,
+) -> Result<PathBuf, ApiError> {
+    let requested = Path::new(artifact_path);
+    if requested.components().any(|component| {
+        matches!(
+            component,
+            Component::Prefix(_) | Component::RootDir | Component::ParentDir
+        )
+    }) {
+        return Err(ApiError::bad_request(
+            "artifact path must stay within workspace",
+        ));
+    }
+    let file = tokio::fs::canonicalize(workspace.join(requested))
+        .await
+        .map_err(|_| ApiError::bad_request("declared artifact file does not exist"))?;
+    if !file.starts_with(workspace) {
+        return Err(ApiError::bad_request(
+            "artifact path must stay within workspace",
+        ));
+    }
+    let metadata = tokio::fs::metadata(&file)
+        .await
+        .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
+    if !metadata.is_file() {
+        return Err(ApiError::bad_request(
+            "declared artifact path must be a file",
+        ));
+    }
+    Ok(file)
+}
+
+fn artifact_name_from_declared_path(path: &str) -> String {
+    path.replace(['/', '\\'], "__")
+}
+
 #[derive(Debug, sqlx::FromRow)]
 #[allow(dead_code)]
 struct JobRow {
@@ -839,6 +951,7 @@ struct JobRow {
     image: String,
     command: String,
     required_secrets: Vec<String>,
+    artifact_paths: Vec<String>,
     status: String,
     #[allow(dead_code)]
     pipeline_id: Uuid,

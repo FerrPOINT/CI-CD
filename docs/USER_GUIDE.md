@@ -116,7 +116,7 @@ git push -u origin main
 git clone http://any-user:<TOKEN>@<host>/git/my-service.git
 ```
 
-Pipeline читает `.forge-ci.yml`, если он доступен в локальном bare repository; иначе используется шаблон build/test/deploy. Поддерживаются две формы: legacy `stages` с jobs, `image`, одиночным `command`, basic `timeout`, `allow_failure` и `manual`; а также v1 DAG MVP с `version: 1`, top-level `jobs`, `commands`, `needs`, `tags`, `secrets`, defaults `image/timeout/tags` и `allow_failure`. V1 `tags` попадают в `required_tags`, external runner получает только совместимую работу; `jobs.*.secrets` попадает в `required_secrets`, и runner получает только эти project secrets. Protected tags/pools/capabilities, ключи `on`, retry и declared artifacts остаются **Target approved**, см. `docs/contracts/PIPELINE_DSL.md`.
+Pipeline читает `.forge-ci.yml`, если он доступен в локальном bare repository; иначе используется шаблон build/test/deploy. Поддерживаются две формы: legacy `stages` с jobs, `image`, одиночным `command`, basic `timeout`, `allow_failure` и `manual`; а также v1 DAG MVP с `version: 1`, top-level `jobs`, `commands`, `needs`, `tags`, `secrets`, `artifacts.paths`, defaults `image/timeout/tags` и `allow_failure`. V1 `tags` попадают в `required_tags`, external runner получает только совместимую работу; `jobs.*.secrets` попадает в `required_secrets`, и runner получает только эти project secrets; `jobs.*.artifacts.paths` попадает в `artifact_paths`, и embedded/external runner загружает только эти relative file paths после выполнения команд. Protected tags/pools/capabilities, ключи `on`, retry, `artifacts.expire_in`, directory/glob upload и retention policy остаются **Target approved**, см. `docs/contracts/PIPELINE_DSL.md`.
 
 ```yaml
 stages:
@@ -143,7 +143,7 @@ stages:
 3. Следите за статусом: `queued`, `running`, `success`, `failed`, `canceled`.
 4. При необходимости отмените pipeline; повторите весь pipeline или отдельную terminal job доступной кнопкой **Retry**.
 
-Детали pipeline также показывают **План запуска**: источник config (`repository` или `legacy_template`), parser version, resolved commit SHA, количество dependency edges и SHA-256 для raw config/normalised plan. Для v1 plan snapshot хранит `jobs.needs`, `required_tags` и dependency edges, но current runner исполняет DAG через топологические стадии `dag-*`; policy snapshot, line/column parser diagnostics и job-level dispatcher остаются target.
+Детали pipeline также показывают **План запуска**: источник config (`repository` или `legacy_template`), parser version, resolved commit SHA, количество dependency edges и SHA-256 для raw config/normalised plan. Для v1 plan snapshot хранит `jobs.needs`, `required_tags`, `required_secrets`, `artifact_paths` и dependency edges, но current runner исполняет DAG через топологические стадии `dag-*`; policy snapshot, line/column parser diagnostics и job-level dispatcher остаются target.
 
 Embedded runner каждые две секунды выбирает доступные queued jobs, выполняет их последовательно по stages, пишет stdout/stderr в append-only log текущей `execution_attempt` и устанавливает результат по exit code. Статусы stage и pipeline агрегируются автоматически. Retry pipeline или отдельной terminal job создаёт новую attempt и сохраняет логи предыдущих attempts. Для диагностики можно вручную менять статус job через UI, API или CLI, но это не заменяет фактическое выполнение.
 
@@ -400,13 +400,13 @@ curl -fsS -X POST "http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines"
 
 **Статус процедуры: Current verified.**
 
-В деталях pipeline используйте **Cancel** для каскадной отмены нетерминальных jobs или **Retry** для нового запуска того же project/ref. Отдельную terminal job можно повторить её кнопкой **Retry**. Secret injection работает через declared `jobs.*.secrets`: embedded runner inject-ит только объявленные project secrets, а current `forge-runner` shell MVP после `ack` получает lease-scoped secret bundle, передаёт его в env, маскирует stdout/stderr и отправляет terminal completion. Protocol artifacts, richer log chunks и production sandbox остаются target.
+В деталях pipeline используйте **Cancel** для каскадной отмены нетерминальных jobs или **Retry** для нового запуска того же project/ref. Отдельную terminal job можно повторить её кнопкой **Retry**. Secret injection работает через declared `jobs.*.secrets`: embedded runner inject-ит только объявленные project secrets, а current `forge-runner` shell MVP после `ack` получает lease-scoped secret bundle, передаёт его в env, маскирует stdout/stderr и отправляет terminal completion. Declared artifact upload работает через `jobs.*.artifacts.paths`: runner собирает workspace-relative файлы, сохраняет metadata с attempt и показывает их на странице job artifacts. Richer log chunks, resumable artifact sessions и production sandbox остаются target.
 
 ### Где найти логи и почему они не меняются?
 
 **Статус процедуры: Current verified.**
 
-Откройте job и **Logs** или вызовите `GET /api/v1/jobs/{job_id}/attempts` вместе с `/attempts/{attempt_id}/logs`. Логи append-only в рамках выбранной attempt; у queued job может ещё не быть строк. Если после retry shortcut `/logs` показывает пустой текущий запуск, переключитесь на предыдущую attempt для старой диагностики и проверьте status job, image, command и доступность Docker/host shell для embedded runner. Для external `forge-runner` current MVP уже отправляет stdout/stderr в централизованные logs через runner protocol и резолвит declared secrets отдельным lease-scoped endpoint; richer chunk/idempotency и artifact protocol остаются target.
+Откройте job и **Logs** или вызовите `GET /api/v1/jobs/{job_id}/attempts` вместе с `/attempts/{attempt_id}/logs`. Логи append-only в рамках выбранной attempt; у queued job может ещё не быть строк. Если после retry shortcut `/logs` показывает пустой текущий запуск, переключитесь на предыдущую attempt для старой диагностики и проверьте status job, image, command и доступность Docker/host shell для embedded runner. Для external `forge-runner` current MVP уже отправляет stdout/stderr в централизованные logs через runner protocol, резолвит declared secrets отдельным lease-scoped endpoint и загружает declared artifacts через lease-scoped endpoint; richer chunk/idempotency и resumable artifact sessions остаются target.
 
 ### Как безопасно передать credential в job?
 

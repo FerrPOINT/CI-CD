@@ -111,6 +111,16 @@ export function PipelineDetailPage() {
                       ))}
                     </div>
                   )}
+                  {job.artifact_paths.length > 0 && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-text-muted">
+                      <span>{t('jobs.artifacts')}:</span>
+                      {job.artifact_paths.map(path => (
+                        <code key={path} className="rounded bg-surface-raised px-1.5 py-0.5 text-text-primary">
+                          {path}
+                        </code>
+                      ))}
+                    </div>
+                  )}
                   <div className="mt-3 flex flex-wrap items-center gap-1.5">
                     {job.status === 'queued' && (
                       <Button size="sm" variant="outline" onClick={() => handleStatus(job.id, 'running')}>

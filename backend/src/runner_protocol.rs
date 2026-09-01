@@ -5,6 +5,7 @@ use std::{
 
 use axum::{
     Json, Router,
+    body::Bytes,
     extract::{Path, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
@@ -49,6 +50,10 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route(
             "/api/v1/runner/leases/{lease_id}/secrets:resolve",
             post(resolve_runner_lease_secrets),
+        )
+        .route(
+            "/api/v1/runner/leases/{lease_id}/artifacts",
+            post(upload_runner_lease_artifact),
         )
         .route(
             "/api/v1/runner/leases/{lease_id}/logs",
@@ -282,6 +287,7 @@ struct ClaimedWork {
     commit_sha: Option<String>,
     repository_url: String,
     required_secrets: Vec<String>,
+    artifact_paths: Vec<String>,
     generation: i64,
     lease_expires_at: DateTime<Utc>,
     ack_deadline: DateTime<Utc>,
@@ -319,6 +325,13 @@ struct RunnerLogLeaseRow {
 struct RunnerSecretLeaseRow {
     project_id: Uuid,
     required_secrets: Vec<String>,
+}
+
+#[derive(Debug, FromRow)]
+struct RunnerArtifactLeaseRow {
+    job_id: Uuid,
+    attempt_id: Uuid,
+    artifact_paths: Vec<String>,
 }
 
 #[utoipa::path(
@@ -671,6 +684,111 @@ pub(crate) async fn resolve_runner_lease_secrets(
 
 #[utoipa::path(
     post,
+    path = "/api/v1/runner/leases/{lease_id}/artifacts",
+    tag = "runner-protocol",
+    request_body = Vec<u8>,
+    params(
+        ("lease_id" = Uuid, Path),
+        ("X-Runner-Protocol-Version" = i32, Header),
+        ("X-Lease-Token" = String, Header),
+        ("X-Fencing-Token" = i64, Header),
+        ("X-Attempt-Id" = Uuid, Header),
+        ("X-Artifact-Path" = String, Header),
+        ("X-Artifact-Name" = String, Header)
+    ),
+    responses((status = 200, body = crate::platform::Artifact), (status = 400), (status = 401), (status = 403), (status = 409), (status = 410))
+)]
+pub(crate) async fn upload_runner_lease_artifact(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(lease_id): Path<Uuid>,
+    body: Bytes,
+) -> Result<Json<crate::platform::Artifact>, ApiError> {
+    let protocol_version = required_i32_header(
+        &headers,
+        "x-runner-protocol-version",
+        "runner protocol version header is required",
+    )?;
+    validate_protocol_version(protocol_version)?;
+    let lease_token =
+        required_text_header(&headers, "x-lease-token", "lease token header is required")?;
+    let fencing_token = required_i64_header(
+        &headers,
+        "x-fencing-token",
+        "fencing token header is required",
+    )?;
+    let attempt_id =
+        required_uuid_header(&headers, "x-attempt-id", "attempt id header is required")?;
+    let artifact_path = required_text_header(
+        &headers,
+        "x-artifact-path",
+        "artifact path header is required",
+    )?;
+    let artifact_name = required_text_header(
+        &headers,
+        "x-artifact-name",
+        "artifact name header is required",
+    )?;
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("application/octet-stream");
+
+    if fencing_token < 1 {
+        return Err(ApiError::bad_request(
+            "lease token and fencing token are required",
+        ));
+    }
+
+    let db = pool(&state)?;
+    let runner = authenticate_runner(db, &headers).await?;
+    let token_hash = crate::auth::hash_token(&lease_token);
+    let row = sqlx::query_as::<_, RunnerArtifactLeaseRow>(
+        "SELECT l.job_id, l.attempt_id, j.artifact_paths \
+         FROM job_leases l \
+         JOIN jobs j ON j.id = l.job_id \
+         JOIN execution_attempts a ON a.id = l.attempt_id \
+         WHERE l.id = $1 \
+           AND l.runner_id = $2 \
+           AND l.lease_status = 'active' \
+           AND l.lease_token_hash = $3 \
+           AND l.generation = $4 \
+           AND l.attempt_id = $5 \
+           AND l.lease_expires_at > now() \
+           AND l.acknowledged_at IS NOT NULL \
+           AND j.status = 'running' \
+           AND a.status = 'running'",
+    )
+    .bind(lease_id)
+    .bind(runner.id)
+    .bind(token_hash)
+    .bind(fencing_token)
+    .bind(attempt_id)
+    .fetch_optional(db)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let Some(row) = row else {
+        return Err(lease_mutation_error(db, lease_id).await);
+    };
+    if !row.artifact_paths.iter().any(|path| path == &artifact_path) {
+        return Err(ApiError::forbidden());
+    }
+
+    let artifact = crate::platform::store_job_artifact(
+        db,
+        row.job_id,
+        Some(row.attempt_id),
+        &artifact_name,
+        content_type,
+        body,
+    )
+    .await?;
+    Ok(Json(artifact))
+}
+
+#[utoipa::path(
+    post,
     path = "/api/v1/runner/leases/{lease_id}/logs",
     tag = "runner-protocol",
     request_body = RunnerLogAppendRequest,
@@ -890,7 +1008,7 @@ async fn claim_next_work(
              SELECT q.id AS queue_id, q.attempt_id, \
                     j.id AS job_id, j.stage_id, j.name AS job_name, j.image, j.command, \
                     LEAST(GREATEST(COALESCE(j.timeout_seconds, 3600), 5), 86400)::integer AS timeout_seconds, \
-                    s.pipeline_id, p.git_ref, p.commit_sha, pr.repository_url, j.required_secrets, \
+                    s.pipeline_id, p.git_ref, p.commit_sha, pr.repository_url, j.required_secrets, j.artifact_paths, \
                     pp.plan_sha256 \
              FROM job_queue q \
              JOIN jobs j ON j.id = q.job_id \
@@ -965,7 +1083,7 @@ async fn claim_next_work(
          ) \
          SELECT cq.lease_id, c.job_id, c.stage_id, ca.id AS attempt_id, ca.attempt_no, \
                 c.pipeline_id, c.job_name, c.image, c.command, c.timeout_seconds, \
-                c.git_ref, c.commit_sha, c.repository_url, c.required_secrets, cq.generation, \
+                c.git_ref, c.commit_sha, c.repository_url, c.required_secrets, c.artifact_paths, cq.generation, \
                 cq.lease_expires_at, cq.ack_deadline, c.plan_sha256 \
          FROM candidate c \
          CROSS JOIN claimed_attempt ca \
@@ -1014,7 +1132,7 @@ async fn claim_next_work(
                 checkout: true,
                 checkout_url: Some(row.repository_url),
             },
-            artifacts: Vec::new(),
+            artifacts: row.artifact_paths,
         },
     }))
 }
@@ -1050,6 +1168,50 @@ fn bearer_token(headers: &HeaderMap) -> Result<&str, ApiError> {
         .map(str::trim)
         .filter(|token| !token.is_empty())
         .ok_or_else(ApiError::unauthorized)
+}
+
+fn required_text_header(
+    headers: &HeaderMap,
+    name: &'static str,
+    message: &'static str,
+) -> Result<String, ApiError> {
+    headers
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| ApiError::bad_request(message))
+}
+
+fn required_i32_header(
+    headers: &HeaderMap,
+    name: &'static str,
+    message: &'static str,
+) -> Result<i32, ApiError> {
+    required_text_header(headers, name, message)?
+        .parse()
+        .map_err(|_| ApiError::bad_request(message))
+}
+
+fn required_i64_header(
+    headers: &HeaderMap,
+    name: &'static str,
+    message: &'static str,
+) -> Result<i64, ApiError> {
+    required_text_header(headers, name, message)?
+        .parse()
+        .map_err(|_| ApiError::bad_request(message))
+}
+
+fn required_uuid_header(
+    headers: &HeaderMap,
+    name: &'static str,
+    message: &'static str,
+) -> Result<Uuid, ApiError> {
+    required_text_header(headers, name, message)?
+        .parse()
+        .map_err(|_| ApiError::bad_request(message))
 }
 
 fn control_response(row: LeaseControlRow) -> RunnerLeaseControlResponse {

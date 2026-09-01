@@ -15,7 +15,7 @@
 | [03-projects.png](../../screenshots/03-projects.png) | `/projects` | Проекты | 1920×1080 |
 | [04-repositories.png](../../screenshots/04-repositories.png) | `/repositories` | Репозитории | 1920×1080 |
 | [05-pipelines.png](../../screenshots/05-pipelines.png) | `/projects/:id/pipelines` | Пайплайны проекта | 1920×1080 |
-| [06-pipeline-detail.png](../../screenshots/06-pipeline-detail.png) | `/pipelines/:id` | Детали пайплайна: immutable plan snapshot, стадии, jobs, команды, runner tags и declared secrets | 1920×1080 |
+| [06-pipeline-detail.png](../../screenshots/06-pipeline-detail.png) | `/pipelines/:id` | Детали пайплайна: immutable plan snapshot, стадии, jobs, команды, runner tags, declared secrets и artifacts | 1920×1080 |
 | [07-settings.png](../../screenshots/07-settings.png) | `/settings` | Системные настройки и `CICD_` окружение | 1920×1080 |
 | [09-repository-browser.png](../../screenshots/09-repository-browser.png) | `/repositories/:repo` → «Код» | Дерево и preview Git-файлов | 1920×1080 |
 | [10-compare.png](../../screenshots/10-compare.png) | `/repositories/:repo/compare` | Сравнение веток: diff + статистика | 1920×1080 |
@@ -47,7 +47,7 @@
 | [30-webhook-add.png](../../screenshots/30-webhook-add.png) | Webhooks → «Добавить webhook» | Форма добавления webhook | 1920×1080 |
 | [31-pr-create.png](../../screenshots/31-pr-create.png) | PR → «Создать pull-запрос» | Форма создания PR (ветки/заголовок/описание) | 1920×1612 |
 | [32-user-create.png](../../screenshots/32-user-create.png) | Пользователи → «Создать пользователя» | Форма создания пользователя | 1920×1080 |
-| [33-job-logs.png](../../screenshots/33-job-logs.png) | Пайплайн → «Логи» | Панель логов джоба с runner tags, secret names, выводом и поиском | 1920×1080 |
+| [33-job-logs.png](../../screenshots/33-job-logs.png) | Пайплайн → «Логи» | Панель логов джоба с runner tags, secret names, artifact paths, выводом и поиском | 1920×1080 |
 | [34-pipeline-run-form.png](../../screenshots/34-pipeline-run-form.png) | Пайплайны → «Запустить пайплайн» | Форма запуска (git ref) | 1920×1080 |
 | [35-releases-list.png](../../screenshots/35-releases-list.png) | Репозиторий → «Релизы» | Список release metadata и Git tags | 1920×1080 |
 | [36-repo-code-blob.png](../../screenshots/36-repo-code-blob.png) | Репозиторий → Код → `.forge-ci.yml` | Просмотр YAML файла CI | 1920×1080 |
@@ -61,7 +61,7 @@
 |---|---|---|---|
 | [m-dashboard.png](../../screenshots/m-dashboard.png) | `/` | Дашборд — мобильная версия | 375×1556 |
 | [m-projects.png](../../screenshots/m-projects.png) | `/projects` | Проекты — мобильная версия | 375×2188 |
-| [m-pipeline-detail.png](../../screenshots/m-pipeline-detail.png) | `/pipelines/:id` | Детали пайплайна с runner tags и declared secrets — мобильная версия | 375×812 |
+| [m-pipeline-detail.png](../../screenshots/m-pipeline-detail.png) | `/pipelines/:id` | Детали пайплайна с runner tags, declared secrets и artifacts — мобильная версия | 375×812 |
 | [m-runners.png](../../screenshots/m-runners.png) | `/runners` | Runners — мобильная версия (карточный layout) | 375×812 |
 | [m-pull-request.png](../../screenshots/m-pull-request.png) | `/repositories/:repo/pulls/:number` | Pull-запрос — мобильная версия | 375×812 |
 | [m-repo-code.png](../../screenshots/m-repo-code.png) | `/repositories/:repo` → Код | Git-дерево на mobile | 375×812 |

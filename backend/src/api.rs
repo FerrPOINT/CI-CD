@@ -91,6 +91,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::runner_protocol::runner_protocol_heartbeat,
         crate::runner_protocol::poll_runner_work, crate::runner_protocol::ack_runner_lease,
         crate::runner_protocol::renew_runner_lease, crate::runner_protocol::resolve_runner_lease_secrets,
+        crate::runner_protocol::upload_runner_lease_artifact,
         crate::runner_protocol::append_runner_lease_logs,
         crate::runner_protocol::complete_runner_lease,
         crate::platform::list_secrets, crate::platform::create_secret, crate::platform::delete_secret,
@@ -1785,6 +1786,7 @@ struct Job {
     command: String,
     required_tags: Vec<String>,
     required_secrets: Vec<String>,
+    artifact_paths: Vec<String>,
     position: i32,
     status: String,
     started_at: Option<DateTime<Utc>>,
@@ -1972,8 +1974,8 @@ pub(crate) async fn create_pipeline_with_vars_idempotent(
             .bind(stage_id).bind(pipeline.id).bind(&stage.name).bind(position as i32).execute(&mut *tx).await.map_err(ApiError::internal)?;
         for (job_position, job) in stage.jobs.iter().enumerate() {
             let job_id = Uuid::new_v4();
-            sqlx::query("INSERT INTO jobs (id, stage_id, name, image, command, required_tags, required_secrets, position, status, timeout_seconds, allow_failure, manual) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'queued', $9, $10, $11)")
-                .bind(job_id).bind(stage_id).bind(&job.name).bind(&job.image).bind(&job.command).bind(&job.required_tags).bind(&job.required_secrets)
+            sqlx::query("INSERT INTO jobs (id, stage_id, name, image, command, required_tags, required_secrets, artifact_paths, position, status, timeout_seconds, allow_failure, manual) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'queued', $10, $11, $12)")
+                .bind(job_id).bind(stage_id).bind(&job.name).bind(&job.image).bind(&job.command).bind(&job.required_tags).bind(&job.required_secrets).bind(&job.artifact_paths)
                 .bind(job_position as i32).bind(job.timeout_seconds).bind(job.allow_failure).bind(job.manual)
                 .execute(&mut *tx).await.map_err(ApiError::internal)?;
             let attempt_id = Uuid::new_v4();
@@ -2098,6 +2100,7 @@ struct LegacyPlanJob {
     command: String,
     required_tags: Vec<String>,
     required_secrets: Vec<String>,
+    artifact_paths: Vec<String>,
     timeout_seconds: Option<i32>,
     allow_failure: bool,
     manual: bool,
@@ -2139,6 +2142,7 @@ struct V1PlanJob {
     command: String,
     required_tags: Vec<String>,
     required_secrets: Vec<String>,
+    artifact_paths: Vec<String>,
     timeout_seconds: Option<i32>,
     allow_failure: bool,
     needs: Vec<String>,
@@ -2216,6 +2220,7 @@ fn build_legacy_execution_plan(
                 command: job.command.clone(),
                 required_tags: job.required_tags.clone(),
                 required_secrets: job.required_secrets.clone(),
+                artifact_paths: job.artifact_paths.clone(),
                 timeout_seconds: job.timeout_seconds,
                 allow_failure: job.allow_failure,
                 manual: job.manual,
@@ -2271,6 +2276,7 @@ struct CiJob {
     command: String,
     required_tags: Vec<String>,
     required_secrets: Vec<String>,
+    artifact_paths: Vec<String>,
     timeout_seconds: Option<i32>,
     allow_failure: bool,
     manual: bool,
@@ -2414,6 +2420,7 @@ fn parse_legacy_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, Strin
                     command: job.command,
                     required_tags: Vec::new(),
                     required_secrets: Vec::new(),
+                    artifact_paths: Vec::new(),
                     timeout_seconds: parse_timeout(job.timeout.as_deref()),
                     allow_failure: job.allow_failure,
                     manual: job.when.as_deref() == Some("manual"),
@@ -2437,6 +2444,7 @@ struct NormalizedV1Job {
     commands: Vec<String>,
     required_tags: Vec<String>,
     required_secrets: Vec<String>,
+    artifact_paths: Vec<String>,
     timeout_seconds: Option<i32>,
     allow_failure: bool,
     needs: Vec<String>,
@@ -2473,7 +2481,16 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
         #[serde(default)]
         secrets: Vec<String>,
         #[serde(default)]
+        artifacts: Option<YamlV1Artifacts>,
+        #[serde(default)]
         allow_failure: bool,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct YamlV1Artifacts {
+        #[serde(default)]
+        paths: Vec<String>,
     }
 
     let parsed: YamlV1Config =
@@ -2535,6 +2552,20 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
         };
         let required_secrets =
             normalize_v1_secret_names(&format!("jobs.{key}.secrets"), job.secrets)?;
+        let artifact_paths = match job.artifacts {
+            Some(artifacts) => {
+                if artifacts.paths.is_empty() {
+                    return Err(format!(
+                        ".forge-ci.yml v1 jobs.{key}.artifacts.paths must define at least one path"
+                    ));
+                }
+                normalize_v1_artifact_paths(
+                    &format!("jobs.{key}.artifacts.paths"),
+                    artifacts.paths,
+                )?
+            }
+            None => Vec::new(),
+        };
 
         if job.needs.len() > 64 {
             return Err(format!(
@@ -2570,6 +2601,7 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
                 commands: job.commands,
                 required_tags,
                 required_secrets,
+                artifact_paths,
                 timeout_seconds,
                 allow_failure: job.allow_failure,
                 needs,
@@ -2618,6 +2650,7 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
                 command: command.clone(),
                 required_tags: job.required_tags.clone(),
                 required_secrets: job.required_secrets.clone(),
+                artifact_paths: job.artifact_paths.clone(),
                 timeout_seconds: job.timeout_seconds,
                 allow_failure: job.allow_failure,
                 manual: false,
@@ -2632,6 +2665,7 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
                 command,
                 required_tags: job.required_tags,
                 required_secrets: job.required_secrets,
+                artifact_paths: job.artifact_paths,
                 timeout_seconds: job.timeout_seconds,
                 allow_failure: job.allow_failure,
                 needs: job.needs,
@@ -2800,6 +2834,25 @@ fn normalize_v1_secret_names(field: &str, names: Vec<String>) -> Result<Vec<Stri
     Ok(normalized.into_iter().collect())
 }
 
+fn normalize_v1_artifact_paths(field: &str, paths: Vec<String>) -> Result<Vec<String>, String> {
+    if paths.len() > 32 {
+        return Err(format!(
+            ".forge-ci.yml v1 {field} supports at most 32 paths"
+        ));
+    }
+    let mut normalized = BTreeSet::new();
+    for path in paths {
+        let path = path.trim();
+        if !is_valid_v1_artifact_path(path) {
+            return Err(format!(
+                ".forge-ci.yml v1 {field} path '{path}' must be a safe relative file path"
+            ));
+        }
+        normalized.insert(path.to_string());
+    }
+    Ok(normalized.into_iter().collect())
+}
+
 fn is_valid_runner_tag(tag: &str) -> bool {
     let bytes = tag.as_bytes();
     if bytes.is_empty() || bytes.len() > 63 {
@@ -2828,6 +2881,19 @@ fn is_valid_v1_secret_name(name: &str) -> bool {
         .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || *b == b'_')
 }
 
+fn is_valid_v1_artifact_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.len() <= 255
+        && !path.starts_with('/')
+        && !path.starts_with('\\')
+        && !path.contains('\\')
+        && !path.contains(':')
+        && !path.chars().any(char::is_control)
+        && path
+            .split('/')
+            .all(|segment| !segment.is_empty() && segment != "." && segment != "..")
+}
+
 fn is_valid_v1_job_key(key: &str) -> bool {
     let mut chars = key.chars();
     let Some(first) = chars.next() else {
@@ -2850,6 +2916,7 @@ fn default_pipeline() -> Vec<CiStage> {
                 command: "git fetch --all".into(),
                 required_tags: Vec::new(),
                 required_secrets: Vec::new(),
+                artifact_paths: Vec::new(),
                 timeout_seconds: None,
                 allow_failure: false,
                 manual: false,
@@ -2863,6 +2930,7 @@ fn default_pipeline() -> Vec<CiStage> {
                 command: "cargo test".into(),
                 required_tags: Vec::new(),
                 required_secrets: Vec::new(),
+                artifact_paths: Vec::new(),
                 timeout_seconds: None,
                 allow_failure: false,
                 manual: false,
@@ -2875,6 +2943,7 @@ fn default_pipeline() -> Vec<CiStage> {
                 image: "alpine:3.21".into(),
                 required_tags: Vec::new(),
                 required_secrets: Vec::new(),
+                artifact_paths: Vec::new(),
                 timeout_seconds: None,
                 allow_failure: false,
                 manual: false,
@@ -3644,6 +3713,8 @@ jobs:
     timeout: 45m
     tags: [linux]
     secrets: [DEPLOY_TOKEN, AWS_ACCESS_KEY_ID, DEPLOY_TOKEN]
+    artifacts:
+      paths: [target/release/app.tar.gz, reports/junit.xml, reports/junit.xml]
     commands:
       - cargo test
       - cargo clippy --all-targets
@@ -3688,6 +3759,13 @@ jobs:
         assert_eq!(
             parsed.stages[1].jobs[0].required_secrets,
             vec!["AWS_ACCESS_KEY_ID".to_string(), "DEPLOY_TOKEN".to_string()]
+        );
+        assert_eq!(
+            parsed.stages[1].jobs[0].artifact_paths,
+            vec![
+                "reports/junit.xml".to_string(),
+                "target/release/app.tar.gz".to_string()
+            ]
         );
         assert_eq!(
             parsed.stages[1].jobs[0].command,
@@ -3739,6 +3817,10 @@ jobs:
             first.plan["jobs"][0]["required_secrets"],
             serde_json::json!([])
         );
+        assert_eq!(
+            first.plan["jobs"][0]["artifact_paths"],
+            serde_json::json!([])
+        );
         assert_eq!(first.plan["dependencies"].as_array().unwrap().len(), 2);
         assert_eq!(first.plan["dependencies"][0]["from"], "build");
         assert_eq!(first.plan["dependencies"][0]["to"], "test");
@@ -3757,7 +3839,9 @@ jobs:
             "version: 1\njobs:\n  build:\n    timeout: 25h\n    commands: [echo build]\n",
             "version: 1\njobs:\n  build:\n    tags: [Prod]\n    commands: [echo build]\n",
             "version: 1\njobs:\n  build:\n    secrets: [deploy_token]\n    commands: [echo build]\n",
-            "version: 1\njobs:\n  build:\n    artifacts:\n      paths: [target]\n    commands: [echo build]\n",
+            "version: 1\njobs:\n  build:\n    artifacts:\n      paths: []\n    commands: [echo build]\n",
+            "version: 1\njobs:\n  build:\n    artifacts:\n      paths: [../target]\n    commands: [echo build]\n",
+            "version: 1\njobs:\n  build:\n    artifacts:\n      paths: [target\\\\app.bin]\n    commands: [echo build]\n",
         ] {
             assert!(parse_pipeline_config(Some(source)).is_err(), "{source}");
         }
@@ -3833,7 +3917,7 @@ async fn pipeline_detail(pool: &PgPool, pipeline_id: Uuid) -> Result<PipelineDet
     let stages = sqlx::query_as::<_, Stage>("SELECT id, pipeline_id, name, position, status FROM stages WHERE pipeline_id = $1 ORDER BY position").bind(pipeline_id).fetch_all(pool).await.map_err(ApiError::internal)?;
     let mut details = Vec::with_capacity(stages.len());
     for stage in stages {
-        let jobs = sqlx::query_as::<_, Job>("SELECT id, stage_id, name, image, command, required_tags, required_secrets, position, status, started_at, finished_at FROM jobs WHERE stage_id = $1 ORDER BY position").bind(stage.id).fetch_all(pool).await.map_err(ApiError::internal)?;
+        let jobs = sqlx::query_as::<_, Job>("SELECT id, stage_id, name, image, command, required_tags, required_secrets, artifact_paths, position, status, started_at, finished_at FROM jobs WHERE stage_id = $1 ORDER BY position").bind(stage.id).fetch_all(pool).await.map_err(ApiError::internal)?;
         details.push(StageDetail { stage, jobs });
     }
     Ok(PipelineDetail {
@@ -3854,13 +3938,13 @@ async fn change_job_status(
     Json(input): Json<ChangeStatus>,
 ) -> ApiResult<Job> {
     let pool = pool(&state)?;
-    let job = sqlx::query_as::<_, Job>("SELECT id, stage_id, name, image, command, required_tags, required_secrets, position, status, started_at, finished_at FROM jobs WHERE id = $1").bind(job_id).fetch_optional(pool).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?;
+    let job = sqlx::query_as::<_, Job>("SELECT id, stage_id, name, image, command, required_tags, required_secrets, artifact_paths, position, status, started_at, finished_at FROM jobs WHERE id = $1").bind(job_id).fetch_optional(pool).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?;
     let current = JobStatus::try_from(job.status.as_str()).map_err(ApiError::bad_request)?;
     current
         .transition_to(input.status)
         .map_err(|error| ApiError::bad_request(error.to_string()))?;
     transition_open_attempt(pool, job_id, input.status.as_str(), "manual_status").await?;
-    let updated = sqlx::query_as::<_, Job>("UPDATE jobs SET status = $2, started_at = CASE WHEN $2 = 'running' THEN now() ELSE started_at END, finished_at = CASE WHEN $2 IN ('success','failed','canceled') THEN now() ELSE finished_at END WHERE id = $1 RETURNING id, stage_id, name, image, command, required_tags, required_secrets, position, status, started_at, finished_at").bind(job_id).bind(input.status.as_str()).fetch_one(pool).await.map_err(ApiError::internal)?;
+    let updated = sqlx::query_as::<_, Job>("UPDATE jobs SET status = $2, started_at = CASE WHEN $2 = 'running' THEN now() ELSE started_at END, finished_at = CASE WHEN $2 IN ('success','failed','canceled') THEN now() ELSE finished_at END WHERE id = $1 RETURNING id, stage_id, name, image, command, required_tags, required_secrets, artifact_paths, position, status, started_at, finished_at").bind(job_id).bind(input.status.as_str()).fetch_one(pool).await.map_err(ApiError::internal)?;
     if matches!(
         input.status,
         JobStatus::Success | JobStatus::Failed | JobStatus::Canceled
@@ -4084,7 +4168,7 @@ async fn retry_pipeline(
 #[utoipa::path(post, path="/api/v1/jobs/{job_id}/retry", tag="jobs", params(("job_id"=Uuid, Path)), responses((status=200, body=Job), (status=404)))]
 async fn retry_job(State(state): State<Arc<AppState>>, Path(job_id): Path<Uuid>) -> ApiResult<Job> {
     let pool = pool(&state)?;
-    let job = sqlx::query_as::<_, Job>("SELECT id, stage_id, name, image, command, required_tags, required_secrets, position, status, started_at, finished_at FROM jobs WHERE id = $1")
+    let job = sqlx::query_as::<_, Job>("SELECT id, stage_id, name, image, command, required_tags, required_secrets, artifact_paths, position, status, started_at, finished_at FROM jobs WHERE id = $1")
         .bind(job_id)
         .fetch_optional(pool)
         .await
@@ -4105,7 +4189,7 @@ async fn retry_job(State(state): State<Arc<AppState>>, Path(job_id): Path<Uuid>)
     .execute(pool)
     .await
     .map_err(ApiError::internal)?;
-    let updated = sqlx::query_as::<_, Job>("UPDATE jobs SET status = 'queued', started_at = NULL, finished_at = NULL WHERE id = $1 RETURNING id, stage_id, name, image, command, required_tags, required_secrets, position, status, started_at, finished_at")
+    let updated = sqlx::query_as::<_, Job>("UPDATE jobs SET status = 'queued', started_at = NULL, finished_at = NULL WHERE id = $1 RETURNING id, stage_id, name, image, command, required_tags, required_secrets, artifact_paths, position, status, started_at, finished_at")
         .bind(job_id)
         .fetch_one(pool)
         .await

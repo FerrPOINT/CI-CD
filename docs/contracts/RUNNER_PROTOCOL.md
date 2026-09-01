@@ -1,6 +1,6 @@
 # Runner protocol
 
-**Статус:** Current verified MVP + Target approved. Реализованный subset на 2026-09-01 покрывает `register`, `heartbeat`, immediate `work:poll`, basic tag matching, `ack`, lease-scoped `secrets:resolve`, `renew`, `logs`, `complete`, SHA-256 storage для runner credential/lease token, fencing по `job_leases.generation`, `workspace.checkoutUrl`, declared `attempt.secrets` и отдельный `forge-runner` shell process. Остальные разделы описывают target-контракт production runner-а. Канонические путь и имена таблиц закреплены [ADR-0009](../adr/0009-canonical-registry.md).
+**Статус:** Current verified MVP + Target approved. Реализованный subset на 2026-09-01 покрывает `register`, `heartbeat`, immediate `work:poll`, basic tag matching, `ack`, lease-scoped `secrets:resolve`, one-shot artifact upload, `renew`, `logs`, `complete`, SHA-256 storage для runner credential/lease token, fencing по `job_leases.generation`, `workspace.checkoutUrl`, declared `attempt.secrets`/`attempt.artifacts` и отдельный `forge-runner` shell process. Остальные разделы описывают target-контракт production runner-а. Канонические путь и имена таблиц закреплены [ADR-0009](../adr/0009-canonical-registry.md).
 
 ## 1. Область и общие правила
 
@@ -74,11 +74,11 @@ Current MVP отвечает сразу и возвращает `204`, если 
  "attempt":{"id":"uuid","number":1,"pipelineId":"uuid","jobId":"uuid","jobKey":"test","commitSha":"<full-sha>",
  "executor":"shell","image":"rust@sha256:<digest>","commands":["cargo test"],"environment":{},
  "secrets":["DEPLOY_TOKEN"],"timeoutSeconds":3600,
- "workspace":{"checkout":true,"checkoutUrl":"https://forge.example/git/project.git"},"artifacts":[]},
+ "workspace":{"checkout":true,"checkoutUrl":"https://forge.example/git/project.git"},"artifacts":["target/release/app.tar.gz"]},
  "planSignature":{"kid":"string","signature":"base64url"}}
 ```
 
-Offer содержит только имена declared secrets, но не значения. Current `forge-runner` использует `workspace.checkoutUrl` для `git clone`, после `ack` получает scoped secret bundle, затем выполняет команды shell в workspace, передаёт declared secrets в env, отправляет stdout/stderr через protocol log append с best-effort masking и отправляет terminal result; `image` остаётся compatibility field до Docker/Kubernetes runner. Target runner проверяет `planSignature`, не запускает работу до ack и не сохраняет `leaseToken` в log/metadata. Несовместимый/disabled/draining/offline runner или runner без нужных `required_tags` не получает offer.
+Offer содержит только имена declared secrets и relative paths declared artifacts, но не secret values и не storage credentials. Current `forge-runner` использует `workspace.checkoutUrl` для `git clone`, после `ack` получает scoped secret bundle, затем выполняет команды shell в workspace, передаёт declared secrets в env, отправляет stdout/stderr через protocol log append с best-effort masking, загружает declared artifact files и отправляет terminal result; `image` остаётся compatibility field до Docker/Kubernetes runner. Target runner проверяет `planSignature`, не запускает работу до ack и не сохраняет `leaseToken` в log/metadata. Несовместимый/disabled/draining/offline runner или runner без нужных `required_tags` не получает offer.
 
 `POST /api/v1/runner/leases/{leaseId}/ack` и `POST /api/v1/runner/leases/{leaseId}/renew` используют одну схему:
 
@@ -90,7 +90,7 @@ Offer содержит только имена declared secrets, но не зн�
 
 Ack допускается только до `ackDeadline`; ответ: `{protocolVersion, leaseExpiresAt, renewAfter, cancelRequested}`. Renew допускается только для active, неистёкшей lease и возвращает те же поля. Повтор корректного ack/renew идемпотентен; stale token/generation возвращает `409 lease_fenced` (или `410` после окончательного expiry).
 
-## 4. Секреты, логи и завершение
+## 4. Секреты, артефакты, логи и завершение
 
 После успешного ack owner получает declared secrets через `POST /api/v1/runner/leases/{leaseId}/secrets:resolve`. Current сервер принимает только active acknowledged lease, сверяет runner credential, lease token hash, `fencingToken` и возвращает только requested names из `jobs.required_secrets`; запрос чужого или не объявленного secret name возвращает `403`.
 
@@ -102,6 +102,23 @@ Ack допускается только до `ackDeadline`; ответ: `{protoc
 ```
 
 Ответ `200` имеет `{protocolVersion, expiresAt, items:[{name, injection:"env", value}]}`. `value` существует только в защищённом TLS-ответе, не записывается в БД/аудит/логи; current `forge-runner` хранит значения только в памяти процесса, передаёт их в env и маскирует stdout/stderr best-effort. Сервер возвращает только ключи immutable plan; ответ `Cache-Control: no-store`. File injection, KMS-backed short leases, rotation policy и full redaction во всех trace/error каналах остаются target hardening.
+
+`POST /api/v1/runner/leases/{leaseId}/artifacts`:
+
+Current MVP принимает один файл в raw request body. Control fields передаются headers, чтобы artifact bytes не кодировались в JSON:
+
+| Header | Значение |
+|---|---|
+| `Authorization` | `Bearer <runner-credential>` |
+| `X-Runner-Protocol-Version` | `1` |
+| `X-Lease-Token` | opaque lease token |
+| `X-Fencing-Token` | `job_leases.generation` |
+| `X-Attempt-Id` | UUID текущей attempt |
+| `X-Artifact-Path` | один из paths из `LeaseOffer.attempt.artifacts` |
+| `X-Artifact-Name` | display name без `/`, `\`, quotes и control chars |
+| `Content-Type` | MIME type файла; default `application/octet-stream` |
+
+Запрос принимается только после `ack`, пока lease active, `job` и `attempt` находятся в `running`, runner identity, lease token hash, `fencingToken` и `attemptId` совпадают, а `X-Artifact-Path` входит в `jobs.artifact_paths` этой job. Body должен быть 1 byte..50 MiB. Сервер сохраняет bytes в `CICD_ARTIFACTS_DIR`, пишет `artifacts` metadata с `attempt_id`, `content_type`, `size_bytes`, `sha256` и возвращает обычный `Artifact` JSON. Current `forge-runner` загружает только file paths из `LeaseOffer.attempt.artifacts`; directory upload, glob patterns, chunked/resumable sessions, per-artifact retention и object storage credentials остаются target hardening.
 
 `POST /api/v1/runner/leases/{leaseId}/logs`:
 

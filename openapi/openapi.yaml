@@ -1892,6 +1892,78 @@ paths:
           description: ''
         '410':
           description: ''
+  /api/v1/runner/leases/{lease_id}/artifacts:
+    post:
+      tags:
+      - runner-protocol
+      operationId: upload_runner_lease_artifact
+      parameters:
+      - name: lease_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Runner-Protocol-Version
+        in: header
+        required: true
+        schema:
+          type: integer
+          format: int32
+      - name: X-Lease-Token
+        in: header
+        required: true
+        schema:
+          type: string
+      - name: X-Fencing-Token
+        in: header
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: X-Attempt-Id
+        in: header
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Artifact-Path
+        in: header
+        required: true
+        schema:
+          type: string
+      - name: X-Artifact-Name
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/octet-stream:
+            schema:
+              type: array
+              items:
+                type: integer
+                format: int32
+                minimum: 0
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Artifact'
+        '400':
+          description: ''
+        '401':
+          description: ''
+        '403':
+          description: ''
+        '409':
+          description: ''
+        '410':
+          description: ''
   /api/v1/runner/leases/{lease_id}/complete:
     post:
       tags:
@@ -2858,9 +2930,14 @@ components:
       - command
       - required_tags
       - required_secrets
+      - artifact_paths
       - position
       - status
       properties:
+        artifact_paths:
+          type: array
+          items:
+            type: string
         command:
           type: string
         finished_at:

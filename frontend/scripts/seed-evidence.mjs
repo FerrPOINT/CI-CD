@@ -76,27 +76,28 @@ async function seedRepository(name, commits, branches = {}) {
   return name
 }
 
-const FORGE_CI = `stages:
-  - name: build
-    jobs:
-      - name: compile
-        image: rust:1.86-slim
-        command: |
-          echo "build: compiling platform-core"
-          echo "build: rustc via image rust:1.86-slim"
-  - name: test
-    jobs:
-      - name: unit
-        image: rust:1.86-slim
-        command: |
-          echo "test: 42 passed, 0 failed"
-  - name: deploy
-    jobs:
-      - name: publish
-        image: alpine:3.21
-        command: |
-          echo "deploy: publishing artifacts to registry"
-          echo "deploy: done"
+const FORGE_CI = `version: 1
+defaults:
+  image: alpine:3.21
+jobs:
+  compile:
+    commands:
+      - echo "build: compiling platform-core"
+      - mkdir -p target/release
+      - printf "forge evidence artifact\\n" > target/release/app.tar.gz
+      - echo "build: artifact target/release/app.tar.gz ready"
+    artifacts:
+      paths:
+        - target/release/app.tar.gz
+  unit:
+    needs: [compile]
+    commands:
+      - echo "test: 42 passed, 0 failed"
+  publish:
+    needs: [unit]
+    commands:
+      - echo "deploy: publishing artifacts to registry"
+      - echo "deploy: done"
 `
 
 async function main() {

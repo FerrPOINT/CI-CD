@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeSet,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::Stdio,
     time::Duration,
 };
@@ -18,6 +18,7 @@ use tokio::{
 use uuid::Uuid;
 
 const PROTOCOL_VERSION: i32 = 1;
+const MAX_ARTIFACT_BYTES: u64 = 50 * 1024 * 1024;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -80,6 +81,8 @@ struct AttemptSpec {
     commands: Vec<String>,
     #[serde(default)]
     secrets: Vec<String>,
+    #[serde(default)]
+    artifacts: Vec<String>,
     timeout_seconds: i32,
     workspace: WorkspaceSpec,
 }
@@ -556,6 +559,27 @@ async fn execute_attempt(
         }
     }
 
+    let artifact_error = match log_context.as_ref() {
+        Some(context) => upload_declared_artifacts(context, offer, &workspace)
+            .await
+            .err(),
+        None if offer.attempt.artifacts.is_empty() => None,
+        None => Some(anyhow::anyhow!(
+            "artifact upload requires runner protocol log context"
+        )),
+    };
+    if result.outcome == "success" {
+        if let Some(error) = artifact_error {
+            result = ExecutionResult {
+                outcome: "failed",
+                exit_code: None,
+                diagnostic: Some(truncate_diagnostic(&format!(
+                    "artifact upload failed: {error:#}"
+                ))),
+            };
+        }
+    }
+
     if !cli.keep_workspace {
         cleanup_workspace(&cleanup_path, cli.work_dir.as_deref())?;
     }
@@ -701,6 +725,95 @@ async fn run_shell_command(
     await_log_task(stdout_task).await?;
     await_log_task(stderr_task).await?;
     Ok(status)
+}
+
+async fn upload_declared_artifacts(
+    context: &LogContext,
+    offer: &LeaseOffer,
+    workspace: &Path,
+) -> anyhow::Result<()> {
+    if offer.attempt.artifacts.is_empty() {
+        return Ok(());
+    }
+    let workspace = tokio::fs::canonicalize(workspace)
+        .await
+        .with_context(|| format!("canonicalize workspace {}", workspace.display()))?;
+    for artifact_path in &offer.attempt.artifacts {
+        let file = resolve_workspace_artifact(&workspace, artifact_path).await?;
+        let metadata = tokio::fs::metadata(&file)
+            .await
+            .with_context(|| format!("stat artifact {}", file.display()))?;
+        if metadata.len() == 0 || metadata.len() > MAX_ARTIFACT_BYTES {
+            bail!("artifact {artifact_path} must be between 1 byte and 50 MiB");
+        }
+        let bytes = tokio::fs::read(&file)
+            .await
+            .with_context(|| format!("read artifact {}", file.display()))?;
+        let artifact_name = artifact_name_from_declared_path(artifact_path);
+        let response = context
+            .client
+            .post(format!(
+                "{}/api/v1/runner/leases/{}/artifacts",
+                context.base, context.lease_id
+            ))
+            .bearer_auth(&context.credential)
+            .header("X-Runner-Protocol-Version", PROTOCOL_VERSION.to_string())
+            .header("X-Lease-Token", &context.lease_token)
+            .header("X-Fencing-Token", context.fencing_token.to_string())
+            .header("X-Attempt-Id", context.attempt_id.to_string())
+            .header("X-Artifact-Path", artifact_path)
+            .header("X-Artifact-Name", &artifact_name)
+            .header("Content-Type", "application/octet-stream")
+            .body(bytes)
+            .send()
+            .await
+            .context("upload runner artifact request failed")?;
+        ensure_success(response)
+            .await
+            .with_context(|| format!("upload artifact {artifact_path} failed"))?;
+        eprintln!("uploaded artifact {artifact_path}");
+        let _ = append_log_lines(
+            context,
+            vec![RunnerLogLine {
+                stream: "system",
+                message: protocol_log_message(&format!("uploaded artifact {artifact_path}")),
+            }],
+        )
+        .await;
+    }
+    Ok(())
+}
+
+async fn resolve_workspace_artifact(
+    workspace: &Path,
+    artifact_path: &str,
+) -> anyhow::Result<PathBuf> {
+    let requested = Path::new(artifact_path);
+    if requested.components().any(|component| {
+        matches!(
+            component,
+            Component::Prefix(_) | Component::RootDir | Component::ParentDir
+        )
+    }) {
+        bail!("artifact path {artifact_path} must stay within workspace");
+    }
+    let file = tokio::fs::canonicalize(workspace.join(requested))
+        .await
+        .with_context(|| format!("declared artifact {artifact_path} does not exist"))?;
+    if !file.starts_with(workspace) {
+        bail!("artifact path {artifact_path} must stay within workspace");
+    }
+    let metadata = tokio::fs::metadata(&file)
+        .await
+        .with_context(|| format!("stat artifact {}", file.display()))?;
+    if !metadata.is_file() {
+        bail!("declared artifact {artifact_path} must be a file");
+    }
+    Ok(file)
+}
+
+fn artifact_name_from_declared_path(path: &str) -> String {
+    path.replace(['/', '\\'], "__")
 }
 
 async fn await_log_task(
@@ -887,6 +1000,7 @@ mod tests {
                 commit_sha: None,
                 commands: vec![command.to_string()],
                 secrets: Vec::new(),
+                artifacts: Vec::new(),
                 timeout_seconds,
                 workspace: WorkspaceSpec {
                     checkout: false,
@@ -928,6 +1042,39 @@ mod tests {
             ),
             "deploy token=***"
         );
+    }
+
+    #[test]
+    fn declared_artifact_name_preserves_relative_context() {
+        assert_eq!(
+            artifact_name_from_declared_path("target/release/app.tar.gz"),
+            "target__release__app.tar.gz"
+        );
+    }
+
+    #[tokio::test]
+    async fn declared_artifact_path_cannot_escape_workspace() {
+        let work_dir =
+            std::env::temp_dir().join(format!("forge-runner-test-{}", Uuid::new_v4().simple()));
+        let workspace = work_dir.join("workspace");
+        std::fs::create_dir_all(&workspace).expect("create workspace");
+        std::fs::write(workspace.join("report.txt"), b"ok").expect("write artifact");
+
+        let workspace = tokio::fs::canonicalize(&workspace)
+            .await
+            .expect("canonical workspace");
+        assert!(
+            resolve_workspace_artifact(&workspace, "report.txt")
+                .await
+                .is_ok()
+        );
+        assert!(
+            resolve_workspace_artifact(&workspace, "../outside.txt")
+                .await
+                .is_err()
+        );
+
+        let _ = std::fs::remove_dir_all(work_dir);
     }
 
     #[tokio::test]

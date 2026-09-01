@@ -284,37 +284,58 @@ async fn upload_artifact(
     headers: HeaderMap,
     body: Bytes,
 ) -> ApiResult<Artifact> {
-    if body.is_empty() || body.len() > MAX_ARTIFACT_BYTES {
-        return Err(ApiError::bad_request(
-            "artifact must be between 1 byte and 50 MiB",
-        ));
-    }
     let name = headers
         .get("x-artifact-name")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("artifact.bin")
         .trim();
-    if !valid_artifact_name(name) {
-        return Err(ApiError::bad_request("invalid artifact name"));
-    }
     let content_type = headers
         .get("content-type")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("application/octet-stream");
+    let artifact =
+        store_job_artifact(pool(&state)?, job_id, None, name, content_type, body).await?;
+    Ok(Json(artifact))
+}
+
+pub(crate) async fn store_job_artifact(
+    db: &PgPool,
+    job_id: Uuid,
+    attempt_id: Option<Uuid>,
+    name: &str,
+    content_type: &str,
+    body: Bytes,
+) -> Result<Artifact, ApiError> {
+    if body.is_empty() || body.len() > MAX_ARTIFACT_BYTES {
+        return Err(ApiError::bad_request(
+            "artifact must be between 1 byte and 50 MiB",
+        ));
+    }
+    let name = name.trim();
+    if !valid_artifact_name(name) {
+        return Err(ApiError::bad_request("invalid artifact name"));
+    }
+    let content_type = content_type.trim();
+    if content_type.is_empty() {
+        return Err(ApiError::bad_request("artifact content-type is required"));
+    }
+    let attempt_id = match attempt_id {
+        Some(attempt_id) => attempt_id,
+        None => crate::store::active_or_latest_attempt_id(db, job_id)
+            .await
+            .map_err(|error| match error {
+                sqlx::Error::RowNotFound => ApiError::not_found(),
+                other => ApiError::internal(other),
+            })?,
+    };
     let id = Uuid::new_v4();
     let artifact_sha256 = sha256_bytes(body.as_ref());
     let path = new_artifact_path(id)?;
     std::fs::write(&path, &body).map_err(io_error)?;
-    let attempt_id = crate::store::active_or_latest_attempt_id(pool(&state)?, job_id)
-        .await
-        .map_err(|error| match error {
-            sqlx::Error::RowNotFound => ApiError::not_found(),
-            other => ApiError::internal(other),
-        })?;
     let artifact = sqlx::query_as("INSERT INTO artifacts (id, job_id, attempt_id, name, storage_path, content_type, sha256, size_bytes) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, job_id, attempt_id, name, content_type, sha256, size_bytes, created_at")
-        .bind(id).bind(job_id).bind(attempt_id).bind(name).bind(path.to_string_lossy().as_ref()).bind(content_type).bind(&artifact_sha256).bind(body.len() as i64).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
-    audit(pool(&state)?, "artifact.uploaded", "artifact", id, None).await?;
-    Ok(Json(artifact))
+        .bind(id).bind(job_id).bind(attempt_id).bind(name).bind(path.to_string_lossy().as_ref()).bind(content_type).bind(&artifact_sha256).bind(body.len() as i64).fetch_one(db).await.map_err(ApiError::internal)?;
+    audit(db, "artifact.uploaded", "artifact", id, None).await?;
+    Ok(artifact)
 }
 #[utoipa::path(get, path = "/api/v1/artifacts/{artifact_id}/download", tag = "artifacts", params(("artifact_id" = Uuid, Path)), responses((status = 200, description = "Artifact download"), (status = 404)))]
 async fn download_artifact(

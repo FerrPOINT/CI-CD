@@ -139,6 +139,7 @@
     "command": "Команда",
     "runnerTags": "Теги runner",
     "secrets": "Секреты",
+    "artifacts": "Артефакты",
     "attempt": "Попытка",
     "trigger": "Источник",
     "exitCode": "Код выхода",

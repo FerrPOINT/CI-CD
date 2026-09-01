@@ -957,6 +957,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runner/leases/{lease_id}/artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["upload_runner_lease_artifact"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runner/leases/{lease_id}/complete": {
         parameters: {
             query?: never;
@@ -1437,6 +1453,7 @@ export interface components {
             repository: string;
         };
         Job: {
+            artifact_paths: string[];
             command: string;
             /** Format: date-time */
             finished_at?: string | null;
@@ -4263,6 +4280,68 @@ export interface operations {
                 };
             };
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    upload_runner_lease_artifact: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Runner-Protocol-Version": number;
+                "X-Lease-Token": string;
+                "X-Fencing-Token": number;
+                "X-Attempt-Id": string;
+                "X-Artifact-Path": string;
+                "X-Artifact-Name": string;
+            };
+            path: {
+                lease_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": number[];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Artifact"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

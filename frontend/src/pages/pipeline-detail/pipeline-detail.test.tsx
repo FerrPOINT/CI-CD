@@ -65,6 +65,7 @@ function renderPipelineDetail(requests: string[]) {
                 command: 'echo test',
                 required_tags: ['docker', 'linux'],
                 required_secrets: ['DEPLOY_TOKEN'],
+                artifact_paths: ['target/release/app.tar.gz'],
                 position: 0,
                 status: 'running',
                 started_at: now,
@@ -172,6 +173,8 @@ describe('PipelineDetailPage logs', () => {
     expect(screen.getByText('linux')).toBeInTheDocument()
     expect(screen.getByText('jobs.secrets:')).toBeInTheDocument()
     expect(screen.getByText('DEPLOY_TOKEN')).toBeInTheDocument()
+    expect(screen.getByText('jobs.artifacts:')).toBeInTheDocument()
+    expect(screen.getByText('target/release/app.tar.gz')).toBeInTheDocument()
   })
 
   it('loads log pages and refetches them with search', async () => {

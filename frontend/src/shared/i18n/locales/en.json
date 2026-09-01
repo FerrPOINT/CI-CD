@@ -139,6 +139,7 @@
     "command": "Command",
     "runnerTags": "Runner tags",
     "secrets": "Secrets",
+    "artifacts": "Artifacts",
     "attempt": "Attempt",
     "trigger": "Trigger",
     "exitCode": "Exit code",

@@ -678,12 +678,16 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
     let attempt_id = Uuid::new_v4();
     let project_name = format!("it-runner-protocol-{}", namespace.simple());
     let previous_secrets_key = std::env::var("CICD_SECRETS_KEY").ok();
+    let previous_artifacts_dir = std::env::var("CICD_ARTIFACTS_DIR").ok();
     let secrets_key = base64::engine::general_purpose::STANDARD.encode([7_u8; 32]);
+    let artifact_root = std::env::temp_dir().join(format!("forge-runner-artifacts-{namespace}"));
+    std::fs::create_dir_all(&artifact_root).expect("create runner artifact root");
 
     // SAFETY: only the runner protocol integration test reads this process env.
     unsafe {
         std::env::set_var("CICD_RUNNER_REGISTRATION_TOKEN", &registration_token);
         std::env::set_var("CICD_SECRETS_KEY", secrets_key);
+        std::env::set_var("CICD_ARTIFACTS_DIR", &artifact_root);
     }
 
     let app = cicd::api::app_with_auth_secret(
@@ -833,8 +837,8 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
     .await
     .expect("insert stage");
     sqlx::query(
-        "INSERT INTO jobs (id, stage_id, name, image, command, required_tags, required_secrets, position, status, timeout_seconds) \
-         VALUES ($1, $2, 'compile', 'alpine:3.21', 'echo ok', ARRAY['docker','linux'], ARRAY['DEPLOY_TOKEN'], 0, 'queued', 30)",
+        "INSERT INTO jobs (id, stage_id, name, image, command, required_tags, required_secrets, artifact_paths, position, status, timeout_seconds) \
+         VALUES ($1, $2, 'compile', 'alpine:3.21', 'echo ok', ARRAY['docker','linux'], ARRAY['DEPLOY_TOKEN'], ARRAY['target/release/app.tar.gz'], 0, 'queued', 30)",
     )
     .bind(job_id)
     .bind(stage_id)
@@ -921,6 +925,10 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
         offer["attempt"]["secrets"],
         serde_json::json!(["DEPLOY_TOKEN"])
     );
+    assert_eq!(
+        offer["attempt"]["artifacts"],
+        serde_json::json!(["target/release/app.tar.gz"])
+    );
     assert_eq!(offer["attempt"]["timeoutSeconds"], 30);
     assert_eq!(offer["attempt"]["workspace"]["checkout"], true);
     assert_eq!(
@@ -929,6 +937,7 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
     );
     let lease_id = Uuid::parse_str(offer["leaseId"].as_str().unwrap()).unwrap();
     let lease_token = offer["leaseToken"].as_str().unwrap().to_owned();
+    let runner_artifact_body = b"runner artifact bytes".to_vec();
 
     let response = app
         .clone()
@@ -968,6 +977,25 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
                     })
                     .to_string(),
                 ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/runner/leases/{lease_id}/artifacts"))
+                .header("authorization", format!("Bearer {credential}"))
+                .header("x-runner-protocol-version", "1")
+                .header("x-lease-token", &lease_token)
+                .header("x-fencing-token", "1")
+                .header("x-attempt-id", attempt_id.to_string())
+                .header("x-artifact-path", "target/release/app.tar.gz")
+                .header("x-artifact-name", "runner-report.txt")
+                .header("content-type", "text/plain")
+                .body(Body::from(runner_artifact_body.clone()))
                 .unwrap(),
         )
         .await
@@ -1129,6 +1157,73 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
     let response = app
         .clone()
         .oneshot(
+            Request::post(format!("/api/v1/runner/leases/{lease_id}/artifacts"))
+                .header("authorization", format!("Bearer {credential}"))
+                .header("x-runner-protocol-version", "1")
+                .header("x-lease-token", &lease_token)
+                .header("x-fencing-token", "1")
+                .header("x-attempt-id", attempt_id.to_string())
+                .header("x-artifact-path", "reports/undeclared.txt")
+                .header("x-artifact-name", "runner-report.txt")
+                .header("content-type", "text/plain")
+                .body(Body::from(runner_artifact_body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/runner/leases/{lease_id}/artifacts"))
+                .header("authorization", format!("Bearer {credential}"))
+                .header("x-runner-protocol-version", "1")
+                .header("x-lease-token", &lease_token)
+                .header("x-fencing-token", "1")
+                .header("x-attempt-id", attempt_id.to_string())
+                .header("x-artifact-path", "target/release/app.tar.gz")
+                .header("x-artifact-name", "runner-report.txt")
+                .header("content-type", "text/plain")
+                .body(Body::from(runner_artifact_body.clone()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let uploaded_artifact = response_json(response).await;
+    let artifact_id = Uuid::parse_str(uploaded_artifact["id"].as_str().unwrap()).unwrap();
+    assert_eq!(uploaded_artifact["job_id"], job_id.to_string());
+    assert_eq!(uploaded_artifact["attempt_id"], attempt_id.to_string());
+    assert_eq!(uploaded_artifact["name"], "runner-report.txt");
+    assert_eq!(uploaded_artifact["content_type"], "text/plain");
+    assert_eq!(
+        uploaded_artifact["size_bytes"],
+        runner_artifact_body.len() as i64
+    );
+    assert_eq!(
+        uploaded_artifact["sha256"],
+        format!("{:x}", Sha256::digest(&runner_artifact_body))
+    );
+
+    let response = secret_app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/artifacts/{artifact_id}/download"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("read runner artifact body");
+    assert_eq!(bytes.as_ref(), runner_artifact_body.as_slice());
+
+    let response = app
+        .clone()
+        .oneshot(
             Request::post(format!("/api/v1/runner/leases/{lease_id}/renew"))
                 .header("authorization", format!("Bearer {credential}"))
                 .header("content-type", "application/json")
@@ -1250,7 +1345,12 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
             Some(value) => std::env::set_var("CICD_SECRETS_KEY", value),
             None => std::env::remove_var("CICD_SECRETS_KEY"),
         }
+        match previous_artifacts_dir {
+            Some(value) => std::env::set_var("CICD_ARTIFACTS_DIR", value),
+            None => std::env::remove_var("CICD_ARTIFACTS_DIR"),
+        }
     }
+    let _ = std::fs::remove_dir_all(&artifact_root);
 }
 
 #[tokio::test]
@@ -1795,6 +1895,8 @@ jobs:
     timeout: 45m
     tags: [linux]
     secrets: [DEPLOY_TOKEN]
+    artifacts:
+      paths: [target/release/app.tar.gz, reports/junit.xml]
     commands:
       - cargo test
       - cargo clippy --all-targets
@@ -1912,6 +2014,20 @@ jobs:
         serde_json::json!(["DEPLOY_TOKEN"])
     );
     assert_eq!(
+        stages[1]["jobs"][0]["artifact_paths"],
+        serde_json::json!(["reports/junit.xml", "target/release/app.tar.gz"])
+    );
+    let planned_test_job = plan["plan"]["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|job| job["key"].as_str() == Some("test"))
+        .expect("test job in plan snapshot");
+    assert_eq!(
+        planned_test_job["artifact_paths"],
+        serde_json::json!(["reports/junit.xml", "target/release/app.tar.gz"])
+    );
+    assert_eq!(
         stages[0]["jobs"]
             .as_array()
             .unwrap()
@@ -1922,8 +2038,8 @@ jobs:
     );
     assert_eq!(stages[1]["jobs"][0]["name"], "test");
 
-    let persisted_jobs = sqlx::query_as::<_, (String, Option<i32>, bool, String, Vec<String>, Vec<String>, Vec<String>)>(
-        "SELECT j.name, j.timeout_seconds, j.allow_failure, j.command, j.required_tags, j.required_secrets, q.required_tags \
+    let persisted_jobs = sqlx::query_as::<_, (String, Option<i32>, bool, String, Vec<String>, Vec<String>, Vec<String>, Vec<String>)>(
+        "SELECT j.name, j.timeout_seconds, j.allow_failure, j.command, j.required_tags, j.required_secrets, j.artifact_paths, q.required_tags \
          FROM jobs j JOIN stages s ON s.id = j.stage_id \
          JOIN job_queue q ON q.job_id = j.id \
          WHERE s.pipeline_id = $1 ORDER BY s.position, j.position",
@@ -1940,8 +2056,9 @@ jobs:
         vec!["docker".to_string(), "linux".to_string()]
     );
     assert_eq!(persisted_jobs[0].5, Vec::<String>::new());
+    assert_eq!(persisted_jobs[0].6, Vec::<String>::new());
     assert_eq!(
-        persisted_jobs[0].6,
+        persisted_jobs[0].7,
         vec!["docker".to_string(), "linux".to_string()]
     );
     assert_eq!(persisted_jobs[1].0, "lint");
@@ -1954,7 +2071,14 @@ jobs:
     assert_eq!(persisted_jobs[2].1, Some(2700));
     assert_eq!(persisted_jobs[2].4, vec!["linux".to_string()]);
     assert_eq!(persisted_jobs[2].5, vec!["DEPLOY_TOKEN".to_string()]);
-    assert_eq!(persisted_jobs[2].6, vec!["linux".to_string()]);
+    assert_eq!(
+        persisted_jobs[2].6,
+        vec![
+            "reports/junit.xml".to_string(),
+            "target/release/app.tar.gz".to_string()
+        ]
+    );
+    assert_eq!(persisted_jobs[2].7, vec!["linux".to_string()]);
     assert_eq!(
         persisted_jobs[2].3,
         "set -e\ncargo test\ncargo clippy --all-targets"
