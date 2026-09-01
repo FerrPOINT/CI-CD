@@ -62,7 +62,6 @@ jobs:
         runtime: node@22
         cache: true
         cache-dependency-path: frontend/pnpm-lock.yaml
-        working-directory: frontend
         install: false
     - run: pnpm install --frozen-lockfile
     - name: generated client up to date
@@ -100,7 +99,6 @@ jobs:
         runtime: node@22
         cache: true
         cache-dependency-path: frontend/pnpm-lock.yaml
-        working-directory: frontend
         install: false
     - name: Node dependency audit
       working-directory: frontend
