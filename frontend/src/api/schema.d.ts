@@ -925,6 +925,102 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runner/heartbeat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["runner_protocol_heartbeat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runner/leases/{lease_id}/ack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["ack_runner_lease"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runner/leases/{lease_id}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["complete_runner_lease"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runner/leases/{lease_id}/renew": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["renew_runner_lease"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runner/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["register_runner_protocol"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/runner/work:poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["poll_runner_work"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runners": {
         parameters: {
             query?: never;
@@ -1635,8 +1731,134 @@ export interface components {
             status: string;
             tags: string[];
         };
+        RunnerAttemptSpec: {
+            artifacts: string[];
+            commands: string[];
+            commitSha?: string | null;
+            environment: {
+                [key: string]: string;
+            };
+            executor: string;
+            gitRef: string;
+            /** Format: uuid */
+            id: string;
+            image: string;
+            /** Format: uuid */
+            jobId: string;
+            jobKey: string;
+            /** Format: int32 */
+            number: number;
+            /** Format: uuid */
+            pipelineId: string;
+            /** Format: int32 */
+            timeoutSeconds: number;
+            workspace: components["schemas"]["RunnerWorkspace"];
+        };
+        RunnerCapacity: {
+            /** Format: int32 */
+            busySlots: number;
+            /** Format: int32 */
+            totalSlots: number;
+        };
+        RunnerCompleteRequest: {
+            /** Format: uuid */
+            attemptId: string;
+            diagnostic?: string | null;
+            /** Format: int32 */
+            exitCode?: number | null;
+            /** Format: int64 */
+            fencingToken: number;
+            /** Format: date-time */
+            finishedAt: string;
+            leaseToken: string;
+            outcome: string;
+            /** Format: int32 */
+            protocolVersion: number;
+        };
+        RunnerCompleteResponse: {
+            accepted: boolean;
+            /** Format: int32 */
+            protocolVersion: number;
+            terminalStatus: string;
+        };
         RunnerHeartbeat: {
             status?: string | null;
+        };
+        RunnerHeartbeatRequest: {
+            activeLeaseIds?: string[];
+            capabilities?: unknown;
+            capacity: components["schemas"]["RunnerCapacity"];
+            draining?: boolean;
+            /** Format: int32 */
+            protocolVersion: number;
+            status: string;
+            tags?: string[];
+        };
+        RunnerLeaseControlRequest: {
+            /** Format: int64 */
+            fencingToken: number;
+            leaseToken: string;
+            /** Format: int32 */
+            protocolVersion: number;
+        };
+        RunnerLeaseControlResponse: {
+            cancelRequested: boolean;
+            /** Format: date-time */
+            leaseExpiresAt: string;
+            /** Format: int32 */
+            protocolVersion: number;
+            /** Format: date-time */
+            renewAfter: string;
+        };
+        RunnerLeaseOffer: {
+            /** Format: date-time */
+            ackDeadline: string;
+            attempt: components["schemas"]["RunnerAttemptSpec"];
+            /** Format: int64 */
+            fencingToken: number;
+            /** Format: date-time */
+            leaseExpiresAt: string;
+            /** Format: uuid */
+            leaseId: string;
+            leaseToken: string;
+            planSha256?: string | null;
+            /** Format: int32 */
+            protocolVersion: number;
+        };
+        RunnerPollCapacity: {
+            /** Format: int32 */
+            freeSlots: number;
+        };
+        RunnerPollRequest: {
+            capabilityDigest?: string | null;
+            capacity: components["schemas"]["RunnerPollCapacity"];
+            /** Format: int32 */
+            protocolVersion: number;
+            tags?: string[];
+        };
+        RunnerRegisterRequest: {
+            capabilities?: unknown;
+            name: string;
+            /** Format: int32 */
+            protocolVersion: number;
+            registrationToken: string;
+            tags?: string[];
+        };
+        RunnerRegisterResponse: {
+            credential: string;
+            /** Format: date-time */
+            credentialExpiresAt: string;
+            /** Format: int32 */
+            heartbeatIntervalSeconds: number;
+            /** Format: int32 */
+            pollWaitMaxSeconds: number;
+            /** Format: int32 */
+            protocolVersion: number;
+            /** Format: uuid */
+            runnerId: string;
+        };
+        RunnerWorkspace: {
+            checkout: boolean;
         };
         Schedule: {
             /** Format: date-time */
@@ -3900,6 +4122,262 @@ export interface operations {
                 content?: never;
             };
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    runner_protocol_heartbeat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerHeartbeatRequest"];
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    ack_runner_lease: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lease_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerLeaseControlRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerLeaseControlResponse"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    complete_runner_lease: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lease_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerCompleteRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerCompleteResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    renew_runner_lease: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lease_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerLeaseControlRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerLeaseControlResponse"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    register_runner_protocol: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerRegisterRequest"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerRegisterResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    poll_runner_work: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerPollRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerLeaseOffer"];
+                };
+            };
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };

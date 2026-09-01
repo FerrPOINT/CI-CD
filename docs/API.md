@@ -4,7 +4,7 @@
 
 REST API первой версии Forge CI/CD. Контрольная плоскость использует JSON; Git Smart HTTP, artifact download, SSE logs и `/metrics` имеют собственные content types. Основные группы: проекты, запуск пайплайнов, переходы статусов задач, append-only логи, platform resources, auth и Git hosting.
 
-> **Source of truth:** актуальная реализация и OpenAPI-аннотации в `backend/src/api.rs`, `backend/src/platform.rs`, `backend/src/git_host.rs`, `backend/src/pulls.rs`; committed contract — `openapi/openapi.yaml`.
+> **Source of truth:** актуальная реализация и OpenAPI-аннотации в `backend/src/api.rs`, `backend/src/platform.rs`, `backend/src/runner_protocol.rs`, `backend/src/git_host.rs`, `backend/src/pulls.rs`; committed contract — `openapi/openapi.yaml`.
 
 ## Базовая информация
 
@@ -25,6 +25,7 @@ REST API первой версии Forge CI/CD. Контрольная плос�
 | 403 Forbidden | Роль principal не допускает route |
 | 404 Not Found | Ресурс не найден |
 | 409 Conflict | Недопустимое состояние операции |
+| 410 Gone | Lease или protocol resource истёк |
 | 429 Too Many Requests | In-process rate limit по client key |
 | 500 Internal Server Error | Ошибка БД |
 | 503 Service Unavailable | БД недоступна |
@@ -1197,7 +1198,24 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 | POST | `/runners/{runner_id}/heartbeat` | Обновляет `last_seen_at`/status |
 | DELETE | `/runners/{runner_id}` | Удаляет registry-запись |
 
-> Сейчас registry/heartbeat — inventory для embedded runner. Durable `job_leases` уже используются embedded executor-ом для claim/expiry/terminal outcome, но registration token, poll/ack/renew endpoints, lease token и dispatch на внешний runner пока не реализованы: `docs/RUNNER_ARCHITECTURE.md`.
+Legacy registry остаётся operator inventory и совместимым CRUD-слоем. Выполнение внешней работы идёт через отдельный runner protocol ниже.
+
+### Runner protocol MVP
+
+Runner protocol обслуживается на `/api/v1/runner/*` и не использует user JWT/PAT. `POST /api/v1/runner/register` принимает `registrationToken`, который должен совпадать с `CICD_RUNNER_REGISTRATION_TOKEN`; пустая переменная отключает регистрацию. После register сервер возвращает bearer `credential` только один раз и хранит SHA-256 hash + hint. Остальные запросы требуют `Authorization: Bearer <runner-credential>`.
+
+| Метод | Путь | Body / результат |
+|---|---|---|
+| POST | `/api/v1/runner/register` | `{protocolVersion,registrationToken,name,tags?,capabilities?}` → `{protocolVersion,runnerId,credential,credentialExpiresAt,heartbeatIntervalSeconds,pollWaitMaxSeconds}` |
+| POST | `/api/v1/runner/heartbeat` | `{protocolVersion,status,draining,capacity,tags?,capabilities?,activeLeaseIds?}` → `204`; обновляет `last_seen_at`, tags, capacity, capabilities и heartbeat snapshot |
+| POST | `/api/v1/runner/work:poll` | `{protocolVersion,capacity,tags?,capabilityDigest?}` → `204` если работы нет или `200 LeaseOffer`; текущий MVP выполняет immediate poll без long-poll |
+| POST | `/api/v1/runner/leases/{lease_id}/ack` | `{protocolVersion,leaseToken,fencingToken}` → `{protocolVersion,leaseExpiresAt,renewAfter,cancelRequested}` |
+| POST | `/api/v1/runner/leases/{lease_id}/renew` | `{protocolVersion,leaseToken,fencingToken}` → продлевает active lease |
+| POST | `/api/v1/runner/leases/{lease_id}/complete` | `{protocolVersion,leaseToken,fencingToken,attemptId,outcome,finishedAt,exitCode?,diagnostic?}` → terminal result job/attempt/lease |
+
+`work:poll` атомарно выбирает queued job, создаёт active `job_leases`, генерирует opaque `leaseToken`, хранит только hash, фиксирует `ackDeadline`, `leaseExpiresAt`, `runnerProtocolVersion=1`, переводит job/attempt в `running` и возвращает `fencingToken = job_leases.generation`. `ack`, `renew` и `complete` одновременно проверяют runner identity, lease token hash, generation, active state и expiry; stale или fenced mutation возвращает `409`, expired lease — `410`.
+
+Ограничения MVP: нет отдельного production runner binary/process, durable `job_queue`, long-poll wakeup, protocol endpoints для secrets/logs/artifacts и pool policy. Эти границы остаются в `docs/RUNNER_ARCHITECTURE.md` и `docs/contracts/RUNNER_PROTOCOL.md`.
 
 ### Secrets и artifacts
 
@@ -1305,6 +1323,12 @@ Git Smart HTTP допускает unauthenticated read только для `repo
 | `/api/v1/repos/{repo}/tree` | Git repositories |
 | `/api/v1/repositories` | Git repositories |
 | `/api/v1/repositories/{name}` | Git repositories |
+| `/api/v1/runner/heartbeat` | Runner protocol |
+| `/api/v1/runner/leases/{lease_id}/ack` | Runner protocol |
+| `/api/v1/runner/leases/{lease_id}/complete` | Runner protocol |
+| `/api/v1/runner/leases/{lease_id}/renew` | Runner protocol |
+| `/api/v1/runner/register` | Runner protocol |
+| `/api/v1/runner/work:poll` | Runner protocol |
 | `/api/v1/runners` | Runners |
 | `/api/v1/runners/{runner_id}` | Runners |
 | `/api/v1/runners/{runner_id}/heartbeat` | Runners |
@@ -1324,7 +1348,7 @@ Git Smart HTTP допускает unauthenticated read только для `repo
 - `docs/DATA_MODEL.md` — схема БД.
 - `docs/GIT_HOSTING.md` — Smart HTTP и hooks.
 - `docs/PULL_REQUESTS.md` — compare и pull requests.
-- `docs/RUNNER_ARCHITECTURE.md` — target runner protocol.
-- `backend/src/api.rs`, `backend/src/platform.rs`, `backend/src/git_host.rs`, `backend/src/pulls.rs` — реализация endpoint-ов.
+- `docs/RUNNER_ARCHITECTURE.md` — current runner protocol MVP и target production runner boundary.
+- `backend/src/api.rs`, `backend/src/platform.rs`, `backend/src/runner_protocol.rs`, `backend/src/git_host.rs`, `backend/src/pulls.rs` — реализация endpoint-ов.
 - `backend/domain/src/lib.rs` — правила переходов статусов.
 - `docs/TESTING.md` — curl-проверки.

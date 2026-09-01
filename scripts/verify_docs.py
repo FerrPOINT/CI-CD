@@ -47,6 +47,7 @@ STATUS_TOKENS = ("Current verified", "Configuration only", "Target approved", "D
 BACKEND_ROUTE_FILES = (
     "backend/src/api.rs",
     "backend/src/platform.rs",
+    "backend/src/runner_protocol.rs",
     "backend/src/git_host.rs",
     "backend/src/pulls.rs",
 )
@@ -381,7 +382,7 @@ def extract_openapi_paths() -> set[str]:
             break
         if not in_paths:
             continue
-        m = re.match(r"^  (/[^:]+):\s*$", line)
+        m = re.match(r"^  (/.+):\s*$", line)
         if m:
             paths.add(m.group(1))
     return paths

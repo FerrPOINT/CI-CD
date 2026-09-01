@@ -2,11 +2,11 @@
 
 ## Status
 
-Accepted (target architecture; external runner implementation pending; embedded lease ledger partial)
+Accepted (target architecture; external runner protocol MVP implemented; separate runner boundary pending)
 
 ## Context
 
-Текущий embedded runner выполняется в процессе backend. Такой процесс совмещает public API, PostgreSQL credentials и запуск недоверенного user code; Docker execution требует daemon privilege. Embedded execution уже пишет `job_leases` как локальный owner/expiry ledger, но реестр `runners` пока не участвует во внешнем dispatch/lease protocol.
+Текущий embedded runner выполняется в процессе backend. Такой процесс совмещает public API, PostgreSQL credentials и запуск недоверенного user code; Docker execution требует daemon privilege. Embedded execution уже пишет `job_leases` как локальный owner/expiry ledger. External runner protocol MVP подключил `runners` к register/heartbeat/poll/ack/renew/complete и lease fencing, но ещё не вынес исполнение в отдельный production runner process.
 
 ## Decision
 
@@ -14,8 +14,8 @@ Control-plane API никогда не исполняет пользовател�
 
 ## Consequences
 
-- `runner` registry превращается в protocol participant, а не UI inventory.
-- Требуются очередь, внешний lease token/ack/renew/fencing, cancellation signal и sandbox policy; current embedded `job_leases` закрывает только локальный owner/expiry/reconciliation MVP.
+- `runner` registry уже участвует в protocol MVP, но legacy inventory endpoints сохраняются для оператора.
+- Текущий protocol MVP закрывает внешний lease token/ack/renew/complete и fencing generation; ещё требуются durable queue, cancellation signal/control endpoint, credential rotation/revocation, log/secret/artifact protocol и sandbox policy.
 - Локальный embedded executor остаётся development adapter до готовности отдельного runner service; production docs не должны рекламировать его как безопасный runner pool.
 
 ## Related

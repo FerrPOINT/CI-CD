@@ -87,6 +87,10 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         list_attempt_logs_page, job_log_stream, list_logs, list_logs_page, append_log,
         crate::platform::list_runners, crate::platform::register_runner,
         crate::platform::runner_heartbeat, crate::platform::delete_runner,
+        crate::runner_protocol::register_runner_protocol,
+        crate::runner_protocol::runner_protocol_heartbeat,
+        crate::runner_protocol::poll_runner_work, crate::runner_protocol::ack_runner_lease,
+        crate::runner_protocol::renew_runner_lease, crate::runner_protocol::complete_runner_lease,
         crate::platform::list_secrets, crate::platform::create_secret, crate::platform::delete_secret,
         crate::platform::list_artifacts, crate::platform::upload_artifact, crate::platform::download_artifact,
         crate::platform::list_environments, crate::platform::create_environment,
@@ -120,6 +124,13 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         PipelineDetail, PipelinePlan, StageDetail, JobAttempt, JobLog, JobLogPage, ChangeStatus, AppendLog,
         CanceledPipelineResult, RetriedPipelineResult, ManualJobStartResult,
         Release, CreateRelease, TestReport,
+        crate::runner_protocol::RunnerRegisterRequest, crate::runner_protocol::RunnerRegisterResponse,
+        crate::runner_protocol::RunnerHeartbeatRequest, crate::runner_protocol::RunnerCapacity,
+        crate::runner_protocol::RunnerPollRequest, crate::runner_protocol::RunnerPollCapacity,
+        crate::runner_protocol::RunnerLeaseOffer, crate::runner_protocol::RunnerAttemptSpec,
+        crate::runner_protocol::RunnerWorkspace, crate::runner_protocol::RunnerLeaseControlRequest,
+        crate::runner_protocol::RunnerLeaseControlResponse, crate::runner_protocol::RunnerCompleteRequest,
+        crate::runner_protocol::RunnerCompleteResponse,
         crate::platform::Runner, crate::platform::RegisterRunner, crate::platform::RunnerHeartbeat,
         crate::platform::SecretMetadata, crate::platform::CreateSecret,
         crate::platform::Artifact,
@@ -148,6 +159,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         (name = "pipelines", description = "Pipeline lifecycle"),
         (name = "jobs", description = "Jobs, logs and retries"),
         (name = "runners", description = "Runner registration and heartbeats"),
+        (name = "runner-protocol", description = "External runner protocol"),
         (name = "secrets", description = "Encrypted project secrets"),
         (name = "artifacts", description = "Job artifact upload and download"),
         (name = "environments", description = "Environments and deployments"),
@@ -254,6 +266,18 @@ impl ApiError {
             message: message.into(),
         }
     }
+    pub(crate) fn gone(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::GONE,
+            message: message.into(),
+        }
+    }
+    pub(crate) fn service_unavailable(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: message.into(),
+        }
+    }
     fn code(&self) -> &'static str {
         match self.status {
             StatusCode::BAD_REQUEST => "invalid_request",
@@ -261,6 +285,7 @@ impl ApiError {
             StatusCode::FORBIDDEN => "permission_denied",
             StatusCode::NOT_FOUND => "not_found",
             StatusCode::CONFLICT => "conflict",
+            StatusCode::GONE => "expired",
             StatusCode::TOO_MANY_REQUESTS => "rate_limited",
             StatusCode::SERVICE_UNAVAILABLE => "unavailable",
             _ => "internal_error",
@@ -426,6 +451,13 @@ fn rate_limit_rule(method: &Method, path: &str) -> Option<RateLimitRule> {
             window_secs: 60,
         });
     }
+    if path.starts_with("/api/v1/runner/") {
+        return Some(RateLimitRule {
+            class: "runner-protocol",
+            limit: 1200,
+            window_secs: 60,
+        });
+    }
     if path.starts_with("/git/") {
         return Some(RateLimitRule {
             class: if method == Method::POST && path.ends_with("/git-receive-pack") {
@@ -502,7 +534,7 @@ async fn require_auth(
         "/metrics",
     ];
     let path = req.uri().path();
-    if PUBLIC.contains(&path) || path.starts_with("/git/") {
+    if PUBLIC.contains(&path) || path.starts_with("/git/") || path.starts_with("/api/v1/runner/") {
         return Ok(next.run(req).await);
     }
     let Some(auth_secret) = state.auth_secret.as_deref() else {
@@ -980,6 +1012,7 @@ fn build_router_with_auth_secret(
         .route("/api/v1/auth/refresh", post(auth_refresh))
         .route("/api/v1/auth/logout", post(auth_logout))
         .merge(crate::platform::routes())
+        .merge(crate::runner_protocol::routes())
         .route("/api/v1/projects", get(list_projects).post(create_project))
         .route(
             "/api/v1/projects/{project_id}",

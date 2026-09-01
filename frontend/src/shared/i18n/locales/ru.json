@@ -179,7 +179,7 @@
   "runners": {
     "title": "Runner-ы",
     "capabilityTitle": "Реестр runner-ов",
-    "capabilityDescription": "Сейчас экран хранит runner-ы, теги, статус и heartbeat для операционного инвентаря. Выдача job по lease и внешний runner protocol остаются target; выполнение делает встроенный runner.",
+    "capabilityDescription": "Сейчас экран хранит runner-ы, теги, статус и heartbeat для операционного инвентаря. Внешний runner protocol MVP уже покрывает регистрацию, heartbeat и lease lifecycle; отдельный production runner binary остаётся target.",
     "register": "Зарегистрировать runner",
     "name": "Имя",
     "tags": "Теги (через запятую)",
@@ -194,7 +194,7 @@
     "status_online": "Онлайн",
     "status_offline": "Оффлайн",
     "status_paused": "Пауза",
-    "deleteWarning": "Runner будет удалён из реестра. В текущем MVP это не останавливает embedded runner; lease-based dispatch остаётся target."
+    "deleteWarning": "Runner будет удалён из реестра. Это не останавливает embedded runner и не заменяет production drain/revoke policy для внешнего runner-а."
   },
   "secrets": {
     "title": "Секреты проекта",
@@ -408,7 +408,8 @@
       "gitToken": "Опциональный токен Git Smart HTTP",
       "gitInternalToken": "Внутренний токен post-receive hook",
       "artifactsDir": "Локальное хранилище артефактов",
-      "runnerMode": "Режим embedded runner: docker или host"
+      "runnerMode": "Режим embedded runner: docker или host",
+      "runnerRegistrationToken": "Bootstrap token для регистрации внешнего runner-а"
     }
   },
   "dashboard": {

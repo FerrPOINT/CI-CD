@@ -4,7 +4,7 @@
 
 - **Путь**: `/opt/dev/CI-CD`.
 - **GitHub**: `git@github.com:FerrPOINT/CI-CD.git`.
-- **Назначение**: self-hosted CI/CD control plane. В MVP jobs выполняет embedded runner (Docker/shell) с `job_leases` ledger/reconciliation, а внешний runner protocol/dispatch остаётся target.
+- **Назначение**: self-hosted CI/CD control plane. В MVP jobs выполняет embedded runner (Docker/shell) с `job_leases` ledger/reconciliation; внешний runner protocol MVP уже покрывает register/heartbeat/poll/ack/renew/complete, а отдельный production runner binary/dispatch остаётся target.
 - **Стек**: Rust 2024, Axum 0.8, SQLx 0.8, PostgreSQL 17; React 19, Vite 6, Tailwind CSS 4, shadcn/ui.
 - **Env prefix**: `CICD_`.
 - **Порты**: API `22801`, Dashboard `22802`, PostgreSQL `22543`.

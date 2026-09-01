@@ -14,6 +14,7 @@
 | `CICD_SECRETS_KEY` | — | Base64 32-byte ключ AES-256-GCM (обязателен для secrets) |
 | `CICD_ARTIFACTS_DIR` | `/var/lib/forge/artifacts` | Локальное хранилище артефактов |
 | `CICD_RUNNER_MODE` | `host` в compose | Режим embedded runner: `host` для локального evidence/dev; `docker` только если Docker executor/socket подключены явно |
+| `CICD_RUNNER_REGISTRATION_TOKEN` | — | Bootstrap token для `POST /api/v1/runner/register`; пусто отключает регистрацию внешних runner-ов |
 
 ## Сборочные переменные compose (в .env)
 
@@ -31,6 +32,7 @@
 | Переменная | Default | Назначение |
 |---|---|---|
 | `CICD_RUNNER_MODE` | `docker` вне compose | Режим embedded runner binary: `docker` \| `host` |
+| `CICD_RUNNER_REGISTRATION_TOKEN` | пусто | Bootstrap token внешнего runner protocol MVP |
 | `CICD_RUNNER_KEEP_WORKSPACE` | `false` | Не удалять workspace после job |
 | `CICD_API_URL` | `http://127.0.0.1:22801` | Base URL для cicd-cli |
 
@@ -39,6 +41,7 @@
 ```bash
 openssl rand -base64 32   # CICD_SECRETS_KEY
 openssl rand -hex 16      # CICD_GIT_TOKEN / CICD_GIT_INTERNAL_TOKEN
+openssl rand -hex 32      # CICD_RUNNER_REGISTRATION_TOKEN
 ```
 
 > Удалённое legacy-значение `forge-internal-dev-token` отклоняется при старте backend. Для shared deployment задайте уникальный `CICD_GIT_INTERNAL_TOKEN`; пустое значение означает trusted-local режим без проверки internal hook token.

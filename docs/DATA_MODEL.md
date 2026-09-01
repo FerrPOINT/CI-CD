@@ -395,15 +395,15 @@ Foreign-key constraints:
 
 ## 5.1 job_leases
 
-Durable ledger владения execution attempt. Текущий MVP использует таблицу для embedded runner: claim одним SQL statement переводит `jobs` и `execution_attempts` в `running`, создаёт active lease и фиксирует generation/expiry. Terminal result, cancel и reconciler закрывают lease. Внешний runner protocol с registration token, ack/renew endpoint-ами, lease token и full fencing остаётся target.
+Durable ledger владения execution attempt. Текущий MVP использует таблицу для embedded runner и external runner protocol: claim одним SQL statement переводит `jobs` и `execution_attempts` в `running`, создаёт active lease и фиксирует generation/expiry. Embedded runner закрывает lease при terminal result/cancel, reconciler закрывает expired/missing owner, а external protocol дополнительно хранит hash lease token, ack deadline, ack/renew state и protocol version. Full production runner binary, durable queue, log/secret/artifact protocol и lost-heartbeat policy остаются target.
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
 | `id` | UUID | NOT NULL | — | PK lease |
 | `job_id` | UUID | NOT NULL | — | FK → `jobs.id`, CASCADE |
 | `attempt_id` | UUID | NOT NULL | — | FK → `execution_attempts.id`, CASCADE |
-| `runner_id` | UUID | NULL | — | FK → `runners.id`, SET NULL; current embedded lease оставляет NULL |
-| `runner_name` | TEXT | NOT NULL | — | `embedded` для текущего runner-а |
+| `runner_id` | UUID | NULL | — | FK → `runners.id`, SET NULL; embedded lease оставляет NULL, external protocol lease связывается с runner |
+| `runner_name` | TEXT | NOT NULL | — | `embedded` или имя external runner-а |
 | `lease_status` | TEXT | NOT NULL | `active` | `active` / `completed` / `expired` / `canceled` |
 | `generation` | BIGINT | NOT NULL | — | Monotonic fencing generation внутри job |
 | `lease_expires_at` | TIMESTAMPTZ | NOT NULL | — | Deadline после `timeout_seconds + 60s`, используется reconciler |
@@ -412,6 +412,11 @@ Durable ledger владения execution attempt. Текущий MVP испол
 | `completed_at` | TIMESTAMPTZ | NULL | — | Время закрытия lease |
 | `terminal_status` | TEXT | NULL | — | Итог attempt: `success` / `failed` / `canceled` |
 | `error_tail` | TEXT | NULL | — | Краткая причина failed/expired/canceled |
+| `lease_token_hash` | TEXT | NULL | — | SHA-256 hash opaque lease token для external runner protocol |
+| `ack_deadline` | TIMESTAMPTZ | NULL | — | Deadline подтверждения lease external runner-ом |
+| `acknowledged_at` | TIMESTAMPTZ | NULL | — | Время успешного ack |
+| `cancel_requested_at` | TIMESTAMPTZ | NULL | — | Target поле для cancel control signal |
+| `runner_protocol_version` | INTEGER | NULL | — | Версия runner protocol, выдавшего lease |
 
 **CHECK constraints:** active lease не имеет `completed_at`/`terminal_status`; terminal lease обязан иметь `completed_at`.
 
@@ -419,7 +424,9 @@ Durable ledger владения execution attempt. Текущий MVP испол
 - `idx_job_leases_active_job` — UNIQUE active lease на job.
 - `idx_job_leases_attempt` — lookup leases по attempt.
 - `idx_job_leases_active_expiry` — due scan reconciler-а.
-- `idx_job_leases_runner_active` — future lookup активных leases runner-а.
+- `idx_job_leases_runner_active` — lookup активных leases runner-а.
+- `idx_job_leases_active_token_hash` — lookup active lease по hash lease token.
+- `idx_job_leases_ack_deadline` — due scan unacked active leases.
 
 ## 6. job_logs
 
@@ -534,6 +541,15 @@ Platform tables создаются и расширяются через `backend
 | `tags` | TEXT[] | NOT NULL | `'{}'` | Теги для фильтрации |
 | `status` | TEXT | NOT NULL | `'offline'` | CHECK: `online`, `offline`, `paused` |
 | `last_seen_at` | TIMESTAMPTZ | NULL | — | Последний heartbeat |
+| `credential_hash` | TEXT | NULL | — | SHA-256 hash bearer credential, возвращаемого только один раз при register |
+| `token_hint` | TEXT | NULL | — | Безопасный hint credential для UI/audit |
+| `credential_expires_at` | TIMESTAMPTZ | NULL | — | Срок действия runner credential |
+| `disabled_at` | TIMESTAMPTZ | NULL | — | Мягкое отключение external runner-а |
+| `draining` | BOOLEAN | NOT NULL | `FALSE` | Runner не должен получать новые leases |
+| `capacity_total_slots` | INTEGER | NULL | — | Заявленная общая ёмкость runner-а |
+| `capacity_busy_slots` | INTEGER | NULL | — | Занятые слоты по последнему heartbeat |
+| `capabilities` | JSONB | NOT NULL | `'{}'` | Capability descriptor external runner-а |
+| `heartbeat_payload` | JSONB | NOT NULL | `'{}'` | Последний protocol heartbeat payload без secret values |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | Время регистрации |
 
 ### 9.2 project_secrets
@@ -795,6 +811,10 @@ idx_job_leases_active_job    ON job_leases(job_id) WHERE lease_status = 'active'
 idx_job_leases_attempt       ON job_leases(attempt_id)
 idx_job_leases_active_expiry ON job_leases(lease_expires_at) WHERE lease_status = 'active'
 idx_job_leases_runner_active ON job_leases(runner_id, lease_status) WHERE runner_id IS NOT NULL
+idx_job_leases_active_token_hash ON job_leases(lease_token_hash) WHERE lease_status = 'active' AND lease_token_hash IS NOT NULL
+idx_job_leases_ack_deadline ON job_leases(ack_deadline) WHERE lease_status = 'active' AND acknowledged_at IS NULL
+idx_runners_active_credential_hash ON runners(credential_hash) WHERE credential_hash IS NOT NULL AND disabled_at IS NULL
+idx_runners_last_seen       ON runners(last_seen_at DESC) WHERE disabled_at IS NULL
 idx_job_logs_attempt_sequence ON job_logs(attempt_id, sequence)
 idx_job_logs_job_id          ON job_logs(job_id)
 idx_artifacts_attempt        ON artifacts(attempt_id)
@@ -816,7 +836,7 @@ idx_outbox_delivery_attempts_message ON outbox_delivery_attempts(message_id, att
 
 | Фаза | Таблицы | Назначение |
 |---|---|---|
-| External runner protocol | `job_queue`, `runner_credentials`, protocol tokens | `job_leases` уже существует как embedded lease ledger; external dispatch добавляет queue, runner identity, ack/renew/fencing token enforcement |
+| External runner production boundary | `job_queue`, credential rotation/revocation tables, protocol log/artifact/secret delivery tables | `runners` + `job_leases` уже покрывают protocol MVP: runner credential hash, heartbeat metadata, lease token hash, ack/renew/complete и fencing generation; target добавляет durable queue, separate runner binary/process, richer identity lifecycle и protocol data planes |
 | Production outbox | `outbox_deliveries` / lease state | Full dispatcher snapshots, lease/fencing, crash recovery, response preview allowlist и operator dead-letter policy поверх current bounded history |
 | External notifications | delivery-specific tables | Email/Slack sender state, templates, preferences |
 

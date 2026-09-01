@@ -179,7 +179,7 @@
   "runners": {
     "title": "Runners",
     "capabilityTitle": "Runner registry",
-    "capabilityDescription": "This screen currently stores runners, tags, status, and heartbeat as operational inventory. Lease-based job dispatch and the external runner protocol remain target; execution is handled by the embedded runner.",
+    "capabilityDescription": "This screen currently stores runners, tags, status, and heartbeat as operational inventory. The external runner protocol MVP now covers registration, heartbeat, and lease lifecycle; a separate production runner binary remains target.",
     "register": "Register runner",
     "name": "Name",
     "tags": "Tags (comma-separated)",
@@ -194,7 +194,7 @@
     "status_online": "Online",
     "status_offline": "Offline",
     "status_paused": "Paused",
-    "deleteWarning": "The runner will be removed from the registry. In the current MVP this does not stop the embedded runner; lease-based dispatch remains target."
+    "deleteWarning": "The runner will be removed from the registry. This does not stop the embedded runner or replace production drain/revoke policy for an external runner."
   },
   "secrets": {
     "title": "Project Secrets",
@@ -408,7 +408,8 @@
       "gitToken": "Optional Git Smart HTTP token",
       "gitInternalToken": "Internal post-receive hook token",
       "artifactsDir": "Local artifact storage path",
-      "runnerMode": "Embedded runner mode: docker or host"
+      "runnerMode": "Embedded runner mode: docker or host",
+      "runnerRegistrationToken": "Bootstrap token for external runner registration"
     }
   },
   "dashboard": {

@@ -1,10 +1,10 @@
 # Runner protocol
 
-**Статус:** Target approved. Нормативный контракт внешнего runner-а; текущее embedded execution не реализует этот протокол. Канонические путь и имена таблиц закреплены [ADR-0009](../adr/0009-canonical-registry.md).
+**Статус:** Current verified MVP + Target approved. Реализованный subset на 2026-09-01 покрывает `register`, `heartbeat`, immediate `work:poll`, `ack`, `renew`, `complete`, SHA-256 storage для runner credential/lease token и fencing по `job_leases.generation`. Остальные разделы описывают target-контракт внешнего runner-а. Канонические путь и имена таблиц закреплены [ADR-0009](../adr/0009-canonical-registry.md).
 
 ## 1. Область и общие правила
 
-Протокол обслуживается только по TLS на `/api/v1/runner/*`. Каждый запрос после регистрации использует `Authorization: Bearer <runner-credential>`; registration token применяется только к `register`. Все JSON-тела используют UTF-8, lower camel case и обязательное поле `protocolVersion`.
+Протокол обслуживается на `/api/v1/runner/*`; production deployment обязан ставить TLS/reverse proxy перед API. Каждый запрос после регистрации использует `Authorization: Bearer <runner-credential>`; registration token применяется только к `register`. Все JSON-тела используют UTF-8, lower camel case и обязательное поле `protocolVersion`.
 
 `protocolVersion` в этом документе равен `1`. Идентификаторы являются UUID, время - RFC 3339 UTC, а `commitSha` - полный 40- или 64-символьный hex SHA. Ответы не содержат DB credentials, control-plane token, Docker socket либо plaintext секреты вне `secrets:resolve`.
 
@@ -24,7 +24,7 @@
 }
 ```
 
-Все mutation-запросы, кроме `register`, содержат `protocolVersion`. `leaseToken` - opaque 32-byte base64url bearer secret; сервер хранит только HMAC-SHA-256. `fencingToken` - монотонное значение `job_leases.generation`; оно обязательно в каждом запросе, изменяющем lease, attempt, logs, artifacts или secrets.
+Все mutation-запросы, кроме `register`, содержат `protocolVersion`. `leaseToken` - opaque bearer secret; current MVP хранит SHA-256 hash, target hardening переходит на HMAC-SHA-256/pepper. `fencingToken` - монотонное значение `job_leases.generation`; оно обязательно в каждом запросе, изменяющем lease, attempt, logs, artifacts или secrets.
 
 ## 2. Регистрация и heartbeat
 
@@ -47,7 +47,7 @@
 }
 ```
 
-Успешный `201` возвращает `{protocolVersion, runnerId, credential, credentialExpiresAt, heartbeatIntervalSeconds, pollWaitMaxSeconds}`. `credential` показывается ровно один раз. Registration token одноразовый/ограниченный по uses, scope и expiry; protected tags назначаются только серверной policy.
+Успешный `201` возвращает `{protocolVersion, runnerId, credential, credentialExpiresAt, heartbeatIntervalSeconds, pollWaitMaxSeconds}`. `credential` показывается ровно один раз. Current MVP сверяет `registrationToken` с `CICD_RUNNER_REGISTRATION_TOKEN` и хранит credential hash + hint; одноразовые/scoped registration tokens, protected tags и registration-token audit остаются target.
 
 `POST /api/v1/runner/heartbeat` принимает:
 
@@ -70,7 +70,7 @@
 },"additionalProperties":false}
 ```
 
-Сервер long-poll-ит не более `pollWait` и отвечает `204`, если совместимой работы нет, либо `200 LeaseOffer`:
+Current MVP отвечает сразу и возвращает `204`, если совместимой работы нет; target сервер long-poll-ит не более `pollWait`. При найденной работе ответ `200 LeaseOffer`:
 
 ```json
 {"protocolVersion":1,"leaseId":"uuid","leaseToken":"opaque","fencingToken":7,
@@ -137,7 +137,7 @@ Completion terminal и идемпотентен только для иденти
 |---|---:|---:|---|
 | registration token TTL | 1h | 5m..24h | атомарно расходуется при register |
 | heartbeat interval | 15s | 5s..60s | unhealthy после 45s, offline после 120s |
-| poll wait | 25s | 1s..30s | только ожидание offer |
+| poll wait | 0s current / 25s target | 0s..30s | current immediate poll; target ожидание offer |
 | ack timeout | 30s | 10s..120s | offer без ack становится abandoned |
 | lease TTL | 120s | 30s..600s | продлевается только owner-ом |
 | renew interval | 40s | `< TTL / 2` | runner начинает renew до deadline |

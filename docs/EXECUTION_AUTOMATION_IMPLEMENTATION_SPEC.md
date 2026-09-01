@@ -4,9 +4,9 @@
 
 ## 1. Первая поставка и границы
 
-Этот документ описывает target-срез external runner/production scheduler/outbox. Current MVP уже имеет embedded runner, scheduler/outgoing webhook/local notification worker, bounded `outbox_delivery_attempts` history и explicit requeue failed delivery.
+Этот документ описывает target-срез external runner/production scheduler/outbox. Current MVP уже имеет embedded runner, runner protocol register/heartbeat/immediate poll/ack/renew/complete, scheduler/outgoing webhook/local notification worker, bounded `outbox_delivery_attempts` history и explicit requeue failed delivery.
 
-Включено в target external-runner поставку: внешний Docker-only runner, registration token, poll/ack/renew/complete, attempt/lease/reconciliation, schedule fire store, `domain_events` + `outbox_messages`.
+Уже реализовано в runner protocol MVP: env bootstrap registration token, heartbeat, immediate `work:poll`, ack/renew/complete, attempt/lease writes и fencing generation. В target external-runner поставку остаются внешний Docker-only runner, durable `job_queue`, long-poll/wakeup, credential lifecycle, lost-runner reconciliation и production sandbox boundary.
 
 Исключено из этого target-среза: Kubernetes, external-runner secret injection, artifact streaming, email/Slack adapters и inbound provider webhooks. Они остаются feature-flagged до отдельного contract PR.
 
@@ -17,7 +17,7 @@
 | registration token TTL | 1 hour | 5m..24h |
 | runner heartbeat interval | 15s | 5s..60s |
 | unhealthy/offline threshold | 45s / 120s | 3x / 8x heartbeat |
-| poll wait | 25s | 1..30s |
+| poll wait | 0s current / 25s target | 0..30s |
 | offer ACK TTL | 30s | 10..120s |
 | lease TTL | 120s | 30..600s |
 | renewal interval | 40s | `< lease TTL / 2` |
@@ -52,13 +52,13 @@ Required versioned migrations create these tables (UUID id unless noted):
 
 ## 4. Runner protocol (all `/api/v1/runner/*`)
 
-Runner credentials: `Authorization: Bearer forge_runner_<opaque>`. Registration returns raw credential once; lease token is separate opaque 32-byte base64url, returned only in offer and stored HMAC-SHA256.
+Runner credentials: `Authorization: Bearer <opaque>`. Registration returns raw credential once; lease token is a separate opaque secret, returned only in offer. Current MVP stores SHA-256 hashes; target hardening uses HMAC-SHA256/pepper.
 
 | Operation | Request | Response / rules |
 |---|---|---|
-| `POST /register` | `{registration_token,name,tags,capabilities}` | 201 `{runner_id,credential,credential_expires_at}`; registration token atomically consumed |
+| `POST /register` | `{registration_token,name,tags,capabilities}` | Current MVP: 201 `{runner_id,credential,credential_expires_at}`; target: registration token atomically consumed |
 | `POST /heartbeat` | `{status,capacity,running_attempt_ids}` | 204; stale credential 401 |
-| `POST /poll` | `{capacity,tags}` | 200 `{offer:null}` or `{attempt_id,lease_id,generation,lease_token,ack_deadline,plan}` |
+| `POST /work:poll` | `{capacity,tags}` | Current MVP: immediate `204` or `200 LeaseOffer`; target: long-poll with signed plan |
 | `POST /leases/{id}/ack` | `{generation,lease_token}` | 200 `{expires_at,renew_after}`; expired/fenced 409 `lease_fenced` |
 | `POST /leases/{id}/renew` | `{generation,lease_token}` | 200 `{expires_at,cancel_requested}` |
 | `POST /attempts/{id}/logs` | `{generation,lease_token,sequence,stream,message_sha256,chunk}` | 202; unique `(attempt,sequence,sha256)` makes retry idempotent |

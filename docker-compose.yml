@@ -30,6 +30,7 @@ services:
       # Local compose runs the embedded runner inside the backend container.
       # Set docker only when a Docker executor/socket setup is wired deliberately.
       CICD_RUNNER_MODE: ${CICD_RUNNER_MODE:-host}
+      CICD_RUNNER_REGISTRATION_TOKEN: ${CICD_RUNNER_REGISTRATION_TOKEN:-}
       CICD_AUTH_SECRET: ${CICD_AUTH_SECRET:-}
       RUST_LOG: info
     ports:

@@ -573,6 +573,354 @@ async fn scoped_api_tokens_limit_project_routes_and_soft_revoke() {
 }
 
 #[tokio::test]
+async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job() {
+    let pool = test_pool().await;
+    let namespace = Uuid::new_v4();
+    let registration_token = format!("registration-{}", namespace.simple());
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let stage_id = Uuid::new_v4();
+    let job_id = Uuid::new_v4();
+    let attempt_id = Uuid::new_v4();
+    let project_name = format!("it-runner-protocol-{}", namespace.simple());
+
+    // SAFETY: only the runner protocol integration test reads this process env.
+    unsafe {
+        std::env::set_var("CICD_RUNNER_REGISTRATION_TOKEN", &registration_token);
+    }
+
+    let app = cicd::api::app_with_auth_secret(
+        Some(pool.clone()),
+        Some(format!("runner-protocol-secret-{namespace}")),
+    );
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/runner/register")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({
+                    "protocolVersion": 1,
+                    "registrationToken": "wrong-token",
+                    "name": format!("runner-wrong-{}", namespace.simple()),
+                    "tags": ["linux", "docker"],
+                    "capabilities": {"executorKinds": ["docker"], "os": "linux", "arch": "amd64"}
+                }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/runner/register")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({
+                    "protocolVersion": 1,
+                    "registrationToken": registration_token,
+                    "name": format!("runner-{}", namespace.simple()),
+                    "tags": ["linux", "docker"],
+                    "capabilities": {"executorKinds": ["docker"], "os": "linux", "arch": "amd64"}
+                }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let registered = response_json(response).await;
+    let runner_id = Uuid::parse_str(registered["runnerId"].as_str().unwrap()).unwrap();
+    let credential = registered["credential"].as_str().unwrap().to_owned();
+    assert!(credential.starts_with("cicd_runner_"));
+    assert_eq!(registered["protocolVersion"], 1);
+    assert_eq!(registered["pollWaitMaxSeconds"], 0);
+
+    let (stored_hash, token_hint): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT credential_hash, token_hint FROM runners WHERE id = $1")
+            .bind(runner_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch runner credential metadata");
+    assert!(stored_hash.is_some());
+    assert_ne!(stored_hash.as_deref(), Some(credential.as_str()));
+    assert!(
+        token_hint
+            .as_deref()
+            .is_some_and(|hint| hint.contains("..."))
+    );
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/runner/heartbeat")
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({
+                    "protocolVersion": 1,
+                    "status": "online",
+                    "capacity": {"totalSlots": 2, "busySlots": 0},
+                    "tags": ["linux", "docker"],
+                    "capabilities": {"executorKinds": ["docker"], "os": "linux", "arch": "amd64"},
+                    "activeLeaseIds": []
+                }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    let (runner_status, draining, total_slots, busy_slots): (
+        String,
+        bool,
+        Option<i32>,
+        Option<i32>,
+    ) = sqlx::query_as(
+        "SELECT status, draining, capacity_total_slots, capacity_busy_slots FROM runners WHERE id = $1",
+    )
+    .bind(runner_id)
+    .fetch_one(&pool)
+    .await
+    .expect("fetch runner heartbeat state");
+    assert_eq!(runner_status, "online");
+    assert!(!draining);
+    assert_eq!(total_slots, Some(2));
+    assert_eq!(busy_slots, Some(0));
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/external-runner.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status) VALUES ($1, $2, 'main', 'queued')",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert pipeline");
+    sqlx::query(
+        "INSERT INTO stages (id, pipeline_id, name, position, status) \
+         VALUES ($1, $2, 'build', 0, 'queued')",
+    )
+    .bind(stage_id)
+    .bind(pipeline_id)
+    .execute(&pool)
+    .await
+    .expect("insert stage");
+    sqlx::query(
+        "INSERT INTO jobs (id, stage_id, name, image, command, position, status, timeout_seconds) \
+         VALUES ($1, $2, 'compile', 'alpine:3.21', 'echo ok', 0, 'queued', 30)",
+    )
+    .bind(job_id)
+    .bind(stage_id)
+    .execute(&pool)
+    .await
+    .expect("insert job");
+    sqlx::query(
+        "INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) \
+         VALUES ($1, $2, 1, 'queued', 'initial')",
+    )
+    .bind(attempt_id)
+    .bind(job_id)
+    .execute(&pool)
+    .await
+    .expect("insert attempt");
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/runner/work:poll")
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "protocolVersion": 1,
+                        "capacity": {"freeSlots": 1},
+                        "tags": ["linux", "docker"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let offer = response_json(response).await;
+    assert_eq!(offer["protocolVersion"], 1);
+    assert_eq!(offer["fencingToken"], 1);
+    assert_eq!(offer["attempt"]["id"], attempt_id.to_string());
+    assert_eq!(offer["attempt"]["jobId"], job_id.to_string());
+    assert_eq!(offer["attempt"]["jobKey"], "compile");
+    assert_eq!(offer["attempt"]["commands"][0], "echo ok");
+    assert_eq!(offer["attempt"]["timeoutSeconds"], 30);
+    let lease_id = Uuid::parse_str(offer["leaseId"].as_str().unwrap()).unwrap();
+    let lease_token = offer["leaseToken"].as_str().unwrap().to_owned();
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/runner/leases/{lease_id}/complete"))
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "protocolVersion": 1,
+                        "leaseToken": lease_token,
+                        "fencingToken": 1,
+                        "attemptId": attempt_id,
+                        "outcome": "success",
+                        "finishedAt": chrono::Utc::now()
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+
+    let (job_status, attempt_status, pipeline_status, lease_runner, lease_hash_present): (
+        String,
+        String,
+        String,
+        Option<Uuid>,
+        bool,
+    ) = sqlx::query_as(
+        "SELECT j.status, a.status, p.status, l.runner_id, l.lease_token_hash IS NOT NULL \
+         FROM jobs j \
+         JOIN execution_attempts a ON a.job_id = j.id \
+         JOIN job_leases l ON l.attempt_id = a.id \
+         JOIN stages s ON s.id = j.stage_id \
+         JOIN pipelines p ON p.id = s.pipeline_id \
+         WHERE j.id = $1",
+    )
+    .bind(job_id)
+    .fetch_one(&pool)
+    .await
+    .expect("fetch claimed state");
+    assert_eq!(job_status, "running");
+    assert_eq!(attempt_status, "running");
+    assert_eq!(pipeline_status, "running");
+    assert_eq!(lease_runner, Some(runner_id));
+    assert!(lease_hash_present);
+
+    for endpoint in ["ack", "renew"] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post(format!("/api/v1/runner/leases/{lease_id}/{endpoint}"))
+                    .header("authorization", format!("Bearer {credential}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "protocolVersion": 1,
+                            "leaseToken": lease_token,
+                            "fencingToken": 1
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response_json(response).await;
+        assert_eq!(body["protocolVersion"], 1);
+        assert_eq!(body["cancelRequested"], false);
+    }
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/runner/leases/{lease_id}/renew"))
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "protocolVersion": 1,
+                        "leaseToken": lease_token,
+                        "fencingToken": 2
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/runner/leases/{lease_id}/complete"))
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "protocolVersion": 1,
+                        "leaseToken": lease_token,
+                        "fencingToken": 1,
+                        "attemptId": attempt_id,
+                        "outcome": "success",
+                        "exitCode": 0,
+                        "finishedAt": Utc::now()
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let completed = response_json(response).await;
+    assert_eq!(completed["accepted"], true);
+    assert_eq!(completed["terminalStatus"], "success");
+
+    let (job_status, attempt_status, lease_status, terminal_status, pipeline_status): (
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+    ) = sqlx::query_as(
+        "SELECT j.status, a.status, l.lease_status, l.terminal_status, p.status \
+         FROM jobs j \
+         JOIN execution_attempts a ON a.job_id = j.id \
+         JOIN job_leases l ON l.attempt_id = a.id \
+         JOIN stages s ON s.id = j.stage_id \
+         JOIN pipelines p ON p.id = s.pipeline_id \
+         WHERE j.id = $1",
+    )
+    .bind(job_id)
+    .fetch_one(&pool)
+    .await
+    .expect("fetch completed state");
+    assert_eq!(job_status, "success");
+    assert_eq!(attempt_status, "success");
+    assert_eq!(lease_status, "completed");
+    assert_eq!(terminal_status.as_deref(), Some("success"));
+    assert_eq!(pipeline_status, "success");
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup protocol project");
+    sqlx::query("DELETE FROM runners WHERE id = $1")
+        .bind(runner_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup protocol runner");
+    unsafe {
+        std::env::remove_var("CICD_RUNNER_REGISTRATION_TOKEN");
+    }
+}
+
+#[tokio::test]
 async fn git_smart_http_uses_project_membership_when_auth_enabled() {
     let pool = test_pool().await;
     let namespace = Uuid::new_v4();

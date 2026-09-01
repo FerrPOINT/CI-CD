@@ -1843,6 +1843,169 @@ paths:
           description: ''
         '503':
           description: ''
+  /api/v1/runner/heartbeat:
+    post:
+      tags:
+      - runner-protocol
+      operationId: runner_protocol_heartbeat
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunnerHeartbeatRequest'
+        required: true
+      responses:
+        '204':
+          description: ''
+        '400':
+          description: ''
+        '401':
+          description: ''
+  /api/v1/runner/leases/{lease_id}/ack:
+    post:
+      tags:
+      - runner-protocol
+      operationId: ack_runner_lease
+      parameters:
+      - name: lease_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunnerLeaseControlRequest'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunnerLeaseControlResponse'
+        '401':
+          description: ''
+        '409':
+          description: ''
+        '410':
+          description: ''
+  /api/v1/runner/leases/{lease_id}/complete:
+    post:
+      tags:
+      - runner-protocol
+      operationId: complete_runner_lease
+      parameters:
+      - name: lease_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunnerCompleteRequest'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunnerCompleteResponse'
+        '400':
+          description: ''
+        '401':
+          description: ''
+        '409':
+          description: ''
+        '410':
+          description: ''
+  /api/v1/runner/leases/{lease_id}/renew:
+    post:
+      tags:
+      - runner-protocol
+      operationId: renew_runner_lease
+      parameters:
+      - name: lease_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunnerLeaseControlRequest'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunnerLeaseControlResponse'
+        '401':
+          description: ''
+        '409':
+          description: ''
+        '410':
+          description: ''
+  /api/v1/runner/register:
+    post:
+      tags:
+      - runner-protocol
+      operationId: register_runner_protocol
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunnerRegisterRequest'
+        required: true
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunnerRegisterResponse'
+        '400':
+          description: ''
+        '401':
+          description: ''
+        '503':
+          description: ''
+  /api/v1/runner/work:poll:
+    post:
+      tags:
+      - runner-protocol
+      operationId: poll_runner_work
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunnerPollRequest'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunnerLeaseOffer'
+        '204':
+          description: ''
+        '400':
+          description: ''
+        '401':
+          description: ''
+        '410':
+          description: ''
   /api/v1/runners:
     get:
       tags:
@@ -3410,6 +3573,127 @@ components:
           type: array
           items:
             type: string
+    RunnerAttemptSpec:
+      type: object
+      required:
+      - id
+      - number
+      - pipelineId
+      - jobId
+      - jobKey
+      - gitRef
+      - executor
+      - image
+      - commands
+      - environment
+      - timeoutSeconds
+      - workspace
+      - artifacts
+      properties:
+        artifacts:
+          type: array
+          items:
+            type: string
+        commands:
+          type: array
+          items:
+            type: string
+        commitSha:
+          type:
+          - string
+          - 'null'
+        environment:
+          type: object
+          additionalProperties:
+            type: string
+          propertyNames:
+            type: string
+        executor:
+          type: string
+        gitRef:
+          type: string
+        id:
+          type: string
+          format: uuid
+        image:
+          type: string
+        jobId:
+          type: string
+          format: uuid
+        jobKey:
+          type: string
+        number:
+          type: integer
+          format: int32
+        pipelineId:
+          type: string
+          format: uuid
+        timeoutSeconds:
+          type: integer
+          format: int32
+        workspace:
+          $ref: '#/components/schemas/RunnerWorkspace'
+    RunnerCapacity:
+      type: object
+      required:
+      - totalSlots
+      - busySlots
+      properties:
+        busySlots:
+          type: integer
+          format: int32
+        totalSlots:
+          type: integer
+          format: int32
+    RunnerCompleteRequest:
+      type: object
+      required:
+      - protocolVersion
+      - leaseToken
+      - fencingToken
+      - attemptId
+      - outcome
+      - finishedAt
+      properties:
+        attemptId:
+          type: string
+          format: uuid
+        diagnostic:
+          type:
+          - string
+          - 'null'
+        exitCode:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        fencingToken:
+          type: integer
+          format: int64
+        finishedAt:
+          type: string
+          format: date-time
+        leaseToken:
+          type: string
+        outcome:
+          type: string
+        protocolVersion:
+          type: integer
+          format: int32
+    RunnerCompleteResponse:
+      type: object
+      required:
+      - protocolVersion
+      - accepted
+      - terminalStatus
+      properties:
+        accepted:
+          type: boolean
+        protocolVersion:
+          type: integer
+          format: int32
+        terminalStatus:
+          type: string
     RunnerHeartbeat:
       type: object
       properties:
@@ -3417,6 +3701,180 @@ components:
           type:
           - string
           - 'null'
+    RunnerHeartbeatRequest:
+      type: object
+      required:
+      - protocolVersion
+      - status
+      - capacity
+      properties:
+        activeLeaseIds:
+          type: array
+          items:
+            type: string
+            format: uuid
+        capabilities: {}
+        capacity:
+          $ref: '#/components/schemas/RunnerCapacity'
+        draining:
+          type: boolean
+        protocolVersion:
+          type: integer
+          format: int32
+        status:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+    RunnerLeaseControlRequest:
+      type: object
+      required:
+      - protocolVersion
+      - leaseToken
+      - fencingToken
+      properties:
+        fencingToken:
+          type: integer
+          format: int64
+        leaseToken:
+          type: string
+        protocolVersion:
+          type: integer
+          format: int32
+    RunnerLeaseControlResponse:
+      type: object
+      required:
+      - protocolVersion
+      - leaseExpiresAt
+      - renewAfter
+      - cancelRequested
+      properties:
+        cancelRequested:
+          type: boolean
+        leaseExpiresAt:
+          type: string
+          format: date-time
+        protocolVersion:
+          type: integer
+          format: int32
+        renewAfter:
+          type: string
+          format: date-time
+    RunnerLeaseOffer:
+      type: object
+      required:
+      - protocolVersion
+      - leaseId
+      - leaseToken
+      - fencingToken
+      - ackDeadline
+      - leaseExpiresAt
+      - attempt
+      properties:
+        ackDeadline:
+          type: string
+          format: date-time
+        attempt:
+          $ref: '#/components/schemas/RunnerAttemptSpec'
+        fencingToken:
+          type: integer
+          format: int64
+        leaseExpiresAt:
+          type: string
+          format: date-time
+        leaseId:
+          type: string
+          format: uuid
+        leaseToken:
+          type: string
+        planSha256:
+          type:
+          - string
+          - 'null'
+        protocolVersion:
+          type: integer
+          format: int32
+    RunnerPollCapacity:
+      type: object
+      required:
+      - freeSlots
+      properties:
+        freeSlots:
+          type: integer
+          format: int32
+    RunnerPollRequest:
+      type: object
+      required:
+      - protocolVersion
+      - capacity
+      properties:
+        capabilityDigest:
+          type:
+          - string
+          - 'null'
+        capacity:
+          $ref: '#/components/schemas/RunnerPollCapacity'
+        protocolVersion:
+          type: integer
+          format: int32
+        tags:
+          type: array
+          items:
+            type: string
+    RunnerRegisterRequest:
+      type: object
+      required:
+      - protocolVersion
+      - registrationToken
+      - name
+      properties:
+        capabilities: {}
+        name:
+          type: string
+        protocolVersion:
+          type: integer
+          format: int32
+        registrationToken:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+    RunnerRegisterResponse:
+      type: object
+      required:
+      - protocolVersion
+      - runnerId
+      - credential
+      - credentialExpiresAt
+      - heartbeatIntervalSeconds
+      - pollWaitMaxSeconds
+      properties:
+        credential:
+          type: string
+        credentialExpiresAt:
+          type: string
+          format: date-time
+        heartbeatIntervalSeconds:
+          type: integer
+          format: int32
+        pollWaitMaxSeconds:
+          type: integer
+          format: int32
+        protocolVersion:
+          type: integer
+          format: int32
+        runnerId:
+          type: string
+          format: uuid
+    RunnerWorkspace:
+      type: object
+      required:
+      - checkout
+      properties:
+        checkout:
+          type: boolean
     Schedule:
       type: object
       required:
@@ -3743,6 +4201,8 @@ tags:
   description: Jobs, logs and retries
 - name: runners
   description: Runner registration and heartbeats
+- name: runner-protocol
+  description: External runner protocol
 - name: secrets
   description: Encrypted project secrets
 - name: artifacts

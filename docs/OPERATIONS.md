@@ -280,7 +280,7 @@ Production monitoring добавляет защищённый metrics endpoint, 
 3. Если задача не имеет прогресса и владелец подтверждает отмену, отправить pipeline cancel. Если это только одна terminal job с допустимой retry-семантикой, используйте `POST /api/v1/jobs/<job-id>/retry` после расследования.
 4. Не используйте restart как способ применить новый образ/config; при необходимости пересоздания backend примените `docker compose up -d --build`, затем повторите health и pipeline inspection.
 
-В Current MVP нет lease TTL, remote runner reconciliation или гарантированного auto-retry. Зависшая job требует ручного решения; не объявляйте её завершённой без API action/evidence.
+В Current MVP есть embedded `job_leases` TTL/reconciliation и external runner protocol ack/renew/complete, но нет отдельного runner binary, durable `job_queue`, lost-runner auto-dispatch или гарантированного auto-retry. Зависшая job требует проверки lease/attempt и ручного решения; не объявляйте её завершённой без API action/evidence.
 
 **Target approved: процедура**
 
@@ -290,7 +290,7 @@ Production monitoring добавляет защищённый metrics endpoint, 
 
 **Current verified: диагностика и действия**
 
-Registry/heartbeat в MVP -- только inventory; remote runner registration, dispatch и leases ещё не реализованы. Проверить запись runner и backend logs:
+Registry/heartbeat legacy endpoints остаются inventory; external runner protocol MVP уже поддерживает `/api/v1/runner/register`, heartbeat, work poll и leases, но production runner binary/dispatch ещё не реализован. Проверить запись runner и backend logs:
 
 ```bash
 curl -fsS http://127.0.0.1:22801/api/v1/runners
