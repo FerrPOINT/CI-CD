@@ -299,6 +299,7 @@ Referenced by:
  image        | text                     | not null |
  command      | text                     | not null |
  required_tags | text[]                  | not null | '{}'
+ required_secrets | text[]               | not null | '{}'
  position     | integer                  | not null |
  status       | text                     | not null |
  timeout_seconds | integer               |          |
@@ -329,6 +330,7 @@ Referenced by:
 | `image` | TEXT | NOT NULL | — | Docker-образ для выполнения (e.g. `rust:1.86`, `alpine:3.21`) |
 | `command` | TEXT | NOT NULL | — | Команда выполнения (e.g. `cargo test`, `git fetch --all`) |
 | `required_tags` | TEXT[] | NOT NULL | `'{}'` | Нормализованные placement tags из v1 `defaults.tags` / `jobs.*.tags`; legacy jobs остаются untagged |
+| `required_secrets` | TEXT[] | NOT NULL | `'{}'` | Нормализованные имена project secrets из v1 `jobs.*.secrets`; используются embedded/external runner secret injection allow-list |
 | `position` | INTEGER | NOT NULL | — | Порядок выполнения внутри стадии |
 | `status` | TEXT | NOT NULL | — | Статус: `queued` / `running` / `success` / `failed` / `canceled` |
 | `timeout_seconds` | INTEGER | NULL | — | Optional timeout из `.forge-ci.yml` |
@@ -346,6 +348,7 @@ Referenced by:
 - `jobs_stage_id_position_key` — UNIQUE (stage_id, position)
 - `idx_jobs_stage_id` — lookup jobs внутри stage для `pipeline_detail`.
 - `idx_jobs_required_tags_gin` — GIN index для диагностики и будущих placement-запросов по tags.
+- `idx_jobs_required_secrets_gin` — GIN index для диагностики и lease-scoped secret lookup по declared names.
 
 **FK:** `stage_id` → `stages(id)` ON DELETE CASCADE.
 
@@ -840,6 +843,7 @@ idx_pipelines_project_id     ON pipelines(project_id)
 idx_stages_pipeline_id       ON stages(pipeline_id)
 idx_jobs_stage_id            ON jobs(stage_id)
 idx_jobs_required_tags_gin   ON jobs USING GIN(required_tags)
+idx_jobs_required_secrets_gin ON jobs USING GIN(required_secrets)
 idx_execution_attempts_job   ON execution_attempts(job_id, attempt_no DESC)
 idx_execution_attempts_active_job ON execution_attempts(job_id) WHERE status IN ('queued','running')
 idx_job_leases_active_job    ON job_leases(job_id) WHERE lease_status = 'active'

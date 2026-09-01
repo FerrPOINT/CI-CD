@@ -1989,6 +1989,41 @@ paths:
           description: ''
         '410':
           description: ''
+  /api/v1/runner/leases/{lease_id}/secrets:resolve:
+    post:
+      tags:
+      - runner-protocol
+      operationId: resolve_runner_lease_secrets
+      parameters:
+      - name: lease_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunnerSecretResolveRequest'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunnerSecretResolveResponse'
+        '400':
+          description: ''
+        '401':
+          description: ''
+        '403':
+          description: ''
+        '409':
+          description: ''
+        '410':
+          description: ''
   /api/v1/runner/register:
     post:
       tags:
@@ -2822,6 +2857,7 @@ components:
       - image
       - command
       - required_tags
+      - required_secrets
       - position
       - status
       properties:
@@ -2842,6 +2878,10 @@ components:
         position:
           type: integer
           format: int32
+        required_secrets:
+          type: array
+          items:
+            type: string
         required_tags:
           type: array
           items:
@@ -3624,6 +3664,7 @@ components:
       - image
       - commands
       - environment
+      - secrets
       - timeoutSeconds
       - workspace
       - artifacts
@@ -3666,6 +3707,10 @@ components:
         pipelineId:
           type: string
           format: uuid
+        secrets:
+          type: array
+          items:
+            type: string
         timeoutSeconds:
           type: integer
           format: int32
@@ -3958,6 +4003,56 @@ components:
         runnerId:
           type: string
           format: uuid
+    RunnerSecretItem:
+      type: object
+      required:
+      - name
+      - injection
+      - value
+      properties:
+        injection:
+          type: string
+        name:
+          type: string
+        value:
+          type: string
+    RunnerSecretResolveRequest:
+      type: object
+      required:
+      - protocolVersion
+      - leaseToken
+      - fencingToken
+      - secretNames
+      properties:
+        fencingToken:
+          type: integer
+          format: int64
+        leaseToken:
+          type: string
+        protocolVersion:
+          type: integer
+          format: int32
+        secretNames:
+          type: array
+          items:
+            type: string
+    RunnerSecretResolveResponse:
+      type: object
+      required:
+      - protocolVersion
+      - expiresAt
+      - items
+      properties:
+        expiresAt:
+          type: string
+          format: date-time
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RunnerSecretItem'
+        protocolVersion:
+          type: integer
+          format: int32
     RunnerWorkspace:
       type: object
       required:

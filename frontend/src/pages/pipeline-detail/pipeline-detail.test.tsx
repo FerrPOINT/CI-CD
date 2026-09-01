@@ -64,6 +64,7 @@ function renderPipelineDetail(requests: string[]) {
                 image: 'alpine:3.21',
                 command: 'echo test',
                 required_tags: ['docker', 'linux'],
+                required_secrets: ['DEPLOY_TOKEN'],
                 position: 0,
                 status: 'running',
                 started_at: now,
@@ -169,6 +170,8 @@ describe('PipelineDetailPage logs', () => {
     expect(screen.getByText('jobs.runnerTags:')).toBeInTheDocument()
     expect(screen.getByText('docker')).toBeInTheDocument()
     expect(screen.getByText('linux')).toBeInTheDocument()
+    expect(screen.getByText('jobs.secrets:')).toBeInTheDocument()
+    expect(screen.getByText('DEPLOY_TOKEN')).toBeInTheDocument()
   })
 
   it('loads log pages and refetches them with search', async () => {

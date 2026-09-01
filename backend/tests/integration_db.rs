@@ -677,10 +677,13 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
     let job_id = Uuid::new_v4();
     let attempt_id = Uuid::new_v4();
     let project_name = format!("it-runner-protocol-{}", namespace.simple());
+    let previous_secrets_key = std::env::var("CICD_SECRETS_KEY").ok();
+    let secrets_key = base64::engine::general_purpose::STANDARD.encode([7_u8; 32]);
 
     // SAFETY: only the runner protocol integration test reads this process env.
     unsafe {
         std::env::set_var("CICD_RUNNER_REGISTRATION_TOKEN", &registration_token);
+        std::env::set_var("CICD_SECRETS_KEY", secrets_key);
     }
 
     let app = cicd::api::app_with_auth_secret(
@@ -788,6 +791,29 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
         .execute(&pool)
         .await
         .expect("insert project");
+    let secret_app = cicd::api::app(Some(pool.clone()));
+    for (key, value) in [
+        ("DEPLOY_TOKEN", "super-secret-token"),
+        ("OTHER_SECRET", "do-not-release"),
+    ] {
+        let response = secret_app
+            .clone()
+            .oneshot(
+                Request::post(format!("/api/v1/projects/{project_id}/secrets"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "key": key,
+                            "value": value
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
     sqlx::query(
         "INSERT INTO pipelines (id, project_id, git_ref, status, created_at) \
          VALUES ($1, $2, 'main', 'queued', '2000-01-01T00:00:00Z')",
@@ -807,8 +833,8 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
     .await
     .expect("insert stage");
     sqlx::query(
-        "INSERT INTO jobs (id, stage_id, name, image, command, required_tags, position, status, timeout_seconds) \
-         VALUES ($1, $2, 'compile', 'alpine:3.21', 'echo ok', ARRAY['docker','linux'], 0, 'queued', 30)",
+        "INSERT INTO jobs (id, stage_id, name, image, command, required_tags, required_secrets, position, status, timeout_seconds) \
+         VALUES ($1, $2, 'compile', 'alpine:3.21', 'echo ok', ARRAY['docker','linux'], ARRAY['DEPLOY_TOKEN'], 0, 'queued', 30)",
     )
     .bind(job_id)
     .bind(stage_id)
@@ -891,6 +917,10 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
     assert_eq!(offer["attempt"]["jobKey"], "compile");
     assert_eq!(offer["attempt"]["executor"], "shell");
     assert_eq!(offer["attempt"]["commands"][0], "echo ok");
+    assert_eq!(
+        offer["attempt"]["secrets"],
+        serde_json::json!(["DEPLOY_TOKEN"])
+    );
     assert_eq!(offer["attempt"]["timeoutSeconds"], 30);
     assert_eq!(offer["attempt"]["workspace"]["checkout"], true);
     assert_eq!(
@@ -899,6 +929,27 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
     );
     let lease_id = Uuid::parse_str(offer["leaseId"].as_str().unwrap()).unwrap();
     let lease_token = offer["leaseToken"].as_str().unwrap().to_owned();
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/runner/leases/{lease_id}/secrets:resolve"))
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "protocolVersion": 1,
+                        "leaseToken": lease_token,
+                        "fencingToken": 1,
+                        "secretNames": ["DEPLOY_TOKEN"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
 
     let response = app
         .clone()
@@ -978,6 +1029,60 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
         assert_eq!(body["protocolVersion"], 1);
         assert_eq!(body["cancelRequested"], false);
     }
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/runner/leases/{lease_id}/secrets:resolve"))
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "protocolVersion": 1,
+                        "leaseToken": lease_token,
+                        "fencingToken": 1,
+                        "secretNames": ["OTHER_SECRET"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/runner/leases/{lease_id}/secrets:resolve"))
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "protocolVersion": 1,
+                        "leaseToken": lease_token,
+                        "fencingToken": 1,
+                        "secretNames": [" DEPLOY_TOKEN ", "DEPLOY_TOKEN"]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers().get("cache-control").unwrap(), "no-store");
+    let resolved_secrets = response_json(response).await;
+    assert_eq!(resolved_secrets["protocolVersion"], 1);
+    assert!(resolved_secrets["expiresAt"].as_str().is_some());
+    assert_eq!(
+        resolved_secrets["items"],
+        serde_json::json!([{
+            "name": "DEPLOY_TOKEN",
+            "injection": "env",
+            "value": "super-secret-token"
+        }])
+    );
 
     let response = app
         .clone()
@@ -1141,6 +1246,10 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
         .expect("cleanup protocol runner");
     unsafe {
         std::env::remove_var("CICD_RUNNER_REGISTRATION_TOKEN");
+        match previous_secrets_key {
+            Some(value) => std::env::set_var("CICD_SECRETS_KEY", value),
+            None => std::env::remove_var("CICD_SECRETS_KEY"),
+        }
     }
 }
 
@@ -1685,6 +1794,7 @@ jobs:
     image: rust:1.86
     timeout: 45m
     tags: [linux]
+    secrets: [DEPLOY_TOKEN]
     commands:
       - cargo test
       - cargo clippy --all-targets
@@ -1798,6 +1908,10 @@ jobs:
         serde_json::json!(["linux"])
     );
     assert_eq!(
+        stages[1]["jobs"][0]["required_secrets"],
+        serde_json::json!(["DEPLOY_TOKEN"])
+    );
+    assert_eq!(
         stages[0]["jobs"]
             .as_array()
             .unwrap()
@@ -1808,8 +1922,8 @@ jobs:
     );
     assert_eq!(stages[1]["jobs"][0]["name"], "test");
 
-    let persisted_jobs = sqlx::query_as::<_, (String, Option<i32>, bool, String, Vec<String>, Vec<String>)>(
-        "SELECT j.name, j.timeout_seconds, j.allow_failure, j.command, j.required_tags, q.required_tags \
+    let persisted_jobs = sqlx::query_as::<_, (String, Option<i32>, bool, String, Vec<String>, Vec<String>, Vec<String>)>(
+        "SELECT j.name, j.timeout_seconds, j.allow_failure, j.command, j.required_tags, j.required_secrets, q.required_tags \
          FROM jobs j JOIN stages s ON s.id = j.stage_id \
          JOIN job_queue q ON q.job_id = j.id \
          WHERE s.pipeline_id = $1 ORDER BY s.position, j.position",
@@ -1825,8 +1939,9 @@ jobs:
         persisted_jobs[0].4,
         vec!["docker".to_string(), "linux".to_string()]
     );
+    assert_eq!(persisted_jobs[0].5, Vec::<String>::new());
     assert_eq!(
-        persisted_jobs[0].5,
+        persisted_jobs[0].6,
         vec!["docker".to_string(), "linux".to_string()]
     );
     assert_eq!(persisted_jobs[1].0, "lint");
@@ -1838,7 +1953,8 @@ jobs:
     assert_eq!(persisted_jobs[2].0, "test");
     assert_eq!(persisted_jobs[2].1, Some(2700));
     assert_eq!(persisted_jobs[2].4, vec!["linux".to_string()]);
-    assert_eq!(persisted_jobs[2].5, vec!["linux".to_string()]);
+    assert_eq!(persisted_jobs[2].5, vec!["DEPLOY_TOKEN".to_string()]);
+    assert_eq!(persisted_jobs[2].6, vec!["linux".to_string()]);
     assert_eq!(
         persisted_jobs[2].3,
         "set -e\ncargo test\ncargo clippy --all-targets"

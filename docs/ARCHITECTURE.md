@@ -152,11 +152,11 @@ Supervisor-полл queued-джобов, атомарный lease-aware claim (`
 
 ### 6.4 External runner protocol MVP
 
-`/api/v1/runner/*` реализует control-plane protocol slice для внешних runner-ов: register через `CICD_RUNNER_REGISTRATION_TOKEN`, heartbeat с tags/capacity/capabilities, immediate `work:poll`, lease `ack`, `renew`, `logs` и `complete`. Сервер хранит только hash runner credential и lease token, а mutating lease endpoints проверяют runner identity, token, `job_leases.generation` и expiry. `work:poll` claim-ит compatible durable `job_queue` row с `required_tags ⊆ runner.tags`, отдаёт `workspace.checkoutUrl` из проекта, а `forge-runner` умеет зарегистрироваться, heartbeat-ить, подтвердить lease, продлевать её, выполнить команды в shell workspace, отправить stdout/stderr в attempt-owned `job_logs` и отправить terminal result. Long-poll wakeup, protocol secrets/artifacts, richer log chunks, Docker/Kubernetes sandbox isolation и production runner policy остаются target.
+`/api/v1/runner/*` реализует control-plane protocol slice для внешних runner-ов: register через `CICD_RUNNER_REGISTRATION_TOKEN`, heartbeat с tags/capacity/capabilities, immediate `work:poll`, lease `ack`, `renew`, `secrets:resolve`, `logs` и `complete`. Сервер хранит только hash runner credential и lease token, а mutating lease endpoints проверяют runner identity, token, `job_leases.generation` и expiry. `work:poll` claim-ит compatible durable `job_queue` row с `required_tags ⊆ runner.tags`, отдаёт `workspace.checkoutUrl` и declared `attempt.secrets`, а `forge-runner` умеет зарегистрироваться, heartbeat-ить, подтвердить lease, получить только declared secrets после ack, продлевать lease, выполнить команды в shell workspace, отправить stdout/stderr в attempt-owned `job_logs` с masking и отправить terminal result. Long-poll wakeup, protocol artifacts, richer log chunks, Docker/Kubernetes sandbox isolation и production runner policy остаются target.
 
 ### 6.5 Платформенные ресурсы (MVP)
 
-Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-256-GCM at rest + embedded env injection/masking), artifacts (upload/download + локальное хранилище, 50 MiB лимит), environments/deployments, schedules MVP (strict 5-field UTC cron, `next_fire_at`, unique fire slots), outgoing webhooks MVP (terminal pipeline events через outbox/basic retry/HMAC), `in_app`/`sse` notifications MVP (local outbox history + Dashboard stream), reports (агрегаты success rate/duration), audit log (последние 200 событий), users/roles, project memberships, argon2id credentials, session-bound access JWT, refresh sessions с rotate/logout, project-scoped PAT enforcement и Git Smart HTTP project checks при `CICD_AUTH_SECRET`.
+Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-256-GCM at rest + job-declared embedded/external env injection/masking), artifacts (upload/download + локальное хранилище, 50 MiB лимит), environments/deployments, schedules MVP (strict 5-field UTC cron, `next_fire_at`, unique fire slots), outgoing webhooks MVP (terminal pipeline events через outbox/basic retry/HMAC), `in_app`/`sse` notifications MVP (local outbox history + Dashboard stream), reports (агрегаты success rate/duration), audit log (последние 200 событий), users/roles, project memberships, argon2id credentials, session-bound access JWT, refresh sessions с rotate/logout, project-scoped PAT enforcement и Git Smart HTTP project checks при `CICD_AUTH_SECRET`.
 
 ## 7. Frontend архитектура
 
@@ -171,7 +171,7 @@ Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-2
 - Domain: unit-тесты переходов статусов (`domain/src/lib.rs`, `tests/domain_transitions.rs`).
 - API contract: no-DB тесты health/readiness/503/валидации (`tests/api_contract.rs`).
 - CLI: contract-тест help-групп (`cli/tests/cli_contract.rs`).
-- Real-PostgreSQL integration tests уже есть для migrations/readiness/project/auth paths, trigger idempotency, immutable `pipeline_plans`, v1 DAG config из bare repo с `required_tags` и runner protocol register/heartbeat/poll/ack/renew/logs/complete с basic tag matching; target остаётся для Playwright E2E, coverage gate и широких failure/protocol tests.
+- Real-PostgreSQL integration tests уже есть для migrations/readiness/project/auth paths, trigger idempotency, immutable `pipeline_plans`, v1 DAG config из bare repo с `required_tags`/`required_secrets` и runner protocol register/heartbeat/poll/ack/`secrets:resolve`/renew/logs/complete с basic tag matching и scoped secret delivery; target остаётся для Playwright E2E, coverage gate и широких failure/protocol tests.
 
 ## 9. Статус миграции (ADR-0005)
 
@@ -184,7 +184,7 @@ Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-2
 | app/infra/api/server пакеты | ⬜ Phase C (strangler по вертикалям) |
 | OpenAPI + генерация клиента | ✅ current: `openapi/openapi.yaml` + `frontend/src/api/schema.d.ts` |
 | Auth/RBAC/token middleware | ◩ current conditional: JWT/scoped PAT/global roles + project memberships + session-bound access invalidation + refresh rotate/logout/revoke при `CICD_AUTH_SECRET`; tenant scope, service-account/scoped Git credentials и production cookie/CSRF/session-family policy target |
-| Distributed runner protocol | ◩ current MVP: `/api/v1/runner/*` register/heartbeat/poll/ack/renew/logs/complete + durable `job_queue` + basic tag matching + hashed credentials/lease tokens + fencing generation + `forge-runner` shell process; long-poll, secrets/artifacts protocol, richer log chunks и sandbox boundary остаются Phase D |
+| Distributed runner protocol | ◩ current MVP: `/api/v1/runner/*` register/heartbeat/poll/ack/`secrets:resolve`/renew/logs/complete + durable `job_queue` + basic tag matching + hashed credentials/lease tokens + fencing generation + scoped secret delivery + `forge-runner` shell process; long-poll, artifacts protocol, richer log chunks и sandbox boundary остаются Phase D |
 
 ## 10. Dev workflow
 

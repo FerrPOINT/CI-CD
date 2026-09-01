@@ -1392,17 +1392,34 @@ fn decrypt_secret(stored: &str) -> Result<String, String> {
 }
 
 /// Project secrets resolved for a job environment (runner injection).
-pub(crate) async fn project_secret_pairs(
+pub(crate) async fn project_secret_pairs_for_names(
     pool: &PgPool,
     project_id: Uuid,
+    names: &[String],
 ) -> Result<Vec<(String, String)>, ApiError> {
+    if names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let requested: std::collections::BTreeSet<&str> = names.iter().map(String::as_str).collect();
+    let requested_vec: Vec<String> = requested.iter().map(|name| (*name).to_string()).collect();
     let rows = sqlx::query_as::<_, (String, String)>(
-        "SELECT key, encrypted_value FROM project_secrets WHERE project_id = $1",
+        "SELECT key, encrypted_value \
+         FROM project_secrets \
+         WHERE project_id = $1 AND key = ANY($2::text[]) \
+         ORDER BY key",
     )
     .bind(project_id)
+    .bind(&requested_vec)
     .fetch_all(pool)
     .await
     .map_err(ApiError::internal)?;
+    let found: std::collections::BTreeSet<&str> =
+        rows.iter().map(|(name, _)| name.as_str()).collect();
+    if found.len() != requested.len() || requested.iter().any(|name| !found.contains(*name)) {
+        return Err(ApiError::not_found_named(
+            "declared project secret is missing",
+        ));
+    }
     let mut pairs = Vec::with_capacity(rows.len());
     for (name, stored) in rows {
         let value = decrypt_secret(&stored).map_err(|msg| ApiError {

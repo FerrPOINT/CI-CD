@@ -138,6 +138,7 @@
     "image": "Image",
     "command": "Command",
     "runnerTags": "Runner tags",
+    "secrets": "Secrets",
     "attempt": "Attempt",
     "trigger": "Trigger",
     "exitCode": "Exit code",

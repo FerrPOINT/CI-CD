@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
@@ -77,6 +78,8 @@ struct AttemptSpec {
     git_ref: String,
     commit_sha: Option<String>,
     commands: Vec<String>,
+    #[serde(default)]
+    secrets: Vec<String>,
     timeout_seconds: i32,
     workspace: WorkspaceSpec,
 }
@@ -96,6 +99,29 @@ struct LeaseMutation<'a> {
     fencing_token: i64,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SecretResolveRequest<'a> {
+    protocol_version: i32,
+    lease_token: &'a str,
+    fencing_token: i64,
+    secret_names: &'a [String],
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SecretResolveResponse {
+    items: Vec<SecretItem>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SecretItem {
+    name: String,
+    injection: String,
+    value: String,
+}
+
 #[derive(Debug, Clone)]
 struct LogContext {
     client: reqwest::Client,
@@ -105,6 +131,7 @@ struct LogContext {
     lease_token: String,
     fencing_token: i64,
     attempt_id: Uuid,
+    masks: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -270,6 +297,32 @@ async fn run_offer(
         offer.lease_id, offer.attempt.id, offer.attempt.job_key
     );
     ack_lease(client, base, credential, &offer).await?;
+    let secret_env = match resolve_lease_secrets(client, base, credential, &offer).await {
+        Ok(secret_env) => secret_env,
+        Err(error) => {
+            let completion_result = complete_lease(
+                client,
+                base,
+                credential,
+                &offer,
+                ExecutionResult {
+                    outcome: "failed",
+                    exit_code: None,
+                    diagnostic: Some(truncate_diagnostic(&format!(
+                        "secret resolve failed: {error:#}"
+                    ))),
+                },
+            )
+            .await;
+            heartbeat(client, base, credential, cli, 0, &[]).await?;
+            return completion_result;
+        }
+    };
+    let masks: Vec<String> = secret_env
+        .iter()
+        .filter(|(_, value)| !value.is_empty())
+        .map(|(_, value)| value.clone())
+        .collect();
     heartbeat(client, base, credential, cli, 1, &[offer.lease_id]).await?;
 
     let (stop_tx, stop_rx) = watch::channel(false);
@@ -290,8 +343,9 @@ async fn run_offer(
         lease_token: offer.lease_token.clone(),
         fencing_token: offer.fencing_token,
         attempt_id: offer.attempt.id,
+        masks,
     };
-    let result = execute_attempt(cli, &offer, Some(log_context)).await;
+    let result = execute_attempt(cli, &offer, Some(log_context), &secret_env).await;
     let _ = stop_tx.send(true);
     let _ = renew_task.await;
 
@@ -337,6 +391,47 @@ async fn ack_lease(
         .await
         .context("ack request failed")?;
     ensure_success(response).await.context("ack failed")
+}
+
+async fn resolve_lease_secrets(
+    client: &reqwest::Client,
+    base: &str,
+    credential: &str,
+    offer: &LeaseOffer,
+) -> anyhow::Result<Vec<(String, String)>> {
+    if offer.attempt.secrets.is_empty() {
+        return Ok(Vec::new());
+    }
+    let response = client
+        .post(format!(
+            "{base}/api/v1/runner/leases/{}/secrets:resolve",
+            offer.lease_id
+        ))
+        .bearer_auth(credential)
+        .json(&SecretResolveRequest {
+            protocol_version: PROTOCOL_VERSION,
+            lease_token: &offer.lease_token,
+            fencing_token: offer.fencing_token,
+            secret_names: &offer.attempt.secrets,
+        })
+        .send()
+        .await
+        .context("resolve secrets request failed")?;
+    let resolved: SecretResolveResponse = response_json(response)
+        .await
+        .context("resolve secrets failed")?;
+    let requested: BTreeSet<&str> = offer.attempt.secrets.iter().map(String::as_str).collect();
+    let mut env = Vec::with_capacity(resolved.items.len());
+    for item in resolved.items {
+        if item.injection != "env" || !requested.contains(item.name.as_str()) {
+            bail!("API returned an invalid secret bundle");
+        }
+        env.push((item.name, item.value));
+    }
+    if env.len() != requested.len() {
+        bail!("API returned an incomplete secret bundle");
+    }
+    Ok(env)
 }
 
 async fn renew_loop(
@@ -413,6 +508,7 @@ async fn execute_attempt(
     cli: &Cli,
     offer: &LeaseOffer,
     log_context: Option<LogContext>,
+    secret_env: &[(String, String)],
 ) -> anyhow::Result<ExecutionResult> {
     let workspace = prepare_workspace(cli, offer).await?;
     let cleanup_path = workspace.clone();
@@ -429,6 +525,7 @@ async fn execute_attempt(
             &workspace,
             offer.attempt.timeout_seconds,
             log_context.as_ref(),
+            secret_env,
         )
         .await
         {
@@ -536,6 +633,7 @@ async fn run_shell_command(
     cwd: &Path,
     timeout_seconds: i32,
     log_context: Option<&LogContext>,
+    secret_env: &[(String, String)],
 ) -> anyhow::Result<std::process::ExitStatus> {
     eprintln!("running: {command}");
     if let Some(context) = log_context {
@@ -551,6 +649,9 @@ async fn run_shell_command(
 
     let mut command_process = shell(command);
     command_process.current_dir(cwd).stdin(Stdio::null());
+    for (name, value) in secret_env {
+        command_process.env(name, value);
+    }
     if log_context.is_some() {
         command_process
             .stdout(Stdio::piped())
@@ -632,11 +733,12 @@ where
             break;
         }
         let raw_message = line.trim_end_matches(&['\r', '\n'][..]);
-        let message = protocol_log_message(raw_message);
+        let masked_message = mask_secrets(raw_message, &context.masks);
+        let message = protocol_log_message(&masked_message);
         if stream == "stderr" {
-            eprintln!("{raw_message}");
+            eprintln!("{masked_message}");
         } else {
-            println!("{raw_message}");
+            println!("{masked_message}");
         }
         if upload_error.is_none() {
             if let Err(error) =
@@ -681,6 +783,16 @@ fn truncate_log_message(value: &str) -> String {
 
 fn protocol_log_message(value: &str) -> String {
     truncate_log_message(&value.replace('\r', "\\r").replace('\n', "\\n"))
+}
+
+fn mask_secrets(value: &str, masks: &[String]) -> String {
+    let mut masked = value.to_string();
+    for secret in masks {
+        if !secret.is_empty() {
+            masked = masked.replace(secret, "***");
+        }
+    }
+    masked
 }
 
 fn shell(command: &str) -> Command {
@@ -774,6 +886,7 @@ mod tests {
                 git_ref: "main".to_string(),
                 commit_sha: None,
                 commands: vec![command.to_string()],
+                secrets: Vec::new(),
                 timeout_seconds,
                 workspace: WorkspaceSpec {
                     checkout: false,
@@ -806,6 +919,17 @@ mod tests {
         assert_eq!(protocol_log_message("one\rtwo\nthree"), "one\\rtwo\\nthree");
     }
 
+    #[test]
+    fn masks_secret_values_before_log_upload() {
+        assert_eq!(
+            mask_secrets(
+                "deploy token=super-secret",
+                &["super-secret".to_string(), "".to_string()]
+            ),
+            "deploy token=***"
+        );
+    }
+
     #[tokio::test]
     async fn failed_command_reports_process_exit_code() {
         let work_dir =
@@ -813,10 +937,36 @@ mod tests {
         let cli = test_cli(work_dir.clone());
         let offer = test_offer("exit 7", 5);
 
-        let result = execute_attempt(&cli, &offer, None).await.unwrap();
+        let result = execute_attempt(&cli, &offer, None, &[]).await.unwrap();
 
         assert_eq!(result.outcome, "failed");
         assert_eq!(result.exit_code, Some(7));
+        let _ = std::fs::remove_dir_all(work_dir);
+    }
+
+    #[tokio::test]
+    async fn secret_env_is_available_to_commands() {
+        let work_dir =
+            std::env::temp_dir().join(format!("forge-runner-test-{}", Uuid::new_v4().simple()));
+        let cli = test_cli(work_dir.clone());
+        let command = if cfg!(windows) {
+            "if \"%DEPLOY_TOKEN%\"==\"super-secret\" (exit /b 0) else (exit /b 9)"
+        } else {
+            "test \"$DEPLOY_TOKEN\" = \"super-secret\""
+        };
+        let mut offer = test_offer(command, 5);
+        offer.attempt.secrets = vec!["DEPLOY_TOKEN".to_string()];
+
+        let result = execute_attempt(
+            &cli,
+            &offer,
+            None,
+            &[("DEPLOY_TOKEN".to_string(), "super-secret".to_string())],
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.outcome, "success");
         let _ = std::fs::remove_dir_all(work_dir);
     }
 
@@ -832,7 +982,7 @@ mod tests {
         };
         let offer = test_offer(command, 1);
 
-        let result = execute_attempt(&cli, &offer, None).await.unwrap();
+        let result = execute_attempt(&cli, &offer, None, &[]).await.unwrap();
 
         assert_eq!(result.outcome, "failed");
         assert_eq!(result.exit_code, None);

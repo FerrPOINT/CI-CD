@@ -1,6 +1,6 @@
 # Runner protocol
 
-**Статус:** Current verified MVP + Target approved. Реализованный subset на 2026-09-01 покрывает `register`, `heartbeat`, immediate `work:poll`, basic tag matching, `ack`, `renew`, `logs`, `complete`, SHA-256 storage для runner credential/lease token, fencing по `job_leases.generation`, `workspace.checkoutUrl` и отдельный `forge-runner` shell process. Остальные разделы описывают target-контракт production runner-а. Канонические путь и имена таблиц закреплены [ADR-0009](../adr/0009-canonical-registry.md).
+**Статус:** Current verified MVP + Target approved. Реализованный subset на 2026-09-01 покрывает `register`, `heartbeat`, immediate `work:poll`, basic tag matching, `ack`, lease-scoped `secrets:resolve`, `renew`, `logs`, `complete`, SHA-256 storage для runner credential/lease token, fencing по `job_leases.generation`, `workspace.checkoutUrl`, declared `attempt.secrets` и отдельный `forge-runner` shell process. Остальные разделы описывают target-контракт production runner-а. Канонические путь и имена таблиц закреплены [ADR-0009](../adr/0009-canonical-registry.md).
 
 ## 1. Область и общие правила
 
@@ -71,13 +71,14 @@ Current MVP отвечает сразу и возвращает `204`, если 
 ```json
 {"protocolVersion":1,"leaseId":"uuid","leaseToken":"opaque","fencingToken":7,
  "ackDeadline":"2026-08-27T12:00:30Z","leaseExpiresAt":"2026-08-27T12:02:00Z",
- "attempt":{"id":"uuid","number":1,"pipelineId":"uuid","jobKey":"test","commitSha":"<full-sha>",
+ "attempt":{"id":"uuid","number":1,"pipelineId":"uuid","jobId":"uuid","jobKey":"test","commitSha":"<full-sha>",
  "executor":"shell","image":"rust@sha256:<digest>","commands":["cargo test"],"environment":{},
- "timeoutSeconds":3600,"workspace":{"checkout":true,"checkoutUrl":"https://forge.example/git/project.git"},"artifacts":[]},
+ "secrets":["DEPLOY_TOKEN"],"timeoutSeconds":3600,
+ "workspace":{"checkout":true,"checkoutUrl":"https://forge.example/git/project.git"},"artifacts":[]},
  "planSignature":{"kid":"string","signature":"base64url"}}
 ```
 
-Offer не содержит секреты. Current `forge-runner` использует `workspace.checkoutUrl` для `git clone`, затем выполняет команды shell в workspace, отправляет stdout/stderr через protocol log append и отправляет terminal result; `image` остаётся compatibility field до Docker/Kubernetes runner. Target runner проверяет `planSignature`, не запускает работу до ack и не сохраняет `leaseToken` в log/metadata. Несовместимый/disabled/draining/offline runner или runner без нужных `required_tags` не получает offer.
+Offer содержит только имена declared secrets, но не значения. Current `forge-runner` использует `workspace.checkoutUrl` для `git clone`, после `ack` получает scoped secret bundle, затем выполняет команды shell в workspace, передаёт declared secrets в env, отправляет stdout/stderr через protocol log append с best-effort masking и отправляет terminal result; `image` остаётся compatibility field до Docker/Kubernetes runner. Target runner проверяет `planSignature`, не запускает работу до ack и не сохраняет `leaseToken` в log/metadata. Несовместимый/disabled/draining/offline runner или runner без нужных `required_tags` не получает offer.
 
 `POST /api/v1/runner/leases/{leaseId}/ack` и `POST /api/v1/runner/leases/{leaseId}/renew` используют одну схему:
 
@@ -91,7 +92,7 @@ Ack допускается только до `ackDeadline`; ответ: `{protoc
 
 ## 4. Секреты, логи и завершение
 
-После успешного ack owner получает declared secrets через `POST /api/v1/runner/leases/{leaseId}/secrets:resolve`:
+После успешного ack owner получает declared secrets через `POST /api/v1/runner/leases/{leaseId}/secrets:resolve`. Current сервер принимает только active acknowledged lease, сверяет runner credential, lease token hash, `fencingToken` и возвращает только requested names из `jobs.required_secrets`; запрос чужого или не объявленного secret name возвращает `403`.
 
 ```json
 {"type":"object","required":["protocolVersion","leaseToken","fencingToken","secretNames"],"properties":{
@@ -100,7 +101,7 @@ Ack допускается только до `ackDeadline`; ответ: `{protoc
 },"additionalProperties":false}
 ```
 
-Ответ `200` имеет `{protocolVersion, expiresAt, items:[{name, injection:"env"|"file", value}]}`. `value` существует только в защищённом TLS-ответе, не записывается в БД/аудит/логи и очищается runner-ом из памяти или temporary `0600` file после attempt. Сервер возвращает только ключи immutable plan; ответ `Cache-Control: no-store`.
+Ответ `200` имеет `{protocolVersion, expiresAt, items:[{name, injection:"env", value}]}`. `value` существует только в защищённом TLS-ответе, не записывается в БД/аудит/логи; current `forge-runner` хранит значения только в памяти процесса, передаёт их в env и маскирует stdout/stderr best-effort. Сервер возвращает только ключи immutable plan; ответ `Cache-Control: no-store`. File injection, KMS-backed short leases, rotation policy и full redaction во всех trace/error каналах остаются target hardening.
 
 `POST /api/v1/runner/leases/{leaseId}/logs`:
 

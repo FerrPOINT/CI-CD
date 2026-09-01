@@ -1005,6 +1005,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runner/leases/{lease_id}/secrets:resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["resolve_runner_lease_secrets"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runner/register": {
         parameters: {
             query?: never;
@@ -1430,6 +1446,7 @@ export interface components {
             name: string;
             /** Format: int32 */
             position: number;
+            required_secrets: string[];
             required_tags: string[];
             /** Format: uuid */
             stage_id: string;
@@ -1767,6 +1784,7 @@ export interface components {
             number: number;
             /** Format: uuid */
             pipelineId: string;
+            secrets: string[];
             /** Format: int32 */
             timeoutSeconds: number;
             workspace: components["schemas"]["RunnerWorkspace"];
@@ -1894,6 +1912,26 @@ export interface components {
             protocolVersion: number;
             /** Format: uuid */
             runnerId: string;
+        };
+        RunnerSecretItem: {
+            injection: string;
+            name: string;
+            value: string;
+        };
+        RunnerSecretResolveRequest: {
+            /** Format: int64 */
+            fencingToken: number;
+            leaseToken: string;
+            /** Format: int32 */
+            protocolVersion: number;
+            secretNames: string[];
+        };
+        RunnerSecretResolveResponse: {
+            /** Format: date-time */
+            expiresAt: string;
+            items: components["schemas"]["RunnerSecretItem"][];
+            /** Format: int32 */
+            protocolVersion: number;
         };
         RunnerWorkspace: {
             checkout: boolean;
@@ -4366,6 +4404,61 @@ export interface operations {
                 };
             };
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    resolve_runner_lease_secrets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lease_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunnerSecretResolveRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerSecretResolveResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

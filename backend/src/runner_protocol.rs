@@ -6,7 +6,7 @@ use std::{
 use axum::{
     Json, Router,
     extract::{Path, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::post,
 };
@@ -30,6 +30,8 @@ const MAX_NAME_LEN: usize = 128;
 const MAX_DIAGNOSTIC_LEN: usize = 4096;
 const MAX_LOG_LINES: usize = 100;
 const MAX_LOG_MESSAGE_LEN: usize = 8192;
+const MAX_SECRET_NAMES: usize = 64;
+const SECRET_BUNDLE_TTL_SECONDS: i64 = 300;
 
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
@@ -43,6 +45,10 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route(
             "/api/v1/runner/leases/{lease_id}/renew",
             post(renew_runner_lease),
+        )
+        .route(
+            "/api/v1/runner/leases/{lease_id}/secrets:resolve",
+            post(resolve_runner_lease_secrets),
         )
         .route(
             "/api/v1/runner/leases/{lease_id}/logs",
@@ -146,6 +152,7 @@ pub(crate) struct RunnerAttemptSpec {
     image: String,
     commands: Vec<String>,
     environment: BTreeMap<String, String>,
+    secrets: Vec<String>,
     timeout_seconds: i32,
     workspace: RunnerWorkspace,
     artifacts: Vec<String>,
@@ -174,6 +181,31 @@ pub(crate) struct RunnerLeaseControlResponse {
     lease_expires_at: DateTime<Utc>,
     renew_after: DateTime<Utc>,
     cancel_requested: bool,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RunnerSecretResolveRequest {
+    protocol_version: i32,
+    lease_token: String,
+    fencing_token: i64,
+    secret_names: Vec<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RunnerSecretResolveResponse {
+    protocol_version: i32,
+    expires_at: DateTime<Utc>,
+    items: Vec<RunnerSecretItem>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RunnerSecretItem {
+    name: String,
+    injection: String,
+    value: String,
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -249,6 +281,7 @@ struct ClaimedWork {
     git_ref: String,
     commit_sha: Option<String>,
     repository_url: String,
+    required_secrets: Vec<String>,
     generation: i64,
     lease_expires_at: DateTime<Utc>,
     ack_deadline: DateTime<Utc>,
@@ -280,6 +313,12 @@ struct CompleteLeaseRow {
 struct RunnerLogLeaseRow {
     job_id: Uuid,
     attempt_id: Uuid,
+}
+
+#[derive(Debug, FromRow)]
+struct RunnerSecretLeaseRow {
+    project_id: Uuid,
+    required_secrets: Vec<String>,
 }
 
 #[utoipa::path(
@@ -549,6 +588,89 @@ pub(crate) async fn renew_runner_lease(
 
 #[utoipa::path(
     post,
+    path = "/api/v1/runner/leases/{lease_id}/secrets:resolve",
+    tag = "runner-protocol",
+    request_body = RunnerSecretResolveRequest,
+    params(("lease_id" = Uuid, Path)),
+    responses((status = 200, body = RunnerSecretResolveResponse), (status = 400), (status = 401), (status = 403), (status = 409), (status = 410))
+)]
+pub(crate) async fn resolve_runner_lease_secrets(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(lease_id): Path<Uuid>,
+    Json(input): Json<RunnerSecretResolveRequest>,
+) -> Result<Response, ApiError> {
+    validate_protocol_version(input.protocol_version)?;
+    if input.fencing_token < 1 || input.lease_token.trim().is_empty() {
+        return Err(ApiError::bad_request(
+            "lease token and fencing token are required",
+        ));
+    }
+    let requested = normalize_secret_names(&input.secret_names)?;
+
+    let db = pool(&state)?;
+    let runner = authenticate_runner(db, &headers).await?;
+    let token_hash = crate::auth::hash_token(input.lease_token.trim());
+    let row = sqlx::query_as::<_, RunnerSecretLeaseRow>(
+        "SELECT p.project_id, j.required_secrets \
+         FROM job_leases l \
+         JOIN jobs j ON j.id = l.job_id \
+         JOIN execution_attempts a ON a.id = l.attempt_id \
+         JOIN stages s ON s.id = j.stage_id \
+         JOIN pipelines p ON p.id = s.pipeline_id \
+         WHERE l.id = $1 \
+           AND l.runner_id = $2 \
+           AND l.lease_status = 'active' \
+           AND l.lease_token_hash = $3 \
+           AND l.generation = $4 \
+           AND l.lease_expires_at > now() \
+           AND l.acknowledged_at IS NOT NULL \
+           AND j.status = 'running' \
+           AND a.status = 'running'",
+    )
+    .bind(lease_id)
+    .bind(runner.id)
+    .bind(token_hash)
+    .bind(input.fencing_token)
+    .fetch_optional(db)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let Some(row) = row else {
+        return Err(lease_mutation_error(db, lease_id).await);
+    };
+
+    let allowed: BTreeSet<&str> = row.required_secrets.iter().map(String::as_str).collect();
+    if requested
+        .iter()
+        .any(|secret_name| !allowed.contains(secret_name.as_str()))
+    {
+        return Err(ApiError::forbidden());
+    }
+
+    let pairs =
+        crate::platform::project_secret_pairs_for_names(db, row.project_id, &requested).await?;
+    let response_body = RunnerSecretResolveResponse {
+        protocol_version: PROTOCOL_VERSION,
+        expires_at: Utc::now() + Duration::seconds(SECRET_BUNDLE_TTL_SECONDS),
+        items: pairs
+            .into_iter()
+            .map(|(name, value)| RunnerSecretItem {
+                name,
+                injection: "env".to_string(),
+                value,
+            })
+            .collect(),
+    };
+    let mut response = Json(response_body).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    Ok(response)
+}
+
+#[utoipa::path(
+    post,
     path = "/api/v1/runner/leases/{lease_id}/logs",
     tag = "runner-protocol",
     request_body = RunnerLogAppendRequest,
@@ -768,7 +890,8 @@ async fn claim_next_work(
              SELECT q.id AS queue_id, q.attempt_id, \
                     j.id AS job_id, j.stage_id, j.name AS job_name, j.image, j.command, \
                     LEAST(GREATEST(COALESCE(j.timeout_seconds, 3600), 5), 86400)::integer AS timeout_seconds, \
-                    s.pipeline_id, p.git_ref, p.commit_sha, pr.repository_url, pp.plan_sha256 \
+                    s.pipeline_id, p.git_ref, p.commit_sha, pr.repository_url, j.required_secrets, \
+                    pp.plan_sha256 \
              FROM job_queue q \
              JOIN jobs j ON j.id = q.job_id \
              JOIN execution_attempts a ON a.id = q.attempt_id \
@@ -842,8 +965,8 @@ async fn claim_next_work(
          ) \
          SELECT cq.lease_id, c.job_id, c.stage_id, ca.id AS attempt_id, ca.attempt_no, \
                 c.pipeline_id, c.job_name, c.image, c.command, c.timeout_seconds, \
-                c.git_ref, c.commit_sha, c.repository_url, cq.generation, cq.lease_expires_at, \
-                cq.ack_deadline, c.plan_sha256 \
+                c.git_ref, c.commit_sha, c.repository_url, c.required_secrets, cq.generation, \
+                cq.lease_expires_at, cq.ack_deadline, c.plan_sha256 \
          FROM candidate c \
          CROSS JOIN claimed_attempt ca \
          CROSS JOIN claimed_queue cq",
@@ -885,6 +1008,7 @@ async fn claim_next_work(
             image: row.image,
             commands: vec![row.command],
             environment: BTreeMap::new(),
+            secrets: row.required_secrets,
             timeout_seconds: row.timeout_seconds,
             workspace: RunnerWorkspace {
                 checkout: true,
@@ -1030,6 +1154,39 @@ fn poll_runner_tags(
         ));
     }
     Ok(requested)
+}
+
+fn normalize_secret_names(names: &[String]) -> Result<Vec<String>, ApiError> {
+    if names.is_empty() || names.len() > MAX_SECRET_NAMES {
+        return Err(ApiError::bad_request(
+            "secret names must match ^[A-Z][A-Z0-9_]{0,127}$ and require 1..64 items",
+        ));
+    }
+    let mut normalized = BTreeSet::new();
+    for name in names {
+        let name = name.trim();
+        if !valid_secret_name(name) {
+            return Err(ApiError::bad_request(
+                "secret names must match ^[A-Z][A-Z0-9_]{0,127}$ and require 1..64 items",
+            ));
+        }
+        normalized.insert(name.to_string());
+    }
+    Ok(normalized.into_iter().collect())
+}
+
+fn valid_secret_name(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.is_empty() || bytes.len() > 128 {
+        return false;
+    }
+    let first = bytes[0];
+    if !first.is_ascii_uppercase() {
+        return false;
+    }
+    bytes
+        .iter()
+        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || *b == b'_')
 }
 
 fn valid_tag(value: &str) -> bool {
@@ -1213,6 +1370,22 @@ mod tests {
             vec!["linux".to_string()]
         );
         assert!(poll_runner_tags(&runner, &["prod".to_string()]).is_err());
+    }
+
+    #[test]
+    fn runner_secret_names_are_normalized_and_required() {
+        assert_eq!(
+            normalize_secret_names(&[
+                " DEPLOY_TOKEN ".to_string(),
+                "DEPLOY_TOKEN".to_string(),
+                "AWS_ACCESS_KEY_ID".to_string(),
+            ])
+            .unwrap(),
+            vec!["AWS_ACCESS_KEY_ID".to_string(), "DEPLOY_TOKEN".to_string()]
+        );
+        assert!(normalize_secret_names(&[]).is_err());
+        assert!(normalize_secret_names(&["deploy_token".to_string()]).is_err());
+        assert!(normalize_secret_names(&vec!["A".to_string(); 65]).is_err());
     }
 
     #[test]

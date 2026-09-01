@@ -101,6 +101,16 @@ export function PipelineDetailPage() {
                       ))}
                     </div>
                   )}
+                  {job.required_secrets.length > 0 && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-text-muted">
+                      <span>{t('jobs.secrets')}:</span>
+                      {job.required_secrets.map(secret => (
+                        <code key={secret} className="rounded bg-surface-raised px-1.5 py-0.5 text-text-primary">
+                          {secret}
+                        </code>
+                      ))}
+                    </div>
+                  )}
                   <div className="mt-3 flex flex-wrap items-center gap-1.5">
                     {job.status === 'queued' && (
                       <Button size="sm" variant="outline" onClick={() => handleStatus(job.id, 'running')}>

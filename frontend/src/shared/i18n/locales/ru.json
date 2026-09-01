@@ -138,6 +138,7 @@
     "image": "Образ",
     "command": "Команда",
     "runnerTags": "Теги runner",
+    "secrets": "Секреты",
     "attempt": "Попытка",
     "trigger": "Источник",
     "exitCode": "Код выхода",

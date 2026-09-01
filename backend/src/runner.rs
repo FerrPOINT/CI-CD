@@ -464,7 +464,7 @@ fn lease_status_for_terminal(terminal_status: &str) -> &'static str {
 
 async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Result<(), ApiError> {
     let job = sqlx::query_as::<_, JobRow>(
-        "SELECT j.id, j.stage_id, j.name, j.image, j.command, j.status, \
+        "SELECT j.id, j.stage_id, j.name, j.image, j.command, j.required_secrets, j.status, \
                 s.pipeline_id, p.project_id, s.name AS stage_name, \
                 p.git_ref, p.commit_sha, pr.name AS project_name \
          FROM jobs j JOIN stages s ON s.id = j.stage_id \
@@ -498,10 +498,13 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
 
     let workspace = prepare_workspace(&pool, &job).await?;
 
-    // REQ-SEC-002: inject project secrets as env vars; mask them in logs.
-    let secrets = crate::platform::project_secret_pairs(&pool, job.project_id)
-        .await
-        .unwrap_or_default();
+    // REQ-SEC-002: inject only job-declared project secrets as env vars.
+    let secrets = crate::platform::project_secret_pairs_for_names(
+        &pool,
+        job.project_id,
+        &job.required_secrets,
+    )
+    .await?;
     let masks: Vec<String> = secrets
         .iter()
         .filter(|(_, v)| !v.is_empty())
@@ -835,6 +838,7 @@ struct JobRow {
     #[allow(dead_code)]
     image: String,
     command: String,
+    required_secrets: Vec<String>,
     status: String,
     #[allow(dead_code)]
     pipeline_id: Uuid,

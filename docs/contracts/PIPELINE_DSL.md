@@ -13,7 +13,7 @@ Forge читает `.forge-ci.yml` только из полного immutable `r
 | Область | Current verified | Target approved |
 |---|---|---|
 | Формат | unversioned `stages`/`jobs` + v1 subset `version: 1`/top-level `jobs` | обязательный `version: 1`, job-level DAG |
-| Job | legacy `name`/`image`/один `command`; v1 `jobs.<key>` с `commands`, `needs`, `defaults.image/timeout/tags`, `jobs.*.tags`, `allow_failure` | mapping `jobs.<key>` с `commands`, `needs`, policy и metadata |
+| Job | legacy `name`/`image`/один `command`; v1 `jobs.<key>` с `commands`, `needs`, `defaults.image/timeout/tags`, `jobs.*.tags`, `jobs.*.secrets`, `allow_failure` | mapping `jobs.<key>` с `commands`, `needs`, policy и metadata |
 | Порядок | legacy порядок stages; v1 `needs` валидируется и проецируется в топологические runtime-стадии `dag-*`; snapshot хранит dependency edges | `needs` определяет DAG; stages не задают зависимости |
 | Trigger | pipeline создаётся manual или текущим Git push hook | `on.push`, `on.pull_request`, `on.schedule` |
 | Parser | `serde_yaml`, durable `pipeline_plans` snapshot с parser version `forge-legacy-linear/1` или `forge-dsl/1.0.0`, config/plan SHA-256 | safe parser, line/column diagnostics, full policy-aware immutable plan |
@@ -32,7 +32,7 @@ stages:
 
 Пустые stages отбрасываются; после этого нужен хотя бы один job. `image` по умолчанию `alpine:3.21`. Legacy режим сохраняет immutable `legacy-linear` snapshot и остаётся compatibility behaviour.
 
-Текущий v1 MVP принимает `version: 1`, `defaults.image`, `defaults.timeout`, `defaults.tags`, top-level `jobs`, `jobs.*.needs`, `jobs.*.image`, `jobs.*.commands`, `jobs.*.timeout`, `jobs.*.tags` и `jobs.*.allow_failure`:
+Текущий v1 MVP принимает `version: 1`, `defaults.image`, `defaults.timeout`, `defaults.tags`, top-level `jobs`, `jobs.*.needs`, `jobs.*.image`, `jobs.*.commands`, `jobs.*.timeout`, `jobs.*.tags`, `jobs.*.secrets` и `jobs.*.allow_failure`:
 
 ```yaml
 version: 1
@@ -47,12 +47,13 @@ jobs:
     needs: [build]
     image: rust:1.86
     tags: [linux]
+    secrets: [DEPLOY_TOKEN]
     commands:
       - cargo test
       - cargo clippy --all-targets
 ```
 
-V1 MVP валидирует job keys, `needs`, циклы, unsafe image reference, runner tags, число jobs/edges/commands и timeout до 24h. Runtime пока использует stage-barrier projection, поэтому DAG проецируется в топологические стадии `dag-0`, `dag-1`, ...; `commands[]` собираются в shell script с `set -e`, чтобы выполнение останавливалось на первой ошибке. Сохранённый `pipeline_plans.plan` содержит исходные job keys, `commands[]`, `needs[]`, `required_tags[]`, runtime command и dependency edges. `job_queue.required_tags` используется external runner protocol claim-ом; embedded runner выполняет только jobs без tags. Ключи `on`, `retry`, `artifacts`, `secrets` и policy diagnostics пока не исполняются и не игнорируются молча: такой config отклоняется как unsupported/unknown.
+V1 MVP валидирует job keys, `needs`, циклы, unsafe image reference, runner tags, secret names, число jobs/edges/commands/secrets и timeout до 24h. Runtime пока использует stage-barrier projection, поэтому DAG проецируется в топологические стадии `dag-0`, `dag-1`, ...; `commands[]` собираются в shell script с `set -e`, чтобы выполнение останавливалось на первой ошибке. Сохранённый `pipeline_plans.plan` содержит исходные job keys, `commands[]`, `needs[]`, `required_tags[]`, `required_secrets[]`, runtime command и dependency edges. `job_queue.required_tags` используется external runner protocol claim-ом; embedded runner выполняет только jobs без tags. `jobs.*.secrets` сохраняется как allow-list имён: embedded runner inject-ит только эти project secrets, а external runner получает только их через lease-scoped `secrets:resolve` после ack. Ключи `on`, `retry`, `artifacts` и policy diagnostics пока не исполняются и не игнорируются молча: такой config отклоняется как unsupported/unknown.
 
 ## 3. Грамматика target v1
 
@@ -110,7 +111,7 @@ jobs:
 
 Job наследует scalar/object defaults только если ключ отсутствует; list `tags` не объединяется, а заменяет defaults. `commands` обязателен после inheritance, содержит 1..64 непустых строк и выполняется в порядке списка. `needs: []` означает source node. Цикл, self-dependency, ссылка на отсутствующий job или дублирующий key - planning error без queue row.
 
-Current v1 MVP поддерживает только `version`, `defaults.image`, `defaults.timeout`, `defaults.tags`, `jobs`, `needs`, `image`, `commands`, `timeout`, `tags` и `allow_failure`. Остальные ключи из target table включаются только вместе с соответствующими execution/storage/secret/policy механизмами.
+Current v1 MVP поддерживает только `version`, `defaults.image`, `defaults.timeout`, `defaults.tags`, `jobs`, `needs`, `image`, `commands`, `timeout`, `tags`, `secrets` и `allow_failure`. Остальные ключи из target table включаются только вместе с соответствующими execution/storage/policy механизмами.
 
 `retry.max_attempts` от 1 до 5. Default: `1`; для deploy/protected pools default и maximum могут быть дополнительно уменьшены policy. Допустимые `retry_on`: `runner_lost`, `infrastructure`, `timeout`; project exit code, parser/policy error, cancellation и stale lease не повторяются без отдельной policy.
 

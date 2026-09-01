@@ -116,7 +116,7 @@ git push -u origin main
 git clone http://any-user:<TOKEN>@<host>/git/my-service.git
 ```
 
-Pipeline читает `.forge-ci.yml`, если он доступен в локальном bare repository; иначе используется шаблон build/test/deploy. Поддерживаются две формы: legacy `stages` с jobs, `image`, одиночным `command`, basic `timeout`, `allow_failure` и `manual`; а также v1 DAG MVP с `version: 1`, top-level `jobs`, `commands`, `needs`, `tags`, defaults `image/timeout/tags` и `allow_failure`. V1 `tags` попадают в `required_tags`, external runner получает только совместимую работу; protected tags/pools/capabilities, ключи `on`, retry, scoped secrets и declared artifacts остаются **Target approved**, см. `docs/contracts/PIPELINE_DSL.md`.
+Pipeline читает `.forge-ci.yml`, если он доступен в локальном bare repository; иначе используется шаблон build/test/deploy. Поддерживаются две формы: legacy `stages` с jobs, `image`, одиночным `command`, basic `timeout`, `allow_failure` и `manual`; а также v1 DAG MVP с `version: 1`, top-level `jobs`, `commands`, `needs`, `tags`, `secrets`, defaults `image/timeout/tags` и `allow_failure`. V1 `tags` попадают в `required_tags`, external runner получает только совместимую работу; `jobs.*.secrets` попадает в `required_secrets`, и runner получает только эти project secrets. Protected tags/pools/capabilities, ключи `on`, retry и declared artifacts остаются **Target approved**, см. `docs/contracts/PIPELINE_DSL.md`.
 
 ```yaml
 stages:
@@ -161,7 +161,7 @@ Embedded runner каждые две секунды выбирает доступ
 4. Для live-tail доступен `GET /api/v1/jobs/{job_id}/logs/stream?after=<sequence>` по текущей/последней attempt.
 5. При анализе ошибки сопоставьте последнюю строку лога с image и command job; панель логов читает строки страницами и поддерживает поиск, а более богатые command spans и stream classification остаются target diagnostic logs.
 
-> Значения project secrets передаются embedded runner в env и маскируются в stdout/stderr logs best-effort. Всё равно не выводите секреты намеренно: target redaction во всех audit/error/trace каналах ещё не завершён.
+> Значения project secrets передаются runner-у только для имён, объявленных job в `secrets`, и маскируются в stdout/stderr logs best-effort. Всё равно не выводите секреты намеренно: target redaction во всех audit/error/trace каналах ещё не завершён.
 
 ### Артефакты
 
@@ -216,7 +216,17 @@ Retention/TTL, S3 и multipart upload - **Target approved**.
 
 Для автоматизации используйте защищённый API-клиент, который отправляет JSON вида `{"key":"DEPLOY_TOKEN","value":"..."}` без записи значения в shell history или CI log.
 
-**Ограничение:** embedded runner получает project secrets целиком; master-key rotation, scoped secret selection из DSL, per-environment policy и lease-based выдача секретов внешним runner-ам - **Target approved**.
+Чтобы job получила секрет, объявите имя в v1 `.forge-ci.yml`:
+
+```yaml
+version: 1
+jobs:
+  deploy:
+    commands: ["./deploy.sh"]
+    secrets: [DEPLOY_TOKEN]
+```
+
+Embedded runner inject-ит только объявленные `jobs.required_secrets`. External `forge-runner` после ack lease вызывает `secrets:resolve`, получает только declared names и передаёт их в env; stdout/stderr masking остаётся best-effort. Master-key rotation, per-environment policy и full redaction во всех каналах - **Target approved**.
 
 ![Секреты проекта](screenshots/14-secrets.png)
 
@@ -390,13 +400,13 @@ curl -fsS -X POST "http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines"
 
 **Статус процедуры: Current verified.**
 
-В деталях pipeline используйте **Cancel** для каскадной отмены нетерминальных jobs или **Retry** для нового запуска того же project/ref. Отдельную terminal job можно повторить её кнопкой **Retry**. Учитывайте, что secret injection работает только для текущего embedded runner; current `forge-runner` shell MVP выполняет checkout/commands, отправляет stdout/stderr logs и terminal completion, но ещё не заменяет target scoped secret/artifact leases.
+В деталях pipeline используйте **Cancel** для каскадной отмены нетерминальных jobs или **Retry** для нового запуска того же project/ref. Отдельную terminal job можно повторить её кнопкой **Retry**. Secret injection работает через declared `jobs.*.secrets`: embedded runner inject-ит только объявленные project secrets, а current `forge-runner` shell MVP после `ack` получает lease-scoped secret bundle, передаёт его в env, маскирует stdout/stderr и отправляет terminal completion. Protocol artifacts, richer log chunks и production sandbox остаются target.
 
 ### Где найти логи и почему они не меняются?
 
 **Статус процедуры: Current verified.**
 
-Откройте job и **Logs** или вызовите `GET /api/v1/jobs/{job_id}/attempts` вместе с `/attempts/{attempt_id}/logs`. Логи append-only в рамках выбранной attempt; у queued job может ещё не быть строк. Если после retry shortcut `/logs` показывает пустой текущий запуск, переключитесь на предыдущую attempt для старой диагностики и проверьте status job, image, command и доступность Docker/host shell для embedded runner. Для external `forge-runner` current MVP уже отправляет stdout/stderr в централизованные logs через runner protocol; richer chunk/idempotency и artifact/secret protocol остаются target.
+Откройте job и **Logs** или вызовите `GET /api/v1/jobs/{job_id}/attempts` вместе с `/attempts/{attempt_id}/logs`. Логи append-only в рамках выбранной attempt; у queued job может ещё не быть строк. Если после retry shortcut `/logs` показывает пустой текущий запуск, переключитесь на предыдущую attempt для старой диагностики и проверьте status job, image, command и доступность Docker/host shell для embedded runner. Для external `forge-runner` current MVP уже отправляет stdout/stderr в централизованные logs через runner protocol и резолвит declared secrets отдельным lease-scoped endpoint; richer chunk/idempotency и artifact protocol остаются target.
 
 ### Как безопасно передать credential в job?
 
