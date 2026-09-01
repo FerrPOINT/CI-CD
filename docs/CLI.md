@@ -164,13 +164,13 @@ cicd-cli token revoke --id <TOKEN_UUID>
 
 ## Контракт
 
-Группы команд и флаги зафиксированы тестом `backend/cli/tests/cli_contract.rs`: control-plane groups, `--token`, `--timeout-seconds`, `--output`, pagination flags, job attempts/logs, `--idempotency-key` и ключевые platform mutations. Real HTTP/API/PostgreSQL smoke зафиксирован в `backend/cli/tests/cli_real_api.rs`: проект create/list, idempotent pipeline run, attempt history, protected deployment approval, env/flag config precedence, bounded HTTP timeout, JSON output и non-zero API error exit. Изменение публичного CLI surface требует обновления тестов и этого документа.
+Группы команд и флаги зафиксированы тестом `backend/cli/tests/cli_contract.rs`: control-plane groups, `--token`, `--timeout-seconds`, `--output`, pagination flags, job attempts/logs, `--idempotency-key` и ключевые platform mutations. Real HTTP/API/PostgreSQL smoke зафиксирован в `backend/cli/tests/cli_real_api.rs`: проект create/list, idempotent pipeline run, attempt history, protected deployment approval, env/flag config precedence, bounded HTTP timeout, JWT/PAT auth-mode, RBAC denial, project-scoped read-only PAT, token redaction на failure, JSON output и non-zero API error exit. Изменение публичного CLI surface требует обновления тестов и этого документа.
 
 ## Границы MVP
 
 - CLI использует только публичный HTTP API и повторяет его текущие ограничения auth/RBAC, pagination и validation.
 - Stable JSON есть сейчас; `table` является lightweight TSV-like представлением для ручной работы, не production reporting format.
-- Profiles, OS keyring, shell completion, request tracing headers, YAML/NDJSON, token redaction fixtures и full auth/RBAC CLI E2E остаются target из `docs/DELIVERY_ARCHITECTURE.md`.
+- Profiles, OS keyring, shell completion, request tracing headers, YAML/NDJSON и расширенные token redaction fixtures остаются target из `docs/DELIVERY_ARCHITECTURE.md`.
 - External email/Slack adapters и inbound provider webhooks по-прежнему target: CLI управляет текущими local notification/outbox/webhook MVP routes.
 
 ## References
