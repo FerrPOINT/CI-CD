@@ -21,6 +21,7 @@ const PROTOCOL_VERSION: i32 = 1;
 const CONTROL_POLL_INTERVAL_SECONDS: u64 = 2;
 const MAX_ARTIFACT_BYTES: u64 = 50 * 1024 * 1024;
 const SERVER_POLL_WAIT_MAX_SECONDS: u64 = 30;
+const RUNNER_HEARTBEAT_INTERVAL_SECONDS: u64 = 15;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -145,6 +146,21 @@ struct LogContext {
     masks: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+struct HeartbeatConfig {
+    total_slots: i32,
+    tags: Vec<String>,
+}
+
+impl HeartbeatConfig {
+    fn from_cli(cli: &Cli) -> Self {
+        Self {
+            total_slots: cli.total_slots,
+            tags: cli.tags.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct RunnerLogLine {
@@ -259,6 +275,25 @@ async fn heartbeat(
     busy_slots: i32,
     active_lease_ids: &[Uuid],
 ) -> anyhow::Result<()> {
+    heartbeat_with_config(
+        client,
+        base,
+        credential,
+        &HeartbeatConfig::from_cli(cli),
+        busy_slots,
+        active_lease_ids,
+    )
+    .await
+}
+
+async fn heartbeat_with_config(
+    client: &reqwest::Client,
+    base: &str,
+    credential: &str,
+    config: &HeartbeatConfig,
+    busy_slots: i32,
+    active_lease_ids: &[Uuid],
+) -> anyhow::Result<()> {
     let response = client
         .post(format!("{base}/api/v1/runner/heartbeat"))
         .bearer_auth(credential)
@@ -267,10 +302,10 @@ async fn heartbeat(
             "status": "online",
             "draining": false,
             "capacity": {
-                "totalSlots": cli.total_slots,
+                "totalSlots": config.total_slots,
                 "busySlots": busy_slots,
             },
-            "tags": &cli.tags,
+            "tags": &config.tags,
             "capabilities": runner_capabilities(),
             "activeLeaseIds": active_lease_ids,
         }))
@@ -332,9 +367,33 @@ async fn run_offer(
         offer.lease_id, offer.attempt.id, offer.attempt.job_key
     );
     ack_lease(client, base, credential, &offer).await?;
+    heartbeat(client, base, credential, cli, 1, &[offer.lease_id]).await?;
+
+    let heartbeat_config = HeartbeatConfig::from_cli(cli);
+    let active_lease_ids = vec![offer.lease_id];
+    let (stop_tx, stop_rx) = watch::channel(false);
+    let renew_task = tokio::spawn(renew_loop(
+        client.clone(),
+        base.to_owned(),
+        credential.to_owned(),
+        offer.lease_id,
+        offer.lease_token.clone(),
+        offer.fencing_token,
+        stop_rx.clone(),
+    ));
+    let heartbeat_task = tokio::spawn(heartbeat_loop(
+        client.clone(),
+        base.to_owned(),
+        credential.to_owned(),
+        heartbeat_config,
+        active_lease_ids,
+        stop_rx,
+    ));
+
     let secret_env = match resolve_lease_secrets(client, base, credential, &offer).await {
         Ok(secret_env) => secret_env,
         Err(error) => {
+            stop_lease_background_tasks(&stop_tx, renew_task, heartbeat_task).await;
             let completion_result = complete_lease(
                 client,
                 base,
@@ -358,18 +417,6 @@ async fn run_offer(
         .filter(|(_, value)| !value.is_empty())
         .map(|(_, value)| value.clone())
         .collect();
-    heartbeat(client, base, credential, cli, 1, &[offer.lease_id]).await?;
-
-    let (stop_tx, stop_rx) = watch::channel(false);
-    let renew_task = tokio::spawn(renew_loop(
-        client.clone(),
-        base.to_owned(),
-        credential.to_owned(),
-        offer.lease_id,
-        offer.lease_token.clone(),
-        offer.fencing_token,
-        stop_rx,
-    ));
     let log_context = LogContext {
         client: client.clone(),
         base: base.to_owned(),
@@ -381,8 +428,7 @@ async fn run_offer(
         masks,
     };
     let result = execute_attempt(cli, &offer, Some(log_context), &secret_env).await;
-    let _ = stop_tx.send(true);
-    let _ = renew_task.await;
+    stop_lease_background_tasks(&stop_tx, renew_task, heartbeat_task).await;
 
     let completion_result = match result {
         Ok(result) => complete_lease(client, base, credential, &offer, result).await,
@@ -426,6 +472,56 @@ async fn ack_lease(
         .await
         .context("ack request failed")?;
     ensure_success(response).await.context("ack failed")
+}
+
+async fn stop_lease_background_tasks(
+    stop_tx: &watch::Sender<bool>,
+    renew_task: tokio::task::JoinHandle<()>,
+    heartbeat_task: tokio::task::JoinHandle<()>,
+) {
+    let _ = stop_tx.send(true);
+    renew_task.abort();
+    heartbeat_task.abort();
+    let _ = renew_task.await;
+    let _ = heartbeat_task.await;
+}
+
+fn active_busy_slots(total_slots: i32, active_lease_ids: &[Uuid]) -> i32 {
+    active_lease_ids.len().min(total_slots.max(0) as usize) as i32
+}
+
+async fn heartbeat_loop(
+    client: reqwest::Client,
+    base: String,
+    credential: String,
+    config: HeartbeatConfig,
+    active_lease_ids: Vec<Uuid>,
+    mut stop_rx: watch::Receiver<bool>,
+) {
+    loop {
+        tokio::select! {
+            changed = stop_rx.changed() => {
+                if changed.is_err() || *stop_rx.borrow() {
+                    return;
+                }
+            }
+            _ = tokio::time::sleep(Duration::from_secs(RUNNER_HEARTBEAT_INTERVAL_SECONDS)) => {
+                let busy_slots = active_busy_slots(config.total_slots, &active_lease_ids);
+                if let Err(error) = heartbeat_with_config(
+                    &client,
+                    &base,
+                    &credential,
+                    &config,
+                    busy_slots,
+                    &active_lease_ids,
+                )
+                .await
+                {
+                    eprintln!("active heartbeat failed: {error:#}");
+                }
+            }
+        }
+    }
 }
 
 async fn resolve_lease_secrets(
@@ -480,8 +576,8 @@ async fn renew_loop(
 ) {
     loop {
         tokio::select! {
-            _ = stop_rx.changed() => {
-                if *stop_rx.borrow() {
+            changed = stop_rx.changed() => {
+                if changed.is_err() || *stop_rx.borrow() {
                     return;
                 }
             }
@@ -1153,6 +1249,15 @@ mod tests {
             empty_poll_sleep_duration(&cli, Duration::from_secs(30)),
             Some(Duration::from_secs(270))
         );
+    }
+
+    #[test]
+    fn active_heartbeat_busy_slots_are_capped_by_runner_capacity() {
+        let leases = vec![Uuid::new_v4(), Uuid::new_v4()];
+
+        assert_eq!(active_busy_slots(4, &leases), 2);
+        assert_eq!(active_busy_slots(1, &leases), 1);
+        assert_eq!(active_busy_slots(0, &leases), 0);
     }
 
     #[test]

@@ -436,7 +436,7 @@ Durable dispatch ledger для current queued attempts. Trigger/retry/manual sta
 
 ## 5.2 job_leases
 
-Durable ledger владения execution attempt. Текущий MVP использует таблицу для embedded runner и external runner protocol: claim одним SQL statement переводит compatible `job_queue` row в `leased`, `jobs` и `execution_attempts` в `running`, создаёт active lease и фиксирует generation/expiry. Embedded runner закрывает lease при terminal result/cancel, reconciler закрывает expired/missing owner, а external protocol дополнительно хранит hash lease token, ack deadline, ack/renew state и protocol version, плюс проверяет current `shell` executor compatibility перед claim. `forge-runner` уже работает как отдельный shell process поверх этой модели, получает declared secrets и загружает declared artifact files через lease-scoped endpoint; production chunked artifact sessions, protected tag/pool policy, advanced capability matching, sandbox и lost-heartbeat policy остаются target.
+Durable ledger владения execution attempt. Текущий MVP использует таблицу для embedded runner и external runner protocol: claim одним SQL statement переводит compatible `job_queue` row в `leased`, `jobs` и `execution_attempts` в `running`, создаёт active lease и фиксирует generation/expiry. Embedded runner закрывает lease при terminal result/cancel, reconciler закрывает expired/missing owner, а external protocol дополнительно хранит hash lease token, ack deadline, ack/renew state и protocol version, плюс проверяет current `shell` executor compatibility перед claim. `forge-runner` уже работает как отдельный shell process поверх этой модели, получает declared secrets, держит active-lease heartbeat и загружает declared artifact files через lease-scoped endpoint; stale-runner reconciliation не переводит runner в `offline`, пока за ним есть unexpired active lease. Production chunked artifact sessions, protected tag/pool policy, advanced capability matching, sandbox и расширенная restart/race lost-runner suite остаются target.
 
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
@@ -592,6 +592,8 @@ Platform tables создаются и расширяются через `backend
 | `capabilities` | JSONB | NOT NULL | `'{}'` | Capability descriptor external runner-а |
 | `heartbeat_payload` | JSONB | NOT NULL | `'{}'` | Последний protocol heartbeat payload без secret values |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | Время регистрации |
+
+Runtime maintenance переводит `status='online'` в `offline`, когда `last_seen_at` старше 120 секунд и у runner-а нет unexpired active row в `job_leases`. Это сохраняет живые long-running attempts для runner-ов, которые продолжают renew/heartbeat, и не делает `last_seen_at` единственным источником истины для active execution.
 
 ### 9.2 project_secrets
 
@@ -880,7 +882,7 @@ idx_outbox_delivery_attempts_message ON outbox_delivery_attempts(message_id, att
 
 | Фаза | Таблицы | Назначение |
 |---|---|---|
-| External runner production boundary | credential rotation/revocation tables, richer artifact sessions, richer log chunks | `runners` + `job_queue` + `job_leases` уже покрывают protocol MVP: runner credential hash, heartbeat metadata, durable dispatch row с basic tag + current executor capability matching, lease token hash, `workspace.checkoutUrl`, ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, fencing generation и shell `forge-runner`; target добавляет richer identity lifecycle, protected tags/pools, advanced capability matching, sandbox и chunked protocol data planes |
+| External runner production boundary | credential rotation/revocation tables, richer artifact sessions, richer log chunks | `runners` + `job_queue` + `job_leases` уже покрывают protocol MVP: runner credential hash, heartbeat metadata, durable dispatch row с basic tag + current executor capability matching, lease token hash, `workspace.checkoutUrl`, ack/renew/control/`secrets:resolve`/artifact upload/logs/complete, fencing generation, stale offline reconciliation и shell `forge-runner` с active-lease heartbeat; target добавляет richer identity lifecycle, protected tags/pools, advanced capability matching, sandbox и chunked protocol data planes |
 | Production outbox | `outbox_deliveries` / lease state | Full dispatcher snapshots, lease/fencing, crash recovery, response preview allowlist и operator dead-letter policy поверх current bounded history |
 | External notifications | delivery-specific tables | Email/Slack sender state, templates, preferences |
 

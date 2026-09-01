@@ -14,14 +14,14 @@
 | `CICD_CORS_ALLOWED_ORIGINS` | — | Comma-separated allowlist browser origins для API/Git Dashboard CORS; пусто сохраняет permissive trusted-local режим, explicit `*` запрещён |
 | `CICD_SECRETS_KEY` | — | Base64 32-byte ключ AES-256-GCM (обязателен для secrets) |
 | `CICD_ARTIFACTS_DIR` | `/var/lib/forge/artifacts` | Локальное хранилище артефактов |
-| `CICD_EMBEDDED_RUNNER_ENABLED` | `true` | Включает embedded runner внутри backend; поставьте `false`, когда работу должен забирать внешний `forge-runner` |
+| `CICD_EMBEDDED_RUNNER_ENABLED` | `true` | Включает embedded runner внутри backend; при `false` работу забирает внешний `forge-runner`, а backend оставляет maintenance loop для lease expiry и stale-runner offline reconciliation |
 | `CICD_RUNNER_MODE` | `host` в compose | Режим embedded runner: `host` для локального evidence/dev; `docker` только если Docker executor/socket подключены явно |
 | `CICD_RUNNER_KEEP_WORKSPACE` | `false` | Не удалять workspace после job для embedded runner и `forge-runner` |
 | `CICD_RUNNER_REGISTRATION_TOKEN` | — | Bootstrap token для `POST /api/v1/runner/register`; пусто отключает регистрацию внешних runner-ов |
 | `CICD_RUNNER_CREDENTIAL` | — | Bearer credential уже зарегистрированного `forge-runner`; если пусто, runner регистрируется через `CICD_RUNNER_REGISTRATION_TOKEN` |
 | `CICD_RUNNER_NAME` | `forge-runner` | Имя внешнего runner process |
 | `CICD_RUNNER_TAGS` | `linux,host` | Теги внешнего runner process, через запятую |
-| `CICD_RUNNER_TOTAL_SLOTS` | `1` | Количество параллельных слотов, которое внешний runner сообщает в heartbeat/poll |
+| `CICD_RUNNER_TOTAL_SLOTS` | `1` | Количество слотов, которое внешний runner сообщает в heartbeat/poll; current `forge-runner` выполняет один offer за раз и сообщает active lease как busy slot |
 | `CICD_RUNNER_POLL_INTERVAL_SECONDS` | `5` | Интервал пустого poll внешнего `forge-runner`: server long-poll wait capped at 30s + fallback sleep для мгновенного `204` |
 | `CICD_RUNNER_NO_CHECKOUT` | `false` | Отключает Git checkout и создаёт пустой workspace для команд |
 | `CICD_RUNNER_WORK_DIR` | `/var/lib/forge/runner-work` в compose runner profile | Корень checkout workspace внешнего `forge-runner` |
@@ -42,12 +42,12 @@
 | Переменная | Default | Назначение |
 |---|---|---|
 | `CICD_RUNNER_MODE` | `docker` вне compose | Режим embedded runner binary: `docker` \| `host` |
-| `CICD_EMBEDDED_RUNNER_ENABLED` | `true` | Отключение embedded execution при запуске внешнего runner-а |
+| `CICD_EMBEDDED_RUNNER_ENABLED` | `true` | Отключение embedded execution при запуске внешнего runner-а; runtime maintenance для leases/stale runners продолжает работать |
 | `CICD_RUNNER_REGISTRATION_TOKEN` | пусто | Bootstrap token внешнего runner protocol MVP |
 | `CICD_RUNNER_CREDENTIAL` | пусто | Credential внешнего `forge-runner`, полученный при регистрации |
 | `CICD_RUNNER_NAME` | `forge-runner` | Имя внешнего runner-а |
 | `CICD_RUNNER_TAGS` | `linux,host` | Теги внешнего runner-а |
-| `CICD_RUNNER_TOTAL_SLOTS` | `1` | Capacity внешнего runner-а |
+| `CICD_RUNNER_TOTAL_SLOTS` | `1` | Capacity внешнего runner-а; current `forge-runner` выполняет один offer за раз и heartbeat-ит active lease |
 | `CICD_RUNNER_POLL_INTERVAL_SECONDS` | `5` | Интервал пустого poll: `forge-runner` передаёт `waitSeconds=min(value,30)` и досыпает остаток только после мгновенного `204` |
 | `CICD_RUNNER_NO_CHECKOUT` | `false` | Запускать команды в пустом workspace без Git checkout |
 | `CICD_RUNNER_WORK_DIR` | temp dir `forge-runner` | Workspace root внешнего runner-а |

@@ -47,6 +47,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::warn!(
             "CICD_EMBEDDED_RUNNER_ENABLED is false; queued jobs require an external forge-runner"
         );
+        let maintenance_pool = pool.clone();
+        tokio::spawn(async move {
+            runner::maintenance_loop(maintenance_pool).await;
+        });
     }
 
     // ADR-0006: outbox delivery + scheduler worker.

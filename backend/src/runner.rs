@@ -19,6 +19,9 @@ use uuid::Uuid;
 
 use crate::api::ApiError;
 
+const RUNNER_RECONCILE_INTERVAL_SECONDS: u64 = 2;
+const RUNNER_STALE_OFFLINE_AFTER_SECONDS: i64 = 120;
+
 /// Job processes currently executed by the embedded runner.
 /// Maps job_id -> child process id so that cancel can kill it.
 pub type RunningJobs = Arc<Mutex<HashMap<Uuid, u32>>>;
@@ -479,6 +482,28 @@ pub async fn reconcile_expired_leases(pool: &PgPool) -> Result<u64, sqlx::Error>
     }
 
     Ok(expired_jobs.len() as u64)
+}
+
+pub async fn reconcile_stale_runners(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE runners r \
+         SET status = 'offline', draining = false, capacity_busy_slots = 0 \
+         WHERE r.disabled_at IS NULL \
+           AND r.status = 'online' \
+           AND r.last_seen_at IS NOT NULL \
+           AND r.last_seen_at <= now() - ($1::bigint * interval '1 second') \
+           AND NOT EXISTS ( \
+             SELECT 1 \
+             FROM job_leases l \
+             WHERE l.runner_id = r.id \
+               AND l.lease_status = 'active' \
+               AND l.lease_expires_at > now() \
+           )",
+    )
+    .bind(RUNNER_STALE_OFFLINE_AFTER_SECONDS)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
 }
 
 async fn reconcile_unleased_running_jobs(pool: &PgPool) -> Result<u64, sqlx::Error> {
@@ -1184,73 +1209,25 @@ pub async fn supervisor_loop(pool: PgPool, running: RunningJobs) {
             Ok(()) => {}
             Err(error) => tracing::error!(%error, "runner poll failed"),
         }
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(Duration::from_secs(RUNNER_RECONCILE_INTERVAL_SECONDS)).await;
+    }
+}
+
+/// Reconciles leases and runner health when the embedded executor is disabled.
+pub async fn maintenance_loop(pool: PgPool) {
+    loop {
+        match reconcile_runtime_state(&pool).await {
+            Ok(()) => {}
+            Err(error) => tracing::error!(%error, "runner maintenance failed"),
+        }
+        tokio::time::sleep(Duration::from_secs(RUNNER_RECONCILE_INTERVAL_SECONDS)).await;
     }
 }
 
 /// Picks the first queued job of every non-terminal pipeline whose previous
 /// stages all finished successfully, and spawns it.
 async fn poll_and_dispatch(pool: &PgPool, running: RunningJobs) -> Result<(), sqlx::Error> {
-    let expired = reconcile_expired_leases(pool).await?;
-    if expired > 0 {
-        tracing::warn!(expired, "runner reconciled expired leases");
-    }
-
-    let unleased = reconcile_unleased_running_jobs(pool).await?;
-    if unleased > 0 {
-        tracing::warn!(
-            unleased,
-            "runner reconciled running jobs without active leases"
-        );
-    }
-
-    let canceled_leases = cancel_active_leases_for_canceled_pipelines(pool).await?;
-    if canceled_leases > 0 {
-        tracing::info!(
-            canceled_leases,
-            "runner signaled or closed active leases for canceled pipelines"
-        );
-    }
-
-    // Cancel jobs of canceled pipelines (queued and running).
-    sqlx::query(
-        "UPDATE jobs SET status = 'canceled', finished_at = now() \
-         WHERE status IN ('queued','running') AND stage_id IN \
-         (SELECT id FROM stages WHERE pipeline_id IN \
-          (SELECT id FROM pipelines WHERE status = 'canceled'))",
-    )
-    .execute(pool)
-    .await?;
-    sqlx::query(
-        "UPDATE execution_attempts \
-         SET status = 'canceled', \
-             finished_at = COALESCE(finished_at, now()), \
-             error_tail = COALESCE(error_tail, 'pipeline canceled') \
-         WHERE status IN ('queued','running') \
-           AND job_id IN ( \
-             SELECT j.id FROM jobs j \
-             JOIN stages s ON s.id = j.stage_id \
-             JOIN pipelines p ON p.id = s.pipeline_id \
-             WHERE p.status = 'canceled' \
-           )",
-    )
-    .execute(pool)
-    .await?;
-    sqlx::query(
-        "UPDATE stages SET status = 'canceled' \
-         WHERE status IN ('queued','running') \
-           AND pipeline_id IN (SELECT id FROM pipelines WHERE status = 'canceled')",
-    )
-    .execute(pool)
-    .await?;
-    sqlx::query(
-        "UPDATE job_queue \
-         SET state = 'canceled', completed_at = COALESCE(completed_at, now()), updated_at = now() \
-         WHERE state IN ('queued','leased') \
-           AND pipeline_id IN (SELECT id FROM pipelines WHERE status = 'canceled')",
-    )
-    .execute(pool)
-    .await?;
+    reconcile_runtime_state(pool).await?;
 
     let enqueued = crate::store::enqueue_missing_ready_jobs(pool).await?;
     if enqueued > 0 {
@@ -1299,6 +1276,79 @@ async fn poll_and_dispatch(pool: &PgPool, running: RunningJobs) -> Result<(), sq
             run_job(pool2, candidate.id, running2).await;
         });
     }
+    Ok(())
+}
+
+async fn reconcile_runtime_state(pool: &PgPool) -> Result<(), sqlx::Error> {
+    let expired = reconcile_expired_leases(pool).await?;
+    if expired > 0 {
+        tracing::warn!(expired, "runner reconciled expired leases");
+    }
+
+    let stale_runners = reconcile_stale_runners(pool).await?;
+    if stale_runners > 0 {
+        tracing::warn!(stale_runners, "runner marked stale runners offline");
+    }
+
+    let unleased = reconcile_unleased_running_jobs(pool).await?;
+    if unleased > 0 {
+        tracing::warn!(
+            unleased,
+            "runner reconciled running jobs without active leases"
+        );
+    }
+
+    let canceled_leases = cancel_active_leases_for_canceled_pipelines(pool).await?;
+    if canceled_leases > 0 {
+        tracing::info!(
+            canceled_leases,
+            "runner signaled or closed active leases for canceled pipelines"
+        );
+    }
+
+    cancel_jobs_for_canceled_pipelines(pool).await?;
+    Ok(())
+}
+
+async fn cancel_jobs_for_canceled_pipelines(pool: &PgPool) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE jobs SET status = 'canceled', finished_at = now() \
+         WHERE status IN ('queued','running') AND stage_id IN \
+         (SELECT id FROM stages WHERE pipeline_id IN \
+          (SELECT id FROM pipelines WHERE status = 'canceled'))",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "UPDATE execution_attempts \
+         SET status = 'canceled', \
+             finished_at = COALESCE(finished_at, now()), \
+             error_tail = COALESCE(error_tail, 'pipeline canceled') \
+         WHERE status IN ('queued','running') \
+           AND job_id IN ( \
+             SELECT j.id FROM jobs j \
+             JOIN stages s ON s.id = j.stage_id \
+             JOIN pipelines p ON p.id = s.pipeline_id \
+             WHERE p.status = 'canceled' \
+           )",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "UPDATE stages SET status = 'canceled' \
+         WHERE status IN ('queued','running') \
+           AND pipeline_id IN (SELECT id FROM pipelines WHERE status = 'canceled')",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "UPDATE job_queue \
+         SET state = 'canceled', completed_at = COALESCE(completed_at, now()), updated_at = now() \
+         WHERE state IN ('queued','leased') \
+           AND pipeline_id IN (SELECT id FROM pipelines WHERE status = 'canceled')",
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }
 

@@ -59,7 +59,7 @@
 {"protocolVersion":1,"status":"online","draining":false,"capacity":{"totalSlots":4,"busySlots":1},"tags":["linux","docker"],"capabilities":{},"activeLeaseIds":["uuid"]}
 ```
 
-Схема: `status` равен `online` или `draining`; `totalSlots` - 1..1024, `busySlots` - 0..`totalSlots`; current MVP нормализует optional tags, при наличии заменяет stored tags, при отсутствии сохраняет текущие tags, сохраняет optional object capabilities, валидирует optional `capabilities.executorKinds` и обновляет heartbeat snapshot. Ответ `204`. Protected-tag scope, capability allowlist и запрет изменения protected tags остаются target policy.
+Схема: `status` равен `online` или `draining`; `totalSlots` - 1..1024, `busySlots` - 0..`totalSlots`; current MVP нормализует optional tags, при наличии заменяет stored tags, при отсутствии сохраняет текущие tags, сохраняет optional object capabilities, валидирует optional `capabilities.executorKinds` и обновляет heartbeat snapshot. Во время active lease runner продолжает слать heartbeat с занятым слотом и `activeLeaseIds`; `forge-runner` делает это каждые 15 секунд после `ack` до terminal completion. Ответ `204`. Protected-tag scope, capability allowlist и запрет изменения protected tags остаются target policy.
 
 ## 3. Получение и подтверждение работы
 
@@ -176,7 +176,7 @@ Completion terminal и идемпотентен только для иденти
 | Параметр | Default | Допустимый диапазон | Норма |
 |---|---:|---:|---|
 | registration token TTL | 1h | 5m..24h | атомарно расходуется при register |
-| heartbeat interval | 15s | 5s..60s | unhealthy после 45s, offline после 120s |
+| heartbeat interval | 15s | 5s..60s | current MVP переводит stale online runner без unexpired active lease в `offline` после 120s; `unhealthy` остаётся target state |
 | poll wait | 0s default / 30s max | 0s..30s | `0` immediate, `>0` bounded ожидание offer с in-process + PostgreSQL `LISTEN/NOTIFY` wakeup |
 | ack timeout | 30s | 10s..120s | offer без ack становится abandoned |
 | lease TTL | 120s | 30s..600s | продлевается только owner-ом |

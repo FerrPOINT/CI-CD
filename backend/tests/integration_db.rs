@@ -3884,6 +3884,185 @@ async fn expired_job_lease_is_reconciled_to_failed_attempt() {
 }
 
 #[tokio::test]
+async fn stale_runner_without_active_lease_is_marked_offline() {
+    let pool = test_pool().await;
+    let namespace = Uuid::new_v4();
+    let runner_id = Uuid::new_v4();
+    let runner_credential = format!("cicd_runner_{}", namespace.simple());
+
+    sqlx::query(
+        "INSERT INTO runners \
+         (id, name, tags, status, last_seen_at, credential_hash, token_hint, credential_expires_at, \
+          draining, capacity_total_slots, capacity_busy_slots, capabilities, heartbeat_payload) \
+         VALUES ($1, $2, ARRAY['linux'], 'online', now() - interval '3 minutes', $3, 'stale-test', \
+                 now() + interval '1 day', true, 2, 1, '{}'::jsonb, '{}'::jsonb)",
+    )
+    .bind(runner_id)
+    .bind(format!("runner-stale-idle-{}", namespace.simple()))
+    .bind(cicd::auth::hash_token(&runner_credential))
+    .execute(&pool)
+    .await
+    .expect("insert stale runner");
+
+    let reconciled = cicd::runner::reconcile_stale_runners(&pool)
+        .await
+        .expect("reconcile stale runners");
+    assert_eq!(reconciled, 1);
+
+    let (status, draining, busy_slots): (String, bool, Option<i32>) =
+        sqlx::query_as("SELECT status, draining, capacity_busy_slots FROM runners WHERE id = $1")
+            .bind(runner_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch stale runner state");
+    assert_eq!(status, "offline");
+    assert!(!draining);
+    assert_eq!(busy_slots, Some(0));
+
+    sqlx::query("DELETE FROM runners WHERE id = $1")
+        .bind(runner_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup runner");
+}
+
+#[tokio::test]
+async fn stale_runner_with_active_unexpired_lease_is_not_marked_offline() {
+    let pool = test_pool().await;
+    let namespace = Uuid::new_v4();
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let stage_id = Uuid::new_v4();
+    let job_id = Uuid::new_v4();
+    let attempt_id = Uuid::new_v4();
+    let runner_id = Uuid::new_v4();
+    let lease_id = Uuid::new_v4();
+    let project_name = format!("it-stale-runner-lease-{}", namespace.simple());
+    let runner_credential = format!("cicd_runner_{}", namespace.simple());
+    let lease_token = format!("lease-{}", namespace.simple());
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/stale-runner.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status, started_at) \
+         VALUES ($1, $2, 'main', 'running', now())",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert pipeline");
+    sqlx::query(
+        "INSERT INTO stages (id, pipeline_id, name, position, status) \
+         VALUES ($1, $2, 'build', 0, 'running')",
+    )
+    .bind(stage_id)
+    .bind(pipeline_id)
+    .execute(&pool)
+    .await
+    .expect("insert stage");
+    sqlx::query(
+        "INSERT INTO jobs (id, stage_id, name, image, command, position, status, started_at) \
+         VALUES ($1, $2, 'compile', 'alpine:3.21', 'sleep 30', 0, 'running', now())",
+    )
+    .bind(job_id)
+    .bind(stage_id)
+    .execute(&pool)
+    .await
+    .expect("insert job");
+    sqlx::query(
+        "INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger, started_at) \
+         VALUES ($1, $2, 1, 'running', 'runner', now())",
+    )
+    .bind(attempt_id)
+    .bind(job_id)
+    .execute(&pool)
+    .await
+    .expect("insert attempt");
+    sqlx::query(
+        "INSERT INTO runners \
+         (id, name, tags, status, last_seen_at, credential_hash, token_hint, credential_expires_at, \
+          draining, capacity_total_slots, capacity_busy_slots, capabilities, heartbeat_payload) \
+         VALUES ($1, $2, ARRAY['linux'], 'online', now() - interval '3 minutes', $3, 'lease-test', \
+                 now() + interval '1 day', false, 2, 1, '{}'::jsonb, '{}'::jsonb)",
+    )
+    .bind(runner_id)
+    .bind(format!("runner-stale-lease-{}", namespace.simple()))
+    .bind(cicd::auth::hash_token(&runner_credential))
+    .execute(&pool)
+    .await
+    .expect("insert runner");
+    sqlx::query(
+        "INSERT INTO job_leases \
+         (id, job_id, attempt_id, runner_id, runner_name, lease_status, generation, lease_expires_at, \
+          lease_token_hash, ack_deadline, acknowledged_at, runner_protocol_version) \
+         VALUES ($1, $2, $3, $4, 'external', 'active', 1, now() + interval '1 minute', \
+                 $5, now() + interval '30 seconds', now(), 1)",
+    )
+    .bind(lease_id)
+    .bind(job_id)
+    .bind(attempt_id)
+    .bind(runner_id)
+    .bind(cicd::auth::hash_token(&lease_token))
+    .execute(&pool)
+    .await
+    .expect("insert active lease");
+
+    let reconciled = cicd::runner::reconcile_stale_runners(&pool)
+        .await
+        .expect("reconcile stale runners with active lease");
+    assert_eq!(reconciled, 0);
+
+    let status: String = sqlx::query_scalar("SELECT status FROM runners WHERE id = $1")
+        .bind(runner_id)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch protected runner status");
+    assert_eq!(status, "online");
+
+    sqlx::query(
+        "UPDATE job_leases SET lease_expires_at = now() - interval '1 minute' WHERE id = $1",
+    )
+    .bind(lease_id)
+    .execute(&pool)
+    .await
+    .expect("expire lease");
+    let expired = cicd::runner::reconcile_expired_leases(&pool)
+        .await
+        .expect("reconcile expired lease");
+    assert_eq!(expired, 1);
+    let reconciled = cicd::runner::reconcile_stale_runners(&pool)
+        .await
+        .expect("reconcile stale runner after lease expiry");
+    assert_eq!(reconciled, 1);
+
+    let (status, busy_slots): (String, Option<i32>) =
+        sqlx::query_as("SELECT status, capacity_busy_slots FROM runners WHERE id = $1")
+            .bind(runner_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch offline runner status");
+    assert_eq!(status, "offline");
+    assert_eq!(busy_slots, Some(0));
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup project");
+    sqlx::query("DELETE FROM runners WHERE id = $1")
+        .bind(runner_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup runner");
+}
+
+#[tokio::test]
 async fn list_attempts_returns_not_found_for_unknown_job() {
     let pool = test_pool().await;
     let app = cicd::api::app(Some(pool));
