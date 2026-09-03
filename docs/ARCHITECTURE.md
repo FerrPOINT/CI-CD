@@ -18,7 +18,7 @@ Self-hosted CI/CD control plane: Git-хостинг (bare-репозитории
 | DB | sqlx (PostgreSQL) | 0.8 |
 | Git | git2 | 0.20 |
 | Шифрование секретов | aes-gcm + sha2 | 0.10 |
-| Config | env (`CICD_`) → typed config (в процессе) | — |
+| Config | typed `RuntimeConfig` поверх env (`CICD_`) | — |
 | CLI | clap + reqwest | 4 / 0.12 |
 | Observability | tracing + tracing-subscriber | 0.1 / 0.3 |
 | Ошибки | thiserror | 2 |
@@ -124,19 +124,22 @@ Composition root: чтение конфига, создание `PgPool`, реп
 | `CICD_GIT_TOKEN` | legacy shared token Git Smart HTTP |
 | `CICD_GIT_INTERNAL_TOKEN` | токен post-receive → pipeline hook |
 | `CICD_CORS_ALLOWED_ORIGINS` | comma-separated allowlist browser origins для shared Dashboard/API; пусто = permissive isolated dev |
+| `CICD_AUTH_SECRET` | JWT/PAT auth boundary; пусто = trusted-network режим |
+| `CICD_AUTH_COOKIE_SECURE` | `Secure` flag для browser refresh/CSRF cookies за TLS/reverse proxy |
 | `CICD_SECRETS_KEY` | base64 32-byte ключ AES-256-GCM |
 | `CICD_ARTIFACTS_DIR` | локальное хранилище артефактов |
 | `CICD_ARTIFACT_RETENTION_DAYS` | TTL новых артефактов; default 30, диапазон `1..3650` |
 | `CICD_EMBEDDED_RUNNER_ENABLED` | `true` по умолчанию; `false` отключает embedded execution в backend |
 | `CICD_RUNNER_MODE` | `host` в local compose; `docker`/`host` в backend binary |
+| `CICD_RUNNER_QUEUE_TIMEOUT_SECONDS` | safety timeout queued job без compatible runner-а; default 86400, `0` отключает |
 | `CICD_RUNNER_REGISTRATION_TOKEN` | bootstrap token для `/api/v1/runner/register`; пусто отключает external registration |
 | `CICD_RUNNER_CREDENTIAL` | bearer credential для уже зарегистрированного `forge-runner` |
 | `CICD_RUNNER_NAME` / `CICD_RUNNER_TAGS` / `CICD_RUNNER_TOTAL_SLOTS` | identity/capacity внешнего `forge-runner` |
 | `CICD_RUNNER_POLL_INTERVAL_SECONDS` / `CICD_RUNNER_NO_CHECKOUT` | empty-poll cadence с server `waitSeconds` cap 30s и dev/debug режим без Git checkout для внешнего `forge-runner` |
 | `CICD_RUNNER_WORK_DIR` | workspace root внешнего `forge-runner` |
-| `CICD_RUNNER_KEEP_WORKSPACE` | `1` — не удалять workspace джоба |
+| `CICD_RUNNER_KEEP_WORKSPACE` | `true`/`1` — не удалять workspace джоба |
 
-Целевая модель — typed config (группы Database/Http/Git/Artifacts/Runner/Auth) по образцу task-tracker; сейчас — прямое чтение env.
+Текущий server composition root читает `backend/src/config.rs::RuntimeConfig` один раз при старте и передаёт typed-группы Database/Http/Git/Artifacts/Runner/Auth/Secrets в HTTP state, Git-trigger config lookup, scheduler/outbox, artifact/secret handlers, runner protocol и embedded runner. Невалидные bool, runner mode, artifact TTL, queue timeout, legacy internal Git token и base64 secrets key падают в parser-е config; CORS wildcard/empty allowlist валидируется при router construction до binding API. `cicd-cli` и отдельный `forge-runner` остаются process-boundary tools на `clap`/env.
 
 ## 6. Ключевые механизмы
 
@@ -150,7 +153,7 @@ Bare-репозитории в `CICD_GIT_ROOT`, Smart HTTP (`/git/<name>.git`), 
 
 ### 6.3 Embedded runner
 
-Supervisor-полл queued-джобов, атомарный lease-aware claim (`queued → running`) с active `execution_attempt` и `job_leases`, клонирование репо в workspace, выполнение в Docker (имя контейнера `forge-job-<id>`, volume workspace) или host shell, построчный стриминг stdout в attempt-owned `job_logs`, сбор declared artifact files из `jobs.artifact_paths`, bounded page/search API для длинных логов, kill-on-cancel через PID-map, закрытие lease на terminal result/cancel и reconciliation expired/missing lease, cleanup workspace (кроме `CICD_RUNNER_KEEP_WORKSPACE=1`).
+Supervisor-полл queued-джобов, атомарный lease-aware claim (`queued → running`) с active `execution_attempt` и `job_leases`, клонирование репо в workspace, выполнение в Docker (имя контейнера `forge-job-<id>`, volume workspace) или host shell, построчный стриминг stdout в attempt-owned `job_logs`, сбор declared artifact files из `jobs.artifact_paths`, bounded page/search API для длинных логов, kill-on-cancel через PID-map, закрытие lease на terminal result/cancel и reconciliation expired/missing lease, cleanup workspace (кроме `CICD_RUNNER_KEEP_WORKSPACE=true/1`).
 
 ### 6.4 External runner protocol MVP
 
@@ -181,7 +184,7 @@ Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-2
 |---|---|
 | Workspace + `domain` пакет | ✅ готово |
 | `cli` отдельный пакет | ✅ готово |
-| typed config + `AppError` | ◩ частично: `AppError`/error envelope current, full typed config target |
+| typed config + `AppError` | ✅ current: `RuntimeConfig` покрывает server startup/AppState/supervisors; `AppError`/error envelope current, package split остаётся Phase C |
 | SQLx версионные миграции | ✅ current: `backend/migrations/*.sql` + runtime `sqlx::migrate::Migrator`/`cicd-migrate` |
 | app/infra/api/server пакеты | ⬜ Phase C (strangler по вертикалям) |
 | OpenAPI + генерация клиента | ✅ current: `openapi/openapi.yaml` + `frontend/src/api/schema.d.ts` |

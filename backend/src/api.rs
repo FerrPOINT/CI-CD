@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::path::Path as FsPath;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -39,6 +40,7 @@ pub struct AppState {
     pub pool: Option<PgPool>,
     pub auth_secret: Option<String>,
     pub git: crate::git_host::GitConfig,
+    pub config: crate::config::RuntimeConfig,
     pub running_jobs: Option<crate::runner::RunningJobs>,
     pub rate_limiter: Arc<crate::rate_limit::RateLimiter>,
 }
@@ -1012,7 +1014,8 @@ fn build_router_from_env(
     git: crate::git_host::GitConfig,
     running: Option<crate::runner::RunningJobs>,
 ) -> Router {
-    build_router_with_auth_secret(pool, git, running, crate::auth::configured_secret().ok())
+    let config = runtime_config_from_env_for_router().with_git_config(git);
+    build_router_with_config(pool, running, config).expect("invalid CICD_ HTTP configuration")
 }
 
 /// Build a router with an explicit auth secret for tests and integration harnesses.
@@ -1034,29 +1037,54 @@ pub fn app_with_git_and_auth_secret(
     build_router_with_auth_secret(pool, git, None, auth_secret)
 }
 
+/// Build a Git-aware router from already validated typed runtime config.
+pub fn app_with_git_and_config(
+    pool: Option<PgPool>,
+    git: crate::git_host::GitConfig,
+    running: Option<crate::runner::RunningJobs>,
+    config: crate::config::RuntimeConfig,
+) -> Result<Router, String> {
+    build_router_with_config(pool, running, config.with_git_config(git))
+}
+
 fn build_router_with_auth_secret(
     pool: Option<PgPool>,
     git: crate::git_host::GitConfig,
     running: Option<crate::runner::RunningJobs>,
     auth_secret: Option<String>,
 ) -> Router {
-    let cors_allowed_origins = std::env::var("CICD_CORS_ALLOWED_ORIGINS").ok();
-    let cors = cors_layer_from_allowed_origins(cors_allowed_origins.as_deref())
-        .expect("invalid CICD_CORS_ALLOWED_ORIGINS");
-    build_router_with_cors(pool, git, running, auth_secret, cors)
+    let config = runtime_config_from_env_for_router()
+        .with_git_config(git)
+        .with_auth_secret(auth_secret);
+    build_router_with_config(pool, running, config).expect("invalid CICD_ HTTP configuration")
+}
+
+fn runtime_config_from_env_for_router() -> crate::config::RuntimeConfig {
+    crate::config::RuntimeConfig::from_env_for_app().expect("invalid CICD_ runtime configuration")
+}
+
+fn build_router_with_config(
+    pool: Option<PgPool>,
+    running: Option<crate::runner::RunningJobs>,
+    config: crate::config::RuntimeConfig,
+) -> Result<Router, String> {
+    let cors = cors_layer_from_allowed_origins(config.http.cors_allowed_origins.as_deref())?;
+    let git = config.git.to_git_config();
+    Ok(build_router_with_cors(pool, git, running, config, cors))
 }
 
 fn build_router_with_cors(
     pool: Option<PgPool>,
     git: crate::git_host::GitConfig,
     running: Option<crate::runner::RunningJobs>,
-    auth_secret: Option<String>,
+    config: crate::config::RuntimeConfig,
     cors: CorsLayer,
 ) -> Router {
     let state = Arc::new(AppState {
         pool: pool.clone(),
-        auth_secret,
+        auth_secret: config.auth.secret.clone(),
         git,
+        config,
         running_jobs: running,
         rate_limiter: Arc::new(crate::rate_limit::RateLimiter::default()),
     });
@@ -1318,7 +1346,7 @@ async fn auth_login(
     )
     .map_err(|_| ApiError::unauthorized())?;
     pair.refresh_token = refresh.clone();
-    Ok((auth_cookie_headers(&refresh, &csrf), Json(pair)))
+    Ok((auth_cookie_headers(&state, &refresh, &csrf), Json(pair)))
 }
 
 #[utoipa::path(post, path="/api/v1/auth/refresh", tag="auth", request_body=crate::auth::RefreshRequest, responses((status=200, body=crate::auth::TokenPair), (status=401)))]
@@ -1351,7 +1379,7 @@ async fn auth_refresh(
     .map_err(|_| ApiError::unauthorized())?;
     pair.refresh_token = rotated.refresh_token.clone();
     Ok((
-        auth_cookie_headers(&rotated.refresh_token, &rotated.csrf_token),
+        auth_cookie_headers(&state, &rotated.refresh_token, &rotated.csrf_token),
         Json(pair),
     ))
 }
@@ -1365,7 +1393,7 @@ async fn auth_logout(
     use crate::auth::*;
     let Some(credential) = logout_credential(&headers, &input.refresh_token)? else {
         return Ok((
-            clear_auth_cookie_headers(),
+            clear_auth_cookie_headers(&state),
             Json(LogoutResponse { revoked: false }),
         ));
     };
@@ -1377,7 +1405,7 @@ async fn auth_logout(
         let _ = audit(pool, "auth.logout", "session", user_id, None).await;
     }
     Ok((
-        clear_auth_cookie_headers(),
+        clear_auth_cookie_headers(&state),
         Json(LogoutResponse {
             revoked: user_id.is_some(),
         }),
@@ -1458,7 +1486,7 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     left.ct_eq(right).into()
 }
 
-fn auth_cookie_headers(refresh_token: &str, csrf_token: &str) -> HeaderMap {
+fn auth_cookie_headers(state: &AppState, refresh_token: &str, csrf_token: &str) -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     headers.append(
@@ -1469,6 +1497,7 @@ fn auth_cookie_headers(refresh_token: &str, csrf_token: &str) -> HeaderMap {
             "/api/v1/auth",
             true,
             crate::auth::REFRESH_TTL_DAYS * 24 * 60 * 60,
+            state.config.http.auth_cookie_secure,
         ))
         .expect("refresh cookie contains only safe ASCII"),
     );
@@ -1480,13 +1509,14 @@ fn auth_cookie_headers(refresh_token: &str, csrf_token: &str) -> HeaderMap {
             "/",
             false,
             crate::auth::REFRESH_TTL_DAYS * 24 * 60 * 60,
+            state.config.http.auth_cookie_secure,
         ))
         .expect("csrf cookie contains only safe ASCII"),
     );
     headers
 }
 
-fn clear_auth_cookie_headers() -> HeaderMap {
+fn clear_auth_cookie_headers(state: &AppState) -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     headers.append(
@@ -1497,13 +1527,21 @@ fn clear_auth_cookie_headers() -> HeaderMap {
             "/api/v1/auth",
             true,
             0,
+            state.config.http.auth_cookie_secure,
         ))
         .expect("refresh cookie contains only safe ASCII"),
     );
     headers.append(
         header::SET_COOKIE,
-        HeaderValue::from_str(&format_auth_cookie(AUTH_CSRF_COOKIE, "", "/", false, 0))
-            .expect("csrf cookie contains only safe ASCII"),
+        HeaderValue::from_str(&format_auth_cookie(
+            AUTH_CSRF_COOKIE,
+            "",
+            "/",
+            false,
+            0,
+            state.config.http.auth_cookie_secure,
+        ))
+        .expect("csrf cookie contains only safe ASCII"),
     );
     headers
 }
@@ -1514,23 +1552,13 @@ fn format_auth_cookie(
     path: &str,
     http_only: bool,
     max_age_seconds: i64,
+    secure: bool,
 ) -> String {
     let http_only = if http_only { "; HttpOnly" } else { "" };
-    let secure = if auth_cookie_secure() { "; Secure" } else { "" };
+    let secure = if secure { "; Secure" } else { "" };
     format!(
         "{name}={value}; Path={path}; Max-Age={max_age_seconds}; SameSite=Lax{http_only}{secure}"
     )
-}
-
-fn auth_cookie_secure() -> bool {
-    std::env::var("CICD_AUTH_COOKIE_SECURE")
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false)
 }
 
 #[utoipa::path(get, path="/api/v1/health", tag="health", responses((status=200, description="Liveness")))]
@@ -2172,6 +2200,7 @@ async fn trigger_pipeline(
             .unwrap_or_else(|_| serde_json::json!({})),
         PIPELINE_TRIGGER_SOURCE_API,
         idempotency_key.as_deref(),
+        &state.config.git.root,
     )
     .await?;
     let mut response_headers = HeaderMap::new();
@@ -2197,6 +2226,7 @@ pub(crate) async fn create_pipeline_with_vars_idempotent(
     variables: serde_json::Value,
     source: &str,
     idempotency_key: Option<&str>,
+    git_root: &FsPath,
 ) -> Result<PipelineTriggerOutcome, ApiError> {
     let repository_url: String =
         sqlx::query_scalar("SELECT repository_url FROM projects WHERE id = $1")
@@ -2207,9 +2237,10 @@ pub(crate) async fn create_pipeline_with_vars_idempotent(
             .ok_or_else(ApiError::not_found)?;
     // Never clone here: this path is called by post-receive and must return
     // before git-receive-pack finishes. Local config is read from the bare repo.
-    let commit_sha = resolve_commit_sha(Some(repository_url.as_str()), &git_ref).await;
+    let commit_sha = resolve_commit_sha(Some(repository_url.as_str()), &git_ref, git_root).await;
     let config_ref = commit_sha.as_deref().unwrap_or(&git_ref);
-    let config = read_local_forge_ci_config(Some(repository_url.as_str()), config_ref).await;
+    let config =
+        read_local_forge_ci_config(Some(repository_url.as_str()), config_ref, git_root).await;
     let (config_source, raw_config) = match config {
         Some(raw_config) => ("repository", raw_config),
         None => ("legacy_template", LEGACY_TEMPLATE_CONFIG.to_string()),
@@ -2612,10 +2643,13 @@ struct CiJob {
 /// Reads `.forge-ci.yml` from an already-pushed local bare repository.
 /// External URLs deliberately use the template: cloning during post-receive
 /// could wait on the same Smart HTTP request that is still completing.
-async fn read_local_forge_ci_config(repo_url: Option<&str>, git_ref: &str) -> Option<String> {
+async fn read_local_forge_ci_config(
+    repo_url: Option<&str>,
+    git_ref: &str,
+    git_root: &FsPath,
+) -> Option<String> {
     let name = extract_repo_name_from_url(repo_url?)?;
-    let git_root = std::env::var("CICD_GIT_ROOT").unwrap_or_else(|_| "/var/lib/forge/git".into());
-    let bare_path = std::path::Path::new(&git_root).join(format!("{name}.git"));
+    let bare_path = git_root.join(format!("{name}.git"));
     if !bare_path.is_dir() {
         return None;
     }
@@ -2633,10 +2667,13 @@ async fn read_local_forge_ci_config(repo_url: Option<&str>, git_ref: &str) -> Op
 }
 
 /// Resolves a ref to a commit sha in the local bare repo (best-effort).
-async fn resolve_commit_sha(repo_url: Option<&str>, git_ref: &str) -> Option<String> {
+async fn resolve_commit_sha(
+    repo_url: Option<&str>,
+    git_ref: &str,
+    git_root: &FsPath,
+) -> Option<String> {
     let name = extract_repo_name_from_url(repo_url?)?;
-    let git_root = std::env::var("CICD_GIT_ROOT").unwrap_or_else(|_| "/var/lib/forge/git".into());
-    let bare_path = std::path::Path::new(&git_root).join(format!("{name}.git"));
+    let bare_path = git_root.join(format!("{name}.git"));
     if !bare_path.is_dir() {
         return None;
     }
@@ -3933,11 +3970,12 @@ mod tests {
 
     #[tokio::test]
     async fn cors_allowlist_marks_only_configured_origins() {
+        let config = crate::config::RuntimeConfig::test_default();
         let app = build_router_with_cors(
             None,
             crate::git_host::GitConfig::default(),
             None,
-            None,
+            config,
             cors_layer_from_allowed_origins(Some("https://cicd.example.com")).unwrap(),
         );
 
@@ -3977,11 +4015,13 @@ mod tests {
 
     #[tokio::test]
     async fn cors_allowlist_preflight_bypasses_auth_on_protected_routes() {
+        let config = crate::config::RuntimeConfig::test_default()
+            .with_auth_secret(Some("test-auth-secret".to_string()));
         let app = build_router_with_cors(
             None,
             crate::git_host::GitConfig::default(),
             None,
-            Some("test-auth-secret".to_string()),
+            config,
             cors_layer_from_allowed_origins(Some("https://cicd.example.com")).unwrap(),
         );
 

@@ -361,7 +361,10 @@ pub(crate) async fn register_runner_protocol(
     Json(input): Json<RunnerRegisterRequest>,
 ) -> Result<(StatusCode, Json<RunnerRegisterResponse>), ApiError> {
     validate_protocol_version(input.protocol_version)?;
-    validate_registration_token(&input.registration_token)?;
+    validate_registration_token(
+        &input.registration_token,
+        state.config.runner.registration_token.as_deref(),
+    )?;
     let name = input.name.trim();
     validate_name(name)?;
     let tags = normalize_tags(&input.tags)?;
@@ -766,8 +769,13 @@ pub(crate) async fn resolve_runner_lease_secrets(
         return Err(ApiError::forbidden());
     }
 
-    let pairs =
-        crate::platform::project_secret_pairs_for_names(db, row.project_id, &requested).await?;
+    let pairs = crate::platform::project_secret_pairs_for_names_with_config(
+        db,
+        row.project_id,
+        &requested,
+        &state.config.secrets,
+    )
+    .await?;
     let response_body = RunnerSecretResolveResponse {
         protocol_version: PROTOCOL_VERSION,
         expires_at: Utc::now() + Duration::seconds(SECRET_BUNDLE_TTL_SECONDS),
@@ -880,8 +888,9 @@ pub(crate) async fn upload_runner_lease_artifact(
         return Err(ApiError::forbidden());
     }
 
-    let artifact = crate::platform::store_job_artifact(
+    let artifact = crate::platform::store_job_artifact_with_config(
         db,
+        &state.config.artifacts,
         row.job_id,
         Some(row.attempt_id),
         &artifact_name,
@@ -1351,10 +1360,9 @@ async fn lease_mutation_error(db: &PgPool, lease_id: Uuid) -> ApiError {
     }
 }
 
-fn validate_registration_token(value: &str) -> Result<(), ApiError> {
-    let configured = std::env::var("CICD_RUNNER_REGISTRATION_TOKEN")
-        .ok()
-        .map(|value| value.trim().to_string())
+fn validate_registration_token(value: &str, configured: Option<&str>) -> Result<(), ApiError> {
+    let configured = configured
+        .map(str::trim)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
             ApiError::service_unavailable("runner registration token is not configured")

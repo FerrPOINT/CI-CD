@@ -99,7 +99,7 @@ Forge **не является** и не должен развиваться ка
 
 ### Безопасность и доверие
 
-- **NFR-SEC-01** До production-grade auth boundary Forge допускается только в доверенной локальной или изолированной сети; для shared deployment обязателен непустой `CICD_AUTH_SECRET`, reverse proxy/network boundary, непустой Git token и закрытый PostgreSQL.
+- **NFR-SEC-01** До production-grade auth boundary Forge допускается только в доверенной локальной или изолированной сети; для shared deployment обязательны валидный `RuntimeConfig`, непустой `CICD_AUTH_SECRET`, `CICD_AUTH_COOKIE_SECURE=true` за TLS/reverse proxy, непустой `CICD_CORS_ALLOWED_ORIGINS`, reverse proxy/network boundary, непустой Git token и закрытый PostgreSQL.
 - **NFR-SEC-02** Доступ к проектным данным, Git-операциям, артефактам, секретам и действиям доставки должен проверяться до загрузки или изменения данных.
 - **NFR-SEC-03** Секреты передаются только через выделенные секретные каналы и конфигурацию; plaintext не сохраняется в логах, audit trail, ответах API или UI.
 - **NFR-SEC-04** Credential classes пользователя, API automation, внутреннего worker и runner должны быть раздельны и иметь минимальные scopes.
@@ -118,7 +118,7 @@ Forge **не является** и не должен развиваться ка
 
 - **NFR-PERF-01** Типичные интерактивные операции Dashboard и API должны иметь измеримые SLO, определённые эксплуатационным контрактом; показатели не объявляются выполненными до нагрузочного evidence.
 - **NFR-PERF-02** Списки и потоки данных имеют детерминированный порядок, pagination или cursor, лимиты запроса и ответа; система не загружает неограниченный объём логов или артефактов в память.
-- **NFR-PERF-03** Ограничения на размер логов, артефактов, параллелизм и retention настраиваются и наблюдаемы оператором. Current MVP задаёт 50 MiB upload limit и `CICD_ARTIFACT_RETENTION_DAYS` TTL; quota/metrics/concurrency budgets остаются target.
+- **NFR-PERF-03** Ограничения на размер логов, артефактов, параллелизм и retention настраиваются и наблюдаемы оператором. Current MVP задаёт 50 MiB upload limit, typed `CICD_ARTIFACT_RETENTION_DAYS` TTL и `CICD_RUNNER_QUEUE_TIMEOUT_SECONDS`; quota/metrics/concurrency budgets остаются target.
 
 ### Совместимость и удобство
 

@@ -26,11 +26,10 @@ use uuid::Uuid;
 use crate::{
     api::{ApiError, AppState, pool},
     body_limits,
+    config::{ArtifactsConfig, SecretsConfig},
 };
 
 pub(crate) const MAX_ARTIFACT_BYTES: usize = body_limits::ARTIFACT_UPLOAD_BYTES;
-const DEFAULT_ARTIFACT_RETENTION_DAYS: i64 = 30;
-const MAX_ARTIFACT_RETENTION_DAYS: i64 = 3650;
 const ARTIFACT_RETENTION_BATCH_LIMIT: i64 = 100;
 const ARTIFACT_RETENTION_INTERVAL_SECONDS: u64 = 60;
 const DEFAULT_TOKEN_LIFETIME_DAYS: i32 = 30;
@@ -247,7 +246,8 @@ async fn create_secret(
     if input.key.trim().is_empty() || input.value.is_empty() {
         return Err(ApiError::bad_request("secret key and value are required"));
     }
-    let encrypted_value = encrypt_secret(&input.value).map_err(ApiError::bad_request)?;
+    let encrypted_value =
+        encrypt_secret(&input.value, &state.config.secrets).map_err(ApiError::bad_request)?;
     let secret = sqlx::query_as::<_, SecretMetadata>("INSERT INTO project_secrets (id, project_id, key, encrypted_value) VALUES ($1, $2, $3, $4) ON CONFLICT (project_id, key) DO UPDATE SET encrypted_value = EXCLUDED.encrypted_value, updated_at = now() RETURNING id, project_id, key, created_at, updated_at")
         .bind(Uuid::new_v4()).bind(project_id).bind(input.key.trim()).bind(encrypted_value).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
     audit(
@@ -313,13 +313,22 @@ async fn upload_artifact(
         .get("content-type")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("application/octet-stream");
-    let artifact =
-        store_job_artifact(pool(&state)?, job_id, None, name, content_type, body).await?;
+    let artifact = store_job_artifact_with_config(
+        pool(&state)?,
+        &state.config.artifacts,
+        job_id,
+        None,
+        name,
+        content_type,
+        body,
+    )
+    .await?;
     Ok(Json(artifact))
 }
 
-pub(crate) async fn store_job_artifact(
+pub(crate) async fn store_job_artifact_with_config(
     db: &PgPool,
+    artifacts: &ArtifactsConfig,
     job_id: Uuid,
     attempt_id: Option<Uuid>,
     name: &str,
@@ -350,8 +359,8 @@ pub(crate) async fn store_job_artifact(
     };
     let id = Uuid::new_v4();
     let artifact_sha256 = sha256_bytes(body.as_ref());
-    let expires_at = artifact_expires_at()?;
-    let path = new_artifact_path(id)?;
+    let expires_at = artifact_expires_at(artifacts);
+    let path = new_artifact_path(artifacts, id)?;
     std::fs::write(&path, &body).map_err(io_error)?;
     let artifact = sqlx::query_as("INSERT INTO artifacts (id, job_id, attempt_id, name, storage_path, content_type, sha256, size_bytes, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, job_id, attempt_id, name, content_type, sha256, size_bytes, created_at, expires_at, purged_at")
         .bind(id).bind(job_id).bind(attempt_id).bind(name).bind(path.to_string_lossy().as_ref()).bind(content_type).bind(&artifact_sha256).bind(body.len() as i64).bind(expires_at).fetch_one(db).await.map_err(ApiError::internal)?;
@@ -371,7 +380,7 @@ async fn download_artifact(
     .await
     .map_err(ApiError::internal)?
     .ok_or_else(ApiError::not_found)?;
-    let path = contained_artifact_path(&row.0)?;
+    let path = contained_artifact_path(&state.config.artifacts, &row.0)?;
     let bytes = std::fs::read(path).map_err(|_| ApiError::not_found())?;
     if let Some(expected) = row.3.as_deref() {
         let actual = sha256_bytes(&bytes);
@@ -390,33 +399,12 @@ async fn download_artifact(
 }
 
 pub fn artifact_retention_days_from_env(raw: Option<String>) -> Result<i64, std::io::Error> {
-    let Some(raw) = raw else {
-        return Ok(DEFAULT_ARTIFACT_RETENTION_DAYS);
-    };
-    let value = raw.trim();
-    if value.is_empty() {
-        return Ok(DEFAULT_ARTIFACT_RETENTION_DAYS);
-    }
-    let days: i64 = value.parse().map_err(|_| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "CICD_ARTIFACT_RETENTION_DAYS must be an integer number of days",
-        )
-    })?;
-    if !(1..=MAX_ARTIFACT_RETENTION_DAYS).contains(&days) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!("CICD_ARTIFACT_RETENTION_DAYS must be 1..={MAX_ARTIFACT_RETENTION_DAYS}"),
-        ));
-    }
-    Ok(days)
+    crate::config::artifact_retention_days_from_env(raw)
+        .map_err(crate::config::ConfigError::into_io_error)
 }
 
-fn artifact_expires_at() -> Result<DateTime<Utc>, ApiError> {
-    let retention_days =
-        artifact_retention_days_from_env(std::env::var("CICD_ARTIFACT_RETENTION_DAYS").ok())
-            .map_err(|error| config_error(error.to_string()))?;
-    Ok(Utc::now() + ChronoDuration::days(retention_days))
+fn artifact_expires_at(artifacts: &ArtifactsConfig) -> DateTime<Utc> {
+    Utc::now() + ChronoDuration::days(artifacts.retention_days)
 }
 
 #[derive(Debug, FromRow)]
@@ -426,6 +414,16 @@ struct ExpiredArtifactCandidate {
 }
 
 pub async fn purge_expired_artifacts(db: &PgPool, batch_limit: i64) -> Result<u64, ApiError> {
+    let artifacts = crate::config::artifacts_config_from_env()
+        .map_err(|error| config_error(error.to_string()))?;
+    purge_expired_artifacts_with_config(db, &artifacts, batch_limit).await
+}
+
+pub async fn purge_expired_artifacts_with_config(
+    db: &PgPool,
+    artifacts: &ArtifactsConfig,
+    batch_limit: i64,
+) -> Result<u64, ApiError> {
     let batch_limit = batch_limit.clamp(1, 1000);
     let mut tx = db.begin().await.map_err(ApiError::internal)?;
     let candidates = sqlx::query_as::<_, ExpiredArtifactCandidate>(
@@ -443,7 +441,7 @@ pub async fn purge_expired_artifacts(db: &PgPool, batch_limit: i64) -> Result<u6
 
     let mut purged = 0;
     for candidate in candidates {
-        let path = match artifact_path_for_delete(&candidate.storage_path) {
+        let path = match artifact_path_for_delete(artifacts, &candidate.storage_path) {
             Ok(path) => path,
             Err(error) => {
                 tracing::warn!(
@@ -494,9 +492,19 @@ pub async fn purge_expired_artifacts(db: &PgPool, batch_limit: i64) -> Result<u6
 }
 
 pub async fn artifact_retention_loop(pool: PgPool) {
+    let artifacts = crate::config::artifacts_config_from_env().unwrap_or_else(|error| {
+        tracing::warn!(%error, "invalid artifact retention config; using test defaults");
+        crate::config::RuntimeConfig::test_default().artifacts
+    });
+    artifact_retention_loop_with_config(pool, artifacts).await;
+}
+
+pub async fn artifact_retention_loop_with_config(pool: PgPool, artifacts: ArtifactsConfig) {
     loop {
         tokio::time::sleep(StdDuration::from_secs(ARTIFACT_RETENTION_INTERVAL_SECONDS)).await;
-        match purge_expired_artifacts(&pool, ARTIFACT_RETENTION_BATCH_LIMIT).await {
+        match purge_expired_artifacts_with_config(&pool, &artifacts, ARTIFACT_RETENTION_BATCH_LIMIT)
+            .await
+        {
             Ok(0) => {}
             Ok(purged) => tracing::info!(purged, "artifact retention purged expired files"),
             Err(error) => tracing::error!(message = %error.message, "artifact retention failed"),
@@ -748,12 +756,15 @@ async fn record_deployment_approval(
     if target.should_start_pipeline {
         start_deployment_pipeline(
             db,
-            deployment_id,
-            target.project_id,
-            target.environment_id,
-            target.git_ref,
-            target.rollback_of_id,
-            "deployment-approval",
+            DeploymentPipelineStart {
+                deployment_id,
+                project_id: target.project_id,
+                environment_id: target.environment_id,
+                git_ref: target.git_ref,
+                rollback_of_id: target.rollback_of_id,
+                source: "deployment-approval",
+                git_root: &state.config.git.root,
+            },
         )
         .await?;
     }
@@ -795,12 +806,15 @@ async fn rollback_deployment(
     if !source.requires_approval() {
         start_deployment_pipeline(
             db,
-            new_id,
-            source.project_id,
-            source.environment_id,
-            git_ref,
-            Some(deployment_id),
-            "deployment-rollback",
+            DeploymentPipelineStart {
+                deployment_id: new_id,
+                project_id: source.project_id,
+                environment_id: source.environment_id,
+                git_ref,
+                rollback_of_id: Some(deployment_id),
+                source: "deployment-rollback",
+                git_root: &state.config.git.root,
+            },
         )
         .await?;
     }
@@ -853,6 +867,17 @@ struct RecordedApprovalTarget {
     git_ref: String,
     rollback_of_id: Option<Uuid>,
     should_start_pipeline: bool,
+}
+
+#[derive(Debug)]
+struct DeploymentPipelineStart<'a> {
+    deployment_id: Uuid,
+    project_id: Uuid,
+    environment_id: Uuid,
+    git_ref: String,
+    rollback_of_id: Option<Uuid>,
+    source: &'a str,
+    git_root: &'a FsPath,
 }
 
 #[derive(Debug, FromRow)]
@@ -1047,24 +1072,21 @@ async fn record_approval_decision(
 
 async fn start_deployment_pipeline(
     db: &PgPool,
-    deployment_id: Uuid,
-    project_id: Uuid,
-    environment_id: Uuid,
-    git_ref: String,
-    rollback_of_id: Option<Uuid>,
-    source: &str,
+    start: DeploymentPipelineStart<'_>,
 ) -> Result<Uuid, ApiError> {
+    let deployment_id = start.deployment_id;
     let outcome = crate::api::create_pipeline_with_vars_idempotent(
         db,
-        project_id,
-        git_ref,
+        start.project_id,
+        start.git_ref,
         serde_json::json!({
             "deployment_id": deployment_id.to_string(),
-            "environment_id": environment_id.to_string(),
-            "rollback_of_deployment_id": rollback_of_id.map(|id| id.to_string()),
+            "environment_id": start.environment_id.to_string(),
+            "rollback_of_deployment_id": start.rollback_of_id.map(|id| id.to_string()),
         }),
-        source,
-        Some(&format!("{source}:{deployment_id}")),
+        start.source,
+        Some(&format!("{}:{deployment_id}", start.source)),
+        start.git_root,
     )
     .await?;
     let deployment_status = deployment_status_from_pipeline(outcome.pipeline.status.as_str());
@@ -2012,21 +2034,18 @@ async fn validate_token_owner_and_project(
     }
 }
 
-fn artifacts_root() -> PathBuf {
-    std::env::var("CICD_ARTIFACTS_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/var/lib/forge/artifacts"))
-}
-
-fn new_artifact_path(id: Uuid) -> Result<PathBuf, ApiError> {
-    let root = artifacts_root();
+fn new_artifact_path(artifacts: &ArtifactsConfig, id: Uuid) -> Result<PathBuf, ApiError> {
+    let root = artifacts.root.clone();
     std::fs::create_dir_all(&root).map_err(io_error)?;
     let root = root.canonicalize().map_err(io_error)?;
     Ok(root.join(format!("{id}.bin")))
 }
 
-fn contained_artifact_path(raw_path: &str) -> Result<PathBuf, ApiError> {
-    let root = canonical_artifacts_root()?;
+fn contained_artifact_path(
+    artifacts: &ArtifactsConfig,
+    raw_path: &str,
+) -> Result<PathBuf, ApiError> {
+    let root = canonical_artifacts_root(artifacts)?;
     let path = FsPath::new(raw_path)
         .canonicalize()
         .map_err(|_| ApiError::not_found())?;
@@ -2036,8 +2055,11 @@ fn contained_artifact_path(raw_path: &str) -> Result<PathBuf, ApiError> {
     Ok(path)
 }
 
-fn artifact_path_for_delete(raw_path: &str) -> Result<PathBuf, ApiError> {
-    let root = canonical_artifacts_root()?;
+fn artifact_path_for_delete(
+    artifacts: &ArtifactsConfig,
+    raw_path: &str,
+) -> Result<PathBuf, ApiError> {
+    let root = canonical_artifacts_root(artifacts)?;
     let path = FsPath::new(raw_path);
     let parent = path.parent().ok_or_else(ApiError::not_found)?;
     let parent = parent.canonicalize().map_err(|_| ApiError::not_found())?;
@@ -2047,8 +2069,10 @@ fn artifact_path_for_delete(raw_path: &str) -> Result<PathBuf, ApiError> {
     Ok(path.to_path_buf())
 }
 
-fn canonical_artifacts_root() -> Result<PathBuf, ApiError> {
-    artifacts_root()
+fn canonical_artifacts_root(artifacts: &ArtifactsConfig) -> Result<PathBuf, ApiError> {
+    artifacts
+        .root
+        .clone()
         .canonicalize()
         .map_err(|_| ApiError::not_found())
 }
@@ -2106,8 +2130,8 @@ fn sha256(value: &str) -> String {
     sha256_bytes(value.as_bytes())
 }
 
-fn decrypt_secret(stored: &str) -> Result<String, String> {
-    let key = secret_key()?;
+fn decrypt_secret(stored: &str, secrets: &SecretsConfig) -> Result<String, String> {
+    let key = secret_key(secrets)?;
     let cipher =
         Aes256Gcm::new_from_slice(&key).map_err(|_| "invalid CICD_SECRETS_KEY".to_owned())?;
     let parts: Vec<&str> = stored.splitn(3, ':').collect();
@@ -2127,11 +2151,11 @@ fn decrypt_secret(stored: &str) -> Result<String, String> {
     String::from_utf8(plain).map_err(|_| "secret is not valid utf-8".to_owned())
 }
 
-/// Project secrets resolved for a job environment (runner injection).
-pub(crate) async fn project_secret_pairs_for_names(
+pub(crate) async fn project_secret_pairs_for_names_with_config(
     pool: &PgPool,
     project_id: Uuid,
     names: &[String],
+    secrets: &SecretsConfig,
 ) -> Result<Vec<(String, String)>, ApiError> {
     if names.is_empty() {
         return Ok(Vec::new());
@@ -2158,7 +2182,7 @@ pub(crate) async fn project_secret_pairs_for_names(
     }
     let mut pairs = Vec::with_capacity(rows.len());
     for (name, stored) in rows {
-        let value = decrypt_secret(&stored).map_err(|msg| ApiError {
+        let value = decrypt_secret(&stored, secrets).map_err(|msg| ApiError {
             status: axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             message: msg,
         })?;
@@ -2178,8 +2202,8 @@ fn schedule_next_fire_at(cron: &str, enabled: bool) -> Result<Option<DateTime<Ut
         .map(Some)
         .map_err(ApiError::bad_request)
 }
-fn encrypt_secret(value: &str) -> Result<String, String> {
-    let key = secret_key()?;
+fn encrypt_secret(value: &str, secrets: &SecretsConfig) -> Result<String, String> {
+    let key = secret_key(secrets)?;
     let cipher =
         Aes256Gcm::new_from_slice(&key).map_err(|_| "invalid CICD_SECRETS_KEY".to_owned())?;
     let source = Uuid::new_v4();
@@ -2193,15 +2217,10 @@ fn encrypt_secret(value: &str) -> Result<String, String> {
         BASE64.encode(ciphertext)
     ))
 }
-fn secret_key() -> Result<[u8; 32], String> {
-    let configured = std::env::var("CICD_SECRETS_KEY")
-        .map_err(|_| "CICD_SECRETS_KEY must be configured before storing secrets".to_owned())?;
-    let decoded = BASE64
-        .decode(configured.trim())
-        .map_err(|_| "CICD_SECRETS_KEY must be base64-encoded 32 bytes".to_owned())?;
-    decoded
-        .try_into()
-        .map_err(|_| "CICD_SECRETS_KEY must be base64-encoded 32 bytes".to_owned())
+fn secret_key(secrets: &SecretsConfig) -> Result<[u8; 32], String> {
+    secrets
+        .key
+        .ok_or_else(|| "CICD_SECRETS_KEY must be configured before storing secrets".to_owned())
 }
 
 #[cfg(test)]

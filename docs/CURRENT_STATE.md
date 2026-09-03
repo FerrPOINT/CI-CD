@@ -31,6 +31,7 @@
 | Project membership RBAC | ✅ MVP | `project_memberships`, фильтрация списка проектов, deny-before-load для project-owned API и name-based repo API; `admin` bypass, tenant isolation/SAT ещё target |
 | Git auth/RBAC | ✅ conditional MVP | public repo read открыт; private read и receive-pack требуют legacy `CICD_GIT_TOKEN` либо JWT/PAT + `project_memberships` + `git:*` PAT scope при `CICD_AUTH_SECRET`; без секрета и Git token остаётся trusted local mode |
 | Auth/RBAC | ✅ conditional | если `CICD_AUTH_SECRET` задан непустым: argon2id+JWT+PAT, session-bound access invalidation, refresh cookie + CSRF browser flow, refresh rotate/logout/revoke, session-family reuse revocation, executable route-policy registry с OpenAPI/router coverage tests, default-deny unpublished API/Git routes, project memberships, Git Smart HTTP project checks, configurable CORS allowlist, аудит login/logout/denied; без секрета trusted-network mode |
+| Runtime configuration | ✅ | Backend server загружает `RuntimeConfig` из `CICD_` один раз при старте/app construction: Database/Http/Git/Artifacts/Runner/Auth/Secrets. Startup/router validation покрывает bool, runner mode, CORS allowlist, artifact TTL, queue timeout и secrets key; AppState/supervisors используют config без повторного прямого чтения env. CLI и `forge-runner` остаются отдельными process-boundary tools на `clap`/env |
 | Secret injection | ✅ MVP | embedded runner передаёт в env только `jobs.required_secrets`; external runner получает declared secrets через lease-scoped `secrets:resolve` после ack; stdout/stderr masking best-effort |
 | Error envelope + request_id | ✅ | Backend returns `{error:{code,message,request_id}}` + `x-request-id`; raw internal SQLx errors are logged server-side and hidden behind generic `500 internal_error`; frontend transport maps structured envelopes, non-JSON HTTP failures, network failures and cancelled requests into typed `ApiError` while preserving status, `code`, `request_id`, safe details and `Retry-After` |
 | Pagination | ✅ | limit/offset (cap 200) на проектах/пайплайнах |
@@ -60,6 +61,7 @@ backend/
 │   ├── runner.rs       # embedded executor (+job_leases, secret injection, маскирование)
 │   ├── runner_protocol.rs # external runner protocol MVP
 │   ├── bin/forge-runner.rs # external shell runner process MVP
+│   ├── config.rs        # typed RuntimeConfig для server startup/AppState/supervisors
 │   ├── outbox.rs       # ADR-0006: domain_events/outbox + scheduler worker
 │   ├── authz.rs        # role-политики роутов + project membership enforcement
 │   ├── rate_limit.rs   # in-process fixed-window route-class limiting

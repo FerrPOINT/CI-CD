@@ -11,6 +11,8 @@
 //! - Scheduler: enabled cron schedules compute `next_fire_at`, claim a unique
 //!   `schedule_fires` slot, then trigger pipelines idempotently.
 
+use std::path::{Path, PathBuf};
+
 use chrono::{DateTime, Duration, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -483,6 +485,11 @@ pub async fn requeue_failed_delivery(
 
 /// One scheduler pass: materialize due cron slots and process pending fires.
 pub async fn fire_due_schedules(pool: &PgPool) -> usize {
+    let git_root = git_root_from_env_lossy();
+    fire_due_schedules_with_git_root(pool, &git_root).await
+}
+
+pub async fn fire_due_schedules_with_git_root(pool: &PgPool, git_root: &Path) -> usize {
     let due = sqlx::query_as::<_, (Uuid, String, Option<DateTime<Utc>>)>(
         "SELECT id, cron, next_fire_at FROM schedules \
          WHERE enabled AND last_fire_error IS NULL AND (next_fire_at IS NULL OR next_fire_at <= now()) \
@@ -496,7 +503,7 @@ pub async fn fire_due_schedules(pool: &PgPool) -> usize {
     for (schedule_id, cron, next_fire_at) in due {
         materialize_schedule_fire(pool, schedule_id, &cron, next_fire_at).await;
     }
-    process_pending_schedule_fires(pool).await
+    process_pending_schedule_fires(pool, git_root).await
 }
 
 async fn materialize_schedule_fire(
@@ -563,7 +570,7 @@ async fn materialize_schedule_fire(
     .await;
 }
 
-async fn process_pending_schedule_fires(pool: &PgPool) -> usize {
+async fn process_pending_schedule_fires(pool: &PgPool, git_root: &Path) -> usize {
     let fires = sqlx::query_as::<_, (Uuid, Uuid, Uuid, DateTime<Utc>, String)>(
         "SELECT f.id, f.schedule_id, f.project_id, f.scheduled_for, s.git_ref \
          FROM schedule_fires f \
@@ -588,6 +595,7 @@ async fn process_pending_schedule_fires(pool: &PgPool) -> usize {
             }),
             crate::api::PIPELINE_TRIGGER_SOURCE_SCHEDULE,
             Some(&schedule_idempotency_key(schedule_id, scheduled_for)),
+            git_root,
         )
         .await;
         match pipeline {
@@ -643,6 +651,10 @@ fn schedule_idempotency_key(schedule_id: Uuid, scheduled_for: DateTime<Utc>) -> 
 
 /// Background supervisor loop: delivery + scheduler every 5 seconds.
 pub async fn supervisor_loop(pool: PgPool) {
+    supervisor_loop_with_git_root(pool, git_root_from_env_lossy()).await;
+}
+
+pub async fn supervisor_loop_with_git_root(pool: PgPool, git_root: PathBuf) {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
@@ -650,7 +662,7 @@ pub async fn supervisor_loop(pool: PgPool) {
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         let delivered = deliver_due(&pool, &client).await;
-        let fired = fire_due_schedules(&pool).await;
+        let fired = fire_due_schedules_with_git_root(&pool, &git_root).await;
         if delivered > 0 || fired > 0 {
             tracing::info!(delivered, fired, "outbox/scheduler pass");
         }
@@ -659,6 +671,15 @@ pub async fn supervisor_loop(pool: PgPool) {
 
 fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn git_root_from_env_lossy() -> PathBuf {
+    crate::config::RuntimeConfig::from_env_for_app()
+        .map(|config| config.git.root)
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "invalid scheduler git root config; using test defaults");
+            crate::config::RuntimeConfig::test_default().git.root
+        })
 }
 
 #[cfg(test)]

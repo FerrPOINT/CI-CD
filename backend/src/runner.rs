@@ -17,12 +17,16 @@ use tokio::{
 };
 use uuid::Uuid;
 
-use crate::api::ApiError;
+use crate::{
+    api::ApiError,
+    config::{ArtifactsConfig, RunnerMode, RuntimeConfig, SecretsConfig},
+};
 
 const RUNNER_RECONCILE_INTERVAL_SECONDS: u64 = 2;
 const RUNNER_STALE_OFFLINE_AFTER_SECONDS: i64 = 120;
-const DEFAULT_RUNNER_QUEUE_TIMEOUT_SECONDS: i64 = 86_400;
-const MAX_RUNNER_QUEUE_TIMEOUT_SECONDS: i64 = 2_592_000;
+const DEFAULT_RUNNER_QUEUE_TIMEOUT_SECONDS: i64 =
+    crate::config::DEFAULT_RUNNER_QUEUE_TIMEOUT_SECONDS;
+const MAX_RUNNER_QUEUE_TIMEOUT_SECONDS: i64 = crate::config::MAX_RUNNER_QUEUE_TIMEOUT_SECONDS;
 
 /// Job processes currently executed by the embedded runner.
 /// Maps job_id -> child process id so that cancel can kill it.
@@ -36,93 +40,74 @@ struct EmbeddedJobLease {
     generation: i64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RunnerMode {
-    /// Execute jobs inside Docker containers using the declared image.
-    Docker,
-    /// Fallback: run on the host shell (local dev without Docker).
-    HostShell,
+#[derive(Clone, Debug)]
+pub struct RuntimeRunnerConfig {
+    pub mode: RunnerMode,
+    pub embedded_enabled: bool,
+    pub queue_timeout_seconds: Option<i64>,
+    pub keep_workspace: bool,
+    pub git_root: PathBuf,
+    pub artifacts: ArtifactsConfig,
+    pub secrets: SecretsConfig,
 }
 
-fn runner_mode() -> RunnerMode {
-    match std::env::var("CICD_RUNNER_MODE").ok().as_deref() {
-        Some("host") => RunnerMode::HostShell,
-        _ => RunnerMode::Docker,
+impl RuntimeRunnerConfig {
+    pub fn from_config(config: &RuntimeConfig) -> Self {
+        Self {
+            mode: config.runner.mode,
+            embedded_enabled: config.runner.embedded_enabled,
+            queue_timeout_seconds: config.runner.queue_timeout_seconds,
+            keep_workspace: config.runner.keep_workspace,
+            git_root: config.git.root.clone(),
+            artifacts: config.artifacts.clone(),
+            secrets: config.secrets.clone(),
+        }
+    }
+
+    fn from_env_lossy() -> Self {
+        match RuntimeConfig::from_env_for_app() {
+            Ok(config) => Self::from_config(&config),
+            Err(error) => {
+                tracing::warn!(%error, "invalid runner runtime config; using test defaults");
+                Self::from_config(&RuntimeConfig::test_default())
+            }
+        }
     }
 }
 
 pub fn embedded_runner_enabled_from_env(raw: Option<String>) -> Result<bool, std::io::Error> {
-    let Some(value) = raw
-        .map(|value| value.trim().to_ascii_lowercase())
-        .filter(|value| !value.is_empty())
-    else {
-        return Ok(true);
-    };
-    match value.as_str() {
-        "1" | "true" | "yes" | "on" => Ok(true),
-        "0" | "false" | "no" | "off" => Ok(false),
-        _ => Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "CICD_EMBEDDED_RUNNER_ENABLED must be one of true/false, 1/0, yes/no or on/off",
-        )),
-    }
+    crate::config::bool_from_env("CICD_EMBEDDED_RUNNER_ENABLED", raw, true)
+        .map_err(crate::config::ConfigError::into_io_error)
 }
 
 fn embedded_runner_enabled() -> bool {
-    match embedded_runner_enabled_from_env(std::env::var("CICD_EMBEDDED_RUNNER_ENABLED").ok()) {
-        Ok(enabled) => enabled,
-        Err(error) => {
-            tracing::warn!(%error, "invalid embedded runner env; assuming enabled");
-            true
-        }
-    }
+    RuntimeRunnerConfig::from_env_lossy().embedded_enabled
 }
 
 pub fn runner_queue_timeout_seconds_from_env(
     raw: Option<String>,
 ) -> Result<Option<i64>, std::io::Error> {
-    let Some(value) = raw
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-    else {
-        return Ok(Some(DEFAULT_RUNNER_QUEUE_TIMEOUT_SECONDS));
-    };
-    let seconds = value.parse::<i64>().map_err(|_| {
-        std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "CICD_RUNNER_QUEUE_TIMEOUT_SECONDS must be an integer number of seconds",
-        )
-    })?;
-    if seconds == 0 {
-        return Ok(None);
-    }
-    if !(1..=MAX_RUNNER_QUEUE_TIMEOUT_SECONDS).contains(&seconds) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            format!(
-                "CICD_RUNNER_QUEUE_TIMEOUT_SECONDS must be 0 or 1..{MAX_RUNNER_QUEUE_TIMEOUT_SECONDS}"
-            ),
-        ));
-    }
-    Ok(Some(seconds))
+    crate::config::runner_queue_timeout_seconds_from_env(raw)
+        .map_err(crate::config::ConfigError::into_io_error)
 }
 
 fn runner_queue_timeout_seconds() -> Option<i64> {
-    match runner_queue_timeout_seconds_from_env(
-        std::env::var("CICD_RUNNER_QUEUE_TIMEOUT_SECONDS").ok(),
-    ) {
-        Ok(timeout) => timeout,
-        Err(error) => {
-            tracing::warn!(%error, "invalid queue timeout env; using default");
-            Some(DEFAULT_RUNNER_QUEUE_TIMEOUT_SECONDS)
-        }
-    }
+    RuntimeRunnerConfig::from_env_lossy().queue_timeout_seconds
 }
 
 /// Executes a single job: marks running, streams stdout/stderr into job_logs,
 /// sets success/failed from the exit code and refreshes stage/pipeline status.
 pub async fn run_job(pool: PgPool, job_id: Uuid, running: RunningJobs) {
-    if let Err(error) = run_job_inner(pool.clone(), job_id, running.clone()).await {
+    run_job_with_config(pool, job_id, running, RuntimeRunnerConfig::from_env_lossy()).await;
+}
+
+pub async fn run_job_with_config(
+    pool: PgPool,
+    job_id: Uuid,
+    running: RunningJobs,
+    config: RuntimeRunnerConfig,
+) {
+    if let Err(error) = run_job_inner(pool.clone(), job_id, running.clone(), &config).await {
         tracing::error!(%job_id, error = ?error, "runner job failed");
         running.lock().await.remove(&job_id);
         finish_job_after_runner_error(&pool, job_id, &error).await;
@@ -638,10 +623,18 @@ pub async fn reconcile_stale_runners(pool: &PgPool) -> Result<u64, sqlx::Error> 
 }
 
 pub async fn reconcile_queue_timeouts(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let config = RuntimeRunnerConfig::from_env_lossy();
+    reconcile_queue_timeouts_for_config(pool, &config).await
+}
+
+pub async fn reconcile_queue_timeouts_for_config(
+    pool: &PgPool,
+    config: &RuntimeRunnerConfig,
+) -> Result<u64, sqlx::Error> {
     reconcile_queue_timeouts_with_config(
         pool,
-        runner_queue_timeout_seconds(),
-        embedded_runner_enabled(),
+        config.queue_timeout_seconds,
+        config.embedded_enabled,
     )
     .await
 }
@@ -803,7 +796,12 @@ fn lease_status_for_terminal(terminal_status: &str) -> &'static str {
     }
 }
 
-async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Result<(), ApiError> {
+async fn run_job_inner(
+    pool: PgPool,
+    job_id: Uuid,
+    running: RunningJobs,
+    config: &RuntimeRunnerConfig,
+) -> Result<(), ApiError> {
     let job = sqlx::query_as::<_, JobRow>(
         "SELECT j.id, j.stage_id, j.name, j.image, j.command, j.required_secrets, j.artifact_paths, j.status, \
                 s.pipeline_id, p.project_id, s.name AS stage_name, \
@@ -837,13 +835,14 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
     };
     let attempt_id = lease.attempt_id;
 
-    let workspace = prepare_workspace(&pool, &job).await?;
+    let workspace = prepare_workspace(&pool, &job, config).await?;
 
     // REQ-SEC-002: inject only job-declared project secrets as env vars.
-    let secrets = crate::platform::project_secret_pairs_for_names(
+    let secrets = crate::platform::project_secret_pairs_for_names_with_config(
         &pool,
         job.project_id,
         &job.required_secrets,
+        &config.secrets,
     )
     .await?;
     let masks: Vec<String> = secrets
@@ -861,9 +860,9 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
             .map_err(ApiError::internal)?
             .unwrap_or(3600)
             .clamp(5, 24 * 3600);
-    let artifacts_root =
-        std::env::var("CICD_ARTIFACTS_DIR").unwrap_or_else(|_| "/var/lib/forge/artifacts".into());
-    let pipeline_artifacts = std::path::Path::new(&artifacts_root)
+    let pipeline_artifacts = config
+        .artifacts
+        .root
         .join("pipelines")
         .join(job.pipeline_id.to_string());
     let job_artifacts = pipeline_artifacts.join("jobs").join(job_id.to_string());
@@ -928,7 +927,7 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
     }
     envs.extend(secrets.iter().cloned());
 
-    let mut child = if runner_mode() == RunnerMode::Docker {
+    let mut child = if config.mode == RunnerMode::Docker {
         let workspace_volume = workspace
             .parent()
             .map(std::path::Path::to_path_buf)
@@ -1012,13 +1011,17 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
                 )
                 .await?;
                 refresh_stage(pool.clone(), job.id).await?;
-                let _ = tokio::fs::remove_dir_all(&workspace).await;
+                if !config.keep_workspace {
+                    let _ = tokio::fs::remove_dir_all(&workspace).await;
+                }
                 return Ok(());
             }
             mark_attempt_failed(&pool, attempt_id, &message).await?;
             complete_embedded_job_lease(&pool, lease.id, "failed", Some(&message)).await?;
             refresh_stage(pool.clone(), job.id).await?;
-            let _ = tokio::fs::remove_dir_all(&workspace).await;
+            if !config.keep_workspace {
+                let _ = tokio::fs::remove_dir_all(&workspace).await;
+            }
             return Ok(());
         }
     };
@@ -1045,10 +1048,16 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
     let mut final_status = final_status;
     let mut exit_code = exit_code;
     let mut error_tail = error_tail;
-    let artifact_error =
-        collect_declared_artifacts(&pool, job_id, attempt_id, &workspace, &job.artifact_paths)
-            .await
-            .err();
+    let artifact_error = collect_declared_artifacts(
+        &pool,
+        &config.artifacts,
+        job_id,
+        attempt_id,
+        &workspace,
+        &job.artifact_paths,
+    )
+    .await
+    .err();
     if final_status == "success" {
         if let Some(error) = artifact_error {
             final_status = "failed";
@@ -1060,8 +1069,8 @@ async fn run_job_inner(pool: PgPool, job_id: Uuid, running: RunningJobs) -> Resu
         }
     }
 
-    // Cleanup workspace unless CICD_RUNNER_KEEP_WORKSPACE=1.
-    if std::env::var("CICD_RUNNER_KEEP_WORKSPACE").ok().as_deref() != Some("1") {
+    // Cleanup workspace unless CICD_RUNNER_KEEP_WORKSPACE is enabled.
+    if !config.keep_workspace {
         let _ = tokio::fs::remove_dir_all(&workspace).await;
     }
 
@@ -1189,6 +1198,7 @@ async fn stream_stdout_to_attempt(
 
 async fn collect_declared_artifacts(
     pool: &PgPool,
+    artifacts: &ArtifactsConfig,
     job_id: Uuid,
     attempt_id: Uuid,
     workspace: &Path,
@@ -1215,8 +1225,9 @@ async fn collect_declared_artifacts(
             .await
             .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
         let name = artifact_name_from_declared_path(artifact_path);
-        crate::platform::store_job_artifact(
+        crate::platform::store_job_artifact_with_config(
             pool,
+            artifacts,
             job_id,
             Some(attempt_id),
             &name,
@@ -1300,7 +1311,11 @@ struct JobRow {
 }
 
 /// Clones the project repository (bare) into /tmp/forge-runner/<job> at git_ref.
-async fn prepare_workspace(pool: &PgPool, job: &JobRow) -> Result<std::path::PathBuf, ApiError> {
+async fn prepare_workspace(
+    pool: &PgPool,
+    job: &JobRow,
+    config: &RuntimeRunnerConfig,
+) -> Result<std::path::PathBuf, ApiError> {
     let repo_url: String = sqlx::query_scalar("SELECT repository_url FROM projects WHERE id = $1")
         .bind(job.project_id)
         .fetch_one(pool)
@@ -1348,7 +1363,7 @@ async fn prepare_workspace(pool: &PgPool, job: &JobRow) -> Result<std::path::Pat
 
     // Prefer local bare repo: avoid HTTP round-trips that can deadlock if the
     // repository_url points back at the same backend serving this runner.
-    let cloned = clone_from_local_bare(&repo_url, &git_ref, &workspace).await;
+    let cloned = clone_from_local_bare(&repo_url, &git_ref, &workspace, &config.git_root).await;
     if !cloned {
         if let Err(error) = clone_via_http(&repo_url, &git_ref, &workspace, pool, job.id).await {
             let _ = tokio::fs::remove_dir_all(&workspace).await;
@@ -1359,12 +1374,16 @@ async fn prepare_workspace(pool: &PgPool, job: &JobRow) -> Result<std::path::Pat
 }
 
 /// Attempts `git clone` from a local bare repo under `CICD_GIT_ROOT`.
-async fn clone_from_local_bare(repo_url: &str, git_ref: &str, workspace: &std::path::Path) -> bool {
+async fn clone_from_local_bare(
+    repo_url: &str,
+    git_ref: &str,
+    workspace: &std::path::Path,
+    git_root: &Path,
+) -> bool {
     let Some(name) = extract_repo_name_from_url(repo_url) else {
         return false;
     };
-    let git_root = std::env::var("CICD_GIT_ROOT").unwrap_or_else(|_| "/var/lib/forge/git".into());
-    let bare_path = std::path::Path::new(&git_root).join(format!("{name}.git"));
+    let bare_path = git_root.join(format!("{name}.git"));
     if !bare_path.is_dir() {
         return false;
     }
@@ -1466,8 +1485,16 @@ async fn append_attempt_log(
 
 /// Wakes up on newly queued pipelines and executes stage-by-stage.
 pub async fn supervisor_loop(pool: PgPool, running: RunningJobs) {
+    supervisor_loop_with_config(pool, running, RuntimeRunnerConfig::from_env_lossy()).await;
+}
+
+pub async fn supervisor_loop_with_config(
+    pool: PgPool,
+    running: RunningJobs,
+    config: RuntimeRunnerConfig,
+) {
     loop {
-        match poll_and_dispatch(&pool, running.clone()).await {
+        match poll_and_dispatch_with_config(&pool, running.clone(), &config).await {
             Ok(()) => {}
             Err(error) => tracing::error!(%error, "runner poll failed"),
         }
@@ -1477,8 +1504,12 @@ pub async fn supervisor_loop(pool: PgPool, running: RunningJobs) {
 
 /// Reconciles leases and runner health when the embedded executor is disabled.
 pub async fn maintenance_loop(pool: PgPool) {
+    maintenance_loop_with_config(pool, RuntimeRunnerConfig::from_env_lossy()).await;
+}
+
+pub async fn maintenance_loop_with_config(pool: PgPool, config: RuntimeRunnerConfig) {
     loop {
-        match reconcile_runtime_state(&pool).await {
+        match reconcile_runtime_state_with_config(&pool, &config).await {
             Ok(()) => {}
             Err(error) => tracing::error!(%error, "runner maintenance failed"),
         }
@@ -1489,7 +1520,16 @@ pub async fn maintenance_loop(pool: PgPool) {
 /// Picks the first queued job of every non-terminal pipeline whose previous
 /// stages all finished successfully, and spawns it.
 async fn poll_and_dispatch(pool: &PgPool, running: RunningJobs) -> Result<(), sqlx::Error> {
-    reconcile_runtime_state(pool).await?;
+    let config = RuntimeRunnerConfig::from_env_lossy();
+    poll_and_dispatch_with_config(pool, running, &config).await
+}
+
+async fn poll_and_dispatch_with_config(
+    pool: &PgPool,
+    running: RunningJobs,
+    config: &RuntimeRunnerConfig,
+) -> Result<(), sqlx::Error> {
+    reconcile_runtime_state_with_config(pool, config).await?;
 
     let enqueued = crate::store::enqueue_missing_ready_jobs(pool).await?;
     if enqueued > 0 {
@@ -1534,14 +1574,23 @@ async fn poll_and_dispatch(pool: &PgPool, running: RunningJobs) -> Result<(), sq
     for candidate in candidates {
         let pool2 = pool.clone();
         let running2 = running.clone();
+        let config2 = config.clone();
         tokio::spawn(async move {
-            run_job(pool2, candidate.id, running2).await;
+            run_job_with_config(pool2, candidate.id, running2, config2).await;
         });
     }
     Ok(())
 }
 
 async fn reconcile_runtime_state(pool: &PgPool) -> Result<(), sqlx::Error> {
+    let config = RuntimeRunnerConfig::from_env_lossy();
+    reconcile_runtime_state_with_config(pool, &config).await
+}
+
+async fn reconcile_runtime_state_with_config(
+    pool: &PgPool,
+    config: &RuntimeRunnerConfig,
+) -> Result<(), sqlx::Error> {
     let unacknowledged = reconcile_unacknowledged_leases(pool).await?;
     if unacknowledged > 0 {
         tracing::warn!(
@@ -1560,7 +1609,7 @@ async fn reconcile_runtime_state(pool: &PgPool) -> Result<(), sqlx::Error> {
         tracing::warn!(stale_runners, "runner marked stale runners offline");
     }
 
-    let queue_timeouts = reconcile_queue_timeouts(pool).await?;
+    let queue_timeouts = reconcile_queue_timeouts_for_config(pool, config).await?;
     if queue_timeouts > 0 {
         tracing::warn!(queue_timeouts, "runner reconciled queue timeouts");
     }

@@ -142,6 +142,9 @@ FORBIDDEN_STALE_STATUS = [
     (r"история доставок остаются target", "bounded delivery history/requeue is current MVP; clarify remaining scheduler or dead-letter target scope"),
     (r"full deliveries table/replay ещё target", "bounded outbox attempt history/requeue is current MVP; production delivery snapshots/leases remain target"),
     (r"delivery history, audited replay/dead letters", "bounded delivery history/requeue is current MVP; audited full dead-letter workflow remains target"),
+    (r"env \(`CICD_`\) → typed config \(в процессе\)", "backend server now uses typed RuntimeConfig; package split remains target"),
+    (r"full typed config target", "backend RuntimeConfig is current; remaining target is package split/production hardening"),
+    (r"сейчас — прямое чтение env", "server startup and AppState now use typed RuntimeConfig"),
 ]
 
 problems: list[str] = []

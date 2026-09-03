@@ -11,6 +11,7 @@
 
 ### Added
 
+- Backend runtime config: server startup теперь собирает typed `RuntimeConfig` из `CICD_` env, передаёт его в HTTP state/supervisors/runner protocol/artifact/secret paths, fail-fast валидирует bool, runner mode, artifact TTL, queue timeout и secrets key, а router construction валидирует CORS; compose/example/docs синхронизированы с `CICD_AUTH_COOKIE_SECURE` и `CICD_RUNNER_QUEUE_TIMEOUT_SECONDS`.
 - Documentation guard: `scripts/verify_docs.py --all` now validates frontend CI script references, required dashboard package scripts/tool dependencies, frontend stack versions in `docs/ARCHITECTURE.md`, and screenshot manifest coverage for every production `appRoutes` path.
 - Documentation guard: `scripts/verify_docs.py --all` now fails when `/readiness` migration-version examples drift behind committed SQLx migrations.
 - Auth hardening: migration `0026_session_family_reuse` adds refresh session `family_id`/`replaced_by`/`reuse_detected_at` and `users.token_version`; refresh rotation is transactional and reuse of a replaced refresh token revokes the whole session family and invalidates already issued access JWTs.

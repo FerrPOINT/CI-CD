@@ -749,6 +749,7 @@ pub async fn internal_git_push(
                 serde_json::json!({}),
                 crate::api::PIPELINE_TRIGGER_SOURCE_GIT_PUSH,
                 idempotency_key.as_deref(),
+                &state.config.git.root,
             )
             .await?;
             Ok(axum::Json(serde_json::json!({
