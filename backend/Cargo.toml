@@ -75,6 +75,10 @@ flate2 = "1"
 git2 = { version = "0.20", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
+# time pinned: 0.3.42+ requires rustc 1.88; fleet toolchain is 1.86
+time = "=0.3.41"
+# Fleet auth core: sibling services-base checkout (umbrella compose + CI).
+sdlc-auth-core = { path = "../../../services-base/crates/sdlc-auth-core" }
 serde_yaml = { package = "yaml_serde", version = "0.10" }
 sha2 = "0.10"
 hmac = "0.12"

@@ -6,18 +6,18 @@ import { toast } from 'sonner'
 import { useRepositoryCommits, useRepositoryRefs, useRepositoryTree, useRepositoryBlob, useRepositoryTags, useReleases, useCreateRelease, useDeleteRelease } from '@/api/hooks'
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/shared/ui/dialog'
-import { Input } from '@/shared/ui/input'
-import { Label } from '@/shared/ui/label'
-import { Textarea } from '@/shared/ui/textarea'
+} from '@sdlc/ui/ui'
+import { Input } from '@sdlc/ui/ui'
+import { Label } from '@sdlc/ui/ui'
+import { Textarea } from '@sdlc/ui/ui'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from '@/shared/ui/alert-dialog'
+} from '@sdlc/ui/ui'
 import { UserAvatar } from '@/shared/ui/user-avatar'
-import { Button } from '@/shared/ui/button'
-import { Card } from '@/shared/ui/card'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/ui/tabs'
+import { Button } from '@sdlc/ui/ui'
+import { Card } from '@sdlc/ui/ui'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@sdlc/ui/ui'
 import {
   Table,
   TableBody,
@@ -25,7 +25,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/shared/ui/table'
+} from '@sdlc/ui/ui'
 
 function formatDate(value: string, locale: string): string {
   const date = new Date(value)

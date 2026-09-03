@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/shared/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card'
-import { Input } from '@/shared/ui/input'
-import { Label } from '@/shared/ui/label'
+import { Button } from '@sdlc/ui/ui'
+import { Card, CardContent, CardHeader, CardTitle } from '@sdlc/ui/ui'
+import { Input } from '@sdlc/ui/ui'
+import { Label } from '@sdlc/ui/ui'
 import { login } from '@/api/auth'
 
 export function LoginPage() {

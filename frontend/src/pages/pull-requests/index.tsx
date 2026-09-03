@@ -9,13 +9,13 @@ import {
   usePullRequests,
   useRepositoryRefs,
 } from '@/api/hooks'
-import { Button } from '@/shared/ui/button'
+import { Button } from '@sdlc/ui/ui'
 import { UserAvatar } from '@/shared/ui/user-avatar'
 import { currentSession } from '@/api/auth'
-import { Card } from '@/shared/ui/card'
-import { Input } from '@/shared/ui/input'
-import { Label } from '@/shared/ui/label'
-import { Textarea } from '@/shared/ui/textarea'
+import { Card } from '@sdlc/ui/ui'
+import { Input } from '@sdlc/ui/ui'
+import { Label } from '@sdlc/ui/ui'
+import { Textarea } from '@sdlc/ui/ui'
 import type { PullRequest, PullRequestStatus } from '@/api/types'
 
 const statusStyles: Record<PullRequestStatus, string> = {

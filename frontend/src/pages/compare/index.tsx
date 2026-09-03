@@ -3,10 +3,10 @@ import { Link, useParams, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { ChevronRight, FileDiff, GitCompareArrows } from 'lucide-react'
 import { useRepositoryComparison } from '@/api/hooks'
-import { Button } from '@/shared/ui/button'
-import { Card } from '@/shared/ui/card'
-import { Input } from '@/shared/ui/input'
-import { Label } from '@/shared/ui/label'
+import { Button } from '@sdlc/ui/ui'
+import { Card } from '@sdlc/ui/ui'
+import { Input } from '@sdlc/ui/ui'
+import { Label } from '@sdlc/ui/ui'
 import {
   Table,
   TableBody,
@@ -14,7 +14,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/shared/ui/table'
+} from '@sdlc/ui/ui'
 import type { ChangeStatus } from '@/api/types'
 
 const changeStatusStyles: Record<ChangeStatus, string> = {

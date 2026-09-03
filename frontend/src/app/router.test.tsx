@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ThemeProvider } from '@/shared/lib/theme'
+import { ThemeProvider } from '@sdlc/ui/lib'
 import { appRoutes } from './router'
 
 vi.mock('react-i18next', () => ({

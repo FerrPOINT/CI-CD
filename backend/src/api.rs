@@ -959,6 +959,11 @@ pub(crate) async fn identity_for_bearer_token(
     auth_secret: &str,
     token: &str,
 ) -> Result<crate::auth::AccessClaims, ApiError> {
+    // Central fleet auth-server first (ES256 via JWKS); legacy session JWTs
+    // and cicd_ PATs remain valid during the migration window.
+    if let Some(central) = crate::central_auth::try_central(token).await {
+        return crate::central_auth::link_central_user(pool, &central).await;
+    }
     if token.starts_with("cicd_") {
         let hash = crate::auth::hash_token(token);
         let row = sqlx::query_as::<_, (Uuid, Uuid, String, Option<Uuid>, Vec<String>)>(
@@ -1301,6 +1306,26 @@ async fn auth_login(
     use crate::auth::*;
     crate::metrics::LOGIN_ATTEMPTS_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let pool = pool(&state)?;
+    // Central fleet auth first; local credential login remains the fallback
+    // during the migration window (central_auth.rs).
+    match crate::central_auth::try_central_login(&input.username, &input.password).await {
+        Ok(Some(pair)) => {
+            if let Some(central) = crate::central_auth::try_central(&pair.access_token).await {
+                crate::central_auth::link_central_user(pool, &central).await?; // shadow user ensured
+                let out = crate::auth::TokenPair {
+                    access_token: pair.access_token,
+                    expires_at: chrono::Utc::now().timestamp() + 900,
+                    refresh_token: pair.refresh_token.unwrap_or_default(),
+                };
+                return Ok((HeaderMap::new(), Json(out)));
+            }
+        }
+        Ok(None) => { /* central not configured */ }
+        Err(Some(error)) => {
+            tracing::warn!(%error, "central login failed; falling back to local");
+        }
+        Err(None) => { /* credentials unknown centrally; local path */ }
+    }
     let row = sqlx::query_as::<_, (Uuid, String, bool, i64, String)>(
         "SELECT u.id, u.role, u.enabled, u.token_version, c.password_hash FROM users u \
          JOIN user_credentials c ON c.user_id = u.id WHERE u.username = $1",

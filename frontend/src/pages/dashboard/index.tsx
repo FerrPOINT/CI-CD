@@ -2,8 +2,8 @@ import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { useProjects } from '@/api/hooks'
 import { useProjectPipelines } from '@/shared/lib/use-project-pipelines'
-import { Card } from '@/shared/ui/card'
-import { Button } from '@/shared/ui/button'
+import { Card } from '@sdlc/ui/ui'
+import { Button } from '@sdlc/ui/ui'
 import { FolderGit2, Play, CheckCircle2, XCircle, Clock } from 'lucide-react'
 
 export function DashboardPage() {

@@ -1,8 +1,8 @@
 import { useTranslation } from 'react-i18next'
 import { useParams } from 'react-router'
 import { useArtifacts } from '@/api/hooks'
-import { Card } from '@/shared/ui/card'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
+import { Card } from '@sdlc/ui/ui'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@sdlc/ui/ui'
 import { Package } from 'lucide-react'
 
 export function ArtifactsPage() {

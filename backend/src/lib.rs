@@ -2,6 +2,7 @@ pub mod api;
 pub mod auth;
 pub mod authz;
 pub(crate) mod body_limits;
+pub mod central_auth;
 pub mod config;
 pub mod dispatch_signal;
 pub mod metrics;

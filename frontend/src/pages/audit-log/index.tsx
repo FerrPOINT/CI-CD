@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { useAuditLog } from '@/api/hooks'
-import { Card } from '@/shared/ui/card'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table'
+import { Card } from '@sdlc/ui/ui'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@sdlc/ui/ui'
 import { History } from 'lucide-react'
 
 import { UserAvatar } from '@/shared/ui/user-avatar'

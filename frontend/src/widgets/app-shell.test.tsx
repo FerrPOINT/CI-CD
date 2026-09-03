@@ -1,5 +1,6 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
+import { ThemeProvider } from '@sdlc/ui/lib'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const authMocks = vi.hoisted(() => ({
@@ -20,7 +21,10 @@ vi.mock('react-router', async () => {
   return { ...actual, Outlet: () => <div>outlet</div>, useNavigate: () => navigateMock }
 })
 
-vi.mock('@/shared/ui/theme-toggle', () => ({ ThemeToggle: () => <button>theme</button> }))
+vi.mock('@sdlc/ui/ui', async () => {
+  const actual = await vi.importActual('@sdlc/ui/ui')
+  return { ...actual, ThemeToggle: () => <button>theme</button> }
+})
 
 import { AppShell } from './app-shell'
 
@@ -40,7 +44,13 @@ afterEach(() => {
 
 describe('AppShell mobile navigation', () => {
   it('gives the mobile drawer trigger an accessible name', () => {
-    render(<MemoryRouter><AppShell /></MemoryRouter>)
+    render(
+      <ThemeProvider>
+        <MemoryRouter>
+          <AppShell />
+        </MemoryRouter>
+      </ThemeProvider>,
+    )
 
     expect(screen.getByRole('button', { name: 'navigation.toggleMenu' })).toBeDefined()
     expect(screen.getByRole('button', { name: 'navigation.toggleMenu' }).getAttribute('aria-controls')).toBe('mobile-navigation')
@@ -54,7 +64,13 @@ describe('AppShell mobile navigation', () => {
     })
     authMocks.authRequired.mockResolvedValue(true)
 
-    render(<MemoryRouter><AppShell /></MemoryRouter>)
+    render(
+      <ThemeProvider>
+        <MemoryRouter>
+          <AppShell />
+        </MemoryRouter>
+      </ThemeProvider>,
+    )
 
     await waitFor(() => expect(authMocks.refresh).toHaveBeenCalledTimes(1))
     expect(authMocks.authRequired).not.toHaveBeenCalled()
@@ -65,7 +81,13 @@ describe('AppShell mobile navigation', () => {
     authMocks.refresh.mockResolvedValue(null)
     authMocks.authRequired.mockResolvedValue(true)
 
-    render(<MemoryRouter><AppShell /></MemoryRouter>)
+    render(
+      <ThemeProvider>
+        <MemoryRouter>
+          <AppShell />
+        </MemoryRouter>
+      </ThemeProvider>,
+    )
 
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith('/login', { replace: true }))
   })
