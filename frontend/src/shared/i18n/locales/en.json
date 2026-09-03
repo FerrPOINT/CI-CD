@@ -173,7 +173,8 @@
     "clear": "Clear",
     "dismiss": "Dismiss",
     "create": "Create",
-    "actions": "Actions"
+    "actions": "Actions",
+    "back": "Back"
   },
   "capability": {
     "currentVerified": "Current verified",

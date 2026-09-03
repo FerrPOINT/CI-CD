@@ -74,6 +74,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let _runner_work_listener = dispatch_signal::spawn_runner_work_listener(pool.clone());
 
+    // Upgrade path: rewrite post-receive hooks so template fixes (e.g. the
+    // blank continuation line bug) reach repositories created by older code.
+    let hook_pool = pool.clone();
+    let hook_git = git.clone();
+    tokio::spawn(async move {
+        cicd::git_host::ensure_post_receive_hooks(&hook_pool, &hook_git).await;
+    });
+
     let listener = tokio::net::TcpListener::bind(&bind).await?;
     tracing::info!(%bind, "CI/CD API listening");
     axum::serve(listener, app_with_git(Some(pool), git, Some(running))).await?;

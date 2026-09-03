@@ -173,7 +173,8 @@
     "clear": "Очистить",
     "dismiss": "Закрыть",
     "create": "Создать",
-    "actions": "Действия"
+    "actions": "Действия",
+    "back": "Назад"
   },
   "capability": {
     "currentVerified": "Проверено сейчас",

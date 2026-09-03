@@ -80,7 +80,7 @@ export function PullRequestDetailPage() {
           <p className="mt-2 text-sm text-text-muted">{pr.title}</p>
         </div>
         <Button variant="outline" onClick={() => setSearchParams({}, { replace: true })}>
-          <ArrowLeft className="h-4 w-4" /> {t('common.back', 'Назад к pull-запросу')}
+          <ArrowLeft className="h-4 w-4" /> {t('common.back')}
         </Button>
         {diffLoading ? (
           <p className="text-sm text-text-muted">{t('common.loading')}</p>

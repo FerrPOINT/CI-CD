@@ -79,8 +79,14 @@ enum GitOperation {
 }
 
 fn post_receive_hook(name: &str, internal_token: Option<&str>) -> String {
-    let token_header = configured_internal_token(internal_token)
-        .map(|t| format!("  -H 'x-internal-token: {t}' \\"))
+    // A blank rendered line under a backslash continuation used to truncate
+    // the curl command before `-d`: pushes silently failed with HTTP 400 on
+    // deployments without an internal token. Build the curl block explicitly.
+    let payload = format!(
+        "{{\\\"repository\\\":\\\"{name}\\\",\\\"ref_name\\\":\\\"$refname\\\",\\\"old_rev\\\":\\\"$oldrev\\\",\\\"new_rev\\\":\\\"$newrev\\\"}}"
+    );
+    let token_line = configured_internal_token(internal_token)
+        .map(|token| format!("    -H 'x-internal-token: {token}' \\\n"))
         .unwrap_or_default();
     format!(
         r#"#!/bin/sh
@@ -88,11 +94,41 @@ fn post_receive_hook(name: &str, internal_token: Option<&str>) -> String {
 while read oldrev newrev refname; do
   curl -fsS -X POST "http://127.0.0.1:22801/api/v1/internal/git-push" \
     -H 'content-type: application/json' \
-{token_header}
-    -d "{{\"repository\":\"{name}\",\"ref_name\":\"$refname\",\"old_rev\":\"$oldrev\",\"new_rev\":\"$newrev\"}}" >/dev/null 2>&1 || true
+{token_line}    -d "{payload}" >/dev/null 2>&1 || true
 done
 "#
     )
+}
+
+/// Rewrites the `post-receive` hook for every registered repository so hook
+/// template fixes reach existing installations after upgrades (hooks are only
+/// generated at repository creation otherwise).
+pub async fn ensure_post_receive_hooks(pool: &PgPool, config: &GitConfig) {
+    let names: Vec<String> = match sqlx::query_scalar("SELECT name FROM repositories ORDER BY name")
+        .fetch_all(pool)
+        .await
+    {
+        Ok(names) => names,
+        Err(error) => {
+            tracing::warn!(?error, "could not list repositories for hook refresh");
+            return;
+        }
+    };
+    for name in names {
+        let path = repo_path(&config.root, &name);
+        if !path.join("HEAD").exists() {
+            continue;
+        }
+        let hook_path = path.join("hooks").join("post-receive");
+        if let Err(error) = tokio::fs::write(
+            &hook_path,
+            post_receive_hook(&name, config.internal_token.as_deref()),
+        )
+        .await
+        {
+            tracing::warn!(repository = %name, ?error, "could not refresh post-receive hook");
+        }
+    }
 }
 
 pub async fn create_repository_core(
@@ -902,5 +938,45 @@ mod tests {
         let hook = post_receive_hook("demo", Some(" \t "));
         assert!(!hook.contains("x-internal-token"));
         assert!(hook.contains("/api/v1/internal/git-push"));
+    }
+
+    #[test]
+    fn post_receive_hook_without_token_keeps_valid_shell_continuation() {
+        let hook = post_receive_hook("demo", None);
+        // No blank line may sit between a backslash continuation and the next
+        // curl argument: that truncated the command before `-d` and broke
+        // push-triggered pipelines on deployments without an internal token.
+        for (index, line) in hook.lines().enumerate() {
+            if line.trim_end().ends_with('\\') {
+                let next = hook
+                    .lines()
+                    .nth(index + 1)
+                    .expect("continuation must be followed by a line");
+                assert!(
+                    !next.trim().is_empty(),
+                    "blank continuation line in hook:\n{hook}"
+                );
+            }
+        }
+        // The generator emits shell-escaped JSON: \"repository\":\"demo\".
+        assert!(hook.contains("\\\"repository\\\":\\\"demo\\\""));
+    }
+
+    #[test]
+    fn post_receive_hook_with_token_keeps_valid_shell_continuation() {
+        let hook = post_receive_hook("demo", Some("secret-token"));
+        assert!(hook.contains("x-internal-token: secret-token"));
+        for (index, line) in hook.lines().enumerate() {
+            if line.trim_end().ends_with('\\') {
+                let next = hook
+                    .lines()
+                    .nth(index + 1)
+                    .expect("continuation must be followed by a line");
+                assert!(
+                    !next.trim().is_empty(),
+                    "blank continuation line in hook:\n{hook}"
+                );
+            }
+        }
     }
 }

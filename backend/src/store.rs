@@ -348,6 +348,11 @@ pub async fn enqueue_current_job_attempt(pool: &PgPool, job_id: Uuid) -> Result<
 }
 
 pub async fn enqueue_missing_ready_jobs(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    // Legacy pipelines created by the pre-fire-slot scheduler can have no
+    // `pipeline_plans` row and stay queued forever; without a bound this scan
+    // rewrites tens of thousands of dead rows on every tick. Keep enqueueing
+    // fresh plan-less pipelines (manual/legacy inserts) for a grace window,
+    // then stop considering them.
     let result = sqlx::query(
         "INSERT INTO job_queue (id, job_id, attempt_id, pipeline_id, stage_id, state, required_tags, queued_at) \
          SELECT gen_random_uuid(), j.id, a.id, s.pipeline_id, s.id, 'queued', j.required_tags, a.created_at \
@@ -361,9 +366,11 @@ pub async fn enqueue_missing_ready_jobs(pool: &PgPool) -> Result<u64, sqlx::Erro
              ORDER BY attempt_no DESC \
              LIMIT 1 \
          ) a ON TRUE \
+         LEFT JOIN pipeline_plans pp ON pp.pipeline_id = p.id \
          WHERE j.status = 'queued' \
            AND NOT j.manual \
            AND p.status IN ('queued','running') \
+           AND (pp.pipeline_id IS NOT NULL OR p.created_at > now() - interval '24 hours') \
            AND NOT EXISTS ( \
                SELECT 1 \
                FROM job_leases l \
