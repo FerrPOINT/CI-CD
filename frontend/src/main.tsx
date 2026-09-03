@@ -5,7 +5,7 @@ import { I18nextProvider } from 'react-i18next'
 import { RouterProvider } from 'react-router'
 import { Toaster } from 'sonner'
 import i18n from './shared/i18n/config'
-import { ThemeProvider, useTheme } from './shared/lib/theme'
+import { ThemeProvider, useTheme } from '@sdlc/ui/lib'
 import { router } from './app/router'
 import './index.css'
 

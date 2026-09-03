@@ -1,6 +1,6 @@
 import { Moon, CloudSun, Sun } from 'lucide-react'
-import { Button } from '@/shared/ui/button'
-import { useTheme } from '@/shared/lib/theme'
+import { Button } from '@sdlc/ui/ui'
+import { useTheme } from '@sdlc/ui/lib'
 import { useTranslation } from 'react-i18next'
 
 export function ThemeToggle() {

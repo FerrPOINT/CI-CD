@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { Card } from '@/shared/ui/card'
+import { Card } from '@sdlc/ui/ui'
 import { Settings, Server, Database, GitBranch, Info } from 'lucide-react'
 
 export function SettingsPage() {

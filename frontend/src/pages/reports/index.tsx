@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { useParams } from 'react-router'
 import { useProjectReport } from '@/api/hooks'
-import { Card } from '@/shared/ui/card'
+import { Card } from '@sdlc/ui/ui'
 import { BarChart3, CheckCircle2, XCircle, Clock, TrendingUp } from 'lucide-react'
 
 export function ReportsPage() {

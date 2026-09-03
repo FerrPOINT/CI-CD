@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, Outlet, useNavigate } from 'react-router'
 import { GitBranch, LayoutDashboard, FolderGit2, Settings, GitFork, Menu, X, History, Users, Cpu } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@/shared/ui/button'
-import { ThemeToggle } from '@/shared/ui/theme-toggle'
+import { Button } from '@sdlc/ui/ui'
+import { ThemeToggle } from '@sdlc/ui/ui'
 
 function NavigationList({ onNavigate, isActive }: { onNavigate: () => void; isActive: (path: string) => boolean }) {
   const { t } = useTranslation()

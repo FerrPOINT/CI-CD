@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 30
     defaults:
       run:
-        working-directory: backend
+        working-directory: CI-CD/backend
     services:
       postgres:
         image: postgres:17-alpine
@@ -34,6 +34,13 @@ jobs:
       CICD_TEST_DATABASE_URL: postgres://forge_owner:forge_test_owner@localhost:5432/forge_test_cicd
     steps:
     - uses: actions/checkout@v7
+      with:
+        path: CI-CD
+    - uses: actions/checkout@v7
+      with:
+        repository: FerrPOINT/services-base
+        path: services-base
+        ref: main
     - uses: dtolnay/rust-toolchain@stable
       with:
         toolchain: "1.86"
@@ -63,17 +70,25 @@ jobs:
     timeout-minutes: 20
     defaults:
       run:
-        working-directory: frontend
+        working-directory: CI-CD/frontend
     steps:
     - uses: actions/checkout@v7
       with:
+        path: CI-CD
         fetch-depth: 0
+    # Fleet shared UI kit lives in a sibling services-base checkout
+    # (frontend file dep: ../../services-base/frontend).
+    - uses: actions/checkout@v7
+      with:
+        repository: FerrPOINT/services-base
+        path: services-base
+        ref: main
     - uses: pnpm/setup@v2
       with:
         version: 11
         runtime: node@22
         cache: true
-        cache-dependency-path: frontend/pnpm-lock.yaml
+        cache-dependency-path: CI-CD/frontend/pnpm-lock.yaml
         install: false
     - run: pnpm install --frozen-lockfile
     - name: evidence script syntax
@@ -101,6 +116,13 @@ jobs:
     timeout-minutes: 20
     steps:
     - uses: actions/checkout@v7
+      with:
+        path: CI-CD
+    - uses: actions/checkout@v7
+      with:
+        repository: FerrPOINT/services-base
+        path: services-base
+        ref: main
     - name: Compose config
       run: docker compose config -q
     - name: Build and start stack
@@ -141,18 +163,25 @@ jobs:
     timeout-minutes: 25
     steps:
     - uses: actions/checkout@v7
+      with:
+        path: CI-CD
+    - uses: actions/checkout@v7
+      with:
+        repository: FerrPOINT/services-base
+        path: services-base
+        ref: main
     - uses: pnpm/setup@v2
       with:
         version: 11
         runtime: node@22
         cache: true
-        cache-dependency-path: frontend/pnpm-lock.yaml
+        cache-dependency-path: CI-CD/frontend/pnpm-lock.yaml
         install: false
     - name: Install frontend dependencies
-      working-directory: frontend
+      working-directory: CI-CD/frontend
       run: pnpm install --frozen-lockfile
     - name: Install Playwright browser
-      working-directory: frontend
+      working-directory: CI-CD/frontend
       run: pnpm exec playwright install --with-deps chromium
     - name: Prepare synthetic secrets key
       run: echo "CICD_SECRETS_KEY=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
@@ -169,10 +198,10 @@ jobs:
         docker compose ps
         exit 1
     - name: Seed evidence data
-      working-directory: frontend
+      working-directory: CI-CD/frontend
       run: pnpm seed:evidence
     - name: Playwright E2E/a11y/performance
-      working-directory: frontend
+      working-directory: CI-CD/frontend
       env:
         E2E_BASE_URL: http://127.0.0.1:22802
         E2E_API_URL: http://127.0.0.1:22801/api/v1
@@ -199,11 +228,18 @@ jobs:
     timeout-minutes: 30
     steps:
     - uses: actions/checkout@v7
+      with:
+        path: CI-CD
+    - uses: actions/checkout@v7
+      with:
+        repository: FerrPOINT/services-base
+        path: services-base
+        ref: main
     - uses: dtolnay/rust-toolchain@stable
       with:
         toolchain: "1.86"
     - name: Rust dependency audit
-      working-directory: backend
+      working-directory: CI-CD/backend
       run: |
         set -euo pipefail
         cargo install cargo-audit --locked --version 0.22.1
@@ -221,10 +257,10 @@ jobs:
         version: 11
         runtime: node@22
         cache: true
-        cache-dependency-path: frontend/pnpm-lock.yaml
+        cache-dependency-path: CI-CD/frontend/pnpm-lock.yaml
         install: false
     - name: Node dependency audit
-      working-directory: frontend
+      working-directory: CI-CD/frontend
       run: |
         pnpm install --frozen-lockfile
         pnpm audit --audit-level high
@@ -249,6 +285,13 @@ jobs:
     timeout-minutes: 10
     steps:
     - uses: actions/checkout@v7
+      with:
+        path: CI-CD
+    - uses: actions/checkout@v7
+      with:
+        repository: FerrPOINT/services-base
+        path: services-base
+        ref: main
     - uses: actions/setup-python@v7
       with:
         python-version: "3.12"
