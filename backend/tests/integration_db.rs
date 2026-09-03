@@ -2641,13 +2641,6 @@ jobs:
     )
     .await;
 
-    // SAFETY: trigger config lookup currently reads CICD_GIT_ROOT directly.
-    // This test uses a unique repo name/root; other trigger tests still fall
-    // back to the legacy template when their repo is absent under this root.
-    unsafe {
-        std::env::set_var("CICD_GIT_ROOT", &root);
-    }
-
     let project_id = Uuid::new_v4();
     sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
         .bind(project_id)
@@ -2657,7 +2650,14 @@ jobs:
         .await
         .expect("insert project");
 
-    let app = cicd::api::app(Some(pool.clone()));
+    let app = cicd::api::app_with_git(
+        Some(pool.clone()),
+        cicd::git_host::GitConfig {
+            root: root.clone(),
+            ..Default::default()
+        },
+        None,
+    );
     let response = app
         .oneshot(
             Request::post(format!("/api/v1/projects/{project_id}/pipelines"))
