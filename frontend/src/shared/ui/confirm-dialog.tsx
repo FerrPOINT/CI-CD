@@ -7,7 +7,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from './alert-dialog'
+} from '@sdlc/ui/ui'
 import { useTranslation } from 'react-i18next'
 
 interface ConfirmDialogProps {
