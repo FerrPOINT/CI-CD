@@ -11,6 +11,7 @@
 
 ### Added
 
+- Documentation guard: `scripts/verify_docs.py --all` now validates frontend CI script references, required dashboard package scripts/tool dependencies, frontend stack versions in `docs/ARCHITECTURE.md`, and screenshot manifest coverage for every production `appRoutes` path.
 - Documentation guard: `scripts/verify_docs.py --all` now fails when `/readiness` migration-version examples drift behind committed SQLx migrations.
 - Auth hardening: migration `0026_session_family_reuse` adds refresh session `family_id`/`replaced_by`/`reuse_detected_at` and `users.token_version`; refresh rotation is transactional and reuse of a replaced refresh token revokes the whole session family and invalidates already issued access JWTs.
 - Auth/RBAC route-policy inventory: backend now keeps executable `ROUTE_POLICIES` for every generated OpenAPI/Git/metrics operation, cross-checks router path literals against that registry, denies unpublished API/Git routes under auth middleware and has a unit gate that fails when a new route ships without policy.

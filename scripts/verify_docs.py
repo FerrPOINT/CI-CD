@@ -3,9 +3,10 @@
 
 Checks: markdown link/anchor integrity, canonical naming (ADR-0009),
 status taxonomy, orphan docs, current-state cross-check, readiness migration
-examples, screenshot manifest, plans status notes, and router/OpenAPI path drift.
+examples, frontend CI contract, screenshot manifest/route coverage, plans status
+notes, and router/OpenAPI path drift.
 
-Usage: python3 scripts/verify_docs.py [--all | --links --anchors --canonical --status-labels --orphan-docs --current-state --readiness-examples --screenshots --manifest --plans --openapi-routes --api-doc-routes]
+Usage: python3 scripts/verify_docs.py [--all | --links --anchors --canonical --status-labels --orphan-docs --current-state --readiness-examples --frontend-contracts --screenshots --manifest --plans --openapi-routes --api-doc-routes]
 Exit code 0 = clean; non-zero with a report otherwise.
 """
 from __future__ import annotations
@@ -52,6 +53,42 @@ BACKEND_ROUTE_FILES = (
     "backend/src/git_host.rs",
     "backend/src/pulls.rs",
 )
+FRONTEND_REQUIRED_SCRIPTS = {
+    "dev",
+    "build",
+    "test",
+    "lint",
+    "e2e",
+    "e2e:install",
+    "seed:evidence",
+    "shoot:evidence",
+    "openapi:generate",
+    "openapi:check",
+    "openapi:compat",
+}
+FRONTEND_SCRIPT_TOOL_DEPS = {
+    "build": ("typescript", "vite"),
+    "test": ("vitest",),
+    "lint": ("@eslint/js", "eslint", "eslint-plugin-react-hooks", "globals", "typescript-eslint"),
+    "e2e": ("@axe-core/playwright", "@playwright/test"),
+    "e2e:install": ("@playwright/test",),
+    "openapi:check": ("openapi-typescript",),
+    "openapi:compat": ("yaml",),
+    "openapi:generate": ("openapi-typescript",),
+}
+PNPM_BUILTINS = {
+    "add",
+    "audit",
+    "config",
+    "dlx",
+    "env",
+    "exec",
+    "install",
+    "remove",
+    "setup",
+    "store",
+    "update",
+}
 FORBIDDEN_STALE_STATUS = [
     (r"В MVP задачи переводятся вручную через API, CLI или Dashboard", "current execution uses embedded runner; manual transitions are historical/manual-job only"),
     (r"Automation — configuration only", "schedules/outgoing webhooks/in_app/SSE notifications are Current verified MVP; only inbound handlers/external adapters remain target"),
@@ -332,6 +369,147 @@ def check_readiness_examples() -> None:
             )
 
 
+def frontend_package() -> dict:
+    path = ROOT / "frontend/package.json"
+    if not path.exists():
+        fail("frontend/package.json missing")
+        return {}
+    try:
+        data = json.loads(read_text(path))
+    except json.JSONDecodeError as exc:
+        fail(f"frontend/package.json is invalid JSON near line {exc.lineno}: {exc.msg}")
+        return {}
+    if not isinstance(data, dict):
+        fail("frontend/package.json must be a JSON object")
+        return {}
+    return data
+
+
+def package_section(data: dict, key: str) -> dict:
+    value = data.get(key, {})
+    if not isinstance(value, dict):
+        fail(f"frontend/package.json {key} must be an object")
+        return {}
+    return value
+
+
+def semver_major(spec: object) -> str | None:
+    if not isinstance(spec, str):
+        return None
+    match = re.search(r"\d+", spec)
+    return match.group(0) if match else None
+
+
+def semver_major_minor(spec: object) -> str | None:
+    if not isinstance(spec, str):
+        return None
+    match = re.search(r"\d+(?:\.\d+)?", spec)
+    return match.group(0) if match else None
+
+
+def frontend_dependency_versions(data: dict) -> dict[str, str]:
+    versions: dict[str, str] = {}
+    for section in ("dependencies", "devDependencies"):
+        for name, version in package_section(data, section).items():
+            if isinstance(name, str) and isinstance(version, str):
+                versions[name] = version
+    return versions
+
+
+def join_major_versions(packages: dict[str, str], names: tuple[str, ...]) -> str | None:
+    majors = [semver_major(packages.get(name)) for name in names]
+    if any(major is None for major in majors):
+        return None
+    if len(set(majors)) == 1:
+        return majors[0]
+    return " / ".join(major for major in majors if major is not None)
+
+
+def check_frontend_ci_scripts(scripts: dict) -> None:
+    workflow = ROOT / ".github/workflows/ci.yml"
+    if not workflow.exists():
+        fail(".github/workflows/ci.yml missing")
+        return
+    commands = set()
+    for match in re.finditer(r"\bpnpm\s+([A-Za-z0-9:_-]+)\b", read_text(workflow)):
+        command = match.group(1)
+        if command not in PNPM_BUILTINS:
+            commands.add(command)
+    for command in sorted(commands):
+        if command not in scripts:
+            fail(f"CI references missing frontend package script: pnpm {command}")
+
+
+def check_frontend_script_contract(scripts: dict, packages: dict[str, str]) -> None:
+    for name in sorted(FRONTEND_REQUIRED_SCRIPTS):
+        if name not in scripts:
+            fail(f"required frontend package script missing: {name}")
+    installed = set(packages)
+    for script, deps in sorted(FRONTEND_SCRIPT_TOOL_DEPS.items()):
+        if script not in scripts:
+            continue
+        for dep in deps:
+            if dep not in installed:
+                fail(f"frontend script {script} requires package {dep}")
+
+
+def parse_architecture_frontend_stack() -> dict[str, tuple[str, str]]:
+    path = DOCS / "ARCHITECTURE.md"
+    if not path.exists():
+        fail("docs/ARCHITECTURE.md missing")
+        return {}
+    rows: dict[str, tuple[str, str]] = {}
+    for line_no, line in enumerate(read_text(path).splitlines(), start=1):
+        if not line.startswith("|"):
+            continue
+        parts = [part.strip() for part in line.strip().strip("|").split("|")]
+        if len(parts) != 3 or parts[0] in {"Компонент", "---"}:
+            continue
+        rows[parts[0]] = (parts[1], parts[2])
+        if parts[2] == "":
+            fail(f"empty frontend stack version at docs/ARCHITECTURE.md:{line_no}")
+    return rows
+
+
+def check_frontend_stack_doc(packages: dict[str, str]) -> None:
+    rows = parse_architecture_frontend_stack()
+    expected = {
+        "Framework": ("react + react-dom", join_major_versions(packages, ("react", "react-dom"))),
+        "Build": ("vite", semver_major(packages.get("vite"))),
+        "Styling": ("tailwindcss + @tailwindcss/vite", join_major_versions(packages, ("tailwindcss", "@tailwindcss/vite"))),
+        "Router": ("react-router", semver_major(packages.get("react-router"))),
+        "Server state": ("@tanstack/react-query", semver_major(packages.get("@tanstack/react-query"))),
+        "Client state": ("zustand", semver_major(packages.get("zustand"))),
+        "i18n": ("i18next + react-i18next", join_major_versions(packages, ("i18next", "react-i18next"))),
+        "Unit tests": ("vitest + @testing-library/react", join_major_versions(packages, ("vitest", "@testing-library/react"))),
+        "Types": ("typescript", semver_major_minor(packages.get("typescript"))),
+    }
+    for component, (library, version) in expected.items():
+        if version is None:
+            fail(f"frontend package version missing for architecture stack row: {component}")
+            continue
+        documented = rows.get(component)
+        if documented is None:
+            fail(f"docs/ARCHITECTURE.md frontend stack row missing: {component}")
+            continue
+        documented_library, documented_version = documented
+        if documented_library != library:
+            fail(f"docs/ARCHITECTURE.md frontend stack library drift for {component}: {documented_library!r} != {library!r}")
+        if documented_version != version:
+            fail(f"docs/ARCHITECTURE.md frontend stack version drift for {component}: {documented_version!r} != {version!r}")
+
+
+def check_frontend_contracts() -> None:
+    data = frontend_package()
+    if not data:
+        return
+    scripts = package_section(data, "scripts")
+    packages = frontend_dependency_versions(data)
+    check_frontend_ci_scripts(scripts)
+    check_frontend_script_contract(scripts, packages)
+    check_frontend_stack_doc(packages)
+
+
 def check_screenshots() -> None:
     readme = read_text(ROOT / "README.md")
     shots = re.findall(r"\(docs/screenshots/([^)]+\.png)\)", readme)
@@ -356,6 +534,30 @@ def manifest_screenshot_entries() -> list[str]:
         return []
     text = read_text(manifest)
     return [m.group(2) for m in re.finditer(r"\((\.\./)+screenshots/([^)]+\.png)\)", text)]
+
+
+def normalize_frontend_route(path: str) -> str:
+    return re.sub(r":[A-Za-z_][A-Za-z0-9_]*", ":param", path.split("?", 1)[0])
+
+
+def frontend_route_paths() -> set[str]:
+    router = ROOT / "frontend/src/app/router.tsx"
+    if not router.exists():
+        fail("frontend/src/app/router.tsx missing")
+        return set()
+    routes = set()
+    for path in re.findall(r"path:\s*'([^']+)'", read_text(router)):
+        if path == "*":
+            continue
+        routes.add(normalize_frontend_route(path))
+    return routes
+
+
+def manifest_route_paths(text: str) -> set[str]:
+    return {
+        normalize_frontend_route(route)
+        for route in re.findall(r"`(/[^`]*)`", text)
+    }
 
 
 def png_dimensions(path: Path) -> tuple[int, int] | None:
@@ -412,6 +614,9 @@ def check_manifest() -> None:
     m = re.search(r"Полный визуальный реестр\s*\((\d+)\s+скрин", readme)
     if m and int(m.group(1)) != count:
         fail(f"README visual registry count drift: documented {m.group(1)}, manifest has {count}")
+    documented_routes = manifest_route_paths(text)
+    for route in sorted(frontend_route_paths() - documented_routes):
+        fail(f"frontend route missing from screenshot manifest: {route}")
 
 
 def check_plans() -> None:
@@ -488,6 +693,7 @@ def main() -> int:
         "orphan-docs",
         "current-state",
         "readiness-examples",
+        "frontend-contracts",
         "screenshots",
         "manifest",
         "plans",
@@ -504,6 +710,7 @@ def main() -> int:
         "orphan-docs": check_orphans,
         "current-state": check_current_state,
         "readiness-examples": check_readiness_examples,
+        "frontend-contracts": check_frontend_contracts,
         "screenshots": check_screenshots,
         "manifest": check_manifest,
         "plans": check_plans,

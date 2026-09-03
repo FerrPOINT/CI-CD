@@ -34,8 +34,8 @@ Self-hosted CI/CD control plane: Git-хостинг (bare-репозитории
 | Router | react-router | 8 |
 | Server state | @tanstack/react-query | 5 |
 | Client state | zustand | 5 |
-| i18n | i18next + react-i18next | 25 / 15 |
-| Unit tests | vitest + @testing-library/react | 3 / 16 |
+| i18n | i18next + react-i18next | 26 / 15 |
+| Unit tests | vitest + @testing-library/react | 4 / 16 |
 | Types | typescript | 5.9 |
 
 ### Infrastructure
