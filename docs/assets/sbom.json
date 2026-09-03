@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:00000000-0000-0000-0000-000000000000",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-09-01T16:13:01Z",
+    "timestamp": "2026-09-03T12:53:50Z",
     "component": {
       "type": "application",
       "name": "forge-ci-cd",
@@ -238,8 +238,8 @@
     {
       "type": "library",
       "name": "chacha20",
-      "version": "0.10.2",
-      "purl": "pkg:cargo/chacha20@0.10.2",
+      "version": "0.10.1",
+      "purl": "pkg:cargo/chacha20@0.10.1",
       "license": "unknown"
     },
     {
@@ -315,8 +315,8 @@
     {
       "type": "library",
       "name": "cpufeatures",
-      "version": "0.3.1",
-      "purl": "pkg:cargo/cpufeatures@0.3.1",
+      "version": "0.3.0",
+      "purl": "pkg:cargo/cpufeatures@0.3.0",
       "license": "unknown"
     },
     {
@@ -441,8 +441,8 @@
     {
       "type": "library",
       "name": "flate2",
-      "version": "1.1.10",
-      "purl": "pkg:cargo/flate2@1.1.10",
+      "version": "1.1.9",
+      "purl": "pkg:cargo/flate2@1.1.9",
       "license": "unknown"
     },
     {
@@ -651,8 +651,8 @@
     {
       "type": "library",
       "name": "hyper",
-      "version": "1.11.1",
-      "purl": "pkg:cargo/hyper@1.11.1",
+      "version": "1.11.0",
+      "purl": "pkg:cargo/hyper@1.11.0",
       "license": "unknown"
     },
     {
@@ -749,8 +749,8 @@
     {
       "type": "library",
       "name": "indexmap",
-      "version": "2.14.1",
-      "purl": "pkg:cargo/indexmap@2.14.1",
+      "version": "2.14.0",
+      "purl": "pkg:cargo/indexmap@2.14.0",
       "license": "unknown"
     },
     {
@@ -833,8 +833,8 @@
     {
       "type": "library",
       "name": "libredox",
-      "version": "0.1.21",
-      "purl": "pkg:cargo/libredox@0.1.21",
+      "version": "0.1.20",
+      "purl": "pkg:cargo/libredox@0.1.20",
       "license": "unknown"
     },
     {
@@ -924,8 +924,8 @@
     {
       "type": "library",
       "name": "miniz_oxide",
-      "version": "0.9.1",
-      "purl": "pkg:cargo/miniz_oxide@0.9.1",
+      "version": "0.8.9",
+      "purl": "pkg:cargo/miniz_oxide@0.8.9",
       "license": "unknown"
     },
     {
@@ -1736,8 +1736,8 @@
     {
       "type": "library",
       "name": "uuid",
-      "version": "1.26.0",
-      "purl": "pkg:cargo/uuid@1.26.0",
+      "version": "1.25.0",
+      "purl": "pkg:cargo/uuid@1.25.0",
       "license": "unknown"
     },
     {
@@ -2127,13 +2127,6 @@
     },
     {
       "type": "library",
-      "name": "zlib-rs",
-      "version": "0.6.7",
-      "purl": "pkg:cargo/zlib-rs@0.6.7",
-      "license": "unknown"
-    },
-    {
-      "type": "library",
       "name": "zmij",
       "version": "1.0.23",
       "purl": "pkg:cargo/zmij@1.0.23",
@@ -2214,8 +2207,8 @@
     {
       "type": "library",
       "name": "i18next",
-      "version": "25.1.0",
-      "purl": "pkg:npm/i18next@25.1.0",
+      "version": "26.4.0",
+      "purl": "pkg:npm/i18next@26.4.0",
       "license": "unknown",
       "scope": "required"
     },
@@ -2232,6 +2225,14 @@
       "name": "lucide-react",
       "version": "0.487.0",
       "purl": "pkg:npm/lucide-react@0.487.0",
+      "license": "unknown",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "playwright",
+      "version": "1.62.1",
+      "purl": "pkg:npm/playwright@1.62.1",
       "license": "unknown",
       "scope": "required"
     },
@@ -2413,14 +2414,6 @@
     },
     {
       "type": "library",
-      "name": "playwright",
-      "version": "1.62.1",
-      "purl": "pkg:npm/playwright@1.62.1",
-      "license": "unknown",
-      "scope": "development"
-    },
-    {
-      "type": "library",
       "name": "tailwindcss",
       "version": "4.1.0",
       "purl": "pkg:npm/tailwindcss@4.1.0",
@@ -2454,8 +2447,8 @@
     {
       "type": "library",
       "name": "vitest",
-      "version": "3.1.4",
-      "purl": "pkg:npm/vitest@3.1.4",
+      "version": "4.1.11",
+      "purl": "pkg:npm/vitest@4.1.11",
       "license": "unknown",
       "scope": "development"
     },
