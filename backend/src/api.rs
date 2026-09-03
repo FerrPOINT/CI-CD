@@ -984,6 +984,7 @@ pub(crate) async fn identity_for_bearer_token(
             token_project_id,
             token_scopes,
             role,
+            ver: 0,
             iat: now.timestamp(),
             exp: now.timestamp() + 900,
         })
@@ -991,10 +992,16 @@ pub(crate) async fn identity_for_bearer_token(
         let mut claims = crate::auth::verify_access_with_secret(token, auth_secret)
             .map_err(|_| ApiError::unauthorized())?;
         let session_id = claims.sid.ok_or_else(ApiError::unauthorized)?;
-        let current = crate::auth::access_session_user(pool, session_id, claims.sub)
-            .await
-            .map_err(|_| ApiError::unauthorized())?;
+        let current = crate::auth::access_session_user_with_version(
+            pool,
+            session_id,
+            claims.sub,
+            Some(claims.ver),
+        )
+        .await
+        .map_err(|_| ApiError::unauthorized())?;
         claims.role = current.role;
+        claims.ver = current.token_version;
         Ok(claims)
     }
 }
@@ -1265,8 +1272,8 @@ async fn auth_login(
     use crate::auth::*;
     crate::metrics::LOGIN_ATTEMPTS_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let pool = pool(&state)?;
-    let row = sqlx::query_as::<_, (Uuid, String, bool, String)>(
-        "SELECT u.id, u.role, u.enabled, c.password_hash FROM users u \
+    let row = sqlx::query_as::<_, (Uuid, String, bool, i64, String)>(
+        "SELECT u.id, u.role, u.enabled, u.token_version, c.password_hash FROM users u \
          JOIN user_credentials c ON c.user_id = u.id WHERE u.username = $1",
     )
     .bind(input.username.trim())
@@ -1274,7 +1281,7 @@ async fn auth_login(
     .await
     .map_err(ApiError::internal)?
     .ok_or_else(ApiError::unauthorized)?;
-    let (user_id, role, enabled, password_hash) = row;
+    let (user_id, role, enabled, token_version, password_hash) = row;
     if !enabled || !verify_password(&password_hash, &input.password) {
         let _ = audit(
             pool,
@@ -1301,8 +1308,14 @@ async fn auth_login(
         create_session_with_csrf(pool, user_id, &hash_token(&refresh), Some(&csrf_hash))
             .await
             .map_err(ApiError::from)?;
-    let mut pair = issue_access_with_secret(user_id, &role, session_id, auth_secret(&state)?)
-        .map_err(|_| ApiError::unauthorized())?;
+    let mut pair = issue_access_with_secret_version(
+        user_id,
+        &role,
+        session_id,
+        token_version,
+        auth_secret(&state)?,
+    )
+    .map_err(|_| ApiError::unauthorized())?;
     pair.refresh_token = refresh.clone();
     Ok((auth_cookie_headers(&refresh, &csrf), Json(pair)))
 }
@@ -1327,15 +1340,11 @@ async fn auth_refresh(
     )
     .await
     .map_err(|_| ApiError::unauthorized())?;
-    let role = sqlx::query_scalar::<_, String>("SELECT role FROM users WHERE id = $1")
-        .bind(rotated.user_id)
-        .fetch_one(pool)
-        .await
-        .map_err(ApiError::internal)?;
-    let mut pair = issue_access_with_secret(
+    let mut pair = issue_access_with_secret_version(
         rotated.user_id,
-        &role,
+        &rotated.role,
         rotated.session_id,
+        rotated.token_version,
         auth_secret(&state)?,
     )
     .map_err(|_| ApiError::unauthorized())?;
@@ -3767,6 +3776,7 @@ mod tests {
             token_project_id: Some(Uuid::new_v4()),
             token_scopes: vec!["api:read".to_string()],
             role: "admin".to_string(),
+            ver: 0,
             iat: 0,
             exp: 900,
         };

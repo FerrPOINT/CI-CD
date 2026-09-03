@@ -741,6 +741,7 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 | `username` | TEXT | NOT NULL | — | UNIQUE |
 | `role` | TEXT | NOT NULL | — | CHECK: `admin`, `maintainer`, `developer`, `viewer` |
 | `enabled` | BOOLEAN | NOT NULL | `TRUE` | — |
+| `token_version` | BIGINT | NOT NULL | `0` | Инкрементируется при refresh-token reuse detection для инвалидизации уже выданных access JWT |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
 
 > Пароли хранятся отдельно в `user_credentials`; роли применяются middleware только при `CICD_AUTH_SECRET`.
@@ -791,11 +792,14 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 | `user_id` | UUID | нет | — | FK → `users(id)` CASCADE |
 | `refresh_token_hash` | TEXT UNIQUE | нет | — | Hash refresh token |
 | `csrf_token_hash` | TEXT | да | — | Hash CSRF companion token для cookie-backed refresh session |
+| `family_id` | UUID | нет | — | Session family root; все children одной refresh-rotation chain имеют общий id |
+| `replaced_by` | UUID | да | — | Следующая session в rotation chain |
+| `reuse_detected_at` | TIMESTAMPTZ | да | — | Время фиксации reuse уже заменённого refresh token |
 | `created_at` | TIMESTAMPTZ | нет | `now()` | Создана |
 | `expires_at` | TIMESTAMPTZ | нет | — | Истекает |
 | `revoked_at` | TIMESTAMPTZ | да | — | Отозвана |
 
-`/api/v1/auth/refresh` rotate-ит refresh session: старый hash получает `revoked_at`, новый refresh token хранится как `hash_token(raw)`, а browser flow дополнительно сверяет `forge_csrf` cookie с `X-CSRF-Token` и `csrf_token_hash`. `/api/v1/auth/logout` идемпотентно выставляет `revoked_at` для переданного refresh token или cookie-backed session. Access JWT содержит `sessions.id`; protected API проверяет, что session активна, не истекла и принадлежит enabled user, поэтому rotate/logout инвалидирует связанный access JWT сразу. Session-family reuse detection остаётся target.
+`/api/v1/auth/refresh` rotate-ит refresh session в транзакции: старый hash получает `revoked_at` и `replaced_by`, новый refresh token хранится как `hash_token(raw)` с тем же `family_id`, а browser flow дополнительно сверяет `forge_csrf` cookie с `X-CSRF-Token` и `csrf_token_hash`. Rotation/reuse сериализуются advisory lock-ом по `family_id`. Повторное использование уже заменённого token отзывает все sessions в `family_id`, идемпотентно выставляет `reuse_detected_at` и один раз инкрементирует `users.token_version`; protected API сравнивает `ver` access JWT с текущим `users.token_version`. `/api/v1/auth/logout` идемпотентно выставляет `revoked_at` для переданного refresh token или cookie-backed session.
 
 ### 9.15 domain_events
 
@@ -889,6 +893,8 @@ idx_job_logs_job_id          ON job_logs(job_id)
 idx_artifacts_attempt        ON artifacts(attempt_id)
 idx_sessions_user            ON sessions(user_id)
 idx_sessions_expires         ON sessions(expires_at)
+idx_sessions_family          ON sessions(family_id)
+idx_sessions_replaced_by     ON sessions(replaced_by)
 idx_api_tokens_active_owner_project ON api_tokens(user_id, project_id) WHERE revoked_at IS NULL
 idx_api_tokens_active_project ON api_tokens(project_id) WHERE revoked_at IS NULL
 idx_project_memberships_user ON project_memberships(user_id, project_id)

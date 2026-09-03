@@ -158,7 +158,7 @@ Supervisor-полл queued-джобов, атомарный lease-aware claim (`
 
 ### 6.5 Платформенные ресурсы (MVP)
 
-Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-256-GCM at rest + job-declared embedded/external env injection/masking), artifacts (upload/download + локальное хранилище, 50 MiB лимит, SHA-256, `expires_at` и retention purge worker), environments/deployments, schedules MVP (strict 5-field UTC cron, `next_fire_at`, unique fire slots), outgoing webhooks MVP (terminal pipeline events через outbox/basic retry/HMAC), `in_app`/`sse` notifications MVP (local outbox history + Dashboard stream), reports (агрегаты success rate/duration), audit log (последние 200 событий), users/roles, project memberships, argon2id credentials, session-bound access JWT, refresh sessions с rotate/logout, project-scoped PAT enforcement и Git Smart HTTP project checks при `CICD_AUTH_SECRET`.
+Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-256-GCM at rest + job-declared embedded/external env injection/masking), artifacts (upload/download + локальное хранилище, 50 MiB лимит, SHA-256, `expires_at` и retention purge worker), environments/deployments, schedules MVP (strict 5-field UTC cron, `next_fire_at`, unique fire slots), outgoing webhooks MVP (terminal pipeline events через outbox/basic retry/HMAC), `in_app`/`sse` notifications MVP (local outbox history + Dashboard stream), reports (агрегаты success rate/duration), audit log (последние 200 событий), users/roles, project memberships, argon2id credentials, session-bound access JWT, refresh sessions с rotate/logout и session-family reuse revocation, project-scoped PAT enforcement и Git Smart HTTP project checks при `CICD_AUTH_SECRET`.
 
 ## 7. Frontend архитектура
 
@@ -185,7 +185,7 @@ Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-2
 | SQLx версионные миграции | ✅ current: `backend/migrations/*.sql` + runtime `sqlx::migrate::Migrator`/`cicd-migrate` |
 | app/infra/api/server пакеты | ⬜ Phase C (strangler по вертикалям) |
 | OpenAPI + генерация клиента | ✅ current: `openapi/openapi.yaml` + `frontend/src/api/schema.d.ts` |
-| Auth/RBAC/token middleware | ◩ current conditional: JWT/scoped PAT/global roles + project memberships + session-bound access invalidation + browser refresh cookie + CSRF + refresh rotate/logout/revoke при `CICD_AUTH_SECRET`; tenant scope, service-account/scoped Git credentials и session-family reuse detection target |
+| Auth/RBAC/token middleware | ◩ current conditional: JWT/scoped PAT/global roles + project memberships + session-bound access invalidation + browser refresh cookie + CSRF + refresh rotate/logout/revoke + session-family reuse revocation при `CICD_AUTH_SECRET`; tenant scope и service-account/scoped Git credentials target |
 | Distributed runner protocol | ◩ current MVP: `/api/v1/runner/*` register/heartbeat/poll/ack/control/`secrets:resolve`/artifact upload/renew/logs/complete + durable `job_queue` + ack-timeout requeue + basic tag/executor capability matching + hashed credentials/lease tokens + fencing generation + scoped secret delivery + long-poll + active runner heartbeat + stale offline reconciliation + `forge-runner` shell process; resumable artifact sessions, richer log chunks, advanced runner policy и sandbox boundary остаются Phase D |
 
 ## 10. Dev workflow

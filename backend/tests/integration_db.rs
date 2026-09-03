@@ -565,6 +565,139 @@ async fn auth_cookie_refresh_requires_csrf_and_rotates_session() {
 }
 
 #[tokio::test]
+async fn auth_cookie_refresh_reuse_revokes_family_and_access_token() {
+    let pool = test_pool().await;
+    let user_id = Uuid::new_v4();
+    let username = format!("it-refresh-reuse-user-{}", user_id.simple());
+    let password = "IntegrationPass1!";
+
+    sqlx::query("INSERT INTO users (id, username, role) VALUES ($1, $2, 'admin')")
+        .bind(user_id)
+        .bind(&username)
+        .execute(&pool)
+        .await
+        .expect("insert user");
+    sqlx::query("INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2)")
+        .bind(user_id)
+        .bind(cicd::auth::hash_password(password).expect("hash password"))
+        .execute(&pool)
+        .await
+        .expect("insert credential");
+
+    let app = cicd::api::app_with_auth_secret(
+        Some(pool.clone()),
+        Some(format!("reuse-secret-{user_id}")),
+    );
+    let login = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"username":"{username}","password":"{password}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(login.status(), StatusCode::OK);
+    let login_headers = login.headers().clone();
+    let old_refresh_cookie = set_cookie_value(&login_headers, "forge_refresh");
+    let old_csrf_cookie = set_cookie_value(&login_headers, "forge_csrf");
+    let old_cookie_header =
+        format!("forge_refresh={old_refresh_cookie}; forge_csrf={old_csrf_cookie}");
+
+    let refreshed = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/auth/refresh")
+                .header("content-type", "application/json")
+                .header("cookie", &old_cookie_header)
+                .header("x-csrf-token", &old_csrf_cookie)
+                .body(Body::from(r#"{"refresh_token":""}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(refreshed.status(), StatusCode::OK);
+    let refreshed_headers = refreshed.headers().clone();
+    let refreshed_body = response_json(refreshed).await;
+    let current_refresh_cookie = set_cookie_value(&refreshed_headers, "forge_refresh");
+    let current_access_token = refreshed_body["access_token"]
+        .as_str()
+        .expect("access token")
+        .to_owned();
+    assert!(
+        cicd::auth::session_user(&pool, &cicd::auth::hash_token(&current_refresh_cookie))
+            .await
+            .is_ok()
+    );
+
+    let reuse = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/auth/refresh")
+                .header("content-type", "application/json")
+                .header("cookie", &old_cookie_header)
+                .header("x-csrf-token", &old_csrf_cookie)
+                .body(Body::from(r#"{"refresh_token":""}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(reuse.status(), StatusCode::UNAUTHORIZED);
+    assert!(
+        cicd::auth::session_user(&pool, &cicd::auth::hash_token(&current_refresh_cookie))
+            .await
+            .is_err()
+    );
+
+    let blocked = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/users")
+                .header("authorization", format!("Bearer {current_access_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(blocked.status(), StatusCode::UNAUTHORIZED);
+    let token_version: i64 = sqlx::query_scalar("SELECT token_version FROM users WHERE id = $1")
+        .bind(user_id)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch token version");
+    assert_eq!(token_version, 1);
+
+    let repeated_reuse = app
+        .oneshot(
+            Request::post("/api/v1/auth/refresh")
+                .header("content-type", "application/json")
+                .header("cookie", old_cookie_header)
+                .header("x-csrf-token", old_csrf_cookie)
+                .body(Body::from(r#"{"refresh_token":""}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(repeated_reuse.status(), StatusCode::UNAUTHORIZED);
+    let token_version_after_repeat: i64 =
+        sqlx::query_scalar("SELECT token_version FROM users WHERE id = $1")
+            .bind(user_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch token version after repeat");
+    assert_eq!(token_version_after_repeat, 1);
+
+    sqlx::query("DELETE FROM users WHERE id = $1")
+        .bind(user_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup user");
+}
+
+#[tokio::test]
 async fn access_token_is_bound_to_active_session() {
     let pool = test_pool().await;
     let user_id = Uuid::new_v4();

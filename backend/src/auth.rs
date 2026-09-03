@@ -9,7 +9,7 @@
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -49,6 +49,9 @@ pub struct AccessClaims {
     pub token_scopes: Vec<String>,
     /// Role hint at issue time; middleware refreshes it from DB for session JWTs.
     pub role: String,
+    /// User token version at issue time. Reuse detection bumps it server-side.
+    #[serde(default)]
+    pub ver: i64,
     pub iat: i64,
     pub exp: i64,
 }
@@ -132,6 +135,16 @@ pub(crate) fn issue_access_with_secret(
     session_id: Uuid,
     secret: &str,
 ) -> Result<TokenPair, AuthError> {
+    issue_access_with_secret_version(user_id, role, session_id, 0, secret)
+}
+
+pub(crate) fn issue_access_with_secret_version(
+    user_id: Uuid,
+    role: &str,
+    session_id: Uuid,
+    token_version: i64,
+    secret: &str,
+) -> Result<TokenPair, AuthError> {
     // Note: refresh token is issued separately by the session layer.
     let now = Utc::now();
     let exp = now + Duration::minutes(ACCESS_TTL_MINUTES);
@@ -142,6 +155,7 @@ pub(crate) fn issue_access_with_secret(
         token_project_id: None,
         token_scopes: Vec::new(),
         role: role.to_string(),
+        ver: token_version,
         iat: now.timestamp(),
         exp: exp.timestamp(),
     };
@@ -211,8 +225,8 @@ pub async fn create_session_with_csrf(
     let id = Uuid::new_v4();
     let expires = Utc::now() + Duration::days(REFRESH_TTL_DAYS);
     sqlx::query(
-        "INSERT INTO sessions (id, user_id, refresh_token_hash, csrf_token_hash, expires_at) \
-         VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO sessions (id, user_id, refresh_token_hash, csrf_token_hash, expires_at, family_id) \
+         VALUES ($1, $2, $3, $4, $5, $1)",
     )
     .bind(id)
     .bind(user_id)
@@ -227,6 +241,7 @@ pub async fn create_session_with_csrf(
 pub struct SessionUser {
     pub user_id: Uuid,
     pub role: String,
+    pub token_version: i64,
 }
 
 /// Validates a refresh token hash, enforcing expiry/revocation/enabled user.
@@ -242,8 +257,8 @@ async fn session_user_for_refresh(
     refresh_hash: &str,
     csrf_hash: Option<&str>,
 ) -> Result<SessionUser, AuthError> {
-    let row = sqlx::query_as::<_, (Uuid, String)>(
-        "SELECT u.id, u.role FROM sessions s JOIN users u ON u.id = s.user_id \
+    let row = sqlx::query_as::<_, (Uuid, String, i64)>(
+        "SELECT u.id, u.role, u.token_version FROM sessions s JOIN users u ON u.id = s.user_id \
          WHERE s.refresh_token_hash = $1 \
            AND ($2::TEXT IS NULL OR s.csrf_token_hash = $2) \
            AND s.revoked_at IS NULL AND s.expires_at > now() AND u.enabled",
@@ -252,8 +267,12 @@ async fn session_user_for_refresh(
     .bind(csrf_hash)
     .fetch_optional(pool)
     .await?;
-    row.map(|(user_id, role)| SessionUser { user_id, role })
-        .ok_or(AuthError::InvalidCredentials)
+    row.map(|(user_id, role, token_version)| SessionUser {
+        user_id,
+        role,
+        token_version,
+    })
+    .ok_or(AuthError::InvalidCredentials)
 }
 
 /// Validates that an access JWT is still bound to an active refresh session.
@@ -262,17 +281,32 @@ pub async fn access_session_user(
     session_id: Uuid,
     user_id: Uuid,
 ) -> Result<SessionUser, AuthError> {
-    let row = sqlx::query_as::<_, (Uuid, String)>(
-        "SELECT u.id, u.role FROM sessions s JOIN users u ON u.id = s.user_id \
+    access_session_user_with_version(pool, session_id, user_id, None).await
+}
+
+pub async fn access_session_user_with_version(
+    pool: &sqlx::PgPool,
+    session_id: Uuid,
+    user_id: Uuid,
+    token_version: Option<i64>,
+) -> Result<SessionUser, AuthError> {
+    let row = sqlx::query_as::<_, (Uuid, String, i64)>(
+        "SELECT u.id, u.role, u.token_version FROM sessions s JOIN users u ON u.id = s.user_id \
          WHERE s.id = $1 AND s.user_id = $2 AND s.revoked_at IS NULL \
-           AND s.expires_at > now() AND u.enabled",
+           AND s.expires_at > now() AND u.enabled \
+           AND ($3::BIGINT IS NULL OR u.token_version = $3)",
     )
     .bind(session_id)
     .bind(user_id)
+    .bind(token_version)
     .fetch_optional(pool)
     .await?;
-    row.map(|(user_id, role)| SessionUser { user_id, role })
-        .ok_or(AuthError::InvalidCredentials)
+    row.map(|(user_id, role, token_version)| SessionUser {
+        user_id,
+        role,
+        token_version,
+    })
+    .ok_or(AuthError::InvalidCredentials)
 }
 
 /// Rotate: revoke old session row, create a new one, return fresh pair.
@@ -286,9 +320,24 @@ pub async fn rotate_session(
 
 pub struct RotatedSession {
     pub user_id: Uuid,
+    pub role: String,
+    pub token_version: i64,
     pub session_id: Uuid,
     pub refresh_token: String,
     pub csrf_token: String,
+}
+
+struct RefreshSessionRow {
+    id: Uuid,
+    user_id: Uuid,
+    role: String,
+    token_version: i64,
+    enabled: bool,
+    family_id: Uuid,
+    expires_at: DateTime<Utc>,
+    revoked_at: Option<DateTime<Utc>>,
+    replaced_by: Option<Uuid>,
+    csrf_token_hash: Option<String>,
 }
 
 pub async fn rotate_session_with_csrf(
@@ -296,27 +345,170 @@ pub async fn rotate_session_with_csrf(
     old_refresh_hash: &str,
     old_csrf_hash: Option<&str>,
 ) -> Result<RotatedSession, AuthError> {
-    let user = session_user_for_refresh(pool, old_refresh_hash, old_csrf_hash).await?;
-    sqlx::query("UPDATE sessions SET revoked_at = now() WHERE refresh_token_hash = $1")
-        .bind(old_refresh_hash)
-        .execute(pool)
-        .await?;
+    let mut tx = pool.begin().await?;
+    let family_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT family_id FROM sessions WHERE refresh_token_hash = $1",
+    )
+    .bind(old_refresh_hash)
+    .fetch_optional(&mut *tx)
+    .await?
+    .ok_or(AuthError::InvalidCredentials)?;
+    lock_session_family(&mut tx, family_id).await?;
+
+    let row = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            Uuid,
+            String,
+            i64,
+            bool,
+            Uuid,
+            DateTime<Utc>,
+            Option<DateTime<Utc>>,
+            Option<Uuid>,
+            Option<String>,
+        ),
+    >(
+        "SELECT s.id, s.user_id, u.role, u.token_version, u.enabled, s.family_id, \
+                s.expires_at, s.revoked_at, s.replaced_by, s.csrf_token_hash \
+         FROM sessions s JOIN users u ON u.id = s.user_id \
+         WHERE s.refresh_token_hash = $1 \
+         FOR UPDATE OF s",
+    )
+    .bind(old_refresh_hash)
+    .fetch_optional(&mut *tx)
+    .await?
+    .map(
+        |(
+            id,
+            user_id,
+            role,
+            token_version,
+            enabled,
+            family_id,
+            expires_at,
+            revoked_at,
+            replaced_by,
+            csrf_token_hash,
+        )| RefreshSessionRow {
+            id,
+            user_id,
+            role,
+            token_version,
+            enabled,
+            family_id,
+            expires_at,
+            revoked_at,
+            replaced_by,
+            csrf_token_hash,
+        },
+    )
+    .ok_or(AuthError::InvalidCredentials)?;
+
+    if let Some(csrf_hash) = old_csrf_hash {
+        if row.csrf_token_hash.as_deref() != Some(csrf_hash) {
+            return Err(AuthError::InvalidCredentials);
+        }
+    }
+
+    if row.replaced_by.is_some() {
+        revoke_session_family(&mut tx, row.family_id, row.user_id).await?;
+        tx.commit().await?;
+        return Err(AuthError::InvalidCredentials);
+    }
+
+    if !row.enabled || row.revoked_at.is_some() || row.expires_at <= Utc::now() {
+        return Err(AuthError::InvalidCredentials);
+    }
+
     let new_refresh = new_refresh_token();
     let new_csrf = new_csrf_token();
     let new_csrf_hash = hash_token(&new_csrf);
-    let session_id = create_session_with_csrf(
-        pool,
-        user.user_id,
-        &hash_token(&new_refresh),
-        Some(&new_csrf_hash),
+    let session_id = Uuid::new_v4();
+    let expires = Utc::now() + Duration::days(REFRESH_TTL_DAYS);
+    sqlx::query(
+        "INSERT INTO sessions (id, user_id, refresh_token_hash, csrf_token_hash, expires_at, family_id) \
+         VALUES ($1, $2, $3, $4, $5, $6)",
     )
+    .bind(session_id)
+    .bind(row.user_id)
+    .bind(hash_token(&new_refresh))
+    .bind(Some(new_csrf_hash.as_str()))
+    .bind(expires)
+    .bind(row.family_id)
+    .execute(&mut *tx)
     .await?;
+    sqlx::query("UPDATE sessions SET revoked_at = now(), replaced_by = $2 WHERE id = $1")
+        .bind(row.id)
+        .bind(session_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
     Ok(RotatedSession {
-        user_id: user.user_id,
+        user_id: row.user_id,
+        role: row.role,
+        token_version: row.token_version,
         session_id,
         refresh_token: new_refresh,
         csrf_token: new_csrf,
     })
+}
+
+async fn revoke_session_family(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    family_id: Uuid,
+    user_id: Uuid,
+) -> Result<(), AuthError> {
+    let newly_marked = sqlx::query_scalar::<_, i64>(
+        "WITH marked AS ( \
+             UPDATE sessions \
+             SET revoked_at = COALESCE(revoked_at, now()), \
+                 reuse_detected_at = now() \
+             WHERE family_id = $1 AND reuse_detected_at IS NULL \
+             RETURNING 1 \
+         ) SELECT COUNT(*)::BIGINT FROM marked",
+    )
+    .bind(family_id)
+    .fetch_one(&mut **tx)
+    .await?;
+
+    sqlx::query(
+        "UPDATE sessions \
+         SET revoked_at = COALESCE(revoked_at, now()) \
+         WHERE family_id = $1",
+    )
+    .bind(family_id)
+    .execute(&mut **tx)
+    .await?;
+
+    if newly_marked > 0 {
+        sqlx::query("UPDATE users SET token_version = token_version + 1 WHERE id = $1")
+            .bind(user_id)
+            .execute(&mut **tx)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn lock_session_family(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    family_id: Uuid,
+) -> Result<(), AuthError> {
+    sqlx::query("SELECT pg_advisory_xact_lock($1)")
+        .bind(session_family_lock_key(family_id))
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
+}
+
+fn session_family_lock_key(family_id: Uuid) -> i64 {
+    let bytes = family_id.as_bytes();
+    let mut high = [0_u8; 8];
+    let mut low = [0_u8; 8];
+    high.copy_from_slice(&bytes[..8]);
+    low.copy_from_slice(&bytes[8..]);
+    (u64::from_be_bytes(high) ^ u64::from_be_bytes(low)) as i64
 }
 
 /// Revoke a refresh session by stored refresh-token hash. Idempotent for callers.

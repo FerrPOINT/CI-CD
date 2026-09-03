@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-Forge CI/CD — self-hosted CI/CD control plane. Текущая версия остаётся MVP и не является production-safe: без непустого `CICD_AUTH_SECRET` backend работает в trusted-network режиме; при включённом секрете уже применяются route roles, project memberships, scoped PAT, session-bound access JWT, refresh cookie + CSRF для browser flow и refresh rotate/logout/revoke, но tenant isolation, service-account tokens, scoped Git credentials и session-family reuse detection остаются target. Безопасность встроена на уровне SQL-запросов, валидации ввода, секретов at rest, условного auth middleware и audit.
+Forge CI/CD — self-hosted CI/CD control plane. Текущая версия остаётся MVP и не является production-safe: без непустого `CICD_AUTH_SECRET` backend работает в trusted-network режиме; при включённом секрете уже применяются route roles, project memberships, scoped PAT, session-bound access JWT, refresh cookie + CSRF для browser flow, refresh rotate/logout/revoke и session-family reuse revocation, но tenant isolation, service-account tokens и scoped Git credentials остаются target. Безопасность встроена на уровне SQL-запросов, валидации ввода, секретов at rest, условного auth middleware и audit.
 
 ## 2. Текущий статус
 
@@ -25,10 +25,10 @@ Forge CI/CD — self-hosted CI/CD control plane. Текущая версия о�
 
 ### 3.1 JWT
 
-- Current: access token — JWT HS256, срок жизни 15 минут, подпись через `CICD_AUTH_SECRET`, привязка к `sessions.id`; middleware проверяет активную session, enabled user и текущую роль из БД на protected routes.
-- Current: refresh token хранится hash-ом в таблице `sessions`; browser flow получает `forge_refresh` как `HttpOnly; SameSite=Lax` cookie и `forge_csrf` как companion cookie, а `/api/v1/auth/refresh` и `/api/v1/auth/logout` требуют matching `X-CSRF-Token`; body `refresh_token` остаётся совместимым для CLI/API clients и legacy dashboard migration. Logout/rotate немедленно инвалидируют session-bound access JWT.
+- Current: access token — JWT HS256, срок жизни 15 минут, подпись через `CICD_AUTH_SECRET`, привязка к `sessions.id` и `users.token_version`; middleware проверяет активную session, enabled user, текущую роль и token version из БД на protected routes.
+- Current: refresh token хранится hash-ом в таблице `sessions`; browser flow получает `forge_refresh` как `HttpOnly; SameSite=Lax` cookie и `forge_csrf` как companion cookie, а `/api/v1/auth/refresh` и `/api/v1/auth/logout` требуют matching `X-CSRF-Token`; body `refresh_token` остаётся совместимым для CLI/API clients и legacy dashboard migration. Logout/rotate немедленно инвалидируют session-bound access JWT; rotation/reuse сериализуются по `family_id`, а повторное использование уже заменённого refresh token отзывает всю family и один раз повышает `users.token_version`.
 - Current: пароли хранятся как `argon2id` hash в `user_credentials`.
-- Target: session-family reuse detection, key management и bootstrap owner procedure.
+- Target: key management и bootstrap owner procedure.
 
 ### 3.2 Эндпоинты
 

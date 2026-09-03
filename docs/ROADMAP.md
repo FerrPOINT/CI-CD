@@ -27,14 +27,14 @@ Roadmap фиксирует порядок доведения Forge до базо
 - local artifacts до 50 MiB с metadata текущей/latest attempt, SHA-256 для новых uploads, `expires_at` и retention cleanup worker;
 - project secrets: AES-256-GCM at rest, job-declared env injection в embedded/external runner, lease-scoped `secrets:resolve`, best-effort masking stdout/stderr;
 - environments/deployments metadata, reports, audit log;
-- users, roles, argon2id credentials, session-bound access JWT, sessions, refresh rotate/logout/revoke, scoped PAT и project memberships при `CICD_AUTH_SECRET`;
+- users, roles, argon2id credentials, session-bound access JWT, sessions, refresh rotate/logout/revoke, session-family reuse revocation, scoped PAT и project memberships при `CICD_AUTH_SECRET`;
 - schedules MVP со строгим 5-польным UTC cron, `next_fire_at` и unique fire slots; outgoing webhooks через outbox с basic retry/HMAC, bounded delivery history/requeue и `in_app`/`sse` notifications через local outbox history/stream;
 - OpenAPI generation/drift gate и generated frontend schema.
 
 Ключевые ограничения current baseline:
 
 - execution attempts, v1 DAG projection и runner lease/protocol реализованы как MVP-слой; bounded log pagination/search, stale-runner offline reconciliation и внешний `forge-runner` shell process с active-lease heartbeat уже есть, а command spans, line/column parser diagnostics, richer error diagnostics, расширенная lost-runner/cancel/restart race suite и production sandboxed runner остаются follow-up;
-- auth/RBAC имеет project membership, scoped PAT, Git Smart HTTP read/write checks, session-bound access invalidation, browser refresh cookie + CSRF и refresh rotate/logout/revoke MVP, но без tenant isolation, service-account tokens, scoped Git credentials и session-family reuse detection;
+- auth/RBAC имеет project membership, scoped PAT, Git Smart HTTP read/write checks, session-bound access invalidation, browser refresh cookie + CSRF, refresh rotate/logout/revoke и session-family reuse revocation MVP, но без tenant isolation, service-account tokens и scoped Git credentials;
 - embedded execution всё ещё встроен в backend process по умолчанию; для shared/prod режима нужно отключать его и доводить external runner boundary до production sandbox;
 - webhooks/notifications имеют bounded delivery history/requeue MVP, но без production leases/fencing, full dead-letter policy/metrics и external adapters; email/Slack notification adapters не реализованы;
 - backup/restore имеет local scripted MVP helper и CI self-test/dry-run, но ещё не является off-site/PITR production platform или verified restore drill gate.
@@ -71,10 +71,10 @@ Gate:
 Deliverables:
 
 - Current MVP: `project_memberships`, project members API/UI, list filtering и deny-before-load для project-owned routes;
-- Current MVP: refresh session rotation and logout/revoke, включая фиксацию `revoked_at` и немедленную инвалидизацию session-bound access JWT;
+- Current MVP: refresh session rotation and logout/revoke, включая фиксацию `revoked_at`, `replaced_by`, `family_id`, reuse detection и немедленную инвалидизацию session-bound access JWT;
 - Current MVP: Git Smart HTTP read/write checks через legacy `CICD_GIT_TOKEN` либо JWT/PAT + project membership по связанному repository URL;
 - Current MVP: scoped PAT с обязательным `project_id`, scopes `api:read|api:write|git:read|git:write`, expiry/revoke/last-used и без глобального доступа по умолчанию;
-- Target follow-up: token-version/session-family reuse policy;
+- Current MVP: повторное использование уже заменённого refresh token отзывает session family и один раз повышает `users.token_version`;
 - Target follow-up: service-account tokens, scoped Git credentials, tenant-bound repository mapping и delivery routes с repository/project binding;
 - Current MVP: configurable `CICD_CORS_ALLOWED_ORIGINS` allowlist и browser refresh/logout CSRF proof; target follow-up: обязательный non-empty production default, TLS/reverse-proxy binding и `CICD_AUTH_COOKIE_SECURE=true` для shared deployments.
 

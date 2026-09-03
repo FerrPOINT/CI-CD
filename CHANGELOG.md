@@ -11,6 +11,7 @@
 
 ### Added
 
+- Auth hardening: migration `0026_session_family_reuse` adds refresh session `family_id`/`replaced_by`/`reuse_detected_at` and `users.token_version`; refresh rotation is transactional and reuse of a replaced refresh token revokes the whole session family and invalidates already issued access JWTs.
 - Auth/RBAC route-policy inventory: backend now keeps executable `ROUTE_POLICIES` for every generated OpenAPI/Git/metrics operation, cross-checks router path literals against that registry, denies unpublished API/Git routes under auth middleware and has a unit gate that fails when a new route ships without policy.
 - CI reliability guard: workflow runs are concurrency-bound per ref and all jobs have `timeout-minutes`; production image build and Trivy container scan also have step-level timeouts to avoid stuck security gates.
 - Frontend API transport hardening: `ApiError` now preserves server envelope fields (`code`, `message`, `request_id`, details, status and `Retry-After`) and separates API, network and cancelled failures for UI/RBAC diagnostics.

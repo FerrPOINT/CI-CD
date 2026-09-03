@@ -36,26 +36,31 @@
 4. Документы не дублируют normative-контент: ссылаются на owner-документ.
 5. Удаление документа — через redirect-stub один release-цикл + запись в CHANGELOG.
 
-## Документная карта (после Gate 2)
+## Документная карта
 
 ```text
 docs/
 ├── README.md              # карта + статусная легенда
-├── CURRENT_STATE.md
-├── ARCHITECTURE_INDEX.md
-├── PRODUCT_REQUIREMENTS.md
+├── CURRENT_STATE.md       # производный снимок current capabilities
+├── PRODUCT_REQUIREMENTS.md # REQ/NFR-ID и baseline scope
+├── TRACEABILITY.md        # RTM, проверки и evidence
+├── TEST_PLAN.md           # стратегия и gate-матрица
+├── ARCHITECTURE_INDEX.md  # вход в архитектурные документы
+├── ARCHITECTURE.md        # runtime/workspace layout
+├── FUNCTIONAL_ARCHITECTURE.md
+├── DOMAIN_MODEL.md
+├── DATA_MODEL.md
 ├── USER_GUIDE.md
 ├── DEVELOPMENT_GUIDE.md
-├── TECH_CHOICES.md
-├── LIBRARIES.md
-├── REPORTS.md
-├── DOCUMENTATION_GOVERNANCE.md
 ├── OPERATIONS.md
 ├── ENV.md
 ├── TROUBLESHOOTING.md
-├── contracts/             # нормативные контракты
-├── architecture/          # narrative + sequences + transition map
-├── adr/                   # ADR-0001..0009
+├── contracts/             # нормативные target/current контракты
+├── architecture/          # boundaries, sequences, transition map
+├── adr/                   # accepted ADRs
 ├── assets/screens/        # manifest визуальных evidence
-└── screenshots/           # PNG
+└── screenshots/           # PNG evidence для Dashboard routes/states
 ```
+
+Полная локальная карта документов поддерживается в `docs/README.md`; этот блок
+фиксирует только верхнеуровневые обязательные входы и каталоги.
