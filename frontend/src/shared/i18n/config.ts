@@ -10,7 +10,6 @@ i18n.use(initReactI18next).init({
   },
   lng: 'ru',
   fallbackLng: 'en',
-  showSupportNotice: false,
   interpolation: { escapeValue: false },
   react: { useSuspense: false },
 })
