@@ -11,6 +11,7 @@
 
 ### Added
 
+- Documentation guard: `scripts/verify_docs.py --all` now fails when `/readiness` migration-version examples drift behind committed SQLx migrations.
 - Auth hardening: migration `0026_session_family_reuse` adds refresh session `family_id`/`replaced_by`/`reuse_detected_at` and `users.token_version`; refresh rotation is transactional and reuse of a replaced refresh token revokes the whole session family and invalidates already issued access JWTs.
 - Auth/RBAC route-policy inventory: backend now keeps executable `ROUTE_POLICIES` for every generated OpenAPI/Git/metrics operation, cross-checks router path literals against that registry, denies unpublished API/Git routes under auth middleware and has a unit gate that fails when a new route ships without policy.
 - CI reliability guard: workflow runs are concurrency-bound per ref and all jobs have `timeout-minutes`; production image build and Trivy container scan also have step-level timeouts to avoid stuck security gates.
@@ -59,6 +60,7 @@
 
 ### Fixed
 
+- API error envelope no longer exposes raw SQLx/internal error text to clients; internal details are logged server-side and `500` responses use a generic `internal_error` message.
 - Environments Dashboard теперь явно помечает metadata/deployment-history как MVP без protected approvals/rollback, а `deployment` action переименован в запись deployment-record; user/CLI/Git docs уточняют current artifact TTL и Git proxy/direct ports.
 - Embedded runner secret injection now reads `project_secrets.key` and `encrypted_value`, so saved project secrets are actually decrypted and passed to jobs as runtime env variables.
 - Embedded runner now drains job stdout/stderr while the process is running and serializes log append sequence per attempt, avoiding blocked jobs on large output.

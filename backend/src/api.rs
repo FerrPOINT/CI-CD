@@ -317,9 +317,10 @@ impl ApiError {
         }
     }
     pub(crate) fn internal(error: sqlx::Error) -> Self {
+        tracing::error!(%error, "internal API error");
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,
-            message: error.to_string(),
+            message: "internal server error".into(),
         }
     }
 }
@@ -3672,6 +3673,17 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn internal_errors_hide_database_details_from_clients() {
+        let error = ApiError::internal(sqlx::Error::Protocol(
+            "duplicate key value violates unique constraint \"users_username_key\"".to_string(),
+        ));
+
+        assert_eq!(error.status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(error.message, "internal server error");
+        assert_eq!(error.code(), "internal_error");
+    }
 
     #[test]
     fn project_scope_ref_maps_project_owned_routes() {

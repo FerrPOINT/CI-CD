@@ -1,7 +1,7 @@
 # CURRENT STATE — Forge CI/CD
 
 > **Производный снимок текущего состояния.** Сгенерирован из кода; authority — код и коммит, не этот файл. Обновлять при каждом изменении capability.
-> Снято: `2026-09-02`, ветка `main`; visual evidence: 46 screenshots в `docs/assets/screens/manifest.md`.
+> Снято: `2026-09-03`, ветка `main`; visual evidence: 46 screenshots в `docs/assets/screens/manifest.md`.
 
 ## Что работает сейчас (Current verified)
 
@@ -32,7 +32,7 @@
 | Git auth/RBAC | ✅ conditional MVP | public repo read открыт; private read и receive-pack требуют legacy `CICD_GIT_TOKEN` либо JWT/PAT + `project_memberships` + `git:*` PAT scope при `CICD_AUTH_SECRET`; без секрета и Git token остаётся trusted local mode |
 | Auth/RBAC | ✅ conditional | если `CICD_AUTH_SECRET` задан непустым: argon2id+JWT+PAT, session-bound access invalidation, refresh cookie + CSRF browser flow, refresh rotate/logout/revoke, session-family reuse revocation, executable route-policy registry с OpenAPI/router coverage tests, default-deny unpublished API/Git routes, project memberships, Git Smart HTTP project checks, configurable CORS allowlist, аудит login/logout/denied; без секрета trusted-network mode |
 | Secret injection | ✅ MVP | embedded runner передаёт в env только `jobs.required_secrets`; external runner получает declared secrets через lease-scoped `secrets:resolve` после ack; stdout/stderr masking best-effort |
-| Error envelope + request_id | ✅ | Backend returns `{error:{code,message,request_id}}` + `x-request-id`; frontend transport maps structured envelopes, non-JSON HTTP failures, network failures and cancelled requests into typed `ApiError` while preserving status, `code`, `request_id`, safe details and `Retry-After` |
+| Error envelope + request_id | ✅ | Backend returns `{error:{code,message,request_id}}` + `x-request-id`; raw internal SQLx errors are logged server-side and hidden behind generic `500 internal_error`; frontend transport maps structured envelopes, non-JSON HTTP failures, network failures and cancelled requests into typed `ApiError` while preserving status, `code`, `request_id`, safe details and `Retry-After` |
 | Pagination | ✅ | limit/offset (cap 200) на проектах/пайплайнах |
 | Rate limiting / body limits | ✅ MVP | in-process per-client fixed-window: auth, API read/write, Git Smart HTTP, internal hook и artifact upload возвращают `429`; явные body limits покрывают artifact uploads, Git RPC, JUnit upload и log append |
 | Health/readiness/metrics | ✅ | `/api/v1/health` liveness без БД; `/api/v1/readiness` проверяет PostgreSQL и SQLx migration versions/checksums; `/metrics` Prometheus text |

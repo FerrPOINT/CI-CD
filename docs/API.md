@@ -27,7 +27,7 @@ REST API первой версии Forge CI/CD. Контрольная плос�
 | 409 Conflict | Недопустимое состояние операции |
 | 410 Gone | Lease или protocol resource истёк |
 | 429 Too Many Requests | In-process rate limit по client key |
-| 500 Internal Server Error | Ошибка БД |
+| 500 Internal Server Error | Внутренняя ошибка; детали логируются server-side, клиент получает безопасное сообщение |
 | 503 Service Unavailable | БД недоступна |
 
 ---
@@ -72,8 +72,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 25,
-    "latest_required_version": 25,
+    "latest_applied_version": 26,
+    "latest_required_version": 26,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],

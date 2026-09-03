@@ -20,4 +20,4 @@ sequenceDiagram
     U->>API: POST /logout (refresh cookie + X-CSRF-Token) → session revoked
 ```
 
-Контракты: `contracts/AUTHZ_CONTRACT.md` + `AUTH_IMPLEMENTATION_SPEC.md`. Текущий MVP уже реализует conditional `/auth/login`, `/auth/refresh`, `/auth/logout`, browser refresh cookie + CSRF, session-bound access invalidation и project membership checks при заданном `CICD_AUTH_SECRET`; tenant isolation и refresh-family reuse policy остаются целевым расширением.
+Контракты: `contracts/AUTHZ_CONTRACT.md` + `AUTH_IMPLEMENTATION_SPEC.md`. Текущий MVP уже реализует conditional `/auth/login`, `/auth/refresh`, `/auth/logout`, browser refresh cookie + CSRF, session-bound access invalidation, project membership checks и refresh-family reuse revocation при заданном `CICD_AUTH_SECRET`; tenant isolation, service-account tokens и scoped Git credentials остаются целевым расширением.

@@ -2,10 +2,10 @@
 """Documentation verification for Forge CI/CD.
 
 Checks: markdown link/anchor integrity, canonical naming (ADR-0009),
-status taxonomy, orphan docs, current-state cross-check, screenshot manifest,
-plans status notes, and router/OpenAPI path drift.
+status taxonomy, orphan docs, current-state cross-check, readiness migration
+examples, screenshot manifest, plans status notes, and router/OpenAPI path drift.
 
-Usage: python3 scripts/verify_docs.py [--all | --links --anchors --canonical --status-labels --orphan-docs --current-state --screenshots --manifest --plans --openapi-routes --api-doc-routes]
+Usage: python3 scripts/verify_docs.py [--all | --links --anchors --canonical --status-labels --orphan-docs --current-state --readiness-examples --screenshots --manifest --plans --openapi-routes --api-doc-routes]
 Exit code 0 = clean; non-zero with a report otherwise.
 """
 from __future__ import annotations
@@ -275,6 +275,63 @@ def check_current_state() -> None:
             fail(f"CURRENT_STATE route count drift: documented {documented.group(1)}, router has {n}")
 
 
+def latest_migration_version() -> int | None:
+    migration_dir = ROOT / "backend/migrations"
+    versions: list[int] = []
+    for p in sorted(migration_dir.glob("*.sql")):
+        m = re.match(r"^(\d{4})_", p.name)
+        if m:
+            versions.append(int(m.group(1)))
+    if not versions:
+        fail("no SQLx migrations found under backend/migrations")
+        return None
+    return max(versions)
+
+
+def check_readiness_examples() -> None:
+    api_doc = DOCS / "API.md"
+    if not api_doc.exists():
+        fail("docs/API.md missing")
+        return
+    latest = latest_migration_version()
+    if latest is None:
+        return
+    text = read_text(api_doc)
+    section = re.search(
+        r"#### GET /api/v1/readiness(?P<body>.*?)(?:\n#### |\n### |\Z)",
+        text,
+        re.DOTALL,
+    )
+    if not section:
+        fail("docs/API.md lacks /api/v1/readiness section")
+        return
+    response = re.search(
+        r"\*\*Response 200:\*\*\s*```json\s*(?P<json>\{.*?\})\s*```",
+        section.group("body"),
+        re.DOTALL,
+    )
+    if not response:
+        fail("docs/API.md lacks readiness Response 200 JSON example")
+        return
+    try:
+        payload = json.loads(response.group("json"))
+    except json.JSONDecodeError as exc:
+        line = text.count("\n", 0, section.start("body") + response.start("json")) + exc.lineno
+        fail(f"docs/API.md readiness Response 200 JSON is invalid near line {line}: {exc.msg}")
+        return
+    migrations = payload.get("migrations")
+    if not isinstance(migrations, dict):
+        fail("docs/API.md readiness Response 200 lacks migrations object")
+        return
+    for field in ("latest_applied_version", "latest_required_version"):
+        documented = migrations.get(field)
+        if documented != latest:
+            fail(
+                f"readiness Response 200 example drift: "
+                f"{field} says {documented!r}, latest migration is {latest}"
+            )
+
+
 def check_screenshots() -> None:
     readme = read_text(ROOT / "README.md")
     shots = re.findall(r"\(docs/screenshots/([^)]+\.png)\)", readme)
@@ -430,6 +487,7 @@ def main() -> int:
         "status-labels",
         "orphan-docs",
         "current-state",
+        "readiness-examples",
         "screenshots",
         "manifest",
         "plans",
@@ -445,6 +503,7 @@ def main() -> int:
         "status-labels": check_status_labels,
         "orphan-docs": check_orphans,
         "current-state": check_current_state,
+        "readiness-examples": check_readiness_examples,
         "screenshots": check_screenshots,
         "manifest": check_manifest,
         "plans": check_plans,
