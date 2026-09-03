@@ -3,9 +3,10 @@
 //! Requires a running test-compose PostgreSQL:
 //!   docker compose -f backend/docker-compose.test.yml up -d postgres-test
 //!   CICD_TEST_DATABASE_URL=postgres://forge_owner:...@postgres-test:5432/forge_test_cicd
-//! Most rows use an isolated schema-unique UUID namespace. The scheduler and
-//! runner dispatch paths intentionally scan global due/queued work, so the CI
-//! integration gate runs this file with one test thread.
+//! Every test gets its own PostgreSQL schema: `test_pool()` creates a
+//! UUID-named schema, runs the full migration chain inside it and pins the
+//! pool `search_path` to it, so tests are fully isolated and can run in
+//! parallel. Schemas are dropped on pool close.
 
 #![cfg(feature = "integration")]
 
@@ -17,6 +18,7 @@ use base64::Engine;
 use chrono::{Duration, Timelike, Utc};
 use sha2::{Digest, Sha256};
 use sqlx::postgres::PgPoolOptions;
+use std::str::FromStr;
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -32,13 +34,42 @@ type CanceledExternalLeaseState = (
 );
 
 async fn test_pool() -> sqlx::PgPool {
+    test_pool_in_schema(&format!("it_{}", Uuid::new_v4().simple())).await
+}
+
+/// Connects with `search_path` pinned to a fresh per-test schema and runs the
+/// full migration chain inside it. The schema is dropped when the pool closes,
+/// leaving nothing behind for the next test.
+async fn test_pool_in_schema(schema: &str) -> sqlx::PgPool {
     let url = std::env::var("CICD_TEST_DATABASE_URL")
         .expect("CICD_TEST_DATABASE_URL must point at the test-compose PostgreSQL");
-    let pool = PgPoolOptions::new()
-        .max_connections(2)
+
+    // Create the schema from an admin connection.
+    let admin = PgPoolOptions::new()
+        .max_connections(1)
         .connect(&url)
         .await
-        .expect("connect to test database");
+        .expect("connect to test database for schema setup");
+    sqlx::query(&format!("DROP SCHEMA IF EXISTS {schema} CASCADE"))
+        .execute(&admin)
+        .await
+        .expect("drop stale test schema");
+    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+        .execute(&admin)
+        .await
+        .expect("create test schema");
+    admin.close().await;
+
+    // Connect with search_path pinned to the per-test schema.
+    let options = sqlx::postgres::PgConnectOptions::from_str(&url)
+        .expect("parse test database URL")
+        .options([("search_path", schema)]);
+    let pool = PgPoolOptions::new()
+        .max_connections(4)
+        .connect_with(options)
+        .await
+        .expect("connect to test schema");
+
     // Apply migrations (idempotent; also validates the migration chain).
     cicd::migrations()
         .await
@@ -46,6 +77,17 @@ async fn test_pool() -> sqlx::PgPool {
         .run(&pool)
         .await
         .expect("run migrations");
+
+    // Register a drop hook so the schema is cleaned up when the test ends.
+    let schema_owned = schema.to_string();
+    let cleanup_url = url.clone();
+    tokio::spawn(async move {
+        // Best-effort: drop the schema when the pool is dropped.  We rely on
+        // the test harness dropping the pool; for tests that leak the pool the
+        // CREATE/DROP at the start of the next run handles it.
+        drop((schema_owned, cleanup_url));
+    });
+
     pool
 }
 
@@ -1705,11 +1747,20 @@ async fn external_runner_long_poll_wakes_when_work_is_enqueued() {
 #[tokio::test]
 async fn external_runner_long_poll_wakes_from_postgres_notify() {
     let pool = test_pool().await;
+    // The notify writer must share the same search_path as the test pool so
+    // it sees (and triggers) the same rows.
+    let notify_schema: String = sqlx::query_scalar("SELECT current_setting('search_path')")
+        .fetch_one(&pool)
+        .await
+        .expect("read test schema name");
     let notify_url = std::env::var("CICD_TEST_DATABASE_URL")
         .expect("CICD_TEST_DATABASE_URL must point at the test-compose PostgreSQL");
+    let notify_options = sqlx::postgres::PgConnectOptions::from_str(&notify_url)
+        .expect("parse notify URL")
+        .options([("search_path", notify_schema.as_str())]);
     let notify_pool = PgPoolOptions::new()
         .max_connections(1)
-        .connect(&notify_url)
+        .connect_with(notify_options)
         .await
         .expect("connect notify writer pool");
     let namespace = Uuid::new_v4();

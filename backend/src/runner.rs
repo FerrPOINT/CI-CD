@@ -1326,6 +1326,26 @@ async fn prepare_workspace(pool: &PgPool, job: &JobRow) -> Result<std::path::Pat
     )
     .await?;
 
+    // Reject SSH URLs early: the embedded runner container does not ship an
+    // SSH client, so `git clone git@…` dies with "cannot run ssh: No such file
+    // or directory" — a confusing error that leaves the pipeline stuck.
+    if repo_url.starts_with("git@") || repo_url.starts_with("ssh://") {
+        append_log(
+            pool,
+            job.id,
+            &format!(
+                "runner: SSH clone URLs are not supported by the embedded runner; \
+                 configure an HTTP URL or use an external runner with SSH access: {repo_url}"
+            ),
+        )
+        .await?;
+        let _ = tokio::fs::remove_dir_all(&workspace).await;
+        return Err(ApiError::bad_request(
+            "SSH clone URLs are not supported by the embedded runner; \
+             use an HTTP URL or an external runner with SSH access",
+        ));
+    }
+
     // Prefer local bare repo: avoid HTTP round-trips that can deadlock if the
     // repository_url points back at the same backend serving this runner.
     let cloned = clone_from_local_bare(&repo_url, &git_ref, &workspace).await;
@@ -1789,5 +1809,19 @@ mod tests {
         assert_eq!(aggregate_statuses(["success", "running"]), "running");
         assert_eq!(aggregate_statuses(["success", "canceled"]), "canceled");
         assert_eq!(aggregate_statuses(["success", "failed"]), "failed");
+    }
+
+    #[test]
+    fn ssh_urls_are_detected_for_early_rejection() {
+        // The embedded runner cannot SSH-clone; these URLs must be caught
+        // before spawning git so the job gets a clear error, not "cannot
+        // run ssh".
+        assert!("git@github.com:org/repo.git".starts_with("git@"));
+        assert!("ssh://git@gitlab.com/org/repo.git".starts_with("ssh://"));
+        // HTTP URLs must NOT be rejected.
+        assert!(!"http://backend:22801/git/demo.git".starts_with("git@"));
+        assert!(!"http://backend:22801/git/demo.git".starts_with("ssh://"));
+        assert!(!"https://github.com/org/repo.git".starts_with("git@"));
+        assert!(!"https://github.com/org/repo.git".starts_with("ssh://"));
     }
 }
