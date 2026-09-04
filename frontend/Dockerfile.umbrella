@@ -10,6 +10,8 @@ ENV CI=true
 ENV SPEC=/workspace/openapi/openapi.yaml
 RUN corepack enable && pnpm install --frozen-lockfile
 COPY CI-CD/frontend/ ./
+ARG VITE_PLATFORM_BRANDING_URL=""
+ENV VITE_PLATFORM_BRANDING_URL=${VITE_PLATFORM_BRANDING_URL}
 RUN pnpm build
 
 FROM nginx:1.31.4-alpine
