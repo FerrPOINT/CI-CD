@@ -67,12 +67,35 @@ jobs:
 
   # install + test + lint + build via the shared fleet gate.
   frontend:
-    uses: FerrPOINT/services-base/.github/workflows/frontend-gate.yml@main
-    with:
-      working-directory: frontend
-      checkout-path: CI-CD
-      services-base-sibling: true
-      pretest: "pnpm openapi:check"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: CI-CD/frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: CI-CD
+      - name: Check out services-base sibling (@sdlc/ui file dep)
+        uses: actions/checkout@v4
+        with:
+          repository: FerrPOINT/services-base
+          path: services-base
+          ref: main
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: CI-CD/frontend/pnpm-lock.yaml
+      - run: pnpm install --no-frozen-lockfile
+        env:
+          CI: "true"
+      - run: pnpm openapi:check
+      - run: pnpm test -- --run
+      - run: pnpm lint
+      - run: pnpm build
   compose-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 20
