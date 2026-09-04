@@ -81,6 +81,7 @@ jobs:
           repository: FerrPOINT/services-base
           path: services-base
           ref: main
+          token: ${{ secrets.SERVICES_BASE_TOKEN }}
       - uses: pnpm/action-setup@v4
         with:
           version: 10.28.1
