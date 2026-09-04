@@ -3,13 +3,11 @@ use cicd::{
 };
 
 use sqlx::postgres::PgPoolOptions;
-use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
+    // Fleet-standard tracing setup (JSON in prod via SDLC_LOG_JSON).
+    sdlc_telemetry::init_tracing("forge-cicd");
     let config = RuntimeConfig::from_env()?;
     let git = config.git.to_git_config();
     if git.internal_token.is_none() {
