@@ -18,7 +18,8 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: ..
+      dockerfile: CI-CD/backend/Dockerfile.umbrella
     environment:
       CICD_DATABASE_URL: postgresql://${CICD_DATABASE_USER:-cicd}:${CICD_DATABASE_PASSWORD:-cicd_local_only}@postgres:5432/${CICD_DATABASE_NAME:-cicd}
       CICD_BIND: 0.0.0.0:22801
@@ -57,7 +58,8 @@ services:
   runner:
     profiles: ["external-runner"]
     build:
-      context: ./backend
+      context: ..
+      dockerfile: CI-CD/backend/Dockerfile.umbrella
     command: ["forge-runner"]
     environment:
       CICD_API_URL: http://backend:22801
@@ -79,8 +81,8 @@ services:
 
   frontend:
     build:
-      context: .
-      dockerfile: frontend/Dockerfile
+      context: ..
+      dockerfile: CI-CD/frontend/Dockerfile.umbrella
     ports:
       - "${CICD_WEB_PORT:-22802}:80"
     depends_on:
