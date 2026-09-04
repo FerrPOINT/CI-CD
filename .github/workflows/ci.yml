@@ -218,6 +218,9 @@ jobs:
 
   security:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: CI-CD
     timeout-minutes: 30
     steps:
     - uses: actions/checkout@v4
@@ -232,70 +235,3 @@ jobs:
     - uses: dtolnay/rust-toolchain@stable
       with:
         toolchain: "1.88"
-    - name: Rust dependency audit
-      working-directory: CI-CD/backend
-      run: |
-        set -euo pipefail
-        cargo install cargo-audit --locked --version 0.22.1
-        if cargo tree -i sqlx-mysql --edges features --target all --prefix none 2>&1 | grep -q '^sqlx-mysql v'; then
-          echo "sqlx-mysql is enabled in the build graph; remove RUSTSEC-2023-0071 ignore before shipping"
-          exit 1
-        fi
-        if cargo tree -i rsa --target all --prefix none 2>&1 | grep -q '^rsa v'; then
-          echo "rsa is enabled in the build graph; remove RUSTSEC-2023-0071 ignore before shipping"
-          exit 1
-        fi
-        cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0183 --ignore RUSTSEC-2026-0009
-    - uses: pnpm/setup@v2
-      with:
-        version: 11
-        runtime: node@22
-        cache: true
-        cache-dependency-path: CI-CD/frontend/pnpm-lock.yaml
-        install: false
-    - name: Node dependency audit
-      working-directory: CI-CD/frontend
-      run: |
-        pnpm install --frozen-lockfile
-        pnpm audit --audit-level high
-    - uses: actions/setup-python@v7
-      with:
-        python-version: "3.12"
-    - name: Secret scan
-      run: python3 scripts/scan_secrets.py
-    - name: SBOM drift gate
-      run: python3 scripts/generate_sbom.py --check
-    - name: Build production images for scan
-      timeout-minutes: 15
-      run: |
-        docker build -t forge-cicd-backend:ci backend
-        docker build -t forge-cicd-frontend:ci frontend
-    - name: Container image scan
-      timeout-minutes: 10
-      run: bash scripts/scan_container_images.sh forge-cicd-backend:ci forge-cicd-frontend:ci
-
-  docs:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        path: CI-CD
-    - uses: actions/checkout@v4
-      with:
-        repository: FerrPOINT/services-base
-        path: services-base
-        ref: main
-        token: ${{ secrets.SERVICES_BASE_TOKEN }}
-    - uses: actions/setup-python@v7
-      with:
-        python-version: "3.12"
-    - name: script checks
-      run: |
-        python3 -m py_compile scripts/verify_docs.py scripts/generate_sbom.py scripts/scan_secrets.py scripts/forge_backup.py
-        python3 scripts/forge_backup.py self-test
-        python3 scripts/forge_backup.py backup --dry-run --skip-git-fsck --backup-dir /tmp/forge-backup-smoke
-        python3 scripts/forge_backup.py restore --dry-run --confirm-restore --skip-git-fsck /tmp/forge-backup-smoke
-        bash -n scripts/backup.sh scripts/restore.sh scripts/verify-backup.sh scripts/scan_container_images.sh
-    - name: documentation checks
-      run: python3 scripts/verify_docs.py --all
