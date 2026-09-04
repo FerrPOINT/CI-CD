@@ -1308,23 +1308,16 @@ async fn auth_login(
     let pool = pool(&state)?;
     // Central fleet auth first; local credential login remains the fallback
     // during the migration window (central_auth.rs).
-    match crate::central_auth::try_central_login(&input.username, &input.password).await {
-        Ok(Some(pair)) => {
-            if let Some(central) = crate::central_auth::try_central(&pair.access_token).await {
-                crate::central_auth::link_central_user(pool, &central).await?; // shadow user ensured
-                let out = crate::auth::TokenPair {
-                    access_token: pair.access_token,
-                    expires_at: chrono::Utc::now().timestamp() + 900,
-                    refresh_token: pair.refresh_token.unwrap_or_default(),
-                };
-                return Ok((HeaderMap::new(), Json(out)));
-            }
+    if let Some(pair) = crate::central_auth::try_login(&input.username, &input.password).await {
+        if let Some(central) = crate::central_auth::try_central(&pair.access_token).await {
+            crate::central_auth::link_central_user(pool, &central).await?; // shadow user ensured
+            let out = crate::auth::TokenPair {
+                access_token: pair.access_token,
+                expires_at: chrono::Utc::now().timestamp() + 900,
+                refresh_token: pair.refresh_token.unwrap_or_default(),
+            };
+            return Ok((HeaderMap::new(), Json(out)));
         }
-        Ok(None) => { /* central not configured */ }
-        Err(Some(error)) => {
-            tracing::warn!(%error, "central login failed; falling back to local");
-        }
-        Err(None) => { /* credentials unknown centrally; local path */ }
     }
     let row = sqlx::query_as::<_, (Uuid, String, bool, i64, String)>(
         "SELECT u.id, u.role, u.enabled, u.token_version, c.password_hash FROM users u \

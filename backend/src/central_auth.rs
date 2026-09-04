@@ -1,67 +1,26 @@
-//! Bridge between Forge CI/CD auth and the central fleet auth-server
-//! (services-base/auth-server, ES256 + JWKS, audience `sdlc`).
+//! Forge CI/CD wiring of the shared central-auth bridge.
 //!
-//! When `CICD_AUTH__CENTRAL_JWKS_URI` is configured, bearer validation tries
-//! the central token first; the verified email claim links a local shadow
-//! user by username (created on demand, no local credential). Legacy HS256
-//! session JWTs and `cicd_` PATs keep working — zero-downtime cutover.
+//! JWKS validation and the login proxy live in
+//! `sdlc_auth_core::service_bridge`; this file maps the central identity
+//! to the local users table (shadow accounts by email-derived username).
 
 use crate::auth::AccessClaims;
-use sdlc_auth_core::{AuthContext, JwksCache, Validator};
+use sdlc_auth_core::AuthContext;
+use sdlc_auth_core::service_bridge::{BridgeOutcome, ServiceBridge};
 use sqlx::PgPool;
-use std::sync::Arc;
-use tokio::sync::OnceCell;
 use uuid::Uuid;
 
-pub struct CentralAuth {
-    validator: Validator,
-    #[allow(dead_code)] // kept for future direct JWKS access (rotation checks)
-    jwks: Arc<JwksCache>,
-}
+/// Env prefix: CICD_AUTH__CENTRAL_{JWKS_URI,ISSUER,LOGIN_URL,TIMEOUT_SECS}.
+pub static BRIDGE: ServiceBridge = ServiceBridge::new("CICD_AUTH__CENTRAL");
 
-static CENTRAL: OnceCell<Option<CentralAuth>> = OnceCell::const_new();
-
-/// Reads `CICD_AUTH__CENTRAL_JWKS_URI` / `CICD_AUTH__CENTRAL_ISSUER` once.
-/// `None` when central auth is not configured (legacy-only mode).
-pub async fn central() -> Option<&'static CentralAuth> {
-    CENTRAL
-        .get_or_init(|| async {
-            let uri = std::env::var("CICD_AUTH__CENTRAL_JWKS_URI").ok()?;
-            let issuer: Arc<String> = Arc::new(
-                std::env::var("CICD_AUTH__CENTRAL_ISSUER")
-                    .unwrap_or_else(|_| "http://127.0.0.1:7701".into()),
-            );
-            match JwksCache::connect(&uri).await {
-                Ok(jwks) => {
-                    let jwks = Arc::new(jwks);
-                    let validator = Validator::Jwks {
-                        jwks: jwks.clone(),
-                        issuer,
-                    };
-                    jwks.clone().spawn_refresh(std::time::Duration::from_secs(3600));
-                    tracing::info!(jwks_uri = %uri, "central auth enabled");
-                    Some(CentralAuth { validator, jwks })
-                }
-                Err(error) => {
-                    tracing::warn!(%error, jwks_uri = %uri, "central auth unavailable; falling back to legacy sessions");
-                    None
-                }
-            }
-        })
-        .await
-        .as_ref()
-}
-
-/// Attempts central validation. `Ok(None)` = not a central token (caller
-/// falls back to PAT/legacy paths).
+/// Central-first bearer check. `None` = fall back to PAT/legacy session.
 pub async fn try_central(token: &str) -> Option<AuthContext> {
-    let central = central().await?;
-    match central.validator.validate(token) {
-        Ok(ctx) => Some(ctx),
-        // kid resolution failure = legacy token, not ours
-        Err(sdlc_auth_core::AuthError::Jwks(_)) => None,
-        Err(other) => {
-            tracing::warn!(error = %other, "central token validation failed");
+    match BRIDGE.try_token(token).await {
+        BridgeOutcome::Validated(ctx) => Some(ctx),
+        BridgeOutcome::Expired => None, // treated as not-ours; middleware 401s later
+        BridgeOutcome::NotOurs | BridgeOutcome::NotConfigured => None,
+        BridgeOutcome::Invalid(reason) => {
+            tracing::debug!(reason, "bearer is not a valid central token; legacy path");
             None
         }
     }
@@ -127,36 +86,13 @@ pub async fn link_central_user(
     })
 }
 
-/// Login proxy to the central auth-server (`CICD_AUTH__CENTRAL_LOGIN_URL`).
-#[derive(serde::Deserialize)]
-pub struct CentralAuthPair {
-    pub access_token: String,
-    #[serde(default)]
-    pub refresh_token: Option<String>,
-    #[serde(default)]
-    pub user: Option<CentralUser>,
-}
-
-#[derive(serde::Deserialize)]
-pub struct CentralUser {
-    #[serde(default)]
-    pub username: Option<String>,
-    #[serde(default)]
-    pub email: Option<String>,
-}
-
-pub async fn try_central_login(
+/// Central login proxy; `None` = not configured / rejected / unreachable.
+pub async fn try_login(
     username: &str,
     password: &str,
-) -> Result<Option<CentralAuthPair>, Option<String>> {
-    let Some(url) = std::env::var("CICD_AUTH__CENTRAL_LOGIN_URL").ok() else {
-        return Ok(None);
-    };
-    if url.trim().is_empty() {
-        return Ok(None);
-    }
-    // The central server authenticates by email; accept the local-part login
-    // by extending it with the configured central email domain, if set.
+) -> Option<sdlc_auth_core::service_bridge::CentralTokenPair> {
+    // The central server authenticates by email; extend the bare username
+    // with the configured domain, if any.
     let email = if username.contains('@') {
         username.to_string()
     } else {
@@ -167,29 +103,11 @@ pub async fn try_central_login(
             _ => username.to_string(),
         }
     };
-    let timeout = std::env::var("CICD_AUTH__CENTRAL_TIMEOUT_SECS")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(5u64);
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(timeout))
-        .build()
-        .map_err(|e| Some(e.to_string()))?;
-    let response = client
-        .post(&url)
-        .json(&serde_json::json!({ "email": email, "password": password }))
-        .send()
-        .await
-        .map_err(|e| {
-            tracing::warn!(error = %e, url = %url, "central login unreachable");
-            Some(e.to_string())
-        })?;
-    if !response.status().is_success() {
-        return Err(None);
+    match BRIDGE.try_login(&email, password).await {
+        Ok(pair) => pair,
+        Err(transport) => {
+            tracing::warn!(%transport, "central login failed; local fallback");
+            None
+        }
     }
-    let pair = response
-        .json::<CentralAuthPair>()
-        .await
-        .map_err(|e| Some(e.to_string()))?;
-    Ok(Some(pair))
 }
