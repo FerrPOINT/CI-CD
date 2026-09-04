@@ -65,52 +65,14 @@ jobs:
         cargo run --bin openapi-dump -- /tmp/openapi.yaml
         diff -u ../openapi/openapi.yaml /tmp/openapi.yaml
 
+  # install + test + lint + build via the shared fleet gate.
   frontend:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: CI-CD/frontend
-    steps:
-    - uses: actions/checkout@v7
-      with:
-        path: CI-CD
-        fetch-depth: 0
-    # Fleet shared UI kit lives in a sibling services-base checkout
-    # (frontend file dep: ../../services-base/frontend).
-    - uses: actions/checkout@v7
-      with:
-        repository: FerrPOINT/services-base
-        path: services-base
-        ref: main
-    - uses: pnpm/setup@v2
-      with:
-        version: 11
-        runtime: node@22
-        cache: true
-        cache-dependency-path: CI-CD/frontend/pnpm-lock.yaml
-        install: false
-    - run: pnpm install --frozen-lockfile
-    - name: evidence script syntax
-      run: |
-        node --check scripts/seed-evidence.mjs
-        node --check scripts/shoot-evidence.mjs
-    - name: generated client up to date
-      run: |
-        pnpm openapi:generate
-        git diff --exit-code -- src/api/schema.d.ts || (echo "schema.d.ts is stale; run pnpm openapi:generate" && exit 1)
-    - name: OpenAPI compatibility checker self-test
-      run: pnpm openapi:compat --self-test
-    - name: OpenAPI compatibility gate (pull request)
-      if: github.event_name == 'pull_request'
-      run: pnpm openapi:compat --base-ref origin/${{ github.base_ref }} --current ../openapi/openapi.yaml
-    - name: OpenAPI compatibility gate (push)
-      if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
-      run: pnpm openapi:compat --base-ref ${{ github.event.before }} --current ../openapi/openapi.yaml
-    - run: pnpm lint
-    - run: pnpm test
-    - run: pnpm build
-
+    uses: FerrPOINT/services-base/.github/workflows/frontend-gate.yml@main
+    with:
+      working-directory: frontend
+      checkout-path: CI-CD
+      services-base-sibling: true
+      pretest: "pnpm openapi:check"
   compose-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 20
