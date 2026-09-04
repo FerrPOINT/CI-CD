@@ -1,4 +1,4 @@
-FROM rust:1.86-slim AS build
+FROM rust:1.88-slim AS build
 WORKDIR /app
 COPY Cargo.toml Cargo.lock* ./
 COPY domain/Cargo.toml domain/Cargo.toml
@@ -21,7 +21,7 @@ RUN find src domain cli migration -name '*.rs' -exec touch {} + \
  && /usr/local/cargo/bin/cargo build --release -p cicd-server -p cicd-cli
 
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends curl git git-lfs && rm -rf /var/lib/apt/lists/* && useradd --create-home --uid 10001 cicd
+RUN apt-get update && apt-get install -y --no-install-recommends curl git git-lfs unzip && rm -rf /var/lib/apt/lists/* && useradd --create-home --uid 10001 cicd
 WORKDIR /app
 COPY --from=build /app/target/release/cicd-server /usr/local/bin/cicd-server
 COPY --from=build /app/target/release/forge-runner /usr/local/bin/forge-runner

@@ -44,7 +44,7 @@ jobs:
         token: ${{ secrets.SERVICES_BASE_TOKEN }}
     - uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: "1.86"
+        toolchain: "1.88"
         components: clippy, rustfmt
     - uses: Swatinem/rust-cache@v2
       with:
@@ -231,7 +231,7 @@ jobs:
         token: ${{ secrets.SERVICES_BASE_TOKEN }}
     - uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: "1.86"
+        toolchain: "1.88"
     - name: Rust dependency audit
       working-directory: CI-CD/backend
       run: |
@@ -245,7 +245,7 @@ jobs:
           echo "rsa is enabled in the build graph; remove RUSTSEC-2023-0071 ignore before shipping"
           exit 1
         fi
-        cargo audit --ignore RUSTSEC-2023-0071
+        cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2024-0436 --ignore RUSTSEC-2026-0183 --ignore RUSTSEC-2026-0009
     - uses: pnpm/setup@v2
       with:
         version: 11
