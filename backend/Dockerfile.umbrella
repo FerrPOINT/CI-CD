@@ -4,7 +4,7 @@
 FROM rust:1.88-slim AS build
 WORKDIR /app
 # backend/Cargo.toml: sdlc-auth-core = { path = "../../../services-base/..." }
-# /app/../../../services-base == /services-base (WORKDIR is repo backend/).
+# /app/../../services-base == /services-base (WORKDIR is repo backend/).
 COPY services-base/Cargo.toml /services-base/Cargo.toml
 COPY services-base/crates/sdlc-auth-core /services-base/crates/sdlc-auth-core
 COPY services-base/crates/sdlc-telemetry /services-base/crates/sdlc-telemetry
