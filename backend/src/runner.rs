@@ -1337,7 +1337,7 @@ async fn prepare_workspace(
     append_log(
         pool,
         job.id,
-        &format!("runner: cloning {} at {}", repo_url, git_ref),
+        &format!("runner: cloning {repo_url} at {git_ref}"),
     )
     .await?;
 

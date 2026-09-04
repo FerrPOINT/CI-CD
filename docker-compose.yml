@@ -79,7 +79,8 @@ services:
 
   frontend:
     build:
-      context: ./frontend
+      context: .
+      dockerfile: CI-CD/frontend/Dockerfile
     ports:
       - "${CICD_WEB_PORT:-22802}:80"
     depends_on:
