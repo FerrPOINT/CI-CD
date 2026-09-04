@@ -3,9 +3,11 @@
 # (../../services-base/frontend) resolves.
 FROM node:22-bookworm-slim AS build
 WORKDIR /app
+COPY CI-CD/openapi/openapi.yaml /workspace/openapi/openapi.yaml
 COPY CI-CD/frontend/package.json CI-CD/frontend/pnpm-lock.yaml* CI-CD/frontend/pnpm-workspace.yaml ./
 COPY services-base/frontend /services-base/frontend
 ENV CI=true
+ENV SPEC=/workspace/openapi/openapi.yaml
 RUN corepack enable && pnpm install --frozen-lockfile
 COPY CI-CD/frontend/ ./
 RUN pnpm build

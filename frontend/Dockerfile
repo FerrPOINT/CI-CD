@@ -1,7 +1,8 @@
 FROM node:22-bookworm-slim AS build
 WORKDIR /app
+COPY ../openapi/openapi.yaml /workspace/openapi/openapi.yaml
 COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml ./
-RUN corepack enable && pnpm install --frozen-lockfile
+RUN corepack enable && SPEC=/workspace/openapi/openapi.yaml pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm build
 

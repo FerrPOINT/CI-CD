@@ -16,7 +16,7 @@
     "openapi:generate": "openapi-typescript ../openapi/openapi.yaml -o src/api/schema.d.ts",
     "openapi:check": "node node_modules/@sdlc/ui/scripts/sdlc-openapi-check.mjs",
     "openapi:compat": "node node_modules/@sdlc/ui/scripts/sdlc-openapi-compat.mjs",
-    "postinstall": "openapi-typescript ../openapi/openapi.yaml -o src/api/schema.d.ts"
+    "postinstall": "openapi-typescript ${SPEC:-../openapi/openapi.yaml} -o src/api/schema.d.ts"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.1.13",
