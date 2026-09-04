@@ -79,6 +79,7 @@ FRONTEND_SCRIPT_TOOL_DEPS = {
 PNPM_BUILTINS = {
     "add",
     "audit",
+    "cache-dependency-path",
     "config",
     "dlx",
     "env",
