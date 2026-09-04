@@ -41,6 +41,7 @@ jobs:
         repository: FerrPOINT/services-base
         path: services-base
         ref: main
+        token: ${{ secrets.SERVICES_BASE_TOKEN }}
     - uses: dtolnay/rust-toolchain@stable
       with:
         toolchain: "1.86"
@@ -80,6 +81,7 @@ jobs:
         with:
           repository: FerrPOINT/services-base
           path: services-base
+          token: ${{ secrets.SERVICES_BASE_TOKEN }}
           ref: main
           token: ${{ secrets.SERVICES_BASE_TOKEN }}
       - uses: pnpm/action-setup@v4
@@ -109,6 +111,7 @@ jobs:
         repository: FerrPOINT/services-base
         path: services-base
         ref: main
+        token: ${{ secrets.SERVICES_BASE_TOKEN }}
     - name: Compose config
       run: docker compose config -q
     - name: Build and start stack
@@ -156,6 +159,7 @@ jobs:
         repository: FerrPOINT/services-base
         path: services-base
         ref: main
+        token: ${{ secrets.SERVICES_BASE_TOKEN }}
     - uses: pnpm/setup@v2
       with:
         version: 11
@@ -221,6 +225,7 @@ jobs:
         repository: FerrPOINT/services-base
         path: services-base
         ref: main
+        token: ${{ secrets.SERVICES_BASE_TOKEN }}
     - uses: dtolnay/rust-toolchain@stable
       with:
         toolchain: "1.86"
@@ -278,6 +283,7 @@ jobs:
         repository: FerrPOINT/services-base
         path: services-base
         ref: main
+        token: ${{ secrets.SERVICES_BASE_TOKEN }}
     - uses: actions/setup-python@v7
       with:
         python-version: "3.12"
