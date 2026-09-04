@@ -7,8 +7,6 @@
 //!
 //! Enforcement policy lives in `authz`; this module only proves identity.
 
-use argon2::Argon2;
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use chrono::{DateTime, Duration, Utc};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
@@ -107,21 +105,11 @@ fn decoding_secret(secret: &str) -> DecodingKey {
 }
 
 pub fn hash_password(password: &str) -> Result<String, AuthError> {
-    let salt = SaltString::generate(&mut rand_core::OsRng);
-    Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
-        .map(|h| h.to_string())
-        .map_err(|_| AuthError::Invalid)
+    sdlc_auth_core::password::hash_password(password).map_err(|_| AuthError::Invalid)
 }
 
 pub fn verify_password(hash: &str, password: &str) -> bool {
-    PasswordHash::new(hash)
-        .map(|parsed| {
-            Argon2::default()
-                .verify_password(password.as_bytes(), &parsed)
-                .is_ok()
-        })
-        .unwrap_or(false)
+    sdlc_auth_core::password::verify_password(password, hash).unwrap_or(false)
 }
 
 pub fn issue_access(user_id: Uuid, role: &str, session_id: Uuid) -> Result<TokenPair, AuthError> {
