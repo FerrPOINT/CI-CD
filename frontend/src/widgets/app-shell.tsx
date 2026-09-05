@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useLocation, Outlet, useNavigate } from 'react-router'
-import { GitBranch, LayoutDashboard, FolderGit2, Settings, GitFork, Menu, X, History, Users, Cpu } from 'lucide-react'
+import { LayoutDashboard, FolderGit2, Settings, GitFork, Menu, X, History, Users, Cpu } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { Button } from '@sdlc/ui/ui'
+import { Button, PlatformMark } from '@sdlc/ui/ui'
 import { ThemeToggle } from '@sdlc/ui/ui'
 import { ServiceSwitcher } from '@sdlc/ui/ui'
 
@@ -109,7 +109,7 @@ export function AppShell() {
             {mobileMenuOpen ? <X className="h-[18px] w-[18px]" /> : <Menu className="h-[18px] w-[18px]" />}
           </Button>
           <Link to="/" className="flex items-center gap-2 font-bold">
-            <GitBranch className="h-[18px] w-[18px] text-accent" />
+            <PlatformMark size="sm" withName={false} />
             <span className="hidden sm:inline">{t('app.name')}</span>
           </Link>
         </div>

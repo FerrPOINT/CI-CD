@@ -14,7 +14,7 @@ ARG VITE_PLATFORM_BRANDING_URL=""
 ENV VITE_PLATFORM_BRANDING_URL=${VITE_PLATFORM_BRANDING_URL}
 ARG VITE_PLATFORM_SERVICES_URL=""
 ENV VITE_PLATFORM_SERVICES_URL=${VITE_PLATFORM_SERVICES_URL}
-RUN pnpm build
+RUN pnpm config set verify-deps-before-run false --location project; pnpm build
 
 FROM nginx:1.31.4-alpine
 COPY CI-CD/frontend/nginx.conf /etc/nginx/conf.d/default.conf
