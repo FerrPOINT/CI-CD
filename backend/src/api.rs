@@ -1310,13 +1310,34 @@ async fn auth_login(
     // during the migration window (central_auth.rs).
     if let Some(pair) = crate::central_auth::try_login(&input.username, &input.password).await {
         if let Some(central) = crate::central_auth::try_central(&pair.access_token).await {
-            crate::central_auth::link_central_user(pool, &central).await?; // shadow user ensured
-            let out = crate::auth::TokenPair {
-                access_token: pair.access_token,
-                expires_at: chrono::Utc::now().timestamp() + 900,
-                refresh_token: pair.refresh_token.unwrap_or_default(),
-            };
-            return Ok((HeaderMap::new(), Json(out)));
+            let claims = crate::central_auth::link_central_user(pool, &central).await?; // shadow user ensured
+            // Issue a local refresh session so the browser survives access-token
+            // expiry (the central token itself has no refresh cookie here).
+            let refresh = new_refresh_token();
+            let csrf = new_csrf_token();
+            let csrf_hash = hash_token(&csrf);
+            let session_id =
+                create_session_with_csrf(pool, claims.sub, &hash_token(&refresh), Some(&csrf_hash))
+                    .await
+                    .map_err(ApiError::from)?;
+            let mut out = issue_access_with_secret_version(
+                claims.sub,
+                &claims.role,
+                session_id,
+                claims.ver,
+                auth_secret(&state)?,
+            )
+            .map_err(|_| ApiError::unauthorized())?;
+            out.refresh_token = refresh.clone();
+            let _ = audit(
+                pool,
+                "auth.login_success",
+                "user",
+                claims.sub,
+                Some(input.username.trim()),
+            )
+            .await;
+            return Ok((auth_cookie_headers(&state, &refresh, &csrf), Json(out)));
         }
     }
     let row = sqlx::query_as::<_, (Uuid, String, bool, i64, String)>(
