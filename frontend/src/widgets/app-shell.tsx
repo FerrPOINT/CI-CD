@@ -4,6 +4,7 @@ import { GitBranch, LayoutDashboard, FolderGit2, Settings, GitFork, Menu, X, His
 import { useTranslation } from 'react-i18next'
 import { Button } from '@sdlc/ui/ui'
 import { ThemeToggle } from '@sdlc/ui/ui'
+import { ServiceSwitcher } from '@sdlc/ui/ui'
 
 function NavigationList({ onNavigate, isActive }: { onNavigate: () => void; isActive: (path: string) => boolean }) {
   const { t } = useTranslation()
@@ -113,6 +114,7 @@ export function AppShell() {
           </Link>
         </div>
         <div className="flex items-center gap-2">
+          <ServiceSwitcher currentKey="ci-cd" />
           <ThemeToggle />
         </div>
       </header>
