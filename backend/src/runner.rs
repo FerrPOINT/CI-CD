@@ -1733,6 +1733,69 @@ fn workspace_root(config: &RuntimeRunnerConfig) -> std::path::PathBuf {
     }
 }
 
+/// K4.4 resource classes: cap the job container footprint per class so a
+/// heavy linker job cannot starve the host while small jobs stay cheap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResourceClass {
+    Small,
+    Standard,
+    Large,
+}
+
+impl ResourceClass {
+    fn from_env() -> Self {
+        match std::env::var("CICD_RUNNER_RESOURCE_CLASS")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "small" => Self::Small,
+            "large" => Self::Large,
+            _ => Self::Standard,
+        }
+    }
+
+    fn memory(&self) -> &'static str {
+        match self {
+            Self::Small => "1g",
+            Self::Standard => "4g",
+            Self::Large => "8g",
+        }
+    }
+
+    fn pids_limit(&self) -> &'static str {
+        match self {
+            Self::Small => "256",
+            Self::Standard => "512",
+            Self::Large => "1024",
+        }
+    }
+
+    fn tmpfs_size(&self) -> &'static str {
+        match self {
+            Self::Small => "1g",
+            Self::Standard => "2g",
+            Self::Large => "4g",
+        }
+    }
+}
+
+/// Absolute path to the hardened seccomp profile shipped in `deploy/`.
+/// Mounted into the runner container by docker-compose (`/seccomp/…`), with a
+/// host fallback for bare-metal runners.
+fn seccomp_profile_path() -> Option<String> {
+    for candidate in [
+        "/seccomp/forge-job-seccomp.json",
+        "/opt/dev/sdlc/CI-CD/deploy/forge-job-seccomp.json",
+    ] {
+        let path = std::path::Path::new(candidate);
+        if path.is_file() {
+            return Some(candidate.to_string());
+        }
+    }
+    None
+}
+
 fn docker_run_args(
     name: &str,
     image: &str,
@@ -1740,7 +1803,8 @@ fn docker_run_args(
     volume_name: &str,
     workspace_subdir: &str,
 ) -> Vec<String> {
-    vec![
+    let class = ResourceClass::from_env();
+    let mut args = vec![
         "run".into(),
         "--rm".into(),
         "--name".into(),
@@ -1754,15 +1818,21 @@ fn docker_run_args(
         "ALL".into(),
         "--security-opt".into(),
         "no-new-privileges".into(),
+    ];
+    if let Some(profile) = seccomp_profile_path() {
+        args.push("--security-opt".into());
+        args.push(format!("seccomp={profile}"));
+    }
+    args.extend([
         "--read-only".into(),
         "--tmpfs".into(),
-        "/tmp:rw,exec,size=2g".into(),
+        format!("/tmp:rw,exec,size={}", class.tmpfs_size()),
         "--memory".into(),
-        "4g".into(),
+        class.memory().into(),
         "--memory-swap".into(),
-        "4g".into(),
+        class.memory().into(),
         "--pids-limit".into(),
-        "512".into(),
+        class.pids_limit().into(),
         "--workdir".into(),
         "/workspace/workspace".into(),
         "--mount".into(),
@@ -1789,7 +1859,8 @@ fn docker_run_args(
         // hiding image toolchains like /usr/local/cargo/bin (rust images).
         "-c".into(),
         command.into(),
-    ]
+    ]);
+    args
 }
 
 fn shell_capture_command(command: &str) -> String {
@@ -1950,6 +2021,55 @@ mod tests {
         assert_eq!(aggregate_statuses(["success", "running"]), "running");
         assert_eq!(aggregate_statuses(["success", "canceled"]), "canceled");
         assert_eq!(aggregate_statuses(["success", "failed"]), "failed");
+    }
+
+    #[test]
+    fn resource_classes_bound_memory_pids_and_tmpfs() {
+        assert_eq!(ResourceClass::Small.memory(), "1g");
+        assert_eq!(ResourceClass::Standard.memory(), "4g");
+        assert_eq!(ResourceClass::Large.memory(), "8g");
+        assert_eq!(ResourceClass::Small.pids_limit(), "256");
+        assert_eq!(ResourceClass::Standard.pids_limit(), "512");
+        assert_eq!(ResourceClass::Large.pids_limit(), "1024");
+        assert_eq!(ResourceClass::Small.tmpfs_size(), "1g");
+        assert_eq!(ResourceClass::Standard.tmpfs_size(), "2g");
+        assert_eq!(ResourceClass::Large.tmpfs_size(), "4g");
+    }
+
+    #[test]
+    fn docker_args_carry_resource_class_limits() {
+        let args = docker_run_args("forge-job-rc", "alpine:3.21", "true", "v", "sub");
+        // Standard class defaults from env.
+        assert!(args.windows(2).any(|p| p == ["--memory", "4g"]));
+        assert!(args.windows(2).any(|p| p == ["--pids-limit", "512"]));
+        assert!(
+            args.windows(2)
+                .any(|p| p[0] == "--tmpfs" && p[1].contains("size=2g"))
+        );
+        // Memory == swap keeps the cap hard (no disk-backed overflow).
+        let mem = args
+            .windows(2)
+            .find(|p| p[0] == "--memory")
+            .expect("memory");
+        let swap = args
+            .windows(2)
+            .find(|p| p[0] == "--memory-swap")
+            .expect("swap");
+        assert_eq!(mem[1], swap[1]);
+    }
+
+    #[test]
+    fn seccomp_profile_mounted_into_job_container_when_available() {
+        let args = docker_run_args("forge-job-sec", "alpine:3.21", "true", "v", "sub");
+        if let Some(profile) = seccomp_profile_path() {
+            let expected = format!("seccomp={profile}");
+            assert!(
+                args.windows(2)
+                    .any(|p| p[0] == "--security-opt" && p[1] == expected)
+            );
+        } else {
+            assert!(!args.iter().any(|a| a.starts_with("seccomp=")));
+        }
     }
 
     #[test]
