@@ -487,6 +487,17 @@ paths:
           - integer
           - 'null'
           format: int32
+      - name: before
+        in: query
+        description: |-
+          Tail-window cursor: return the newest rows with sequence less than
+          this value (descending fetch, returned in ascending order).
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int32
       - name: limit
         in: query
         description: Page size. Default and maximum are 200 rows.
@@ -578,6 +589,17 @@ paths:
       - name: after
         in: query
         description: Return log rows with sequence greater than this value.
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int32
+      - name: before
+        in: query
+        description: |-
+          Tail-window cursor: return the newest rows with sequence less than
+          this value (descending fetch, returned in ascending order).
         required: false
         schema:
           type:
@@ -1982,6 +2004,198 @@ paths:
           description: ''
         '410':
           description: ''
+  /api/v1/runner/leases/{lease_id}/artifact-sessions/{session_id}/abort:
+    post:
+      tags:
+      - runner-protocol
+      operationId: abort_artifact_upload_session
+      parameters:
+      - name: lease_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArtifactSessionCompleteRequest'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactSessionStatusResponse'
+        '401':
+          description: ''
+        '404':
+          description: ''
+        '410':
+          description: ''
+  /api/v1/runner/leases/{lease_id}/artifact-sessions/{session_id}/chunks:
+    post:
+      tags:
+      - runner-protocol
+      operationId: append_artifact_upload_chunk
+      parameters:
+      - name: lease_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Runner-Protocol-Version
+        in: header
+        required: true
+        schema:
+          type: integer
+          format: int32
+      - name: X-Lease-Token
+        in: header
+        required: true
+        schema:
+          type: string
+      - name: X-Fencing-Token
+        in: header
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: X-Attempt-Id
+        in: header
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: X-Chunk-Index
+        in: header
+        required: true
+        schema:
+          type: integer
+          format: int64
+      - name: X-Chunk-Sha256
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/octet-stream:
+            schema:
+              type: array
+              items:
+                type: integer
+                format: int32
+                minimum: 0
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactSessionStatusResponse'
+        '400':
+          description: ''
+        '401':
+          description: ''
+        '403':
+          description: ''
+        '409':
+          description: chunk index regression
+        '410':
+          description: ''
+        '413':
+          description: ''
+  /api/v1/runner/leases/{lease_id}/artifact-sessions/{session_id}/complete:
+    post:
+      tags:
+      - runner-protocol
+      operationId: complete_artifact_upload_session
+      parameters:
+      - name: lease_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: session_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArtifactSessionCompleteRequest'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Artifact'
+        '400':
+          description: ''
+        '401':
+          description: ''
+        '409':
+          description: received bytes != declared size
+        '410':
+          description: ''
+  /api/v1/runner/leases/{lease_id}/artifact-sessions:begin:
+    post:
+      tags:
+      - runner-protocol
+      operationId: begin_artifact_upload_session
+      parameters:
+      - name: lease_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ArtifactSessionBeginRequest'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactSessionBeginResponse'
+        '400':
+          description: ''
+        '401':
+          description: ''
+        '403':
+          description: ''
+        '409':
+          description: ''
+        '410':
+          description: ''
   /api/v1/runner/leases/{lease_id}/artifacts:
     post:
       tags:
@@ -2704,6 +2918,111 @@ components:
         size_bytes:
           type: integer
           format: int64
+    ArtifactSessionBeginRequest:
+      type: object
+      required:
+      - protocolVersion
+      - leaseToken
+      - fencingToken
+      - attemptId
+      - artifactPath
+      - artifactName
+      - declaredSize
+      properties:
+        artifactName:
+          type: string
+        artifactPath:
+          type: string
+        attemptId:
+          type: string
+          format: uuid
+        contentType:
+          type:
+          - string
+          - 'null'
+        declaredSize:
+          type: integer
+          format: int64
+        fencingToken:
+          type: integer
+          format: int64
+        leaseToken:
+          type: string
+        protocolVersion:
+          type: integer
+          format: int32
+    ArtifactSessionBeginResponse:
+      type: object
+      required:
+      - sessionId
+      - chunkSize
+      - receivedBytes
+      - highestChunk
+      - status
+      properties:
+        chunkSize:
+          type: integer
+          minimum: 0
+        highestChunk:
+          type: integer
+          format: int64
+        receivedBytes:
+          type: integer
+          format: int64
+        sessionId:
+          type: string
+          format: uuid
+        status:
+          type: string
+    ArtifactSessionCompleteRequest:
+      type: object
+      required:
+      - protocolVersion
+      - leaseToken
+      - fencingToken
+      - attemptId
+      properties:
+        artifactSha256:
+          type:
+          - string
+          - 'null'
+        attemptId:
+          type: string
+          format: uuid
+        fencingToken:
+          type: integer
+          format: int64
+        leaseToken:
+          type: string
+        protocolVersion:
+          type: integer
+          format: int32
+    ArtifactSessionStatusResponse:
+      type: object
+      required:
+      - sessionId
+      - receivedBytes
+      - highestChunk
+      - persistedChunks
+      - status
+      properties:
+        highestChunk:
+          type: integer
+          format: int64
+        persistedChunks:
+          type: array
+          items:
+            type: integer
+            format: int64
+          description: 'Resume hint: sorted chunk indices already persisted.'
+        receivedBytes:
+          type: integer
+          format: int64
+        sessionId:
+          type: string
+          format: uuid
+        status:
+          type: string
     AuditEvent:
       type: object
       required:
@@ -3261,7 +3580,12 @@ components:
       type: object
       required:
       - items
+      - total
+      - has_more_before
       properties:
+        has_more_before:
+          type: boolean
+          description: True when a `before` window has older rows beyond this page.
         items:
           type: array
           items:
@@ -3271,6 +3595,10 @@ components:
           - integer
           - 'null'
           format: int32
+        total:
+          type: integer
+          format: int64
+          description: Total matching rows for the current filter (K4.2 windowing).
     JobStatus:
       type: string
       enum:
@@ -3677,6 +4005,12 @@ components:
         id:
           type: string
           format: uuid
+        max_running_jobs:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          description: 'K4.3 dispatch cap: null = unlimited.'
         name:
           type: string
         repository_url:
@@ -4625,6 +4959,14 @@ components:
           type:
           - string
           - 'null'
+        max_running_jobs:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          description: |-
+            K4.3 dispatch fairness: max concurrently active-leased jobs for this
+            project (>=1). Omit to keep; null clears the limit.
         name:
           type:
           - string

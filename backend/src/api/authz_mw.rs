@@ -413,7 +413,7 @@ pub(crate) async fn list_projects_for_claims(
         .await
         .map_err(ApiError::internal),
         (_, Some(project_id)) => sqlx::query_as::<_, Project>(
-            "SELECT p.id, p.name, p.repository_url, p.default_branch, p.created_at \
+            "SELECT p.id, p.name, p.repository_url, p.default_branch, p.max_running_jobs, p.created_at \
                  FROM projects p \
                  JOIN project_memberships m ON m.project_id = p.id \
                  WHERE m.user_id = $3 AND p.id = $4 \
@@ -427,7 +427,7 @@ pub(crate) async fn list_projects_for_claims(
         .await
         .map_err(ApiError::internal),
         (_, None) => sqlx::query_as::<_, Project>(
-            "SELECT p.id, p.name, p.repository_url, p.default_branch, p.created_at \
+            "SELECT p.id, p.name, p.repository_url, p.default_branch, p.max_running_jobs, p.created_at \
                  FROM projects p \
                  JOIN project_memberships m ON m.project_id = p.id \
                  WHERE m.user_id = $3 \

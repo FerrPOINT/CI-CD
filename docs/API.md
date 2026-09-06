@@ -72,8 +72,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 26,
-    "latest_required_version": 26,
+    "latest_applied_version": 28,
+    "latest_required_version": 28,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],
@@ -1275,6 +1275,10 @@ Runner protocol обслуживается на `/api/v1/runner/*` и не ис�
 | GET | `/api/v1/runner/leases/{lease_id}/control` | headers `X-Runner-Protocol-Version`, `X-Lease-Token`, `X-Fencing-Token` → `{protocolVersion,leaseExpiresAt,renewAfter,cancelRequested}` без продления lease |
 | POST | `/api/v1/runner/leases/{lease_id}/secrets:resolve` | `{protocolVersion,leaseToken,fencingToken,secretNames}` → `{protocolVersion,expiresAt,items:[{name,injection,value}]}` только после ack и только для declared job secrets |
 | POST | `/api/v1/runner/leases/{lease_id}/artifacts` | raw body + headers `X-Runner-Protocol-Version`, `X-Lease-Token`, `X-Fencing-Token`, `X-Attempt-Id`, `X-Artifact-Path`, `X-Artifact-Name` → `Artifact`; только после ack, только для owned active lease и только для declared artifact path |
+| POST | `/api/v1/runner/leases/{lease_id}/artifact-sessions:begin` | headers `X-Runner-Protocol-Version`, `X-Lease-Token`, `X-Fencing-Token`, `X-Attempt-Id` + JSON `{artifactPath, artifactName, contentType?, totalBytes}` → resumable session `{sessionId, receivedBytes, highestChunk}`; idempotent per (attempt, artifactPath) |
+| POST | `/api/v1/runner/leases/{lease_id}/artifact-sessions/{session_id}/chunks` | raw chunk body (≤8 MiB) + `X-Chunk-Index`, `X-Chunk-Sha256` → `{receivedBytes, highestChunk}`; sequential high-water, replay of already-received chunk is a no-op, sha mismatch → 400 |
+| POST | `/api/v1/runner/leases/{lease_id}/artifact-sessions/{session_id}/complete` | `{totalSha256}` → assembles `Artifact`; verifies whole-file sha256, rejects mismatched totals |
+| POST | `/api/v1/runner/leases/{lease_id}/artifact-sessions/{session_id}/abort` | `{}` → discards session + chunks |
 | POST | `/api/v1/runner/leases/{lease_id}/logs` | `{protocolVersion,leaseToken,fencingToken,attemptId,lines:[{stream,message}]}` → append stdout/stderr/system строк в attempt-owned `job_logs` |
 | POST | `/api/v1/runner/leases/{lease_id}/complete` | `{protocolVersion,leaseToken,fencingToken,attemptId,outcome,finishedAt,exitCode?,diagnostic?}` → terminal result job/attempt/lease |
 
