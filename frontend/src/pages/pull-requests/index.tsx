@@ -226,9 +226,9 @@ export function PullRequestsPage() {
         isEmpty={(list) => list.length === 0}
         empty={{ title: t('pulls.empty') }}
       >
-        {(list) => (
+        {() => (
           <div className="space-y-3">
-            {list.map((pullRequest) => (
+            {pullRequests.map((pullRequest) => (
               <PullRequestCard key={pullRequest.id} repo={repo} pullRequest={pullRequest} locale={i18n.language} />
             ))}
           </div>

@@ -9,7 +9,6 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from 'react'
@@ -39,7 +38,7 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(() => currentSession())
   const [status, setStatus] = useState<AuthStatus>(session ? 'authenticated' : 'checking')
-  const invalidatedRef = useRef(0)
+  const [invalidateNonce, setInvalidateNonce] = useState(0)
 
   // Bootstrap: restore session via cookie refresh, else probe whether the
   // backend enforces auth at all (trusted-network mode keeps pages public).
@@ -61,7 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true
     }
-  }, [invalidatedRef.current])
+  }, [invalidateNonce])
 
   // Terminal 401 anywhere in the app: drop to anonymous (router redirects).
   useEffect(() => {
@@ -86,7 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const invalidate = useCallback(() => {
     setSession(currentSession())
     setStatus(currentSession() ? 'authenticated' : 'anonymous')
-    invalidatedRef.current += 1
+    setInvalidateNonce((n) => n + 1)
   }, [])
 
   const value = useMemo<AuthContextValue>(

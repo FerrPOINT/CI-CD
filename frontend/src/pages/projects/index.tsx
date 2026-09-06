@@ -110,7 +110,7 @@ export function ProjectsPage() {
         isEmpty={(list) => list.length === 0}
         empty={{ title: t('projects.empty') }}
       >
-        {(list) => (
+        {() => (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {projects.map(p => (
             <Card key={p.id} className="group p-4 transition-colors hover:border-accent">
