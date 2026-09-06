@@ -327,6 +327,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "cicd-api"
+version = "0.1.0"
+dependencies = [
+ "cicd-app",
+]
+
+[[package]]
+name = "cicd-app"
+version = "0.1.0"
+
+[[package]]
 name = "cicd-cli"
 version = "0.1.0"
 dependencies = [
@@ -351,6 +362,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cicd-infra"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "sqlx",
+ "uuid",
+]
+
+[[package]]
 name = "cicd-migrate"
 version = "0.1.0"
 dependencies = [
@@ -369,7 +389,10 @@ dependencies = [
  "axum",
  "base64",
  "chrono",
+ "cicd-api",
+ "cicd-app",
  "cicd-domain",
+ "cicd-infra",
  "clap",
  "flate2",
  "git2",

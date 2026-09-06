@@ -1,6 +1,8 @@
 pub mod api;
 pub mod auth;
 pub mod authz;
+#[cfg(test)]
+mod authz_route_coverage;
 pub(crate) mod body_limits;
 pub mod central_auth;
 pub mod config;

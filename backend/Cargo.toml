@@ -56,6 +56,9 @@ path = "src/bin/forge-runner.rs"
 integration = []
 
 [dependencies]
+cicd-app = { path = "app" }
+cicd-infra = { path = "infra" }
+cicd-api = { path = "api" }
 reqwest.workspace = true
 tokio-stream = "0.1"
 utoipa = { workspace = true }

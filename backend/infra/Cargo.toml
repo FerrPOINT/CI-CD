@@ -1,0 +1,12 @@
+[package]
+name = "cicd-infra"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license-file.workspace = true
+repository.workspace = true
+
+[dependencies]
+chrono.workspace = true
+sqlx.workspace = true
+uuid.workspace = true
