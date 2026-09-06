@@ -12,7 +12,6 @@ use axum::body::Bytes;
 use sqlx::PgPool;
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
-    process::ChildStdout,
     sync::Mutex,
 };
 use uuid::Uuid;
@@ -47,6 +46,7 @@ pub struct RuntimeRunnerConfig {
     pub queue_timeout_seconds: Option<i64>,
     pub keep_workspace: bool,
     pub git_root: PathBuf,
+    pub workspace_volume: String,
     pub artifacts: ArtifactsConfig,
     pub secrets: SecretsConfig,
 }
@@ -59,6 +59,7 @@ impl RuntimeRunnerConfig {
             queue_timeout_seconds: config.runner.queue_timeout_seconds,
             keep_workspace: config.runner.keep_workspace,
             git_root: config.git.root.clone(),
+            workspace_volume: config.runner.workspace_volume.clone(),
             artifacts: config.artifacts.clone(),
             secrets: config.secrets.clone(),
         }
@@ -928,24 +929,28 @@ async fn run_job_inner(
     envs.extend(secrets.iter().cloned());
 
     let mut child = if config.mode == RunnerMode::Docker {
-        let workspace_volume = workspace
+        // prepare_workspace returns <root>/forge-runner-<job>/workspace; the
+        // bind source must be the per-job directory (one level up from the
+        // clone checkout).
+        let workspace_subdir = workspace
             .parent()
-            .map(std::path::Path::to_path_buf)
-            .unwrap_or_else(|| workspace.clone());
+            .and_then(|parent| parent.file_name())
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| format!("forge-runner-{job_id}"));
         let mut cmd = tokio::process::Command::new("docker");
         cmd.args(docker_run_args(
             &format!("forge-job-{job_id}"),
             &job.image,
             &command_shell,
-            "forge_runner_workspaces",
-            &workspace_volume.display().to_string(),
+            &config.workspace_volume,
+            &workspace_subdir,
         ));
         for (k, v) in &envs {
             cmd.env(k, v);
         }
         cmd.current_dir(&workspace)
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .kill_on_drop(true);
         cmd
     } else {
@@ -954,7 +959,7 @@ async fn run_job_inner(
             .arg(&command_shell)
             .current_dir(&workspace)
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .kill_on_drop(true);
         for (k, v) in &envs {
             cmd.env(k, v);
@@ -974,7 +979,17 @@ async fn run_job_inner(
         let pool = pool.clone();
         let masks = masks.clone();
         tokio::spawn(async move {
-            stream_stdout_to_attempt(pool, job_id, attempt_id, stdout, masks).await
+            stream_output_to_attempt(pool, job_id, attempt_id, stdout, masks).await
+        })
+    });
+    // Docker client failures (exit 125: bad mounts, missing image, network
+    // errors) are printed to stderr — stream them into the attempt log or
+    // they vanish silently.
+    let mut stderr_task = child.stderr.take().map(|stderr| {
+        let pool = pool.clone();
+        let masks = masks.clone();
+        tokio::spawn(async move {
+            stream_output_to_attempt(pool, job_id, attempt_id, stderr, masks).await
         })
     });
     let exit_status = tokio::select! {
@@ -986,6 +1001,9 @@ async fn run_job_inner(
             let _ = child.wait().await;
             if let Some(task) = stdout_task.take() {
                 await_stdout_task(task).await?;
+            }
+            if let Some(task) = stderr_task.take() {
+                let _ = await_stdout_task(task).await;
             }
             running.lock().await.remove(&job_id);
             let updated = sqlx::query(
@@ -1030,6 +1048,9 @@ async fn run_job_inner(
 
     if let Some(task) = stdout_task {
         await_stdout_task(task).await?;
+    }
+    if let Some(task) = stderr_task.take() {
+        let _ = await_stdout_task(task).await;
     }
 
     let (final_status, exit_code, error_tail) = match exit_status {
@@ -1170,11 +1191,11 @@ async fn await_stdout_task(
     })?
 }
 
-async fn stream_stdout_to_attempt(
+async fn stream_output_to_attempt<R: tokio::io::AsyncRead + Unpin>(
     pool: PgPool,
     job_id: Uuid,
     attempt_id: Uuid,
-    stdout: ChildStdout,
+    stdout: R,
     masks: Vec<String>,
 ) -> Result<(), ApiError> {
     let mut reader = BufReader::new(stdout);
@@ -1328,7 +1349,7 @@ async fn prepare_workspace(
         .await
         .map_err(ApiError::internal)?;
 
-    let workspace = std::env::temp_dir().join(format!("forge-runner-{}", job.id));
+    let workspace = workspace_root(config).join(format!("forge-runner-{}", job.id));
     let _ = tokio::fs::remove_dir_all(&workspace).await;
     tokio::fs::create_dir_all(&workspace)
         .await
@@ -1399,7 +1420,20 @@ async fn clone_from_local_bare(
         .current_dir(workspace)
         .output()
         .await;
-    matches!(output, Ok(out) if out.status.success())
+    match output {
+        Ok(out) if out.status.success() => true,
+        Ok(out) => {
+            tracing::warn!(
+                "local bare clone failed for {repo_url}: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+            false
+        }
+        Err(err) => {
+            tracing::warn!("local bare clone spawn failed for {repo_url}: {err}");
+            false
+        }
+    }
 }
 
 async fn clone_via_http(
@@ -1685,40 +1719,75 @@ struct Candidate {
 
 /// Builds the `docker run` argument vector for executing a job in an
 /// isolated container. Exported for unit tests.
+/// Workspace root for job checkouts.
+///
+/// Docker mode binds the workspace directory into job containers; a bind
+/// source must exist on the docker *host*, so the workspace has to live in
+/// the shared `forge_runner_workspaces` volume rather than the container's
+/// private /tmp. Host-shell mode keeps /tmp.
+fn workspace_root(config: &RuntimeRunnerConfig) -> std::path::PathBuf {
+    if config.mode == RunnerMode::Docker {
+        std::path::Path::new("/workspaces").to_path_buf()
+    } else {
+        std::env::temp_dir()
+    }
+}
+
 fn docker_run_args(
     name: &str,
     image: &str,
     command: &str,
     volume_name: &str,
-    workspace_mount: &str,
+    workspace_subdir: &str,
 ) -> Vec<String> {
     vec![
         "run".into(),
         "--rm".into(),
         "--name".into(),
         name.into(),
+        // Jobs that need crates.io run with egress to the compose network
+        // (crates.nu + git smart-http only); no-new-privileges and the rest
+        // of the sandbox stay. `none` starves cargo of its registry.
         "--network".into(),
-        "none".into(),
+        "sdlc-local_cicd".into(),
         "--cap-drop".into(),
         "ALL".into(),
+        "--security-opt".into(),
+        "no-new-privileges".into(),
         "--read-only".into(),
         "--tmpfs".into(),
-        "/tmp:rw,size=64m".into(),
+        "/tmp:rw,exec,size=2g".into(),
         "--memory".into(),
-        "512m".into(),
+        "4g".into(),
+        "--memory-swap".into(),
+        "4g".into(),
         "--pids-limit".into(),
-        "256".into(),
+        "512".into(),
         "--workdir".into(),
-        "/workspace".into(),
-        "--volume".into(),
-        format!("{volume_name}:/workspaces"),
+        "/workspace/workspace".into(),
         "--mount".into(),
         format!("type=volume,src={volume_name},dst=/workspaces"),
         "--mount".into(),
-        format!("type=bind,src={workspace_mount},dst=/workspace,readonly=false"),
+        // Bind sources resolve on the docker HOST, not inside this container:
+        // point at the local-driver volume mountpoint so the per-job
+        // workspace (shared through the same volume) is visible host-side.
+        format!(
+            "type=bind,src=/var/lib/docker/volumes/{volume_name}/_data/{workspace_subdir},dst=/workspace,readonly=false"
+        ),
+        // Job commands run as the workspace owner (uid 10001) so cargo can
+        // write target/ and the shell can create sibling directories next to
+        // the checkout (path-dependency provisioning).
+        "--user".into(),
+        "10001:10001".into(),
+        // Writable registry cache for cargo: mounted at the registry root
+        // only, so the image toolchain (/usr/local/cargo/bin) stays intact.
+        "--mount".into(),
+        format!("type=volume,src={volume_name}_cargo,dst=/usr/local/cargo/registry"),
         image.into(),
         "sh".into(),
-        "-lc".into(),
+        // NOT a login shell: `-l` sources /etc/profile and resets PATH,
+        // hiding image toolchains like /usr/local/cargo/bin (rust images).
+        "-c".into(),
         command.into(),
     ]
 }
@@ -1788,8 +1857,11 @@ mod tests {
             "rust:1.86",
             "cargo test",
             "forge_runner_workspaces",
-            "/workspace/123/workspace",
+            "forge-runner-123",
         );
+        assert!(args.iter().any(|arg| {
+            arg.contains("/var/lib/docker/volumes/forge_runner_workspaces/_data/forge-runner-123")
+        }));
 
         assert!(
             args.windows(2)
@@ -1800,9 +1872,20 @@ mod tests {
         assert!(args.iter().any(|arg| arg == "rust:1.86"));
         assert!(
             args.windows(3)
-                .any(|pair| pair == ["sh", "-lc", "cargo test"])
+                .any(|pair| pair == ["sh", "-c", "cargo test"])
         );
         assert!(!args.iter().any(|arg| arg == "cargo"));
+        // A duplicated --volume/--mount pair for the same destination used to
+        // make every docker execution fail with "Duplicate mount point".
+        let workspace_mounts = args
+            .windows(2)
+            .filter(|pair| pair[0] == "--mount" || pair[0] == "--volume")
+            .filter(|pair| pair[1].ends_with(":/workspaces") || pair[1].contains("dst=/workspaces"))
+            .count();
+        assert_eq!(
+            workspace_mounts, 1,
+            "exactly one /workspaces mount expected"
+        );
     }
 
     #[test]

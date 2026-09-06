@@ -57,6 +57,11 @@ pub struct RunnerConfig {
     pub embedded_enabled: bool,
     pub queue_timeout_seconds: Option<i64>,
     pub keep_workspace: bool,
+    /// Docker volume that backs embedded-runner workspaces; job containers
+    /// bind-mount per-job directories out of it. Must match the volume
+    /// mounted at /workspaces in the compose file (including any project
+    /// prefix).
+    pub workspace_volume: String,
     pub registration_token: Option<String>,
 }
 
@@ -134,6 +139,9 @@ impl RuntimeConfig {
                 get("CICD_RUNNER_KEEP_WORKSPACE"),
                 false,
             )?,
+            workspace_volume: get("CICD_RUNNER_WORKSPACE_VOLUME")
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "forge_runner_workspaces".to_string()),
             registration_token: optional_secret_value(get("CICD_RUNNER_REGISTRATION_TOKEN")),
         };
         let auth = AuthConfig {
@@ -181,6 +189,7 @@ impl RuntimeConfig {
                 embedded_enabled: true,
                 queue_timeout_seconds: Some(DEFAULT_RUNNER_QUEUE_TIMEOUT_SECONDS),
                 keep_workspace: false,
+                workspace_volume: "forge_runner_workspaces".to_string(),
                 registration_token: None,
             },
             auth: AuthConfig { secret: None },
