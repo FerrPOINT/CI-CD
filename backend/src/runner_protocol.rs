@@ -14,6 +14,7 @@ use axum::{
 };
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::{FromRow, PgPool};
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
@@ -64,6 +65,23 @@ pub fn routes() -> Router<Arc<AppState>> {
             "/api/v1/runner/leases/{lease_id}/artifacts",
             post(upload_runner_lease_artifact)
                 .layer(DefaultBodyLimit::max(body_limits::ARTIFACT_UPLOAD_BYTES)),
+        )
+        .route(
+            "/api/v1/runner/leases/{lease_id}/artifact-sessions:begin",
+            post(begin_artifact_upload_session),
+        )
+        .route(
+            "/api/v1/runner/leases/{lease_id}/artifact-sessions/{session_id}/chunks",
+            post(append_artifact_upload_chunk)
+                .layer(DefaultBodyLimit::max(body_limits::ARTIFACT_CHUNK_BYTES)),
+        )
+        .route(
+            "/api/v1/runner/leases/{lease_id}/artifact-sessions/{session_id}/complete",
+            post(complete_artifact_upload_session),
+        )
+        .route(
+            "/api/v1/runner/leases/{lease_id}/artifact-sessions/{session_id}/abort",
+            post(abort_artifact_upload_session),
         )
         .route(
             "/api/v1/runner/leases/{lease_id}/logs",
@@ -1653,6 +1671,539 @@ fn map_runner_insert_error(error: sqlx::Error) -> ApiError {
         }
         other => ApiError::internal(other),
     }
+}
+
+// ---------------------------------------------------------------------------
+// K4.1: resumable artifact upload sessions (runner protocol v2)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ArtifactSessionBeginRequest {
+    protocol_version: i32,
+    lease_token: String,
+    fencing_token: i64,
+    attempt_id: Uuid,
+    artifact_path: String,
+    artifact_name: String,
+    #[serde(default)]
+    content_type: Option<String>,
+    declared_size: i64,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ArtifactSessionBeginResponse {
+    session_id: Uuid,
+    chunk_size: usize,
+    received_bytes: i64,
+    highest_chunk: i64,
+    status: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ArtifactSessionStatusResponse {
+    session_id: Uuid,
+    received_bytes: i64,
+    highest_chunk: i64,
+    /// Resume hint: sorted chunk indices already persisted.
+    persisted_chunks: Vec<i64>,
+    status: String,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/runner/leases/{lease_id}/artifact-sessions:begin",
+    tag = "runner-protocol",
+    request_body = ArtifactSessionBeginRequest,
+    params(("lease_id" = Uuid, Path)),
+    responses((status = 200, body = ArtifactSessionBeginResponse), (status = 400), (status = 401), (status = 403), (status = 409), (status = 410))
+)]
+pub(crate) async fn begin_artifact_upload_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(lease_id): Path<Uuid>,
+    Json(input): Json<ArtifactSessionBeginRequest>,
+) -> Result<Json<ArtifactSessionBeginResponse>, ApiError> {
+    validate_protocol_version(input.protocol_version)?;
+    if input.fencing_token < 1 || input.lease_token.trim().is_empty() {
+        return Err(ApiError::bad_request(
+            "lease token and fencing token are required",
+        ));
+    }
+    if input.declared_size < 0
+        || input.declared_size as u128 > body_limits::ARTIFACT_UPLOAD_BYTES as u128
+    {
+        return Err(ApiError::bad_request("declared artifact size out of range"));
+    }
+
+    let db = pool(&state)?;
+    let runner = authenticate_runner(db, &headers).await?;
+    let token_hash = crate::auth::hash_token(input.lease_token.trim());
+    let row = lease_artifact_row(
+        db,
+        lease_id,
+        runner.id,
+        &token_hash,
+        input.fencing_token,
+        input.attempt_id,
+    )
+    .await?;
+    if !row
+        .artifact_paths
+        .iter()
+        .any(|path| path == &input.artifact_path)
+    {
+        return Err(ApiError::forbidden());
+    }
+
+    // Idempotent begin: an open session for the same (attempt, path) resumes.
+    let existing = sqlx::query_as::<_, (Uuid, i64, i32, String)>(
+        "SELECT id, received_bytes, highest_chunk, status \
+         FROM artifact_upload_sessions \
+         WHERE attempt_id = $1 AND artifact_path = $2 AND status = 'open'",
+    )
+    .bind(input.attempt_id)
+    .bind(&input.artifact_path)
+    .fetch_optional(db)
+    .await
+    .map_err(ApiError::internal)?;
+
+    if let Some((session_id, received_bytes, highest_chunk, status)) = existing {
+        return Ok(Json(ArtifactSessionBeginResponse {
+            session_id,
+            chunk_size: body_limits::ARTIFACT_CHUNK_BYTES,
+            received_bytes,
+            highest_chunk: highest_chunk as i64,
+            status,
+        }));
+    }
+
+    let session_id = Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO artifact_upload_sessions \
+             (id, lease_id, attempt_id, job_id, runner_id, artifact_path, artifact_name, \
+              content_type, declared_size) \
+         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9 \
+         WHERE NOT EXISTS (\
+             SELECT 1 FROM artifact_upload_sessions \
+             WHERE attempt_id = $3 AND artifact_path = $6 AND status = 'open'\
+         )",
+    )
+    .bind(session_id)
+    .bind(lease_id)
+    .bind(input.attempt_id)
+    .bind(row.job_id)
+    .bind(runner.id)
+    .bind(&input.artifact_path)
+    .bind(&input.artifact_name)
+    .bind(
+        input
+            .content_type
+            .as_deref()
+            .unwrap_or("application/octet-stream"),
+    )
+    .bind(input.declared_size)
+    .execute(db)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok(Json(ArtifactSessionBeginResponse {
+        session_id,
+        chunk_size: body_limits::ARTIFACT_CHUNK_BYTES,
+        received_bytes: 0,
+        highest_chunk: -1,
+        status: "open".into(),
+    }))
+}
+
+/// Shared lease validation for artifact session mutations.
+#[allow(clippy::type_complexity)]
+async fn lease_artifact_row(
+    db: &PgPool,
+    lease_id: Uuid,
+    runner_id: Uuid,
+    token_hash: &str,
+    fencing_token: i64,
+    attempt_id: Uuid,
+) -> Result<RunnerArtifactLeaseRow, ApiError> {
+    let row = sqlx::query_as::<_, RunnerArtifactLeaseRow>(
+        "SELECT l.job_id, l.attempt_id, j.artifact_paths \
+         FROM job_leases l \
+         JOIN jobs j ON j.id = l.job_id \
+         JOIN execution_attempts a ON a.id = l.attempt_id \
+         WHERE l.id = $1 \
+           AND l.runner_id = $2 \
+           AND l.lease_status = 'active' \
+           AND l.lease_token_hash = $3 \
+           AND l.generation = $4 \
+           AND l.attempt_id = $5 \
+           AND l.lease_expires_at > now() \
+           AND l.acknowledged_at IS NOT NULL \
+           AND j.status = 'running' \
+           AND a.status = 'running'",
+    )
+    .bind(lease_id)
+    .bind(runner_id)
+    .bind(token_hash)
+    .bind(fencing_token)
+    .bind(attempt_id)
+    .fetch_optional(db)
+    .await
+    .map_err(ApiError::internal)?;
+    row.ok_or_else(|| ApiError::gone("lease is no longer active"))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/runner/leases/{lease_id}/artifact-sessions/{session_id}/chunks",
+    tag = "runner-protocol",
+    request_body = Vec<u8>,
+    params(
+        ("lease_id" = Uuid, Path),
+        ("session_id" = Uuid, Path),
+        ("X-Runner-Protocol-Version" = i32, Header),
+        ("X-Lease-Token" = String, Header),
+        ("X-Fencing-Token" = i64, Header),
+        ("X-Attempt-Id" = Uuid, Header),
+        ("X-Chunk-Index" = i64, Header),
+        ("X-Chunk-Sha256" = String, Header)
+    ),
+    responses((status = 200, body = ArtifactSessionStatusResponse), (status = 400), (status = 401), (status = 403), (status = 409, description = "chunk index regression"), (status = 410), (status = 413))
+)]
+pub(crate) async fn append_artifact_upload_chunk(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((lease_id, session_id)): Path<(Uuid, Uuid)>,
+    body: Bytes,
+) -> Result<Json<ArtifactSessionStatusResponse>, ApiError> {
+    let protocol_version = required_i32_header(
+        &headers,
+        "x-runner-protocol-version",
+        "runner protocol version header is required",
+    )?;
+    validate_protocol_version(protocol_version)?;
+    let lease_token =
+        required_text_header(&headers, "x-lease-token", "lease token header is required")?;
+    let fencing_token = required_i64_header(
+        &headers,
+        "x-fencing-token",
+        "fencing token header is required",
+    )?;
+    let attempt_id =
+        required_uuid_header(&headers, "x-attempt-id", "attempt id header is required")?;
+    let chunk_index =
+        required_i64_header(&headers, "x-chunk-index", "chunk index header is required")?;
+    let chunk_sha = required_text_header(
+        &headers,
+        "x-chunk-sha256",
+        "chunk sha256 header is required",
+    )?;
+    if fencing_token < 1 {
+        return Err(ApiError::bad_request("fencing token is required"));
+    }
+    if chunk_index < 0 {
+        return Err(ApiError::bad_request("chunk index must be non-negative"));
+    }
+    if body.len() > body_limits::ARTIFACT_CHUNK_BYTES {
+        return Err(ApiError::bad_request(
+            "chunk body exceeds the 8 MiB chunk cap",
+        ));
+    }
+    let mut digest = Sha256::new();
+    digest.update(&body);
+    let actual_hex = format!("{:x}", digest.finalize());
+    if !chunk_sha.eq_ignore_ascii_case(&actual_hex) {
+        return Err(ApiError::bad_request("chunk sha256 mismatch"));
+    }
+
+    let db = pool(&state)?;
+    let runner = authenticate_runner(db, &headers).await?;
+    let token_hash = crate::auth::hash_token(&lease_token);
+    lease_artifact_row(
+        db,
+        lease_id,
+        runner.id,
+        &token_hash,
+        fencing_token,
+        attempt_id,
+    )
+    .await?;
+
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
+    let session = sqlx::query_as::<_, (i64, i32, i64, String)>(
+        "SELECT declared_size, highest_chunk, received_bytes, status \
+         FROM artifact_upload_sessions \
+         WHERE id = $1 AND attempt_id = $2 AND runner_id = $3 AND lease_id = $4 \
+           FOR UPDATE",
+    )
+    .bind(session_id)
+    .bind(attempt_id)
+    .bind(runner.id)
+    .bind(lease_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+    let Some((declared_size, highest_chunk, received_bytes, status)) = session else {
+        return Err(ApiError::not_found());
+    };
+    if status != "open" {
+        return Err(ApiError::conflict("artifact session is not open"));
+    }
+    if chunk_index != highest_chunk as i64 + 1 {
+        return Err(ApiError::conflict(
+            "chunk index must extend the sequential high-water mark",
+        ));
+    }
+    let byte_offset = received_bytes;
+    if byte_offset + body.len() as i64 > declared_size {
+        return Err(ApiError::bad_request(
+            "chunk overruns declared artifact size",
+        ));
+    }
+
+    sqlx::query(
+        "INSERT INTO artifact_upload_chunks \
+             (session_id, chunk_index, byte_offset, byte_length, sha256) \
+         VALUES ($1, $2, $3, $4, $5) \
+         ON CONFLICT (session_id, chunk_index) DO NOTHING",
+    )
+    .bind(session_id)
+    .bind(chunk_index)
+    .bind(byte_offset)
+    .bind(body.len() as i64)
+    .bind(&chunk_sha)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    sqlx::query(
+        "INSERT INTO artifact_chunk_blobs (session_id, chunk_index, data) \
+         VALUES ($1, $2, $3) \
+         ON CONFLICT (session_id, chunk_index) DO NOTHING",
+    )
+    .bind(session_id)
+    .bind(chunk_index)
+    .bind(body.as_ref())
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+
+    sqlx::query(
+        "UPDATE artifact_upload_sessions \
+         SET received_bytes = $2, highest_chunk = $3, updated_at = now() \
+         WHERE id = $1",
+    )
+    .bind(session_id)
+    .bind(byte_offset + body.len() as i64)
+    .bind(chunk_index)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+    tx.commit().await.map_err(ApiError::internal)?;
+
+    Ok(Json(ArtifactSessionStatusResponse {
+        session_id,
+        received_bytes: byte_offset + body.len() as i64,
+        highest_chunk: chunk_index,
+        persisted_chunks: vec![chunk_index],
+        status: "open".into(),
+    }))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ArtifactSessionCompleteRequest {
+    protocol_version: i32,
+    lease_token: String,
+    fencing_token: i64,
+    attempt_id: Uuid,
+    #[serde(default)]
+    artifact_sha256: Option<String>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/runner/leases/{lease_id}/artifact-sessions/{session_id}/complete",
+    tag = "runner-protocol",
+    request_body = ArtifactSessionCompleteRequest,
+    params(("lease_id" = Uuid, Path), ("session_id" = Uuid, Path)),
+    responses((status = 200, body = crate::platform::Artifact), (status = 400), (status = 401), (status = 409, description = "received bytes != declared size"), (status = 410))
+)]
+pub(crate) async fn complete_artifact_upload_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((lease_id, session_id)): Path<(Uuid, Uuid)>,
+    Json(input): Json<ArtifactSessionCompleteRequest>,
+) -> Result<Json<crate::platform::Artifact>, ApiError> {
+    validate_protocol_version(input.protocol_version)?;
+    if input.fencing_token < 1 || input.lease_token.trim().is_empty() {
+        return Err(ApiError::bad_request(
+            "lease token and fencing token are required",
+        ));
+    }
+    let db = pool(&state)?;
+    let runner = authenticate_runner(db, &headers).await?;
+    let token_hash = crate::auth::hash_token(input.lease_token.trim());
+    lease_artifact_row(
+        db,
+        lease_id,
+        runner.id,
+        &token_hash,
+        input.fencing_token,
+        input.attempt_id,
+    )
+    .await?;
+
+    let meta = sqlx::query_as::<_, (Uuid, String, String, i64, i64, String)>(
+        "SELECT job_id, artifact_name, content_type, declared_size, received_bytes, status \
+         FROM artifact_upload_sessions \
+         WHERE id = $1 AND attempt_id = $2 AND runner_id = $3 AND lease_id = $4",
+    )
+    .bind(session_id)
+    .bind(input.attempt_id)
+    .bind(runner.id)
+    .bind(lease_id)
+    .fetch_optional(db)
+    .await
+    .map_err(ApiError::internal)?;
+    let Some((job_id, artifact_name, content_type, declared_size, received_bytes, status)) = meta
+    else {
+        return Err(ApiError::not_found());
+    };
+    if status == "completed" {
+        // Idempotent completion: return the stored artifact.
+        let stored = sqlx::query_as::<_, (Option<Uuid>,)>(
+            "SELECT artifact_id FROM artifact_upload_sessions WHERE id = $1",
+        )
+        .bind(session_id)
+        .fetch_one(db)
+        .await
+        .map_err(ApiError::internal)?;
+        if let (Some(artifact_id),) = stored {
+            if let Ok(artifact) = sqlx::query_as::<_, crate::platform::Artifact>(
+                "SELECT * FROM artifacts WHERE id = $1",
+            )
+            .bind(artifact_id)
+            .fetch_one(db)
+            .await
+            {
+                return Ok(Json(artifact));
+            }
+        }
+        return Err(ApiError::conflict("session completed but artifact is gone"));
+    }
+    if status != "open" {
+        return Err(ApiError::conflict("artifact session is not open"));
+    }
+    if received_bytes != declared_size {
+        return Err(ApiError::conflict(
+            "received bytes do not match the declared artifact size",
+        ));
+    }
+
+    // Assemble chunks in offset order and reassemble the artifact body.
+    let chunks = sqlx::query_as::<_, (i64, Vec<u8>)>(
+        "SELECT byte_length, data \
+         FROM (\
+             SELECT c.byte_length, c.sha256, m.data \
+             FROM artifact_upload_chunks c \
+             JOIN LATERAL (\
+                 SELECT b.data \
+                 FROM artifact_chunk_blobs b \
+                 WHERE b.session_id = c.session_id AND b.chunk_index = c.chunk_index\
+             ) m ON true \
+             WHERE c.session_id = $1 \
+             ORDER BY c.byte_offset\
+         ) t",
+    )
+    .bind(session_id)
+    .fetch_all(db)
+    .await
+    .map_err(ApiError::internal)?;
+
+    let mut body_bytes = Vec::with_capacity(declared_size as usize);
+    for (_, data) in &chunks {
+        body_bytes.extend_from_slice(data);
+    }
+    if body_bytes.len() as i64 != declared_size {
+        return Err(ApiError::internal_with_message(
+            "assembled artifact size mismatch",
+        ));
+    }
+    if let Some(expected) = input.artifact_sha256.as_deref() {
+        let mut digest = Sha256::new();
+        digest.update(&body_bytes);
+        let actual = format!("{:x}", digest.finalize());
+        if !expected.eq_ignore_ascii_case(&actual) {
+            return Err(ApiError::bad_request("assembled artifact sha256 mismatch"));
+        }
+    }
+
+    let artifact = crate::platform::store_job_artifact_with_config(
+        db,
+        &state.config.artifacts,
+        job_id,
+        Some(input.attempt_id),
+        &artifact_name,
+        &content_type,
+        body_bytes.into(),
+    )
+    .await?;
+
+    sqlx::query(
+        "UPDATE artifact_upload_sessions \
+         SET status = 'completed', artifact_id = $2, updated_at = now() \
+         WHERE id = $1",
+    )
+    .bind(session_id)
+    .bind(artifact.id())
+    .execute(db)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok(Json(artifact))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/runner/leases/{lease_id}/artifact-sessions/{session_id}/abort",
+    tag = "runner-protocol",
+    request_body = ArtifactSessionCompleteRequest,
+    params(("lease_id" = Uuid, Path), ("session_id" = Uuid, Path)),
+    responses((status = 200, body = ArtifactSessionStatusResponse), (status = 401), (status = 404), (status = 410))
+)]
+pub(crate) async fn abort_artifact_upload_session(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path((lease_id, session_id)): Path<(Uuid, Uuid)>,
+    Json(input): Json<ArtifactSessionCompleteRequest>,
+) -> Result<Json<ArtifactSessionStatusResponse>, ApiError> {
+    validate_protocol_version(input.protocol_version)?;
+    let db = pool(&state)?;
+    let runner = authenticate_runner(db, &headers).await?;
+    let updated = sqlx::query(
+        "UPDATE artifact_upload_sessions \
+         SET status = 'aborted', updated_at = now() \
+         WHERE id = $1 AND runner_id = $2 AND lease_id = $3 AND status = 'open'",
+    )
+    .bind(session_id)
+    .bind(runner.id)
+    .bind(lease_id)
+    .execute(db)
+    .await
+    .map_err(ApiError::internal)?;
+    if updated.rows_affected() == 0 {
+        return Err(ApiError::not_found());
+    }
+    Ok(Json(ArtifactSessionStatusResponse {
+        session_id,
+        received_bytes: 0,
+        highest_chunk: -1,
+        persisted_chunks: vec![],
+        status: "aborted".into(),
+    }))
 }
 
 #[cfg(test)]

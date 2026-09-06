@@ -5617,6 +5617,409 @@ async fn deployment_rollback_creates_separate_traceable_pipeline_record() {
         .expect("cleanup project");
 }
 
+#[tokio::test]
+async fn artifact_upload_sessions_resume_and_complete() {
+    let pool = test_pool().await;
+    sqlx::query("DELETE FROM projects WHERE name LIKE 'it-artifact-sessions-%'")
+        .execute(&pool)
+        .await
+        .expect("cleanup stale artifact session projects");
+
+    let namespace = Uuid::new_v4();
+    let registration_token = format!("registration-{}", namespace.simple());
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let stage_id = Uuid::new_v4();
+    let job_id = Uuid::new_v4();
+    let attempt_id = Uuid::new_v4();
+    let project_name = format!("it-artifact-sessions-{}", namespace.simple());
+    let previous_secrets_key = std::env::var("CICD_SECRETS_KEY").ok();
+    let previous_artifacts_dir = std::env::var("CICD_ARTIFACTS_DIR").ok();
+    let secrets_key = base64::engine::general_purpose::STANDARD.encode([9_u8; 32]);
+    let artifact_root = std::env::temp_dir().join(format!("forge-artifact-sessions-{namespace}"));
+    std::fs::create_dir_all(&artifact_root).expect("create artifact session root");
+
+    // SAFETY: only this test reads these process env vars.
+    unsafe {
+        std::env::set_var("CICD_RUNNER_REGISTRATION_TOKEN", &registration_token);
+        std::env::set_var("CICD_SECRETS_KEY", secrets_key);
+        std::env::set_var("CICD_ARTIFACTS_DIR", &artifact_root);
+    }
+
+    let app = cicd::api::app_with_auth_secret(
+        Some(pool.clone()),
+        Some(format!("artifact-session-secret-{namespace}")),
+    );
+
+    // Register the runner.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/runner/register")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({
+                    "protocolVersion": 1,
+                    "registrationToken": registration_token,
+                    "name": format!("runner-{}", namespace.simple()),
+                    "tags": ["linux"],
+                    "capabilities": {"executorKinds": ["docker"], "os": "linux", "arch": "amd64"}
+                }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let registered = response_json(response).await;
+    let credential = registered["credential"].as_str().unwrap().to_owned();
+
+    // Heartbeat so the runner is online and dispatchable.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/runner/heartbeat")
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({
+                    "protocolVersion": 1,
+                    "status": "online",
+                    "capacity": {"totalSlots": 1, "busySlots": 0},
+                    "tags": ["linux"],
+                    "capabilities": {"executorKinds": ["docker"], "os": "linux", "arch": "amd64"},
+                    "activeLeaseIds": []
+                }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    // Seed a running job attempt the way the runner-protocol test does.
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/artifact-sessions.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status, created_at) \
+         VALUES ($1, $2, 'main', 'queued', '2000-01-01T00:00:00Z')",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert pipeline");
+    sqlx::query(
+        "INSERT INTO stages (id, pipeline_id, name, position, status) \
+         VALUES ($1, $2, 'build', 0, 'queued')",
+    )
+    .bind(stage_id)
+    .bind(pipeline_id)
+    .execute(&pool)
+    .await
+    .expect("insert stage");
+    sqlx::query(
+        "INSERT INTO jobs (id, stage_id, name, image, command, required_tags, required_secrets, artifact_paths, position, status, timeout_seconds) \
+         VALUES ($1, $2, 'compile', 'alpine:3.21', 'echo ok', ARRAY['linux'], ARRAY[]::TEXT[], ARRAY['dist/app.bin'], 0, 'queued', 30)",
+    )
+    .bind(job_id)
+    .bind(stage_id)
+    .execute(&pool)
+    .await
+    .expect("insert job");
+    sqlx::query(
+        "INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) \
+         VALUES ($1, $2, 1, 'queued', 'initial')",
+    )
+    .bind(attempt_id)
+    .bind(job_id)
+    .execute(&pool)
+    .await
+    .expect("insert attempt");
+    sqlx::query(
+        "INSERT INTO job_queue (id, job_id, attempt_id, pipeline_id, stage_id, state, priority, required_tags) \
+         VALUES ($1, $2, $3, $4, $5, 'queued', 100, ARRAY['linux'])",
+    )
+    .bind(Uuid::new_v4())
+    .bind(job_id)
+    .bind(attempt_id)
+    .bind(pipeline_id)
+    .bind(stage_id)
+    .execute(&pool)
+    .await
+    .expect("insert queue row");
+
+    // Seed an active acknowledged lease directly (unit of this test is the
+    // artifact-session protocol, not dispatch).
+    let runner_id = Uuid::parse_str(registered["runnerId"].as_str().unwrap()).unwrap();
+    let lease_id = Uuid::new_v4();
+    let lease_token = format!("lease-token-{}", namespace.simple());
+    let lease_token_hash = cicd::auth::hash_token(&lease_token);
+    sqlx::query("UPDATE jobs SET status = 'running' WHERE id = $1")
+        .bind(job_id)
+        .execute(&pool)
+        .await
+        .expect("job to running");
+    sqlx::query("UPDATE execution_attempts SET status = 'running' WHERE id = $1")
+        .bind(attempt_id)
+        .execute(&pool)
+        .await
+        .expect("attempt to running");
+    sqlx::query(
+        "INSERT INTO job_leases \
+         (id, job_id, attempt_id, runner_id, runner_name, lease_status, generation, \
+          lease_token_hash, acknowledged_at, lease_expires_at) \
+         VALUES ($1, $2, $3, $4, 'embedded', 'active', 1, $5, now(), now() + interval '10 minutes')",
+    )
+    .bind(lease_id)
+    .bind(job_id)
+    .bind(attempt_id)
+    .bind(runner_id)
+    .bind(&lease_token_hash)
+    .execute(&pool)
+    .await
+    .expect("insert active lease");
+    sqlx::query(
+        "UPDATE job_queue SET state = 'leased', leased_at = now(), lease_id = $2 WHERE attempt_id = $1",
+    )
+    .bind(attempt_id)
+    .bind(lease_id)
+    .execute(&pool)
+    .await
+    .expect("queue to leased");
+
+    // Begin a session for dist/app.bin (declared: two 4-byte chunks).
+    let body_full = b"chunk-one!!chunk-two".to_vec();
+    let declared = body_full.len() as i64;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!(
+                "/api/v1/runner/leases/{lease_id}/artifact-sessions:begin"
+            ))
+            .header("authorization", format!("Bearer {credential}"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({
+                    "protocolVersion": 1,
+                    "leaseToken": lease_token,
+                    "fencingToken": 1,
+                    "attemptId": attempt_id,
+                    "artifactPath": "dist/app.bin",
+                    "artifactName": "app.bin",
+                    "contentType": "application/octet-stream",
+                    "declaredSize": declared
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let begun = response_json(response).await;
+    assert_eq!(
+        begun.get("sessionId").is_some(),
+        true,
+        "begin session failed: {begun:?}"
+    );
+    let session_id = Uuid::parse_str(begun["sessionId"].as_str().expect("session id")).unwrap();
+    assert_eq!(begun["receivedBytes"], 0);
+    assert_eq!(begun["highestChunk"], -1);
+
+    // Re-begin must be idempotent and return the same open session.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!(
+                "/api/v1/runner/leases/{lease_id}/artifact-sessions:begin"
+            ))
+            .header("authorization", format!("Bearer {credential}"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({
+                    "protocolVersion": 1,
+                    "leaseToken": lease_token,
+                    "fencingToken": 1,
+                    "attemptId": attempt_id,
+                    "artifactPath": "dist/app.bin",
+                    "artifactName": "app.bin",
+                    "declaredSize": declared
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let resumed = response_json(response).await;
+    assert_eq!(
+        Uuid::parse_str(resumed["sessionId"].as_str().unwrap()).unwrap(),
+        session_id,
+        "re-begin resumes the same session"
+    );
+
+    // Chunk 0 uploads.
+    let chunk0 = &body_full[..10];
+    let sha0 = format!("{:x}", Sha256::digest(chunk0));
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!(
+                "/api/v1/runner/leases/{lease_id}/artifact-sessions/{session_id}/chunks"
+            ))
+            .header("authorization", format!("Bearer {credential}"))
+            .header("x-runner-protocol-version", "1")
+            .header("x-lease-token", &lease_token)
+            .header("x-fencing-token", "1")
+            .header("x-attempt-id", attempt_id.to_string())
+            .header("x-chunk-index", "0")
+            .header("x-chunk-sha256", &sha0)
+            .body(Body::from(chunk0.to_vec()))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK, "chunk 0");
+    let after0 = response_json(response).await;
+    assert_eq!(after0["receivedBytes"], 10);
+
+    // Regression: chunk 0 again must be rejected (sequential high-water mark).
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!(
+                "/api/v1/runner/leases/{lease_id}/artifact-sessions/{session_id}/chunks"
+            ))
+            .header("authorization", format!("Bearer {credential}"))
+            .header("x-runner-protocol-version", "1")
+            .header("x-lease-token", &lease_token)
+            .header("x-fencing-token", "1")
+            .header("x-attempt-id", attempt_id.to_string())
+            .header("x-chunk-index", "0")
+            .header("x-chunk-sha256", &sha0)
+            .body(Body::from(chunk0.to_vec()))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::CONFLICT,
+        "chunk replay rejected"
+    );
+
+    // Corrupt sha on chunk 1 must be rejected.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!(
+                "/api/v1/runner/leases/{lease_id}/artifact-sessions/{session_id}/chunks"
+            ))
+            .header("authorization", format!("Bearer {credential}"))
+            .header("x-runner-protocol-version", "1")
+            .header("x-lease-token", &lease_token)
+            .header("x-fencing-token", "1")
+            .header("x-attempt-id", attempt_id.to_string())
+            .header("x-chunk-index", "1")
+            .header("x-chunk-sha256", "deadbeef")
+            .body(Body::from(body_full[10..].to_vec()))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::BAD_REQUEST,
+        "sha mismatch rejected"
+    );
+
+    // Chunk 1 uploads correctly.
+    let chunk1 = &body_full[10..];
+    let sha1 = format!("{:x}", Sha256::digest(chunk1));
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!(
+                "/api/v1/runner/leases/{lease_id}/artifact-sessions/{session_id}/chunks"
+            ))
+            .header("authorization", format!("Bearer {credential}"))
+            .header("x-runner-protocol-version", "1")
+            .header("x-lease-token", &lease_token)
+            .header("x-fencing-token", "1")
+            .header("x-attempt-id", attempt_id.to_string())
+            .header("x-chunk-index", "1")
+            .header("x-chunk-sha256", &sha1)
+            .body(Body::from(chunk1.to_vec()))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK, "chunk 1");
+    let after1 = response_json(response).await;
+    assert_eq!(after1["receivedBytes"], declared);
+
+    // Complete assembles and stores the artifact.
+    let full_sha = format!("{:x}", Sha256::digest(&body_full));
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!(
+                "/api/v1/runner/leases/{lease_id}/artifact-sessions/{session_id}/complete"
+            ))
+            .header("authorization", format!("Bearer {credential}"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({
+                    "protocolVersion": 1,
+                    "leaseToken": lease_token,
+                    "fencingToken": 1,
+                    "attemptId": attempt_id,
+                    "artifactSha256": full_sha
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK, "complete session");
+    let artifact = response_json(response).await;
+    assert_eq!(artifact["job_id"], job_id.to_string());
+    assert_eq!(artifact["size_bytes"], declared);
+    assert_eq!(artifact["sha256"], full_sha);
+
+    // Session is completed in DB and linked to the artifact.
+    let (status, linked): (String, Option<Uuid>) =
+        sqlx::query_as("SELECT status, artifact_id FROM artifact_upload_sessions WHERE id = $1")
+            .bind(session_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch completed session");
+    assert_eq!(status, "completed");
+    assert!(linked.is_some());
+
+    // Restore env.
+    unsafe {
+        match previous_secrets_key {
+            Some(v) => std::env::set_var("CICD_SECRETS_KEY", v),
+            None => std::env::remove_var("CICD_SECRETS_KEY"),
+        }
+        match previous_artifacts_dir {
+            Some(v) => std::env::set_var("CICD_ARTIFACTS_DIR", v),
+            None => std::env::remove_var("CICD_ARTIFACTS_DIR"),
+        }
+        std::env::remove_var("CICD_RUNNER_REGISTRATION_TOKEN");
+    }
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup project");
+    let _ = std::fs::remove_dir_all(&artifact_root);
+}
+
 async fn response_json(response: axum::response::Response) -> serde_json::Value {
     let body = to_bytes(response.into_body(), usize::MAX)
         .await

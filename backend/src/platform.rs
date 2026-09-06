@@ -288,6 +288,12 @@ pub(crate) struct Artifact {
     expires_at: DateTime<Utc>,
     purged_at: Option<DateTime<Utc>>,
 }
+
+impl Artifact {
+    pub(crate) fn id(&self) -> Uuid {
+        self.id
+    }
+}
 #[utoipa::path(get, path = "/api/v1/jobs/{job_id}/artifacts", tag = "artifacts", params(("job_id" = Uuid, Path)), responses((status = 200, body = [Artifact])))]
 async fn list_artifacts(
     State(state): State<Arc<AppState>>,

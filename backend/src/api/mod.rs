@@ -341,6 +341,13 @@ impl ApiError {
             message: "internal server error".into(),
         }
     }
+
+    pub(crate) fn internal_with_message(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            message: message.into(),
+        }
+    }
 }
 
 impl From<crate::auth::AuthError> for ApiError {
