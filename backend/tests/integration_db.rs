@@ -176,7 +176,7 @@ async fn job_log_append_serializes_concurrent_attempt_writes() {
     .expect("insert pipeline");
     sqlx::query(
         "INSERT INTO stages (id, pipeline_id, name, position, status) \
-         VALUES ($1, $2, 'build', 0, 'running')",
+         VALUES ($1, $2, 'build', 0, 'queued')",
     )
     .bind(stage_id)
     .bind(pipeline_id)
@@ -6061,6 +6061,215 @@ async fn artifact_upload_sessions_resume_and_complete() {
         .await
         .expect("cleanup project");
     let _ = std::fs::remove_dir_all(&artifact_root);
+}
+
+#[tokio::test]
+async fn project_dispatch_limit_defers_work_beyond_cap() {
+    let pool = test_pool().await;
+    sqlx::query("DELETE FROM projects WHERE name LIKE 'it-dispatch-limit-%'")
+        .execute(&pool)
+        .await
+        .expect("cleanup stale dispatch-limit projects");
+
+    let namespace = Uuid::new_v4();
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let stage_id = Uuid::new_v4();
+    let project_name = format!("it-dispatch-limit-{}", namespace.simple());
+    let registration_token = format!("registration-{}", namespace.simple());
+    let previous_secrets_key = std::env::var("CICD_SECRETS_KEY").ok();
+    let secrets_key = base64::engine::general_purpose::STANDARD.encode([5_u8; 32]);
+    unsafe {
+        std::env::set_var("CICD_RUNNER_REGISTRATION_TOKEN", &registration_token);
+        std::env::set_var("CICD_SECRETS_KEY", secrets_key);
+    }
+
+    let app = cicd::api::app_with_auth_secret(
+        Some(pool.clone()),
+        Some(format!("dispatch-limit-secret-{namespace}")),
+    );
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/runner/register")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "protocolVersion": 1,
+                        "registrationToken": registration_token,
+                        "name": format!("runner-{}", namespace.simple()),
+                        "tags": ["linux"],
+                        "capabilities": {"executorKinds": ["shell"], "os": "linux", "arch": "amd64"}
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let registered = response_json(response).await;
+    let credential = registered["credential"].as_str().unwrap().to_owned();
+    let runner_id = Uuid::parse_str(registered["runnerId"].as_str().unwrap()).unwrap();
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/runner/heartbeat")
+                .header("authorization", format!("Bearer {credential}"))
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({
+                    "protocolVersion": 1,
+                    "status": "online",
+                    "capacity": {"totalSlots": 10, "busySlots": 0},
+                    "tags": ["linux"],
+                    "capabilities": {"executorKinds": ["shell"], "os": "linux", "arch": "amd64"},
+                    "activeLeaseIds": []
+                }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    // Project with a concurrency cap of 1.
+    sqlx::query(
+        "INSERT INTO projects (id, name, repository_url, max_running_jobs) \
+         VALUES ($1, $2, 'https://example.invalid/dispatch-limit.git', 1)",
+    )
+    .bind(project_id)
+    .bind(&project_name)
+    .execute(&pool)
+    .await
+    .expect("insert capped project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status, created_at) \
+         VALUES ($1, $2, 'main', 'queued', now())",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert pipeline");
+    sqlx::query(
+        "INSERT INTO stages (id, pipeline_id, name, position, status) \
+         VALUES ($1, $2, 'build', 0, 'running')",
+    )
+    .bind(stage_id)
+    .bind(pipeline_id)
+    .execute(&pool)
+    .await
+    .expect("insert stage");
+
+    let mut queue_ids = vec![];
+    for i in 0..2 {
+        let job_id = Uuid::new_v4();
+        let attempt_id = Uuid::new_v4();
+        let queue_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO jobs (id, stage_id, name, image, command, required_tags, required_secrets, position, status, timeout_seconds) \
+             VALUES ($1, $2, $3, 'alpine:3.21', 'echo ok', ARRAY['linux'], ARRAY[]::TEXT[], $4, 'queued', 30)",
+        )
+        .bind(job_id)
+        .bind(stage_id)
+        .bind(format!("job-{i}"))
+        .bind(i)
+        .execute(&pool)
+        .await
+        .expect("insert job");
+        sqlx::query(
+            "INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) \
+             VALUES ($1, $2, 1, 'queued', 'initial')",
+        )
+        .bind(attempt_id)
+        .bind(job_id)
+        .execute(&pool)
+        .await
+        .expect("insert attempt");
+        sqlx::query(
+            "INSERT INTO job_queue (id, job_id, attempt_id, pipeline_id, stage_id, state, priority, required_tags) \
+             VALUES ($1, $2, $3, $4, $5, 'queued', 100, ARRAY['linux'])",
+        )
+        .bind(queue_id)
+        .bind(job_id)
+        .bind(attempt_id)
+        .bind(pipeline_id)
+        .bind(stage_id)
+        .execute(&pool)
+        .await
+        .expect("insert queue row");
+        queue_ids.push((job_id, attempt_id));
+    }
+
+    let poll = |app: axum::Router, cred: String| {
+        Box::pin(async move {
+            app.oneshot(
+                Request::post("/api/v1/runner/work:poll")
+                    .header("authorization", format!("Bearer {cred}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "protocolVersion": 1,
+                            "capacity": {"freeSlots": 1},
+                            "tags": ["linux"]
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+        })
+    };
+
+    // First poll claims the single allowed job.
+    let response = poll(app.clone(), credential.clone()).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let offer = response_json(response).await;
+    assert!(offer["leaseId"].is_string(), "first job claimed: {offer:?}");
+
+    // Second poll must NOT claim the sibling while the cap is reached.
+    let response = poll(app.clone(), credential.clone()).await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+
+    // Raise the cap to 2 — the sibling becomes claimable.
+    sqlx::query("UPDATE projects SET max_running_jobs = 2 WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("raise cap");
+    let response = poll(app.clone(), credential.clone()).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let second_offer = response_json(response).await;
+    assert!(
+        second_offer["leaseId"].is_string(),
+        "sibling claimed after raise: {second_offer:?}"
+    );
+
+    // Clear the cap entirely (null) — validation path for PATCH parity.
+    let (cap_now,): (Option<i32>,) =
+        sqlx::query_as("SELECT max_running_jobs FROM projects WHERE id = $1")
+            .bind(project_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch cap");
+    assert_eq!(cap_now, Some(2));
+
+    unsafe {
+        match previous_secrets_key {
+            Some(v) => std::env::set_var("CICD_SECRETS_KEY", v),
+            None => std::env::remove_var("CICD_SECRETS_KEY"),
+        }
+        std::env::remove_var("CICD_RUNNER_REGISTRATION_TOKEN");
+    }
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup project");
+    let _ = runner_id;
+    let _ = queue_ids;
 }
 
 async fn response_json(response: axum::response::Response) -> serde_json::Value {

@@ -11,6 +11,8 @@ pub(crate) struct Project {
     pub(crate) name: String,
     pub(crate) repository_url: String,
     pub(crate) default_branch: String,
+    /// K4.3 dispatch cap: null = unlimited.
+    pub(crate) max_running_jobs: Option<i32>,
     pub(crate) created_at: DateTime<Utc>,
 }
 #[derive(Debug, Deserialize, utoipa::ToSchema)]

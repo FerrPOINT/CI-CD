@@ -1163,6 +1163,16 @@ async fn claim_next_work(
                  SELECT 1 FROM job_leases l \
                  WHERE l.job_id = j.id AND l.lease_status = 'active' \
                ) \
+               AND ( \
+                 pr.max_running_jobs IS NULL \
+                 OR (SELECT count(*) FROM job_leases cl \
+                     JOIN jobs cj ON cj.id = cl.job_id \
+                     JOIN stages cs ON cs.id = cj.stage_id \
+                     JOIN pipelines cp ON cp.id = cs.pipeline_id \
+                     WHERE cl.lease_status = 'active' \
+                       AND cl.runner_id IS NOT NULL \
+                       AND cp.project_id = pr.id) < pr.max_running_jobs \
+               ) \
                AND NOT EXISTS ( \
                  SELECT 1 FROM jobs x JOIN stages xs ON xs.id = x.stage_id \
                  WHERE xs.pipeline_id = p.id AND xs.position < s.position \

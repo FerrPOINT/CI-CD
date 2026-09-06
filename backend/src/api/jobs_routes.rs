@@ -590,7 +590,7 @@ async fn log_page(
     let search_pattern = params.search_pattern()?;
     let pattern_ref = search_pattern.as_deref();
 
-    let (mut items, total, has_more_before): (Vec<JobLog>, i64, bool) =
+    let (items, total, has_more_before): (Vec<JobLog>, i64, bool) =
         if let Some(before) = params.before_sequence()? {
             // Tail window: newest rows strictly below `before`, ascending.
             let rows = sqlx::query_as::<_, JobLog>(
@@ -817,6 +817,7 @@ mod tests {
     fn log_page_params_are_bounded_and_search_is_escaped() {
         let params = LogPageParams {
             after: Some(0),
+            before: None,
             limit: Some(200),
             q: Some("100%_ok\\done".to_string()),
         };
@@ -830,6 +831,7 @@ mod tests {
         assert!(
             LogPageParams {
                 after: Some(-1),
+                before: None,
                 limit: Some(50),
                 q: None,
             }
@@ -839,6 +841,7 @@ mod tests {
         assert!(
             LogPageParams {
                 after: None,
+                before: None,
                 limit: Some(201),
                 q: None,
             }
@@ -848,6 +851,7 @@ mod tests {
         assert!(
             LogPageParams {
                 after: None,
+                before: None,
                 limit: Some(50),
                 q: Some("x".repeat(129)),
             }

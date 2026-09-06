@@ -24,7 +24,7 @@ pub(crate) async fn create_project(
     }
     let db = pool(&state)?;
     let project = sqlx::query_as::<_, Project>(
-        "INSERT INTO projects (id, name, repository_url, default_branch) VALUES ($1, $2, $3, $4) RETURNING id, name, repository_url, default_branch, created_at"
+        "INSERT INTO projects (id, name, repository_url, default_branch) VALUES ($1, $2, $3, $4) RETURNING id, name, repository_url, default_branch, max_running_jobs, created_at"
     ).bind(Uuid::new_v4()).bind(input.name.trim()).bind(input.repository_url.trim()).bind(input.default_branch.unwrap_or_else(|| "main".into())).fetch_one(db).await.map_err(ApiError::internal)?;
     if let Some(axum::Extension(claims)) = claims {
         if let Some(role) = default_project_role(&claims.role) {
@@ -47,7 +47,7 @@ pub(crate) async fn list_projects(
         let role = crate::authz::Role::parse(&claims.role).ok_or_else(ApiError::unauthorized)?;
         list_projects_for_claims(db, &claims, role, limit, offset).await?
     } else {
-        sqlx::query_as::<_, Project>("SELECT id, name, repository_url, default_branch, created_at FROM projects ORDER BY created_at DESC LIMIT $1 OFFSET $2")
+        sqlx::query_as::<_, Project>("SELECT id, name, repository_url, default_branch, max_running_jobs, created_at FROM projects ORDER BY created_at DESC LIMIT $1 OFFSET $2")
             .bind(limit)
             .bind(offset)
             .fetch_all(db)
@@ -223,7 +223,7 @@ pub(crate) async fn get_project(
     Path(project_id): Path<Uuid>,
 ) -> ApiResult<Project> {
     let project = sqlx::query_as::<_, Project>(
-        "SELECT id, name, repository_url, default_branch, created_at FROM projects WHERE id = $1",
+        "SELECT id, name, repository_url, default_branch, max_running_jobs, created_at FROM projects WHERE id = $1",
     )
     .bind(project_id)
     .fetch_optional(pool(&state)?)
@@ -238,6 +238,9 @@ pub(crate) struct UpdateProject {
     pub(crate) name: Option<String>,
     pub(crate) repository_url: Option<String>,
     pub(crate) default_branch: Option<String>,
+    /// K4.3 dispatch fairness: max concurrently active-leased jobs for this
+    /// project (>=1). Omit to keep; null clears the limit.
+    pub(crate) max_running_jobs: Option<Option<i32>>,
 }
 
 #[utoipa::path(patch, path="/api/v1/projects/{project_id}", tag="projects", request_body=UpdateProject, params(("project_id"=Uuid, Path)), responses((status=200, body=Project), (status=404)))]
@@ -246,9 +249,21 @@ pub(crate) async fn update_project(
     Path(project_id): Path<Uuid>,
     Json(input): Json<UpdateProject>,
 ) -> ApiResult<Project> {
-    if let (None, None, None) = (&input.name, &input.repository_url, &input.default_branch) {
+    if let (None, None, None, None) = (
+        &input.name,
+        &input.repository_url,
+        &input.default_branch,
+        &input.max_running_jobs,
+    ) {
         return Err(ApiError::bad_request(
-            "at least one of name, repository_url, default_branch is required",
+            "at least one of name, repository_url, default_branch, max_running_jobs is required",
+        ));
+    }
+    if let Some(cap) = input.max_running_jobs.flatten()
+        && !(1..=4096).contains(&cap)
+    {
+        return Err(ApiError::bad_request(
+            "max_running_jobs must be between 1 and 4096",
         ));
     }
     for field in [&input.name, &input.repository_url, &input.default_branch]
@@ -260,12 +275,13 @@ pub(crate) async fn update_project(
         }
     }
     let project = sqlx::query_as::<_, Project>(
-        "UPDATE projects SET name = COALESCE($2, name), repository_url = COALESCE($3, repository_url), default_branch = COALESCE($4, default_branch) WHERE id = $1 RETURNING id, name, repository_url, default_branch, created_at",
+        "UPDATE projects SET name = COALESCE($2, name), repository_url = COALESCE($3, repository_url), default_branch = COALESCE($4, default_branch), max_running_jobs = COALESCE($5, max_running_jobs) WHERE id = $1 RETURNING id, name, repository_url, default_branch, max_running_jobs, created_at",
     )
     .bind(project_id)
     .bind(input.name.as_deref().map(str::trim))
     .bind(input.repository_url.as_deref().map(str::trim))
     .bind(input.default_branch.as_deref().map(str::trim))
+    .bind(input.max_running_jobs.flatten())
     .fetch_optional(pool(&state)?)
     .await
     .map_err(ApiError::internal)?

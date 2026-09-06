@@ -394,7 +394,7 @@ pub(crate) async fn list_projects_for_claims(
 ) -> Result<Vec<Project>, ApiError> {
     match (role, claims.token_project_id) {
         (crate::authz::Role::Admin, Some(project_id)) => sqlx::query_as::<_, Project>(
-            "SELECT id, name, repository_url, default_branch, created_at \
+            "SELECT id, name, repository_url, default_branch, max_running_jobs, created_at \
                  FROM projects WHERE id = $3 ORDER BY created_at DESC LIMIT $1 OFFSET $2",
         )
         .bind(limit)
@@ -404,7 +404,7 @@ pub(crate) async fn list_projects_for_claims(
         .await
         .map_err(ApiError::internal),
         (crate::authz::Role::Admin, None) => sqlx::query_as::<_, Project>(
-            "SELECT id, name, repository_url, default_branch, created_at \
+            "SELECT id, name, repository_url, default_branch, max_running_jobs, created_at \
                  FROM projects ORDER BY created_at DESC LIMIT $1 OFFSET $2",
         )
         .bind(limit)
