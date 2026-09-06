@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::{Json, Router, http::StatusCode, response::IntoResponse};
+use axum::{Json, Router, extract::State, http::StatusCode, response::IntoResponse};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -242,7 +242,13 @@ pub fn openapi_yaml() -> Result<String, serde_yaml::Error> {
     tag = "health",
     responses((status = 200, description = "Prometheus text exposition"))
 )]
-async fn metrics() -> impl IntoResponse {
+async fn metrics(State(state): State<std::sync::Arc<AppState>>) -> impl IntoResponse {
+    // K6.1: refresh state gauges from the database before rendering so a
+    // scrape reflects current pipeline/job/runner reality.
+    if let Some(pool) = state.pool.as_ref() {
+        crate::metrics::refresh_state_gauges(pool).await;
+    }
+
     (
         [(
             axum::http::header::CONTENT_TYPE,
