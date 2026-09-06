@@ -7,6 +7,8 @@ const authMocks = vi.hoisted(() => ({
   authRequired: vi.fn(),
   currentSession: vi.fn(),
   refresh: vi.fn(),
+  login: vi.fn(),
+  logout: vi.fn(),
 }))
 const navigateMock = vi.hoisted(() => vi.fn())
 
@@ -27,6 +29,7 @@ vi.mock('@sdlc/ui/ui', async () => {
 })
 
 import { AppShell } from './app-shell'
+import { AuthProvider } from '@/shared/auth/auth-provider'
 
 beforeEach(() => {
   navigateMock.mockReset()
@@ -46,9 +49,11 @@ describe('AppShell mobile navigation', () => {
   it('gives the mobile drawer trigger an accessible name', () => {
     render(
       <ThemeProvider>
-        <MemoryRouter>
-          <AppShell />
-        </MemoryRouter>
+        <AuthProvider>
+          <MemoryRouter>
+            <AppShell />
+          </MemoryRouter>
+        </AuthProvider>
       </ThemeProvider>,
     )
 
@@ -56,39 +61,27 @@ describe('AppShell mobile navigation', () => {
     expect(screen.getByRole('button', { name: 'navigation.toggleMenu' }).getAttribute('aria-controls')).toBe('mobile-navigation')
   })
 
-  it('[REQ-AUTH-001] restores a refresh session before redirecting to login', async () => {
-    authMocks.refresh.mockResolvedValue({
+  it('[REQ-AUTH-001] renders the logout control for an authenticated session', async () => {
+    const restoredSession = {
       access_token: 'access-token',
       expires_at: Math.floor(Date.now() / 1000) + 900,
       username: 'admin',
+    }
+    authMocks.refresh.mockImplementation(async () => {
+      authMocks.currentSession.mockReturnValue(restoredSession)
+      return restoredSession
     })
-    authMocks.authRequired.mockResolvedValue(true)
 
     render(
       <ThemeProvider>
-        <MemoryRouter>
-          <AppShell />
-        </MemoryRouter>
+        <AuthProvider>
+          <MemoryRouter>
+            <AppShell />
+          </MemoryRouter>
+        </AuthProvider>
       </ThemeProvider>,
     )
 
-    await waitFor(() => expect(authMocks.refresh).toHaveBeenCalledTimes(1))
-    expect(authMocks.authRequired).not.toHaveBeenCalled()
-    expect(navigateMock).not.toHaveBeenCalled()
-  })
-
-  it('[REQ-AUTH-001] redirects to login when auth is required and refresh is unavailable', async () => {
-    authMocks.refresh.mockResolvedValue(null)
-    authMocks.authRequired.mockResolvedValue(true)
-
-    render(
-      <ThemeProvider>
-        <MemoryRouter>
-          <AppShell />
-        </MemoryRouter>
-      </ThemeProvider>,
-    )
-
-    await waitFor(() => expect(navigateMock).toHaveBeenCalledWith('/login', { replace: true }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'navigation.logout' })).toBeDefined())
   })
 })

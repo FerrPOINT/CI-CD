@@ -40,12 +40,21 @@ export class ApiError extends Error {
   }
 }
 
+type TerminalAuthHandler = () => void
+let terminalAuthHandler: TerminalAuthHandler | null = null
+
+/** Register the app-level reaction to a terminal 401 (session expired). */
+export function onTerminalAuthError(handler: TerminalAuthHandler): void {
+  terminalAuthHandler = handler
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   let response = await request(path, init)
   if (response.status === 401) {
-    // One transparent refresh + retry before surfacing the 401.
+    // Single-flight refresh + one retry; a second 401 is terminal.
     const refreshed = await import('./auth').then((m) => m.refresh()).catch(() => null)
     if (refreshed) response = await request(path, init)
+    else terminalAuthHandler?.()
   }
   if (!response.ok) {
     throw await apiErrorFromResponse(response)

@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next'
 import { Button, PlatformMark } from '@sdlc/ui/ui'
 import { ThemeToggle } from '@sdlc/ui/ui'
 import { ServiceSwitcher } from '@sdlc/ui/ui'
+import { useAuth } from '@/shared/auth/auth-provider'
 
 function NavigationList({ onNavigate, isActive }: { onNavigate: () => void; isActive: (path: string) => boolean }) {
   const { t } = useTranslation()
@@ -42,20 +43,8 @@ function NavigationList({ onNavigate, isActive }: { onNavigate: () => void; isAc
 }
 
 export function AppShell() {
+  const { session, logout } = useAuth()
   const navigate = useNavigate()
-  useEffect(() => {
-    let cancelled = false
-    import('@/api/auth').then(async (m) => {
-      if (cancelled || m.currentSession()) return
-      const restored = await m.refresh().catch(() => null)
-      if (cancelled || restored || m.currentSession()) return
-      const required = await m.authRequired()
-      if (required && !cancelled) navigate('/login', { replace: true })
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [navigate])
   const { t } = useTranslation()
   const location = useLocation()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -116,6 +105,15 @@ export function AppShell() {
         <div className="flex items-center gap-2">
           <ServiceSwitcher currentKey="ci-cd" />
           <ThemeToggle />
+          {session && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => void logout().then(() => navigate('/login', { replace: true }))}
+            >
+              {t('navigation.logout', 'Выйти')}
+            </Button>
+          )}
         </div>
       </header>
 

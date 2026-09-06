@@ -1,6 +1,8 @@
 import { lazy, Suspense, type ReactElement } from 'react'
 import { createBrowserRouter, Navigate } from 'react-router'
 import { AppShell } from '@/widgets/app-shell'
+import { AuthProvider } from '@/shared/auth/auth-provider'
+import { ProtectedRoute } from '@/shared/auth/protected-route'
 
 const DashboardPage = lazy(() => import('@/pages/dashboard').then(m => ({ default: m.DashboardPage })))
 const ProjectsPage = lazy(() => import('@/pages/projects').then(m => ({ default: m.ProjectsPage })))
@@ -13,6 +15,7 @@ const PullRequestsPage = lazy(() => import('@/pages/pull-requests').then(m => ({
 const PullRequestDetailPage = lazy(() => import('@/pages/pull-request-detail').then(m => ({ default: m.PullRequestDetailPage })))
 const SettingsPage = lazy(() => import('@/pages/settings').then(m => ({ default: m.SettingsPage })))
 const LoginPage = lazy(() => import('@/pages/login').then(m => ({ default: m.LoginPage })))
+const ForbiddenPage = lazy(() => import('@/pages/forbidden').then(m => ({ default: m.ForbiddenPage })))
 const RunnersPage = lazy(() => import('@/pages/runners').then(m => ({ default: m.RunnersPage })))
 const SecretsPage = lazy(() => import('@/pages/secrets').then(m => ({ default: m.SecretsPage })))
 const ProjectMembersPage = lazy(() => import('@/pages/project-members').then(m => ({ default: m.ProjectMembersPage })))
@@ -32,8 +35,13 @@ const withSuspense = (el: ReactElement) => <Suspense fallback={<PageLoader />}>{
 
 export const appRoutes = [
   {
-    element: <AppShell />,
+    element: (
+      <AuthProvider>
+        <ProtectedRoute />
+      </AuthProvider>
+    ),
     children: [
+      { element: <AppShell />, children: [
       { path: '/', element: withSuspense(<DashboardPage />) },
       { path: '/projects', element: withSuspense(<ProjectsPage />) },
       { path: '/projects/:projectId/pipelines', element: withSuspense(<PipelinesPage />) },
@@ -54,9 +62,11 @@ export const appRoutes = [
       { path: '/projects/:projectId/reports', element: withSuspense(<ReportsPage />) },
       { path: '/audit-log', element: withSuspense(<AuditLogPage />) },
       { path: '/users', element: withSuspense(<UsersPage />) },
+      ] },
     ],
   },
   { path: '/login', element: withSuspense(<LoginPage />) },
+  { path: '/forbidden', element: withSuspense(<ForbiddenPage />) },
   { path: '*', element: <Navigate to="/" replace /> },
 ]
 

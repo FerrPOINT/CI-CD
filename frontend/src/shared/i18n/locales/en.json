@@ -12,7 +12,8 @@
     "users": "Users",
     "auditLog": "Audit Log",
     "create": "Create",
-    "toggleMenu": "Toggle menu"
+    "toggleMenu": "Toggle menu",
+    "logout": "Sign out"
   },
   "projects": {
     "title": "Projects",
@@ -166,7 +167,7 @@
     "delete": "Delete",
     "copy": "Copy",
     "close": "Close",
-    "loading": "Loading…",
+    "loading": "Loading",
     "error": "Error",
     "retry": "Retry",
     "search": "Search",
@@ -174,7 +175,10 @@
     "dismiss": "Dismiss",
     "create": "Create",
     "actions": "Actions",
-    "back": "Back"
+    "back": "Back",
+    "noData": "No data",
+    "empty": "Nothing here yet",
+    "unknown": "Unknown error"
   },
   "capability": {
     "currentVerified": "Current verified",
@@ -475,5 +479,12 @@
     "description": "Description",
     "deleteTitle": "Delete release?",
     "deleteConfirm": "The release will be deleted. The git tag stays."
+  },
+  "errors": {
+    "forbidden": {
+      "title": "Access denied",
+      "description": "Your role does not allow this section or action. Contact a project administrator.",
+      "back": "Back to dashboard"
+    }
   }
 }
