@@ -4,6 +4,8 @@
 //! the single source of coarse role truth; project-scoped resources are further
 //! checked against `project_memberships` by the API middleware.
 
+pub mod auth;
+
 const GET: &[&str] = &["GET"];
 const POST: &[&str] = &["POST"];
 const PUT: &[&str] = &["PUT"];

@@ -336,6 +336,18 @@ dependencies = [
 [[package]]
 name = "cicd-app"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "jsonwebtoken",
+ "sdlc-auth-core",
+ "serde",
+ "sha2",
+ "sqlx",
+ "subtle",
+ "thiserror",
+ "utoipa",
+ "uuid",
+]
 
 [[package]]
 name = "cicd-cli"

@@ -7,3 +7,13 @@ license-file.workspace = true
 repository.workspace = true
 
 [dependencies]
+chrono.workspace = true
+jsonwebtoken = { workspace = true }
+serde.workspace = true
+sqlx.workspace = true
+subtle = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+utoipa = { workspace = true }
+sdlc-auth-core = { path = "/services-base/crates/sdlc-auth-core" }
+uuid.workspace = true

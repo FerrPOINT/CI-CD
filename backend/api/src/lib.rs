@@ -4,3 +4,4 @@
 //! `cicd-server::api` re-exports them so call sites keep compiling.
 
 pub use cicd_app as authz;
+pub use cicd_app::auth;
