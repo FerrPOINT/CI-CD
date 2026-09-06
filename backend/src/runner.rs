@@ -1867,7 +1867,16 @@ mod tests {
             args.windows(2)
                 .any(|pair| pair == ["--name", "forge-job-123"])
         );
-        assert!(args.windows(2).any(|pair| pair == ["--network", "none"]));
+        // Jobs run with compose-network egress (cargo needs crates.io);
+        // isolation comes from no-new-privileges + cap-drop + read-only rootfs.
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--network", "sdlc-local_cicd"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--security-opt", "no-new-privileges"])
+        );
         assert!(args.windows(2).any(|pair| pair == ["--cap-drop", "ALL"]));
         assert!(args.iter().any(|arg| arg == "rust:1.86"));
         assert!(
