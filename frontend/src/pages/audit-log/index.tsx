@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import { QueryState } from '@/shared/ui/query-state'
 import { useAuditLog } from '@/api/hooks'
 import { Card } from '@sdlc/ui/ui'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@sdlc/ui/ui'
@@ -8,7 +9,7 @@ import { UserAvatar } from '@/shared/ui/user-avatar'
 
 export function AuditLogPage() {
   const { t } = useTranslation()
-  const { data: events = [], isLoading } = useAuditLog()
+  const { data: events = [], isLoading, error: listError } = useAuditLog()
 
   return (
     <div className="space-y-6">
@@ -17,11 +18,9 @@ export function AuditLogPage() {
         <h1 className="text-2xl font-bold">{t('auditLog.title')}</h1>
       </div>
 
-      {isLoading ? (
-        <p className="text-sm text-text-muted">{t('common.loading')}</p>
-      ) : events.length === 0 ? (
-        <Card className="p-8 text-center"><p className="text-text-muted">{t('auditLog.empty')}</p></Card>
-      ) : (
+      <QueryState data={events} isLoading={isLoading} error={listError} isEmpty={(list) => list.length === 0} empty={{ title: t('auditLog.empty') }}>
+        {() => (
+
         <Card>
           <Table>
             <TableHeader>
@@ -54,7 +53,9 @@ export function AuditLogPage() {
             </TableBody>
           </Table>
         </Card>
-      )}
+      
+        )}
+      </QueryState>
     </div>
   )
 }

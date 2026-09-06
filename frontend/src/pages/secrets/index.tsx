@@ -10,12 +10,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { KeyRound, Plus, Trash2, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
+import { QueryState } from '@/shared/ui/query-state'
 import type { SecretMetadata } from '@/api/types'
 
 export function SecretsPage() {
   const { t } = useTranslation()
   const { projectId } = useParams()
-  const { data: secrets = [], isLoading } = useSecrets(projectId)
+  const { data: secrets = [], isLoading, error: listError } = useSecrets(projectId)
   const upsert = useUpsertSecret(projectId)
   const del = useDeleteSecret()
   const [showForm, setShowForm] = useState(false)
@@ -73,11 +74,9 @@ export function SecretsPage() {
         </Card>
       )}
 
-      {isLoading ? (
-        <p className="text-sm text-text-muted">{t('common.loading')}</p>
-      ) : secrets.length === 0 ? (
-        <Card className="p-8 text-center"><p className="text-text-muted">{t('secrets.empty')}</p></Card>
-      ) : (
+      <QueryState data={secrets} isLoading={isLoading} error={listError} isEmpty={(list) => list.length === 0} empty={{ title: t('secrets.empty') }}>
+        {() => (
+
         <Card>
           <Table>
             <TableHeader>
@@ -102,7 +101,9 @@ export function SecretsPage() {
             </TableBody>
           </Table>
         </Card>
-      )}
+      
+        )}
+      </QueryState>
       <ConfirmDialog
         open={pendingDelete !== null}
         title={pendingDelete ? `${t('secrets.deleteConfirm')} "${pendingDelete.key}"?` : ''}

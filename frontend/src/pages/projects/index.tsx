@@ -9,11 +9,12 @@ import { Label } from '@sdlc/ui/ui'
 import { FolderGit2, Plus, ChevronRight, Pencil, Trash2, GitFork, KeyRound, Globe, Clock, Webhook, BarChart3, Users } from 'lucide-react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
+import { QueryState } from '@/shared/ui/query-state'
 import type { Project } from '@/api/types'
 
 export function ProjectsPage() {
   const { t } = useTranslation()
-  const { data: projects = [], isLoading } = useProjects()
+  const { data: projects = [], isLoading, error: listError } = useProjects()
   const createProject = useCreateProject()
   const updateProject = useUpdateProject()
   const deleteProject = useDeleteProject()
@@ -102,11 +103,14 @@ export function ProjectsPage() {
         </Card>
       )}
 
-      {isLoading ? (
-        <p className="text-sm text-text-muted">{t('common.loading')}</p>
-      ) : projects.length === 0 ? (
-        <Card className="p-8 text-center"><p className="text-text-muted">{t('projects.empty')}</p></Card>
-      ) : (
+      <QueryState
+        data={projects}
+        isLoading={isLoading}
+        error={listError}
+        isEmpty={(list) => list.length === 0}
+        empty={{ title: t('projects.empty') }}
+      >
+        {(list) => (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {projects.map(p => (
             <Card key={p.id} className="group p-4 transition-colors hover:border-accent">
@@ -169,7 +173,8 @@ export function ProjectsPage() {
             </Card>
           ))}
         </div>
-      )}
+        )}
+      </QueryState>
       <ConfirmDialog
         open={pendingDelete !== null}
         title={pendingDelete ? `${t('projects.deleteConfirm')} "${pendingDelete.name}"?` : ''}

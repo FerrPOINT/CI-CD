@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useParams, Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
+import { QueryState } from '@/shared/ui/query-state'
 import { usePipelines, useTriggerPipeline, useProjects } from '@/api/hooks'
 import { Card } from '@sdlc/ui/ui'
 import { Button } from '@sdlc/ui/ui'
@@ -22,7 +23,7 @@ export function PipelinesPage() {
   const { projectId } = useParams<{ projectId: string }>()
   const { data: projects = [] } = useProjects()
   const project = projects.find(p => p.id === projectId)
-  const { data: pipelines = [], isLoading } = usePipelines(projectId)
+  const { data: pipelines = [], isLoading, error: listError } = usePipelines(projectId)
   const trigger = useTriggerPipeline(projectId)
   const [showForm, setShowForm] = useState(false)
   const [gitRef, setGitRef] = useState('')
@@ -76,11 +77,9 @@ export function PipelinesPage() {
         </Card>
       )}
 
-      {isLoading ? (
-        <p className="text-sm text-text-muted">{t('common.loading')}</p>
-      ) : pipelines.length === 0 ? (
-        <Card className="p-8 text-center"><p className="text-text-muted">{t('pipelines.empty')}</p></Card>
-      ) : (
+      <QueryState data={pipelines} isLoading={isLoading} error={listError} isEmpty={(list) => list.length === 0} empty={{ title: t('pipelines.empty') }}>
+        {() => (
+
         <div className="space-y-2">
           {pipelines.map(p => (
             <Link key={p.id} to={`/pipelines/${p.id}`}>
@@ -99,7 +98,9 @@ export function PipelinesPage() {
             </Link>
           ))}
         </div>
-      )}
+      
+        )}
+      </QueryState>
     </div>
   )
 }

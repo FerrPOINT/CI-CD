@@ -11,12 +11,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Activity, RotateCcw, Webhook, Plus, Trash2, Bell } from 'lucide-react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
+import { QueryState } from '@/shared/ui/query-state'
 import type { OutboxDelivery, Webhook as WebhookType } from '@/api/types'
 
 export function WebhooksPage() {
   const { t } = useTranslation()
   const { projectId } = useParams()
-  const { data: webhooks = [], isLoading } = useWebhooks(projectId)
+  const { data: webhooks = [], isLoading, error: listError } = useWebhooks(projectId)
   const createWebhook = useCreateWebhook(projectId)
   const deleteWebhook = useDeleteWebhook()
   const [showForm, setShowForm] = useState(false)
@@ -77,11 +78,9 @@ export function WebhooksPage() {
         </Card>
       )}
 
-      {isLoading ? (
-        <p className="text-sm text-text-muted">{t('common.loading')}</p>
-      ) : webhooks.length === 0 ? (
-        <Card className="p-8 text-center"><p className="text-text-muted">{t('webhooks.empty')}</p></Card>
-      ) : (
+      <QueryState data={webhooks} isLoading={isLoading} error={listError} isEmpty={(list) => list.length === 0} empty={{ title: t('webhooks.empty') }}>
+        {() => (
+
         <Card>
           <Table>
             <TableHeader>
@@ -112,7 +111,9 @@ export function WebhooksPage() {
             </TableBody>
           </Table>
         </Card>
-      )}
+      
+        )}
+      </QueryState>
 
       <ConfirmDialog
         open={pendingDelete !== null}

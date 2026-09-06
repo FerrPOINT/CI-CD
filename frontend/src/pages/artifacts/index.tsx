@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next'
+import { QueryState } from '@/shared/ui/query-state'
 import { useParams } from 'react-router'
 import { useArtifacts } from '@/api/hooks'
 import { Card } from '@sdlc/ui/ui'
@@ -8,7 +9,7 @@ import { Package } from 'lucide-react'
 export function ArtifactsPage() {
   const { t } = useTranslation()
   const { jobId } = useParams()
-  const { data: artifacts = [], isLoading } = useArtifacts(jobId)
+  const { data: artifacts = [], isLoading, error: listError } = useArtifacts(jobId)
 
   return (
     <div className="space-y-6">
@@ -17,11 +18,9 @@ export function ArtifactsPage() {
         <h1 className="text-2xl font-bold">{t('artifacts.title')}</h1>
       </div>
 
-      {isLoading ? (
-        <p className="text-sm text-text-muted">{t('common.loading')}</p>
-      ) : artifacts.length === 0 ? (
-        <Card className="p-8 text-center"><p className="text-text-muted">{t('artifacts.empty')}</p></Card>
-      ) : (
+      <QueryState data={artifacts} isLoading={isLoading} error={listError} isEmpty={(list) => list.length === 0} empty={{ title: t('artifacts.empty') }}>
+        {() => (
+
         <Card>
           <Table>
             <TableHeader>
@@ -64,7 +63,9 @@ export function ArtifactsPage() {
             </TableBody>
           </Table>
         </Card>
-      )}
+      
+        )}
+      </QueryState>
     </div>
   )
 }

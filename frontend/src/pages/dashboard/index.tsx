@@ -1,5 +1,6 @@
 import { Link } from 'react-router'
 import { useTranslation } from 'react-i18next'
+import { QueryState } from '@/shared/ui/query-state'
 import { useProjects } from '@/api/hooks'
 import { useProjectPipelines } from '@/shared/lib/use-project-pipelines'
 import { Card } from '@sdlc/ui/ui'
@@ -8,7 +9,7 @@ import { FolderGit2, Play, CheckCircle2, XCircle, Clock } from 'lucide-react'
 
 export function DashboardPage() {
   const { t } = useTranslation()
-  const { data: projects = [], isLoading } = useProjects()
+  const { data: projects = [], isLoading, error: listError } = useProjects()
 
   // Aggregate CI metrics from recent pipelines across all visible projects.
   // Page is a summary, not an exhaustive report (see /reports for per-project stats).
@@ -47,13 +48,9 @@ export function DashboardPage() {
 
       <div>
         <h2 className="mb-3 text-lg font-semibold">{t('navigation.projects')}</h2>
-        {isLoading ? (
-          <p className="text-sm text-text-muted">{t('common.loading')}</p>
-        ) : projects.length === 0 ? (
-          <Card className="p-8 text-center">
-            <p className="text-text-muted">{t('projects.empty')}</p>
-          </Card>
-        ) : (
+        <QueryState data={projects} isLoading={isLoading} error={listError} isEmpty={(list) => list.length === 0} empty={{ title: t('projects.empty') }}>
+        {() => (
+
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {projects.map((p) => (
               <Link key={p.id} to={`/projects/${p.id}/pipelines`}>
@@ -71,7 +68,9 @@ export function DashboardPage() {
               </Link>
             ))}
           </div>
+        
         )}
+      </QueryState>
       </div>
     </div>
   )

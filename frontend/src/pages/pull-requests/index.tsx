@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
+import { QueryState } from '@/shared/ui/query-state'
 import { ChevronRight, GitPullRequest, GitMerge, Plus, RotateCcw, XCircle, FileDiff } from 'lucide-react'
 import { toast } from 'sonner'
 import {
@@ -189,7 +190,7 @@ function PullRequestCard({ repo, pullRequest, locale }: { repo: string; pullRequ
 export function PullRequestsPage() {
   const { t, i18n } = useTranslation()
   const { repo } = useParams<{ repo: string }>()
-  const { data: pullRequests = [], isLoading, isError, error } = usePullRequests(repo)
+  const { data: pullRequests = [], isLoading, error } = usePullRequests(repo)
   const [showForm, setShowForm] = useState(false)
 
   if (!repo) return <p className="text-sm text-text-muted">{t('repositories.notFound')}</p>
@@ -218,21 +219,21 @@ export function PullRequestsPage() {
 
       {showForm && <CreatePullRequestForm repo={repo} onClose={() => setShowForm(false)} />}
 
-      {isLoading ? (
-        <p className="text-sm text-text-muted">{t('common.loading')}</p>
-      ) : isError ? (
-        <Card className="p-6 text-sm text-danger">
-          {t('common.error')}: {error instanceof Error ? error.message : String(error)}
-        </Card>
-      ) : pullRequests.length === 0 ? (
-        <Card className="p-8 text-center text-text-muted">{t('pulls.empty')}</Card>
-      ) : (
-        <div className="space-y-3">
-          {pullRequests.map((pullRequest) => (
-            <PullRequestCard key={pullRequest.id} repo={repo} pullRequest={pullRequest} locale={i18n.language} />
-          ))}
-        </div>
-      )}
+      <QueryState
+        data={pullRequests}
+        isLoading={isLoading}
+        error={error}
+        isEmpty={(list) => list.length === 0}
+        empty={{ title: t('pulls.empty') }}
+      >
+        {(list) => (
+          <div className="space-y-3">
+            {list.map((pullRequest) => (
+              <PullRequestCard key={pullRequest.id} repo={repo} pullRequest={pullRequest} locale={i18n.language} />
+            ))}
+          </div>
+        )}
+      </QueryState>
     </div>
   )
 }

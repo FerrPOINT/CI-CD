@@ -6,6 +6,7 @@ import { Button } from '@sdlc/ui/ui'
 import { Input } from '@sdlc/ui/ui'
 import { Label } from '@sdlc/ui/ui'
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
+import { QueryState } from '@/shared/ui/query-state'
 import { CapabilityCallout } from '@/shared/ui/capability-callout'
 import { Server, Plus, Activity, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -13,7 +14,7 @@ import type { Runner } from '@/api/types'
 
 export function RunnersPage() {
   const { t } = useTranslation()
-  const { data: runners = [], isLoading } = useRunners()
+  const { data: runners = [], isLoading, error: listError } = useRunners()
   const registerRunner = useRegisterRunner()
   const heartbeat = useRunnerHeartbeat()
   const deleteRunner = useDeleteRunner()
@@ -71,11 +72,9 @@ export function RunnersPage() {
         </Card>
       )}
 
-      {isLoading ? (
-        <p className="text-sm text-text-muted">{t('common.loading')}</p>
-      ) : runners.length === 0 ? (
-        <Card className="p-8 text-center"><p className="text-text-muted">{t('runners.empty')}</p></Card>
-      ) : (
+      <QueryState data={runners} isLoading={isLoading} error={listError} isEmpty={(list) => list.length === 0} empty={{ title: t('runners.empty') }}>
+        {() => (
+
         <ul className="grid gap-3 md:hidden" aria-label={t('runners.title')}>
           {runners.map(r => (
             <li key={r.id}>
@@ -106,7 +105,9 @@ export function RunnersPage() {
             </li>
           ))}
         </ul>
-      )}
+      
+        )}
+      </QueryState>
 
       {runners.length > 0 && (
         <Card className="hidden md:block">
