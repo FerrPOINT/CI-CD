@@ -3609,6 +3609,49 @@ async fn job_log_page_is_bounded_and_searchable() {
         "unit error: expected status"
     );
 
+    // K4.2: tail window via `before` returns the newest rows below the cursor
+    // in ascending order, with total + has_more_before diagnostics.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/jobs/{job_id}/attempts/{attempt_id}/logs/page?limit=2&before=4"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let tail_page = response_json(response).await;
+    assert_eq!(tail_page["items"].as_array().unwrap().len(), 2);
+    // Tail window returns the rows adjacent to the cursor (newest below it).
+    assert_eq!(tail_page["items"][0]["sequence"], 2);
+    assert_eq!(tail_page["items"][1]["sequence"], 3);
+    assert_eq!(tail_page["total"], 3);
+    assert_eq!(tail_page["has_more_before"], true);
+    // next_after doubles as the backward cursor for the next tail window.
+    assert_eq!(tail_page["next_after"], 2);
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/jobs/{job_id}/attempts/{attempt_id}/logs/page?limit=5&before=4"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let full_tail = response_json(response).await;
+    assert_eq!(full_tail["items"].as_array().unwrap().len(), 3);
+    assert_eq!(full_tail["has_more_before"], false);
+
+    // Forward pages now carry total too.
+    assert_eq!(first_page["total"], 3);
+
     let response = app
         .oneshot(
             Request::get(format!(

@@ -587,46 +587,92 @@ async fn log_page(
 ) -> Result<JobLogPage, ApiError> {
     let limit = params.bounded_limit()?;
     let fetch_limit = limit + 1;
-    let after = params.after_sequence()?;
     let search_pattern = params.search_pattern()?;
-    let mut items = if let Some(pattern) = search_pattern {
-        sqlx::query_as::<_, JobLog>(
-            "SELECT id, job_id, attempt_id, sequence, message, created_at \
-             FROM job_logs \
-             WHERE job_id = $1 AND attempt_id = $2 AND sequence > $3 \
-               AND message ILIKE $4 ESCAPE '\\' \
-             ORDER BY sequence LIMIT $5",
-        )
-        .bind(job_id)
-        .bind(attempt_id)
-        .bind(after)
-        .bind(pattern)
-        .bind(fetch_limit)
-        .fetch_all(pool)
-        .await
-        .map_err(ApiError::internal)?
+    let pattern_ref = search_pattern.as_deref();
+
+    let (mut items, total, has_more_before): (Vec<JobLog>, i64, bool) =
+        if let Some(before) = params.before_sequence()? {
+            // Tail window: newest rows strictly below `before`, ascending.
+            let rows = sqlx::query_as::<_, JobLog>(
+                "SELECT id, job_id, attempt_id, sequence, message, created_at \
+                 FROM job_logs \
+                 WHERE job_id = $1 AND attempt_id = $2 AND sequence < $3 \
+                   AND ($4::TEXT IS NULL OR message ILIKE $4 ESCAPE '\\') \
+                 ORDER BY sequence DESC LIMIT $5",
+            )
+            .bind(job_id)
+            .bind(attempt_id)
+            .bind(before)
+            .bind(pattern_ref)
+            .bind(fetch_limit)
+            .fetch_all(pool)
+            .await
+            .map_err(ApiError::internal)?;
+            let (total,): (i64,) = sqlx::query_as(
+                "SELECT count(*) FROM job_logs \
+                 WHERE job_id = $1 AND attempt_id = $2 AND sequence < $3 \
+                   AND ($4::TEXT IS NULL OR message ILIKE $4 ESCAPE '\\')",
+            )
+            .bind(job_id)
+            .bind(attempt_id)
+            .bind(before)
+            .bind(pattern_ref)
+            .fetch_one(pool)
+            .await
+            .map_err(ApiError::internal)?;
+            let has_more = rows.len() as i64 > limit;
+            let mut rows = rows;
+            rows.truncate(limit as usize);
+            rows.reverse();
+            (rows, total, has_more)
+        } else {
+            let after = params.after_sequence()?;
+            let rows = sqlx::query_as::<_, JobLog>(
+                "SELECT id, job_id, attempt_id, sequence, message, created_at \
+                 FROM job_logs \
+                 WHERE job_id = $1 AND attempt_id = $2 AND sequence > $3 \
+                   AND ($4::TEXT IS NULL OR message ILIKE $4 ESCAPE '\\') \
+                 ORDER BY sequence LIMIT $5",
+            )
+            .bind(job_id)
+            .bind(attempt_id)
+            .bind(after)
+            .bind(pattern_ref)
+            .bind(fetch_limit)
+            .fetch_all(pool)
+            .await
+            .map_err(ApiError::internal)?;
+            let (total,): (i64,) = sqlx::query_as(
+                "SELECT count(*) FROM job_logs \
+                 WHERE job_id = $1 AND attempt_id = $2 AND sequence > $3 \
+                   AND ($4::TEXT IS NULL OR message ILIKE $4 ESCAPE '\\')",
+            )
+            .bind(job_id)
+            .bind(attempt_id)
+            .bind(after)
+            .bind(pattern_ref)
+            .fetch_one(pool)
+            .await
+            .map_err(ApiError::internal)?;
+            let mut rows = rows;
+            rows.truncate(limit as usize);
+            (rows, total, false)
+        };
+
+    let next_after = if has_more_before {
+        items.first().map(|log| log.sequence)
     } else {
-        sqlx::query_as::<_, JobLog>(
-            "SELECT id, job_id, attempt_id, sequence, message, created_at \
-             FROM job_logs \
-             WHERE job_id = $1 AND attempt_id = $2 AND sequence > $3 \
-             ORDER BY sequence LIMIT $4",
-        )
-        .bind(job_id)
-        .bind(attempt_id)
-        .bind(after)
-        .bind(fetch_limit)
-        .fetch_all(pool)
-        .await
-        .map_err(ApiError::internal)?
+        items
+            .last()
+            .map(|log| log.sequence)
+            .filter(|_| total > items.len() as i64)
     };
-    let next_after = if items.len() as i64 > limit {
-        items.pop();
-        items.last().map(|log| log.sequence)
-    } else {
-        None
-    };
-    Ok(JobLogPage { items, next_after })
+    Ok(JobLogPage {
+        items,
+        next_after,
+        total,
+        has_more_before,
+    })
 }
 
 fn like_contains_pattern(value: &str) -> String {
@@ -687,6 +733,10 @@ pub(crate) struct JobLog {
 pub(crate) struct JobLogPage {
     items: Vec<JobLog>,
     next_after: Option<i32>,
+    /// Total matching rows for the current filter (K4.2 windowing).
+    pub(crate) total: i64,
+    /// True when a `before` window has older rows beyond this page.
+    pub(crate) has_more_before: bool,
 }
 
 #[derive(Deserialize, utoipa::ToSchema)]
@@ -708,6 +758,9 @@ pub(crate) struct StreamParams {
 pub(crate) struct LogPageParams {
     /// Return log rows with sequence greater than this value.
     pub(crate) after: Option<i32>,
+    /// Tail-window cursor: return the newest rows with sequence less than
+    /// this value (descending fetch, returned in ascending order).
+    pub(crate) before: Option<i32>,
     /// Page size. Default and maximum are 200 rows.
     pub(crate) limit: Option<i64>,
     /// Optional case-insensitive substring filter for message text.
@@ -715,6 +768,18 @@ pub(crate) struct LogPageParams {
 }
 
 impl LogPageParams {
+    fn before_sequence(&self) -> Result<Option<i32>, ApiError> {
+        match self.before {
+            None => Ok(None),
+            Some(before) => {
+                if before <= 0 {
+                    return Err(ApiError::bad_request("before must be greater than 0"));
+                }
+                Ok(Some(before))
+            }
+        }
+    }
+
     fn after_sequence(&self) -> Result<i32, ApiError> {
         let after = self.after.unwrap_or(0);
         if after < 0 {
