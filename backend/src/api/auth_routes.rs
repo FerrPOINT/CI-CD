@@ -1,7 +1,7 @@
 //! Auth vertical (login/refresh/logout + cookie helpers) — migrated out of the
 //! api.rs monolith (ADR-0012). Token/session primitives live in `cicd_app::auth`.
 
-use super::{
+pub(crate) use super::{
     AUTH_CSRF_COOKIE, AUTH_CSRF_HEADER, AUTH_REFRESH_COOKIE, ApiError, AppState, auth_secret, pool,
 };
 use crate::platform::audit;
