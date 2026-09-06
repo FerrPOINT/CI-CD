@@ -1,0 +1,51 @@
+# K6.2: Forge CI/CD alert rules (loaded by the observability profile).
+groups:
+  - name: forge-availability
+    rules:
+      - alert: ForgeBackendDown
+        expr: up{job="forge-cicd"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Forge CI/CD backend недоступен"
+          description: "Scrape /metrics на cicd-backend:22801 падает 2+ минуты."
+          runbook: "docs/runbooks/OBSERVABILITY.md#forgebackenddown"
+
+      - alert: ForgeHttp5xxSpiking
+        expr: increase(forge_http_5xx_total[15m]) > 10
+        labels:
+          severity: warning
+        annotations:
+          summary: "Волна 5xx в Forge API"
+          runbook: "docs/runbooks/OBSERVABILITY.md#forgehttp5xxspiking"
+
+  - name: forge-pipelines
+    rules:
+      - alert: ForgeJobsFailing
+        expr: forge_jobs_failed_24h > 20
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Больше 20 упавших job за 24ч"
+          runbook: "docs/runbooks/OBSERVABILITY.md#forgejobsfailing"
+
+      - alert: ForgeQueueStuck
+        expr: forge_pipelines_queued > 0 and forge_runners_online == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Работа в очереди, но нет онлайн runner-ов"
+          description: "Пайплайны стоят в queued, а forge_runners_online = 0 — embedded runner мёртв или draining."
+          runbook: "docs/runbooks/OBSERVABILITY.md#forgequeuestuck"
+
+      - alert: ForgeNoRunnersOnline
+        expr: forge_runners_online == 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Нет онлайн runner-ов 30 минут"
+          runbook: "docs/runbooks/OBSERVABILITY.md#forgenorunnersonline"

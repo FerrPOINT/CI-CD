@@ -1,0 +1,71 @@
+{
+  "title": "Forge CI/CD — Base Platform",
+  "uid": "forge-overview",
+  "tags": ["forge", "base"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Pipelines: running / queued",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "forge_pipelines_running", "legendFormat": "running" },
+        { "expr": "forge_pipelines_queued", "legendFormat": "queued" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "id": 2,
+      "title": "Jobs 24h: succeeded / failed",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "forge_jobs_succeeded_24h", "legendFormat": "succeeded" },
+        { "expr": "forge_jobs_failed_24h", "legendFormat": "failed" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" } }
+    },
+    {
+      "id": 3,
+      "title": "Runners: online / draining",
+      "type": "stat",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "expr": "forge_runners_online", "legendFormat": "online" },
+        { "expr": "forge_runners_draining", "legendFormat": "draining" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "HTTP: requests / 5xx rate",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "expr": "rate(forge_http_requests_total[5m])", "legendFormat": "req/s" },
+        { "expr": "rate(forge_http_5xx_total[5m])", "legendFormat": "5xx/s" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Login failures (rate)",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 14 },
+      "targets": [
+        { "expr": "rate(forge_login_failures_total[15m])", "legendFormat": "failures/s" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Outbox: delivered / dead",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 14 },
+      "targets": [
+        { "expr": "rate(forge_outbox_delivered_total[15m])", "legendFormat": "delivered/s" },
+        { "expr": "rate(forge_outbox_dead_total[15m])", "legendFormat": "dead/s" }
+      ]
+    }
+  ]
+}
