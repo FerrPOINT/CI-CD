@@ -10,7 +10,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     sdlc_telemetry::init_tracing("forge-cicd");
     // Wire the storage-layer enqueue hook to the in-process dispatch signal
     // (the storage crate itself is transport-agnostic; ADR-0012).
-    cicd_infra::set_notify_hook(dispatch_signal::notify_runner_work_available);
     let config = RuntimeConfig::from_env()?;
     let git = config.git.to_git_config();
     if git.internal_token.is_none() {

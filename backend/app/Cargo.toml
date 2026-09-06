@@ -15,5 +15,5 @@ subtle = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
 utoipa = { workspace = true }
-sdlc-auth-core = { path = "../../../services-base/crates/sdlc-auth-core" }
+sdlc-auth-core = { path = "/services-base/crates/sdlc-auth-core" }
 uuid.workspace = true

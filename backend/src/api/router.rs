@@ -40,6 +40,7 @@ pub(crate) fn build_router_from_env(
     git: crate::git_host::GitConfig,
     running: Option<crate::runner::RunningJobs>,
 ) -> Router {
+    wire_default_notify_hook();
     let config = runtime_config_from_env_for_router().with_git_config(git);
     build_router_with_config(pool, running, config).expect("invalid CICD_ HTTP configuration")
 }
@@ -94,9 +95,19 @@ fn build_router_with_config(
     running: Option<crate::runner::RunningJobs>,
     config: crate::config::RuntimeConfig,
 ) -> Result<Router, String> {
+    wire_default_notify_hook();
     let cors = cors_layer_from_allowed_origins(config.http.cors_allowed_origins.as_deref())?;
     let git = config.git.to_git_config();
     Ok(build_router_with_cors(pool, git, running, config, cors))
+}
+
+/// Wire the in-process dispatch signal to the store enqueue hook exactly once.
+fn wire_default_notify_hook() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        cicd_infra::set_notify_hook(crate::dispatch_signal::notify_runner_work_available);
+    });
 }
 
 pub(crate) fn build_router_with_cors(
