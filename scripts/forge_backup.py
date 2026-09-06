@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -263,7 +264,51 @@ def command_backup(args: argparse.Namespace) -> int:
         counts = write_inventory(backup_dir)
         write_manifest(config, backup_dir, counts)
         print(f"backup created: {backup_dir}")
+        apply_retention(args, backup_dir)
+        sync_offsite(args, backup_dir)
     return 0
+
+
+def apply_retention(args: argparse.Namespace, backup_dir: Path) -> None:
+    """K7.1: keep the newest N timestamped siblings, delete older ones.
+
+    Only directories that look like backups (manifest.json present) are
+    considered; explicit --backup-dir targets are never deleted.
+    """
+    keep = getattr(args, "retention", None)
+    if not keep or keep <= 0:
+        return
+    parent = backup_dir.parent
+    candidates = sorted(
+        (d for d in parent.iterdir() if d.is_dir() and (d / "manifest.json").exists()),
+        key=lambda d: d.name,
+    )
+    for old_dir in candidates[:-keep]:
+        if old_dir.resolve() == backup_dir.resolve():
+            continue
+        shutil.rmtree(old_dir)
+        print(f"retention: removed {old_dir}")
+
+
+def sync_offsite(args: argparse.Namespace, backup_dir: Path) -> None:
+    """K7.1: rsync the fresh backup to FORGE_BACKUP_OFFSITE_DIR (host path).
+
+    The offsite copy is append-only per backup (no --delete), so a broken
+    remote tree never removes local history.
+    """
+    target = os.environ.get("FORGE_BACKUP_OFFSITE_DIR")
+    if not target or getattr(args, "no_offsite", False):
+        return
+    if shutil.which("rsync") is None:
+        print("offsite: rsync not found; skipping (install rsync or unset FORGE_BACKUP_OFFSITE_DIR)")
+        return
+    dest = Path(target)
+    dest.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        ["rsync", "-a", str(backup_dir) + "/", str(dest / backup_dir.name) + "/"],
+        check=True,
+    )
+    print(f"offsite: synced to {dest / backup_dir.name}")
 
 
 def parse_checksum_line(line: str) -> tuple[str, str]:
@@ -438,6 +483,8 @@ def build_parser() -> argparse.ArgumentParser:
     backup.add_argument("--no-stop", action="store_true", help="do not stop backend/frontend; unsafe for production snapshots")
     backup.add_argument("--leave-stopped", action="store_true", help="do not restart services after backup")
     backup.add_argument("--skip-git-fsck", action="store_true", help="skip Git repository fsck before copying")
+    backup.add_argument("--retention", type=int, default=0, metavar="N", help="K7.1: keep only the newest N timestamped backups, remove older ones")
+    backup.add_argument("--no-offsite", action="store_true", help="K7.1: skip the FORGE_BACKUP_OFFSITE_DIR rsync for this run")
     backup.set_defaults(func=command_backup)
 
     verify = sub.add_parser("verify", help="verify checksum manifest for an existing backup")

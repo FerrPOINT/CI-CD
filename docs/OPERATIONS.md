@@ -166,7 +166,15 @@ cicd-migrate verify --database-url "$CICD_OWNER_DATABASE_URL"
 
 ### Current verified MVP: scripted local backup
 
-В MVP есть локальный scripted helper: `scripts/forge_backup.py` и wrappers `scripts/backup.sh`, `scripts/restore.sh`, `scripts/verify-backup.sh`. Он сохраняет **согласованный набор** для Docker Compose: PostgreSQL custom dump, bare Git directory, artifacts directory, `files.txt`, `SHA256SUMS` и `manifest.json` без `.env`/секретов. Скрипт не заменяет production backup platform: off-site copy, encryption, PITR, immutable storage и scheduled backup остаются обязанностью оператора/target.
+В MVP есть локальный scripted helper: `scripts/forge_backup.py` и wrappers `scripts/backup.sh`, `scripts/restore.sh`, `scripts/verify-backup.sh`. Он сохраняет **согласованный набор** для Docker Compose: PostgreSQL custom dump, bare Git directory, artifacts directory, `files.txt`, `SHA256SUMS` и `manifest.json` без `.env`/секретов.
+
+**Off-site и retention (K7.1).** `FORGE_BACKUP_OFFSITE_DIR=/mnt/nas/forge-backups` заставляет каждый backup rsync-нуться в под-директорию того же имени (append-only, без `--delete`). `--retention 7` оставляет только 7 свежих timestamp-бэкапов в локальном каталоге, удаляя старшие; явные `--backup-dir` цели не удаляются никогда. Encryption/PITR/immutable storage остаются обязанностью оператора/target.
+
+```bash
+FORGE_BACKUP_OFFSITE_DIR=/mnt/nas/forge-backups scripts/backup.sh --retention 7
+```
+
+**Restore drill (K7.1, проверен 2026-09-06).** Дамп восстановлен в чистый postgres:17: 9 projects / 45k pipelines / 135k jobs / миграции до головы; единственное ожидаемое предупреждение — GRANT роли `forge_runtime` (роль создаётся на стенде перед restore). Регламент: раз в месяц полный drill в изолированной БД + сверка count(*) ключевых таблиц с манифестом.
 
 Локальные named volumes содержат:
 
