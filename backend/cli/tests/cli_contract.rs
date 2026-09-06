@@ -103,3 +103,53 @@ fn cli_exposes_platform_resource_mutations() {
     assert_contains(&deployment, "reject");
     assert_contains(&deployment, "rollback");
 }
+
+#[test]
+fn cli_completions_emit_shell_scripts() {
+    for shell in ["bash", "zsh", "fish"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
+            .args(["completions", shell])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "completions {shell} failed");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.len() > 200,
+            "completions {shell} look empty ({}/{} bytes)",
+            stdout.len(),
+            stdout.len()
+        );
+    }
+}
+
+#[test]
+fn cli_exit_codes_are_stable() {
+    // Connection refused -> network/server code 3.
+    let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
+        .env("CICD_API_URL", "http://127.0.0.1:1")
+        .args(["project", "list"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(3), "network failure must exit 3");
+}
+
+#[test]
+fn cli_ndjson_flag_parses() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
+        .env("CICD_API_URL", "http://127.0.0.1:1")
+        .args(["--output", "ndjson", "--help"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("ndjson"),
+        "ndjson must be documented in --help"
+    );
+}
+
+#[test]
+fn cli_profile_flag_documented() {
+    let stdout = cli_help(&["--help"]);
+    assert_contains(&stdout, "--profile");
+}

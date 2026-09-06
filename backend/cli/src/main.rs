@@ -1,6 +1,6 @@
 use std::{path::PathBuf, time::Duration};
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use reqwest::{RequestBuilder, Url, header};
 use serde_json::{Map, Value, json};
 
@@ -11,6 +11,9 @@ struct Cli {
     api_url: String,
     #[arg(long, env = "CICD_API_TOKEN")]
     token: Option<String>,
+    /// K5: config profile from ~/.config/forge-cli/config.toml (flag > CICD_PROFILE > default_profile).
+    #[arg(long)]
+    profile: Option<String>,
     #[arg(long, env = "CICD_TIMEOUT_SECONDS", default_value_t = 60)]
     timeout_seconds: u64,
     #[arg(
@@ -27,11 +30,84 @@ struct Cli {
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum OutputFormat {
     Json,
+    Ndjson,
     Table,
+}
+
+/// K5: stable process exit codes (see docs/CLI.md).
+mod exit_code {
+    pub const OK: u8 = 0;
+    pub const USAGE: u8 = 2;
+    pub const NETWORK_OR_SERVER: u8 = 3;
+    pub const NOT_FOUND: u8 = 4;
+    pub const UNAUTHORIZED: u8 = 5;
+    pub const VALIDATION: u8 = 6;
+}
+
+/// K5: profile resolution order — --profile flag > CICD_PROFILE env >
+/// `default_profile` key in the user config file. Config keys (toml):
+/// `[profiles.<name>] api_url / token / output`.
+fn load_profile_toml() -> Option<(String, toml::Value)> {
+    let path = std::env::var_os("CICD_CONFIG")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| {
+                PathBuf::from(home)
+                    .join(".config")
+                    .join("forge-cli")
+                    .join("config.toml")
+            })
+        })?;
+    let raw = std::fs::read_to_string(path).ok()?;
+    let value: toml::Value = toml::from_str(&raw).ok()?;
+    let default = value.get("default_profile")?.as_str()?.to_string();
+    Some((default, value))
+}
+
+struct ProfileOverrides {
+    api_url: Option<String>,
+    token: Option<String>,
+    output: Option<OutputFormat>,
+}
+
+fn parse_output(s: &str) -> Option<OutputFormat> {
+    match s {
+        "json" => Some(OutputFormat::Json),
+        "ndjson" => Some(OutputFormat::Ndjson),
+        "table" => Some(OutputFormat::Table),
+        _ => None,
+    }
+}
+
+fn resolve_profile(flag: &Option<String>) -> Option<ProfileOverrides> {
+    let name = flag
+        .clone()
+        .or_else(|| std::env::var("CICD_PROFILE").ok())?;
+    let (_, config) = load_profile_toml()?;
+    let section = config.get("profiles")?.get(&name)?;
+    Some(ProfileOverrides {
+        api_url: section
+            .get("api_url")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        token: section
+            .get("token")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        output: section
+            .get("output")
+            .and_then(|v| v.as_str())
+            .and_then(parse_output),
+    })
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// K5: emit shell completions (bash/zsh/fish/powershell).
+    Completions {
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
     Project {
         #[command(subcommand)]
         command: ProjectCommand,
@@ -603,21 +679,89 @@ impl ApiClient {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+async fn main() -> std::process::ExitCode {
+    let mut cli = Cli::parse();
+    // K5: profile file fills ONLY the gaps — explicit flags/env always win.
+    if let Some(over) = resolve_profile(&cli.profile) {
+        if std::env::var_os("CICD_API_URL").is_none() {
+            cli.api_url = over.api_url.unwrap_or(cli.api_url);
+        }
+        if std::env::var_os("CICD_API_TOKEN").is_none() {
+            cli.token = cli.token.or(over.token);
+        }
+        if std::env::var_os("CICD_OUTPUT").is_none() && matches!(cli.output, OutputFormat::Json) {
+            cli.output = over.output.unwrap_or(cli.output);
+        }
+    }
     if cli.timeout_seconds == 0 {
-        anyhow::bail!("--timeout-seconds must be greater than 0");
+        eprintln!("error: --timeout-seconds must be greater than 0");
+        return exit(exit_code::USAGE);
+    }
+    if let Command::Completions { shell } = &cli.command {
+        let mut cmd = Cli::command();
+        let name = cmd.get_name().to_string();
+        clap_complete::generate(*shell, &mut cmd, name, &mut std::io::stdout());
+        return exit(exit_code::OK);
     }
     let output = cli.output;
     let timeout = Duration::from_secs(cli.timeout_seconds);
-    let api = ApiClient::new(cli.api_url, cli.token, timeout)?;
-    let value = execute(&api, cli.command).await?;
-    print_output(&value, output)?;
-    Ok(())
+    let api = match ApiClient::new(cli.api_url, cli.token, timeout) {
+        Ok(api) => api,
+        Err(err) => {
+            eprintln!("error: {err:#}");
+            return exit(exit_code::USAGE);
+        }
+    };
+    let value = match execute(&api, cli.command).await {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("error: {err:#}");
+            return exit(classify_error(&err));
+        }
+    };
+    if let Err(err) = print_output(&value, output) {
+        eprintln!("error: {err:#}");
+        return exit(exit_code::USAGE);
+    }
+    exit(exit_code::OK)
+}
+
+fn exit(code: u8) -> std::process::ExitCode {
+    std::process::ExitCode::from(code)
+}
+
+/// K5: map error chains to stable exit codes (network/4xx/5xx).
+fn classify_error(err: &anyhow::Error) -> u8 {
+    let rendered = format!("{err:#}");
+    for cause in err.chain() {
+        let text = cause.to_string();
+        if text.contains("status Some(1)") || text.contains("500 Internal Server Error") {
+            return exit_code::NETWORK_OR_SERVER;
+        }
+        if text.contains("401") || text.contains("unauthorized") {
+            return exit_code::UNAUTHORIZED;
+        }
+        if text.contains("404") || text.contains("not_found") || text.contains("not found") {
+            return exit_code::NOT_FOUND;
+        }
+        if text.contains("400") || text.contains("422") || text.contains("validation") {
+            return exit_code::VALIDATION;
+        }
+        if text.contains("error sending request")
+            || text.contains("dns error")
+            || text.contains("Connection refused")
+        {
+            return exit_code::NETWORK_OR_SERVER;
+        }
+    }
+    let _ = rendered;
+    exit_code::USAGE
 }
 
 async fn execute(api: &ApiClient, command: Command) -> anyhow::Result<Value> {
     match command {
+        // Completions is handled in main() before the API client exists.
+        Command::Completions { .. } => Ok(Value::Null),
         Command::Project { command } => project(api, command).await,
         Command::Pipeline { command } => pipeline(api, command).await,
         Command::Job { command } => job(api, command).await,
@@ -1177,6 +1321,16 @@ fn parse_notification_config(raw: String) -> anyhow::Result<Value> {
 fn print_output(value: &Value, format: OutputFormat) -> anyhow::Result<()> {
     match format {
         OutputFormat::Json => println!("{}", serde_json::to_string_pretty(value)?),
+        // K5: one compact JSON document per line — array items stream as
+        // records, single objects print once. jq/ndjson-friendly.
+        OutputFormat::Ndjson => match value {
+            Value::Array(items) => {
+                for item in items {
+                    println!("{}", serde_json::to_string(item)?);
+                }
+            }
+            single => println!("{}", serde_json::to_string(single)?),
+        },
         OutputFormat::Table => print_table(value),
     }
     Ok(())

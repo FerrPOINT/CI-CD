@@ -20,7 +20,9 @@ docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" -w /workspac
 | `CICD_API_URL` | `http://127.0.0.1:22801` | Базовый URL API |
 | `CICD_API_TOKEN` | - | Bearer PAT/JWT для auth-mode; эквивалентно `--token` |
 | `CICD_TIMEOUT_SECONDS` | `60` | Общий timeout HTTP-запроса; эквивалентно `--timeout-seconds` |
-| `CICD_OUTPUT` | `json` | Формат вывода: `json` или `table`; эквивалентно `--output` |
+| `CICD_OUTPUT` | `json` | Формат вывода: `json`, `ndjson` или `table`; эквивалентно `--output` |
+| `CICD_PROFILE` | - | Имя профиля из `~/.config/forge-cli/config.toml`; эквивалентно `--profile` |
+| `CICD_CONFIG` | `~/.config/forge-cli/config.toml` | Путь к TOML-конфигу профилей |
 
 Глобальные флаги:
 
@@ -162,6 +164,54 @@ cicd-cli token create --name deploy-bot --user <USER_UUID> --project <PROJECT_UU
 cicd-cli token revoke --id <TOKEN_UUID>
 ```
 
+## Профили (K5)
+
+`~/.config/forge-cli/config.toml`:
+
+```toml
+default_profile = "local"
+
+[profiles.local]
+api_url = "http://127.0.0.1:22801"
+token = "forge_pat_..."   # prefer CICD_API_TOKEN env on shared hosts
+output = "table"
+
+[profiles.stage]
+api_url = "https://forge-stage.internal:22801"
+output = "json"
+```
+
+Порядок применения: явный флаг/env > значения профиля > built-in default. Флаг `--profile local` (или `CICD_PROFILE=local`) подставляет `api_url`/`token`/`output` только если соответствующая переменная окружения не задана. OS-keyring остаётся target (см. DELIVERY_ARCHITECTURE).
+
+## NDJSON (K5)
+
+`--output ndjson` печатает по одному compact-JSON документу на строку; массивы стримятся поэлементно:
+
+```bash
+cicd-cli --output ndjson project list | jq -c 'select(.name | startswith("forge"))'
+```
+
+## Stable exit codes (K5)
+
+| Код | Смысл |
+|---|---|
+| `0` | успех |
+| `2` | usage / локальная ошибка аргументов или вывода |
+| `3` | сеть или 5xx сервера (connection refused, DNS, 500) |
+| `4` | 404 / not found |
+| `5` | 401 / unauthorized |
+| `6` | 400/422 validation |
+
+Скрипты должны проверять код, а не парсить stderr.
+
+## Completions (K5)
+
+```bash
+cicd-cli completions bash > /etc/bash_completion.d/cicd-cli
+cicd-cli completions zsh > ~/.zfunc/_cicd-cli
+cicd-cli completions fish > ~/.config/fish/completions/cicd-cli.fish
+```
+
 ## Контракт
 
 Группы команд и флаги зафиксированы тестом `backend/cli/tests/cli_contract.rs`: control-plane groups, `--token`, `--timeout-seconds`, `--output`, pagination flags, job attempts/logs, `--idempotency-key` и ключевые platform mutations. Real HTTP/API/PostgreSQL smoke зафиксирован в `backend/cli/tests/cli_real_api.rs`: проект create/list, idempotent pipeline run, attempt history, protected deployment approval, env/flag config precedence, bounded HTTP timeout, JWT/PAT auth-mode, RBAC denial, project-scoped read-only PAT, token redaction на failure, JSON output и non-zero API error exit. Изменение публичного CLI surface требует обновления тестов и этого документа.
@@ -170,7 +220,7 @@ cicd-cli token revoke --id <TOKEN_UUID>
 
 - CLI использует только публичный HTTP API и повторяет его текущие ограничения auth/RBAC, pagination и validation.
 - Stable JSON есть сейчас; `table` является lightweight TSV-like представлением для ручной работы, не production reporting format.
-- Profiles, OS keyring, shell completion, request tracing headers, YAML/NDJSON и расширенные token redaction fixtures остаются target из `docs/DELIVERY_ARCHITECTURE.md`.
+- Profiles (`config.toml`), NDJSON и shell completion реализованы (K5). OS keyring для токенов, request tracing headers, YAML-вывод и расширенные token redaction fixtures остаются target из `docs/DELIVERY_ARCHITECTURE.md`.
 - External email/Slack adapters и inbound provider webhooks по-прежнему target: CLI управляет текущими local notification/outbox/webhook MVP routes.
 
 ## References
