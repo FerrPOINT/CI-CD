@@ -11,6 +11,16 @@
 
 ### Added
 
+- Phase C architecture (K1): backend workspace split — new crates `cicd-app` (authz policy + token/session primitives), `cicd-infra` (SQLx store, single enqueue notify hook), `cicd-api` facade; monolithic `api.rs` (4.9k lines) decomposed into `api/{auth,projects,pipelines,jobs}_routes + dto + authz_mw + router + readiness` modules; store.rs is a pure re-export shim.
+- Frontend auth UX (K2): `AuthProvider` (restore/open-mode/anonymous states), `ProtectedRoute` layout guard with login redirect, `/forbidden` 403 page, unified `QueryState` (loading skeleton/empty/403/error) adopted across all pages, terminal-401 invalidation, AppShell logout.
+- Resumable artifact uploads (K4.1): migration 0027 + runner-protocol sessions `artifact-sessions:begin` / `chunks` / `complete` / `abort` with per-chunk and whole-file sha256 verification, sequential high-water, 8 MiB chunk cap.
+- Log windows (K4.2): `before`-cursor tail pages (DESC fetch → ascending return), `total` and `has_more_before` in the page envelope, `q` filter on both window kinds.
+- Dispatch fairness (K4.3): migration 0028 `projects.max_running_jobs`; claim CTE skips candidates whose project is at its active-lease cap; `PATCH /projects` exposes the limit.
+- Sandbox hardening (K4.4): custom seccomp profile `deploy/forge-job-seccomp.json` (180-syscall allowlist, live-tested with cargo builds), resource classes small/standard/large (`CICD_RUNNER_RESOURCE_CLASS`) capping memory/pids/tmpfs per job with hard swap==memory.
+- CLI (K5): `ndjson` output (arrays stream one compact doc per line), stable exit codes (0/2 usage, 3 network/5xx, 4 not-found, 5 unauthorized, 6 validation), config profiles `~/.config/forge-cli/config.toml` (`--profile`/`CICD_PROFILE`, flag>env>file precedence), `completions` command (bash/zsh/fish/powershell).
+- Observability (K6): `/metrics` state gauges (pipelines running/queued, jobs failed/succeeded 24h, runners online/draining) refreshed from PostgreSQL on every scrape; opt-in OTLP trace export in `sdlc-telemetry` (feature `otlp`, `SDLC_OTLP_ENDPOINT`); compose profile `observability` — Prometheus 7790 (alert rules), Grafana 7791 (provisioned dashboard), Alertmanager 7792 (`FORGE_ALERT_WEBHOOK_URL` external hook); runbook OBSERVABILITY.md.
+- Backups (K7): `forge_backup.py --retention N` prunes old timestamped backups, `FORGE_BACKUP_OFFSITE_DIR` rsyncs each backup off-site (append-only); restore drill executed and documented.
+
 - Backend runtime config: server startup теперь собирает typed `RuntimeConfig` из `CICD_` env, передаёт его в HTTP state/supervisors/runner protocol/artifact/secret paths, fail-fast валидирует bool, runner mode, artifact TTL, queue timeout и secrets key, а router construction валидирует CORS; compose/example/docs синхронизированы с `CICD_AUTH_COOKIE_SECURE` и `CICD_RUNNER_QUEUE_TIMEOUT_SECONDS`.
 - Documentation guard: `scripts/verify_docs.py --all` now validates frontend CI script references, required dashboard package scripts/tool dependencies, frontend stack versions in `docs/ARCHITECTURE.md`, and screenshot manifest coverage for every production `appRoutes` path.
 - Documentation guard: `scripts/verify_docs.py --all` now fails when `/readiness` migration-version examples drift behind committed SQLx migrations.

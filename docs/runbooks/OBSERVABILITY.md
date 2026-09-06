@@ -39,5 +39,15 @@ queued > 0 и runners online = 0.
 ### ForgeNoRunnersOnline
 30 минут 0 онлайн. Проверить heartbeat-цикл runner'а (outbox/listener в логах), затем как ForgeQueueStuck.
 
+## Alertmanager + внешний мониторинг (K7.2)
+
+Alertmanager (7792) входит в профиль observability и отправляет firing/resolved-алерты на внешний webhook:
+
+```bash
+FORGE_ALERT_WEBHOOK_URL=https://monitoring.example.com/hooks/forge   docker compose -f docker-compose.local.yml --profile observability up -d
+```
+
+Без переменной вебхук указывает на локальный `webhook-disabled` (алерты видны только в UI Alertmanager → http://127.0.0.1:7792). `send_resolved: true` — на вебхук уходят и закрытия.
+
 ## Изменение правил/дэшборда
-Правила и дэшборд монтируются read-only; после правки — `docker compose restart prometheus grafana` (с профилем). Алерты без Alertmanager пока видны только в UI Prometheus → Alerts.
+Правила и дэшборд монтируются read-only; после правки — `docker compose restart prometheus grafana alertmanager` (с профилем).

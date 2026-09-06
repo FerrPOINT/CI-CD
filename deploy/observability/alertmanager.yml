@@ -1,0 +1,13 @@
+# K7.2: Alertmanager with a generic external monitoring hook.
+# FORGE_ALERT_WEBHOOK_URL (compose env) receives every firing alert as JSON.
+route:
+  receiver: external-hook
+  group_by: [alertname]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+receivers:
+  - name: external-hook
+    webhook_configs:
+      - url: __WEBHOOK_URL__
+        send_resolved: true
