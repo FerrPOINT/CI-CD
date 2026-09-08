@@ -276,7 +276,7 @@ PR, добавляющий или меняющий capability, NFR, публич
 
 ## OpenAPI и generated types
 
-OpenAPI-first artifact уже current: Rust `utoipa` annotations генерируют committed `openapi/openapi.yaml`, frontend генерирует DTO в `frontend/src/api/schema.d.ts`, а `pnpm openapi:compat` проверяет backward compatibility против base/default branch. Отдельный `cicd-api` crate и generated transport boundary остаются target.
+OpenAPI-first artifact уже current: Rust `utoipa` annotations генерируют committed `openapi/openapi.yaml`, а committed frontend schema `frontend/src/api/schema.d.ts` регенерируется через `pnpm openapi:generate` и проверяется `pnpm openapi:check`; `pnpm openapi:compat` проверяет backward compatibility против base/default branch. Отдельный `cicd-api` crate и generated transport boundary остаются target.
 
 Текущий порядок при изменении API:
 
