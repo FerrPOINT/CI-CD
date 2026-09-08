@@ -6290,15 +6290,26 @@ async fn project_dispatch_limit_defers_work_beyond_cap() {
         })
     };
 
-    // First poll claims the single allowed job.
-    let response = poll(app.clone(), credential.clone()).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let offer = response_json(response).await;
-    assert!(offer["leaseId"].is_string(), "first job claimed: {offer:?}");
-
-    // Second poll must NOT claim the sibling while the cap is reached.
-    let response = poll(app.clone(), credential.clone()).await;
-    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    // Concurrent polls may lock different queue rows, but must never oversubscribe
+    // the project-wide cap. Exactly one request gets an offer.
+    let (first, second) = tokio::join!(
+        poll(app.clone(), credential.clone()),
+        poll(app.clone(), credential.clone()),
+    );
+    let statuses = [first.status(), second.status()];
+    assert!(statuses.contains(&StatusCode::OK), "one poll must claim work: {statuses:?}");
+    assert!(
+        statuses.contains(&StatusCode::NO_CONTENT),
+        "the sibling poll must observe the cap: {statuses:?}"
+    );
+    let lease_count: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM job_leases WHERE runner_id = $1 AND lease_status = 'active'",
+    )
+    .bind(runner_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count active leases");
+    assert_eq!(lease_count, 1, "project cap must hold under concurrent polls");
 
     // Raise the cap to 2 — the sibling becomes claimable.
     sqlx::query("UPDATE projects SET max_running_jobs = 2 WHERE id = $1")

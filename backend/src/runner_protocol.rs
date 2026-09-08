@@ -1186,7 +1186,7 @@ async fn claim_next_work(
                ) \
              ORDER BY q.priority DESC, q.not_before, q.queued_at, p.created_at, s.position, j.position, q.id \
              LIMIT 1 \
-             FOR UPDATE OF q SKIP LOCKED \
+             FOR UPDATE OF q, pr SKIP LOCKED \
          ), claimed_job AS ( \
              UPDATE jobs j \
              SET status = 'running', started_at = COALESCE(started_at, now()) \
