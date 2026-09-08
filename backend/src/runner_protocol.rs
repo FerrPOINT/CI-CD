@@ -2180,6 +2180,7 @@ pub(crate) async fn complete_artifact_upload_session(
     post,
     path = "/api/v1/runner/leases/{lease_id}/artifact-sessions/{session_id}/abort",
     tag = "runner-protocol",
+    // Keep the historical wire schema compatible while parsing the narrower abort DTO.
     request_body = ArtifactSessionCompleteRequest,
     params(("lease_id" = Uuid, Path), ("session_id" = Uuid, Path)),
     responses((status = 200, body = ArtifactSessionStatusResponse), (status = 401), (status = 404), (status = 410))
@@ -2191,8 +2192,23 @@ pub(crate) async fn abort_artifact_upload_session(
     Json(input): Json<ArtifactSessionCompleteRequest>,
 ) -> Result<Json<ArtifactSessionStatusResponse>, ApiError> {
     validate_protocol_version(input.protocol_version)?;
+    if input.fencing_token < 1 || input.lease_token.trim().is_empty() {
+        return Err(ApiError::bad_request(
+            "lease token and fencing token are required",
+        ));
+    }
     let db = pool(&state)?;
     let runner = authenticate_runner(db, &headers).await?;
+    let token_hash = crate::auth::hash_token(input.lease_token.trim());
+    lease_artifact_row(
+        db,
+        lease_id,
+        runner.id,
+        &token_hash,
+        input.fencing_token,
+        input.attempt_id,
+    )
+    .await?;
     let updated = sqlx::query(
         "UPDATE artifact_upload_sessions \
          SET status = 'aborted', updated_at = now() \

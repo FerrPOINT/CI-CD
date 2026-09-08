@@ -5903,6 +5903,41 @@ async fn artifact_upload_sessions_resume_and_complete() {
         "re-begin resumes the same session"
     );
 
+    // Abort is a lease-fenced mutation: a runner credential alone is not enough.
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!(
+                "/api/v1/runner/leases/{lease_id}/artifact-sessions/{session_id}/abort"
+            ))
+            .header("authorization", format!("Bearer {credential}"))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({
+                    "protocolVersion": 1,
+                    "leaseToken": "wrong-lease-token",
+                    "fencingToken": 1,
+                    "attemptId": attempt_id,
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::GONE,
+        "bad lease token must not abort session"
+    );
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM artifact_upload_sessions WHERE id = $1")
+            .bind(session_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch open session after rejected abort");
+    assert_eq!(status, "open");
+
     // Chunk 0 uploads.
     let chunk0 = &body_full[..10];
     let sha0 = format!("{:x}", Sha256::digest(chunk0));
