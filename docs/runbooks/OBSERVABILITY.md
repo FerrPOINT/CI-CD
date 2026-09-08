@@ -1,9 +1,10 @@
 # Runbook: Observability (K6.2)
 
-Профиль `observability` в `docker-compose.local.yml` поднимает Prometheus (7790) и Grafana (7791) для Forge CI/CD.
+Профиль `observability` в workspace-файле `/opt/dev/sdlc/docker-compose.local.yml` поднимает Prometheus (7790), Grafana (7791) и Alertmanager (7792) для Forge CI/CD. Запускайте команды из корня workspace, а не из checkout `CI-CD`.
 
 ```bash
-docker compose -f docker-compose.local.yml --profile observability up -d
+cd /opt/dev/sdlc
+docker compose -f /opt/dev/sdlc/docker-compose.local.yml --profile observability up -d
 ```
 
 - Prometheus: http://127.0.0.1:7790 (scrape `forge-cicd` → `cicd-backend:22801/metrics`, rules из `deploy/observability/forge-alerts.yaml`)
@@ -44,7 +45,8 @@ queued > 0 и runners online = 0.
 Alertmanager (7792) входит в профиль observability и отправляет firing/resolved-алерты на внешний webhook:
 
 ```bash
-FORGE_ALERT_WEBHOOK_URL=https://monitoring.example.com/hooks/forge   docker compose -f docker-compose.local.yml --profile observability up -d
+FORGE_ALERT_WEBHOOK_URL=https://monitoring.example.com/hooks/forge \
+  docker compose -f /opt/dev/sdlc/docker-compose.local.yml --profile observability up -d
 ```
 
 Без переменной вебхук указывает на локальный `webhook-disabled` (алерты видны только в UI Alertmanager → http://127.0.0.1:7792). `send_resolved: true` — на вебхук уходят и закрытия.

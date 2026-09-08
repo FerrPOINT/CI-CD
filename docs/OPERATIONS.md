@@ -185,8 +185,16 @@ FORGE_BACKUP_OFFSITE_DIR=/mnt/nas/forge-backups scripts/backup.sh --retention 7
 Для наиболее согласованного backup дождитесь terminal jobs, приостановите новые push/API mutations и позвольте helper-у остановить backend/frontend на время снимка. Current embedded runner может быть прерван остановкой backend, поэтому это maintenance-операция, а не online snapshot.
 
 ```bash
-cd /opt/dev/CI-CD
-scripts/backup.sh --backup-dir "$PWD/backups/$(date -u +%Y%m%dT%H%M%SZ)"
+# Base workspace: the umbrella compose file owns the running CI-CD volumes.
+cd /opt/dev/sdlc/CI-CD
+scripts/backup.sh \
+  --project-dir /opt/dev/sdlc \
+  --compose-file /opt/dev/sdlc/docker-compose.local.yml \
+  --env-file /opt/dev/sdlc/.env \
+  --postgres-service cicd-postgres \
+  --backend-service cicd-backend \
+  --frontend-service cicd-frontend \
+  --backup-dir "$PWD/backups/$(date -u +%Y%m%dT%H%M%SZ)"
 scripts/verify-backup.sh "$PWD/backups/<backup-id>"
 ```
 
@@ -201,11 +209,18 @@ Helper берёт `CICD_DATABASE_USER`/`CICD_DATABASE_NAME` из `.env` или �
 Ниже `<backup-dir>` -- каталог, созданный предыдущей процедурой. Команды заменяют содержимое базы, Git и artifacts на содержимое backup.
 
 ```bash
-cd /opt/dev/CI-CD
+cd /opt/dev/sdlc/CI-CD
 scripts/verify-backup.sh "/absolute/path/to/<backup-dir>"
-scripts/restore.sh "/absolute/path/to/<backup-dir>" --confirm-restore
-curl -fsS http://127.0.0.1:22801/api/v1/health
-curl -fsS http://127.0.0.1:22801/api/v1/projects
+scripts/restore.sh \
+  --project-dir /opt/dev/sdlc \
+  --compose-file /opt/dev/sdlc/docker-compose.local.yml \
+  --env-file /opt/dev/sdlc/.env \
+  --postgres-service cicd-postgres \
+  --backend-service cicd-backend \
+  --frontend-service cicd-frontend \
+  "/absolute/path/to/<backup-dir>" --confirm-restore
+curl -fsS http://127.0.0.1:7711/api/v1/health
+curl -fsS http://127.0.0.1:7711/api/v1/projects
 ```
 
 Restore script требует `--confirm-restore`, перед записью проверяет `SHA256SUMS`/`files.txt`/`manifest.json`, останавливает frontend/backend, запускает `pg_restore --clean --if-exists --no-owner`, заменяет Git/artifact volumes через backend image и выполняет `git fsck`, если не задан `--skip-git-fsck`. После восстановления проверьте чтение нескольких ожидаемых pipeline/job/artifact записей через API. Не запускайте новые pipelines до завершения этой проверки. Если restore не проходит, сохраняйте исходные логи и эскалируйте; не лечите ошибку удалением data volume.

@@ -34,6 +34,9 @@ class ComposeConfig:
     env_file: Path | None
     db_user: str
     db_name: str
+    postgres_service: str
+    backend_service: str
+    frontend_service: str
     dry_run: bool
 
 
@@ -82,6 +85,9 @@ def build_config(args: argparse.Namespace) -> ComposeConfig:
         env_file=env_file.resolve() if env_file else None,
         db_user=env_value(env_values, "CICD_DATABASE_USER", "cicd"),
         db_name=env_value(env_values, "CICD_DATABASE_NAME", "cicd"),
+        postgres_service=args.postgres_service,
+        backend_service=args.backend_service,
+        frontend_service=args.frontend_service,
         dry_run=args.dry_run,
     )
 
@@ -199,7 +205,7 @@ def write_manifest(config: ComposeConfig, backup_dir: Path, counts: dict[str, in
             if config.compose_file.is_relative_to(config.project_dir)
             else str(config.compose_file),
         },
-        "services": {"postgres": "postgres", "backend": "backend", "frontend": "frontend"},
+        "services": {"postgres": config.postgres_service, "backend": config.backend_service, "frontend": config.frontend_service},
         "database": {"name": config.db_name, "user": config.db_user},
         "container_paths": {"git": DEFAULT_GIT_PATH, "artifacts": DEFAULT_ARTIFACTS_PATH},
         "contents": {
@@ -225,7 +231,7 @@ def run_git_fsck(config: ComposeConfig) -> None:
         f"find {DEFAULT_GIT_PATH} -type d -name '*.git' "
         "-exec git --git-dir={} fsck --no-dangling ';'"
     )
-    run(config, compose(config, "run", "--rm", "--no-deps", "--user", "root", "backend", "sh", "-ceu", script))
+    run(config, compose(config, "run", "--rm", "--no-deps", "--user", "root", config.backend_service, "sh", "-ceu", script))
 
 
 def command_backup(args: argparse.Namespace) -> int:
@@ -238,27 +244,27 @@ def command_backup(args: argparse.Namespace) -> int:
         (backup_dir / "git").mkdir()
         (backup_dir / "artifacts").mkdir()
 
-    backend_cid = capture(config, compose(config, "ps", "-q", "backend"), "DRY_RUN_BACKEND_CONTAINER")
+    backend_cid = capture(config, compose(config, "ps", "-q", config.backend_service), "DRY_RUN_BACKEND_CONTAINER")
     if not backend_cid:
         raise SystemExit("backend container not found; run `docker compose up` before backup")
 
     stopped = False
     try:
         if not args.no_stop:
-            run(config, compose(config, "stop", "frontend", "backend"))
+            run(config, compose(config, "stop", config.frontend_service, config.backend_service))
             stopped = True
         if not args.skip_git_fsck:
             run_git_fsck(config)
         run(
             config,
-            compose(config, "exec", "-T", "postgres", "pg_dump", "-U", config.db_user, "-d", config.db_name, "--format=custom", "--no-owner"),
+            compose(config, "exec", "-T", config.postgres_service, "pg_dump", "-U", config.db_user, "-d", config.db_name, "--format=custom", "--no-owner"),
             stdout_path=backup_dir / "postgres.dump",
         )
         run(config, ["docker", "cp", f"{backend_cid}:{DEFAULT_GIT_PATH}/.", str(backup_dir / "git")])
         run(config, ["docker", "cp", f"{backend_cid}:{DEFAULT_ARTIFACTS_PATH}/.", str(backup_dir / "artifacts")])
     finally:
         if stopped and not args.leave_stopped:
-            run(config, compose(config, "up", "-d", "backend", "frontend"))
+            run(config, compose(config, "up", "-d", config.backend_service, config.frontend_service))
 
     if not config.dry_run:
         counts = write_inventory(backup_dir)
@@ -427,10 +433,10 @@ def command_restore(args: argparse.Namespace) -> int:
     else:
         print(f"restore source: {backup_dir}")
 
-    run(config, compose(config, "stop", "frontend", "backend"))
+    run(config, compose(config, "stop", config.frontend_service, config.backend_service))
     run(
         config,
-        compose(config, "exec", "-T", "postgres", "pg_restore", "-U", config.db_user, "-d", config.db_name, "--clean", "--if-exists", "--no-owner"),
+        compose(config, "exec", "-T", config.postgres_service, "pg_restore", "-U", config.db_user, "-d", config.db_name, "--clean", "--if-exists", "--no-owner"),
         stdin_path=backup_dir / "postgres.dump",
     )
     volume_script = (
@@ -452,7 +458,7 @@ def command_restore(args: argparse.Namespace) -> int:
             "root",
             "-v",
             f"{backup_dir}:/backup:ro",
-            "backend",
+            config.backend_service,
             "sh",
             "-ceu",
             volume_script,
@@ -460,7 +466,7 @@ def command_restore(args: argparse.Namespace) -> int:
     )
     if not args.skip_git_fsck:
         run_git_fsck(config)
-    run(config, compose(config, "up", "-d", "backend", "frontend"))
+    run(config, compose(config, "up", "-d", config.backend_service, config.frontend_service))
     run(config, compose(config, "ps"))
     print("restore finished; run read-only API/Git/artifact smoke before accepting traffic")
     return 0
@@ -470,6 +476,9 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--project-dir", default=str(ROOT), help="repository root with docker-compose.yml")
     parser.add_argument("--compose-file", default="docker-compose.yml", help="compose file path")
     parser.add_argument("--env-file", default=".env", help="optional compose env file")
+    parser.add_argument("--postgres-service", default="postgres", help="PostgreSQL Compose service name")
+    parser.add_argument("--backend-service", default="backend", help="backend Compose service name")
+    parser.add_argument("--frontend-service", default="frontend", help="frontend Compose service name")
     parser.add_argument("--dry-run", action="store_true", help="print commands without executing them")
 
 
