@@ -377,7 +377,7 @@ export CICD_CLI="$PWD/backend/target/debug/cicd-cli"
 | Reports/audit | `$CICD_CLI report summary --project <PROJECT_UUID>`; `$CICD_CLI audit list` |
 | Users/members/tokens | `$CICD_CLI user list`; `$CICD_CLI member upsert --project <PROJECT_UUID> --user <USER_UUID> --role developer`; `$CICD_CLI token create --name deploy-bot --user <USER_UUID> --project <PROJECT_UUID> --scope api:read --expires-in-days 30` |
 
-Глобальные флаги `--token`, `--timeout-seconds`, `--output json|table`, `--api-url` и env-переменные `CICD_API_TOKEN`, `CICD_TIMEOUT_SECONDS`, `CICD_OUTPUT`, `CICD_API_URL` описаны в [CLI](CLI.md). Real-API smoke gate для CLI уже входит в CI и покрывает protected API JWT/PAT auth-mode, RBAC denial и project-scoped read-only PAT; CLI profile/keyring, shell completion, YAML/NDJSON, request tracing и расширенные token redaction fixtures остаются **Target approved**.
+Глобальные флаги `--token`, `--timeout-seconds`, `--output json|table`, `--api-url` и env-переменные `CICD_API_TOKEN`, `CICD_TIMEOUT_SECONDS`, `CICD_OUTPUT`, `CICD_API_URL` описаны в [CLI](CLI.md). Real-API smoke gate для CLI уже входит в CI и покрывает protected API JWT/PAT auth-mode, RBAC denial и project-scoped read-only PAT; CLI profiles (`config.toml`), shell completion and NDJSON are current; OS keyring, YAML output, request tracing and extended token redaction fixtures remain **Target approved**.
 
 ## 13. FAQ по типовым задачам
 
@@ -411,13 +411,13 @@ curl -fsS -X POST "http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines"
 
 **Статус процедуры: Current verified.**
 
-В деталях pipeline используйте **Cancel** для каскадной отмены нетерминальных jobs или **Retry** для нового запуска того же project/ref. Отдельную terminal job можно повторить её кнопкой **Retry**. Secret injection работает через declared `jobs.*.secrets`: embedded runner inject-ит только объявленные project secrets, а current `forge-runner` shell MVP после `ack` получает lease-scoped secret bundle, передаёт его в env, маскирует stdout/stderr и отправляет terminal completion. Declared artifact upload работает через `jobs.*.artifacts.paths`: runner собирает workspace-relative файлы, сохраняет metadata с attempt и показывает их на странице job artifacts. Richer log chunks, resumable artifact sessions и production sandbox остаются target.
+В деталях pipeline используйте **Cancel** для каскадной отмены нетерминальных jobs или **Retry** для нового запуска того же project/ref. Отдельную terminal job можно повторить её кнопкой **Retry**. Secret injection работает через declared `jobs.*.secrets`: embedded runner inject-ит только объявленные project secrets, а current `forge-runner` shell MVP после `ack` получает lease-scoped secret bundle, передаёт его в env, маскирует stdout/stderr и отправляет terminal completion. Declared artifact upload работает через `jobs.*.artifacts.paths`: runner собирает workspace-relative файлы, сохраняет metadata с attempt и показывает их на странице job artifacts. Richer log chunks and production runner-zone sandbox remain target; resumable artifact sessions and Docker seccomp/resource classes are current.
 
 ### Где найти логи и почему они не меняются?
 
 **Статус процедуры: Current verified.**
 
-Откройте job и **Logs** или вызовите `GET /api/v1/jobs/{job_id}/attempts` вместе с `/attempts/{attempt_id}/logs`. Логи append-only в рамках выбранной attempt; у queued job может ещё не быть строк. Если после retry shortcut `/logs` показывает пустой текущий запуск, переключитесь на предыдущую attempt для старой диагностики и проверьте status job, image, command и доступность Docker/host shell для embedded runner. Для external `forge-runner` current MVP уже отправляет stdout/stderr в централизованные logs через runner protocol, резолвит declared secrets отдельным lease-scoped endpoint и загружает declared artifacts через lease-scoped endpoint; richer chunk/idempotency и resumable artifact sessions остаются target.
+Откройте job и **Logs** или вызовите `GET /api/v1/jobs/{job_id}/attempts` вместе с `/attempts/{attempt_id}/logs`. Логи append-only в рамках выбранной attempt; у queued job может ещё не быть строк. Если после retry shortcut `/logs` показывает пустой текущий запуск, переключитесь на предыдущую attempt для старой диагностики и проверьте status job, image, command и доступность Docker/host shell для embedded runner. Для external `forge-runner` current MVP уже отправляет stdout/stderr в централизованные logs через runner protocol, резолвит declared secrets отдельным lease-scoped endpoint и загружает declared artifacts через lease-scoped endpoint; richer chunk/idempotency remains target; resumable artifact sessions are current.
 
 ### Как безопасно передать credential в job?
 

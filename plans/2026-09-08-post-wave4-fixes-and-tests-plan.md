@@ -1,6 +1,6 @@
 # Post-Wave 4 Fixes and Tests Implementation Plan
 
-> **For Hermes:** Execute this plan task-by-task, using strict TDD for every production-code change. Do not start Wave 5 product modules until the deterministic P0 baseline is green.
+**Status 2026-09-08:** Active. Gate 0 baseline confirmed; initial audit found stale K1/K4/K5/K6 claims in canonical and narrative documentation. First implementation checkpoint is documentation reconciliation plus an explicit drift guard.
 
 **Goal:** Turn the completed K1-K7 work into a durable, regression-resistant Forge CI/CD baseline: documentation accurately represents shipped behaviour, tests cover the new runner/CLI/observability/backup contracts, and compose/CI prove the operational paths actually used on the Base stand.
 

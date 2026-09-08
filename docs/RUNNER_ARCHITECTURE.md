@@ -41,7 +41,7 @@
 | Изоляция | API/backend может запускать Docker; есть host-shell fallback; внешний `forge-runner` shell MVP можно запускать отдельно, но без production sandbox | Docker socket только у runner host; rootless/least privilege. Kubernetes runner создаёт ограниченный Job/Pod |
 | Тесты | Domain/API/CLI tests, real PostgreSQL integration для persistent paths, frontend unit/build gates | Unit, property, protocol compatibility, runner contract, Docker/K8s integration, chaos/e2e |
 
-В документации и пользовательском интерфейсе текущий механизм следует называть **embedded execution + durable queue + external runner protocol/forge-runner shell MVP**, а не полноценной distributed runner platform: production sandbox, resumable artifact sessions, fairness/pool policy, full redaction/rotation и richer log chunks ещё не завершены.
+В документации и пользовательском интерфейсе текущий механизм следует называть **embedded execution + durable queue + external runner protocol/forge-runner shell MVP**, а не полноценной distributed runner platform: production runner-zone separation, Kubernetes isolation, pool policy, full redaction/rotation and richer log chunks are not complete; resumable artifact sessions, per-project dispatch cap and Docker seccomp/resource classes are current.
 
 ---
 

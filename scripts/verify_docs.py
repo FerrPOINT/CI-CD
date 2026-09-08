@@ -146,6 +146,12 @@ FORBIDDEN_STALE_STATUS = [
     (r"env \(`CICD_`\) → typed config \(в процессе\)", "backend server now uses typed RuntimeConfig; package split remains target"),
     (r"full typed config target", "backend RuntimeConfig is current; remaining target is package split/production hardening"),
     (r"сейчас — прямое чтение env", "server startup and AppState now use typed RuntimeConfig"),
+    (r"richer log chunks, resumable artifact sessions, Docker/Kubernetes isolation and sandbox hardening remain target", "resumable artifact sessions and Docker seccomp/resource classes are current"),
+    (r"Profiles, keyring, generated DTO/client, request tracing, NDJSON и расширенные redaction fixtures остаются target", "profiles and NDJSON are current; OS keyring/request tracing remain target"),
+    (r"OTLP, alerting и корреляция API--CLI не реализованы", "OTLP and alert routing are current; API--CLI trace correlation remains target"),
+    (r"profile/keyring/YAML/NDJSON, request tracing и расширенные redaction fixtures остаются target", "profiles/NDJSON/completions/stable exit codes are current"),
+    (r"off-site/PITR/monthly drill остаются target", "off-site rsync, retention and a PostgreSQL 17 restore drill are current"),
+    (r"resumable artifact sessions, richer log chunks, advanced runner policy и sandbox boundary остаются Phase D", "artifact sessions, dispatch caps and Docker seccomp/resource classes are current"),
 ]
 
 problems: list[str] = []

@@ -23,16 +23,16 @@ Forge CI/CD развивается из MVP control plane в безопасну�
 
 | Область | Текущее состояние |
 |---|---|
-| Backend | Cargo workspace содержит server crate, `domain` и выделенный `cli`; основная HTTP/SQL-логика пока находится в `backend/src/api.rs` и смежных модулях. |
+| Backend | Cargo workspace содержит `cicd-server`, `cicd-domain`, `cicd-app`, `cicd-infra`, `cicd-api` facade и отдельный `cicd-cli`; server API разделён на vertical modules in `backend/src/api/`, while further use-case transfers remain incremental. |
 | API | REST доступен по `/api/v1`; есть health/readiness, auth, projects, pipelines, jobs, Git и platform endpoints. OpenAPI генерируется из Rust annotations в `openapi/openapi.yaml` и проверяется drift gate в CI. |
 | Ошибки | Current API возвращает structured envelope `{"error":{"code","message","request_id"}}` и header `x-request-id`; compatibility/error taxonomy ещё не полностью покрыта target contract tests. |
 | Версионирование | Path-versioning `/api/v1` документирован, но нет автоматической проверки breaking changes между контрактами. |
-| Пагинация | `projects` и `pipelines` поддерживают `limit/offset` с cap 200; job logs имеют bounded page/search (`limit`, `after`, `q`) и compatibility array endpoint для current/latest attempt. Унифицированный response envelope/cursor model для всех списков остаётся target. |
+| Пагинация | `projects` и `pipelines` поддерживают `limit/offset` с cap 200; job logs have bounded forward and tail windows (`limit`, `after`, `before`, `q`, `total`, `has_more_before`) и compatibility array endpoint для current/latest attempt. Унифицированный response envelope/cursor model для всех списков остаётся target. |
 | Идемпотентность | Current MVP: `POST /projects/{project_id}/pipelines` поддерживает `Idempotency-Key` и хранит `pipeline_triggers`; generated Git hook дедуплицируется по `repository/ref/new_rev`. General idempotency storage для всех retryable mutations остаётся target. |
 | Auth/RBAC | При `CICD_AUTH_SECRET` включены login/JWT/scoped PAT, argon2id credentials, sessions, route-level global roles и project memberships; без секрета остаётся trusted-network mode. Tenant scope, service-account/scoped Git credentials и production session policy остаются target. |
 | Frontend | React 19/Vite/TanStack Query; около 20 маршрутов + `/login`. DTO генерируются в `frontend/src/api/schema.d.ts`, API wrapper/hooks остаются handwritten. |
-| CLI | `backend/cli` уже отдельный package и работает через HTTP; реализованы runtime/platform группы `project`, `pipeline`, `job`, `runner`, `secret`, `artifact`, `environment`, `deployment`, `schedule`, `webhook`, `notification`, `outbox`, `report`, `audit`, `user`, `member`, `token`; есть `--api-url`/`CICD_API_URL`, `--token`/`CICD_API_TOKEN`, `--timeout-seconds`/`CICD_TIMEOUT_SECONDS`, `--output json|table`/`CICD_OUTPUT` и real-API smoke в CI, включая JWT/PAT auth-mode, RBAC denial и project-scoped read-only PAT. Profiles, keyring, generated DTO/client, request tracing, NDJSON и расширенные redaction fixtures остаются target. |
-| Observability | Есть `/api/v1/health`, `/api/v1/readiness`, `/metrics`, `TraceLayer` и `tracing`. OTLP, alerting и корреляция API--CLI не реализованы. |
+| CLI | `backend/cli` уже отдельный package и работает через HTTP; реализованы runtime/platform группы `project`, `pipeline`, `job`, `runner`, `secret`, `artifact`, `environment`, `deployment`, `schedule`, `webhook`, `notification`, `outbox`, `report`, `audit`, `user`, `member`, `token`; есть `--api-url`/`CICD_API_URL`, `--token`/`CICD_API_TOKEN`, `--timeout-seconds`/`CICD_TIMEOUT_SECONDS`, `--output json|table`/`CICD_OUTPUT` и real-API smoke в CI, включая JWT/PAT auth-mode, RBAC denial и project-scoped read-only PAT. Profiles (`config.toml`), NDJSON, stable exit codes and shell completions are current. OS keyring, generated transport client, request tracing and extended redaction fixtures remain target. |
+| Observability | Есть `/api/v1/health`, `/api/v1/readiness`, `/metrics` with database state gauges, `TraceLayer`, tracing and opt-in OTLP export (`SDLC_OTLP_ENDPOINT`). The `observability` compose profile provides Prometheus, Grafana and Alertmanager with external webhook routing; API--CLI trace correlation remains target. |
 | Quality | GitHub Actions запускает backend fmt/clippy/workspace tests, real PostgreSQL integration, OpenAPI drift/compatibility gate, frontend generated-client check/test/build, Compose startup/health smoke, critical Playwright journeys, all-route axe/performance E2E на seeded Compose stack, security и docs checks. Lighthouse/load budgets и полный evidence bundle остаются target. |
 
 ## 3. Целевые принципы
@@ -887,8 +887,8 @@ Evidence requirements:
 
 - Разделить CLI на command/config/client/output/error modules.
 - Подключить generated API DTO/client или verified shared public contract package.
-- Реализовать profiles, keyring/token-env policy и request tracing.
-- Добавить NDJSON mode, stable errors и exit code tests.
+- Реализовать OS keyring/token-env policy и request tracing; profiles and NDJSON are current.
+- Расширить redaction/error classification fixtures; NDJSON and stable exit code tests are current.
 - Добавить pagination, `--all`, `--follow`, idempotency and safe confirmations.
 - Документировать shell completion и automation examples.
 
@@ -898,7 +898,7 @@ Evidence requirements:
 
 **Цель:** обнаруживать и диагностировать инциденты до пользовательского обращения.
 
-- Добавить Prometheus metrics, OTLP tracing и trace propagation.
+- Расширить metrics/trace propagation correlation; Prometheus gauges, OTLP tracing, alerts and runbook are current.
 - Настроить structured logging schema/redaction.
 - Ввести dashboards, alerts, runbook и retention policy.
 - Добавить metrics/traces/probe checks в compose smoke.
