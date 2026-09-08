@@ -10,7 +10,7 @@
 |---|---|
 | Источник DTO | Только `openapi/openapi.yaml`; generated schema расположен в `frontend/src/api/schema.d.ts`. |
 | Generated code | Не редактируется вручную; regeneration и `git diff --exit-code` обязательны в CI. |
-| Handwritten transport | `frontend/src/api/client.ts` и feature-level wrappers оборачивают generated schema для headers, error decoding, binary upload/download и SSE. Generated transport остаётся target. |
+| Handwritten transport | `frontend/src/api/client.ts` и feature-level wrappers оборачивают generated schema для headers, error decoding, binary upload/download и SSE. Artifact download использует Bearer-aware `downloadArtifact()` с single refresh/retry и terminal-401 handling; страница не должна использовать plain `<a>` для protected binary endpoint. Generated transport остаётся target. |
 | UI policy | Query keys, cache invalidation, retry, redirect, toast и presentation errors не генерируются. |
 | Raw fetch | Page, widget и feature не вызывают raw `fetch`; используют entity/feature API поверх typed transport. |
 | DTO duplication | Для migrated operation запрещены ручные DTO и hand-written serialization. |

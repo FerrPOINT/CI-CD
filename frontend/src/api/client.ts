@@ -49,17 +49,50 @@ export function onTerminalAuthError(handler: TerminalAuthHandler): void {
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  let response = await request(path, init)
-  if (response.status === 401) {
-    // Single-flight refresh + one retry; a second 401 is terminal.
-    const refreshed = await import('./auth').then((m) => m.refresh()).catch(() => null)
-    if (refreshed) response = await request(path, init)
-    else terminalAuthHandler?.()
-  }
+  const response = await requestWithRefresh(path, init)
   if (!response.ok) {
     throw await apiErrorFromResponse(response)
   }
   return response.json() as Promise<T>
+}
+
+export type DownloadedArtifact = {
+  blob: Blob
+  filename: string
+}
+
+/** Download a protected artifact through the same Bearer/refresh policy as JSON API calls. */
+export async function downloadArtifact(artifactId: string): Promise<DownloadedArtifact> {
+  const response = await requestWithRefresh(`/artifacts/${encodeURIComponent(artifactId)}/download`, {
+    headers: { Accept: 'application/octet-stream' },
+  })
+  if (!response.ok) {
+    throw await apiErrorFromResponse(response)
+  }
+  return {
+    blob: await response.blob(),
+    filename: filenameFromDisposition(response.headers.get('Content-Disposition')) ?? 'artifact',
+  }
+}
+
+export function saveDownloadedArtifact(artifact: DownloadedArtifact): void {
+  const url = URL.createObjectURL(artifact.blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = artifact.filename
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
+async function requestWithRefresh(path: string, init?: RequestInit): Promise<Response> {
+  let response = await request(path, init)
+  if (response.status !== 401) return response
+
+  // Single-flight refresh + one retry; a second 401 is terminal.
+  const refreshed = await import('./auth').then((m) => m.refresh()).catch(() => null)
+  if (refreshed) response = await request(path, init)
+  else terminalAuthHandler?.()
+  return response
 }
 
 async function request(path: string, init?: RequestInit): Promise<Response> {
@@ -73,7 +106,7 @@ async function request(path: string, init?: RequestInit): Promise<Response> {
 function withAuth(init?: RequestInit): RequestInit {
   const session = currentSession()
   const headers = new Headers(init?.headers)
-  headers.set('Accept', 'application/json')
+  if (!headers.has('Accept')) headers.set('Accept', 'application/json')
   if (init?.body !== undefined && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }
@@ -114,6 +147,14 @@ function apiErrorFromFetch(error: unknown): ApiError {
     kind: 'network',
     message: error instanceof Error && error.message ? error.message : 'network request failed',
   })
+}
+
+function filenameFromDisposition(value: string | null): string | undefined {
+  if (!value) return undefined
+  const encoded = value.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+  if (encoded) return decodeURIComponent(encoded)
+  const quoted = value.match(/filename="([^"]+)"/i)?.[1]
+  return quoted ?? value.match(/filename=([^;\s]+)/i)?.[1]
 }
 
 function parseRetryAfter(value: string | null): number | undefined {

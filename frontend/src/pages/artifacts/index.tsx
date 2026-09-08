@@ -2,9 +2,11 @@ import { useTranslation } from 'react-i18next'
 import { QueryState } from '@/shared/ui/query-state'
 import { useParams } from 'react-router'
 import { useArtifacts } from '@/api/hooks'
+import { downloadArtifact, saveDownloadedArtifact } from '@/api/client'
 import { Card } from '@sdlc/ui/ui'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@sdlc/ui/ui'
 import { Package } from 'lucide-react'
+import { toast } from 'sonner'
 
 export function ArtifactsPage() {
   const { t } = useTranslation()
@@ -47,12 +49,17 @@ export function ArtifactsPage() {
                     <TableCell className="text-xs text-text-muted">{new Date(a.expires_at).toLocaleString()}</TableCell>
                     <TableCell>
                       {state === 'available' ? (
-                        <a
-                          href={`/api/v1/artifacts/${a.id}/download`}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void downloadArtifact(a.id)
+                              .then(saveDownloadedArtifact)
+                              .catch(() => toast.error(t('artifacts.downloadFailed')))
+                          }}
                           className="text-xs text-accent hover:underline"
                         >
                           {t('artifacts.download')}
-                        </a>
+                        </button>
                       ) : (
                         <span className="text-xs text-text-muted">{t(`artifacts.${state}`)}</span>
                       )}

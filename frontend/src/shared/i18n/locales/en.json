@@ -228,6 +228,7 @@
     "created": "Created",
     "expires": "Expires",
     "download": "Download",
+    "downloadFailed": "Could not download artifact",
     "expired": "Expired",
     "purged": "Purged",
     "empty": "No artifacts for this job."
