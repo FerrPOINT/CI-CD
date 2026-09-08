@@ -6,7 +6,7 @@ use super::{ApiError, ApiResult, AppState, PageParams, list_projects_for_claims,
 use crate::platform::audit;
 use axum::Json;
 use axum::extract::{Path, State};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -233,6 +233,15 @@ pub(crate) async fn get_project(
     Ok(Json(project))
 }
 
+fn deserialize_present_nullable_i32<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<i32>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<i32>::deserialize(deserializer).map(Some)
+}
+
 #[derive(Debug, Deserialize, Default, utoipa::ToSchema)]
 pub(crate) struct UpdateProject {
     pub(crate) name: Option<String>,
@@ -240,6 +249,7 @@ pub(crate) struct UpdateProject {
     pub(crate) default_branch: Option<String>,
     /// K4.3 dispatch fairness: max concurrently active-leased jobs for this
     /// project (>=1). Omit to keep; null clears the limit.
+    #[serde(default, deserialize_with = "deserialize_present_nullable_i32")]
     pub(crate) max_running_jobs: Option<Option<i32>>,
 }
 
@@ -275,12 +285,13 @@ pub(crate) async fn update_project(
         }
     }
     let project = sqlx::query_as::<_, Project>(
-        "UPDATE projects SET name = COALESCE($2, name), repository_url = COALESCE($3, repository_url), default_branch = COALESCE($4, default_branch), max_running_jobs = COALESCE($5, max_running_jobs) WHERE id = $1 RETURNING id, name, repository_url, default_branch, max_running_jobs, created_at",
+        "UPDATE projects SET name = COALESCE($2, name), repository_url = COALESCE($3, repository_url), default_branch = COALESCE($4, default_branch), max_running_jobs = CASE WHEN $5 THEN $6 ELSE max_running_jobs END WHERE id = $1 RETURNING id, name, repository_url, default_branch, max_running_jobs, created_at",
     )
     .bind(project_id)
     .bind(input.name.as_deref().map(str::trim))
     .bind(input.repository_url.as_deref().map(str::trim))
     .bind(input.default_branch.as_deref().map(str::trim))
+    .bind(input.max_running_jobs.is_some())
     .bind(input.max_running_jobs.flatten())
     .fetch_optional(pool(&state)?)
     .await

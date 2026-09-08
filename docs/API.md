@@ -288,6 +288,7 @@ curl -sS http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID
 | `name` | string | no | Новое имя (non-empty при передаче) |
 | `repository_url` | string | no | Новый URL репозитория |
 | `default_branch` | string | no | Новая ветка по умолчанию |
+| `max_running_jobs` | integer or null | no | Максимум одновременно active lease для проекта: `1..4096`; `null` снимает cap, отсутствие поля сохраняет текущее значение |
 
 **Response 200:** обновлённый объект проекта.
 

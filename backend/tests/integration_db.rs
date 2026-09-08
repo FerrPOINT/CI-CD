@@ -6064,6 +6064,38 @@ async fn artifact_upload_sessions_resume_and_complete() {
 }
 
 #[tokio::test]
+async fn project_patch_null_max_running_jobs_clears_dispatch_cap() {
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO projects (id, name, repository_url, max_running_jobs) \
+         VALUES ($1, $2, 'https://example.invalid/clear-cap.git', 1)",
+    )
+    .bind(project_id)
+    .bind(format!("it-clear-dispatch-cap-{}", Uuid::new_v4().simple()))
+    .execute(&pool)
+    .await
+    .expect("insert capped project");
+
+    let app = cicd::api::app(Some(pool));
+    let response = app
+        .oneshot(
+            Request::patch(format!("/api/v1/projects/{project_id}"))
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"max_running_jobs":null}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response_json(response).await["max_running_jobs"].is_null(),
+        "PATCH null must remove the project dispatch cap"
+    );
+}
+
+#[tokio::test]
 async fn project_dispatch_limit_defers_work_beyond_cap() {
     let pool = test_pool().await;
     sqlx::query("DELETE FROM projects WHERE name LIKE 'it-dispatch-limit-%'")
