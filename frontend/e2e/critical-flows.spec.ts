@@ -26,7 +26,11 @@ test.describe('critical dashboard journeys', () => {
     await page.getByRole('link', { name: /Артефакты/ }).first().click()
     await expect(page.getByRole('heading', { name: 'Артефакты' })).toBeVisible()
     await expect(page.getByText(expectedArtifactName)).toBeVisible()
-    await expect(page.getByRole('link', { name: 'Скачать' }).first()).toHaveAttribute('href', /\/api\/v1\/artifacts\/.+\/download/)
+    // Downloads use the authenticated API client rather than an unauthenticated link.
+    const download = page.waitForEvent('download')
+    await page.getByRole('button', { name: 'Скачать' }).first().click()
+    const downloadedFile = await download
+    expect(downloadedFile.suggestedFilename()).toBe(expectedArtifactName)
   })
 
   test('[REQ-UI-001] opens repository code and renders the committed Forge pipeline config', async ({ page, request }) => {
