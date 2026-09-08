@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:00000000-0000-0000-0000-000000000000",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-09-03T12:53:50Z",
+    "timestamp": "2026-09-08T17:36:57Z",
     "component": {
       "type": "application",
       "name": "forge-ci-cd",
@@ -118,6 +118,27 @@
     },
     {
       "type": "library",
+      "name": "async-stream",
+      "version": "0.3.6",
+      "purl": "pkg:cargo/async-stream@0.3.6",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "async-stream-impl",
+      "version": "0.3.6",
+      "purl": "pkg:cargo/async-stream-impl@0.3.6",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "async-trait",
+      "version": "0.1.92",
+      "purl": "pkg:cargo/async-trait@0.1.92",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
       "name": "atoi",
       "version": "2.0.0",
       "purl": "pkg:cargo/atoi@2.0.0",
@@ -140,8 +161,22 @@
     {
       "type": "library",
       "name": "axum",
+      "version": "0.7.9",
+      "purl": "pkg:cargo/axum@0.7.9",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "axum",
       "version": "0.8.9",
       "purl": "pkg:cargo/axum@0.8.9",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "axum-core",
+      "version": "0.4.5",
+      "purl": "pkg:cargo/axum-core@0.4.5",
       "license": "unknown"
     },
     {
@@ -238,8 +273,8 @@
     {
       "type": "library",
       "name": "chacha20",
-      "version": "0.10.1",
-      "purl": "pkg:cargo/chacha20@0.10.1",
+      "version": "0.10.2",
+      "purl": "pkg:cargo/chacha20@0.10.2",
       "license": "unknown"
     },
     {
@@ -247,6 +282,27 @@
       "name": "chrono",
       "version": "0.4.45",
       "purl": "pkg:cargo/chrono@0.4.45",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "cicd-api",
+      "version": "0.1.0",
+      "purl": "pkg:cargo/cicd-api@0.1.0",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "cicd-app",
+      "version": "0.1.0",
+      "purl": "pkg:cargo/cicd-app@0.1.0",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "cicd-infra",
+      "version": "0.1.0",
+      "purl": "pkg:cargo/cicd-infra@0.1.0",
       "license": "unknown"
     },
     {
@@ -268,6 +324,13 @@
       "name": "clap_builder",
       "version": "4.6.6",
       "purl": "pkg:cargo/clap_builder@4.6.6",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "clap_complete",
+      "version": "4.6.9",
+      "purl": "pkg:cargo/clap_complete@4.6.9",
       "license": "unknown"
     },
     {
@@ -315,8 +378,8 @@
     {
       "type": "library",
       "name": "cpufeatures",
-      "version": "0.3.0",
-      "purl": "pkg:cargo/cpufeatures@0.3.0",
+      "version": "0.3.1",
+      "purl": "pkg:cargo/cpufeatures@0.3.1",
       "license": "unknown"
     },
     {
@@ -373,6 +436,13 @@
       "name": "der",
       "version": "0.7.10",
       "purl": "pkg:cargo/der@0.7.10",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "deranged",
+      "version": "0.5.8",
+      "purl": "pkg:cargo/deranged@0.5.8",
       "license": "unknown"
     },
     {
@@ -441,8 +511,8 @@
     {
       "type": "library",
       "name": "flate2",
-      "version": "1.1.9",
-      "purl": "pkg:cargo/flate2@1.1.9",
+      "version": "1.1.10",
+      "purl": "pkg:cargo/flate2@1.1.10",
       "license": "unknown"
     },
     {
@@ -450,6 +520,13 @@
       "name": "flume",
       "version": "0.11.1",
       "purl": "pkg:cargo/flume@0.11.1",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "fnv",
+      "version": "1.0.7",
+      "purl": "pkg:cargo/fnv@1.0.7",
       "license": "unknown"
     },
     {
@@ -499,6 +576,13 @@
       "name": "futures-io",
       "version": "0.3.34",
       "purl": "pkg:cargo/futures-io@0.3.34",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "futures-macro",
+      "version": "0.3.34",
+      "purl": "pkg:cargo/futures-macro@0.3.34",
       "license": "unknown"
     },
     {
@@ -555,6 +639,27 @@
       "name": "git2",
       "version": "0.20.4",
       "purl": "pkg:cargo/git2@0.20.4",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "glob",
+      "version": "0.3.4",
+      "purl": "pkg:cargo/glob@0.3.4",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "h2",
+      "version": "0.4.19",
+      "purl": "pkg:cargo/h2@0.4.19",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "hashbrown",
+      "version": "0.12.3",
+      "purl": "pkg:cargo/hashbrown@0.12.3",
       "license": "unknown"
     },
     {
@@ -651,8 +756,8 @@
     {
       "type": "library",
       "name": "hyper",
-      "version": "1.11.0",
-      "purl": "pkg:cargo/hyper@1.11.0",
+      "version": "1.11.1",
+      "purl": "pkg:cargo/hyper@1.11.1",
       "license": "unknown"
     },
     {
@@ -660,6 +765,13 @@
       "name": "hyper-rustls",
       "version": "0.27.9",
       "purl": "pkg:cargo/hyper-rustls@0.27.9",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "hyper-timeout",
+      "version": "0.5.2",
+      "purl": "pkg:cargo/hyper-timeout@0.5.2",
       "license": "unknown"
     },
     {
@@ -749,8 +861,15 @@
     {
       "type": "library",
       "name": "indexmap",
-      "version": "2.14.0",
-      "purl": "pkg:cargo/indexmap@2.14.0",
+      "version": "1.9.3",
+      "purl": "pkg:cargo/indexmap@1.9.3",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "indexmap",
+      "version": "2.14.1",
+      "purl": "pkg:cargo/indexmap@2.14.1",
       "license": "unknown"
     },
     {
@@ -772,6 +891,13 @@
       "name": "is_terminal_polyfill",
       "version": "1.70.2",
       "purl": "pkg:cargo/is_terminal_polyfill@1.70.2",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "itertools",
+      "version": "0.14.0",
+      "purl": "pkg:cargo/itertools@0.14.0",
       "license": "unknown"
     },
     {
@@ -833,8 +959,8 @@
     {
       "type": "library",
       "name": "libredox",
-      "version": "0.1.20",
-      "purl": "pkg:cargo/libredox@0.1.20",
+      "version": "0.1.23",
+      "purl": "pkg:cargo/libredox@0.1.23",
       "license": "unknown"
     },
     {
@@ -896,6 +1022,13 @@
     {
       "type": "library",
       "name": "matchit",
+      "version": "0.7.3",
+      "purl": "pkg:cargo/matchit@0.7.3",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "matchit",
       "version": "0.8.4",
       "purl": "pkg:cargo/matchit@0.8.4",
       "license": "unknown"
@@ -924,15 +1057,15 @@
     {
       "type": "library",
       "name": "miniz_oxide",
-      "version": "0.8.9",
-      "purl": "pkg:cargo/miniz_oxide@0.8.9",
+      "version": "0.9.1",
+      "purl": "pkg:cargo/miniz_oxide@0.9.1",
       "license": "unknown"
     },
     {
       "type": "library",
       "name": "mio",
-      "version": "1.2.2",
-      "purl": "pkg:cargo/mio@1.2.2",
+      "version": "1.2.3",
+      "purl": "pkg:cargo/mio@1.2.3",
       "license": "unknown"
     },
     {
@@ -944,9 +1077,23 @@
     },
     {
       "type": "library",
+      "name": "num-bigint",
+      "version": "0.4.8",
+      "purl": "pkg:cargo/num-bigint@0.4.8",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
       "name": "num-bigint-dig",
       "version": "0.8.6",
       "purl": "pkg:cargo/num-bigint-dig@0.8.6",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "num-conv",
+      "version": "0.2.2",
+      "purl": "pkg:cargo/num-conv@0.2.2",
       "license": "unknown"
     },
     {
@@ -993,6 +1140,41 @@
     },
     {
       "type": "library",
+      "name": "opentelemetry",
+      "version": "0.27.1",
+      "purl": "pkg:cargo/opentelemetry@0.27.1",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "opentelemetry-http",
+      "version": "0.27.0",
+      "purl": "pkg:cargo/opentelemetry-http@0.27.0",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "opentelemetry-otlp",
+      "version": "0.27.0",
+      "purl": "pkg:cargo/opentelemetry-otlp@0.27.0",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "opentelemetry-proto",
+      "version": "0.27.0",
+      "purl": "pkg:cargo/opentelemetry-proto@0.27.0",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "opentelemetry_sdk",
+      "version": "0.27.1",
+      "purl": "pkg:cargo/opentelemetry_sdk@0.27.1",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
       "name": "parking",
       "version": "2.2.1",
       "purl": "pkg:cargo/parking@2.2.1",
@@ -1021,6 +1203,13 @@
     },
     {
       "type": "library",
+      "name": "pem",
+      "version": "3.0.6",
+      "purl": "pkg:cargo/pem@3.0.6",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
       "name": "pem-rfc7468",
       "version": "0.7.0",
       "purl": "pkg:cargo/pem-rfc7468@0.7.0",
@@ -1031,6 +1220,20 @@
       "name": "percent-encoding",
       "version": "2.3.2",
       "purl": "pkg:cargo/percent-encoding@2.3.2",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "pin-project",
+      "version": "1.1.13",
+      "purl": "pkg:cargo/pin-project@1.1.13",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "pin-project-internal",
+      "version": "1.1.13",
+      "purl": "pkg:cargo/pin-project-internal@1.1.13",
       "license": "unknown"
     },
     {
@@ -1084,6 +1287,13 @@
     },
     {
       "type": "library",
+      "name": "powerfmt",
+      "version": "0.2.0",
+      "purl": "pkg:cargo/powerfmt@0.2.0",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
       "name": "ppv-lite86",
       "version": "0.2.21",
       "purl": "pkg:cargo/ppv-lite86@0.2.21",
@@ -1094,6 +1304,20 @@
       "name": "proc-macro2",
       "version": "1.0.107",
       "purl": "pkg:cargo/proc-macro2@1.0.107",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "prost",
+      "version": "0.13.5",
+      "purl": "pkg:cargo/prost@0.13.5",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "prost-derive",
+      "version": "0.13.5",
+      "purl": "pkg:cargo/prost-derive@0.13.5",
       "license": "unknown"
     },
     {
@@ -1280,6 +1504,20 @@
     },
     {
       "type": "library",
+      "name": "sdlc-auth-core",
+      "version": "0.1.0",
+      "purl": "pkg:cargo/sdlc-auth-core@0.1.0",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "sdlc-telemetry",
+      "version": "0.1.0",
+      "purl": "pkg:cargo/sdlc-telemetry@0.1.0",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
       "name": "serde",
       "version": "1.0.229",
       "purl": "pkg:cargo/serde@1.0.229",
@@ -1311,6 +1549,13 @@
       "name": "serde_path_to_error",
       "version": "0.1.20",
       "purl": "pkg:cargo/serde_path_to_error@0.1.20",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "serde_spanned",
+      "version": "0.6.9",
+      "purl": "pkg:cargo/serde_spanned@0.6.9",
       "license": "unknown"
     },
     {
@@ -1371,6 +1616,13 @@
     },
     {
       "type": "library",
+      "name": "simple_asn1",
+      "version": "0.6.3",
+      "purl": "pkg:cargo/simple_asn1@0.6.3",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
       "name": "slab",
       "version": "0.4.12",
       "purl": "pkg:cargo/slab@0.4.12",
@@ -1379,8 +1631,15 @@
     {
       "type": "library",
       "name": "smallvec",
-      "version": "1.15.2",
-      "purl": "pkg:cargo/smallvec@1.15.2",
+      "version": "1.16.0",
+      "purl": "pkg:cargo/smallvec@1.16.0",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "socket2",
+      "version": "0.5.10",
+      "purl": "pkg:cargo/socket2@0.5.10",
       "license": "unknown"
     },
     {
@@ -1512,8 +1771,22 @@
     {
       "type": "library",
       "name": "thiserror",
+      "version": "1.0.69",
+      "purl": "pkg:cargo/thiserror@1.0.69",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "thiserror",
       "version": "2.0.20",
       "purl": "pkg:cargo/thiserror@2.0.20",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "thiserror-impl",
+      "version": "1.0.69",
+      "purl": "pkg:cargo/thiserror-impl@1.0.69",
       "license": "unknown"
     },
     {
@@ -1528,6 +1801,27 @@
       "name": "thread_local",
       "version": "1.1.10",
       "purl": "pkg:cargo/thread_local@1.1.10",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "time",
+      "version": "0.3.47",
+      "purl": "pkg:cargo/time@0.3.47",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "time-core",
+      "version": "0.1.8",
+      "purl": "pkg:cargo/time-core@0.1.8",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "time-macros",
+      "version": "0.2.27",
+      "purl": "pkg:cargo/time-macros@0.2.27",
       "license": "unknown"
     },
     {
@@ -1577,6 +1871,55 @@
       "name": "tokio-stream",
       "version": "0.1.19",
       "purl": "pkg:cargo/tokio-stream@0.1.19",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "tokio-util",
+      "version": "0.7.19",
+      "purl": "pkg:cargo/tokio-util@0.7.19",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "toml",
+      "version": "0.8.23",
+      "purl": "pkg:cargo/toml@0.8.23",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "toml_datetime",
+      "version": "0.6.11",
+      "purl": "pkg:cargo/toml_datetime@0.6.11",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "toml_edit",
+      "version": "0.22.27",
+      "purl": "pkg:cargo/toml_edit@0.22.27",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "toml_write",
+      "version": "0.1.2",
+      "purl": "pkg:cargo/toml_write@0.1.2",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "tonic",
+      "version": "0.12.3",
+      "purl": "pkg:cargo/tonic@0.12.3",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "tower",
+      "version": "0.4.13",
+      "purl": "pkg:cargo/tower@0.4.13",
       "license": "unknown"
     },
     {
@@ -1633,6 +1976,20 @@
       "name": "tracing-log",
       "version": "0.2.0",
       "purl": "pkg:cargo/tracing-log@0.2.0",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "tracing-opentelemetry",
+      "version": "0.28.0",
+      "purl": "pkg:cargo/tracing-opentelemetry@0.28.0",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "tracing-serde",
+      "version": "0.2.0",
+      "purl": "pkg:cargo/tracing-serde@0.2.0",
       "license": "unknown"
     },
     {
@@ -1736,8 +2093,8 @@
     {
       "type": "library",
       "name": "uuid",
-      "version": "1.25.0",
-      "purl": "pkg:cargo/uuid@1.25.0",
+      "version": "1.26.0",
+      "purl": "pkg:cargo/uuid@1.26.0",
       "license": "unknown"
     },
     {
@@ -2043,6 +2400,13 @@
     },
     {
       "type": "library",
+      "name": "winnow",
+      "version": "0.7.15",
+      "purl": "pkg:cargo/winnow@0.7.15",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
       "name": "writeable",
       "version": "0.6.4",
       "purl": "pkg:cargo/writeable@0.6.4",
@@ -2123,6 +2487,13 @@
       "name": "zerovec-derive",
       "version": "0.11.6",
       "purl": "pkg:cargo/zerovec-derive@0.11.6",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "zlib-rs",
+      "version": "0.6.7",
+      "purl": "pkg:cargo/zlib-rs@0.6.7",
       "license": "unknown"
     },
     {
@@ -2289,6 +2660,14 @@
       "name": "zustand",
       "version": "5.0.3",
       "purl": "pkg:npm/zustand@5.0.3",
+      "license": "unknown",
+      "scope": "required"
+    },
+    {
+      "type": "library",
+      "name": "@sdlc/ui",
+      "version": "file:../../services-base/frontend",
+      "purl": "pkg:npm/@sdlc/ui@file:../../services-base/frontend",
       "license": "unknown",
       "scope": "required"
     },

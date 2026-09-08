@@ -238,6 +238,45 @@ jobs:
     - uses: dtolnay/rust-toolchain@stable
       with:
         toolchain: "1.88"
+    - name: Install cargo-audit
+      run: cargo install cargo-audit --locked
+    - name: Guard optional MySQL/RSA advisory path
+      working-directory: CI-CD/backend
+      run: |
+        if cargo tree -i sqlx-mysql --edges features --target all 2>/dev/null | grep -q .; then exit 1; fi
+        if cargo tree -i rsa --target all 2>/dev/null | grep -q .; then exit 1; fi
+    - name: Rust advisory audit
+      working-directory: CI-CD/backend
+      run: cargo audit --ignore RUSTSEC-2023-0071
+    - uses: pnpm/action-setup@v4
+      with:
+        version: 10.28.1
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: pnpm
+        cache-dependency-path: CI-CD/frontend/pnpm-lock.yaml
+    - name: Install frontend dependency graph
+      working-directory: CI-CD/frontend
+      run: pnpm install --frozen-lockfile
+    - name: Node advisory audit
+      working-directory: CI-CD/frontend
+      run: pnpm audit --audit-level high
+    - name: Committed-secret baseline
+      run: python3 scripts/scan_secrets.py
+    - name: SBOM drift
+      run: python3 scripts/generate_sbom.py --check
+    - name: Build production images for scan
+      env:
+        CICD_API_PORT: 22801
+        CICD_WEB_PORT: 22802
+      run: |
+        docker build -f backend/Dockerfile.umbrella -t forge-cicd-backend:ci ..
+        docker build -f frontend/Dockerfile.umbrella -t forge-cicd-frontend:ci ..
+    - name: Critical image vulnerability scan
+      env:
+        CICD_TRIVY_SEVERITY: CRITICAL
+      run: scripts/scan_container_images.sh forge-cicd-backend:ci forge-cicd-frontend:ci
 
   docs:
     runs-on: ubuntu-latest
