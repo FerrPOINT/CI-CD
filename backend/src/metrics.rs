@@ -19,6 +19,7 @@ pub static JOBS_FAILED_24H: AtomicU64 = AtomicU64::new(0);
 pub static JOBS_SUCCEEDED_24H: AtomicU64 = AtomicU64::new(0);
 pub static RUNNERS_ONLINE: AtomicU64 = AtomicU64::new(0);
 pub static RUNNERS_DRAINING: AtomicU64 = AtomicU64::new(0);
+pub static RUNNERS_EMBEDDED_ENABLED: AtomicU64 = AtomicU64::new(0);
 
 pub fn render() -> String {
     let mut out = String::new();
@@ -100,6 +101,12 @@ pub fn render() -> String {
         RUNNERS_DRAINING.load(Ordering::Relaxed),
     );
     m(
+        "forge_runner_embedded_enabled",
+        "Embedded runner enabled (1) or disabled (0)",
+        "gauge",
+        RUNNERS_EMBEDDED_ENABLED.load(Ordering::Relaxed),
+    );
+    m(
         "forge_outbox_dead_total",
         "Outbox messages dead-lettered",
         "counter",
@@ -112,6 +119,16 @@ pub fn render() -> String {
 /// tolerated (metrics must never 5xx); gauges keep their last value.
 pub async fn refresh_state_gauges(pool: &sqlx::PgPool) {
     use sqlx::Row;
+
+    RUNNERS_EMBEDDED_ENABLED.store(
+        u64::from(
+            crate::runner::embedded_runner_enabled_from_env(
+                std::env::var("CICD_EMBEDDED_RUNNER_ENABLED").ok(),
+            )
+            .unwrap_or(false),
+        ),
+        Ordering::Relaxed,
+    );
     let ok = |row: &sqlx::postgres::PgRow, col: &str| -> u64 {
         row.try_get::<i64, _>(col)
             .map(|v| v.max(0) as u64)
@@ -143,5 +160,16 @@ pub async fn refresh_state_gauges(pool: &sqlx::PgPool) {
     {
         RUNNERS_ONLINE.store(ok(&row, "online"), Ordering::Relaxed);
         RUNNERS_DRAINING.store(ok(&row, "draining"), Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn renders_embedded_runner_mode_gauge() {
+        RUNNERS_EMBEDDED_ENABLED.store(1, Ordering::Relaxed);
+        assert!(render().contains("forge_runner_embedded_enabled 1"));
     }
 }

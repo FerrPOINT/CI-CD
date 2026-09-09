@@ -38,7 +38,10 @@ queued > 0 и runners online = 0.
 4. Если runner draining — снять флаг через UI/CLI (`cicd-cli runner update --drain false`).
 
 ### ForgeNoRunnersOnline
-30 минут 0 онлайн. Проверить heartbeat-цикл runner'а (outbox/listener в логах), затем как ForgeQueueStuck.
+30 минут нет online external runner при выключенном embedded runner (`forge_runner_embedded_enabled == 0`). Если embedded runner включён, нулевое число registered runner-ов штатно и alert не срабатывает.
+
+1. Для external-only режима проверьте heartbeat-цикл runner'а (outbox/listener в логах), затем как ForgeQueueStuck.
+2. Для embedded режима проверьте `CICD_EMBEDDED_RUNNER_ENABLED=true`, Docker socket и группу `DOCKER_GID`; при наличии queued jobs основной сигнал — ForgeQueueStuck.
 
 ## Alertmanager + внешний мониторинг (K7.2)
 
