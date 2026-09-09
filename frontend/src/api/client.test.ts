@@ -7,7 +7,7 @@ const authMocks = vi.hoisted(() => ({
 
 vi.mock('./auth', () => authMocks)
 
-import { api, ApiError, apiRetry, downloadArtifact } from './client'
+import { api, ApiError, apiRetry, downloadArtifact, onTerminalAuthError } from './client'
 
 beforeEach(() => {
   authMocks.currentSession.mockReset()
@@ -116,6 +116,22 @@ describe('api client errors', () => {
     expect(new Headers(fetchMock.mock.calls[1][1]?.headers).get('Authorization')).toBe('Bearer fresh-access')
     expect(artifact.filename).toBe('build.txt')
     expect(artifact.blob.type).toBe('text/plain')
+  })
+
+  it('[REQ-AUTH-002] reports a retried 401 as terminal session expiry', async () => {
+    const terminal = vi.fn()
+    onTerminalAuthError(terminal)
+    authMocks.currentSession.mockReturnValue({ access_token: 'expired-access', expires_at: Date.now() / 1000 + 3600 })
+    authMocks.refresh.mockResolvedValue({ access_token: 'fresh-access', expires_at: Date.now() / 1000 + 3600 })
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(new Response('expired', { status: 401 }))
+      .mockResolvedValueOnce(new Response('still expired', { status: 401 })))
+
+    const error = await captureApiError(() => api('/projects'))
+
+    expect(error.status).toBe(401)
+    expect(authMocks.refresh).toHaveBeenCalledOnce()
+    expect(terminal).toHaveBeenCalledOnce()
   })
 
   it('[REQ-UI-001] surfaces terminal 401 instead of returning an artifact', async () => {

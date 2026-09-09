@@ -1,7 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef } from 'react'
-import { api, apiRetry } from './client'
-import { currentSession } from './auth'
+import { api, apiRetry, authenticatedFetch } from './client'
 import type {
   TreeEntry,
   BlobContent,
@@ -683,13 +682,7 @@ export function useNotificationEvents(projectId: string | undefined) {
     async function connect() {
       while (!stopped) {
         try {
-          const headers = new Headers()
-          const session = currentSession()
-          if (session && session.expires_at * 1000 > Date.now() + 30_000) {
-            headers.set('Authorization', `Bearer ${session.access_token}`)
-          }
-          const response = await fetch(`/api/v1/projects/${streamProjectId}/notifications/stream`, {
-            headers,
+          const response = await authenticatedFetch(`/projects/${streamProjectId}/notifications/stream`, {
             signal: controller.signal,
           })
           if (!response.ok || !response.body) throw new Error('notification stream unavailable')

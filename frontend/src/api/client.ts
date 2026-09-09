@@ -49,7 +49,7 @@ export function onTerminalAuthError(handler: TerminalAuthHandler): void {
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await requestWithRefresh(path, init)
+  const response = await authenticatedFetch(path, init)
   if (!response.ok) {
     throw await apiErrorFromResponse(response)
   }
@@ -63,7 +63,7 @@ export type DownloadedArtifact = {
 
 /** Download a protected artifact through the same Bearer/refresh policy as JSON API calls. */
 export async function downloadArtifact(artifactId: string): Promise<DownloadedArtifact> {
-  const response = await requestWithRefresh(`/artifacts/${encodeURIComponent(artifactId)}/download`, {
+  const response = await authenticatedFetch(`/artifacts/${encodeURIComponent(artifactId)}/download`, {
     headers: { Accept: 'application/octet-stream' },
   })
   if (!response.ok) {
@@ -84,14 +84,14 @@ export function saveDownloadedArtifact(artifact: DownloadedArtifact): void {
   URL.revokeObjectURL(url)
 }
 
-async function requestWithRefresh(path: string, init?: RequestInit): Promise<Response> {
+export async function authenticatedFetch(path: string, init?: RequestInit): Promise<Response> {
   let response = await request(path, init)
   if (response.status !== 401) return response
 
   // Single-flight refresh + one retry; a second 401 is terminal.
   const refreshed = await import('./auth').then((m) => m.refresh()).catch(() => null)
   if (refreshed) response = await request(path, init)
-  else terminalAuthHandler?.()
+  if (response.status === 401) terminalAuthHandler?.()
   return response
 }
 
