@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:00000000-0000-0000-0000-000000000000",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-09-08T17:36:57Z",
+    "timestamp": "2026-09-09T03:44:00Z",
     "component": {
       "type": "application",
       "name": "forge-ci-cd",
@@ -2772,6 +2772,14 @@
       "name": "globals",
       "version": "17.11.0",
       "purl": "pkg:npm/globals@17.11.0",
+      "license": "unknown",
+      "scope": "development"
+    },
+    {
+      "type": "library",
+      "name": "js-yaml",
+      "version": "4.3.2",
+      "purl": "pkg:npm/js-yaml@4.3.2",
       "license": "unknown",
       "scope": "development"
     },

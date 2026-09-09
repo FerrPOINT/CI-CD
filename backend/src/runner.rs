@@ -1030,7 +1030,7 @@ async fn run_job_inner(
                 .await?;
                 refresh_stage(pool.clone(), job.id).await?;
                 if !config.keep_workspace {
-                    let _ = tokio::fs::remove_dir_all(&workspace).await;
+                    remove_workspace(&workspace).await;
                 }
                 return Ok(());
             }
@@ -1038,7 +1038,7 @@ async fn run_job_inner(
             complete_embedded_job_lease(&pool, lease.id, "failed", Some(&message)).await?;
             refresh_stage(pool.clone(), job.id).await?;
             if !config.keep_workspace {
-                let _ = tokio::fs::remove_dir_all(&workspace).await;
+                remove_workspace(&workspace).await;
             }
             return Ok(());
         }
@@ -1092,7 +1092,7 @@ async fn run_job_inner(
 
     // Cleanup workspace unless CICD_RUNNER_KEEP_WORKSPACE is enabled.
     if !config.keep_workspace {
-        let _ = tokio::fs::remove_dir_all(&workspace).await;
+        remove_workspace(&workspace).await;
     }
 
     let updated = sqlx::query(
@@ -1136,6 +1136,20 @@ async fn run_job_inner(
     complete_embedded_job_lease(&pool, lease.id, final_status, error_tail.as_deref()).await?;
     refresh_stage(pool, job.id).await?;
     Ok(())
+}
+
+fn cleanup_root(workspace: &Path) -> &Path {
+    if workspace
+        .file_name()
+        .is_some_and(|name| name == "workspace")
+    {
+        return workspace.parent().unwrap_or(workspace);
+    }
+    workspace
+}
+
+async fn remove_workspace(workspace: &Path) {
+    let _ = tokio::fs::remove_dir_all(cleanup_root(workspace)).await;
 }
 
 async fn mark_attempt_failed(
@@ -1920,6 +1934,13 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cleanup_root_removes_the_job_directory_not_only_checkout() {
+        let root = Path::new("/workspaces/forge-runner-123");
+        assert_eq!(cleanup_root(root), root);
+        assert_eq!(cleanup_root(&root.join("workspace")), root);
+    }
 
     #[test]
     fn docker_execution_uses_the_declared_image_and_isolated_workspace_volume() {
