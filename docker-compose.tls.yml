@@ -1,0 +1,43 @@
+# Wave 5 O: TLS termination for Forge CI/CD.
+#
+# Combine with docker-compose.yml. This profile intentionally removes direct
+# Forge HTTP ingress; only Caddy publishes the selected loopback HTTPS port.
+# It uses Caddy's internal CA, so clients must trust the exported root CA.
+services:
+  backend:
+    ports: !reset []
+    environment:
+      CICD_AUTH_SECRET: ${CICD_AUTH_SECRET:?set a non-empty value in .env}
+      CICD_AUTH_COOKIE_SECURE: "true"
+      CICD_CORS_ALLOWED_ORIGINS: https://${CICD_TLS_HOST:?set in .env}:${CICD_TLS_HTTPS_PORT:-22443}
+
+  frontend:
+    ports: !reset []
+
+  caddy:
+    image: caddy:2.10.2-alpine@sha256:d8c17a862962def15cde69863a3a463f25a2664942eafd7bdbf050e9c3116b83
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    environment:
+      CICD_TLS_HOST: ${CICD_TLS_HOST:?set in .env}
+      CICD_TLS_HTTPS_PORT: ${CICD_TLS_HTTPS_PORT:-22443}
+    ports:
+      - "127.0.0.1:${CICD_TLS_HTTPS_PORT:-22443}:${CICD_TLS_HTTPS_PORT:-22443}"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - cicd_caddy_data:/data
+      - cicd_caddy_config:/config
+    healthcheck:
+      test: ["CMD", "caddy", "version"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  cicd_caddy_data:
+  cicd_caddy_config:

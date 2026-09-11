@@ -4,9 +4,9 @@
 
 ## Статус и граница доверия
 
-- **Current verified:** локальный Docker Compose запускает PostgreSQL, backend и Dashboard; versioned SQLx migrations применяются при старте; embedded runner выполняет jobs на том же узле; health, `/metrics`, structured logs, conditional auth, schedules, outgoing webhook worker и `in_app`/`sse` notification delivery доступны.
+- **Current verified:** локальный Docker Compose запускает PostgreSQL, backend и Dashboard; versioned SQLx migrations применяются при старте; embedded runner выполняет jobs на том же узле; health, `/metrics`, structured logs, conditional auth, schedules, outgoing webhook worker и `in_app`/`sse` notification delivery доступны. Отдельный `docker-compose.tls.yml` добавляет loopback-only Caddy TLS termination с internal CA, strict CORS origin и secure cookies.
 - **Configuration only:** email/Slack notification adapters и inbound provider webhooks можно описать как target/config, но sender/handlers не исполняют внешнюю доставку.
-- **Target approved:** TLS-termination, tenant isolation/scoped policy, отдельные runner-ы с leases, production scheduler/outbox guarantees, alerting, off-site/PITR backup platform и production DR.
+- **Target approved:** tenant isolation/scoped policy, отдельные runner-ы с leases, production scheduler/outbox guarantees, alerting, off-site/PITR backup platform, public ingress policy and production DR.
 
 > **Критическое ограничение MVP: только локальная или доверенная сеть.** Если `CICD_AUTH_SECRET` не задан или пустой, API и Dashboard работают open/trusted-network; при непустом секрете включаются JWT/scoped PAT, session-bound access invalidation, browser refresh cookie + CSRF, refresh rotate/logout/revoke, session-family reuse revocation, route roles и project memberships для project-owned ресурсов, но tenant isolation, service-account tokens и scoped Git credentials ещё не завершены. CORS по умолчанию permissive только для isolated dev; shared deployment обязан задать `CICD_CORS_ALLOWED_ORIGINS`, TLS/reverse proxy и `CICD_AUTH_COOKIE_SECURE=true`. PostgreSQL в `docker-compose.yml` привязан к `127.0.0.1`, но API/Dashboard host ports нельзя публиковать в недоверенную сеть и нельзя считать этот Compose production-развёртыванием.
 
@@ -44,6 +44,8 @@ curl -fsS http://127.0.0.1:22801/api/v1/readiness
 curl -fsS http://127.0.0.1:22802/ >/dev/null
 ```
 
+The standard Compose file remains an isolated-development stack. For shared/internal access use the TLS profile below; it removes direct API/Dashboard host ports, requires non-empty auth, sets exact CORS and secure cookies, but it does not replace network ingress policy or the remaining production prerequisites.
+
 Ожидаемый liveness-ответ API: `{"status":"ok","service":"cicd"}`. Readiness возвращает `200` только когда PostgreSQL отвечает и все committed SQLx migrations применены без checksum mismatch; иначе endpoint возвращает `503` с `status:"not_ready"`.
 
 PostgreSQL можно дополнительно проверить контейнерным healthcheck:
@@ -80,6 +82,31 @@ docker compose down -v
 ```
 
 Перед `down -v`, `docker volume prune` или `docker system prune --volumes` создайте и проверьте backup. Эти команды могут необратимо удалить `cicd_postgres_data`, `cicd_git_repos` и `cicd_artifacts`.
+
+## TLS reverse-proxy profile (Wave 5 O)
+
+The repository includes a bounded internal TLS profile based on Caddy's internal CA. It is intended for an operator-controlled host and publishes only the HTTPS entry point on loopback; it is not an Internet-facing deployment recipe. The profile removes the direct Forge API and Dashboard host ports, preserves PostgreSQL's localhost-only binding, derives the exact CORS origin, and forces `CICD_AUTH_COOKIE_SECURE=true`.
+
+1. Create `.env` from `.env.example`, set the normal non-empty Forge secrets, then set `CICD_TLS_HOST` and (optionally) `CICD_TLS_HTTPS_PORT`. The default internal name is `forge.localhost:22443`.
+2. Render and start the profile with the existing stack:
+
+```bash
+cd /opt/dev/sdlc/CI-CD
+docker compose -f docker-compose.yml -f docker-compose.tls.yml config -q
+docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d --build
+docker compose -f docker-compose.yml -f docker-compose.tls.yml ps
+```
+
+3. Export the generated Caddy root CA to an operator-controlled path, then trust that certificate in the client OS/browser trust store. The certificate is trust material, not a Forge secret; do not install it on unmanaged clients:
+
+```bash
+scripts/export-tls-ca.sh --output ./tmp/forge-caddy-root.crt
+# Add --project-name when the stack runs under a non-default Compose project.
+curl --cacert ./tmp/forge-caddy-root.crt https://forge.localhost:22443/api/v1/health
+curl --cacert ./tmp/forge-caddy-root.crt https://forge.localhost:22443/api/v1/readiness
+```
+
+Dashboard, REST API and Git Smart HTTP share this single HTTPS origin. `/metrics` is deliberately not proxied by Caddy; keep monitoring traffic on its private network path. To stop the profile without deleting state, run `docker compose -f docker-compose.yml -f docker-compose.tls.yml down`. Returning to isolated HTTP development requires a deliberate `docker compose -f docker-compose.yml up -d`; do not publish the direct ports to an untrusted network.
 
 ## Production prerequisites (Target approved)
 

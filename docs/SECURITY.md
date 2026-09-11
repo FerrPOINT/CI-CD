@@ -19,7 +19,7 @@ Forge CI/CD — self-hosted CI/CD control plane. Текущая версия о�
 | Input validation | ✅ частично | проверка `trim().is_empty()` на входе |
 | CORS | ✅ configurable MVP | Пустой `CICD_CORS_ALLOWED_ORIGINS` сохраняет permissive dev-режим; непустой список включает allowlist origins, credentials и запрещает explicit `*` |
 | Rate limiting | ✅ MVP | in-process fixed-window для auth, API, Git Smart HTTP, internal hook и artifact upload; distributed/proxy policy — target |
-| HTTPS/TLS | ❌ нет | через reverse proxy (nginx/Caddy) |
+| HTTPS/TLS | ✅ bounded internal profile | `docker-compose.tls.yml` terminates loopback HTTPS with Caddy internal CA; public ingress, ACME and network firewall policy remain operator-owned |
 
 ## 3. Authentication
 
@@ -169,15 +169,14 @@ if let Some(status) = status_filter {
 
 ### 8.1 Текущее состояние
 
-- HTTP без TLS (разработка).
-- Reverse proxy (nginx / Caddy / Traefik) — для HTTPS в production (см. `docs/DEPLOYMENT.md`).
+- HTTP без TLS остаётся development-путём.
+- Для bounded internal deployment доступен `docker-compose.tls.yml`: Caddy на loopback завершает HTTPS собственной internal CA, сбрасывает direct API/Dashboard ports, выставляет trusted proxy headers, точный CORS origin и `CICD_AUTH_COOKIE_SECURE=true`.
+- `/metrics` не публикуется Caddy profile; monitoring traffic остаётся в private network path.
+- Public DNS/ACME, host firewall/VPN и доверие internal CA на клиентах — operator-owned prerequisites, а не свойства приложения.
 
-### 8.2 Планируемое (production)
+### 8.2 Целевое ограничение
 
-- HTTPS/TLS everywhere.
-- HSTS header.
-- Secure, SameSite=Lax/Strict, httpOnly cookies (для refresh token).
-- No sensitive data в URL query params.
+Internal TLS profile не закрывает tenant isolation, service-account/scoped Git credentials, mTLS runner identity или production network policy. Shared/public deployment требует этих независимых контуров и отдельной ingress review.
 
 ## 9. CORS
 

@@ -15,6 +15,8 @@
 | `CICD_AUTH_SECRET` | — | JWT/PAT auth boundary; пусто оставляет trusted-network режим |
 | `CICD_AUTH_COOKIE_SECURE` | `false` | `Secure` flag для refresh/CSRF cookies; включайте за TLS/reverse proxy |
 | `CICD_CORS_ALLOWED_ORIGINS` | — | Comma-separated allowlist browser origins для API/Git Dashboard CORS; пусто сохраняет permissive trusted-local режим, explicit `*` запрещён |
+| `CICD_TLS_HOST` | — | Имя internal TLS origin для профиля `docker-compose.tls.yml`; обязательна непустая DNS-safe host label, например `forge.localhost` |
+| `CICD_TLS_HTTPS_PORT` | `22443` | Loopback host/container порт Caddy TLS profile; frontend/API direct ports в этом профиле удалены |
 | `CICD_SECRETS_KEY` | — | Base64 32-byte ключ AES-256-GCM (обязателен для secrets) |
 | `CICD_ARTIFACTS_DIR` | `/var/lib/forge/artifacts` | Локальное хранилище артефактов |
 | `CICD_ARTIFACT_RETENTION_DAYS` | `30` | TTL новых артефактов в днях (`1..3650`); backend retention worker удаляет expired local files и помечает metadata `purged_at` |

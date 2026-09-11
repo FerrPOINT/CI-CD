@@ -76,7 +76,7 @@ Deliverables:
 - Current MVP: scoped PAT с обязательным `project_id`, scopes `api:read|api:write|git:read|git:write`, expiry/revoke/last-used и без глобального доступа по умолчанию;
 - Current MVP: повторное использование уже заменённого refresh token отзывает session family и один раз повышает `users.token_version`;
 - Target follow-up: service-account tokens, scoped Git credentials, tenant-bound repository mapping и delivery routes с repository/project binding;
-- Current MVP: configurable `CICD_CORS_ALLOWED_ORIGINS` allowlist и browser refresh/logout CSRF proof; target follow-up: обязательный non-empty production default, TLS/reverse-proxy binding и `CICD_AUTH_COOKIE_SECURE=true` для shared deployments.
+- Current verified: configurable `CICD_CORS_ALLOWED_ORIGINS` allowlist, browser refresh/logout CSRF proof и loopback-only Caddy internal-CA TLS profile (`docker-compose.tls.yml`) с `CICD_AUTH_COOKIE_SECURE=true`; target follow-up: public ingress/ACME, mandatory production deployment policy and independent network boundary review.
 
 Gate:
 
