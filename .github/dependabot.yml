@@ -1,27 +1,13 @@
 version: 2
 updates:
-  # Backend: Rust workspace (backend/ — корень Cargo workspace).
-  - package-ecosystem: "cargo"
-    directory: "/backend"
-    schedule:
-      interval: "weekly"
-    commit-message:
-      prefix: "chore(deps)"
-    labels:
-      - "dependencies"
-      - "backend"
-
-  # Frontend: pnpm/npm (frontend/package.json).
-  - package-ecosystem: "npm"
-    directory: "/frontend"
-    schedule:
-      interval: "weekly"
-    commit-message:
-      prefix: "chore(deps)"
-    labels:
-      - "dependencies"
-      - "frontend"
-
+  # NOTE: cargo (/backend) and npm (/frontend) ecosystems are intentionally NOT
+  # configured. Backend path-depends on the sibling services-base checkout
+  # (sdlc-shared, sdlc-auth-core) and frontend on @sdlc/ui
+  # (file:../../services-base/frontend); GitHub Dependabot clones only this
+  # repository, so manifest resolution always fails (dependency_file_not_resolvable /
+  # ENOENT services-base). Cargo/npm dependency updates are done manually with
+  # the full backend+frontend gate.
+  #
   # GitHub Actions workflows.
   - package-ecosystem: "github-actions"
     directory: "/"
