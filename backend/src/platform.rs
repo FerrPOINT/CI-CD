@@ -1576,7 +1576,9 @@ pub(crate) struct Notification {
 }
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct NotificationInput {
+    /// One of: in_app, sse, slack_webhook, generic_webhook.
     channel: String,
+    /// Local target name or an https:// URL for external channels.
     target: String,
     enabled: Option<bool>,
 }
@@ -1630,12 +1632,31 @@ async fn replace_notifications(
         .await
         .map_err(ApiError::internal)?;
     for input in inputs {
-        if input.channel.trim().is_empty() || input.target.trim().is_empty() {
+        let channel = input.channel.trim().to_ascii_lowercase();
+        if channel.is_empty() || input.target.trim().is_empty() {
             return Err(ApiError::bad_request(
                 "notification channel and target are required",
             ));
         }
-        sqlx::query("INSERT INTO notification_configs (id, project_id, channel, target, enabled) VALUES ($1, $2, $3, $4, $5)").bind(Uuid::new_v4()).bind(project_id).bind(input.channel.trim()).bind(input.target.trim()).bind(input.enabled.unwrap_or(true)).execute(db).await.map_err(ApiError::internal)?;
+        // Fail closed on unknown channels (docs/AUTOMATION_ARCHITECTURE.md §9):
+        // in_app/sse are local, slack_webhook/generic_webhook use the shared
+        // HTTP delivery subsystem.
+        if !matches!(
+            channel.as_str(),
+            "in_app" | "sse" | "slack_webhook" | "generic_webhook"
+        ) {
+            return Err(ApiError::bad_request(
+                "unsupported notification channel: must be one of in_app, sse, slack_webhook, generic_webhook",
+            ));
+        }
+        if (channel == "slack_webhook" || channel == "generic_webhook")
+            && !input.target.trim().starts_with("https://")
+        {
+            return Err(ApiError::bad_request(
+                "external notification targets must be https URLs",
+            ));
+        }
+        sqlx::query("INSERT INTO notification_configs (id, project_id, channel, target, enabled) VALUES ($1, $2, $3, $4, $5)").bind(Uuid::new_v4()).bind(project_id).bind(&channel).bind(input.target.trim()).bind(input.enabled.unwrap_or(true)).execute(db).await.map_err(ApiError::internal)?;
     }
     list_notifications(State(state), Path(project_id)).await
 }

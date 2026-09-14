@@ -20,6 +20,22 @@ use uuid::Uuid;
 pub const MAX_ATTEMPTS: i32 = 8;
 pub const NOTIFICATION_CHANNEL_IN_APP: &str = "in_app";
 pub const NOTIFICATION_CHANNEL_SSE: &str = "sse";
+/// Delivery channels that fan out over HTTP on terminal pipeline events
+/// (docs/AUTOMATION_ARCHITECTURE.md §9, stage 4 step 2/4).
+pub const NOTIFICATION_CHANNEL_SLACK_WEBHOOK: &str = "slack_webhook";
+pub const NOTIFICATION_CHANNEL_GENERIC_WEBHOOK: &str = "generic_webhook";
+
+/// Slack incoming-webhook body: a single rendered message block.
+fn slack_payload(
+    event_type: &str,
+    project_id: Uuid,
+    pipeline_id: Uuid,
+    status: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "text": format!("Pipeline {pipeline_id} of project {project_id} finished: {status} ({event_type})"),
+    })
+}
 const OUTCOME_DELIVERED: &str = "delivered";
 const OUTCOME_RETRY_SCHEDULED: &str = "retry_scheduled";
 const OUTCOME_FAILED: &str = "failed";
@@ -73,6 +89,40 @@ pub async fn emit_pipeline_event(
         .bind(format!("webhook:{hook_id}"))
         .bind(url)
         .bind(serde_json::json!({ "event": event_type, "pipeline_id": pipeline_id, "status": status, "signed": secret.is_some() }))
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    let external = sqlx::query_as::<_, (Uuid, String, String)>(
+        "SELECT id, lower(channel), target FROM notification_configs \
+         WHERE project_id = $1 AND enabled AND lower(channel) IN ('slack_webhook', 'generic_webhook')",
+    )
+    .bind(project_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for (config_id, channel, target) in external {
+        // Reuse the shared HTTP delivery subsystem: the message is delivered
+        // by deliver_due with the same retry/backoff/dead-letter ledger.
+        let payload = if channel == NOTIFICATION_CHANNEL_SLACK_WEBHOOK {
+            slack_payload(event_type, project_id, pipeline_id, status)
+        } else {
+            serde_json::json!({
+                "event": event_type,
+                "project_id": project_id,
+                "pipeline_id": pipeline_id,
+                "status": status,
+            })
+        };
+        sqlx::query(
+            "INSERT INTO outbox_messages (id, event_id, project_id, subscription_id, channel, destination, payload) \
+             VALUES ($1, $2, $3, $4, 'webhook', $5, $6)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(event_id)
+        .bind(project_id)
+        .bind(format!("notification:{config_id}"))
+        .bind(target)
+        .bind(payload)
         .execute(&mut *tx)
         .await?;
     }

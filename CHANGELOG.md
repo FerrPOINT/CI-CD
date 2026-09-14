@@ -10,6 +10,7 @@
 ## [Unreleased]
 
 ### Added
+- Notifications внешний fan-out (AUTOMATION_ARCHITECTURE §9 этап 4): каналы `slack_webhook`/`generic_webhook` доставляются через общий outbox HTTP delivery subsystem (retry/backoff/dead-letter); Slack-контракт `{"text"}`, generic — event envelope; `https://`-only, fail-closed валидация (400).
 
 - Tenants, первый шаг target-модели (AUTHORIZATION): миграция 0030 (`tenants`, `tenant_memberships`, `projects.tenant_id` nullable), admin API `/api/v1/admin/tenants` (+memberships), tenant-read-видимость в `GET /api/v1/projects` (active tenant), suspended скрывает проекты; `POST /projects` принимает `tenant_id`.
 - Service accounts (AUTHORIZATION target-step): миграция 0029 (`service_accounts`, `api_tokens.principal_type`/`service_account_id`), admin API `/api/v1/admin/service-accounts` (+`/tokens` выпуск `forge_sat_…`), интроспекция `/api/v1/auth/principal`; SAT — developer-class machine principal с ограничением токен-скопами, `enabled=false` блокирует токены. Tenant-модель — отдельный инкремент.

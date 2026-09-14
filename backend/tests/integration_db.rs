@@ -5236,6 +5236,117 @@ async fn in_app_notification_events_are_fanned_out_and_delivered() {
 }
 
 #[tokio::test]
+async fn external_notification_channels_fan_out_to_outbox_webhook_delivery() {
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let project_name = format!("it-ext-notifications-{}", project_id.simple());
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/ext-notifications.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status) VALUES ($1, $2, 'main', 'success')",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert pipeline");
+
+    // slack_webhook + generic_webhook both fan out through the shared HTTP
+    // delivery subsystem (docs/AUTOMATION_ARCHITECTURE.md §9 stage 4).
+    let slack_target = "https://hooks.example.test/slack/x";
+    let generic_target = "https://hooks.example.test/generic";
+    sqlx::query(
+        "INSERT INTO notification_configs (id, project_id, channel, target, enabled) \
+         VALUES ($1, $2, 'slack_webhook', $3, true), ($4, $2, 'generic_webhook', $5, true)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(project_id)
+    .bind(slack_target)
+    .bind(Uuid::new_v4())
+    .bind(generic_target)
+    .execute(&pool)
+    .await
+    .expect("insert external notification configs");
+
+    let event_id = cicd::outbox::emit_pipeline_event(
+        &pool,
+        project_id,
+        pipeline_id,
+        "pipeline.success",
+        "success",
+    )
+    .await
+    .expect("emit pipeline event");
+
+    // Two webhook-channel outbox rows: slack gets the rendered message,
+    // generic gets the raw event envelope; both target the configured URL.
+    let rows: Vec<(String, String, serde_json::Value)> = sqlx::query_as(
+        "SELECT destination, subscription_id, payload FROM outbox_messages \
+         WHERE event_id = $1 AND channel = 'webhook' ORDER BY destination",
+    )
+    .bind(event_id)
+    .fetch_all(&pool)
+    .await
+    .expect("fetch external notification rows");
+    assert_eq!(rows.len(), 2, "both external channels fan out");
+    assert!(rows.iter().all(|(dest, sub, _)| {
+        dest.starts_with("https://hooks.example.test/") && sub.starts_with("notification:")
+    }));
+    let slack_row = rows
+        .iter()
+        .find(|(dest, _, _)| dest == slack_target)
+        .expect("slack row");
+    assert!(slack_row.0 == slack_target);
+    assert!(
+        slack_row.2.get("text").is_some(),
+        "slack payload uses the rendered message contract"
+    );
+    let generic_row = rows
+        .iter()
+        .find(|(dest, _, _)| dest == generic_target)
+        .expect("generic row");
+    assert_eq!(generic_row.2["event"], "pipeline.success");
+    assert_eq!(generic_row.2["status"], "success");
+
+    // Disabled external configs must not fan out.
+    sqlx::query("UPDATE notification_configs SET enabled = false WHERE project_id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("disable configs");
+    let event2 = cicd::outbox::emit_pipeline_event(
+        &pool,
+        project_id,
+        pipeline_id,
+        "pipeline.failed",
+        "failed",
+    )
+    .await
+    .expect("emit second event");
+    let rows2: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM outbox_messages WHERE event_id = $1 AND channel = 'webhook'",
+    )
+    .bind(event2)
+    .fetch_one(&pool)
+    .await
+    .expect("count disabled rows");
+    assert_eq!(rows2, 0, "disabled configs do not fan out");
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup project");
+}
+
+#[tokio::test]
 async fn exhausted_outbox_message_is_not_retried() {
     let pool = test_pool().await;
     let event_id = Uuid::new_v4();

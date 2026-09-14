@@ -1921,8 +1921,10 @@ export interface components {
             target: string;
         };
         NotificationInput: {
+            /** @description One of: in_app, sse, slack_webhook, generic_webhook. */
             channel: string;
             enabled?: boolean | null;
+            /** @description Local target name or an https:// URL for external channels. */
             target: string;
         };
         OutboxDelivery: {

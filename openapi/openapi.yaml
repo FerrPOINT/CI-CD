@@ -4032,12 +4032,14 @@ components:
       properties:
         channel:
           type: string
+          description: 'One of: in_app, sse, slack_webhook, generic_webhook.'
         enabled:
           type:
           - boolean
           - 'null'
         target:
           type: string
+          description: Local target name or an https:// URL for external channels.
     OutboxDelivery:
       type: object
       required:
