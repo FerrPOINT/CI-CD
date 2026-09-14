@@ -1392,6 +1392,155 @@ paths:
                   $ref: '#/components/schemas/NotificationEvent'
         '400':
           description: ''
+  /api/v1/projects/{project_id}/notification-preferences:
+    get:
+      tags:
+      - notifications
+      operationId: get_notification_preferences
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - type: 'null'
+                - $ref: '#/components/schemas/NotificationPreference'
+    put:
+      tags:
+      - notifications
+      operationId: put_notification_preferences
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NotificationPreferenceInput'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPreference'
+        '400':
+          description: ''
+  /api/v1/projects/{project_id}/notification-rules:
+    get:
+      tags:
+      - notifications
+      operationId: list_notification_rules
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NotificationRule'
+    put:
+      tags:
+      - notifications
+      operationId: replace_notification_rules
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/NotificationRuleInput'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NotificationRule'
+        '400':
+          description: ''
+  /api/v1/projects/{project_id}/notification-templates:
+    get:
+      tags:
+      - notifications
+      operationId: list_notification_templates
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NotificationTemplate'
+    put:
+      tags:
+      - notifications
+      operationId: replace_notification_templates
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/NotificationTemplateInput'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/NotificationTemplate'
+        '400':
+          description: ''
   /api/v1/projects/{project_id}/notifications:
     get:
       tags:
@@ -4040,6 +4189,168 @@ components:
         target:
           type: string
           description: Local target name or an https:// URL for external channels.
+    NotificationPreference:
+      type: object
+      required:
+      - id
+      - user_id
+      - project_id
+      - muted_channels
+      - verbosity
+      - created_at
+      - updated_at
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        muted_channels:
+          type: array
+          items:
+            type: string
+        project_id:
+          type: string
+          format: uuid
+        updated_at:
+          type: string
+          format: date-time
+        user_id:
+          type: string
+          format: uuid
+        verbosity:
+          type: string
+    NotificationPreferenceInput:
+      type: object
+      required:
+      - muted_channels
+      properties:
+        muted_channels:
+          type: array
+          items:
+            type: string
+        verbosity:
+          type:
+          - string
+          - 'null'
+          description: '''all'' or ''failures_only''.'
+    NotificationRule:
+      type: object
+      required:
+      - id
+      - project_id
+      - event_types
+      - statuses
+      - channels
+      - enabled
+      - created_at
+      - updated_at
+      properties:
+        channels:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+        enabled:
+          type: boolean
+        event_types:
+          type: array
+          items:
+            type: string
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        statuses:
+          type: array
+          items:
+            type: string
+        updated_at:
+          type: string
+          format: date-time
+    NotificationRuleInput:
+      type: object
+      required:
+      - event_types
+      - statuses
+      - channels
+      properties:
+        channels:
+          type: array
+          items:
+            type: string
+          description: Channel kinds; empty = all channels.
+        enabled:
+          type:
+          - boolean
+          - 'null'
+        event_types:
+          type: array
+          items:
+            type: string
+          description: Event types to match; empty = all events.
+        statuses:
+          type: array
+          items:
+            type: string
+          description: Pipeline statuses to match; empty = all statuses.
+    NotificationTemplate:
+      type: object
+      required:
+      - id
+      - project_id
+      - channel
+      - subject_template
+      - body_template
+      - enabled
+      - created_at
+      - updated_at
+      properties:
+        body_template:
+          type: string
+        channel:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        enabled:
+          type: boolean
+        id:
+          type: string
+          format: uuid
+        project_id:
+          type: string
+          format: uuid
+        subject_template:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+    NotificationTemplateInput:
+      type: object
+      required:
+      - channel
+      - body_template
+      properties:
+        body_template:
+          type: string
+        channel:
+          type: string
+          description: in_app | sse | slack_webhook | generic_webhook | email
+        enabled:
+          type:
+          - boolean
+          - 'null'
+        subject_template:
+          type:
+          - string
+          - 'null'
+          description: '{{event}}/{{pipeline_id}}/{{project_id}}/{{status}} placeholders.'
     OutboxDelivery:
       type: object
       required:

@@ -510,6 +510,42 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
     ),
     user(
         GET,
+        "/api/v1/projects/{project_id}/notification-rules",
+        Action::Read,
+        Role::Viewer,
+    ),
+    user(
+        PUT,
+        "/api/v1/projects/{project_id}/notification-rules",
+        Action::Write,
+        Role::Developer,
+    ),
+    user(
+        GET,
+        "/api/v1/projects/{project_id}/notification-preferences",
+        Action::Read,
+        Role::Viewer,
+    ),
+    user(
+        PUT,
+        "/api/v1/projects/{project_id}/notification-preferences",
+        Action::Write,
+        Role::Viewer,
+    ),
+    user(
+        GET,
+        "/api/v1/projects/{project_id}/notification-templates",
+        Action::Read,
+        Role::Viewer,
+    ),
+    user(
+        PUT,
+        "/api/v1/projects/{project_id}/notification-templates",
+        Action::Write,
+        Role::Developer,
+    ),
+    user(
+        GET,
         "/api/v1/projects/{project_id}/notifications/stream",
         Action::Read,
         Role::Viewer,

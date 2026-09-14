@@ -124,6 +124,18 @@ pub fn routes() -> Router<Arc<AppState>> {
             get(list_notification_events),
         )
         .route(
+            "/api/v1/projects/{project_id}/notification-rules",
+            get(list_notification_rules).put(replace_notification_rules),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/notification-preferences",
+            get(get_notification_preferences).put(put_notification_preferences),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/notification-templates",
+            get(list_notification_templates).put(replace_notification_templates),
+        )
+        .route(
             "/api/v1/projects/{project_id}/notifications/stream",
             get(notification_stream),
         )
@@ -1612,6 +1624,251 @@ pub(crate) struct NotificationEvent {
     last_error: Option<String>,
     created_at: DateTime<Utc>,
 }
+// --- Notification rules / preferences / templates (stage 4 item 1) ---
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct NotificationRule {
+    id: Uuid,
+    project_id: Uuid,
+    event_types: Vec<String>,
+    statuses: Vec<String>,
+    channels: Vec<String>,
+    enabled: bool,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct NotificationRuleInput {
+    /// Event types to match; empty = all events.
+    event_types: Vec<String>,
+    /// Pipeline statuses to match; empty = all statuses.
+    statuses: Vec<String>,
+    /// Channel kinds; empty = all channels.
+    channels: Vec<String>,
+    enabled: Option<bool>,
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct NotificationPreference {
+    id: Uuid,
+    user_id: Uuid,
+    project_id: Uuid,
+    muted_channels: Vec<String>,
+    verbosity: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct NotificationPreferenceInput {
+    muted_channels: Vec<String>,
+    /// 'all' or 'failures_only'.
+    verbosity: Option<String>,
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct NotificationTemplate {
+    id: Uuid,
+    project_id: Uuid,
+    channel: String,
+    subject_template: String,
+    body_template: String,
+    enabled: bool,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct NotificationTemplateInput {
+    /// in_app | sse | slack_webhook | generic_webhook | email
+    channel: String,
+    /// {{event}}/{{pipeline_id}}/{{project_id}}/{{status}} placeholders.
+    subject_template: Option<String>,
+    body_template: String,
+    enabled: Option<bool>,
+}
+
+fn validate_channel_kind(channel: &str) -> Result<(), ApiError> {
+    const KNOWN: [&str; 5] = [
+        crate::outbox::NOTIFICATION_CHANNEL_IN_APP,
+        crate::outbox::NOTIFICATION_CHANNEL_SSE,
+        crate::outbox::NOTIFICATION_CHANNEL_SLACK_WEBHOOK,
+        crate::outbox::NOTIFICATION_CHANNEL_GENERIC_WEBHOOK,
+        crate::outbox::NOTIFICATION_CHANNEL_EMAIL,
+    ];
+    if KNOWN.iter().any(|k| k.eq_ignore_ascii_case(channel)) {
+        Ok(())
+    } else {
+        Err(ApiError::bad_request(format!(
+            "unknown notification channel kind: {channel}"
+        )))
+    }
+}
+
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/notification-rules", tag = "notifications", params(("project_id" = Uuid, Path)), responses((status = 200, body = [NotificationRule])))]
+async fn list_notification_rules(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+) -> ApiResult<Vec<NotificationRule>> {
+    Ok(Json(
+        sqlx::query_as("SELECT id, project_id, event_types, statuses, channels, enabled, created_at, updated_at FROM notification_rules WHERE project_id = $1 ORDER BY created_at")
+            .bind(project_id)
+            .fetch_all(pool(&state)?)
+            .await
+            .map_err(ApiError::internal)?,
+    ))
+}
+
+#[utoipa::path(put, path = "/api/v1/projects/{project_id}/notification-rules", tag = "notifications", request_body = [NotificationRuleInput], params(("project_id" = Uuid, Path)), responses((status = 200, body = [NotificationRule]), (status = 400)))]
+async fn replace_notification_rules(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+    Json(inputs): Json<Vec<NotificationRuleInput>>,
+) -> ApiResult<Vec<NotificationRule>> {
+    if inputs.len() > 100 {
+        return Err(ApiError::bad_request("too many rules (max 100)"));
+    }
+    let db = pool(&state)?;
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
+    sqlx::query("DELETE FROM notification_rules WHERE project_id = $1")
+        .bind(project_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    for input in inputs {
+        for channel in &input.channels {
+            validate_channel_kind(channel)?;
+        }
+        for verbosity in input.statuses.iter().chain(input.event_types.iter()) {
+            if verbosity.trim().is_empty() {
+                return Err(ApiError::bad_request(
+                    "rule event types and statuses must be non-empty strings",
+                ));
+            }
+        }
+        sqlx::query("INSERT INTO notification_rules (id, project_id, event_types, statuses, channels, enabled) VALUES ($1, $2, $3, $4, $5, $6)")
+            .bind(Uuid::new_v4())
+            .bind(project_id)
+            .bind(&input.event_types)
+            .bind(&input.statuses)
+            .bind(&input.channels)
+            .bind(input.enabled.unwrap_or(true))
+            .execute(&mut *tx)
+            .await
+            .map_err(ApiError::internal)?;
+    }
+    tx.commit().await.map_err(ApiError::internal)?;
+    list_notification_rules(State(state), Path(project_id)).await
+}
+
+#[utoipa::path(put, path = "/api/v1/projects/{project_id}/notification-preferences", tag = "notifications", request_body = NotificationPreferenceInput, params(("project_id" = Uuid, Path)), responses((status = 200, body = NotificationPreference), (status = 400)))]
+async fn put_notification_preferences(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+    claims: axum::Extension<crate::auth::AccessClaims>,
+    Json(input): Json<NotificationPreferenceInput>,
+) -> ApiResult<NotificationPreference> {
+    for channel in &input.muted_channels {
+        validate_channel_kind(channel)?;
+    }
+    let verbosity = input.verbosity.unwrap_or_else(|| "all".to_string());
+    if verbosity != "all" && verbosity != "failures_only" {
+        return Err(ApiError::bad_request(
+            "verbosity must be 'all' or 'failures_only'",
+        ));
+    }
+    let db = pool(&state)?;
+    let row: NotificationPreference = sqlx::query_as(
+        "INSERT INTO notification_preferences (id, user_id, project_id, muted_channels, verbosity) \
+         VALUES ($1, $2, $3, $4, $5) \
+         ON CONFLICT (user_id, project_id) DO UPDATE SET \
+           muted_channels = EXCLUDED.muted_channels, verbosity = EXCLUDED.verbosity, \
+           updated_at = now() \
+         RETURNING id, user_id, project_id, muted_channels, verbosity, created_at, updated_at",
+    )
+    .bind(Uuid::new_v4())
+    .bind(claims.sub)
+    .bind(project_id)
+    .bind(&input.muted_channels)
+    .bind(&verbosity)
+    .fetch_one(db)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(Json(row))
+}
+
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/notification-preferences", tag = "notifications", params(("project_id" = Uuid, Path)), responses((status = 200, body = Option<NotificationPreference>)))]
+async fn get_notification_preferences(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+    claims: axum::Extension<crate::auth::AccessClaims>,
+) -> ApiResult<Option<NotificationPreference>> {
+    let row = sqlx::query_as::<_, NotificationPreference>(
+        "SELECT id, user_id, project_id, muted_channels, verbosity, created_at, updated_at \
+         FROM notification_preferences WHERE user_id = $1 AND project_id = $2",
+    )
+    .bind(claims.sub)
+    .bind(project_id)
+    .fetch_optional(pool(&state)?)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(Json(row))
+}
+
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/notification-templates", tag = "notifications", params(("project_id" = Uuid, Path)), responses((status = 200, body = [NotificationTemplate])))]
+async fn list_notification_templates(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+) -> ApiResult<Vec<NotificationTemplate>> {
+    Ok(Json(
+        sqlx::query_as("SELECT id, project_id, channel, subject_template, body_template, enabled, created_at, updated_at FROM notification_templates WHERE project_id = $1 ORDER BY channel, created_at")
+            .bind(project_id)
+            .fetch_all(pool(&state)?)
+            .await
+            .map_err(ApiError::internal)?,
+    ))
+}
+
+#[utoipa::path(put, path = "/api/v1/projects/{project_id}/notification-templates", tag = "notifications", request_body = [NotificationTemplateInput], params(("project_id" = Uuid, Path)), responses((status = 200, body = [NotificationTemplate]), (status = 400)))]
+async fn replace_notification_templates(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+    Json(inputs): Json<Vec<NotificationTemplateInput>>,
+) -> ApiResult<Vec<NotificationTemplate>> {
+    if inputs.len() > 20 {
+        return Err(ApiError::bad_request(
+            "too many templates (max 20, one per channel is used)",
+        ));
+    }
+    let db = pool(&state)?;
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
+    sqlx::query("DELETE FROM notification_templates WHERE project_id = $1")
+        .bind(project_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    for input in inputs {
+        let channel = input.channel.trim().to_ascii_lowercase();
+        validate_channel_kind(&channel)?;
+        if input.body_template.trim().is_empty() {
+            return Err(ApiError::bad_request("template body_template is required"));
+        }
+        sqlx::query("INSERT INTO notification_templates (id, project_id, channel, subject_template, body_template, enabled) VALUES ($1, $2, $3, $4, $5, $6)")
+            .bind(Uuid::new_v4())
+            .bind(project_id)
+            .bind(&channel)
+            .bind(input.subject_template.unwrap_or_default())
+            .bind(input.body_template.trim())
+            .bind(input.enabled.unwrap_or(true))
+            .execute(&mut *tx)
+            .await
+            .map_err(ApiError::internal)?;
+    }
+    tx.commit().await.map_err(ApiError::internal)?;
+    list_notification_templates(State(state), Path(project_id)).await
+}
+
 #[utoipa::path(get, path = "/api/v1/projects/{project_id}/notifications", tag = "notifications", params(("project_id" = Uuid, Path)), responses((status = 200, body = [Notification])))]
 async fn list_notifications(
     State(state): State<Arc<AppState>>,

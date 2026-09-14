@@ -749,6 +749,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/notification-preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_notification_preferences"];
+        put: operations["put_notification_preferences"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/notification-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_notification_rules"];
+        put: operations["replace_notification_rules"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/notification-templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_notification_templates"];
+        put: operations["replace_notification_templates"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/notifications": {
         parameters: {
             query?: never;
@@ -1926,6 +1974,70 @@ export interface components {
             enabled?: boolean | null;
             /** @description Local target name or an https:// URL for external channels. */
             target: string;
+        };
+        NotificationPreference: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            muted_channels: string[];
+            /** Format: uuid */
+            project_id: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: uuid */
+            user_id: string;
+            verbosity: string;
+        };
+        NotificationPreferenceInput: {
+            muted_channels: string[];
+            /** @description 'all' or 'failures_only'. */
+            verbosity?: string | null;
+        };
+        NotificationRule: {
+            channels: string[];
+            /** Format: date-time */
+            created_at: string;
+            enabled: boolean;
+            event_types: string[];
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            project_id: string;
+            statuses: string[];
+            /** Format: date-time */
+            updated_at: string;
+        };
+        NotificationRuleInput: {
+            /** @description Channel kinds; empty = all channels. */
+            channels: string[];
+            enabled?: boolean | null;
+            /** @description Event types to match; empty = all events. */
+            event_types: string[];
+            /** @description Pipeline statuses to match; empty = all statuses. */
+            statuses: string[];
+        };
+        NotificationTemplate: {
+            body_template: string;
+            channel: string;
+            /** Format: date-time */
+            created_at: string;
+            enabled: boolean;
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            project_id: string;
+            subject_template: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        NotificationTemplateInput: {
+            body_template: string;
+            /** @description in_app | sse | slack_webhook | generic_webhook | email */
+            channel: string;
+            enabled?: boolean | null;
+            /** @description {{event}}/{{pipeline_id}}/{{project_id}}/{{status}} placeholders. */
+            subject_template?: string | null;
         };
         OutboxDelivery: {
             /** Format: uuid */
@@ -4174,6 +4286,162 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NotificationEvent"][];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_notification_preferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": null | components["schemas"]["NotificationPreference"];
+                };
+            };
+        };
+    };
+    put_notification_preferences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationPreferenceInput"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationPreference"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_notification_rules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationRule"][];
+                };
+            };
+        };
+    };
+    replace_notification_rules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationRuleInput"][];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationRule"][];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_notification_templates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationTemplate"][];
+                };
+            };
+        };
+    };
+    replace_notification_templates: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NotificationTemplateInput"][];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotificationTemplate"][];
                 };
             };
             400: {

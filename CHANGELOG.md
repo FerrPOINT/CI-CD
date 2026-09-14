@@ -10,6 +10,11 @@
 ## [Unreleased]
 
 ### Added
+- Notification rules / preferences / template catalog (stage 4 item 1): миграция 0032, fan-out фильтрация, per-user mute/verbosity, `{{var}}`-шаблоны с воспроизводимым рендерингом.
+
+## [Unreleased]
+
+### Added
 - Email-канал уведомлений (AUTOMATION_ARCHITECTURE §9 этап 4): SMTP-доставка через outbox (lettre, `CICD_SMTP_*`), при disabled SMTP — локальная пометка delivered; миграция 0031 расширяет CHECK канала `email`; fail-closed валидация адреса.
 - Notifications внешний fan-out (AUTOMATION_ARCHITECTURE §9 этап 4): каналы `slack_webhook`/`generic_webhook` доставляются через общий outbox HTTP delivery subsystem (retry/backoff/dead-letter); Slack-контракт `{"text"}`, generic — event envelope; `https://`-only, fail-closed валидация (400).
 

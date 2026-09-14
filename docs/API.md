@@ -72,7 +72,7 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 31,
+    "latest_applied_version": 32,
     "latest_required_version": 31,
     "pending_versions": [],
     "checksum_mismatches": [],
@@ -1153,6 +1153,13 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 ```
 
 ### Notifications
+
+### Rules, preferences, templates (stage 4)
+
+- `GET/PUT /api/v1/projects/{project_id}/notification-rules` — правила фильтрации fan-out: `{event_types[], statuses[], channels[], enabled}` (пустой массив = «все»); хотя бы одно правило должно пропустить событие, иначе доставка канала пропускается. Без правил — прежнее поведение (всё фанáутится).
+- `GET/PUT /api/v1/projects/{project_id}/notification-preferences` — per-user предпочтения: `muted_channels[]`, `verbosity` (`all` | `failures_only`); upsert по (user, project).
+- `GET/PUT /api/v1/projects/{project_id}/notification-templates` — каталог шаблонов `{channel, subject_template, body_template, enabled}`; переменные `{{event}} {{pipeline_id}} {{project_id}} {{status}}`, неизвестные плейсхолдеры вырезаются; используется последний обновлённый enabled-шаблон канала (email — subject+body, in_app/sse — body как message), рендеринг чистый → воспроизводим по delivery history.
+- Миграция `0032_notification_rules_templates.sql` (таблицы `notification_rules`, `notification_preferences`, `notification_templates`).
 
 | Метод | Путь | Назначение |
 |---|---|---|

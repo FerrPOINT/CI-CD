@@ -51,6 +51,105 @@ const OUTCOME_DELIVERED: &str = "delivered";
 const OUTCOME_RETRY_SCHEDULED: &str = "retry_scheduled";
 const OUTCOME_FAILED: &str = "failed";
 
+/// A loaded notification rule row (stage 4 item 1).
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub(crate) struct NotificationRuleRow {
+    pub event_types: Vec<String>,
+    pub statuses: Vec<String>,
+    pub channels: Vec<String>,
+}
+
+impl NotificationRuleRow {
+    /// Empty arrays mean "match everything".
+    fn matches(&self, event_type: &str, status: &str, channel: &str) -> bool {
+        let event_ok =
+            self.event_types.is_empty() || self.event_types.iter().any(|e| e == event_type);
+        let status_ok = self.statuses.is_empty() || self.statuses.iter().any(|s| s == status);
+        let channel_ok = self.channels.is_empty()
+            || self
+                .channels
+                .iter()
+                .any(|c| c.eq_ignore_ascii_case(channel));
+        event_ok && status_ok && channel_ok
+    }
+}
+
+/// Render a `{{var}}` template with the standard event variables. Unknown
+/// placeholders are removed (not leaked); rendering is pure so payloads stay
+/// reproducible from delivery history.
+pub(crate) fn render_template(
+    template: &str,
+    event_type: &str,
+    project_id: Uuid,
+    pipeline_id: Uuid,
+    status: &str,
+) -> String {
+    let vars = [
+        ("event", event_type.to_string()),
+        ("project_id", project_id.to_string()),
+        ("pipeline_id", pipeline_id.to_string()),
+        ("status", status.to_string()),
+    ];
+    let mut out = template.to_string();
+    for (key, value) in &vars {
+        out = out.replace(&format!("{{{{{key}}}}}"), value);
+    }
+    // Remove unknown placeholders so templates never leak moustache noise.
+    while let Some(start) = out.find("{{") {
+        if let Some(end_rel) = out[start..].find("}}") {
+            let end = start + end_rel + 2;
+            out.replace_range(start..end, "");
+        } else {
+            break;
+        }
+    }
+    out
+}
+
+/// True when the (event, status, channel) triple passes the project's enabled
+/// rules. With no rules configured every event still fans out (backwards
+/// compatible default).
+pub(crate) async fn rules_allow(
+    tx: &mut sqlx::PgConnection,
+    project_id: Uuid,
+    event_type: &str,
+    status: &str,
+    channel: &str,
+) -> Result<bool, sqlx::Error> {
+    let rules = sqlx::query_as::<_, NotificationRuleRow>(
+        "SELECT event_types, statuses, channels FROM notification_rules \
+         WHERE project_id = $1 AND enabled",
+    )
+    .bind(project_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    if rules.is_empty() {
+        return Ok(true);
+    }
+    Ok(rules
+        .iter()
+        .any(|rule| rule.matches(event_type, status, channel)))
+}
+
+/// The most specific enabled template for (project, channel) — last updated
+/// wins, so admins can iterate templates without touching delivery code.
+pub(crate) async fn template_for(
+    tx: &mut sqlx::PgConnection,
+    project_id: Uuid,
+    channel: &str,
+) -> Result<Option<(String, String)>, sqlx::Error> {
+    let row = sqlx::query_as::<_, (String, String)>(
+        "SELECT subject_template, body_template FROM notification_templates \
+         WHERE project_id = $1 AND enabled AND lower(channel) = lower($2) \
+         ORDER BY updated_at DESC LIMIT 1",
+    )
+    .bind(project_id)
+    .bind(channel)
+    .fetch_optional(&mut *tx)
+    .await?;
+    Ok(row)
+}
+
 pub fn notification_destination(project_id: Uuid) -> String {
     format!("project:{project_id}")
 }
@@ -112,12 +211,21 @@ pub async fn emit_pipeline_event(
     .fetch_all(&mut *tx)
     .await?;
     for (config_id, _channel, target) in emails {
+        if !rules_allow(&mut tx, project_id, event_type, status, "email").await? {
+            continue;
+        }
+        let (subject_tpl, body_tpl) =
+            match template_for(&mut tx, project_id, "email").await? {
+                Some((subject_tpl, body_tpl)) => (subject_tpl, body_tpl),
+                None => (
+                    "Forge pipeline {{status}}".to_string(),
+                    "Pipeline {{pipeline_id}} of project {{project_id}} finished with status {{status}} ({{event}}).".to_string(),
+                ),
+            };
         let payload = serde_json::to_value(EmailNotificationPayload {
             to: target.clone(),
-            subject: format!("Forge pipeline {status}"),
-            body: format!(
-                "Pipeline {pipeline_id} of project {project_id} finished with status {status} ({event_type})."
-            ),
+            subject: render_template(&subject_tpl, event_type, project_id, pipeline_id, status),
+            body: render_template(&body_tpl, event_type, project_id, pipeline_id, status),
         })
         .unwrap_or(serde_json::Value::Null);
         sqlx::query(
@@ -142,6 +250,9 @@ pub async fn emit_pipeline_event(
     .fetch_all(&mut *tx)
     .await?;
     for (config_id, channel, target) in external {
+        if !rules_allow(&mut tx, project_id, event_type, status, &channel).await? {
+            continue;
+        }
         // Reuse the shared HTTP delivery subsystem: the message is delivered
         // by deliver_due with the same retry/backoff/dead-letter ledger.
         let payload = if channel == NOTIFICATION_CHANNEL_SLACK_WEBHOOK {
@@ -176,10 +287,18 @@ pub async fn emit_pipeline_event(
     .fetch_all(&mut *tx)
     .await?;
     for (config_id, channel, target) in notifications {
-        let message = format!(
-            "Pipeline {} finished with status {status}",
-            pipeline_id.simple()
-        );
+        if !rules_allow(&mut tx, project_id, event_type, status, &channel).await? {
+            continue;
+        }
+        let message = match template_for(&mut tx, project_id, &channel).await? {
+            Some((_, body_tpl)) => {
+                render_template(&body_tpl, event_type, project_id, pipeline_id, status)
+            }
+            None => format!(
+                "Pipeline {} finished with status {status}",
+                pipeline_id.simple()
+            ),
+        };
         sqlx::query(
             "INSERT INTO outbox_messages (id, event_id, project_id, subscription_id, channel, destination, payload) \
              VALUES ($1, $2, $3, $4, 'notification', $5, $6)",
@@ -875,6 +994,41 @@ fn git_root_from_env_lossy() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn render_template_substitutes_known_and_strips_unknown_vars() {
+        let out = render_template(
+            "CUSTOM {{event}} {{status}} {{unknown}} done",
+            "pipeline.failed",
+            Uuid::nil(),
+            Uuid::nil(),
+            "failed",
+        );
+        assert_eq!(out, "CUSTOM pipeline.failed failed  done");
+    }
+
+    #[test]
+    fn notification_rule_matches_empty_arrays_as_wildcards() {
+        let rule = NotificationRuleRow {
+            event_types: vec![],
+            statuses: vec![],
+            channels: vec![],
+        };
+        assert!(rule.matches("pipeline.failed", "failed", "email"));
+    }
+
+    #[test]
+    fn notification_rule_matches_exact_entries() {
+        let rule = NotificationRuleRow {
+            event_types: vec!["pipeline.failed".to_string()],
+            statuses: vec!["failed".to_string(), "canceled".to_string()],
+            channels: vec!["in_app".to_string()],
+        };
+        assert!(rule.matches("pipeline.failed", "canceled", "IN_APP"));
+        assert!(!rule.matches("pipeline.succeeded", "failed", "in_app"));
+        assert!(!rule.matches("pipeline.failed", "success", "in_app"));
+        assert!(!rule.matches("pipeline.failed", "failed", "email"));
+    }
 
     #[test]
     fn backoff_is_bounded() {

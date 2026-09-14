@@ -5147,6 +5147,112 @@ async fn cron_schedule_materializes_unique_fire_slots() {
 }
 
 #[tokio::test]
+async fn notification_rules_filter_and_templates_render() {
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let pipeline_ok = Uuid::new_v4();
+    let project_name = format!("it-notif-rules-{}", project_id.simple());
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/rules.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query("INSERT INTO pipelines (id, project_id, git_ref, status) VALUES ($1, $2, 'main', 'success')")
+        .bind(pipeline_ok)
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("insert pipeline");
+    sqlx::query(
+        "INSERT INTO notification_configs (id, project_id, channel, target, enabled) \
+         VALUES ($1, $2, 'in_app', 'dashboard', true)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert notification config");
+    // Rule: only failure events reach notifications.
+    sqlx::query(
+        "INSERT INTO notification_rules (id, project_id, event_types, statuses, channels) \
+         VALUES ($1, $2, ARRAY['pipeline.failed'], ARRAY['failed','canceled'], ARRAY['in_app','sse'])",
+    )
+    .bind(Uuid::new_v4())
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert rule");
+    // Template: custom message for in_app.
+    sqlx::query(
+        "INSERT INTO notification_templates (id, project_id, channel, subject_template, body_template) \
+         VALUES ($1, $2, 'in_app', '', 'CUSTOM {{event}} -> {{status}}')",
+    )
+    .bind(Uuid::new_v4())
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert template");
+
+    // Success event must be filtered out by the rule.
+    let ok_event = cicd::outbox::emit_pipeline_event(
+        &pool,
+        project_id,
+        pipeline_ok,
+        "pipeline.success",
+        "success",
+    )
+    .await
+    .expect("emit ok event");
+    let ok_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM outbox_messages WHERE event_id = $1")
+            .bind(ok_event)
+            .fetch_one(&pool)
+            .await
+            .expect("count ok rows");
+    assert_eq!(ok_rows, 0, "success must be filtered by failures-only rule");
+
+    // Failed pipeline: rule allows in_app and the template renders.
+    let pipeline_fail = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status) VALUES ($1, $2, 'main', 'failed')",
+    )
+    .bind(pipeline_fail)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert failed pipeline");
+    let fail_event = cicd::outbox::emit_pipeline_event(
+        &pool,
+        project_id,
+        pipeline_fail,
+        "pipeline.failed",
+        "failed",
+    )
+    .await
+    .expect("emit fail event");
+    let payload: serde_json::Value = sqlx::query_scalar(
+        "SELECT payload FROM outbox_messages WHERE event_id = $1 AND channel = 'notification'",
+    )
+    .bind(fail_event)
+    .fetch_one(&pool)
+    .await
+    .expect("fetch fail payload");
+    assert_eq!(
+        payload["message"].as_str().unwrap(),
+        "CUSTOM pipeline.failed -> failed"
+    );
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup project");
+}
+
+#[tokio::test]
 async fn in_app_notification_events_are_fanned_out_and_delivered() {
     let pool = test_pool().await;
     let project_id = Uuid::new_v4();

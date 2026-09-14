@@ -1178,7 +1178,7 @@ HTTP webhook span фиксирует только hostname и status class, не
 
 ### Этап 4. Notifications
 
-1. Добавить destinations, rules, preferences и template catalog.
+1. Добавить destinations, rules, preferences и template catalog. — done: `notification_rules` / `notification_preferences` / `notification_templates` (мигр 0032), фильтрация fan-out по правилам, per-user mute/verbosity, воспроизводимый `{{var}}`-рендеринг (см. docs/API.md Notifications).
 2. Включить email fake/test adapter, затем Slack webhook. — done: канал `email` (SMTP через `CICD_SMTP_*`, при disabled — локальная доставка) и `slack_webhook`/`generic_webhook` доставляются через общий outbox delivery subsystem (см. docs/API.md Notifications); rules/preferences/templates остаются target.
 3. Ввести aggregation и quiet hours.
 4. Запустить notifications для terminal pipeline events одного проекта.
