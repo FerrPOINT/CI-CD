@@ -1205,6 +1205,25 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 | POST | `/api-tokens` | Создать scoped PAT (`name`, `project_id`, `scopes`, `expires_in_days`, `user_id?`) → возвращает `value` один раз |
 | DELETE | `/api-tokens/{token_id}` | Отозвать токен (`revoked_at`) |
 
+### Service Accounts
+
+Machine principals для автоматизации (AUTHORIZATION target-step; tenant-модель — отдельный инкремент).
+
+| Метод | Путь | Роль | Назначение |
+|---|---|---|---|
+| GET | `/admin/service-accounts` | admin | Список service accounts |
+| POST | `/admin/service-accounts` | admin | Создать (`name` 1–64 уникальный, `description?`) → 201 |
+| PATCH | `/admin/service-accounts/{account_id}` | admin | Изменить `description`/`enabled` |
+| POST | `/admin/service-accounts/{account_id}/tokens` | admin | Выпустить `forge_sat_…` токен (`name`, `scopes`, `expires_in_days?`) → 201, `token` показывается один раз |
+
+Токены service account: формат `forge_sat_<random>` (≥256 бит), SHA-256 hash at rest, `principal_type='service_account'`, `user_id=NULL`. Аутентификация Bearer `forge_sat_…`; principal действует как developer-class субъект, ограниченный скопами токена (`api:read`/`api:write`/`git:read`/`git:write`) и project-биндингами; admin-only маршруты недоступны. `enabled=false` аккаунта мгновенно блокирует его токены.
+
+### Auth Principal
+
+| Метод | Путь | Назначение |
+|---|---|---|
+| GET | `/auth/principal` | Интроспекция текущего Bearer-субъекта: `principal_type` (`user`/`service_account`), `sub`, scopes, для SAT — имя аккаунта |
+
 **Create request (auth-mode):**
 ```json
 {
@@ -1340,6 +1359,10 @@ Git Smart HTTP допускает unauthenticated read только для `repo
 |---|---|
 | `/api/v1/api-tokens` | Auth / tokens |
 | `/api/v1/api-tokens/{token_id}` | Auth / tokens |
+| `/api/v1/admin/service-accounts` | Service accounts |
+| `/api/v1/admin/service-accounts/{account_id}` | Service accounts |
+| `/api/v1/admin/service-accounts/{account_id}/tokens` | Service accounts |
+| `/api/v1/auth/principal` | Auth |
 | `/api/v1/artifacts/{artifact_id}/download` | Artifacts |
 | `/api/v1/audit-log` | Audit |
 | `/api/v1/auth/login` | Auth |

@@ -45,6 +45,9 @@ impl Role {
             "developer" => Some(Self::Developer),
             "maintainer" => Some(Self::Maintainer),
             "admin" => Some(Self::Admin),
+            // Machine principals act as developer-class; their token scopes
+            // and project bindings still constrain every route (AUTHORIZATION).
+            "service_account" => Some(Self::Developer),
             _ => None,
         }
     }
@@ -582,6 +585,33 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
         "/api/v1/repos/{repo}/pulls/{number}/action",
         Action::Write,
         Role::Developer,
+    ),
+    // Authenticated principal introspection (any valid credential).
+    user(GET, "/api/v1/auth/principal", Action::Read, Role::Viewer),
+    // Service-account administration is admin-only (AUTHORIZATION target).
+    user(
+        GET,
+        "/api/v1/admin/service-accounts",
+        Action::Read,
+        Role::Admin,
+    ),
+    user(
+        POST,
+        "/api/v1/admin/service-accounts",
+        Action::Write,
+        Role::Admin,
+    ),
+    user(
+        PATCH,
+        "/api/v1/admin/service-accounts/{account_id}",
+        Action::Write,
+        Role::Admin,
+    ),
+    user(
+        POST,
+        "/api/v1/admin/service-accounts/{account_id}/tokens",
+        Action::Write,
+        Role::Admin,
     ),
 ];
 

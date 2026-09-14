@@ -754,7 +754,9 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 | `name` | TEXT | NOT NULL | — | Имя токена |
 | `token_hash` | TEXT | NOT NULL | — | UNIQUE, SHA-256 хэш |
 | `token_hint` | TEXT | NOT NULL | — | Подсказка (`cicd_xxxx...yyyy`) |
-| `user_id` | UUID | NULL | — | FK → `users(id)` SET NULL |
+| `user_id` | UUID | NULL | — | FK → `users(id)` SET NULL; NULL для `principal_type='service_account'` |
+| `principal_type` | TEXT | NOT NULL | `'user'` | `user` \| `service_account` (CHECK) |
+| `service_account_id` | UUID | NULL | — | FK → `service_accounts(id)` CASCADE; NOT NULL при `principal_type='service_account'` |
 | `project_id` | UUID | NULL | — | FK → `projects(id)` CASCADE; обязателен для новых PAT при `CICD_AUTH_SECRET` |
 | `scopes` | TEXT[] | NOT NULL | `ARRAY['api:read','api:write','git:read','git:write']` | Разрешённые области PAT: REST read/write и Git read/write |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
@@ -763,6 +765,19 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 | `revoked_at` | TIMESTAMPTZ | NULL | — | Soft revoke; активные списки фильтруют `revoked_at IS NULL` |
 
 > Полное значение возвращается только при создании. PAT проверяется как Bearer token при включённом `CICD_AUTH_SECRET`; `project_id` ограничивает project-owned API и linked Git repository, `scopes` ограничивают REST/Git операции. Старые записи с `project_id = NULL` остаются legacy global до отзыва.
+
+### 9.11a service_accounts
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | UUID | NOT NULL | — | PK |
+| `name` | TEXT | NOT NULL | — | UNIQUE, 1–64 символа |
+| `description` | TEXT | NOT NULL | `''` | Назначение аккаунта |
+| `enabled` | BOOLEAN | NOT NULL | `TRUE` | `false` мгновенно блокирует все токены аккаунта |
+| `created_by` | UUID | NULL | — | FK → `users(id)` SET NULL |
+| `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
+
+> Machine principals (AUTHORIZATION target). Токены сервисных аккаунтов выпускаются в `api_tokens` с `principal_type='service_account'`, формат `forge_sat_<random>`; проверяются как Bearer, действуют developer-class с ограничением скопами токена и project-биндингами.
 
 ### 9.12 project_memberships
 

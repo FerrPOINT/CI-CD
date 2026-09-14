@@ -11,6 +11,8 @@
 
 ### Added
 
+- Service accounts (AUTHORIZATION target-step): миграция 0029 (`service_accounts`, `api_tokens.principal_type`/`service_account_id`), admin API `/api/v1/admin/service-accounts` (+`/tokens` выпуск `forge_sat_…`), интроспекция `/api/v1/auth/principal`; SAT — developer-class machine principal с ограничением токен-скопами, `enabled=false` блокирует токены. Tenant-модель — отдельный инкремент.
+
 - Phase C architecture (K1): backend workspace split — new crates `cicd-app` (authz policy + token/session primitives), `cicd-infra` (SQLx store, single enqueue notify hook), `cicd-api` facade; monolithic `api.rs` (4.9k lines) decomposed into `api/{auth,projects,pipelines,jobs}_routes + dto + authz_mw + router + readiness` modules; store.rs is a pure re-export shim.
 - Frontend auth UX (K2): `AuthProvider` (restore/open-mode/anonymous states), `ProtectedRoute` layout guard with login redirect, `/forbidden` 403 page, unified `QueryState` (loading skeleton/empty/403/error) adopted across all pages, terminal-401 invalidation, AppShell logout.
 - Resumable artifact uploads (K4.1): migration 0027 + runner-protocol sessions `artifact-sessions:begin` / `chunks` / `complete` / `abort` with per-chunk and whole-file sha256 verification, sequential high-water, 8 MiB chunk cap.

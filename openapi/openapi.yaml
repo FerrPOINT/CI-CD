@@ -7,6 +7,99 @@ info:
     url: https://github.com/FerrPOINT/CI-CD/blob/main/LICENSE
   version: 0.1.0
 paths:
+  /api/v1/admin/service-accounts:
+    get:
+      tags:
+      - service-accounts
+      operationId: list_service_accounts
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ServiceAccount'
+    post:
+      tags:
+      - service-accounts
+      operationId: create_service_account
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateServiceAccount'
+        required: true
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceAccount'
+        '400':
+          description: ''
+        '403':
+          description: ''
+  /api/v1/admin/service-accounts/{account_id}:
+    patch:
+      tags:
+      - service-accounts
+      operationId: update_service_account
+      parameters:
+      - name: account_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateServiceAccount'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceAccount'
+        '403':
+          description: ''
+        '404':
+          description: ''
+  /api/v1/admin/service-accounts/{account_id}/tokens:
+    post:
+      tags:
+      - service-accounts
+      operationId: issue_service_account_token
+      parameters:
+      - name: account_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueServiceAccountToken'
+        required: true
+      responses:
+        '201':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssuedServiceAccountToken'
+        '403':
+          description: ''
+        '404':
+          description: ''
   /api/v1/api-tokens:
     get:
       tags:
@@ -126,6 +219,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/LogoutResponse'
+  /api/v1/auth/principal:
+    get:
+      tags:
+      - auth
+      operationId: auth_principal
+      responses:
+        '200':
+          description: ''
+        '401':
+          description: ''
   /api/v1/auth/refresh:
     post:
       tags:
@@ -2825,6 +2928,7 @@ components:
       - id
       - name
       - token_hint
+      - principal_type
       - scopes
       - created_at
       properties:
@@ -2846,6 +2950,8 @@ components:
           format: date-time
         name:
           type: string
+        principal_type:
+          type: string
         project_id:
           type:
           - string
@@ -2860,6 +2966,11 @@ components:
           type: array
           items:
             type: string
+        service_account_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
         token_hint:
           type: string
         user_id:
@@ -3220,6 +3331,15 @@ components:
           type: string
         value:
           type: string
+    CreateServiceAccount:
+      type: object
+      required:
+      - name
+      properties:
+        description:
+          type: string
+        name:
+          type: string
     CreateToken:
       type: object
       required:
@@ -3450,6 +3570,49 @@ components:
         ref_name:
           type: string
         repository:
+          type: string
+    IssueServiceAccountToken:
+      type: object
+      required:
+      - name
+      properties:
+        expires_in_days:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        name:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+    IssuedServiceAccountToken:
+      type: object
+      required:
+      - id
+      - name
+      - token
+      - token_hint
+      - scopes
+      properties:
+        expires_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        token:
+          type: string
+        token_hint:
           type: string
     Job:
       type: object
@@ -4790,6 +4953,32 @@ components:
         updated_at:
           type: string
           format: date-time
+    ServiceAccount:
+      type: object
+      required:
+      - id
+      - name
+      - description
+      - enabled
+      - created_at
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        created_by:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        description:
+          type: string
+        enabled:
+          type: boolean
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
     Stage:
       type: object
       required:
@@ -4974,6 +5163,17 @@ components:
         repository_url:
           type:
           - string
+          - 'null'
+    UpdateServiceAccount:
+      type: object
+      properties:
+        description:
+          type:
+          - string
+          - 'null'
+        enabled:
+          type:
+          - boolean
           - 'null'
     User:
       type: object

@@ -139,6 +139,18 @@ pub fn routes() -> Router<Arc<AppState>> {
             "/api/v1/api-tokens/{token_id}",
             axum::routing::delete(delete_token),
         )
+        .route(
+            "/api/v1/admin/service-accounts",
+            get(list_service_accounts).post(create_service_account),
+        )
+        .route(
+            "/api/v1/admin/service-accounts/{account_id}",
+            patch(update_service_account),
+        )
+        .route(
+            "/api/v1/admin/service-accounts/{account_id}/tokens",
+            post(issue_service_account_token),
+        )
 }
 
 #[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
@@ -1857,6 +1869,10 @@ pub(crate) struct ApiToken {
     name: String,
     token_hint: String,
     user_id: Option<Uuid>,
+    #[sqlx(default)]
+    principal_type: String,
+    #[sqlx(default)]
+    service_account_id: Option<Uuid>,
     project_id: Option<Uuid>,
     scopes: Vec<String>,
     expires_at: Option<DateTime<Utc>>,
@@ -1886,7 +1902,7 @@ pub(crate) struct CreateToken {
 }
 #[utoipa::path(get, path = "/api/v1/api-tokens", tag = "tokens", responses((status = 200, body = [ApiToken])))]
 async fn list_tokens(State(state): State<Arc<AppState>>) -> ApiResult<Vec<ApiToken>> {
-    Ok(Json(sqlx::query_as("SELECT id, name, token_hint, user_id, project_id, scopes, expires_at, revoked_at, created_at, last_used_at FROM api_tokens WHERE revoked_at IS NULL ORDER BY created_at DESC").fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
+    Ok(Json(sqlx::query_as("SELECT id, name, token_hint, user_id, principal_type, service_account_id, project_id, scopes, expires_at, revoked_at, created_at, last_used_at FROM api_tokens WHERE revoked_at IS NULL ORDER BY created_at DESC").fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
 #[utoipa::path(post, path = "/api/v1/api-tokens", tag = "tokens", request_body = CreateToken, responses((status = 200, body = CreatedToken), (status = 400)))]
 async fn create_token(
@@ -1918,7 +1934,7 @@ async fn create_token(
     let token_hash = sha256(&value);
     let hint = format!("{}...{}", &value[..9], &value[value.len() - 4..]);
     let expires_at = token_expires_at(input.expires_in_days, auth_enabled)?;
-    let token = sqlx::query_as::<_, ApiToken>("INSERT INTO api_tokens (id, name, token_hash, token_hint, user_id, project_id, scopes, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, name, token_hint, user_id, project_id, scopes, expires_at, revoked_at, created_at, last_used_at")
+    let token = sqlx::query_as::<_, ApiToken>("INSERT INTO api_tokens (id, name, token_hash, token_hint, user_id, project_id, scopes, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, name, token_hint, user_id, principal_type, service_account_id, project_id, scopes, expires_at, revoked_at, created_at, last_used_at")
         .bind(Uuid::new_v4())
         .bind(input.name.trim())
         .bind(token_hash)
@@ -2288,5 +2304,242 @@ mod tests {
         assert!(artifact_retention_days_from_env(Some("0".to_string())).is_err());
         assert!(artifact_retention_days_from_env(Some("3651".to_string())).is_err());
         assert!(artifact_retention_days_from_env(Some("soon".to_string())).is_err());
+    }
+}
+
+// --- Service accounts (AUTHORIZATION target: machine principals) ---
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct ServiceAccount {
+    id: Uuid,
+    name: String,
+    description: String,
+    enabled: bool,
+    created_by: Option<Uuid>,
+    created_at: DateTime<Utc>,
+}
+
+fn require_admin_claims(
+    claims: &Option<axum::Extension<crate::auth::AccessClaims>>,
+) -> Result<(), ApiError> {
+    match claims {
+        Some(axum::Extension(c)) if c.role == crate::authz::Role::Admin.as_str() => Ok(()),
+        Some(_) => Err(ApiError::forbidden()),
+        None => Ok(()), // trusted-network mode (no auth secret): open access
+    }
+}
+
+#[utoipa::path(get, path = "/api/v1/admin/service-accounts", tag = "service-accounts", responses((status = 200, body = [ServiceAccount])))]
+async fn list_service_accounts(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+) -> ApiResult<Vec<ServiceAccount>> {
+    require_admin_claims(&claims)?;
+    Ok(Json(
+        sqlx::query_as(
+            "SELECT id, name, description, enabled, created_by, created_at \
+             FROM service_accounts ORDER BY created_at DESC",
+        )
+        .fetch_all(pool(&state)?)
+        .await
+        .map_err(ApiError::internal)?,
+    ))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct CreateServiceAccount {
+    name: String,
+    #[serde(default)]
+    description: String,
+}
+
+#[utoipa::path(post, path = "/api/v1/admin/service-accounts", tag = "service-accounts", request_body = CreateServiceAccount, responses((status = 201, body = ServiceAccount), (status = 400), (status = 403)))]
+async fn create_service_account(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+    Json(input): Json<CreateServiceAccount>,
+) -> Result<(StatusCode, Json<ServiceAccount>), ApiError> {
+    require_admin_claims(&claims)?;
+    let name = input.name.trim();
+    if name.is_empty() || name.len() > 64 {
+        return Err(ApiError::bad_request(
+            "service account name is required (1-64 chars)",
+        ));
+    }
+    let created_by = claims.as_ref().map(|axum::Extension(c)| c.sub);
+    let account = sqlx::query_as::<_, ServiceAccount>(
+        "INSERT INTO service_accounts (id, name, description, enabled, created_by) \
+         VALUES ($1, $2, $3, TRUE, $4) \
+         RETURNING id, name, description, enabled, created_by, created_at",
+    )
+    .bind(Uuid::new_v4())
+    .bind(name)
+    .bind(input.description.trim())
+    .bind(created_by)
+    .fetch_one(pool(&state)?)
+    .await
+    .map_err(|err| match err {
+        sqlx::Error::Database(db) if db.is_unique_violation() => {
+            ApiError::bad_request("service account name already exists")
+        }
+        other => ApiError::internal(other),
+    })?;
+    audit(
+        pool(&state)?,
+        "service_account.created",
+        "service_account",
+        account.id,
+        None,
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(account)))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct UpdateServiceAccount {
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    enabled: Option<bool>,
+}
+
+#[utoipa::path(patch, path = "/api/v1/admin/service-accounts/{account_id}", tag = "service-accounts", request_body = UpdateServiceAccount, params(("account_id" = Uuid, Path)), responses((status = 200, body = ServiceAccount), (status = 404), (status = 403)))]
+async fn update_service_account(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+    Path(account_id): Path<Uuid>,
+    Json(input): Json<UpdateServiceAccount>,
+) -> Result<Json<ServiceAccount>, ApiError> {
+    require_admin_claims(&claims)?;
+    let account = sqlx::query_as::<_, ServiceAccount>(
+        "UPDATE service_accounts \
+         SET description = COALESCE($2, description), \
+             enabled = COALESCE($3, enabled) \
+         WHERE id = $1 \
+         RETURNING id, name, description, enabled, created_by, created_at",
+    )
+    .bind(account_id)
+    .bind(input.description.as_deref().map(str::trim))
+    .bind(input.enabled)
+    .fetch_optional(pool(&state)?)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)?;
+    audit(
+        pool(&state)?,
+        "service_account.updated",
+        "service_account",
+        account_id,
+        None,
+    )
+    .await?;
+    Ok(Json(account))
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct IssueServiceAccountToken {
+    name: String,
+    #[serde(default = "default_token_scope_strings")]
+    scopes: Vec<String>,
+    #[serde(default)]
+    expires_in_days: Option<i32>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct IssuedServiceAccountToken {
+    id: Uuid,
+    name: String,
+    token: String,
+    token_hint: String,
+    scopes: Vec<String>,
+    expires_at: Option<DateTime<Utc>>,
+}
+
+#[utoipa::path(post, path = "/api/v1/admin/service-accounts/{account_id}/tokens", tag = "service-accounts", request_body = IssueServiceAccountToken, params(("account_id" = Uuid, Path)), responses((status = 201, body = IssuedServiceAccountToken), (status = 404), (status = 403)))]
+async fn issue_service_account_token(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+    Path(account_id): Path<Uuid>,
+    Json(input): Json<IssueServiceAccountToken>,
+) -> Result<(StatusCode, Json<IssuedServiceAccountToken>), ApiError> {
+    require_admin_claims(&claims)?;
+    if input.name.trim().is_empty() {
+        return Err(ApiError::bad_request("token name is required"));
+    }
+    let scopes = normalize_token_scopes(input.scopes)?;
+    let value = format!(
+        "forge_sat_{}{}",
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple()
+    );
+    let token_hash = sha256(&value);
+    let hint = format!("{}...{}", &value[..13], &value[value.len() - 4..]);
+    let expires_at = token_expires_at(input.expires_in_days, state.auth_secret.is_some())?;
+    let db = pool(&state)?;
+    let exists: Option<Uuid> =
+        sqlx::query_scalar("SELECT id FROM service_accounts WHERE id = $1 AND enabled")
+            .bind(account_id)
+            .fetch_optional(db)
+            .await
+            .map_err(ApiError::internal)?;
+    if exists.is_none() {
+        return Err(ApiError::not_found());
+    }
+    let row = sqlx::query_as::<_, (Uuid, String, String, Vec<String>, Option<DateTime<Utc>>)>(
+        "INSERT INTO api_tokens \
+         (id, name, token_hash, token_hint, principal_type, service_account_id, \
+          user_id, project_id, scopes, expires_at) \
+         VALUES ($1, $2, $3, $4, 'service_account', $5, NULL, NULL, $6, $7) \
+         RETURNING id, name, token_hint, scopes, expires_at",
+    )
+    .bind(Uuid::new_v4())
+    .bind(input.name.trim())
+    .bind(token_hash)
+    .bind(hint)
+    .bind(account_id)
+    .bind(scopes)
+    .bind(expires_at)
+    .fetch_one(db)
+    .await
+    .map_err(ApiError::internal)?;
+    audit(db, "service_account.token_issued", "api_token", row.0, None).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(IssuedServiceAccountToken {
+            id: row.0,
+            name: row.1,
+            token: value,
+            token_hint: row.2,
+            scopes: row.3,
+            expires_at: row.4,
+        }),
+    ))
+}
+
+#[utoipa::path(get, path = "/api/v1/auth/principal", tag = "auth", responses((status = 200), (status = 401)))]
+pub(crate) async fn auth_principal(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+) -> ApiResult<serde_json::Value> {
+    let _ = &state;
+    let Some(axum::Extension(claims)) = claims else {
+        return Err(ApiError::unauthorized());
+    };
+    if claims.role == "service_account" {
+        Ok(Json(serde_json::json!({
+            "principal_type": "service_account",
+            "sub": claims.sub,
+            "service_account": {
+                "id": claims.sub,
+                "name": claims.service_account_name,
+            },
+            "scopes": claims.token_scopes,
+        })))
+    } else {
+        Ok(Json(serde_json::json!({
+            "principal_type": "user",
+            "sub": claims.sub,
+            "scopes": claims.token_scopes,
+        })))
     }
 }

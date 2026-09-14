@@ -4,6 +4,54 @@
  */
 
 export interface paths {
+    "/api/v1/admin/service-accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_service_accounts"];
+        put?: never;
+        post: operations["create_service_account"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/admin/service-accounts/{account_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["update_service_account"];
+        trace?: never;
+    };
+    "/api/v1/admin/service-accounts/{account_id}/tokens": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["issue_service_account_token"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/api-tokens": {
         parameters: {
             query?: never;
@@ -94,6 +142,22 @@ export interface paths {
         get?: never;
         put?: never;
         post: operations["auth_logout"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/principal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["auth_principal"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1387,11 +1451,14 @@ export interface components {
             /** Format: date-time */
             last_used_at?: string | null;
             name: string;
+            principal_type: string;
             /** Format: uuid */
             project_id?: string | null;
             /** Format: date-time */
             revoked_at?: string | null;
             scopes: string[];
+            /** Format: uuid */
+            service_account_id?: string | null;
             token_hint: string;
             /** Format: uuid */
             user_id?: string | null;
@@ -1539,6 +1606,10 @@ export interface components {
             key: string;
             value: string;
         };
+        CreateServiceAccount: {
+            description?: string;
+            name: string;
+        };
         CreateToken: {
             /**
              * Format: int32
@@ -1637,6 +1708,22 @@ export interface components {
             old_rev?: string | null;
             ref_name: string;
             repository: string;
+        };
+        IssueServiceAccountToken: {
+            /** Format: int32 */
+            expires_in_days?: number | null;
+            name: string;
+            scopes?: string[];
+        };
+        IssuedServiceAccountToken: {
+            /** Format: date-time */
+            expires_at?: string | null;
+            /** Format: uuid */
+            id: string;
+            name: string;
+            scopes: string[];
+            token: string;
+            token_hint: string;
         };
         Job: {
             artifact_paths: string[];
@@ -2194,6 +2281,17 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        ServiceAccount: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            created_by?: string | null;
+            description: string;
+            enabled: boolean;
+            /** Format: uuid */
+            id: string;
+            name: string;
+        };
         Stage: {
             /** Format: uuid */
             id: string;
@@ -2274,6 +2372,10 @@ export interface components {
             name?: string | null;
             repository_url?: string | null;
         };
+        UpdateServiceAccount: {
+            description?: string | null;
+            enabled?: boolean | null;
+        };
         User: {
             /** Format: date-time */
             created_at: string;
@@ -2310,6 +2412,134 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_service_accounts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceAccount"][];
+                };
+            };
+        };
+    };
+    create_service_account: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateServiceAccount"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceAccount"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    update_service_account: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateServiceAccount"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServiceAccount"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    issue_service_account_token: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IssueServiceAccountToken"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IssuedServiceAccountToken"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     list_tokens: {
         parameters: {
             query?: never;
@@ -2477,6 +2707,29 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["LogoutResponse"];
                 };
+            };
+        };
+    };
+    auth_principal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

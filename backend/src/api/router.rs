@@ -133,6 +133,10 @@ pub(crate) fn build_router_with_cors(
         .route("/api/v1/auth/login", post(auth_login))
         .route("/api/v1/auth/refresh", post(auth_refresh))
         .route("/api/v1/auth/logout", post(auth_logout))
+        .route(
+            "/api/v1/auth/principal",
+            get(crate::platform::auth_principal),
+        )
         .merge(crate::platform::routes())
         .merge(crate::runner_protocol::routes())
         .route("/api/v1/projects", get(list_projects).post(create_project))

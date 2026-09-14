@@ -185,6 +185,8 @@ pub(crate) async fn require_auth(
     let claims = bearer_identity(pool, auth_secret, req.headers())
         .await
         .map_err(|_| ApiError::unauthorized())?;
+    // Role::parse maps machine principals ("service_account") to the
+    // developer class; token scopes still constrain every route.
     let role = crate::authz::Role::parse(&claims.role).ok_or_else(ApiError::unauthorized)?;
     let path = req.uri().path().to_string();
     let (mut parts, body) = req.into_parts();
@@ -576,7 +578,39 @@ pub(crate) async fn identity_for_bearer_token(
     if let Some(central) = crate::central_auth::try_central(token).await {
         return crate::central_auth::link_central_user(pool, &central).await;
     }
-    if token.starts_with("cicd_") {
+    if token.starts_with("forge_sat_") {
+        let hash = crate::auth::hash_token(token);
+        let row = sqlx::query_as::<_, (Uuid, Uuid, String, Option<Uuid>, Vec<String>)>(
+            "SELECT t.id, sa.id, sa.name, t.project_id, t.scopes \
+             FROM api_tokens t JOIN service_accounts sa ON sa.id = t.service_account_id \
+             WHERE t.token_hash = $1 AND t.principal_type = 'service_account' \
+               AND sa.enabled AND t.revoked_at IS NULL \
+               AND (t.expires_at IS NULL OR t.expires_at > now())",
+        )
+        .bind(&hash)
+        .fetch_optional(pool)
+        .await
+        .map_err(ApiError::internal)?;
+        let (token_id, service_account_id, sa_name, token_project_id, token_scopes) =
+            row.ok_or_else(ApiError::unauthorized)?;
+        let _ = sqlx::query("UPDATE api_tokens SET last_used_at = now() WHERE id = $1")
+            .bind(token_id)
+            .execute(pool)
+            .await;
+        let now = chrono::Utc::now();
+        Ok(crate::auth::AccessClaims {
+            sub: service_account_id,
+            sid: None,
+            token_id: Some(token_id),
+            token_project_id,
+            token_scopes,
+            role: "service_account".to_string(),
+            ver: 0,
+            iat: now.timestamp(),
+            exp: now.timestamp() + 900,
+            service_account_name: Some(sa_name),
+        })
+    } else if token.starts_with("cicd_") {
         let hash = crate::auth::hash_token(token);
         let row = sqlx::query_as::<_, (Uuid, Uuid, String, Option<Uuid>, Vec<String>)>(
             "SELECT t.id, u.id, u.role, t.project_id, t.scopes \
@@ -599,6 +633,7 @@ pub(crate) async fn identity_for_bearer_token(
         let now = chrono::Utc::now();
         Ok(crate::auth::AccessClaims {
             sub,
+            service_account_name: None,
             sid: None,
             token_id: Some(token_id),
             token_project_id,

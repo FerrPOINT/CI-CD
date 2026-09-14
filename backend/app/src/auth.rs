@@ -31,8 +31,11 @@ pub enum AuthError {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AccessClaims {
-    /// user id
+    /// user id (or service account id for forge_sat credentials)
     pub sub: Uuid,
+    /// Service account display name for forge_sat credentials.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_account_name: Option<String>,
     /// Session id for access-token invalidation; absent only for non-session credentials.
     #[serde(default)]
     pub sid: Option<Uuid>,
@@ -137,6 +140,7 @@ pub fn issue_access_with_secret_version(
     let now = Utc::now();
     let exp = now + Duration::minutes(ACCESS_TTL_MINUTES);
     let claims = AccessClaims {
+        service_account_name: None,
         sub: user_id,
         sid: Some(session_id),
         token_id: None,

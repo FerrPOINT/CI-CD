@@ -138,6 +138,9 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::platform::project_report, crate::platform::list_audit_log,
         crate::platform::list_users, crate::platform::create_user, crate::platform::update_user,
         crate::platform::list_tokens, crate::platform::create_token, crate::platform::delete_token,
+        crate::platform::list_service_accounts, crate::platform::create_service_account,
+        crate::platform::update_service_account, crate::platform::issue_service_account_token,
+        crate::platform::auth_principal,
         crate::git_host::list_repositories, crate::git_host::create_repository,
         crate::git_host::delete_repository,
         crate::git_host::git_info_refs, crate::git_host::git_service_endpoint,
@@ -565,6 +568,7 @@ mod tests {
     #[test]
     fn pat_scopes_are_enforced_by_method() {
         let claims = crate::auth::AccessClaims {
+            service_account_name: None,
             sub: Uuid::new_v4(),
             sid: None,
             token_id: Some(Uuid::new_v4()),

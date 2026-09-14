@@ -6424,3 +6424,163 @@ async fn login_access_token(app: axum::Router, username: &str, password: &str) -
         .expect("access token")
         .to_owned()
 }
+
+#[tokio::test]
+async fn service_account_tokens_authenticate_as_machine_principal() {
+    let pool = test_pool().await;
+    // Admin issues a service account.
+    let admin_id = Uuid::new_v4();
+    let admin_name = format!("sa-admin-{}", admin_id.simple());
+    sqlx::query("INSERT INTO users (id, username, role) VALUES ($1, $2, 'admin')")
+        .bind(admin_id)
+        .bind(&admin_name)
+        .execute(&pool)
+        .await
+        .expect("insert admin");
+
+    sqlx::query("INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2)")
+        .bind(admin_id)
+        .bind(cicd::auth::hash_password("IntegrationPass1!").expect("hash password"))
+        .execute(&pool)
+        .await
+        .expect("insert credential");
+
+    let app =
+        cicd::api::app_with_auth_secret(Some(pool.clone()), Some(format!("sa-secret-{admin_id}")));
+    let login = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"username":"{admin_name}","password":"IntegrationPass1!"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(login.status(), StatusCode::OK);
+    let admin_access: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(login.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let admin_access = admin_access["access_token"].as_str().unwrap().to_owned();
+
+    // Create a service account through the admin API.
+    let create = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/admin/service-accounts")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {admin_access}"))
+                .body(Body::from(
+                    r#"{"name":"ci-bot","description":"CI automation bot"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        create.status(),
+        StatusCode::CREATED,
+        "admin must create service accounts"
+    );
+    let created: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(create.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let sa_id: Uuid = created["id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(created["name"], "ci-bot");
+    assert_eq!(created["enabled"], true);
+
+    // Issue a forge_sat token for the service account.
+    let issue = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/admin/service-accounts/{sa_id}/tokens"))
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {admin_access}"))
+                .body(Body::from(
+                    r#"{"name":"ci-bot-token","scopes":["api:read"]}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(issue.status(), StatusCode::CREATED);
+    let issued: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(issue.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    let raw_token = issued["token"].as_str().unwrap();
+    assert!(
+        raw_token.starts_with("forge_sat_"),
+        "service-account tokens use forge_sat_ prefix, got {raw_token}"
+    );
+
+    // The SAT authenticates and exposes principal metadata.
+    let who = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/auth/principal")
+                .header("authorization", format!("Bearer {raw_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(who.status(), StatusCode::OK, "SAT must authenticate");
+    let me: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(who.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(me["principal_type"], "service_account");
+    assert_eq!(me["service_account"]["name"], "ci-bot");
+
+    // SAT carries its scopes into protected routes (read-only scope list).
+    let projects = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/projects")
+                .header("authorization", format!("Bearer {raw_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        projects.status(),
+        StatusCode::OK,
+        "SAT must reach scoped routes"
+    );
+
+    // Disabling the service account blocks its tokens.
+    sqlx::query("UPDATE service_accounts SET enabled = false WHERE id = $1")
+        .bind(sa_id)
+        .execute(&pool)
+        .await
+        .expect("disable service account");
+    let blocked = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/auth/principal")
+                .header("authorization", format!("Bearer {raw_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        blocked.status(),
+        StatusCode::UNAUTHORIZED,
+        "disabled service account tokens must be rejected"
+    );
+}

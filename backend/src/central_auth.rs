@@ -74,6 +74,7 @@ pub async fn link_central_user(
     };
     let now = chrono::Utc::now();
     Ok(AccessClaims {
+        service_account_name: None,
         sub: user_id,
         sid: None, // central token; session invalidation is central-side
         token_id: None,
