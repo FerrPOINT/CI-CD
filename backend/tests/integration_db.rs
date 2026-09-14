@@ -5201,7 +5201,12 @@ async fn in_app_notification_events_are_fanned_out_and_delivered() {
     .expect("count notification rows");
     assert_eq!(notification_rows, 1);
 
-    let delivered = cicd::outbox::deliver_due(&pool, &reqwest::Client::new()).await;
+    let delivered = cicd::outbox::deliver_due(
+        &pool,
+        &reqwest::Client::new(),
+        &cicd::config::SmtpConfig::default(),
+    )
+    .await;
     assert!(delivered >= 1);
 
     let app = cicd::api::app(Some(pool.clone()));
@@ -5227,6 +5232,85 @@ async fn in_app_notification_events_are_fanned_out_and_delivered() {
     assert!(events[0]["message"].as_str().unwrap().contains("failed"));
     assert!(events[0]["delivered_at"].is_string());
     assert!(events[0]["last_error"].is_null());
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup project");
+}
+
+#[tokio::test]
+async fn email_notification_channel_fans_out_and_delivers_when_smtp_disabled() {
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let project_name = format!("it-email-notifications-{}", project_id.simple());
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/email-notifications.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status) VALUES ($1, $2, 'main', 'failed')",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert pipeline");
+    sqlx::query(
+        "INSERT INTO notification_configs (id, project_id, channel, target, enabled) \
+         VALUES ($1, $2, 'email', 'ops@example.test', true)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert email notification config");
+
+    let event_id = cicd::outbox::emit_pipeline_event(
+        &pool,
+        project_id,
+        pipeline_id,
+        "pipeline.failed",
+        "failed",
+    )
+    .await
+    .expect("emit pipeline event");
+
+    let rows: Vec<(String, serde_json::Value)> = sqlx::query_as(
+        "SELECT destination, payload FROM outbox_messages \
+         WHERE event_id = $1 AND channel = 'email'",
+    )
+    .bind(event_id)
+    .fetch_all(&pool)
+    .await
+    .expect("fetch email rows");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0, "ops@example.test");
+    assert_eq!(rows[0].1["to"], "ops@example.test");
+    assert!(rows[0].1["subject"].as_str().unwrap().contains("failed"));
+    assert!(rows[0].1["body"].as_str().unwrap().contains("finished"));
+
+    // Disabled SMTP marks the message delivered locally without the network.
+    let smtp = cicd::config::SmtpConfig::default();
+    assert!(!smtp.enabled);
+    let _ = cicd::outbox::deliver_due(&pool, &reqwest::Client::new(), &smtp).await;
+    let delivered: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT delivered_at FROM outbox_messages WHERE event_id = $1 AND channel = 'email'",
+    )
+    .bind(event_id)
+    .fetch_one(&pool)
+    .await
+    .expect("fetch delivered_at");
+    assert!(
+        delivered.is_some(),
+        "disabled smtp still marks email delivered"
+    );
 
     sqlx::query("DELETE FROM projects WHERE id = $1")
         .bind(project_id)
@@ -5381,7 +5465,12 @@ async fn exhausted_outbox_message_is_not_retried() {
     .await
     .expect("insert exhausted outbox message");
 
-    let _ = cicd::outbox::deliver_due(&pool, &reqwest::Client::new()).await;
+    let _ = cicd::outbox::deliver_due(
+        &pool,
+        &reqwest::Client::new(),
+        &cicd::config::SmtpConfig::default(),
+    )
+    .await;
 
     let (attempts, last_error): (i32, Option<String>) =
         sqlx::query_as("SELECT attempts, last_error FROM outbox_messages WHERE id = $1")
@@ -5458,7 +5547,12 @@ async fn failed_outbox_delivery_records_attempt_and_can_be_requeued() {
     // deliver_due returns a process-wide count, so parallel integration tests
     // may contribute unrelated delivered messages. The assertions below are
     // scoped to this unsupported-channel message.
-    let _delivered = cicd::outbox::deliver_due(&pool, &reqwest::Client::new()).await;
+    let _delivered = cicd::outbox::deliver_due(
+        &pool,
+        &reqwest::Client::new(),
+        &cicd::config::SmtpConfig::default(),
+    )
+    .await;
 
     let (attempts, failed_at, last_error): (
         i32,

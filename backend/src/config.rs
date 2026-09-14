@@ -23,6 +23,35 @@ pub struct RuntimeConfig {
     pub runner: RunnerConfig,
     pub auth: AuthConfig,
     pub secrets: SecretsConfig,
+    pub smtp: SmtpConfig,
+}
+
+/// SMTP transport for the `email` notification channel
+/// (docs/AUTOMATION_ARCHITECTURE.md §9 stage 4 step 2). Disabled by
+/// default; emails are only attempted when `enabled = true`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SmtpConfig {
+    pub enabled: bool,
+    pub host: String,
+    pub port: u16,
+    pub username: Option<String>,
+    pub password: Option<String>,
+    pub from_address: String,
+    pub starttls: bool,
+}
+
+impl Default for SmtpConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            host: String::new(),
+            port: 587,
+            username: None,
+            password: None,
+            from_address: "forge@localhost".to_string(),
+            starttls: true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -150,6 +179,17 @@ impl RuntimeConfig {
         let secrets = SecretsConfig {
             key: secrets_key_from_env(get("CICD_SECRETS_KEY"))?,
         };
+        let smtp = SmtpConfig {
+            enabled: bool_from_env("CICD_SMTP_ENABLED", get("CICD_SMTP_ENABLED"), false)?,
+            host: string_from_env(get("CICD_SMTP_HOST"), ""),
+            port: string_from_env(get("CICD_SMTP_PORT"), "587")
+                .parse::<u16>()
+                .unwrap_or(587),
+            username: optional_trimmed(get("CICD_SMTP_USERNAME")),
+            password: optional_secret_value(get("CICD_SMTP_PASSWORD")),
+            from_address: string_from_env(get("CICD_SMTP_FROM"), "forge@localhost"),
+            starttls: bool_from_env("CICD_SMTP_STARTTLS", get("CICD_SMTP_STARTTLS"), true)?,
+        };
         Ok(Self {
             database: DatabaseConfig {
                 url: database_url,
@@ -161,6 +201,7 @@ impl RuntimeConfig {
             runner,
             auth,
             secrets,
+            smtp,
         })
     }
 
@@ -194,6 +235,7 @@ impl RuntimeConfig {
             },
             auth: AuthConfig { secret: None },
             secrets: SecretsConfig { key: None },
+            smtp: SmtpConfig::default(),
         }
     }
 

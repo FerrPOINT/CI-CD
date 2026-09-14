@@ -72,8 +72,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 30,
-    "latest_required_version": 30,
+    "latest_applied_version": 31,
+    "latest_required_version": 31,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],
@@ -1163,7 +1163,9 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 
 `in_app` и `sse` каналы — локальные: terminal pipeline events создают durable записи в `outbox_messages`, worker помечает их delivered локально, а Dashboard читает историю через `notification-events`. `limit` принимает `1..200`, default `50`.
 
-`slack_webhook` и `generic_webhook` каналы (AUTOMATION_ARCHITECTURE §9, этап 4) — внешняя доставка: terminal pipeline events фанаутятся в те же `outbox_messages` (channel `webhook`), доставляются общим delivery subsystem (retry/backoff/dead-letter ledger, `X-Forge-Signature` не подписывается — Slack/generic endpoints не имеют секрета). `slack_webhook` получает Slack incoming-webhook контракт (`{"text": ...}`), `generic_webhook` — сырой envelope события (`event/project_id/pipeline_id/status`). Target обязан быть `https://`-URL; неизвестные каналы отклоняются 400 (fail-closed). Email/Telegram adapters, rules/preferences/templates и quiet hours остаются target.
+`email` канал — SMTP-доставка (lettre, STARTTLS/credentials через `CICD_SMTP_*`; при `CICD_SMTP_ENABLED=false` письма не отправляются, но сообщение помечается delivered — dev/staging режим).
+
+`slack_webhook` и `generic_webhook` каналы (AUTOMATION_ARCHITECTURE §9, этап 4) — внешняя доставка: terminal pipeline events фанаутятся в те же `outbox_messages` (channel `webhook`), доставляются общим delivery subsystem (retry/backoff/dead-letter ledger, `X-Forge-Signature` не подписывается — Slack/generic endpoints не имеют секрета). `slack_webhook` получает Slack incoming-webhook контракт (`{"text": ...}`), `generic_webhook` — сырой envelope события (`event/project_id/pipeline_id/status`). Target обязан быть `https://`-URL; неизвестные каналы отклоняются 400 (fail-closed). Telegram adapter, rules/preferences/templates и quiet hours остаются target.
 
 ### Reports
 

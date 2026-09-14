@@ -25,6 +25,17 @@ pub const NOTIFICATION_CHANNEL_SSE: &str = "sse";
 pub const NOTIFICATION_CHANNEL_SLACK_WEBHOOK: &str = "slack_webhook";
 pub const NOTIFICATION_CHANNEL_GENERIC_WEBHOOK: &str = "generic_webhook";
 
+pub const NOTIFICATION_CHANNEL_EMAIL: &str = "email";
+
+/// Email notification body for terminal pipeline events
+/// (docs/AUTOMATION_ARCHITECTURE.md §9 stage 4 step 2).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct EmailNotificationPayload {
+    pub to: String,
+    pub subject: String,
+    pub body: String,
+}
+
 /// Slack incoming-webhook body: a single rendered message block.
 fn slack_payload(
     event_type: &str,
@@ -89,6 +100,36 @@ pub async fn emit_pipeline_event(
         .bind(format!("webhook:{hook_id}"))
         .bind(url)
         .bind(serde_json::json!({ "event": event_type, "pipeline_id": pipeline_id, "status": status, "signed": secret.is_some() }))
+        .execute(&mut *tx)
+        .await?;
+    }
+
+    let emails = sqlx::query_as::<_, (Uuid, String, String)>(
+        "SELECT id, lower(channel), target FROM notification_configs \
+         WHERE project_id = $1 AND enabled AND lower(channel) = 'email'",
+    )
+    .bind(project_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    for (config_id, _channel, target) in emails {
+        let payload = serde_json::to_value(EmailNotificationPayload {
+            to: target.clone(),
+            subject: format!("Forge pipeline {status}"),
+            body: format!(
+                "Pipeline {pipeline_id} of project {project_id} finished with status {status} ({event_type})."
+            ),
+        })
+        .unwrap_or(serde_json::Value::Null);
+        sqlx::query(
+            "INSERT INTO outbox_messages (id, event_id, project_id, subscription_id, channel, destination, payload) \
+             VALUES ($1, $2, $3, $4, 'email', $5, $6)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(event_id)
+        .bind(project_id)
+        .bind(format!("notification:{config_id}"))
+        .bind(target)
+        .bind(payload)
         .execute(&mut *tx)
         .await?;
     }
@@ -170,8 +211,53 @@ fn next_delay(attempts: i32) -> chrono::Duration {
     Duration::seconds(secs)
 }
 
-/// One delivery pass: claim due messages and POST them.
-pub async fn deliver_due(pool: &PgPool, client: &reqwest::Client) -> usize {
+/// Send one outbox email payload over SMTP. Errors are retryable and use
+/// the standard backoff/dead-letter ledger.
+async fn deliver_email(
+    smtp: &crate::config::SmtpConfig,
+    payload: &serde_json::Value,
+) -> Result<(), String> {
+    let parsed: EmailNotificationPayload = serde_json::from_value(payload.clone())
+        .map_err(|e| format!("invalid email payload: {e}"))?;
+    use lettre::message::header::ContentType;
+    use lettre::transport::smtp::authentication::Credentials;
+    use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+
+    let mut builder = if smtp.starttls {
+        AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&smtp.host)
+            .map_err(|e| format!("smtp relay: {e}"))?
+    } else {
+        AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(&smtp.host)
+    };
+    builder = builder.port(smtp.port);
+    if let (Some(user), Some(pass)) = (&smtp.username, &smtp.password) {
+        builder = builder.credentials(Credentials::new(user.clone(), pass.clone()));
+    }
+    let email = Message::builder()
+        .from(
+            format!("Forge <{}>", smtp.from_address)
+                .parse()
+                .map_err(|e| format!("from address: {e}"))?,
+        )
+        .to(parsed.to.parse().map_err(|e| format!("to address: {e}"))?)
+        .subject(&parsed.subject)
+        .header(ContentType::TEXT_PLAIN)
+        .body(parsed.body)
+        .map_err(|e| format!("email build: {e}"))?;
+    let mailer = builder.build();
+    mailer
+        .send(email)
+        .await
+        .map_err(|e| format!("smtp send: {e}"))?;
+    Ok(())
+}
+
+/// One delivery pass: claim due messages and POST/SMTP them.
+pub async fn deliver_due(
+    pool: &PgPool,
+    client: &reqwest::Client,
+    smtp: &crate::config::SmtpConfig,
+) -> usize {
     let due = sqlx::query_as::<_, (Uuid, String, String, serde_json::Value, i32)>(
         "SELECT id, channel, destination, payload, attempts FROM outbox_messages \
          WHERE delivered_at IS NULL AND failed_at IS NULL AND next_attempt_at <= now() \
@@ -264,6 +350,57 @@ pub async fn deliver_due(pool: &PgPool, client: &reqwest::Client) -> usize {
                             error_message: Some(last_error),
                             duration_ms: elapsed_ms(timer),
                         },
+                    )
+                    .await;
+                }
+            }
+            continue;
+        }
+
+        if channel == "email" {
+            // SMTP delivery (AUTOMATION_ARCHITECTURE §9 stage 4). Disabled
+            // config marks the message delivered without touching the
+            // network, matching the local notification behavior.
+            let email_result = if !smtp.enabled {
+                Ok(())
+            } else {
+                deliver_email(smtp, &payload).await
+            };
+            match email_result {
+                Ok(()) => {
+                    let _ = sqlx::query(
+                        "UPDATE outbox_messages SET attempts = $2, delivered_at = now(), failed_at = NULL, last_error = NULL WHERE id = $1",
+                    )
+                    .bind(id)
+                    .bind(attempt_number)
+                    .execute(pool)
+                    .await;
+                    record_delivery_attempt(
+                        pool,
+                        DeliveryAttemptRecord {
+                            message_id: id,
+                            attempt_number,
+                            started_at,
+                            outcome: OUTCOME_DELIVERED,
+                            http_status: None,
+                            error_message: None,
+                            duration_ms: elapsed_ms(timer),
+                        },
+                    )
+                    .await;
+                    crate::metrics::OUTBOX_DELIVERED_TOTAL
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    delivered += 1;
+                }
+                Err(err) => {
+                    record_failed_delivery_attempt(
+                        pool,
+                        id,
+                        attempt_number,
+                        started_at,
+                        timer,
+                        None,
+                        err,
                     )
                     .await;
                 }
@@ -709,9 +846,12 @@ pub async fn supervisor_loop_with_git_root(pool: PgPool, git_root: PathBuf) {
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .expect("reqwest client");
+    let smtp = crate::config::RuntimeConfig::from_env()
+        .map(|cfg| cfg.smtp)
+        .unwrap_or_default();
     loop {
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-        let delivered = deliver_due(&pool, &client).await;
+        let delivered = deliver_due(&pool, &client, &smtp).await;
         let fired = fire_due_schedules_with_git_root(&pool, &git_root).await;
         if delivered > 0 || fired > 0 {
             tracing::info!(delivered, fired, "outbox/scheduler pass");

@@ -10,6 +10,7 @@
 ## [Unreleased]
 
 ### Added
+- Email-канал уведомлений (AUTOMATION_ARCHITECTURE §9 этап 4): SMTP-доставка через outbox (lettre, `CICD_SMTP_*`), при disabled SMTP — локальная пометка delivered; миграция 0031 расширяет CHECK канала `email`; fail-closed валидация адреса.
 - Notifications внешний fan-out (AUTOMATION_ARCHITECTURE §9 этап 4): каналы `slack_webhook`/`generic_webhook` доставляются через общий outbox HTTP delivery subsystem (retry/backoff/dead-letter); Slack-контракт `{"text"}`, generic — event envelope; `https://`-only, fail-closed валидация (400).
 
 - Tenants, первый шаг target-модели (AUTHORIZATION): миграция 0030 (`tenants`, `tenant_memberships`, `projects.tenant_id` nullable), admin API `/api/v1/admin/tenants` (+memberships), tenant-read-видимость в `GET /api/v1/projects` (active tenant), suspended скрывает проекты; `POST /projects` принимает `tenant_id`.

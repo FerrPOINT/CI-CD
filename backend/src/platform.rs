@@ -1643,10 +1643,10 @@ async fn replace_notifications(
         // HTTP delivery subsystem.
         if !matches!(
             channel.as_str(),
-            "in_app" | "sse" | "slack_webhook" | "generic_webhook"
+            "in_app" | "sse" | "slack_webhook" | "generic_webhook" | "email"
         ) {
             return Err(ApiError::bad_request(
-                "unsupported notification channel: must be one of in_app, sse, slack_webhook, generic_webhook",
+                "unsupported notification channel: must be one of in_app, sse, slack_webhook, generic_webhook, email",
             ));
         }
         if (channel == "slack_webhook" || channel == "generic_webhook")
@@ -1654,6 +1654,11 @@ async fn replace_notifications(
         {
             return Err(ApiError::bad_request(
                 "external notification targets must be https URLs",
+            ));
+        }
+        if channel == "email" && !input.target.trim().contains('@') {
+            return Err(ApiError::bad_request(
+                "email notification target must be an email address",
             ));
         }
         sqlx::query("INSERT INTO notification_configs (id, project_id, channel, target, enabled) VALUES ($1, $2, $3, $4, $5)").bind(Uuid::new_v4()).bind(project_id).bind(&channel).bind(input.target.trim()).bind(input.enabled.unwrap_or(true)).execute(db).await.map_err(ApiError::internal)?;
