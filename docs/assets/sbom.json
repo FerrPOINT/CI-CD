@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:00000000-0000-0000-0000-000000000000",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-09-09T03:44:00Z",
+    "timestamp": "2026-09-14T15:30:05Z",
     "component": {
       "type": "application",
       "name": "forge-ci-cd",
@@ -198,6 +198,13 @@
       "name": "base64",
       "version": "0.22.1",
       "purl": "pkg:cargo/base64@0.22.1",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "base64",
+      "version": "0.23.1",
+      "purl": "pkg:cargo/base64@0.23.1",
       "license": "unknown"
     },
     {
@@ -475,6 +482,20 @@
     },
     {
       "type": "library",
+      "name": "email-encoding",
+      "version": "0.4.2",
+      "purl": "pkg:cargo/email-encoding@0.4.2",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "email_address",
+      "version": "0.2.9",
+      "purl": "pkg:cargo/email_address@0.2.9",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
       "name": "equivalent",
       "version": "1.0.2",
       "purl": "pkg:cargo/equivalent@1.0.2",
@@ -499,6 +520,13 @@
       "name": "event-listener",
       "version": "5.4.2",
       "purl": "pkg:cargo/event-listener@5.4.2",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "fastrand",
+      "version": "2.5.0",
+      "purl": "pkg:cargo/fastrand@2.5.0",
       "license": "unknown"
     },
     {
@@ -720,6 +748,13 @@
     },
     {
       "type": "library",
+      "name": "hostname",
+      "version": "0.4.2",
+      "purl": "pkg:cargo/hostname@0.4.2",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
       "name": "http",
       "version": "1.5.0",
       "purl": "pkg:cargo/http@1.5.0",
@@ -937,6 +972,13 @@
     },
     {
       "type": "library",
+      "name": "lettre",
+      "version": "0.11.23",
+      "purl": "pkg:cargo/lettre@0.11.23",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
       "name": "libc",
       "version": "0.2.189",
       "purl": "pkg:cargo/libc@0.2.189",
@@ -1066,6 +1108,13 @@
       "name": "mio",
       "version": "1.2.3",
       "purl": "pkg:cargo/mio@1.2.3",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "nom",
+      "version": "8.0.0",
+      "purl": "pkg:cargo/nom@8.0.0",
       "license": "unknown"
     },
     {
@@ -1346,6 +1395,13 @@
       "name": "quote",
       "version": "1.0.47",
       "purl": "pkg:cargo/quote@1.0.47",
+      "license": "unknown"
+    },
+    {
+      "type": "library",
+      "name": "quoted_printable",
+      "version": "0.5.2",
+      "purl": "pkg:cargo/quoted_printable@0.5.2",
       "license": "unknown"
     },
     {
