@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:00000000-0000-0000-0000-000000000000",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-09-14T15:30:05Z",
+    "timestamp": "2026-09-14T20:28:53Z",
     "component": {
       "type": "application",
       "name": "forge-ci-cd",
@@ -664,13 +664,6 @@
     },
     {
       "type": "library",
-      "name": "git2",
-      "version": "0.20.4",
-      "purl": "pkg:cargo/git2@0.20.4",
-      "license": "unknown"
-    },
-    {
-      "type": "library",
       "name": "glob",
       "version": "0.3.4",
       "purl": "pkg:cargo/glob@0.3.4",
@@ -944,13 +937,6 @@
     },
     {
       "type": "library",
-      "name": "jobserver",
-      "version": "0.1.35",
-      "purl": "pkg:cargo/jobserver@0.1.35",
-      "license": "unknown"
-    },
-    {
-      "type": "library",
       "name": "js-sys",
       "version": "0.3.104",
       "purl": "pkg:cargo/js-sys@0.3.104",
@@ -986,13 +972,6 @@
     },
     {
       "type": "library",
-      "name": "libgit2-sys",
-      "version": "0.18.8+1.9.7",
-      "purl": "pkg:cargo/libgit2-sys@0.18.8+1.9.7",
-      "license": "unknown"
-    },
-    {
-      "type": "library",
       "name": "libm",
       "version": "0.2.16",
       "purl": "pkg:cargo/libm@0.2.16",
@@ -1017,13 +996,6 @@
       "name": "libyaml-rs",
       "version": "0.3.0",
       "purl": "pkg:cargo/libyaml-rs@0.3.0",
-      "license": "unknown"
-    },
-    {
-      "type": "library",
-      "name": "libz-sys",
-      "version": "1.1.29",
-      "purl": "pkg:cargo/libz-sys@1.1.29",
       "license": "unknown"
     },
     {
