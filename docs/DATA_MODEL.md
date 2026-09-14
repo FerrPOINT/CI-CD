@@ -766,6 +766,28 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 
 > Полное значение возвращается только при создании. PAT проверяется как Bearer token при включённом `CICD_AUTH_SECRET`; `project_id` ограничивает project-owned API и linked Git repository, `scopes` ограничивают REST/Git операции. Старые записи с `project_id = NULL` остаются legacy global до отзыва.
 
+### 9.10a tenants
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `id` | UUID | NOT NULL | — | PK |
+| `slug` | TEXT | NOT NULL | — | UNIQUE, 1–64 `[a-z0-9-]` |
+| `display_name` | TEXT | NOT NULL | — | 1–200 |
+| `status` | TEXT | NOT NULL | `'active'` | `active` \| `suspended`; suspended скрывает проекты tenant из списков |
+| `created_by` | UUID | NULL | — | Создатель (admin) |
+| `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
+
+### 9.10b tenant_memberships
+
+| Колонка | Тип | Nullable | Default | Описание |
+|---|---|---|---|---|
+| `tenant_id` | UUID | NOT NULL | — | FK → `tenants(id)` CASCADE, PK(tenant,user) |
+| `user_id` | UUID | NOT NULL | — | PK(tenant,user); idx по user |
+| `role` | TEXT | NOT NULL | `'member'` | `owner` \| `member` |
+| `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
+
+> Активное membership даёт read-видимость проектов tenant (bounded шаг). `projects.tenant_id` (nullable, FK SET NULL, частичный idx) — backfill-фаза target-модели; `UNIQUE(tenant_id, name)` отдельной миграцией после backfill.
+
 ### 9.11a service_accounts
 
 | Колонка | Тип | Nullable | Default | Описание |

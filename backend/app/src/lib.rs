@@ -586,6 +586,27 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
         Action::Write,
         Role::Developer,
     ),
+    // Tenant administration is admin-only (AUTHORIZATION target model).
+    user(GET, "/api/v1/admin/tenants", Action::Read, Role::Admin),
+    user(POST, "/api/v1/admin/tenants", Action::Write, Role::Admin),
+    user(
+        GET,
+        "/api/v1/admin/tenants/{tenant_id}",
+        Action::Read,
+        Role::Admin,
+    ),
+    user(
+        POST,
+        "/api/v1/admin/tenants/{tenant_id}/memberships",
+        Action::Write,
+        Role::Admin,
+    ),
+    user(
+        DELETE,
+        "/api/v1/admin/tenants/{tenant_id}/memberships/{user_id}",
+        Action::Write,
+        Role::Admin,
+    ),
     // Authenticated principal introspection (any valid credential).
     user(GET, "/api/v1/auth/principal", Action::Read, Role::Viewer),
     // Service-account administration is admin-only (AUTHORIZATION target).

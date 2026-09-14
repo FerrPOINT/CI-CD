@@ -23,9 +23,21 @@ pub(crate) async fn create_project(
         ));
     }
     let db = pool(&state)?;
+    // Validate the tenant exists when the project targets one (AUTHORIZATION).
+    if let Some(tenant_id) = input.tenant_id {
+        let exists: Option<Uuid> =
+            sqlx::query_scalar("SELECT id FROM tenants WHERE id = $1 AND status = 'active'")
+                .bind(tenant_id)
+                .fetch_optional(db)
+                .await
+                .map_err(ApiError::internal)?;
+        if exists.is_none() {
+            return Err(ApiError::bad_request("unknown or suspended tenant"));
+        }
+    }
     let project = sqlx::query_as::<_, Project>(
-        "INSERT INTO projects (id, name, repository_url, default_branch) VALUES ($1, $2, $3, $4) RETURNING id, name, repository_url, default_branch, max_running_jobs, created_at"
-    ).bind(Uuid::new_v4()).bind(input.name.trim()).bind(input.repository_url.trim()).bind(input.default_branch.unwrap_or_else(|| "main".into())).fetch_one(db).await.map_err(ApiError::internal)?;
+        "INSERT INTO projects (id, name, repository_url, default_branch, tenant_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, name, repository_url, default_branch, max_running_jobs, created_at"
+    ).bind(Uuid::new_v4()).bind(input.name.trim()).bind(input.repository_url.trim()).bind(input.default_branch.unwrap_or_else(|| "main".into())).bind(input.tenant_id).fetch_one(db).await.map_err(ApiError::internal)?;
     if let Some(axum::Extension(claims)) = claims {
         if let Some(role) = default_project_role(&claims.role) {
             upsert_project_membership_record(db, project.id, claims.sub, role).await?;

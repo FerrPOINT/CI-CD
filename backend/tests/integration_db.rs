@@ -6584,3 +6584,220 @@ async fn service_account_tokens_authenticate_as_machine_principal() {
         "disabled service account tokens must be rejected"
     );
 }
+
+#[tokio::test]
+async fn tenants_crud_and_project_scoping() {
+    let pool = test_pool().await;
+    // Admin + regular user with credentials.
+    let admin_id = Uuid::new_v4();
+    let admin_name = format!("tenant-admin-{}", admin_id.simple());
+    sqlx::query("INSERT INTO users (id, username, role) VALUES ($1, $2, 'admin')")
+        .bind(admin_id)
+        .bind(&admin_name)
+        .execute(&pool)
+        .await
+        .expect("insert admin");
+    sqlx::query("INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2)")
+        .bind(admin_id)
+        .bind(cicd::auth::hash_password("IntegrationPass1!").expect("hash password"))
+        .execute(&pool)
+        .await
+        .expect("insert credential");
+
+    let user_id = Uuid::new_v4();
+    let user_name = format!("tenant-user-{}", user_id.simple());
+    sqlx::query("INSERT INTO users (id, username, role) VALUES ($1, $2, 'viewer')")
+        .bind(user_id)
+        .bind(&user_name)
+        .execute(&pool)
+        .await
+        .expect("insert viewer");
+    sqlx::query("INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2)")
+        .bind(user_id)
+        .bind(cicd::auth::hash_password("IntegrationPass1!").expect("hash password"))
+        .execute(&pool)
+        .await
+        .expect("insert credential");
+
+    let app = cicd::api::app_with_auth_secret(
+        Some(pool.clone()),
+        Some(format!("tenant-secret-{admin_id}")),
+    );
+
+    let login = |username: String| {
+        let app = app.clone();
+        async move {
+            app.oneshot(
+                Request::post("/api/v1/auth/login")
+                    .header("content-type", "application/json")
+                    .body(Body::from(format!(
+                        r#"{{"username":"{username}","password":"IntegrationPass1!"}}"#
+                    )))
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+        }
+    };
+    let admin_login = login(admin_name.clone()).await;
+    assert_eq!(admin_login.status(), StatusCode::OK);
+    let admin_bearer = bearer(admin_login).await;
+
+    // Admin creates a tenant.
+    let tag = admin_id.simple().to_string();
+    let tag8 = &tag[..8];
+    let slug = format!("acme-{tag8}");
+    let create = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/admin/tenants")
+                .header("authorization", admin_bearer.clone())
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"slug":"{slug}","display_name":"Acme Corp"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        create.status(),
+        StatusCode::CREATED,
+        "admin must create tenant"
+    );
+    let created: serde_json::Value = serde_json::from_str(
+        &String::from_utf8(
+            axum::body::to_bytes(create.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let tenant_id: Uuid = created["id"].as_str().unwrap().parse().unwrap();
+
+    // Admin adds the viewer as a tenant member.
+    let membership = app
+        .clone()
+        .oneshot(
+            Request::post(&format!("/api/v1/admin/tenants/{tenant_id}/memberships"))
+                .header("authorization", admin_bearer.clone())
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"user_id":"{user_id}","role":"member"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        membership.status(),
+        StatusCode::CREATED,
+        "membership must be added"
+    );
+
+    // A project inside the tenant.
+    let project = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/projects")
+                .header("authorization", admin_bearer.clone())
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"name":"tenant-proj-{tag8}","repository_url":"https://example.invalid/{tag8}.git","tenant_id":"{tenant_id}"}}"#
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        project.status(),
+        StatusCode::OK,
+        "project with tenant must be created"
+    );
+
+    // Viewer (tenant member, no project membership) sees ONLY tenant-scoped
+    // metadata in the project list: the tenant project appears because tenant
+    // membership implies read visibility per the target model (bounded step).
+    let user_login = login(user_name).await;
+    assert_eq!(user_login.status(), StatusCode::OK);
+    let user_bearer = bearer(user_login).await;
+    let list = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/projects")
+                .header("authorization", user_bearer.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list.status(), StatusCode::OK);
+    let body = String::from_utf8(
+        axum::body::to_bytes(list.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    let projects: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let names: Vec<&str> = projects
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        names.iter().any(|n| n.starts_with("tenant-proj-")),
+        "tenant member must see the tenant project, got: {names:?}"
+    );
+
+    // Suspending the tenant hides it from listings.
+    sqlx::query("UPDATE tenants SET status = 'suspended' WHERE id = $1")
+        .bind(tenant_id)
+        .execute(&pool)
+        .await
+        .expect("suspend tenant");
+    let list2 = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/projects")
+                .header("authorization", user_bearer.clone())
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(list2.status(), StatusCode::OK);
+    let body2 = String::from_utf8(
+        axum::body::to_bytes(list2.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    let projects2: serde_json::Value = serde_json::from_str(&body2).unwrap();
+    let names2: Vec<&str> = projects2
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        !names2.iter().any(|n| n.starts_with("tenant-proj-")),
+        "suspended tenant projects must be hidden, got: {names2:?}"
+    );
+}
+
+async fn bearer(response: axum::response::Response) -> String {
+    let body = String::from_utf8(
+        axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    let json: serde_json::Value = serde_json::from_str(&body).unwrap();
+    format!("Bearer {}", json["access_token"].as_str().unwrap())
+}

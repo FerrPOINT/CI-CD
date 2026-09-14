@@ -429,10 +429,16 @@ pub(crate) async fn list_projects_for_claims(
         .await
         .map_err(ApiError::internal),
         (_, None) => sqlx::query_as::<_, Project>(
-            "SELECT p.id, p.name, p.repository_url, p.default_branch, p.max_running_jobs, p.created_at \
+            // Tenant visibility (AUTHORIZATION target, bounded step): active
+            // tenant membership implies read access to that tenant's projects
+            // alongside the user's direct project memberships.
+            "SELECT DISTINCT p.id, p.name, p.repository_url, p.default_branch, p.max_running_jobs, p.created_at \
                  FROM projects p \
-                 JOIN project_memberships m ON m.project_id = p.id \
+                 LEFT JOIN project_memberships m ON m.project_id = p.id AND m.user_id = $3 \
+                 LEFT JOIN tenant_memberships tm ON tm.user_id = $3 AND tm.tenant_id = p.tenant_id \
+                 LEFT JOIN tenants t ON t.id = p.tenant_id \
                  WHERE m.user_id = $3 \
+                    OR (p.tenant_id IS NOT NULL AND tm.user_id = $3 AND t.status = 'active') \
                  ORDER BY p.created_at DESC LIMIT $1 OFFSET $2",
         )
         .bind(limit)

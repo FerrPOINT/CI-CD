@@ -11,6 +11,7 @@
 
 ### Added
 
+- Tenants, первый шаг target-модели (AUTHORIZATION): миграция 0030 (`tenants`, `tenant_memberships`, `projects.tenant_id` nullable), admin API `/api/v1/admin/tenants` (+memberships), tenant-read-видимость в `GET /api/v1/projects` (active tenant), suspended скрывает проекты; `POST /projects` принимает `tenant_id`.
 - Service accounts (AUTHORIZATION target-step): миграция 0029 (`service_accounts`, `api_tokens.principal_type`/`service_account_id`), admin API `/api/v1/admin/service-accounts` (+`/tokens` выпуск `forge_sat_…`), интроспекция `/api/v1/auth/principal`; SAT — developer-class machine principal с ограничением токен-скопами, `enabled=false` блокирует токены. Tenant-модель — отдельный инкремент.
 
 - Phase C architecture (K1): backend workspace split — new crates `cicd-app` (authz policy + token/session primitives), `cicd-infra` (SQLx store, single enqueue notify hook), `cicd-api` facade; monolithic `api.rs` (4.9k lines) decomposed into `api/{auth,projects,pipelines,jobs}_routes + dto + authz_mw + router + readiness` modules; store.rs is a pure re-export shim.

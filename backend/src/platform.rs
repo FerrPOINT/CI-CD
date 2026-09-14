@@ -140,6 +140,19 @@ pub fn routes() -> Router<Arc<AppState>> {
             axum::routing::delete(delete_token),
         )
         .route(
+            "/api/v1/admin/tenants",
+            get(list_tenants).post(create_tenant),
+        )
+        .route("/api/v1/admin/tenants/{tenant_id}", get(get_tenant))
+        .route(
+            "/api/v1/admin/tenants/{tenant_id}/memberships",
+            post(add_tenant_membership),
+        )
+        .route(
+            "/api/v1/admin/tenants/{tenant_id}/memberships/{user_id}",
+            axum::routing::delete(remove_tenant_membership),
+        )
+        .route(
             "/api/v1/admin/service-accounts",
             get(list_service_accounts).post(create_service_account),
         )
@@ -2319,6 +2332,33 @@ pub(crate) struct ServiceAccount {
     created_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct Tenant {
+    id: Uuid,
+    slug: String,
+    display_name: String,
+    status: String,
+    created_by: Option<Uuid>,
+    created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct CreateTenantInput {
+    slug: String,
+    display_name: String,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub(crate) struct TenantMembershipInput {
+    user_id: Uuid,
+    #[serde(default = "default_member_role")]
+    role: String,
+}
+
+fn default_member_role() -> String {
+    "member".to_string()
+}
+
 fn require_admin_claims(
     claims: &Option<axum::Extension<crate::auth::AccessClaims>>,
 ) -> Result<(), ApiError> {
@@ -2327,6 +2367,131 @@ fn require_admin_claims(
         Some(_) => Err(ApiError::forbidden()),
         None => Ok(()), // trusted-network mode (no auth secret): open access
     }
+}
+
+#[utoipa::path(get, path = "/api/v1/admin/tenants", tag = "tenants", responses((status = 200, body = [Tenant])))]
+async fn list_tenants(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+) -> ApiResult<Vec<Tenant>> {
+    require_admin_claims(&claims)?;
+    let db = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    Ok(Json(
+        sqlx::query_as(
+            "SELECT id, slug, display_name, status, created_by, created_at \
+                 FROM tenants ORDER BY created_at DESC",
+        )
+        .fetch_all(db)
+        .await
+        .map_err(ApiError::internal)?,
+    ))
+}
+
+#[utoipa::path(post, path = "/api/v1/admin/tenants", tag = "tenants", request_body = CreateTenantInput, responses((status = 201, body = Tenant)))]
+async fn create_tenant(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+    axum::Json(input): axum::Json<CreateTenantInput>,
+) -> Result<(StatusCode, Json<Tenant>), ApiError> {
+    require_admin_claims(&claims)?;
+    let creator = claims.as_ref().map(|axum::Extension(c)| c.sub);
+    let slug = input.slug.trim().to_lowercase();
+    if slug.is_empty()
+        || slug.len() > 64
+        || !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    {
+        return Err(ApiError::bad_request(
+            "slug must be 1-64 chars of [a-z0-9-]",
+        ));
+    }
+    if input.display_name.trim().is_empty() || input.display_name.len() > 200 {
+        return Err(ApiError::bad_request("display_name must be 1-200 chars"));
+    }
+    let db = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    let tenant: Tenant = sqlx::query_as(
+        "INSERT INTO tenants (id, slug, display_name, created_by) \
+             VALUES ($1, $2, $3, $4) \
+             RETURNING id, slug, display_name, status, created_by, created_at",
+    )
+    .bind(Uuid::new_v4())
+    .bind(&slug)
+    .bind(input.display_name.trim())
+    .bind(creator)
+    .fetch_one(db)
+    .await
+    .map_err(|e| match e {
+        sqlx::Error::Database(db_err) if db_err.is_unique_violation() => {
+            ApiError::bad_request("slug already exists")
+        }
+        other => ApiError::internal(other),
+    })?;
+    Ok((StatusCode::CREATED, Json(tenant)))
+}
+
+#[utoipa::path(get, path = "/api/v1/admin/tenants/{tenant_id}", tag = "tenants", responses((status = 200, body = Tenant)))]
+async fn get_tenant(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+    Path(tenant_id): Path<Uuid>,
+) -> ApiResult<Tenant> {
+    require_admin_claims(&claims)?;
+    let db = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    let tenant: Tenant = sqlx::query_as(
+        "SELECT id, slug, display_name, status, created_by, created_at FROM tenants WHERE id = $1",
+    )
+    .bind(tenant_id)
+    .fetch_optional(db)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)?;
+    Ok(Json(tenant))
+}
+
+#[utoipa::path(post, path = "/api/v1/admin/tenants/{tenant_id}/memberships", tag = "tenants", request_body = TenantMembershipInput, responses((status = 201)))]
+async fn add_tenant_membership(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+    Path(tenant_id): Path<Uuid>,
+    axum::Json(input): axum::Json<TenantMembershipInput>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    require_admin_claims(&claims)?;
+    if !matches!(input.role.as_str(), "owner" | "member") {
+        return Err(ApiError::bad_request("role must be owner|member"));
+    }
+    let db = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    sqlx::query(
+        "INSERT INTO tenant_memberships (tenant_id, user_id, role) VALUES ($1, $2, $3) \
+             ON CONFLICT (tenant_id, user_id) DO UPDATE SET role = EXCLUDED.role",
+    )
+    .bind(tenant_id)
+    .bind(input.user_id)
+    .bind(&input.role)
+    .execute(db)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            serde_json::json!({"tenant_id": tenant_id, "user_id": input.user_id, "role": input.role}),
+        ),
+    ))
+}
+
+#[utoipa::path(delete, path = "/api/v1/admin/tenants/{tenant_id}/memberships/{user_id}", tag = "tenants", responses((status = 204)))]
+async fn remove_tenant_membership(
+    State(state): State<Arc<AppState>>,
+    claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+    Path((tenant_id, user_id)): Path<(Uuid, Uuid)>,
+) -> Result<StatusCode, ApiError> {
+    require_admin_claims(&claims)?;
+    let db = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    sqlx::query("DELETE FROM tenant_memberships WHERE tenant_id = $1 AND user_id = $2")
+        .bind(tenant_id)
+        .bind(user_id)
+        .execute(db)
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[utoipa::path(get, path = "/api/v1/admin/service-accounts", tag = "service-accounts", responses((status = 200, body = [ServiceAccount])))]

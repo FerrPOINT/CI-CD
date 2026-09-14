@@ -20,6 +20,8 @@ pub(crate) struct CreateProject {
     pub(crate) name: String,
     pub(crate) repository_url: String,
     pub(crate) default_branch: Option<String>,
+    /// Target-model tenancy (AUTHORIZATION): optional during backfill.
+    pub(crate) tenant_id: Option<Uuid>,
 }
 #[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
 pub(crate) struct ProjectMembership {

@@ -72,8 +72,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 29,
-    "latest_required_version": 29,
+    "latest_applied_version": 30,
+    "latest_required_version": 30,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],
@@ -1218,6 +1218,20 @@ Machine principals для автоматизации (AUTHORIZATION target-step;
 
 Токены service account: формат `forge_sat_<random>` (≥256 бит), SHA-256 hash at rest, `principal_type='service_account'`, `user_id=NULL`. Аутентификация Bearer `forge_sat_…`; principal действует как developer-class субъект, ограниченный скопами токена (`api:read`/`api:write`/`git:read`/`git:write`) и project-биндингами; admin-only маршруты недоступны. `enabled=false` аккаунта мгновенно блокирует его токены.
 
+### Tenants
+
+Первый шаг tenant-модели (AUTHORIZATION): `tenants` + `tenant_memberships`, `projects.tenant_id` (nullable, backfill-фаза). Глобальный `UNIQUE(name)` проектов сохраняется до завершения backfill.
+
+| Метод | Путь | Роль | Назначение |
+|---|---|---|---|
+| GET | `/admin/tenants` | admin | Список tenants |
+| POST | `/admin/tenants` | admin | Создать (`slug` 1–64 `[a-z0-9-]` уникальный, `display_name` 1–200) → 201 |
+| GET | `/admin/tenants/{tenant_id}` | admin | Получить tenant |
+| POST | `/admin/tenants/{tenant_id}/memberships` | admin | Добавить/обновить membership (`user_id`, `role`: `owner`/`member`) |
+| DELETE | `/admin/tenants/{tenant_id}/memberships/{user_id}` | admin | Удалить membership |
+
+`POST /api/v1/projects` принимает опциональный `tenant_id` (tenant должен быть `active`). Активное membership в tenant даёт read-видимость проектов tenant в `GET /api/v1/projects` (bounded шаг target-модели); `status='suspended'` скрывает проекты tenant из списков.
+
 ### Auth Principal
 
 | Метод | Путь | Назначение |
@@ -1359,6 +1373,10 @@ Git Smart HTTP допускает unauthenticated read только для `repo
 |---|---|
 | `/api/v1/api-tokens` | Auth / tokens |
 | `/api/v1/api-tokens/{token_id}` | Auth / tokens |
+| `/api/v1/admin/tenants` | Tenants |
+| `/api/v1/admin/tenants/{tenant_id}` | Tenants |
+| `/api/v1/admin/tenants/{tenant_id}/memberships` | Tenants |
+| `/api/v1/admin/tenants/{tenant_id}/memberships/{user_id}` | Tenants |
 | `/api/v1/admin/service-accounts` | Service accounts |
 | `/api/v1/admin/service-accounts/{account_id}` | Service accounts |
 | `/api/v1/admin/service-accounts/{account_id}/tokens` | Service accounts |
