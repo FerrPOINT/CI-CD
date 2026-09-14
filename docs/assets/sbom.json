@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:00000000-0000-0000-0000-000000000000",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-09-14T20:28:53Z",
+    "timestamp": "2026-09-14T20:41:13Z",
     "component": {
       "type": "application",
       "name": "forge-ci-cd",
@@ -1491,8 +1491,8 @@
     {
       "type": "library",
       "name": "rustls",
-      "version": "0.23.43",
-      "purl": "pkg:cargo/rustls@0.23.43",
+      "version": "0.23.45",
+      "purl": "pkg:cargo/rustls@0.23.45",
       "license": "unknown"
     },
     {
