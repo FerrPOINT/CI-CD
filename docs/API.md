@@ -72,7 +72,7 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 32,
+    "latest_applied_version": 33,
     "latest_required_version": 31,
     "pending_versions": [],
     "checksum_mismatches": [],
@@ -1159,7 +1159,14 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 - `GET/PUT /api/v1/projects/{project_id}/notification-rules` — правила фильтрации fan-out: `{event_types[], statuses[], channels[], enabled}` (пустой массив = «все»); хотя бы одно правило должно пропустить событие, иначе доставка канала пропускается. Без правил — прежнее поведение (всё фанáутится).
 - `GET/PUT /api/v1/projects/{project_id}/notification-preferences` — per-user предпочтения: `muted_channels[]`, `verbosity` (`all` | `failures_only`); upsert по (user, project).
 - `GET/PUT /api/v1/projects/{project_id}/notification-templates` — каталог шаблонов `{channel, subject_template, body_template, enabled}`; переменные `{{event}} {{pipeline_id}} {{project_id}} {{status}}`, неизвестные плейсхолдеры вырезаются; используется последний обновлённый enabled-шаблон канала (email — subject+body, in_app/sse — body как message), рендеринг чистый → воспроизводим по delivery history.
-- Миграция `0032_notification_rules_templates.sql` (таблицы `notification_rules`, `notification_preferences`, `notification_templates`).
+- Миграция `0032_notification_rules_templates.sql`
+- Миграция `0033_aggregation_quiet_hours.sql`.
+
+### Aggregation, quiet hours, destination alerts (stage 4 items 3+5)
+
+- `aggregation_window_secs` (0–3600) в notification-config: повторы того же статуса в окне схлопываются в одно pending-сообщение со счётчиком `payload.agg_count` вместо N доставок.
+- Quiet hours per-config: `quiet_start_min`/`quiet_end_min` (минуты от полуночи, -1 = выкл, окно может переходить через полночь), `quiet_action`: `hold` (по умолчанию — доставка откладывается) или `drop` (сообщение отбрасывается при доставке); `quiet_bypass_statuses` (default `['failed']`) — статусы, которые всегда доставляются.
+- Destination alerts: `GET /api/v1/projects/{project_id}/destination-alerts` — открытые/acknowledged алерты по каналам; `POST /api/v1/destination-alerts/{alert_id}/acknowledge` (Developer+). Алерт открывается автоматически при dead-letter (исчерпаны MAX_ATTEMPTS=8), автозакрывается (`resolved`) при следующей успешной доставке того же destination — «muted success не скрывает failed deployment». (таблицы `notification_rules`, `notification_preferences`, `notification_templates`).
 
 | Метод | Путь | Назначение |
 |---|---|---|

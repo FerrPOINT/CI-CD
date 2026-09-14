@@ -203,15 +203,26 @@ pub async fn emit_pipeline_event(
         .await?;
     }
 
-    let emails = sqlx::query_as::<_, (Uuid, String, String)>(
-        "SELECT id, lower(channel), target FROM notification_configs \
+    let emails = sqlx::query_as::<_, (Uuid, String, String, i32)>(
+        "SELECT id, lower(channel), target, aggregation_window_secs FROM notification_configs \
          WHERE project_id = $1 AND enabled AND lower(channel) = 'email'",
     )
     .bind(project_id)
     .fetch_all(&mut *tx)
     .await?;
-    for (config_id, _channel, target) in emails {
+    for (config_id, _channel, target, window_secs) in emails {
         if !rules_allow(&mut tx, project_id, event_type, status, "email").await? {
+            continue;
+        }
+        if try_aggregate(
+            &mut tx,
+            project_id,
+            &format!("notification:{config_id}"),
+            status,
+            window_secs,
+        )
+        .await?
+        {
             continue;
         }
         let (subject_tpl, body_tpl) =
@@ -242,15 +253,26 @@ pub async fn emit_pipeline_event(
         .await?;
     }
 
-    let external = sqlx::query_as::<_, (Uuid, String, String)>(
-        "SELECT id, lower(channel), target FROM notification_configs \
+    let external = sqlx::query_as::<_, (Uuid, String, String, i32)>(
+        "SELECT id, lower(channel), target, aggregation_window_secs FROM notification_configs \
          WHERE project_id = $1 AND enabled AND lower(channel) IN ('slack_webhook', 'generic_webhook')",
     )
     .bind(project_id)
     .fetch_all(&mut *tx)
     .await?;
-    for (config_id, channel, target) in external {
+    for (config_id, channel, target, window_secs) in external {
         if !rules_allow(&mut tx, project_id, event_type, status, &channel).await? {
+            continue;
+        }
+        if try_aggregate(
+            &mut tx,
+            project_id,
+            &format!("notification:{config_id}"),
+            status,
+            window_secs,
+        )
+        .await?
+        {
             continue;
         }
         // Reuse the shared HTTP delivery subsystem: the message is delivered
@@ -279,15 +301,26 @@ pub async fn emit_pipeline_event(
         .await?;
     }
 
-    let notifications = sqlx::query_as::<_, (Uuid, String, String)>(
-        "SELECT id, lower(channel), target FROM notification_configs \
+    let notifications = sqlx::query_as::<_, (Uuid, String, String, i32)>(
+        "SELECT id, lower(channel), target, aggregation_window_secs FROM notification_configs \
          WHERE project_id = $1 AND enabled AND lower(channel) IN ('in_app', 'sse')",
     )
     .bind(project_id)
     .fetch_all(&mut *tx)
     .await?;
-    for (config_id, channel, target) in notifications {
+    for (config_id, channel, target, window_secs) in notifications {
         if !rules_allow(&mut tx, project_id, event_type, status, &channel).await? {
+            continue;
+        }
+        if try_aggregate(
+            &mut tx,
+            project_id,
+            &format!("notification:{config_id}"),
+            status,
+            window_secs,
+        )
+        .await?
+        {
             continue;
         }
         let message = match template_for(&mut tx, project_id, &channel).await? {
@@ -322,6 +355,117 @@ pub async fn emit_pipeline_event(
     }
     tx.commit().await?;
     Ok(event_id)
+}
+
+/// Opens (or re-opens with the newer error) the destination-failure alert for
+/// a dead-lettered message; a later successful delivery resolves it.
+async fn open_destination_alert(
+    pool: &PgPool,
+    message_id: Uuid,
+    error_message: &str,
+) -> Result<(), sqlx::Error> {
+    let row = sqlx::query_as::<_, (Uuid, String, String)>(
+        "SELECT m.project_id, m.channel, m.destination FROM outbox_messages m WHERE m.id = $1",
+    )
+    .bind(message_id)
+    .fetch_optional(pool)
+    .await?;
+    let Some((project_id, channel, destination)) = row else {
+        return Ok(());
+    };
+    sqlx::query(
+        "INSERT INTO notification_destination_alerts (id, project_id, channel, destination, last_error, state) \
+         VALUES ($1, $2, $3, $4, $5, 'open') \
+         ON CONFLICT DO NOTHING",
+    )
+    // no unique constraint: dedupe via NOT EXISTS below instead
+    .execute(pool)
+    .await
+    .ok();
+    sqlx::query(
+        "UPDATE notification_destination_alerts a SET state = 'open', last_error = $3, updated_at = now() \
+         WHERE a.project_id = $1 AND a.channel = $2 AND a.destination = $4 AND a.state <> 'open'",
+    )
+    .bind(project_id)
+    .bind(&channel)
+    .bind(error_message)
+    .bind(&destination)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Resolves destination alerts once delivery succeeds again.
+async fn resolve_destination_alert(
+    pool: &PgPool,
+    project_id: Uuid,
+    channel: &str,
+    destination: &str,
+) {
+    let _ = sqlx::query(
+        "UPDATE notification_destination_alerts SET state = 'resolved', updated_at = now() \
+         WHERE project_id = $1 AND channel = $2 AND destination = $3 AND state <> 'resolved'",
+    )
+    .bind(project_id)
+    .bind(channel)
+    .bind(destination)
+    .execute(pool)
+    .await;
+}
+
+/// True when `now` falls inside the config's quiet window. Windows may wrap
+/// midnight (start > end). Unconfigured (-1) windows never quiet.
+/// Aggregation (stage 4 item 3): inside the config's window a repeated
+/// identical delivery increments the pending message's counter instead of
+/// enqueueing a duplicate. Returns true when the event was collapsed into an
+/// existing pending message.
+#[allow(clippy::too_many_arguments)]
+async fn try_aggregate(
+    tx: &mut sqlx::PgConnection,
+    project_id: Uuid,
+    subscription_id: &str,
+    status: &str,
+    window_secs: i32,
+) -> Result<bool, sqlx::Error> {
+    if window_secs <= 0 {
+        return Ok(false);
+    }
+    let collapsed = sqlx::query(
+        "UPDATE outbox_messages SET payload = jsonb_set(payload, '{agg_count}', \
+             ((coalesce((payload->>'agg_count')::int, 0) + 1)::text::jsonb)) \
+         WHERE id IN ( \
+           SELECT id FROM outbox_messages \
+           WHERE delivered_at IS NULL AND failed_at IS NULL \
+             AND project_id = $1 AND subscription_id = $2 \
+             AND payload->>'status' = $3 \
+             AND created_at > now() - make_interval(secs => $4) \
+           ORDER BY created_at DESC LIMIT 1 \
+         ) RETURNING id",
+    )
+    .bind(project_id)
+    .bind(subscription_id)
+    .bind(status)
+    .bind(window_secs)
+    .fetch_optional(&mut *tx)
+    .await?;
+    Ok(collapsed.is_some())
+}
+
+/// Reference implementation of the SQL quiet-window predicate (unit-tested;
+/// the delivery gate evaluates the same logic in SQL for set-based skipping).
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) fn in_quiet_window(now_min: i64, start_min: i64, end_min: i64) -> bool {
+    if start_min < 0 || end_min < 0 {
+        return false;
+    }
+    if start_min == end_min {
+        return false;
+    }
+    if start_min < end_min {
+        (start_min..end_min).contains(&now_min)
+    } else {
+        now_min >= start_min || now_min < end_min
+    }
 }
 
 fn next_delay(attempts: i32) -> chrono::Duration {
@@ -377,11 +521,26 @@ pub async fn deliver_due(
     client: &reqwest::Client,
     smtp: &crate::config::SmtpConfig,
 ) -> usize {
-    let due = sqlx::query_as::<_, (Uuid, String, String, serde_json::Value, i32)>(
-        "SELECT id, channel, destination, payload, attempts FROM outbox_messages \
-         WHERE delivered_at IS NULL AND failed_at IS NULL AND next_attempt_at <= now() \
-           AND attempts < $1 \
-         ORDER BY next_attempt_at, id LIMIT 20",
+    let due = sqlx::query_as::<_, (Uuid, Uuid, String, String, serde_json::Value, i32)>(
+        "SELECT m.id, m.project_id, m.channel, m.destination, m.payload, m.attempts \
+         FROM outbox_messages m \
+         WHERE m.delivered_at IS NULL AND m.failed_at IS NULL AND m.next_attempt_at <= now() \
+           AND m.attempts < $1 \
+           AND NOT EXISTS ( \
+             SELECT 1 FROM notification_configs c \
+             WHERE c.project_id = m.project_id \
+               AND c.enabled \
+               AND ('notification:' || c.id::text) = m.subscription_id \
+               AND c.quiet_action = 'drop' \
+               AND c.quiet_start_min >= 0 \
+               AND (extract(hour from now()) * 60 + extract(minute from now()))::int \
+                     BETWEEN c.quiet_start_min AND c.quiet_end_min - 1 \
+               AND NOT ( \
+                 m.payload->>'status' = ANY (c.quiet_bypass_statuses) \
+                 OR c.quiet_bypass_statuses = '{}' \
+               ) \
+           ) \
+         ORDER BY m.next_attempt_at, m.id LIMIT 20",
     )
     .bind(MAX_ATTEMPTS)
     .fetch_all(pool)
@@ -389,7 +548,7 @@ pub async fn deliver_due(
     .unwrap_or_default();
 
     let mut delivered = 0;
-    for (id, channel, url, payload, attempts) in due {
+    for (id, project_id, channel, url, payload, attempts) in due {
         let attempt_number = attempts + 1;
         let started_at = Utc::now();
         let timer = std::time::Instant::now();
@@ -419,6 +578,12 @@ pub async fn deliver_due(
                     },
                 )
                 .await;
+                let local_target = payload
+                    .get("target")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                resolve_destination_alert(pool, project_id, local_channel, &local_target).await;
                 crate::metrics::OUTBOX_DELIVERED_TOTAL
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 delivered += 1;
@@ -507,6 +672,7 @@ pub async fn deliver_due(
                         },
                     )
                     .await;
+                    resolve_destination_alert(pool, project_id, "email", &url).await;
                     crate::metrics::OUTBOX_DELIVERED_TOTAL
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     delivered += 1;
@@ -573,6 +739,7 @@ pub async fn deliver_due(
                     },
                 )
                 .await;
+                resolve_destination_alert(pool, project_id, "webhook", &url).await;
                 crate::metrics::OUTBOX_DELIVERED_TOTAL
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 delivered += 1;
@@ -627,6 +794,9 @@ async fn record_failed_delivery_attempt(
         .bind(&error_message)
         .execute(pool)
         .await;
+        // Stage 4 item 5: a destination that exhausts retries opens an alert
+        // for the project so muted success never hides failed deliveries.
+        let _ = open_destination_alert(pool, id, &error_message).await;
         record_delivery_attempt(
             pool,
             DeliveryAttemptRecord {
@@ -1005,6 +1175,18 @@ mod tests {
             "failed",
         );
         assert_eq!(out, "CUSTOM pipeline.failed failed  done");
+    }
+
+    #[test]
+    fn quiet_window_detection_handles_wrap_midnight_and_disabled() {
+        assert!(!in_quiet_window(700, -1, -1), "unconfigured never quiets");
+        assert!(!in_quiet_window(700, 700, 700), "empty window never quiets");
+        assert!(in_quiet_window(700, 600, 800));
+        assert!(!in_quiet_window(500, 600, 800));
+        // 22:00-06:00 wraps midnight.
+        assert!(in_quiet_window(23 * 60, 22 * 60, 6 * 60));
+        assert!(in_quiet_window(3 * 60, 22 * 60, 6 * 60));
+        assert!(!in_quiet_window(12 * 60, 22 * 60, 6 * 60));
     }
 
     #[test]

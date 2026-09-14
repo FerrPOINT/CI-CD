@@ -276,6 +276,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/destination-alerts/{alert_id}/acknowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["acknowledge_destination_alert"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/environments/{environment_id}": {
         parameters: {
             query?: never;
@@ -683,6 +699,22 @@ export interface paths {
         options?: never;
         head?: never;
         patch: operations["update_project"];
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/destination-alerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_destination_alerts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/projects/{project_id}/environments": {
@@ -1795,6 +1827,20 @@ export interface components {
             /** Format: uuid */
             id: string;
         };
+        DestinationAlert: {
+            channel: string;
+            destination: string;
+            /** Format: uuid */
+            id: string;
+            last_error: string;
+            /** Format: date-time */
+            opened_at: string;
+            /** Format: uuid */
+            project_id: string;
+            state: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
         DiffFile: {
             /** Format: int32 */
             additions: number;
@@ -1937,6 +1983,8 @@ export interface components {
             unknown_applied_versions: number[];
         };
         Notification: {
+            /** Format: int32 */
+            aggregation_window_secs: number;
             channel: string;
             /** Format: date-time */
             created_at: string;
@@ -1945,6 +1993,12 @@ export interface components {
             id: string;
             /** Format: uuid */
             project_id: string;
+            quiet_action: string;
+            quiet_bypass_statuses: string[];
+            /** Format: int32 */
+            quiet_end_min: number;
+            /** Format: int32 */
+            quiet_start_min: number;
             target: string;
         };
         NotificationEvent: {
@@ -1969,9 +2023,28 @@ export interface components {
             target: string;
         };
         NotificationInput: {
-            /** @description One of: in_app, sse, slack_webhook, generic_webhook. */
+            /**
+             * Format: int32
+             * @description Collapse repeats of the same status within N seconds (0 = off, max 3600).
+             */
+            aggregation_window_secs?: number | null;
+            /** @description One of: in_app, sse, slack_webhook, generic_webhook, email. */
             channel: string;
             enabled?: boolean | null;
+            /** @description Quiet window behaviour: 'hold' (default) or 'drop'. */
+            quiet_action?: string | null;
+            /** @description Statuses that bypass quiet hours (default ['failed']). */
+            quiet_bypass_statuses?: string[] | null;
+            /**
+             * Format: int32
+             * @description Quiet window end (minutes since midnight, -1 = disabled).
+             */
+            quiet_end_min?: number | null;
+            /**
+             * Format: int32
+             * @description Quiet window start (minutes since midnight, -1 = disabled).
+             */
+            quiet_start_min?: number | null;
             /** @description Local target name or an https:// URL for external channels. */
             target: string;
         };
@@ -3184,6 +3257,33 @@ export interface operations {
             };
         };
     };
+    acknowledge_destination_alert: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                alert_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DestinationAlert"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     delete_environment: {
         parameters: {
             query?: never;
@@ -4115,6 +4215,27 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    list_destination_alerts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DestinationAlert"][];
+                };
             };
         };
     };

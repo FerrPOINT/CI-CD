@@ -510,6 +510,18 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
     ),
     user(
         GET,
+        "/api/v1/projects/{project_id}/destination-alerts",
+        Action::Read,
+        Role::Viewer,
+    ),
+    user(
+        POST,
+        "/api/v1/destination-alerts/{alert_id}/acknowledge",
+        Action::Write,
+        Role::Developer,
+    ),
+    user(
+        GET,
         "/api/v1/projects/{project_id}/notification-rules",
         Action::Read,
         Role::Viewer,

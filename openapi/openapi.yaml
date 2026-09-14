@@ -425,6 +425,27 @@ paths:
           description: ''
         '409':
           description: ''
+  /api/v1/destination-alerts/{alert_id}/acknowledge:
+    post:
+      tags:
+      - notifications
+      operationId: acknowledge_destination_alert
+      parameters:
+      - name: alert_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DestinationAlert'
+        '404':
+          description: ''
   /api/v1/environments/{environment_id}:
     delete:
       tags:
@@ -1237,6 +1258,27 @@ paths:
                 $ref: '#/components/schemas/Project'
         '404':
           description: ''
+  /api/v1/projects/{project_id}/destination-alerts:
+    get:
+      tags:
+      - notifications
+      operationId: list_destination_alerts
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DestinationAlert'
   /api/v1/projects/{project_id}/environments:
     get:
       tags:
@@ -3736,6 +3778,38 @@ components:
         id:
           type: string
           format: uuid
+    DestinationAlert:
+      type: object
+      required:
+      - id
+      - project_id
+      - channel
+      - destination
+      - last_error
+      - state
+      - opened_at
+      - updated_at
+      properties:
+        channel:
+          type: string
+        destination:
+          type: string
+        id:
+          type: string
+          format: uuid
+        last_error:
+          type: string
+        opened_at:
+          type: string
+          format: date-time
+        project_id:
+          type: string
+          format: uuid
+        state:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
     DiffFile:
       type: object
       required:
@@ -4106,7 +4180,15 @@ components:
       - target
       - enabled
       - created_at
+      - aggregation_window_secs
+      - quiet_start_min
+      - quiet_end_min
+      - quiet_action
+      - quiet_bypass_statuses
       properties:
+        aggregation_window_secs:
+          type: integer
+          format: int32
         channel:
           type: string
         created_at:
@@ -4120,6 +4202,18 @@ components:
         project_id:
           type: string
           format: uuid
+        quiet_action:
+          type: string
+        quiet_bypass_statuses:
+          type: array
+          items:
+            type: string
+        quiet_end_min:
+          type: integer
+          format: int32
+        quiet_start_min:
+          type: integer
+          format: int32
         target:
           type: string
     NotificationEvent:
@@ -4179,13 +4273,43 @@ components:
       - channel
       - target
       properties:
+        aggregation_window_secs:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          description: Collapse repeats of the same status within N seconds (0 = off, max 3600).
         channel:
           type: string
-          description: 'One of: in_app, sse, slack_webhook, generic_webhook.'
+          description: 'One of: in_app, sse, slack_webhook, generic_webhook, email.'
         enabled:
           type:
           - boolean
           - 'null'
+        quiet_action:
+          type:
+          - string
+          - 'null'
+          description: 'Quiet window behaviour: ''hold'' (default) or ''drop''.'
+        quiet_bypass_statuses:
+          type:
+          - array
+          - 'null'
+          items:
+            type: string
+          description: Statuses that bypass quiet hours (default ['failed']).
+        quiet_end_min:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          description: Quiet window end (minutes since midnight, -1 = disabled).
+        quiet_start_min:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          description: Quiet window start (minutes since midnight, -1 = disabled).
         target:
           type: string
           description: Local target name or an https:// URL for external channels.

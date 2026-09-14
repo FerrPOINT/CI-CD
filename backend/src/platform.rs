@@ -128,6 +128,14 @@ pub fn routes() -> Router<Arc<AppState>> {
             get(list_notification_rules).put(replace_notification_rules),
         )
         .route(
+            "/api/v1/projects/{project_id}/destination-alerts",
+            get(list_destination_alerts),
+        )
+        .route(
+            "/api/v1/destination-alerts/{alert_id}/acknowledge",
+            post(acknowledge_destination_alert),
+        )
+        .route(
             "/api/v1/projects/{project_id}/notification-preferences",
             get(get_notification_preferences).put(put_notification_preferences),
         )
@@ -1585,14 +1593,29 @@ pub(crate) struct Notification {
     target: String,
     enabled: bool,
     created_at: DateTime<Utc>,
+    aggregation_window_secs: i32,
+    quiet_start_min: i32,
+    quiet_end_min: i32,
+    quiet_action: String,
+    quiet_bypass_statuses: Vec<String>,
 }
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct NotificationInput {
-    /// One of: in_app, sse, slack_webhook, generic_webhook.
+    /// One of: in_app, sse, slack_webhook, generic_webhook, email.
     channel: String,
     /// Local target name or an https:// URL for external channels.
     target: String,
     enabled: Option<bool>,
+    /// Collapse repeats of the same status within N seconds (0 = off, max 3600).
+    aggregation_window_secs: Option<i32>,
+    /// Quiet window start (minutes since midnight, -1 = disabled).
+    quiet_start_min: Option<i32>,
+    /// Quiet window end (minutes since midnight, -1 = disabled).
+    quiet_end_min: Option<i32>,
+    /// Quiet window behaviour: 'hold' (default) or 'drop'.
+    quiet_action: Option<String>,
+    /// Statuses that bypass quiet hours (default ['failed']).
+    quiet_bypass_statuses: Option<Vec<String>>,
 }
 #[derive(Debug, Deserialize, utoipa::IntoParams)]
 pub(crate) struct NotificationEventsParams {
@@ -1704,6 +1727,52 @@ fn validate_channel_kind(channel: &str) -> Result<(), ApiError> {
             "unknown notification channel kind: {channel}"
         )))
     }
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+pub(crate) struct DestinationAlert {
+    id: Uuid,
+    project_id: Uuid,
+    channel: String,
+    destination: String,
+    last_error: String,
+    state: String,
+    opened_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+#[utoipa::path(get, path = "/api/v1/projects/{project_id}/destination-alerts", tag = "notifications", params(("project_id" = Uuid, Path)), responses((status = 200, body = [DestinationAlert])))]
+async fn list_destination_alerts(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+) -> ApiResult<Vec<DestinationAlert>> {
+    Ok(Json(
+        sqlx::query_as("SELECT id, project_id, channel, destination, last_error, state, opened_at, updated_at FROM notification_destination_alerts WHERE project_id = $1 AND state <> 'resolved' ORDER BY updated_at DESC")
+            .bind(project_id)
+            .fetch_all(pool(&state)?)
+            .await
+            .map_err(ApiError::internal)?,
+    ))
+}
+
+#[utoipa::path(post, path = "/api/v1/destination-alerts/{alert_id}/acknowledge", tag = "notifications", params(("alert_id" = Uuid, Path)), responses((status = 200, body = DestinationAlert), (status = 404)))]
+async fn acknowledge_destination_alert(
+    State(state): State<Arc<AppState>>,
+    Path(alert_id): Path<Uuid>,
+) -> ApiResult<DestinationAlert> {
+    let row: DestinationAlert = sqlx::query_as(
+        "UPDATE notification_destination_alerts SET state = 'acknowledged', updated_at = now() \
+         WHERE id = $1 AND state = 'open' \
+         RETURNING id, project_id, channel, destination, last_error, state, opened_at, updated_at",
+    )
+    .bind(alert_id)
+    .fetch_one(pool(&state)?)
+    .await
+    .map_err(|e| match e {
+        sqlx::Error::RowNotFound => ApiError::not_found(),
+        other => ApiError::internal(other),
+    })?;
+    Ok(Json(row))
 }
 
 #[utoipa::path(get, path = "/api/v1/projects/{project_id}/notification-rules", tag = "notifications", params(("project_id" = Uuid, Path)), responses((status = 200, body = [NotificationRule])))]
@@ -1874,7 +1943,7 @@ async fn list_notifications(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
 ) -> ApiResult<Vec<Notification>> {
-    Ok(Json(sqlx::query_as("SELECT id, project_id, channel, target, enabled, created_at FROM notification_configs WHERE project_id = $1 ORDER BY channel").bind(project_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
+    Ok(Json(sqlx::query_as("SELECT id, project_id, channel, target, enabled, created_at, aggregation_window_secs, quiet_start_min, quiet_end_min, quiet_action, quiet_bypass_statuses FROM notification_configs WHERE project_id = $1 ORDER BY channel").bind(project_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
 #[utoipa::path(put, path = "/api/v1/projects/{project_id}/notifications", tag = "notifications", request_body = [NotificationInput], params(("project_id" = Uuid, Path)), responses((status = 200, body = [Notification]), (status = 400)))]
 async fn replace_notifications(
@@ -1918,7 +1987,42 @@ async fn replace_notifications(
                 "email notification target must be an email address",
             ));
         }
-        sqlx::query("INSERT INTO notification_configs (id, project_id, channel, target, enabled) VALUES ($1, $2, $3, $4, $5)").bind(Uuid::new_v4()).bind(project_id).bind(&channel).bind(input.target.trim()).bind(input.enabled.unwrap_or(true)).execute(db).await.map_err(ApiError::internal)?;
+        let quiet_action = input
+            .quiet_action
+            .clone()
+            .unwrap_or_else(|| "hold".to_string());
+        if quiet_action != "hold" && quiet_action != "drop" {
+            return Err(ApiError::bad_request(
+                "quiet_action must be 'hold' or 'drop'",
+            ));
+        }
+        let quiet_start = input.quiet_start_min.unwrap_or(-1);
+        let quiet_end = input.quiet_end_min.unwrap_or(-1);
+        if (quiet_start >= 0) != (quiet_end >= 0) {
+            return Err(ApiError::bad_request(
+                "quiet_start_min and quiet_end_min must be configured together",
+            ));
+        }
+        let window = input.aggregation_window_secs.unwrap_or(0);
+        if !(0..=3600).contains(&window) {
+            return Err(ApiError::bad_request(
+                "aggregation_window_secs must be between 0 and 3600",
+            ));
+        }
+        sqlx::query("INSERT INTO notification_configs (id, project_id, channel, target, enabled, aggregation_window_secs, quiet_start_min, quiet_end_min, quiet_action, quiet_bypass_statuses) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)")
+            .bind(Uuid::new_v4())
+            .bind(project_id)
+            .bind(&channel)
+            .bind(input.target.trim())
+            .bind(input.enabled.unwrap_or(true))
+            .bind(window)
+            .bind(quiet_start)
+            .bind(quiet_end)
+            .bind(&quiet_action)
+            .bind(input.quiet_bypass_statuses.clone().unwrap_or_else(|| vec!["failed".to_string()]))
+            .execute(db)
+            .await
+            .map_err(ApiError::internal)?;
     }
     list_notifications(State(state), Path(project_id)).await
 }

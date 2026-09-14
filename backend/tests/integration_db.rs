@@ -5147,6 +5147,178 @@ async fn cron_schedule_materializes_unique_fire_slots() {
 }
 
 #[tokio::test]
+async fn notification_aggregation_collapses_repeats() {
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let config_id = Uuid::new_v4();
+    let project_name = format!("it-notif-agg-{}", project_id.simple());
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/agg.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status) VALUES ($1, $2, 'main', 'failed')",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert pipeline");
+    sqlx::query(
+        "INSERT INTO notification_configs (id, project_id, channel, target, enabled, aggregation_window_secs) \
+         VALUES ($1, $2, 'in_app', 'dashboard', true, 600)",
+    )
+    .bind(config_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert config");
+
+    cicd::outbox::emit_pipeline_event(&pool, project_id, pipeline_id, "pipeline.failed", "failed")
+        .await
+        .expect("first emit");
+    cicd::outbox::emit_pipeline_event(&pool, project_id, pipeline_id, "pipeline.failed", "failed")
+        .await
+        .expect("second emit");
+    cicd::outbox::emit_pipeline_event(&pool, project_id, pipeline_id, "pipeline.failed", "failed")
+        .await
+        .expect("third emit");
+
+    let rows: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM outbox_messages WHERE project_id = $1 AND channel = 'notification'",
+    )
+    .bind(project_id)
+    .fetch_one(&pool)
+    .await
+    .expect("count rows");
+    assert_eq!(rows, 1, "repeats must collapse into one pending message");
+
+    let agg: i32 = sqlx::query_scalar(
+        "SELECT (payload->>'agg_count')::int FROM outbox_messages WHERE project_id = $1 AND channel = 'notification'",
+    )
+    .bind(project_id)
+    .fetch_one(&pool)
+    .await
+    .expect("agg count");
+    assert_eq!(agg, 2, "two repeats must be counted");
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup");
+}
+
+#[tokio::test]
+async fn quiet_drop_skips_delivery_unless_bypass_status() {
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let pipeline_fail = Uuid::new_v4();
+    let pipeline_ok = Uuid::new_v4();
+    let config_id = Uuid::new_v4();
+    let project_name = format!("it-notif-quiet-{}", project_id.simple());
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/quiet.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    for (pid, status) in [(pipeline_fail, "failed"), (pipeline_ok, "success")] {
+        sqlx::query(
+            "INSERT INTO pipelines (id, project_id, git_ref, status) VALUES ($1, $2, 'main', $3)",
+        )
+        .bind(pid)
+        .bind(project_id)
+        .bind(status)
+        .execute(&pool)
+        .await
+        .expect("insert pipeline");
+    }
+    // 24/7 quiet drop with 'failed' bypass.
+    sqlx::query(
+        "INSERT INTO notification_configs (id, project_id, channel, target, enabled, quiet_start_min, quiet_end_min, quiet_action, quiet_bypass_statuses) \
+         VALUES ($1, $2, 'in_app', 'dashboard', true, 0, 1439, 'drop', ARRAY['failed'])",
+    )
+    .bind(config_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert config");
+
+    // success is dropped by the quiet window...
+    cicd::outbox::emit_pipeline_event(
+        &pool,
+        project_id,
+        pipeline_ok,
+        "pipeline.success",
+        "success",
+    )
+    .await
+    .expect("emit ok");
+    let ok_rows: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM outbox_messages WHERE project_id = $1")
+            .bind(project_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count ok rows");
+    // NOTE: emit still enqueues; quiet drop is applied at delivery time.
+    // Verify the delivery pass skips the non-bypassed message but keeps failed.
+    let delivered = cicd::outbox::deliver_due(
+        &pool,
+        &reqwest::Client::new(),
+        &cicd::config::SmtpConfig::default(),
+    )
+    .await;
+    let _ = delivered;
+    let ok_pending: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM outbox_messages WHERE project_id = $1 AND payload->>'status' = 'success' AND delivered_at IS NOT NULL",
+    )
+    .bind(project_id)
+    .fetch_one(&pool)
+    .await
+    .expect("success pending");
+    assert_eq!(ok_pending, 0, "success must be dropped inside quiet window");
+
+    // failed bypasses the quiet window.
+    cicd::outbox::emit_pipeline_event(
+        &pool,
+        project_id,
+        pipeline_fail,
+        "pipeline.failed",
+        "failed",
+    )
+    .await
+    .expect("emit fail");
+    let _ = cicd::outbox::deliver_due(
+        &pool,
+        &reqwest::Client::new(),
+        &cicd::config::SmtpConfig::default(),
+    )
+    .await;
+    let fail_delivered: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM outbox_messages WHERE project_id = $1 AND payload->>'status' = 'failed' AND delivered_at IS NOT NULL",
+    )
+    .bind(project_id)
+    .fetch_one(&pool)
+    .await
+    .expect("fail delivered");
+    assert_eq!(fail_delivered, 1, "failed must bypass quiet hours");
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup");
+}
+
+#[tokio::test]
 async fn notification_rules_filter_and_templates_render() {
     let pool = test_pool().await;
     let project_id = Uuid::new_v4();
