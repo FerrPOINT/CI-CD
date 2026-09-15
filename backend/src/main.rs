@@ -1,5 +1,6 @@
 use cicd::{
-    api::app_with_git_and_config, config::RuntimeConfig, dispatch_signal, outbox, platform, runner,
+    api::app_with_git_and_config, config::RuntimeConfig, config::parse_roles, dispatch_signal,
+    outbox, platform, runner,
 };
 
 use sqlx::postgres::PgPoolOptions;
@@ -27,9 +28,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let migrator = cicd::migrations_from_path(&config.database.migrations_dir).await?;
     migrator.run(&pool).await?;
 
+    // Stage 5 scale-out: split roles across deployments. A pod started with
+    // CICD_ROLES=api serves only the API; CICD_ROLES=worker runs the outbox/
+    // scheduler/retention workers; CICD_ROLES=runner executes jobs. Default
+    // keeps the all-in-one behaviour for local compose.
+    let roles = parse_roles(&std::env::var("CICD_ROLES").unwrap_or_default());
+    tracing::info!(?roles, "role selection");
+    let has_role = |role: &str| roles.contains(&role);
+
     let running = runner::RunningJobs::default();
     let runner_runtime = runner::RuntimeRunnerConfig::from_config(&config);
-    if config.runner.embedded_enabled {
+    if config.runner.embedded_enabled && (roles.is_empty() || has_role("runner")) {
         // Embedded runner: executes queued jobs stage by stage.
         let supervisor_pool = pool.clone();
         let supervisor_running = running.clone();
@@ -42,7 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
             .await;
         });
-    } else {
+    } else if roles.is_empty() || has_role("runner") {
         tracing::warn!(
             "CICD_EMBEDDED_RUNNER_ENABLED is false; queued jobs require an external forge-runner"
         );
@@ -54,21 +63,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // ADR-0006: outbox delivery + scheduler worker.
-    let outbox_pool = pool.clone();
-    let outbox_git_root = config.git.root.clone();
-    tokio::spawn(async move {
-        outbox::supervisor_loop_with_git_root(outbox_pool, outbox_git_root).await;
-    });
+    if roles.is_empty() || has_role("worker") {
+        let outbox_pool = pool.clone();
+        let outbox_git_root = config.git.root.clone();
+        tokio::spawn(async move {
+            outbox::supervisor_loop_with_git_root(outbox_pool, outbox_git_root).await;
+        });
+    }
 
-    let artifact_retention_pool = pool.clone();
-    let artifact_retention_config = config.artifacts.clone();
-    tokio::spawn(async move {
-        platform::artifact_retention_loop_with_config(
-            artifact_retention_pool,
-            artifact_retention_config,
-        )
-        .await;
-    });
+    if roles.is_empty() || has_role("worker") {
+        let artifact_retention_pool = pool.clone();
+        let artifact_retention_config = config.artifacts.clone();
+        tokio::spawn(async move {
+            platform::artifact_retention_loop_with_config(
+                artifact_retention_pool,
+                artifact_retention_config,
+            )
+            .await;
+        });
+    }
 
     let _runner_work_listener = dispatch_signal::spawn_runner_work_listener(pool.clone());
 

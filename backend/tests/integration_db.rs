@@ -5147,6 +5147,262 @@ async fn cron_schedule_materializes_unique_fire_slots() {
 }
 
 #[tokio::test]
+async fn outbox_retention_sweeps_old_delivered_messages() {
+    // Stage 5 item 3: the retention worker deletes terminal outbox rows and
+    // their attempt history past the retention window, keeping recent ones.
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let event_id = Uuid::new_v4();
+    let old_message = Uuid::new_v4();
+    let fresh_message = Uuid::new_v4();
+    let project_name = format!("it-retention-{}", project_id.simple());
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/retention.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+
+    sqlx::query(
+        "INSERT INTO domain_events (id, event_type, aggregate_type, aggregate_id, payload) VALUES ($1, 'pipeline.failed', 'pipeline', $2, '{}'::jsonb)",
+    )
+    .bind(event_id)
+    .bind(Uuid::new_v4())
+    .execute(&pool)
+    .await
+    .expect("insert domain event");
+
+    for (message_id, age_days, delivered) in [(old_message, 40i32, true), (fresh_message, 1, true)]
+    {
+        sqlx::query(
+            "INSERT INTO outbox_messages (id, event_id, project_id, subscription_id, channel, destination, payload, delivered_at, created_at, attempts) \
+             VALUES ($1, $2, $3, 'webhook:manual', 'webhook', 'https://hooks.example/x', '{}'::jsonb, \
+                     now() - make_interval(days => $4), now() - make_interval(days => $4), 1)",
+        )
+        .bind(message_id)
+        .bind(event_id)
+        .bind(project_id)
+        .bind(age_days)
+        .execute(&pool)
+        .await
+        .expect("insert outbox message");
+        let _ = delivered;
+        sqlx::query(
+            "INSERT INTO outbox_delivery_attempts (message_id, attempt_number, started_at, finished_at, outcome, duration_ms, created_at) \
+             VALUES ($1, 1, now(), now(), 'delivered', 1, now() - make_interval(days => $2))",
+        )
+        .bind(message_id)
+        .bind(age_days)
+        .execute(&pool)
+        .await
+        .expect("insert attempt row");
+    }
+
+    let swept = cicd::outbox::retention_sweep(&pool, chrono::Duration::days(30)).await;
+
+    assert_eq!(swept, 1, "only the old message is swept");
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM outbox_messages WHERE project_id = $1")
+            .bind(project_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count remaining");
+    assert_eq!(remaining, 1, "fresh delivered message must survive");
+    let old_attempts: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM outbox_delivery_attempts WHERE message_id = $1")
+            .bind(old_message)
+            .fetch_one(&pool)
+            .await
+            .expect("count old attempts");
+    assert_eq!(old_attempts, 0, "attempt history cascades with the message");
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup");
+}
+
+#[tokio::test]
+async fn egress_allowlist_blocks_disallowed_webhook_host() {
+    // Stage 5 item 2: with CICD_WEBHOOK_ALLOWLIST set, a webhook message to a
+    // non-allowlisted host must fail closed (no outbound request attempt).
+    unsafe { std::env::set_var("CICD_WEBHOOK_ALLOWLIST", "hooks.allowed.example") };
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let event_id = Uuid::new_v4();
+    let message_id = Uuid::new_v4();
+    let project_name = format!("it-egress-{}", project_id.simple());
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/egress.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+
+    sqlx::query(
+        "INSERT INTO domain_events (id, event_type, aggregate_type, aggregate_id, payload) VALUES ($1, 'pipeline.failed', 'pipeline', $2, '{}'::jsonb)",
+    )
+    .bind(event_id)
+    .bind(Uuid::new_v4())
+    .execute(&pool)
+    .await
+    .expect("insert domain event");
+
+    sqlx::query(
+        "INSERT INTO outbox_messages (id, event_id, project_id, subscription_id, channel, destination, payload) VALUES ($1, $2, $3, 'webhook:manual', 'webhook', 'https://evil.example.net/hook', $4)",
+    )
+    .bind(message_id)
+    .bind(event_id)
+    .bind(project_id)
+    .bind(serde_json::json!({"event": "pipeline.failed"}))
+    .execute(&pool)
+    .await
+    .expect("insert webhook outbox message");
+
+    let _ = cicd::outbox::deliver_due(
+        &pool,
+        &reqwest::Client::new(),
+        &cicd::config::SmtpConfig::default(),
+    )
+    .await;
+    unsafe { std::env::remove_var("CICD_WEBHOOK_ALLOWLIST") };
+
+    let (last_error, delivered_at): (Option<String>, Option<chrono::DateTime<chrono::Utc>>) =
+        sqlx::query_as("SELECT last_error, delivered_at FROM outbox_messages WHERE id = $1")
+            .bind(message_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch egress message");
+    assert!(delivered_at.is_none(), "blocked host must not be delivered");
+    let error = last_error.expect("must record an egress failure");
+    assert!(
+        error.contains("egress allowlist"),
+        "unexpected error: {error}"
+    );
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup");
+}
+
+#[tokio::test]
+async fn parallel_delivery_claims_message_exactly_once() {
+    // Stage 5 scale-out: two worker instances must not double-deliver the
+    // same outbox message. The claim has to be atomic (SKIP LOCKED style),
+    // so concurrent deliver_due passes deliver the row exactly once.
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let config_id = Uuid::new_v4();
+    let message_id = Uuid::new_v4();
+    let project_name = format!("it-notif-race-{}", project_id.simple());
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(&project_name)
+        .bind("https://example.invalid/race.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status) VALUES ($1, $2, 'main', 'failed')",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert pipeline");
+    sqlx::query(
+        "INSERT INTO notification_configs (id, project_id, channel, target, enabled) VALUES ($1, $2, 'in_app', 'dashboard', true)",
+    )
+    .bind(config_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert notification config");
+
+    let event_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO domain_events (id, event_type, aggregate_type, aggregate_id, payload) VALUES ($1, 'pipeline.failed', 'pipeline', $2, '{}'::jsonb)",
+    )
+    .bind(event_id)
+    .bind(pipeline_id)
+    .execute(&pool)
+    .await
+    .expect("insert domain event");
+
+    sqlx::query(
+        "INSERT INTO outbox_messages (id, event_id, project_id, subscription_id, channel, destination, payload) VALUES ($1, $2, $3, $4, 'notification', 'dashboard', $5)",
+    )
+    .bind(message_id)
+    .bind(event_id)
+    .bind(project_id)
+    .bind(format!("notification:{}", config_id))
+    .bind(serde_json::json!({
+        "event": "pipeline.failed",
+        "project_id": project_id,
+        "pipeline_id": pipeline_id,
+        "status": "failed",
+        "channel": "in_app",
+    }))
+    .execute(&pool)
+    .await
+    .expect("insert race outbox message");
+
+    let left = pool.clone();
+    let right = pool.clone();
+    let (a, b) = tokio::join!(
+        async move {
+            cicd::outbox::deliver_due(
+                &left,
+                &reqwest::Client::new(),
+                &cicd::config::SmtpConfig::default(),
+            )
+            .await
+        },
+        async move {
+            cicd::outbox::deliver_due(
+                &right,
+                &reqwest::Client::new(),
+                &cicd::config::SmtpConfig::default(),
+            )
+            .await
+        },
+    );
+    let _ = (a, b);
+
+    let (attempts, delivered_at): (i32, Option<chrono::DateTime<chrono::Utc>>) =
+        sqlx::query_as("SELECT attempts, delivered_at FROM outbox_messages WHERE id = $1")
+            .bind(message_id)
+            .fetch_one(&pool)
+            .await
+            .expect("fetch raced message");
+    assert_eq!(attempts, 1, "concurrent workers must deliver exactly once");
+    assert!(delivered_at.is_some(), "message must be delivered");
+
+    let history: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM outbox_delivery_attempts WHERE message_id = $1")
+            .bind(message_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap_or(0);
+    assert_eq!(history, 1, "exactly one delivery history row");
+
+    sqlx::query("DELETE FROM projects WHERE id = $1")
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("cleanup");
+}
+
+#[tokio::test]
 async fn notification_aggregation_collapses_repeats() {
     let pool = test_pool().await;
     let project_id = Uuid::new_v4();

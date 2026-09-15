@@ -10,6 +10,12 @@
 ## [Unreleased]
 
 ### Added
+
+- Этап 5 масштабирования: `CICD_ROLES` (api/worker/runner); exactly-once lease-claim доставки outbox (SKIP LOCKED + 300 c); egress-allowlist `CICD_WEBHOOK_ALLOWLIST`; outbox retention-sweep (30 дней, часовой каденс); `docs/RUNBOOK.md`.
+
+## [Unreleased]
+
+### Added
 - Notification rules / preferences / template catalog (stage 4 item 1): миграция 0032, fan-out фильтрация, per-user mute/verbosity, `{{var}}`-шаблоны с воспроизводимым рендерингом.
 - Aggregation + quiet hours + destination alerts (stage 4 items 3+5): миграция 0033 — collapse повторов со счётчиком, quiet окна hold/drop с bypass-статусами, авто-алерты на dead-letter с acknowledge/авто-resolve.
 

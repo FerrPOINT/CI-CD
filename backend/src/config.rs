@@ -14,6 +14,52 @@ pub const INSECURE_GIT_INTERNAL_TOKEN: &str = "forge-internal-dev-token";
 
 const TEST_DATABASE_URL: &str = "postgresql://cicd-test-placeholder";
 
+/// Parse a CICD_ROLES value ("api,worker,runner"). Empty input means
+/// "all roles" (single-process local compose behaviour).
+pub fn parse_roles(raw: &str) -> Vec<&'static str> {
+    let mut roles = Vec::new();
+    for part in raw.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+        let role = match part.to_ascii_lowercase().as_str() {
+            "api" => "api",
+            "worker" => "worker",
+            "runner" => "runner",
+            other => {
+                tracing::warn!(role = other, "unknown CICD_ROLES entry ignored");
+                continue;
+            }
+        };
+        if !roles.contains(&role) {
+            roles.push(role);
+        }
+    }
+    roles
+}
+
+#[cfg(test)]
+mod role_tests {
+    use super::parse_roles;
+
+    #[test]
+    fn empty_means_all_roles() {
+        assert!(parse_roles("").is_empty());
+        assert!(parse_roles("  ").is_empty());
+    }
+
+    #[test]
+    fn parses_and_dedupes_known_roles() {
+        assert_eq!(parse_roles("api,worker"), vec!["api", "worker"]);
+        assert_eq!(
+            parse_roles("worker, worker ,runner"),
+            vec!["worker", "runner"]
+        );
+    }
+
+    #[test]
+    fn unknown_roles_are_ignored() {
+        assert_eq!(parse_roles("api,queen"), vec!["api"]);
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeConfig {
     pub database: DatabaseConfig,
@@ -24,6 +70,58 @@ pub struct RuntimeConfig {
     pub auth: AuthConfig,
     pub secrets: SecretsConfig,
     pub smtp: SmtpConfig,
+}
+
+/// Egress allowlist for outbound webhook deliveries (Stage 5 item 2).
+/// Empty means "no restriction" (backwards-compatible local compose);
+/// entries are `host` or `host:port` matched case-insensitively.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EgressConfig {
+    pub webhook_allowlist: Vec<String>,
+    pub destination_max_inflight: u32,
+}
+
+impl EgressConfig {
+    pub fn webhook_host_allowed(&self, url: &str) -> bool {
+        if self.webhook_allowlist.is_empty() {
+            return true;
+        }
+        let host = url
+            .split("://")
+            .nth(1)
+            .and_then(|rest| rest.split(['/', '?']).next())
+            .map(|h| h.to_ascii_lowercase());
+        match host {
+            Some(host) => self
+                .webhook_allowlist
+                .iter()
+                .any(|allowed| allowed.to_ascii_lowercase() == host),
+            None => false,
+        }
+    }
+}
+
+#[cfg(test)]
+mod egress_tests {
+    use super::EgressConfig;
+
+    #[test]
+    fn empty_allowlist_permits_everything() {
+        let cfg = EgressConfig::default();
+        assert!(cfg.webhook_host_allowed("https://example.com/hook"));
+    }
+
+    #[test]
+    fn allowlist_matches_host_and_rejects_others() {
+        let cfg = EgressConfig {
+            webhook_allowlist: vec!["hooks.example.com".into(), "Internal:8443".into()],
+            destination_max_inflight: 4,
+        };
+        assert!(cfg.webhook_host_allowed("https://hooks.example.com/x"));
+        assert!(cfg.webhook_host_allowed("https://internal:8443/y"));
+        assert!(!cfg.webhook_host_allowed("https://evil.example.net/z"));
+        assert!(!cfg.webhook_host_allowed("not-a-url"));
+    }
 }
 
 /// SMTP transport for the `email` notification channel

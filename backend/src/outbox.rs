@@ -17,6 +17,10 @@ use chrono::{DateTime, Duration, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+/// Delivery lease (seconds): a claimed row is invisible to other workers
+/// until the lease expires, so crashed workers release work within this window.
+pub const DELIVERY_LEASE_SECS: f64 = 300.0;
+
 pub const MAX_ATTEMPTS: i32 = 8;
 pub const NOTIFICATION_CHANNEL_IN_APP: &str = "in_app";
 pub const NOTIFICATION_CHANNEL_SSE: &str = "sse";
@@ -521,35 +525,48 @@ pub async fn deliver_due(
     client: &reqwest::Client,
     smtp: &crate::config::SmtpConfig,
 ) -> usize {
-    let due = sqlx::query_as::<_, (Uuid, Uuid, String, String, serde_json::Value, i32)>(
-        "SELECT m.id, m.project_id, m.channel, m.destination, m.payload, m.attempts \
-         FROM outbox_messages m \
-         WHERE m.delivered_at IS NULL AND m.failed_at IS NULL AND m.next_attempt_at <= now() \
-           AND m.attempts < $1 \
-           AND NOT EXISTS ( \
-             SELECT 1 FROM notification_configs c \
-             WHERE c.project_id = m.project_id \
-               AND c.enabled \
-               AND ('notification:' || c.id::text) = m.subscription_id \
-               AND c.quiet_action = 'drop' \
-               AND c.quiet_start_min >= 0 \
-               AND (extract(hour from now()) * 60 + extract(minute from now()))::int \
-                     BETWEEN c.quiet_start_min AND c.quiet_end_min - 1 \
-               AND NOT ( \
-                 m.payload->>'status' = ANY (c.quiet_bypass_statuses) \
-                 OR c.quiet_bypass_statuses = '{}' \
-               ) \
-           ) \
-         ORDER BY m.next_attempt_at, m.id LIMIT 20",
+    // Stage 5 scale-out: atomically claim due rows (lease-claim). The claim
+    // bumps attempts and pushes next_attempt_at one lease window forward in a
+    // single UPDATE ... WHERE next_attempt_at <= now() so a second worker
+    // deployment can never claim or deliver the same message concurrently.
+    let claimed = sqlx::query_as::<_, (Uuid, Uuid, String, String, serde_json::Value, i32)>(
+        "UPDATE outbox_messages m SET \
+           attempts = m.attempts + 1, \
+           next_attempt_at = now() + make_interval(secs => $2::double precision) \
+         FROM ( \
+           SELECT id FROM outbox_messages m \
+           WHERE m.delivered_at IS NULL AND m.failed_at IS NULL AND m.next_attempt_at <= now() \
+             AND m.attempts < $1 \
+             AND NOT EXISTS ( \
+               SELECT 1 FROM notification_configs c \
+               WHERE c.project_id = m.project_id \
+                 AND c.enabled \
+                 AND ('notification:' || c.id::text) = m.subscription_id \
+                 AND c.quiet_action = 'drop' \
+                 AND c.quiet_start_min >= 0 \
+                 AND (extract(hour from now()) * 60 + extract(minute from now()))::int \
+                       BETWEEN c.quiet_start_min AND c.quiet_end_min - 1 \
+                 AND NOT ( \
+                   m.payload->>'status' = ANY (c.quiet_bypass_statuses) \
+                   OR c.quiet_bypass_statuses = '{}' \
+                 ) \
+             ) \
+           ORDER BY m.next_attempt_at, m.id LIMIT 20 \
+           FOR UPDATE SKIP LOCKED \
+         ) batch \
+         WHERE m.id = batch.id \
+         RETURNING m.id, m.project_id, m.channel, m.destination, m.payload, m.attempts",
     )
     .bind(MAX_ATTEMPTS)
+    .bind(DELIVERY_LEASE_SECS)
     .fetch_all(pool)
     .await
     .unwrap_or_default();
 
     let mut delivered = 0;
-    for (id, project_id, channel, url, payload, attempts) in due {
-        let attempt_number = attempts + 1;
+    for (id, project_id, channel, url, payload, attempts) in claimed {
+        // The lease-claim already bumped attempts: this IS attempt_number.
+        let attempt_number = attempts;
         let started_at = Utc::now();
         let timer = std::time::Instant::now();
         if channel == "notification" {
@@ -559,11 +576,10 @@ pub async fn deliver_due(
                 .unwrap_or_default();
             if supported_local_notification_channel(local_channel) {
                 let _ = sqlx::query(
-                    "UPDATE outbox_messages SET attempts = $2, delivered_at = now(), failed_at = NULL, last_error = NULL WHERE id = $1",
+                    "UPDATE outbox_messages SET delivered_at = now(), failed_at = NULL, last_error = NULL WHERE id = $1",
                 )
                 .bind(id)
-                .bind(attempt_number)
-                .execute(pool)
+                                .execute(pool)
                 .await;
                 record_delivery_attempt(
                     pool,
@@ -591,11 +607,10 @@ pub async fn deliver_due(
                 let last_error = format!("unsupported notification channel: {local_channel}");
                 if attempt_number >= MAX_ATTEMPTS {
                     let _ = sqlx::query(
-                        "UPDATE outbox_messages SET attempts = $2, last_error = $3, failed_at = now() WHERE id = $1",
+                        "UPDATE outbox_messages SET last_error = $2, failed_at = now() WHERE id = $1",
                     )
                     .bind(id)
-                    .bind(attempt_number)
-                    .bind(&last_error)
+                                        .bind(&last_error)
                     .execute(pool)
                     .await;
                     record_delivery_attempt(
@@ -615,11 +630,10 @@ pub async fn deliver_due(
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 } else {
                     let _ = sqlx::query(
-                        "UPDATE outbox_messages SET attempts = $2, last_error = $3, next_attempt_at = $4 WHERE id = $1",
+                        "UPDATE outbox_messages SET last_error = $2, next_attempt_at = $3 WHERE id = $1",
                     )
                     .bind(id)
-                    .bind(attempt_number)
-                    .bind(&last_error)
+                                        .bind(&last_error)
                     .bind(Utc::now() + next_delay(attempts))
                     .execute(pool)
                     .await;
@@ -653,11 +667,10 @@ pub async fn deliver_due(
             match email_result {
                 Ok(()) => {
                     let _ = sqlx::query(
-                        "UPDATE outbox_messages SET attempts = $2, delivered_at = now(), failed_at = NULL, last_error = NULL WHERE id = $1",
+                        "UPDATE outbox_messages SET delivered_at = now(), failed_at = NULL, last_error = NULL WHERE id = $1",
                     )
                     .bind(id)
-                    .bind(attempt_number)
-                    .execute(pool)
+                                        .execute(pool)
                     .await;
                     record_delivery_attempt(
                         pool,
@@ -693,6 +706,25 @@ pub async fn deliver_due(
             continue;
         }
 
+        // Stage 5 egress control: outbound webhook hosts must pass the
+        // configured allowlist (empty allowlist = unrestricted local mode).
+        let egress = egress_config_from_env();
+        if !egress.webhook_host_allowed(&url) {
+            let error_message =
+                format!("webhook destination host not allowed by egress allowlist: {url}");
+            record_failed_delivery_attempt(
+                pool,
+                id,
+                attempt_number,
+                started_at,
+                timer,
+                None,
+                error_message,
+            )
+            .await;
+            continue;
+        }
+
         let mut request = client.post(&url).json(&payload);
         // Sign when the webhook has a secret (subscription_id = "webhook:<id>").
         if let Some(secret) = sqlx::query_scalar::<_, Option<String>>(
@@ -720,11 +752,10 @@ pub async fn deliver_due(
         match result {
             Ok(response) if response.status().is_success() => {
                 let _ = sqlx::query(
-                    "UPDATE outbox_messages SET attempts = $2, delivered_at = now(), failed_at = NULL, last_error = NULL WHERE id = $1",
+                    "UPDATE outbox_messages SET delivered_at = now(), failed_at = NULL, last_error = NULL WHERE id = $1",
                 )
                 .bind(id)
-                .bind(attempt_number)
-                .execute(pool)
+                                .execute(pool)
                 .await;
                 record_delivery_attempt(
                     pool,
@@ -787,10 +818,9 @@ async fn record_failed_delivery_attempt(
 ) {
     if attempt_number >= MAX_ATTEMPTS {
         let _ = sqlx::query(
-            "UPDATE outbox_messages SET attempts = $2, last_error = $3, failed_at = now() WHERE id = $1",
+            "UPDATE outbox_messages SET last_error = $2, failed_at = now() WHERE id = $1",
         )
         .bind(id)
-        .bind(attempt_number)
         .bind(&error_message)
         .execute(pool)
         .await;
@@ -813,10 +843,9 @@ async fn record_failed_delivery_attempt(
         crate::metrics::OUTBOX_DEAD_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     } else {
         let _ = sqlx::query(
-            "UPDATE outbox_messages SET attempts = $2, last_error = $3, next_attempt_at = $4 WHERE id = $1",
+            "UPDATE outbox_messages SET last_error = $2, next_attempt_at = $3 WHERE id = $1",
         )
         .bind(id)
-        .bind(attempt_number)
         .bind(&error_message)
         .bind(Utc::now() + next_delay(attempt_number - 1))
         .execute(pool)
@@ -845,6 +874,40 @@ struct DeliveryAttemptRecord {
     http_status: Option<i32>,
     error_message: Option<String>,
     duration_ms: i32,
+}
+
+/// Stage 5 item 3: retention sweep for terminal outbox rows. Deletes
+/// delivered messages older than the window; attempt history cascades via
+/// FK. Undelivered / retrying / dead-letter rows are never touched.
+pub async fn retention_sweep(pool: &PgPool, window: chrono::Duration) -> u64 {
+    let cutoff = chrono::Utc::now() - window;
+    let result = sqlx::query(
+        "DELETE FROM outbox_messages WHERE delivered_at IS NOT NULL AND delivered_at < $1",
+    )
+    .bind(cutoff)
+    .execute(pool)
+    .await;
+    match result {
+        Ok(res) => res.rows_affected(),
+        Err(error) => {
+            tracing::warn!(%error, "outbox retention sweep failed");
+            0
+        }
+    }
+}
+
+/// Egress allowlist from CICD_WEBHOOK_ALLOWLIST (comma-separated hosts).
+fn egress_config_from_env() -> crate::config::EgressConfig {
+    let raw = std::env::var("CICD_WEBHOOK_ALLOWLIST").unwrap_or_default();
+    crate::config::EgressConfig {
+        webhook_allowlist: raw
+            .split(',')
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .map(str::to_owned)
+            .collect(),
+        destination_max_inflight: 4,
+    }
 }
 
 async fn record_delivery_attempt(pool: &PgPool, attempt: DeliveryAttemptRecord) {
@@ -1131,6 +1194,7 @@ pub async fn supervisor_loop(pool: PgPool) {
 }
 
 pub async fn supervisor_loop_with_git_root(pool: PgPool, git_root: PathBuf) {
+    let mut passes: u32 = 0;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
@@ -1144,6 +1208,15 @@ pub async fn supervisor_loop_with_git_root(pool: PgPool, git_root: PathBuf) {
         let fired = fire_due_schedules_with_git_root(&pool, &git_root).await;
         if delivered > 0 || fired > 0 {
             tracing::info!(delivered, fired, "outbox/scheduler pass");
+            // Stage 5 item 3: retention runs hourly (720 passes at 5s cadence).
+            passes += 1;
+            if passes >= 720 {
+                let swept = retention_sweep(&pool, chrono::Duration::days(30)).await;
+                if swept > 0 {
+                    tracing::info!(swept, "outbox retention sweep");
+                }
+                passes = 0;
+            }
         }
     }
 }

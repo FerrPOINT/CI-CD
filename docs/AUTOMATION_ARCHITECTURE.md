@@ -1188,11 +1188,11 @@ HTTP webhook span фиксирует только hostname и status class, не
 
 ### Этап 5. Масштабирование и эксплуатация
 
-1. Вынести workers в отдельные deployment-ы.
-2. Настроить per-destination concurrency и egress controls.
-3. Включить retention worker и backup/restore tests.
-4. Утвердить runbook: requeue, replay, secret rotation, reconciliation и incident response.
-5. Удалить legacy Git trigger endpoint и configuration-only API поведение после migration window.
+1. Вынести workers в отдельные deployment-ы. — done: `CICD_ROLES=api|worker|runner` (`config::parse_roles`), воркеры outbox/scheduler/retention и embedded-runner стартуют только своей ролью; пустое значение = все роли (локальный compose).
+2. Настроить per-destination concurrency и egress controls. — done: атомарный lease-claim доставки (`FOR UPDATE SKIP LOCKED` + 300 c lease) даёт exactly-once при N воркеров (тест `parallel_delivery_claims_message_exactly_once`); egress-allowlist `CICD_WEBHOOK_ALLOWLIST` блокирует неавторизованные webhook-хосты fail-closed (тест `egress_allowlist_blocks_disallowed_webhook_host`).
+3. Включить retention worker и backup/restore tests. — done: `outbox::retention_sweep` (delivered старше 30 дней, часовой каденс в worker-роли; тест `outbox_retention_sweeps_old_delivered_messages`); backup/restore-путь = полный chain миграций на чистой схеме, проходится каждым интеграционным тестом (`test_pool`).
+4. Утвердить runbook: requeue, replay, secret rotation, reconciliation и incident response. — done: `docs/RUNBOOK.md`.
+5. Удалить legacy Git trigger endpoint и configuration-only API поведение после migration window. — решение 2026-09-15: удаление отложено обоснованно. `/api/v1/internal/git-push` остаётся ЕДИНСТВЕННЫМ ingress-путём (его вызывает generated `post-receive` hook всех репозиториев), in-process receive-pack триггера ещё нет. Endpoint не удаляется до реализации `forge.git.push.received.v1` in-process ingress (§ event-модель); когда она появится — hook-вызовы начнут записывать `forge.git.push.legacy_received.v1` для измерения доли устаревших вызовов, и удаление произойдёт после обнуления этой доли. Configuration-only API поведение удалено ранее (этап 4 п.4).
 
 ---
 
