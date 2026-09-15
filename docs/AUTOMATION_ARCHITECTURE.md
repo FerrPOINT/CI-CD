@@ -1181,7 +1181,7 @@ HTTP webhook span фиксирует только hostname и status class, не
 1. Добавить destinations, rules, preferences и template catalog. — done: `notification_rules` / `notification_preferences` / `notification_templates` (мигр 0032), фильтрация fan-out по правилам, per-user mute/verbosity, воспроизводимый `{{var}}`-рендеринг (см. docs/API.md Notifications).
 2. Включить email fake/test adapter, затем Slack webhook. — done: канал `email` (SMTP через `CICD_SMTP_*`, при disabled — локальная доставка) и `slack_webhook`/`generic_webhook` доставляются через общий outbox delivery subsystem (см. docs/API.md Notifications); rules/preferences/templates остаются target.
 3. Ввести aggregation и quiet hours. — done: `aggregation_window_secs` collapse со счётчиком, quiet windows (hold/drop + bypass-статусы) в миграции 0033 (см. docs/API.md).
-4. Запустить notifications для terminal pipeline events одного проекта.
+4. Запустить notifications для terminal pipeline events одного проекта. — done: `emit_pipeline_event` вызывается ровно один раз на terminal-переходе (`success`/`failed`/`canceled`, дедуп по предыдущему статусу) из completion-пути джобов; правила/preferences/templates/агрегация применяются в fan-out (см. integration-тесты `notification_rules_filter_and_templates_render`, `notification_aggregation_collapses_repeats`).
 5. Добавить production alerting на failed notification destinations. — done: `notification_destination_alerts` — авто-open при dead-letter, авто-resolve при успехе, acknowledge-эндпоинт (Developer+).
 
 Критерий готовности: muted success не скрывает failed deployment; template rendering воспроизводим по delivery history.
