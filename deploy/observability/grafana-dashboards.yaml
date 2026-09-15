@@ -5,3 +5,10 @@ providers:
     type: file
     options:
       path: /var/lib/grafana/dashboards
+  - name: base
+    folder: Base
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    type: file
+    options:
+      path: /var/lib/grafana/dashboards

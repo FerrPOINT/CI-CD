@@ -1,0 +1,33 @@
+# M3: Base-wide availability alert rules.
+# Covers all five Base services scraped by this Prometheus instance.
+groups:
+  - name: base-availability
+    rules:
+      - alert: BaseServiceDown
+        expr: up{service=~"forge-cicd|fleet-control|task-tracker|wiki|java-agent"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }} is down"
+          description: "Scrape target {{ $labels.job }}/{{ $labels.instance }} has been unreachable for 2 minutes."
+
+      - alert: BaseService5xxRate
+        expr: |
+          sum by (service) (rate(http_requests_total{status=~"5.."}[5m]))
+            / sum by (service) (rate(http_requests_total[5m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} 5xx error rate above 5%"
+          description: "Sustained 5xx rate > 5% over the last 10 minutes."
+
+      - alert: BaseScrapeMissing
+        expr: absent(up{job="fleet-control"}) or absent(up{job="task-tracker"}) or absent(up{job="wiki"}) or absent(up{job="java-agent"}) or absent(up{job="forge-cicd"})
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A Base service scrape job disappeared from targets"
+          description: "One of the five expected scrape jobs is missing entirely — check prometheus.yml and service networks."

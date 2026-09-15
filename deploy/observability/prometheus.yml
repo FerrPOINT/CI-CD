@@ -1,5 +1,7 @@
-# K6.2: Prometheus scrape config for the Base observability profile.
-# Scope: Forge CI/CD backend + platform postgres exporters (opt-in profile).
+# K6.2 → M1: Prometheus scrape config for the Base observability profile.
+# Scope: ALL Base services — Forge CI/CD + fleet-control + task-tracker +
+# wiki + java-agent. Aliases resolve per-network: `backend` in `tt` is
+# tt-backend, in `wiki` wiki-backend, in `fc` fc-backend.
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
@@ -12,8 +14,37 @@ scrape_configs:
         labels:
           service: forge-cicd
 
+  - job_name: fleet-control
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["fc-backend:23801"]
+        labels:
+          service: fleet-control
+
+  - job_name: task-tracker
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["tt-backend:3456"]
+        labels:
+          service: task-tracker
+
+  - job_name: wiki
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["wiki-backend:3456"]
+        labels:
+          service: wiki
+
+  - job_name: java-agent
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["agent:9969"]
+        labels:
+          service: java-agent
+
 rule_files:
   - /etc/prometheus/rules/forge-alerts.yaml
+  - /etc/prometheus/rules/base-alerts.yaml
 
 alerting:
   alertmanagers:
