@@ -94,10 +94,10 @@ docker compose config -q
 docker compose -f backend/docker-compose.test.yml config -q
 just readiness
 docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" -w /workspace \
-  -e CARGO_TARGET_DIR=/workspace/target rust:1.86-bookworm \
+  -e CARGO_TARGET_DIR=/workspace/target rust:1.88-bookworm \
   -lc '/usr/local/cargo/bin/cargo test --workspace'
 docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" -w /workspace \
-  -e CARGO_TARGET_DIR=/workspace/target rust:1.86-bookworm \
+  -e CARGO_TARGET_DIR=/workspace/target rust:1.88-bookworm \
   -lc '/usr/local/cargo/bin/cargo test -p cicd-cli --test cli_contract'
 cd backend && CICD_TEST_DATABASE_URL=<reachable test PostgreSQL> \
   cargo test -p cicd-cli --features integration --test cli_real_api -- --test-threads=1

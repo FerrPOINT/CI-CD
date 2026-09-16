@@ -12,7 +12,7 @@
 
 ### Требования
 
-Для полного Docker-цикла достаточно Docker Engine с Compose plugin, `curl` и (опционально) `just`. Локальный режим дополнительно требует Rust 1.86+ и Node.js 22 с pnpm 11. Версии runtime и образов зафиксированы в `docker-compose.yml` и `.github/workflows/ci.yml`.
+Для полного Docker-цикла достаточно Docker Engine с Compose plugin, `curl` и (опционально) `just`. Локальный режим дополнительно требует Rust 1.88+ и Node.js 22 с pnpm 11. Версии runtime и образов зафиксированы в `docker-compose.yml` и `.github/workflows/ci.yml`.
 
 Перед первым запуском создайте только локальный файл конфигурации:
 
@@ -37,7 +37,7 @@ just logs            # docker compose logs -f
 just health          # GET /api/v1/health
 just readiness       # GET /api/v1/readiness (PostgreSQL + SQLx migrations)
 just down            # остановить stack
-just test-backend    # cargo test в rust:1.86-bookworm
+just test-backend    # cargo test в rust:1.88-bookworm
 just test-frontend   # Vitest на хосте
 just build-frontend  # TypeScript check и Vite build на хосте
 ```
@@ -172,7 +172,7 @@ docker run --rm --entrypoint /bin/bash \
   -v "$PWD/backend:/workspace" \
   -w /workspace \
   -e CARGO_TARGET_DIR=/workspace/target \
-  rust:1.86-bookworm \
+  rust:1.88-bookworm \
   -lc '/usr/local/cargo/bin/cargo fmt --all -- --check && \
        /usr/local/cargo/bin/cargo clippy --workspace --all-targets -- -D warnings && \
        /usr/local/cargo/bin/cargo test --workspace && \

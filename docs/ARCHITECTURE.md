@@ -12,7 +12,7 @@ Self-hosted CI/CD control plane: Git-хостинг (bare-репозитории
 
 | Компонент | Библиотека | Версия |
 |---|---|---|
-| Язык | Rust | 1.86 (edition 2024) |
+| Язык | Rust | 1.88 (edition 2024) |
 | Web framework | axum | 0.8 |
 | Async runtime | tokio | 1 |
 | DB | sqlx (PostgreSQL) | 0.8 |
@@ -197,7 +197,7 @@ Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-2
 just up             # docker compose up --build -d
 just health         # curl /api/v1/health
 just readiness      # curl /api/v1/readiness
-just test-backend   # cargo test --workspace (в rust:1.86-bookworm)
+just test-backend   # cargo test --workspace (в rust:1.88-bookworm)
 just test-frontend  # pnpm test
 just build-frontend # pnpm build
 ```

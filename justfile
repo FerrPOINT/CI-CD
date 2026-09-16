@@ -13,7 +13,7 @@ logs:
     docker compose logs -f
 
 test-backend:
-    docker run --rm --entrypoint /bin/bash -v "{{justfile_directory()}}/backend:/workspace" -w /workspace rust:1.86-bookworm -lc '/usr/local/cargo/bin/cargo test'
+    docker run --rm --entrypoint /bin/bash -v "{{justfile_directory()}}/backend:/workspace" -w /workspace rust:1.88-bookworm -lc '/usr/local/cargo/bin/cargo test'
 
 test-frontend:
     cd frontend && pnpm test

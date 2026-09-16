@@ -345,7 +345,7 @@ CLI `cicd-cli` работает только через HTTP API и покрыв
 
 ```bash
 docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" -w /workspace \
-  -e CARGO_TARGET_DIR=/workspace/target rust:1.86-bookworm \
+  -e CARGO_TARGET_DIR=/workspace/target rust:1.88-bookworm \
   -lc '/usr/local/cargo/bin/cargo build -p cicd-cli'
 
 export CICD_API_URL=http://127.0.0.1:22801

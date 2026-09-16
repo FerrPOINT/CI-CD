@@ -59,7 +59,7 @@
 
 | Окружение / fixture | Правило использования | Статус |
 |---|---|---|
-| Local unit/contract | Rust 1.86 и Node 22/pnpm 11 согласно `.github/workflows/ci.yml`; тест не использует production URL, токен или DB. | **Current verified** |
+| Local unit/contract | Rust 1.88 и Node 22/pnpm 11 согласно `.github/workflows/ci.yml`; тест не использует production URL, токен или DB. | **Current verified** |
 | Main Compose smoke | Disposable local Compose stack; проверяются health и состояние сервисов, затем stack останавливается. Реальные shared data и secrets запрещены. | **Current verified** |
 | Test Compose PostgreSQL | `backend/docker-compose.test.yml`: `postgres:17-alpine`, `forge_test_cicd`, tmpfs, без host port, healthcheck. Owner fixture -- `forge_owner`; `backend/tests/sql/init-roles.sql` создаёт runtime fixture `forge_runtime`. | **Current verified fixture** |
 | Real-DB harness | Current CI применяет migrations к disposable PostgreSQL service под `forge_owner`. Полная owner/runtime role matrix, prior-schema upgrade и parallel isolated DB/schema остаются target. | **Current verified; target расширение** |
@@ -134,7 +134,7 @@ Coverage измеряет поведение и риск, а не только l
 
 | Job | Обязательная проверка |
 |---|---|
-| `backend` | Rust 1.86 + PostgreSQL 17 service: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db -- --test-threads=1`, `cargo build --release --workspace`, OpenAPI drift gate. |
+| `backend` | Rust 1.88 + PostgreSQL 17 service: `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db -- --test-threads=1`, `cargo build --release --workspace`, OpenAPI drift gate. |
 | `frontend` | Node 22/pnpm 11: `pnpm install --frozen-lockfile`, `pnpm openapi:generate` + clean diff для `src/api/schema.d.ts`, `pnpm openapi:compat` self-test, OpenAPI backward compatibility diff с base commit/default branch, `pnpm lint`, `pnpm test`, `pnpm build`. |
 | `compose-smoke` | Docker Compose: config validation, production image build, healthy startup, backend health/readiness, frontend nginx smoke, failure logs and cleanup. |
 | `e2e` | Node 22/pnpm 11 + Playwright Chromium: installs browser dependencies, validates Compose config, starts production stack, seeds deterministic evidence, runs critical UI journeys, all-route axe smoke and seeded performance smoke, uploads Playwright report/traces/screenshots/video on failure and always cleans Compose volumes. |

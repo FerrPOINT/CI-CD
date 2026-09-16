@@ -149,6 +149,64 @@ async fn readiness_reports_database_and_migrations() {
 }
 
 #[tokio::test]
+async fn metrics_count_recent_terminal_jobs_by_finished_at() {
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let stage_id = Uuid::new_v4();
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(format!("it-metrics-{}", project_id.simple()))
+        .bind("https://example.invalid/metrics.git")
+        .execute(&pool)
+        .await
+        .expect("insert metrics project");
+    sqlx::query(
+        "INSERT INTO pipelines (id, project_id, git_ref, status, finished_at) \
+         VALUES ($1, $2, 'main', 'failed', now())",
+    )
+    .bind(pipeline_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert metrics pipeline");
+    sqlx::query(
+        "INSERT INTO stages (id, pipeline_id, name, position, status) \
+         VALUES ($1, $2, 'metrics', 0, 'failed')",
+    )
+    .bind(stage_id)
+    .bind(pipeline_id)
+    .execute(&pool)
+    .await
+    .expect("insert metrics stage");
+    sqlx::query(
+        "INSERT INTO jobs (id, stage_id, name, image, command, position, status, finished_at) VALUES \
+         ($1, $2, 'recent-failure', 'alpine', 'false', 0, 'failed', now()), \
+         ($3, $2, 'recent-success', 'alpine', 'true', 1, 'success', now()), \
+         ($4, $2, 'old-failure', 'alpine', 'false', 2, 'failed', now() - interval '25 hours')",
+    )
+    .bind(Uuid::new_v4())
+    .bind(stage_id)
+    .bind(Uuid::new_v4())
+    .bind(Uuid::new_v4())
+    .execute(&pool)
+    .await
+    .expect("insert terminal metric jobs");
+
+    cicd::metrics::refresh_state_gauges(&pool).await;
+
+    assert_eq!(
+        cicd::metrics::JOBS_FAILED_24H.load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
+    assert_eq!(
+        cicd::metrics::JOBS_SUCCEEDED_24H.load(std::sync::atomic::Ordering::Relaxed),
+        1
+    );
+}
+
+#[tokio::test]
 async fn job_log_append_serializes_concurrent_attempt_writes() {
     let pool = test_pool().await;
     let namespace = Uuid::new_v4();
@@ -5592,12 +5650,6 @@ async fn quiet_drop_skips_delivery_unless_bypass_status() {
     )
     .await
     .expect("emit ok");
-    let ok_rows: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM outbox_messages WHERE project_id = $1")
-            .bind(project_id)
-            .fetch_one(&pool)
-            .await
-            .expect("count ok rows");
     // NOTE: emit still enqueues; quiet drop is applied at delivery time.
     // Verify the delivery pass skips the non-bypassed message but keeps failed.
     let delivered = cicd::outbox::deliver_due(

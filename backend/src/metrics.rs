@@ -138,8 +138,8 @@ pub async fn refresh_state_gauges(pool: &sqlx::PgPool) {
         "SELECT \
             (SELECT count(*) FROM pipelines WHERE status = 'running') AS p_running, \
             (SELECT count(*) FROM pipelines WHERE status = 'queued') AS p_queued, \
-            (SELECT count(*) FROM jobs WHERE status = 'failed' AND updated_at > now() - interval '24 hours') AS j_failed, \
-            (SELECT count(*) FROM jobs WHERE status = 'success' AND updated_at > now() - interval '24 hours') AS j_ok",
+            (SELECT count(*) FROM jobs WHERE status = 'failed' AND finished_at > now() - interval '24 hours') AS j_failed, \
+            (SELECT count(*) FROM jobs WHERE status = 'success' AND finished_at > now() - interval '24 hours') AS j_ok",
     )
     .fetch_one(pool)
     .await

@@ -8,8 +8,8 @@
 
 **Решение:**
 
-- Проверить версию Rust в Dockerfile: `rust:1.86-slim` — должна быть ≥ 1.86 (edition 2024).
-- Docker multi-stage build: первый stage (`rust:1.86-slim`) компилирует, второй (`debian:bookworm-slim`) — runtime.
+- Проверить версию Rust в Dockerfile: `rust:1.88-slim` — должна быть ≥ 1.88 (edition 2024).
+- Docker multi-stage build: первый stage (`rust:1.88-slim`) компилирует, второй (`debian:bookworm-slim`) — runtime.
 - Первый build — долгий (скачивание и компиляция зависимостей). Последующие — быстрее (Docker layer cache).
 - Если cache сломался:
 

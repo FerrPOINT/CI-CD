@@ -391,7 +391,7 @@ docker compose logs --tail=200 backend
 cd /opt/dev/CI-CD
 
 docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" \
-  -w /workspace rust:1.86-bookworm \
+  -w /workspace rust:1.88-bookworm \
   -lc '/usr/local/cargo/bin/cargo fmt --all -- --check && /usr/local/cargo/bin/cargo clippy --workspace --all-targets -- -D warnings && /usr/local/cargo/bin/cargo test --workspace && /usr/local/cargo/bin/cargo build --release --workspace'
 
 cd frontend

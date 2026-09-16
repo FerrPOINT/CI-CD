@@ -221,7 +221,7 @@ let cors = CorsLayer::new()
 - Current: `.github/workflows/ci.yml` выполняет frozen lockfile install, Rust fmt/clippy/tests/release build, OpenAPI drift/backward compatibility gates, frontend lint/test/build, docs checks, secret scan, `cargo audit`, `pnpm audit --audit-level high`, SBOM drift gate и pinned Trivy critical container image scan; JavaScript actions обновлены на Node 24-compatible majors, а pnpm v11 ставится через `pnpm/setup`.
 - Current: YAML compatibility path использует dependency alias `serde_yaml = { package = "yaml_serde" }`; resolved graph больше не содержит deprecated crate `serde_yaml` или `unsafe-libyaml`.
 - Current: `RUSTSEC-2023-0071` игнорируется только после guard-команд `cargo tree -i sqlx-mysql --edges features --target all` и `cargo tree -i rsa --target all`; это компенсирует Cargo.lock false-positive от optional SQLx MySQL path, который не активен в Postgres-only build.
-- Current: `cargo audit` может печатать allowed warnings `RUSTSEC-2026-0183`/`RUSTSEC-2026-0184` по `git2 0.20.4`; `git2 0.21.0` проверен и не компилируется на закреплённом Rust 1.86, поэтому remediation — совместимый upstream patch либо отдельный MSRV/toolchain bump.
+- Current: `cargo audit` может печатать allowed warnings `RUSTSEC-2026-0183`/`RUSTSEC-2026-0184` по `git2 0.20.4`; `git2 0.21.0` проверен и не компилируется на закреплённом Rust 1.88, поэтому remediation — совместимый upstream patch либо отдельный MSRV/toolchain bump.
 - Current: container image scan выполняется helper-скриптом `scripts/scan_container_images.sh` по уже собранным backend/frontend images, использует pinned Trivy CLI image digest и блокирует critical fixable vulnerabilities.
 - Target: добавить `cargo-deny` с license/source/ban policy, broader image severity/exception policy, SBOM release artifact, deeper history/container secret scanning и documented exceptions/remediation.
 - Target: убрать `RUSTSEC-2023-0071` ignore после SQLx upgrade/замены macro path либо при любом намеренном включении MySQL/RSA.
@@ -231,7 +231,7 @@ let cors = CorsLayer::new()
 
 ### 12.1 Backend Dockerfile
 
-- Multi-stage build: `rust:1.86-slim` → `debian:bookworm-slim`.
+- Multi-stage build: `rust:1.88-slim` → `debian:bookworm-slim`.
 - Non-root user: `uid 10001`.
 - Минимальный финальный образ.
 

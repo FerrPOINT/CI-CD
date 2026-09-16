@@ -16,7 +16,7 @@
 
 - Зависимость должна быть привязана к конкретной границе: API, persistence, runner process, object storage, auth, observability, frontend UI.
 - Runtime dependency не добавляется ради одного helper, если стандартная библиотека или уже существующий crate закрывает задачу без ухудшения читаемости.
-- Backend dependency не должна повышать `rust-version` выше workspace `1.86` без отдельного решения по CI/runtime image.
+- Backend dependency не должна повышать `rust-version` выше workspace `1.88` без отдельного решения по CI/runtime image.
 - Deprecated/unmaintained direct dependency не используется для новых capabilities. Если dependency уже находится в runtime path, она получает documented debt, replacement candidates и regression plan до production hardening либо удаляется отдельным reviewable change с lockfile/SBOM evidence.
 - TLS для внешних HTTP-клиентов по умолчанию — `rustls`; OpenSSL допускается только с явной причиной.
 - `default-features` отключаются, когда crate тянет лишние runtime, TLS, compression, native или cloud provider features.

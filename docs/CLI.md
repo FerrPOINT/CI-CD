@@ -7,7 +7,7 @@
 ```bash
 # В Rust-контейнере, если cargo на хосте отсутствует:
 docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" -w /workspace \
-  -e CARGO_TARGET_DIR=/workspace/target rust:1.86-bookworm \
+  -e CARGO_TARGET_DIR=/workspace/target rust:1.88-bookworm \
   -lc '/usr/local/cargo/bin/cargo build -p cicd-cli'
 
 ./backend/target/debug/cicd-cli --help
