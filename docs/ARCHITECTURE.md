@@ -137,7 +137,7 @@ Composition root: чтение конфига, создание `PgPool`, реп
 | `CICD_RUNNER_NAME` / `CICD_RUNNER_TAGS` / `CICD_RUNNER_TOTAL_SLOTS` | identity/capacity внешнего `forge-runner` |
 | `CICD_RUNNER_POLL_INTERVAL_SECONDS` / `CICD_RUNNER_NO_CHECKOUT` | empty-poll cadence с server `waitSeconds` cap 30s и dev/debug режим без Git checkout для внешнего `forge-runner` |
 | `CICD_RUNNER_WORK_DIR` | workspace root внешнего `forge-runner` |
-| `CICD_RUNNER_KEEP_WORKSPACE` | `true`/`1` — не удалять workspace джоба |
+| `CICD_RUNNER_KEEP_WORKSPACE` | `false` по умолчанию; `true`/`1` оставляет exact `forge-runner-<job-id>` workspace только для краткой отладки. После terminal job stand не хранит workspace; logs и declared artifacts остаются в своих managed stores. |
 
 Текущий server composition root читает `backend/src/config.rs::RuntimeConfig` один раз при старте и передаёт typed-группы Database/Http/Git/Artifacts/Runner/Auth/Secrets в HTTP state, Git-trigger config lookup, scheduler/outbox, artifact/secret handlers, runner protocol и embedded runner. Невалидные bool, runner mode, artifact TTL, queue timeout, legacy internal Git token и base64 secrets key падают в parser-е config; CORS wildcard/empty allowlist валидируется при router construction до binding API. `cicd-cli` и отдельный `forge-runner` остаются process-boundary tools на `clap`/env.
 

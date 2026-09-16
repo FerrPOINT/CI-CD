@@ -22,7 +22,7 @@
 | `CICD_ARTIFACT_RETENTION_DAYS` | `30` | TTL новых артефактов в днях (`1..3650`); backend retention worker удаляет expired local files и помечает metadata `purged_at` |
 | `CICD_EMBEDDED_RUNNER_ENABLED` | `true` | Включает embedded runner внутри backend; при `false` работу забирает внешний `forge-runner`, а backend оставляет maintenance loop для ack-timeout requeue, lease expiry и stale-runner offline reconciliation |
 | `CICD_RUNNER_MODE` | `host` в compose | Режим embedded runner: `host` для локального evidence/dev; `docker` только если Docker executor/socket подключены явно |
-| `CICD_RUNNER_KEEP_WORKSPACE` | `false` | Не удалять workspace после job для embedded runner и `forge-runner`; truthy: `true`, `1`, `yes`, `on` |
+| `CICD_RUNNER_KEEP_WORKSPACE` | `false` | Сохраняет exact `forge-runner-<job-id>` workspace после terminal job только для краткой отладки; stand default удаляет workspace, сохраняя managed logs и declared artifacts. truthy: `true`, `1`, `yes`, `on` |
 | `CICD_RUNNER_QUEUE_TIMEOUT_SECONDS` | `86400` | Safety timeout для dispatch-eligible `queued` job без совместимого execution path; `0` отключает. Таймаут срабатывает только если нет embedded path для untagged work и нет online protocol runner-а с подходящими tags/current `shell` capability |
 | `CICD_RUNNER_REGISTRATION_TOKEN` | — | Bootstrap token для `POST /api/v1/runner/register`; пусто отключает регистрацию внешних runner-ов |
 | `CICD_RUNNER_CREDENTIAL` | — | Bearer credential уже зарегистрированного `forge-runner`; если пусто, runner регистрируется через `CICD_RUNNER_REGISTRATION_TOKEN` |

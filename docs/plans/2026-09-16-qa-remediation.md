@@ -37,7 +37,7 @@
 
 **Steps:**
 1. Confirm runner code removes a per-job directory whenever `CICD_RUNNER_KEEP_WORKSPACE=false` and that the default config is false.
-2. Change the umbrella setting from `true` to `false`; document that retention is a short-lived debugging override, not a stand default.
+2. Change the umbrella setting from `true` to `false`; document that preservation is a short-lived debugging override, while managed logs and declared artifacts remain available.
 3. Query Forge DB statuses and enumerate only exact volume children whose UUID matches a terminal job (`success`, `failed`, `canceled`). Refuse all non-terminal/unknown/malformed paths.
 4. Record candidate count and reclaimed bytes before deletion; delete only that explicit set. Do not use Docker volume prune or broad glob deletion.
 5. Verify all current pipelines/jobs stay terminal, health/readiness remains green, and free disk increased.
