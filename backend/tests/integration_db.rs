@@ -4717,6 +4717,80 @@ async fn queued_job_without_compatible_runner_fails_after_queue_timeout() {
 }
 
 #[tokio::test]
+async fn terminal_pipeline_reconciliation_cancels_never_started_queue_entries() {
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let stage_id = Uuid::new_v4();
+    let job_id = Uuid::new_v4();
+    let attempt_id = Uuid::new_v4();
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(format!("it-terminal-queue-{}", Uuid::new_v4().simple()))
+        .bind("https://example.invalid/terminal-queue.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query("INSERT INTO pipelines (id, project_id, git_ref, status, finished_at) VALUES ($1, $2, 'main', 'failed', now())")
+        .bind(pipeline_id)
+        .bind(project_id)
+        .execute(&pool)
+        .await
+        .expect("insert failed pipeline");
+    sqlx::query("INSERT INTO stages (id, pipeline_id, name, position, status) VALUES ($1, $2, 'deploy', 1, 'queued')")
+        .bind(stage_id)
+        .bind(pipeline_id)
+        .execute(&pool)
+        .await
+        .expect("insert queued stage");
+    sqlx::query("INSERT INTO jobs (id, stage_id, name, image, command, position, status) VALUES ($1, $2, 'deploy', 'alpine:3.21', 'echo skipped', 0, 'queued')")
+        .bind(job_id)
+        .bind(stage_id)
+        .execute(&pool)
+        .await
+        .expect("insert queued job");
+    sqlx::query("INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) VALUES ($1, $2, 1, 'queued', 'initial')")
+        .bind(attempt_id)
+        .bind(job_id)
+        .execute(&pool)
+        .await
+        .expect("insert queued attempt");
+    sqlx::query("INSERT INTO job_queue (id, job_id, attempt_id, pipeline_id, stage_id, state) VALUES ($1, $2, $3, $4, $5, 'queued')")
+        .bind(Uuid::new_v4())
+        .bind(job_id)
+        .bind(attempt_id)
+        .bind(pipeline_id)
+        .bind(stage_id)
+        .execute(&pool)
+        .await
+        .expect("insert queued entry");
+
+    let reconciled = cicd::runner::reconcile_terminal_pipeline_queues(&pool)
+        .await
+        .expect("reconcile terminal pipeline queues");
+    assert_eq!(reconciled, 1);
+
+    let state: (String, String, String) = sqlx::query_as(
+        "SELECT j.status, a.status, q.state FROM jobs j \
+         JOIN execution_attempts a ON a.job_id = j.id \
+         JOIN job_queue q ON q.attempt_id = a.id WHERE j.id = $1",
+    )
+    .bind(job_id)
+    .fetch_one(&pool)
+    .await
+    .expect("load reconciled queue state");
+    assert_eq!(
+        state,
+        (
+            "canceled".to_string(),
+            "canceled".to_string(),
+            "canceled".to_string()
+        )
+    );
+}
+
+#[tokio::test]
 async fn queue_timeout_keeps_old_work_when_compatible_protocol_runner_exists() {
     let pool = test_pool().await;
     let namespace = Uuid::new_v4();

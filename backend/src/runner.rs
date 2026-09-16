@@ -623,6 +623,46 @@ pub async fn reconcile_stale_runners(pool: &PgPool) -> Result<u64, sqlx::Error> 
     Ok(result.rows_affected())
 }
 
+/// Cancels queue entries that can no longer run because their pipeline already
+/// reached a terminal state. Terminal pipeline transitions can leave later DAG
+/// stages queued; they must not remain visible as runnable work forever.
+pub async fn reconcile_terminal_pipeline_queues(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let reconciled: i64 = sqlx::query_scalar(
+        "WITH terminal_queues AS ( \
+             SELECT q.id AS queue_id, q.job_id, q.attempt_id \
+             FROM job_queue q \
+             JOIN pipelines p ON p.id = q.pipeline_id \
+             WHERE q.state = 'queued' \
+               AND p.status IN ('success', 'failed', 'canceled') \
+         ), updated_attempts AS ( \
+             UPDATE execution_attempts a \
+             SET status = 'canceled', \
+                 finished_at = COALESCE(a.finished_at, now()), \
+                 error_tail = COALESCE(a.error_tail, 'pipeline reached a terminal state') \
+             FROM terminal_queues t \
+             WHERE a.id = t.attempt_id AND a.status = 'queued' \
+         ), updated_jobs AS ( \
+             UPDATE jobs j \
+             SET status = 'canceled', finished_at = COALESCE(j.finished_at, now()) \
+             FROM terminal_queues t \
+             WHERE j.id = t.job_id AND j.status = 'queued' \
+         ), updated_queue AS ( \
+             UPDATE job_queue q \
+             SET state = 'canceled', \
+                 completed_at = COALESCE(q.completed_at, now()), \
+                 updated_at = now() \
+             FROM terminal_queues t \
+             WHERE q.id = t.queue_id AND q.state = 'queued' \
+             RETURNING q.id \
+         ) \
+         SELECT count(*) FROM updated_queue",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(reconciled as u64)
+}
+
 pub async fn reconcile_queue_timeouts(pool: &PgPool) -> Result<u64, sqlx::Error> {
     let config = RuntimeRunnerConfig::from_env_lossy();
     reconcile_queue_timeouts_for_config(pool, &config).await
@@ -1655,6 +1695,14 @@ async fn reconcile_runtime_state_with_config(
     let stale_runners = reconcile_stale_runners(pool).await?;
     if stale_runners > 0 {
         tracing::warn!(stale_runners, "runner marked stale runners offline");
+    }
+
+    let terminal_queues = reconcile_terminal_pipeline_queues(pool).await?;
+    if terminal_queues > 0 {
+        tracing::warn!(
+            terminal_queues,
+            "runner canceled queues from terminal pipelines"
+        );
     }
 
     let queue_timeouts = reconcile_queue_timeouts_for_config(pool, config).await?;

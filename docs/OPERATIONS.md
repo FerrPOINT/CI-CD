@@ -330,7 +330,7 @@ Production monitoring добавляет защищённый metrics endpoint, 
 3. Если задача не имеет прогресса и владелец подтверждает отмену, отправить pipeline cancel. Если это только одна terminal job с допустимой retry-семантикой, используйте `POST /api/v1/jobs/<job-id>/retry` после расследования.
 4. Не используйте restart как способ применить новый образ/config; при необходимости пересоздания backend примените `docker compose up -d --build`, затем повторите health и pipeline inspection.
 
-В Current MVP есть durable `job_queue`, embedded `job_leases` TTL/reconciliation, external runner protocol ack/renew/control/logs/complete, ack-timeout requeue, configurable queue-timeout diagnostic для dispatch-eligible job без compatible runner-а, basic tag/current executor compatibility и `forge-runner` shell process, но нет full lost-runner auto-dispatch для уже running execution, sandboxed runner или гарантированного auto-retry. Зависшая job требует проверки queue/lease/attempt и ручного решения; не объявляйте её завершённой без API action/evidence.
+В Current MVP есть durable `job_queue`, embedded `job_leases` TTL/reconciliation, reconciliation очереди terminal pipeline (не начатые downstream jobs переходят в `canceled`, а не остаются runnable), external runner protocol ack/renew/control/logs/complete, ack-timeout requeue, configurable queue-timeout diagnostic для dispatch-eligible job без compatible runner-а, basic tag/current executor compatibility и `forge-runner` shell process, но нет full lost-runner auto-dispatch для уже running execution, sandboxed runner или гарантированного auto-retry. Зависшая job требует проверки queue/lease/attempt и ручного решения; не объявляйте её завершённой без API action/evidence.
 
 **Target approved: процедура**
 
