@@ -303,6 +303,7 @@ jobs:
         python3 scripts/forge_backup.py self-test
         python3 scripts/forge_backup.py backup --dry-run --skip-git-fsck --backup-dir /tmp/forge-backup-smoke
         python3 scripts/forge_backup.py restore --dry-run --confirm-restore --skip-git-fsck /tmp/forge-backup-smoke
-        bash -n scripts/backup.sh scripts/restore.sh scripts/verify-backup.sh scripts/scan_container_images.sh
+        bash -n scripts/backup.sh scripts/backup-stand.sh scripts/restore.sh scripts/verify-backup.sh scripts/scan_container_images.sh
+        python3 -m unittest scripts.tests.test_base_stand_backup
     - name: documentation checks
       run: python3 scripts/verify_docs.py --all

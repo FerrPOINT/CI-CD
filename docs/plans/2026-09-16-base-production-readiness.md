@@ -12,7 +12,7 @@
 
 - Compose configuration is valid; all runtime services are up.
 - Prometheus scrapes five production service targets; all are UP; Alertmanager has no firing alerts.
-- The nightly five-database backup is scheduled and the latest run has no dump errors.
+- The nightly five-database backup is scheduled, includes Task Tracker uploads and the Java Agent Chromium profile, and the latest run has no dump errors.
 - CI is green on the current main heads except jobs currently executing after recent changes.
 - Project Workflow hosted CI was added. Its first run exposed a real strict-mypy regression in a UI smoke script; the regression test and fix are now in the next CI run.
 - Fleet Control can reach Project Workflow catalog endpoints but legacy sample bindings (`dev`/`qa`, `workflow-dev`/`workflow-qa`) do not exist in the current catalog and are correctly reported stale. The contract needs an explicit unbound state and a supported rebind path, rather than false health.
