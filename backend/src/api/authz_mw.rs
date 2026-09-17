@@ -59,7 +59,7 @@ pub(crate) async fn rate_limit_mw(
 pub(crate) fn rate_limit_rule(method: &Method, path: &str) -> Option<RateLimitRule> {
     if matches!(
         path,
-        "/api/v1/health" | "/api/v1/readiness" | "/api/v1/openapi.json" | "/metrics"
+        "/health" | "/api/v1/health" | "/api/v1/readiness" | "/api/v1/openapi.json" | "/metrics"
     ) {
         return None;
     }

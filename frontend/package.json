@@ -8,15 +8,16 @@
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
-    "lint": "eslint src",
+    "lint": "eslint src && pnpm lint:semantic",
+    "lint:semantic": "node node_modules/@sdlc/ui/scripts/sdlc-semantic-classes-check.mjs --css src/index.css --src src",
     "e2e": "playwright test --config playwright.config.ts",
     "e2e:install": "playwright install chromium",
     "seed:evidence": "node scripts/seed-evidence.mjs",
     "shoot:evidence": "node scripts/shoot-evidence.mjs",
-    "openapi:generate": "openapi-typescript ../openapi/openapi.yaml -o src/api/schema.d.ts",
+    "openapi:generate": "node scripts/generate-openapi.mjs",
     "openapi:check": "node node_modules/@sdlc/ui/scripts/sdlc-openapi-check.mjs",
     "openapi:compat": "node node_modules/@sdlc/ui/scripts/sdlc-openapi-compat.mjs",
-    "postinstall": "openapi-typescript ${SPEC:-../openapi/openapi.yaml} -o src/api/schema.d.ts"
+    "postinstall": "pnpm run openapi:generate"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.1.13",

@@ -1,4 +1,5 @@
 @import 'tailwindcss';
+@source "../../../services-base/frontend/src";
 
 @theme {
   /* Default dark theme tokens */
@@ -16,6 +17,17 @@
   --color-danger: #f87171;
   --color-success: #4ade80;
   --color-warning: #fbbf24;
+  --color-focus: var(--color-accent);
+  --color-popover: var(--color-surface);
+  --color-popover-foreground: var(--color-text-primary);
+  --color-primary: var(--color-accent);
+  --color-primary-foreground: var(--color-accent-foreground);
+  --color-secondary: var(--color-surface-raised);
+  --color-secondary-foreground: var(--color-text-primary);
+  --color-muted: var(--color-surface-raised);
+  --color-muted-foreground: var(--color-text-muted);
+  --color-destructive: var(--color-danger);
+  --color-destructive-foreground: #ffffff;
 }
 
 [data-theme='gray'] {

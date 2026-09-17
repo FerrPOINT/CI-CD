@@ -126,6 +126,7 @@ pub(crate) fn build_router_with_cors(
         rate_limiter: Arc::new(crate::rate_limit::RateLimiter::default()),
     });
     Router::new()
+        .route("/health", get(health))
         .route("/api/v1/health", get(health))
         .route("/api/v1/readiness", get(readiness))
         .route("/metrics", get(metrics))
