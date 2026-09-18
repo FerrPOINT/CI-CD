@@ -3,116 +3,266 @@
 </p>
 
 <p align="center">
-  <a href="#capabilities"><img src="https://img.shields.io/badge/Capabilities-0f3a4b?style=for-the-badge" alt="Capabilities" /></a>
-  <a href="#quick-start"><img src="https://img.shields.io/badge/Quick_Start-075985?style=for-the-badge" alt="Quick start" /></a>
-  <a href="#visual-proof"><img src="https://img.shields.io/badge/Visual_Proof-166534?style=for-the-badge" alt="Visual proof" /></a>
-  <a href="#safety"><img src="https://img.shields.io/badge/Safety-365314?style=for-the-badge" alt="Safety" /></a>
+  <a href="#overview"><img src="https://img.shields.io/badge/Overview-0f3a4b?style=for-the-badge" alt="Overview" /></a>
+  <a href="#capabilities"><img src="https://img.shields.io/badge/Capabilities-075985?style=for-the-badge" alt="Capabilities" /></a>
+  <a href="#quick-start"><img src="https://img.shields.io/badge/Quick_Start-166534?style=for-the-badge" alt="Quick start" /></a>
+  <a href="#visual-proof"><img src="https://img.shields.io/badge/Visual_Proof-365314?style=for-the-badge" alt="Visual proof" /></a>
+  <a href="#safety"><img src="https://img.shields.io/badge/Safety-3f6212?style=for-the-badge" alt="Safety" /></a>
   <a href="#quality"><img src="https://img.shields.io/badge/Quality-334155?style=for-the-badge" alt="Quality" /></a>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Rust-2024-000000?style=flat-square&logo=rust&logoColor=white" alt="Rust 2024" />
   <img src="https://img.shields.io/badge/Axum-0.8-0f766e?style=flat-square" alt="Axum 0.8" />
+  <img src="https://img.shields.io/badge/SQLx-0.8-1D4ED8?style=flat-square" alt="SQLx 0.8" />
   <img src="https://img.shields.io/badge/PostgreSQL-17-4169e1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL 17" />
   <img src="https://img.shields.io/badge/React-19-0ea5e9?style=flat-square&logo=react&logoColor=white" alt="React 19" />
-  <img src="https://img.shields.io/badge/CI-.github%2Fworkflows%2Fci.yml-15803d?style=flat-square" alt="Repository CI" />
+  <img src="https://img.shields.io/badge/Vite-6-646CFF?style=flat-square&logo=vite&logoColor=white" alt="Vite 6" />
+  <img src="https://img.shields.io/badge/Tailwind-4-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white" alt="Tailwind 4" />
+  <img src="https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker Compose" />
 </p>
 
-> **Forge CI/CD** is a self-hosted Git and pipeline control plane for Base: bare Git hosting, Smart HTTP, push-triggered pipelines, runner execution, artifacts, platform configuration and evidence-oriented operations. It is source-available software, not a hosted public service.
+---
+
+> **Forge CI/CD** — self-hosted control plane для Git-репозиториев и CI/CD: bare Git hosting, Smart HTTP, push-triggered pipelines, Docker/shell jobs, artifacts, secrets, environments, reports, notifications и audit. Проект в стадии **MVP `0.1.x`**: до production hardening запускать только в trusted network или за reverse proxy.
 
 <a name="overview"></a>
-## Overview
 
-Forge joins a Git surface, an execution control plane and an operator dashboard without claiming distributed-production guarantees it does not yet provide. The current local Compose implementation is suitable for bounded development and operator-controlled environments; target scope is documented separately.
+## Обзор и Snapshot
 
-| Surface | Current behavior | Status |
-|---|---|---|
-| Git | Bare repositories, Smart HTTP, push-triggered pipelines, branches/tags, compare and pull-request flow. | Current verified |
-| Pipelines | Immutable plan snapshots, DAG-compatible jobs, bounded logs, execution attempts, artifacts and cancellation. | Current verified MVP |
-| Execution | Embedded Docker/shell runner plus an external `forge-runner` protocol slice with leases and reconciliation. | Current verified MVP |
-| Platform | Projects, secrets, environments, protected approvals, schedules, webhooks, notifications, reports and audit. | Current verified MVP |
-| Security | Conditional JWT/PAT auth, project membership RBAC, Git checks, CORS configuration and bounded in-process limits. | Current verified MVP |
-| Target scope | Tenant isolation, service accounts, external delivery adapters, Kubernetes isolation and distributed guarantees. | Target approved |
-
-`Current verified` means implemented and backed by tests, CI, runtime or runbook evidence. `MVP` means a bounded local control-plane capability, not a distributed guarantee. The exhaustive capability and boundary inventory is [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md).
+| Поле | Значение |
+|---|---|
+| Backend | Rust 2024, Axum 0.8, SQLx 0.8 |
+| Frontend | React 19, Vite 6, Tailwind CSS 4, shadcn/ui |
+| Data | PostgreSQL 17 |
+| Runtime | Docker Compose, embedded Docker/shell runner, Git Smart HTTP |
+| Порты | repository-local: dashboard/Git proxy `22802`, API/direct Git `22801`, PostgreSQL `22543` (loopback); Base umbrella: dashboard `7712`, API `7711` |
+| License | FerrPOINT Proprietary Source-Available Evaluation License v1.0 |
 
 <a name="capabilities"></a>
-## Capabilities
 
-- **Repository control.** Register projects and repositories, browse Git trees and releases, compare branches, open pull requests and trigger work through push hooks.
-- **Pipeline evidence.** Persist a plan snapshot, stages/jobs, attempt-owned logs, declared artifacts and terminal status so an operator can inspect what ran.
-- **Runner model.** Use the embedded runner for local Compose work or the lease-aware shell `forge-runner` protocol for bounded external execution.
-- **Platform operations.** Manage encrypted project secrets, environments/deployments, schedules, outgoing webhooks, local notifications, reports, audit records, users, memberships and API tokens.
-- **Interfaces.** Run the React dashboard or use the HTTP-only `cicd-cli`; API and Git contracts are described in [docs/API.md](docs/API.md), [docs/GIT_HOSTING.md](docs/GIT_HOSTING.md) and [docs/CLI.md](docs/CLI.md).
+## Возможности
+
+| Feature | Статус |
+|---|---|
+| Projects, pipelines, stages, jobs и bounded logs | Current verified |
+| Immutable pipeline plan snapshots | Current verified MVP |
+| Bare Git hosting + Smart HTTP + `post-receive` trigger | Current verified |
+| Branch/tag browser, compare и pull request flow | Current verified |
+| Artifacts до 50 MiB в local storage с SHA-256 и retention cleanup | Current verified MVP |
+| Secrets encrypted at rest с runner injection и stdout masking | Current verified |
+| Environments, protected approvals, rollback records, reports и audit trail | Current verified MVP |
+| HTTP-only CLI для runtime и platform operations | Current verified MVP |
+| Auth/RBAC с `CICD_AUTH_SECRET` | Current verified |
+| Configurable CORS allowlist | Current verified MVP |
+| Liveness, DB-aware readiness и Prometheus metrics | Current verified |
+| Dependency audit, secret scan и SBOM drift gate | Current verified MVP |
+| Browser E2E и all-route axe smoke на реальном Compose stack | Current verified MVP |
+| RU/EN Dashboard i18n contract parity и динамические status/action keys | Current verified MVP |
+| Seeded API/Dashboard performance smoke budgets | Current verified MVP |
+| Schedules, outgoing webhooks, in-app/SSE notifications | MVP |
+| External adapters, tenant isolation, distributed runners | Target approved |
+
+| Статус | Значение |
+|---|---|
+| Current verified | Реализовано и подтверждено тестами, CI, screenshots или runbook evidence. |
+| MVP | Работает для bounded local сценариев, без distributed guarantees. |
+| Target approved | Принято как целевое требование, но не реализовано полностью. |
 
 <a name="quick-start"></a>
-## Quick Start
 
-Use the repository-local Compose profile for a controlled local environment. The checked-in `.env.example` is a template: set operator-owned credentials and encryption material in an ignored `.env`; never paste real values into commands, committed files or issue text.
+## Быстрый старт
 
 ```bash
 cp .env.example .env
-# Edit .env: set the required database password and a unique CICD_SECRETS_KEY.
+echo "CICD_SECRETS_KEY=$(openssl rand -base64 32)" >> .env
 docker compose up --build -d
 curl -fsS http://127.0.0.1:22801/api/v1/health
 curl -fsS http://127.0.0.1:22801/api/v1/readiness
 ```
 
-Repository-local defaults are dashboard `22802`, API `22801` and loopback PostgreSQL `22543`. In the Base umbrella runtime the dashboard/API are published at `7712`/`7711`; those are deployment-specific local coordinates, not a public endpoint. See [docs/ENV.md](docs/ENV.md), [docs/DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md) and [docs/OPERATIONS.md](docs/OPERATIONS.md) before operating a shared environment.
+Dashboard: `http://127.0.0.1:22802`.
+
+```bash
+curl -X POST http://127.0.0.1:22801/api/v1/repositories \
+  -H 'content-type: application/json' \
+  -d '{"name":"my-service"}'
+
+git clone http://127.0.0.1:22802/git/my-service.git
+# добавить .forge-ci.yml, commit, push через Dashboard/Git proxy
+git push
+```
+
+Configuration: [docs/ENV.md](docs/ENV.md). CLI: [docs/CLI.md](docs/CLI.md).
 
 <a name="visual-proof"></a>
-## Visual Proof
 
-The root README deliberately uses only reviewed synthetic or blank-state assets. The dashboard and repository-browser screenshots are retained in the full registry but are not repeated here because their seed data includes internal-looking topology and remotes.
+## Визуальные доказательства
 
-### Login boundary
+Скриншоты — реальные поверхности Dashboard с seeded-данными.
 
-![Forge CI/CD login](docs/screenshots/01-login.png)
+### Вход
 
-### Pipeline plan and job evidence
+![Вход](docs/screenshots/01-login.png)
 
-![Forge CI/CD pipeline detail](docs/screenshots/06-pipeline-detail.png)
+### Дашборд
 
-### Pipeline detail on mobile
+![Дашборд](docs/screenshots/02-dashboard.png)
 
-![Forge CI/CD pipeline detail on mobile](docs/screenshots/m-pipeline-detail.png)
+### Проекты
 
-The mobile image is 375x812 proof of the card layout. Dense pipeline metadata remains necessarily compact at that width. The complete 46-screen route/evidence registry, capture conditions and known mock-only exceptions live in [docs/assets/screens/manifest.md](docs/assets/screens/manifest.md).
+![Проекты](docs/screenshots/03-projects.png)
+
+### Пайплайны
+
+![Пайплайны](docs/screenshots/05-pipelines.png)
+
+### Детали пайплайна
+
+![Детали пайплайна](docs/screenshots/06-pipeline-detail.png)
+
+### Код репозитория
+
+![Код репозитория](docs/screenshots/09-repository-browser.png)
+
+### Сравнение веток
+
+![Сравнение веток](docs/screenshots/10-compare.png)
+
+### Pull-запросы
+
+![Pull-запросы](docs/screenshots/11-pull-requests.png)
+
+### Детали pull-запроса
+
+![Детали pull-запроса](docs/screenshots/12-pull-request-detail.png)
+
+### Diff конкретного pull-запроса
+
+![Diff конкретного pull-запроса](docs/screenshots/22-pr-diff.png)
+
+### Секреты проекта
+
+![Секреты проекта](docs/screenshots/14-secrets.png)
+
+### Раннеры
+
+![Раннеры](docs/screenshots/13-runners.png)
+
+### Окружения
+
+![Окружения](docs/screenshots/15-environments.png)
+
+### Артефакты
+
+![Артефакты](docs/screenshots/21-artifacts.png)
+
+### Логи джоба
+
+![Логи джоба](docs/screenshots/33-job-logs.png)
+
+### Аудит
+
+![Аудит](docs/screenshots/19-audit-log.png)
+
+### Подтверждение удаления проекта
+
+![Подтверждение удаления проекта](docs/screenshots/24-project-delete-confirm.png)
+
+### Дашборд на мобильном
+
+![Дашборд на мобильном](docs/screenshots/m-dashboard.png)
+
+### Детали пайплайна на мобильном
+
+![Детали пайплайна на мобильном](docs/screenshots/m-pipeline-detail.png)
+
+На `375x812` плотные метаданные пайплайна остаются намеренно компактными; полные данные — на desktop.
+
+Полный визуальный реестр (47 скриншотов, условия съёмки и известные mock-исключения): [docs/assets/screens/manifest.md](docs/assets/screens/manifest.md).
+
+## Архитектура
+
+```mermaid
+flowchart TD
+    Dev[Developer git push] --> Git[Smart HTTP + bare repo]
+    Git --> Hook[post-receive hook]
+    Hook --> Pipe[Pipeline orchestrator]
+    Pipe --> Plan[Immutable pipeline plan]
+    Pipe --> Runner[Embedded runner / forge-runner]
+    Runner --> Logs[Job logs + artifacts]
+    API[Axum API] --> DB[(PostgreSQL)]
+    UI[React dashboard] --> API
+    Plan --> DB
+    Pipe --> DB
+    Runner --> DB
+    API --> Notify[Schedules, webhooks, in-app/SSE]
+```
 
 <a name="safety"></a>
-## Safety Boundaries
 
-- **Auth is conditional.** With an empty `CICD_AUTH_SECRET`, API and dashboard run in trusted-local mode. A shared deployment must set an auth secret, a CORS allowlist and operator-controlled ingress.
-- **Secrets stay server-side.** Project secret values are encrypted at rest and only declared names are injected into jobs. Logs use best-effort masking; do not treat it as a substitute for safe job commands and environment policy.
-- **Runner isolation is bounded.** The embedded runner and external shell protocol are local execution mechanisms. Kubernetes isolation, advanced runner pools/protected tags and a production runner-zone boundary remain target work.
-- **Readiness is specific.** `/api/v1/health` is process liveness; `/api/v1/readiness` also checks PostgreSQL and committed SQLx migration state. Neither asserts every provider, webhook receiver or runner is healthy.
-- **Ingress remains operator-owned.** The optional local TLS profile does not create public ingress, ACME, firewall policy or tenant isolation. See [SECURITY.md](SECURITY.md) and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
+## Границы доверия
+
+- Если `CICD_AUTH_SECRET` отсутствует или пуст, API и Dashboard работают в trusted-network mode без auth enforcement.
+- С `CICD_AUTH_SECRET` включаются login/JWT/scoped PAT, session-bound access JWT, refresh cookie + CSRF, refresh rotate/logout/revoke, session-family reuse revocation, global roles, project membership RBAC и Git Smart HTTP read/write проверки для linked projects.
+- Tenant isolation, service-account tokens и scoped Git credentials остаются target hardening; loopback-only Caddy internal-CA TLS profile доступен в `docker-compose.tls.yml`, публичный ingress/ACME и network policy остаются за оператором.
+- CORS пермиссивен только когда `CICD_CORS_ALLOWED_ORIGINS` пуст для изолированной разработки. TLS profile выводит явный origin и включает secure cookies; in-process rate limiting не заменяет reverse-proxy или distributed limiting.
+- Embedded runner записывает владение job-ами в `job_leases`, инжектит только объявленные secrets, собирает объявленные artifact-файлы и реконсиалит истёкшие leases. Внешний runner protocol MVP: register/heartbeat/bounded long-poll с in-process + PostgreSQL `LISTEN/NOTIFY` wakeup/ack/renew/`secrets:resolve`/artifact upload/logs/complete с bearer runner credentials и lease tokens; `forge-runner` работает отдельным shell-runner процессом, держит active-lease heartbeat во время команд, пишет stdout/stderr в attempt-owned logs, резолвит secrets и загружает артефакты. Maintenance loop реькеит unacknowledged offers после `ackDeadline`, фейлит dispatch-eligible queued jobs после queue timeout при отсутствии совместимого execution path и переводит stale online runners в offline. Richer log chunks, Kubernetes isolation и продвинутый runner pool/protected-tag policy — target work.
+- Pipeline trigger хранит immutable `pipeline_plans` snapshots для current `legacy-linear` и v1 `jobs.needs` DAG plans; policy diagnostics/job-level dispatch — target hardening.
+- CI прогоняет OpenAPI generation/drift и backward-compatibility проверки, SQLx optional MySQL/RSA feature guard, Rust release build, Rust/Node dependency audits, secret scan, SBOM drift и pinned Trivy critical scan; OpenAPI examples validation, `cargo-deny`, history secret scan и release SBOM publication — target hardening.
+- Локальные artifacts получают SHA-256 metadata и дефолтную 30-дневную expiry через `CICD_ARTIFACT_RETENTION_DAYS`; expired/purged artifacts не скачиваются, retention worker чистит локальные файлы. Object storage, legal hold и tenant/object isolation — target hardening.
+- Protected environments создают pending deployment records, хранят append-only approval decisions и запускают linked deployment pipeline только после `required_approvals`; rollback создаёт отдельную `rollback_of_id` запись.
+- Schedules, outgoing webhooks и `in_app`/`sse` notifications работают как MVP local delivery.
+- Outbox delivery history, attempt log и failed-delivery requeue — bounded MVP; inbound provider webhooks, external notification adapters и crash-safe distributed delivery guarantees не завершены.
+
+Полный current-state срез: [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md). Security policy: [SECURITY.md](SECURITY.md).
 
 <a name="quality"></a>
-## Quality and Verification
 
-| Gate | Command |
+## Качество и проверки
+
+| Проверка | Команда |
 |---|---|
-| Documentation integrity and README contract | `python3 scripts/verify_docs.py --all` |
-| Documentation regression tests | `python3 -m unittest scripts.tests.test_verify_docs -v` |
-| Backend workspace | `just test-backend` |
+| Docs integrity + README contract | `python3 scripts/verify_docs.py --all` |
+| Stack up/down | `just up` / `just down` |
+| Health / readiness | `just health` / `just readiness` |
+| Backend tests | `just test-backend` |
 | Frontend tests | `just test-frontend` |
-| Frontend production build | `just build-frontend` |
-| Local health/readiness | `just health` / `just readiness` |
-| Browser E2E, accessibility and performance smoke | `cd frontend && pnpm e2e` |
-| Secret/SBOM checks | `python3 scripts/scan_secrets.py` / `python3 scripts/generate_sbom.py --check` |
+| Frontend build | `just build-frontend` |
+| Browser E2E/a11y/perf smoke | `cd frontend && pnpm e2e` |
+| Secret scan | `python3 scripts/scan_secrets.py` |
+| SBOM drift | `python3 scripts/generate_sbom.py --check` |
+| Container image scan | `bash scripts/scan_container_images.sh forge-cicd-backend:ci forge-cicd-frontend:ci` |
 
-GitHub Actions covers Rust formatting, clippy, workspace/integration tests, release build, frontend contract/test/lint/build, Compose smoke, browser E2E, security scans and documentation checks. The README contract is part of the same docs verification gate; it validates anchors, local assets, safe proof references, placeholder/path leaks and workflow badge targets.
+## Карта проекта
 
-## Documentation Map
+```text
+CI-CD/
+├── backend/           # Rust workspace: API, domain, CLI, Git hosting, runner, store
+├── frontend/          # React dashboard с generated API hooks
+├── docs/              # architecture, contracts, operations, quality, screenshots
+├── scripts/           # documentation и verification helpers
+├── docker-compose.yml # postgres + backend + frontend
+└── justfile           # локальные workflow-команды
+```
 
-- **Current capability boundaries:** [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md), [docs/ROADMAP.md](docs/ROADMAP.md)
-- **Operator material:** [docs/OPERATIONS.md](docs/OPERATIONS.md), [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md), [docs/DISASTER_RECOVERY.md](docs/DISASTER_RECOVERY.md)
-- **Architecture:** [docs/ARCHITECTURE_INDEX.md](docs/ARCHITECTURE_INDEX.md), [docs/RUNNER_ARCHITECTURE.md](docs/RUNNER_ARCHITECTURE.md), [docs/STORAGE_ARCHITECTURE.md](docs/STORAGE_ARCHITECTURE.md)
-- **Contracts:** [docs/API.md](docs/API.md), [docs/DATA_MODEL.md](docs/DATA_MODEL.md), [docs/IMPLEMENTATION_CONTRACTS.md](docs/IMPLEMENTATION_CONTRACTS.md)
-- **Security and quality:** [SECURITY.md](SECURITY.md), [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md), [docs/TEST_PLAN.md](docs/TEST_PLAN.md)
+## Документы
+
+| Аудитория | Документы |
+|---|---|
+| Overview | [docs/README.md](docs/README.md), [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md), [docs/ROADMAP.md](docs/ROADMAP.md) |
+| User/owner | [docs/USER_GUIDE.md](docs/USER_GUIDE.md), [docs/PRODUCT_REQUIREMENTS.md](docs/PRODUCT_REQUIREMENTS.md) |
+| Developer | [docs/DEVELOPMENT_GUIDE.md](docs/DEVELOPMENT_GUIDE.md), [docs/API.md](docs/API.md), [docs/DATA_MODEL.md](docs/DATA_MODEL.md), [docs/ENV.md](docs/ENV.md), [docs/CLI.md](docs/CLI.md), [docs/LIBRARIES.md](docs/LIBRARIES.md) |
+| Operator | [docs/OPERATIONS.md](docs/OPERATIONS.md), [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md), [docs/SLO.md](docs/SLO.md), [docs/METRICS.md](docs/METRICS.md), [docs/DISASTER_RECOVERY.md](docs/DISASTER_RECOVERY.md), [docs/INCIDENT_RESPONSE.md](docs/INCIDENT_RESPONSE.md) |
+| Architecture | [docs/ARCHITECTURE_INDEX.md](docs/ARCHITECTURE_INDEX.md), [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/FUNCTIONAL_ARCHITECTURE.md](docs/FUNCTIONAL_ARCHITECTURE.md), [docs/AUTHORIZATION.md](docs/AUTHORIZATION.md), [docs/RUNNER_ARCHITECTURE.md](docs/RUNNER_ARCHITECTURE.md), [docs/AUTOMATION_ARCHITECTURE.md](docs/AUTOMATION_ARCHITECTURE.md), [docs/STORAGE_ARCHITECTURE.md](docs/STORAGE_ARCHITECTURE.md), [docs/DELIVERY_ARCHITECTURE.md](docs/DELIVERY_ARCHITECTURE.md), [docs/ADR.md](docs/ADR.md), [docs/contracts](docs/contracts), [docs/architecture](docs/architecture) |
+| Executable specs | [docs/IMPLEMENTATION_CONTRACTS.md](docs/IMPLEMENTATION_CONTRACTS.md), [docs/MIGRATION_EXECUTION_SPEC.md](docs/MIGRATION_EXECUTION_SPEC.md), [docs/AUTH_IMPLEMENTATION_SPEC.md](docs/AUTH_IMPLEMENTATION_SPEC.md), [docs/EXECUTION_AUTOMATION_IMPLEMENTATION_SPEC.md](docs/EXECUTION_AUTOMATION_IMPLEMENTATION_SPEC.md) |
+| Quality/security | [docs/TEST_PLAN.md](docs/TEST_PLAN.md), [docs/TRACEABILITY.md](docs/TRACEABILITY.md), [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md), [docs/RISK_REGISTER.md](docs/RISK_REGISTER.md), [docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md), [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md), [SECURITY.md](SECURITY.md) |
+| Policy | [CONTRIBUTING.md](CONTRIBUTING.md), [SUPPORT.md](SUPPORT.md), [CHANGELOG.md](CHANGELOG.md), [LICENSE](LICENSE) |
 
 <a name="license"></a>
-## License
 
-FerrPOINT Proprietary Source-Available Evaluation License v1.0. This is not open source. Viewing and evaluation are allowed under the repository license; commercial, production, resale, redistribution and SaaS/hosting use require a written FerrPOINT license. See [LICENSE](LICENSE), [NOTICE](NOTICE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+## Лицензия
+
+Proprietary source-available. Not open source. Viewing/evaluation only.
+
+Commercial, production, resale, redistribution, SaaS/hosting use require written license from FerrPOINT. См. [LICENSE](LICENSE), [NOTICE](NOTICE) и [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
