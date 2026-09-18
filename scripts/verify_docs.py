@@ -520,6 +520,50 @@ def check_frontend_contracts() -> None:
     check_frontend_stack_doc(packages)
 
 
+README_REQUIRED_ANCHORS = {
+    "overview",
+    "capabilities",
+    "quick-start",
+    "visual-proof",
+    "safety",
+    "quality",
+    "license",
+}
+README_SAFE_PROOF = {
+    "01-login.png",
+    "06-pipeline-detail.png",
+    "m-pipeline-detail.png",
+}
+
+
+def check_readme_contract() -> None:
+    """Keep the public README self-contained and tied to reviewed proof assets."""
+    readme = ROOT / "README.md"
+    text = read_text(readme)
+    anchors = set(re.findall(r'<a\s+name=["\']([^"\']+)["\']', text, re.IGNORECASE))
+    for anchor in sorted(README_REQUIRED_ANCHORS - anchors):
+        fail(f"README missing required anchor: {anchor}")
+
+    if "{{" in text or re.search(r"/opt/(?:dev|home)/", text):
+        fail("README contains a placeholder or local filesystem path")
+
+    image_paths = re.findall(r"!\[[^]]*\]\(([^)]+)\)", text)
+    image_paths += re.findall(r"<img\b[^>]*\bsrc=[\"']([^\"']+)[\"']", text, re.IGNORECASE)
+    for image in image_paths:
+        if image.startswith(("http://", "https://", "data:")):
+            continue
+        if not (ROOT / image).exists():
+            fail(f"README image missing: {image}")
+
+    for workflow in set(re.findall(r"actions/workflows/([^/?#]+\.ya?ml)", text)):
+        if not (ROOT / ".github/workflows" / workflow).exists():
+            fail(f"README workflow badge references missing workflow: {workflow}")
+
+    proof = set(re.findall(r"docs/screenshots/([^)]+\.png)", text))
+    for name in sorted(README_SAFE_PROOF - proof):
+        fail(f"README lacks required safe visual proof: {name}")
+
+
 def check_screenshots() -> None:
     readme = read_text(ROOT / "README.md")
     shots = re.findall(r"\(docs/screenshots/([^)]+\.png)\)", readme)
@@ -704,6 +748,7 @@ def main() -> int:
         "current-state",
         "readiness-examples",
         "frontend-contracts",
+        "readme-contract",
         "screenshots",
         "manifest",
         "plans",
@@ -721,6 +766,7 @@ def main() -> int:
         "current-state": check_current_state,
         "readiness-examples": check_readiness_examples,
         "frontend-contracts": check_frontend_contracts,
+        "readme-contract": check_readme_contract,
         "screenshots": check_screenshots,
         "manifest": check_manifest,
         "plans": check_plans,
