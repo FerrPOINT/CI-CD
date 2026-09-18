@@ -127,6 +127,7 @@ const fn user(
 
 /// Exhaustive policy registry for the current OpenAPI/router surface.
 pub const ROUTE_POLICIES: &[RoutePolicy] = &[
+    public(GET, "/health"),
     public(GET, "/api/v1/health"),
     public(GET, "/api/v1/readiness"),
     public(GET, "/api/v1/openapi.json"),

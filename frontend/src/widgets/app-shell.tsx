@@ -97,7 +97,7 @@ export function AppShell() {
           >
             {mobileMenuOpen ? <X className="h-[18px] w-[18px]" /> : <Menu className="h-[18px] w-[18px]" />}
           </Button>
-          <Link to="/" className="flex items-center gap-2 font-bold">
+          <Link to="/" className="flex items-center gap-2 font-bold" aria-label={t('app.name')}>
             <PlatformMark size="sm" withName={false} />
             <span className="hidden sm:inline">{t('app.name')}</span>
           </Link>
