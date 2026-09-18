@@ -56,7 +56,7 @@
 | Auth/RBAC с `CICD_AUTH_SECRET` | Current verified |
 | Configurable CORS allowlist | Current verified MVP |
 | Liveness, DB-aware readiness и Prometheus metrics | Current verified |
-| Dependency audit, secret scan и SBOM drift gate | Current verified MVP |
+| Dependency audit, secret scan и SBOM drift gate | Local verified gate (scripts/), вне CI |
 | Browser E2E и all-route axe smoke на реальном Compose stack | Current verified MVP |
 | RU/EN Dashboard i18n contract parity и динамические status/action keys | Current verified MVP |
 | Seeded API/Dashboard performance smoke budgets | Current verified MVP |
@@ -209,7 +209,7 @@ flowchart TD
 - CORS пермиссивен только когда `CICD_CORS_ALLOWED_ORIGINS` пуст для изолированной разработки. TLS profile выводит явный origin и включает secure cookies; in-process rate limiting не заменяет reverse-proxy или distributed limiting.
 - Embedded runner записывает владение job-ами в `job_leases`, инжектит только объявленные secrets, собирает объявленные artifact-файлы и реконсиалит истёкшие leases. Внешний runner protocol MVP: register/heartbeat/bounded long-poll с in-process + PostgreSQL `LISTEN/NOTIFY` wakeup/ack/renew/`secrets:resolve`/artifact upload/logs/complete с bearer runner credentials и lease tokens; `forge-runner` работает отдельным shell-runner процессом, держит active-lease heartbeat во время команд, пишет stdout/stderr в attempt-owned logs, резолвит secrets и загружает артефакты. Maintenance loop реькеит unacknowledged offers после `ackDeadline`, фейлит dispatch-eligible queued jobs после queue timeout при отсутствии совместимого execution path и переводит stale online runners в offline. Richer log chunks, Kubernetes isolation и продвинутый runner pool/protected-tag policy — target work.
 - Pipeline trigger хранит immutable `pipeline_plans` snapshots для current `legacy-linear` и v1 `jobs.needs` DAG plans; policy diagnostics/job-level dispatch — target hardening.
-- CI прогоняет OpenAPI generation/drift и backward-compatibility проверки, SQLx optional MySQL/RSA feature guard, Rust release build, Rust/Node dependency audits, secret scan, SBOM drift и pinned Trivy critical scan; OpenAPI examples validation, `cargo-deny`, history secret scan и release SBOM publication — target hardening.
+- CI прогоняет docs-гейт, backend fmt/clippy/unit/integration на реальном PostgreSQL и OpenAPI drift; frontend — unit-тесты и build. Dependency audits, secret scan, SBOM drift, Trivy и browser E2E выполняются локально как отдельные проверки по необходимости.
 - Локальные artifacts получают SHA-256 metadata и дефолтную 30-дневную expiry через `CICD_ARTIFACT_RETENTION_DAYS`; expired/purged artifacts не скачиваются, retention worker чистит локальные файлы. Object storage, legal hold и tenant/object isolation — target hardening.
 - Protected environments создают pending deployment records, хранят append-only approval decisions и запускают linked deployment pipeline только после `required_approvals`; rollback создаёт отдельную `rollback_of_id` запись.
 - Schedules, outgoing webhooks и `in_app`/`sse` notifications работают как MVP local delivery.

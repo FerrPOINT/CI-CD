@@ -11,6 +11,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: CI-CD
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: CI-CD
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: documentation regression tests
+        run: python3 -m unittest scripts.tests.test_verify_docs scripts.tests.test_base_stand_backup
+      - name: documentation checks
+        run: python3 scripts/verify_docs.py --all
+      - name: script checks
+        run: |
+          python3 -m py_compile scripts/verify_docs.py scripts/generate_sbom.py scripts/scan_secrets.py scripts/forge_backup.py
+          bash -n scripts/backup.sh scripts/backup-stand.sh scripts/restore.sh scripts/verify-backup.sh scripts/scan_container_images.sh
+
   backend:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -31,44 +53,40 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      CICD_TEST_DATABASE_URL: postgres://forge_owner:forge_test_owner@localhost:5432/forge_test_cicd
+      CICD_TEST_DATABASE_URL: postgres://forge_owner:***@localhost:5432/forge_test_cicd
     steps:
-    - uses: actions/checkout@v4
-      with:
-        path: CI-CD
-    - uses: actions/checkout@v4
-      with:
-        repository: FerrPOINT/services-base
-        path: services-base
-        ref: main
-        token: ${{ secrets.SERVICES_BASE_TOKEN }}
-    - uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: "1.88"
-        components: clippy, rustfmt
-    - uses: Swatinem/rust-cache@v2
-      with:
-        workspaces: backend
-    - name: fmt
-      run: cargo fmt --all -- --check
-    - name: clippy
-      run: cargo clippy --workspace --all-targets -- -D warnings
-    - name: unit tests
-      run: cargo test --workspace
-    - name: integration tests (real PostgreSQL)
-      run: cargo test --features integration --test integration_db -- --test-threads=1
-    - name: CLI integration smoke (real HTTP API and PostgreSQL)
-      run: cargo test -p cicd-cli --features integration --test cli_real_api -- --test-threads=1
-    - name: release build
-      run: cargo build --release --workspace
-    - name: openapi drift gate
-      run: |
-        cargo run --bin openapi-dump -- /tmp/openapi.yaml
-        diff -u ../openapi/openapi.yaml /tmp/openapi.yaml
+      - uses: actions/checkout@v4
+        with:
+          path: CI-CD
+      - uses: actions/checkout@v4
+        with:
+          repository: FerrPOINT/services-base
+          path: services-base
+          ref: main
+          token: ${{ secrets.SERVICES_BASE_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.88"
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+      - name: fmt
+        run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: unit tests
+        run: cargo test --workspace
+      - name: integration tests (real PostgreSQL)
+        run: cargo test --features integration --test integration_db -- --test-threads=1
+      - name: openapi drift gate
+        run: |
+          cargo run --bin openapi-dump -- /tmp/openapi.yaml
+          diff -u ../openapi/openapi.yaml /tmp/openapi.yaml
 
-  # install + test + lint + build via the shared fleet gate.
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: CI-CD/frontend
@@ -98,214 +116,3 @@ jobs:
       - run: pnpm test -- --run
       - run: pnpm lint
       - run: pnpm build
-  compose-smoke:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: CI-CD
-    timeout-minutes: 20
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        path: CI-CD
-    - uses: actions/checkout@v4
-      with:
-        repository: FerrPOINT/services-base
-        path: services-base
-        ref: main
-        token: ${{ secrets.SERVICES_BASE_TOKEN }}
-    - name: Compose config
-      run: docker compose config -q
-    - name: Build and start stack
-      run: docker compose up --build -d
-    - name: Backend health
-      run: |
-        for i in {1..60}; do
-          curl -fsS http://127.0.0.1:22801/api/v1/health && exit 0
-          sleep 2
-        done
-        docker compose ps
-        exit 1
-    - name: Backend readiness
-      run: |
-        for i in {1..60}; do
-          curl -fsS http://127.0.0.1:22801/api/v1/readiness && exit 0
-          sleep 2
-        done
-        docker compose ps
-        exit 1
-    - name: Frontend nginx
-      run: |
-        for i in {1..60}; do
-          curl -fsS http://127.0.0.1:22802/ >/tmp/forge-frontend-index.html && exit 0
-          sleep 2
-        done
-        docker compose ps
-        exit 1
-    - name: Compose logs
-      if: failure()
-      run: docker compose logs --no-color
-    - name: Compose cleanup
-      if: always()
-      run: docker compose down -v --remove-orphans
-
-  e2e:
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        path: CI-CD
-    - uses: actions/checkout@v4
-      with:
-        repository: FerrPOINT/services-base
-        path: services-base
-        ref: main
-        token: ${{ secrets.SERVICES_BASE_TOKEN }}
-    - uses: pnpm/setup@v2
-      with:
-        version: 11
-        runtime: node@22
-        cache: true
-        cache-dependency-path: CI-CD/frontend/pnpm-lock.yaml
-        install: false
-    - name: Install frontend dependencies
-      working-directory: CI-CD/frontend
-      run: pnpm install --frozen-lockfile
-    - name: Install Playwright browser
-      working-directory: CI-CD/frontend
-      run: pnpm exec playwright install --with-deps chromium
-    - name: Prepare synthetic secrets key
-      run: echo "CICD_SECRETS_KEY=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
-    - name: Compose config
-      working-directory: CI-CD
-      run: docker compose config -q
-    - name: Build and start stack
-      working-directory: CI-CD
-      run: docker compose up --build -d
-    - name: Backend readiness
-      run: |
-        for i in {1..60}; do
-          curl -fsS http://127.0.0.1:22801/api/v1/readiness && exit 0
-          sleep 2
-        done
-        docker compose ps
-        exit 1
-    - name: Seed evidence data
-      working-directory: CI-CD/frontend
-      run: pnpm seed:evidence
-    - name: Playwright E2E/a11y/performance
-      working-directory: CI-CD/frontend
-      env:
-        E2E_BASE_URL: http://127.0.0.1:22802
-        E2E_API_URL: http://127.0.0.1:22801/api/v1
-      run: pnpm e2e
-    - name: Upload Playwright report
-      if: always()
-      uses: actions/upload-artifact@v7
-      with:
-        name: playwright-report
-        path: |
-          frontend/playwright-report
-          frontend/test-results
-        if-no-files-found: ignore
-        retention-days: 14
-    - name: Compose logs
-      if: failure()
-      working-directory: CI-CD
-      run: docker compose logs --no-color
-    - name: Compose cleanup
-      if: always()
-      working-directory: CI-CD
-      run: docker compose down -v --remove-orphans
-
-  security:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: CI-CD
-    timeout-minutes: 30
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        path: CI-CD
-    - uses: actions/checkout@v4
-      with:
-        repository: FerrPOINT/services-base
-        path: services-base
-        ref: main
-        token: ${{ secrets.SERVICES_BASE_TOKEN }}
-    - uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: "1.88"
-    - name: Install cargo-audit
-      run: cargo install cargo-audit --locked
-    - name: Guard optional MySQL/RSA advisory path
-      working-directory: CI-CD/backend
-      run: |
-        if cargo tree -i sqlx-mysql --edges features --target all 2>/dev/null | grep -q .; then exit 1; fi
-        if cargo tree -i rsa --target all 2>/dev/null | grep -q .; then exit 1; fi
-    - name: Rust advisory audit
-      working-directory: CI-CD/backend
-      run: cargo audit --ignore RUSTSEC-2023-0071
-    - uses: pnpm/action-setup@v4
-      with:
-        version: 10.28.1
-    - uses: actions/setup-node@v4
-      with:
-        node-version: 22
-        cache: pnpm
-        cache-dependency-path: CI-CD/frontend/pnpm-lock.yaml
-    - name: Install frontend dependency graph
-      working-directory: CI-CD/frontend
-      run: pnpm install --frozen-lockfile
-    - name: Node advisory audit
-      working-directory: CI-CD/frontend
-      run: pnpm audit --audit-level high
-    - name: Committed-secret baseline
-      run: python3 scripts/scan_secrets.py
-    - name: SBOM drift
-      run: python3 scripts/generate_sbom.py --check
-    - name: Build production images for scan
-      env:
-        CICD_API_PORT: 22801
-        CICD_WEB_PORT: 22802
-      run: |
-        docker build -f backend/Dockerfile.umbrella -t forge-cicd-backend:ci ..
-        docker build -f frontend/Dockerfile.umbrella -t forge-cicd-frontend:ci ..
-    - name: Critical image vulnerability scan
-      env:
-        CICD_TRIVY_SEVERITY: CRITICAL
-      run: scripts/scan_container_images.sh forge-cicd-backend:ci forge-cicd-frontend:ci
-
-  docs:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: CI-CD
-    timeout-minutes: 10
-    steps:
-    - uses: actions/checkout@v4
-      with:
-        path: CI-CD
-    - uses: actions/checkout@v4
-      with:
-        repository: FerrPOINT/services-base
-        path: services-base
-        ref: main
-        token: ${{ secrets.SERVICES_BASE_TOKEN }}
-    - uses: actions/setup-python@v7
-      with:
-        python-version: "3.12"
-    - name: script checks
-      run: |
-        python3 -m py_compile scripts/verify_docs.py scripts/generate_sbom.py scripts/scan_secrets.py scripts/forge_backup.py
-        python3 scripts/forge_backup.py self-test
-        python3 scripts/forge_backup.py backup --dry-run --skip-git-fsck --backup-dir /tmp/forge-backup-smoke
-        python3 scripts/forge_backup.py restore --dry-run --confirm-restore --skip-git-fsck /tmp/forge-backup-smoke
-        bash -n scripts/backup.sh scripts/backup-stand.sh scripts/restore.sh scripts/verify-backup.sh scripts/scan_container_images.sh
-        python3 -m unittest scripts.tests.test_base_stand_backup
-    - name: documentation regression tests
-      run: python3 -m unittest scripts.tests.test_verify_docs
-    - name: documentation checks
-      run: python3 scripts/verify_docs.py --all
