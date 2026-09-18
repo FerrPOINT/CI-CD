@@ -171,11 +171,11 @@ Configuration: [docs/ENV.md](docs/ENV.md). CLI: [docs/CLI.md](docs/CLI.md).
 
 ### Мобильный интерфейс (375×812)
 
-![Дашборд на мобильном](docs/screenshots/m-dashboard.png) ![Детали пайплайна на мобильном](docs/screenshots/m-pipeline-detail.png)
+<img src="docs/screenshots/m-dashboard.png" alt="Дашборд на мобильном" width="49.5%" /> <img src="docs/screenshots/m-pipeline-detail.png" alt="Детали пайплайна на мобильном" width="49.5%" />
 
-![Проекты на мобильном](docs/screenshots/m-projects.png) ![Pull request на мобильном](docs/screenshots/m-pull-request.png)
+<img src="docs/screenshots/m-projects.png" alt="Проекты на мобильном" width="49.5%" /> <img src="docs/screenshots/m-pull-request.png" alt="Pull request на мобильном" width="49.5%" />
 
-![Код репозитория на мобильном](docs/screenshots/m-repo-code.png) ![Раннеры на мобильном](docs/screenshots/m-runners.png)
+<img src="docs/screenshots/m-repo-code.png" alt="Код репозитория на мобильном" width="49.5%" /> <img src="docs/screenshots/m-runners.png" alt="Раннеры на мобильном" width="49.5%" />
 
 На `375x812` плотные метаданные пайплайна остаются намеренно компактными; полные данные — на desktop.
 

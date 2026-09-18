@@ -559,7 +559,7 @@ def check_readme_contract() -> None:
         if not (ROOT / ".github/workflows" / workflow).exists():
             fail(f"README workflow badge references missing workflow: {workflow}")
 
-    proof = set(re.findall(r"docs/screenshots/([^)]+\.png)", text))
+    proof = set(re.findall(r"docs/screenshots/([^\"')]+\.png)", text))
     for name in sorted(README_SAFE_PROOF - proof):
         fail(f"README lacks required safe visual proof: {name}")
 
