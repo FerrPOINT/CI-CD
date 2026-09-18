@@ -26,7 +26,7 @@ export function QueryState<T>({
 
   if (isLoading) {
     return (
-      <div className="space-y-2" aria-busy="true" aria-label={t('common.loading', 'Загрузка')}>
+      <div className="space-y-2" role="status" aria-busy="true" aria-label={t('common.loading', 'Загрузка')}>
         <div className="h-8 animate-pulse rounded bg-surface-raised" />
         <div className="h-8 animate-pulse rounded bg-surface-raised" />
         <div className="h-8 animate-pulse rounded bg-surface-raised" />

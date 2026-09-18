@@ -16,7 +16,7 @@ describe('QueryState', () => {
       </QueryState>,
     )
 
-    expect(screen.getByLabelText('common.loading')).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByRole('status', { name: 'common.loading' })).toHaveAttribute('aria-busy', 'true')
   })
 
   it('[REQ-UI-002] renders an explicit empty state instead of children', () => {
