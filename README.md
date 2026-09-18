@@ -101,10 +101,6 @@ Configuration: [docs/ENV.md](docs/ENV.md). CLI: [docs/CLI.md](docs/CLI.md).
 
 Скриншоты — реальные поверхности Dashboard с seeded-данными.
 
-### Вход
-
-![Вход](docs/screenshots/01-login.png)
-
 ### Дашборд
 
 ![Дашборд](docs/screenshots/02-dashboard.png)
@@ -168,12 +164,6 @@ Configuration: [docs/ENV.md](docs/ENV.md). CLI: [docs/CLI.md](docs/CLI.md).
 ### Подтверждение удаления проекта
 
 ![Подтверждение удаления проекта](docs/screenshots/24-project-delete-confirm.png)
-
-### Мобильный интерфейс (375×812)
-
-![Мобильный интерфейс: колонка 1](docs/screenshots/m-col-left.png) ![Мобильный интерфейс: колонка 2](docs/screenshots/m-col-right.png)
-
-На `375x812` плотные метаданные пайплайна остаются намеренно компактными; полные данные — на desktop.
 
 Полный визуальный реестр (47 скриншотов, условия съёмки и известные mock-исключения): [docs/assets/screens/manifest.md](docs/assets/screens/manifest.md).
 

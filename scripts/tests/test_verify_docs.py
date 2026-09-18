@@ -39,14 +39,14 @@ class CapabilityStatusRegressionTests(unittest.TestCase):
             for phrase in forbidden:
                 self.assertNotIn(phrase, content, f"stale current-state claim in {relative_path}")
 
-    def test_readme_contract_rejects_missing_safe_mobile_proof(self) -> None:
+    def test_readme_contract_rejects_missing_safe_proof(self) -> None:
         readme = verify_docs.ROOT / "README.md"
         original = readme.read_text(encoding="utf-8")
         try:
             readme.write_text("# Forge\n<a name=\"overview\"></a>\n", encoding="utf-8")
             verify_docs.check_readme_contract()
             self.assertTrue(
-                any(problem.startswith("README lacks required safe visual proof: m-pipeline-detail.png")
+                any(problem.startswith("README lacks required safe visual proof: 06-pipeline-detail.png")
                     for problem in verify_docs.problems)
             )
         finally:

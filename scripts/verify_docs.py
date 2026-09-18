@@ -530,9 +530,7 @@ README_REQUIRED_ANCHORS = {
     "license",
 }
 README_SAFE_PROOF = {
-    "01-login.png",
     "06-pipeline-detail.png",
-    "m-pipeline-detail.png",
 }
 
 
