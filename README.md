@@ -172,8 +172,8 @@ Configuration: [docs/ENV.md](docs/ENV.md). CLI: [docs/CLI.md](docs/CLI.md).
 ### Мобильный интерфейс (375×812)
 
 <table><tr>
-<td valign="top" width="50%"><img src="docs/screenshots/m-dashboard.png" alt="Дашборд на мобильном" width="100%" /><br/><img src="docs/screenshots/m-projects.png" alt="Проекты на мобильном" width="100%" /><br/><img src="docs/screenshots/m-repo-code.png" alt="Код репозитория на мобильном" width="100%" /></td>
-<td valign="top" width="50%"><img src="docs/screenshots/m-pipeline-detail.png" alt="Детали пайплайна на мобильном" width="100%" /><br/><img src="docs/screenshots/m-pull-request.png" alt="Pull request на мобильном" width="100%" /><br/><img src="docs/screenshots/m-runners.png" alt="Раннеры на мобильном" width="100%" /></td>
+<td style="border:none;padding:0;vertical-align:top;" width="50%"><img src="docs/screenshots/m-dashboard.png" alt="Дашборд на мобильном" width="100%" /><img src="docs/screenshots/m-projects.png" alt="Проекты на мобильном" width="100%" /><img src="docs/screenshots/m-repo-code.png" alt="Код репозитория на мобильном" width="100%" /></td>
+<td style="border:none;padding:0;vertical-align:top;" width="50%"><img src="docs/screenshots/m-pipeline-detail.png" alt="Детали пайплайна на мобильном" width="100%" /><img src="docs/screenshots/m-pull-request.png" alt="Pull request на мобильном" width="100%" /><img src="docs/screenshots/m-runners.png" alt="Раннеры на мобильном" width="100%" /></td>
 </tr></table>
 
 На `375x812` плотные метаданные пайплайна остаются намеренно компактными; полные данные — на desktop.
