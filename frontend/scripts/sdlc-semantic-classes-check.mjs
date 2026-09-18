@@ -8,7 +8,10 @@ for (let index = 2; index < process.argv.length; index += 2) {
 
 const sourceRoot = resolve(args.get("--src") ?? "src");
 const cssPath = resolve(args.get("--css") ?? join(sourceRoot, "index.css"));
-const css = readFileSync(cssPath, "utf8");
+const localCss = readFileSync(cssPath, "utf8");
+const css = localCss.includes("@sdlc/ui/tokens.css")
+  ? localCss + readFileSync(new URL(import.meta.resolve("@sdlc/ui/tokens.css")), "utf8")
+  : localCss;
 const declared = new Set(
   [...css.matchAll(/--color-([a-z0-9-]+)\s*:/g)].map((match) => match[1]),
 );
