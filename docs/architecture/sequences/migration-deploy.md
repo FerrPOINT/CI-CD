@@ -11,7 +11,7 @@ sequenceDiagram
     MG->>DB: SELECT applied FROM _sqlx_migrations
     MG-->>OP: план (pending migrations)
     OP->>MG: cicd-migrate up
-    MG->>DB: BEGIN; apply SQL; INSERT _sqlx_migrations; COMMIT (per file)
+    MG->>DB: BEGIN → apply SQL → INSERT _sqlx_migrations → COMMIT (per file)
     alt failure
         MG->>DB: ROLLBACK файла
         MG-->>OP: non-zero exit + runbook link (MIGRATION_CONTRACT.md)

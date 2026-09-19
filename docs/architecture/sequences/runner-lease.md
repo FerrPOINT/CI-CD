@@ -21,7 +21,7 @@ sequenceDiagram
     RN->>API: POST /leases/{id}/logs (batch, sequence)
     RN->>API: POST /leases/{id}/complete {outcome}
     API->>DB: execution_attempts, statuses, outbox_messages
-    Note over API,DB: renew до deadline; fencing-token защищает от zombie
+    Note over API,DB: renew до deadline, fencing-token защищает от zombie
 ```
 
 Полностью target (ADR-0007); сейчас — embedded runner без lease. Контракты: `contracts/RUNNER_PROTOCOL.md`.

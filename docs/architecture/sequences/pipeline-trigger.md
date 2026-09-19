@@ -13,7 +13,7 @@ sequenceDiagram
     API->>API: git-receive-pack в bare repo
     API->>H: exec post-receive (ref old new)
     H->>INT: POST X-Internal-Token {repo, ref, after}
-    INT->>DB: INSERT pipeline + stages + jobs (queued) [.forge-ci.yml | fallback]
+    INT->>DB: INSERT pipeline + stages + jobs (queued, .forge-ci.yml или fallback)
     Note over DB: target: + domain_events + outbox_messages (ADR-0006)
     loop poll (current)
         R->>DB: claim queued job (atomic)
