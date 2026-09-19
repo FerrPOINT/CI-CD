@@ -24,11 +24,21 @@
     "empty": "No projects yet. Create one.",
     "add": "Add",
     "edit": "Edit",
+    "editProject": "Edit project {{name}}",
+    "created": "Project created",
     "updated": "Project updated",
     "deleted": "Project deleted",
     "deleteConfirm": "Delete project",
     "repositories": "Repositories",
-    "members": "Members"
+    "members": "Members",
+    "search": "Find a project",
+    "shown": "Showing {{count}} of {{total}} projects",
+    "noMatches": "No projects match this search.",
+    "openPipelines": "Open pipelines for {{name}}",
+    "actionsFor": "Actions for project {{name}}",
+    "pages": "Project pages",
+    "previous": "Previous",
+    "next": "Next"
   },
   "pipelines": {
     "title": "Pipelines",

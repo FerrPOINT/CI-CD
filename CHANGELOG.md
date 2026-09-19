@@ -11,6 +11,8 @@
 
 ### Added
 
+- Каталог проектов Dashboard: поиск, постраничный список, компактное меню действий
+  и сохранение диалога удаления при ошибке запроса.
 - Central Auth SSO для Dashboard, read-only центральный каталог пользователей,
   локальные профили по immutable `sub`, общая CLI transport-библиотека и
   поддержка центральных scoped personal tokens; локальные human login/user/PAT
