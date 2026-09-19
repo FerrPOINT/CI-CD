@@ -1,5 +1,5 @@
 import { MemoryRouter } from 'react-router'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/client'
 import { QueryState } from './query-state'
@@ -16,12 +16,21 @@ describe('QueryState', () => {
       </QueryState>,
     )
 
-    expect(screen.getByRole('status', { name: 'common.loading' })).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByRole('status', { name: 'common.loading' })).toHaveAttribute(
+      'aria-busy',
+      'true',
+    )
   })
 
   it('[REQ-UI-002] renders an explicit empty state instead of children', () => {
     render(
-      <QueryState data={[]} isLoading={false} error={null} isEmpty={(items) => items.length === 0} empty={{ title: 'Nothing here' }}>
+      <QueryState
+        data={[]}
+        isLoading={false}
+        error={null}
+        isEmpty={(items) => items.length === 0}
+        empty={{ title: 'Nothing here' }}
+      >
         {() => <div>data</div>}
       </QueryState>,
     )
@@ -44,5 +53,18 @@ describe('QueryState', () => {
     )
 
     expect(screen.getByText('errors.forbidden.title')).toBeInTheDocument()
+  })
+
+  it('[REQ-UI-002] offers retry for recoverable load failures', () => {
+    const retry = vi.fn()
+    render(
+      <QueryState data={undefined} isLoading={false} error={new Error('offline')} onRetry={retry}>
+        {() => <div>data</div>}
+      </QueryState>,
+    )
+
+    expect(screen.getByRole('alert')).toHaveTextContent('offline')
+    fireEvent.click(screen.getByRole('button', { name: 'common.retry' }))
+    expect(retry).toHaveBeenCalledOnce()
   })
 })

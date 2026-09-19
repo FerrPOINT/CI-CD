@@ -59,7 +59,17 @@
     "planCommit": "Commit",
     "planEdges": "Dependencies",
     "planConfigHash": "Config SHA-256",
-    "planHash": "Plan SHA-256"
+    "planHash": "Plan SHA-256",
+    "loadError": "Could not load the pipeline",
+    "cancelTitle": "Cancel pipeline?",
+    "cancelDescription": "Running jobs will receive a cancellation signal. This cannot be undone.",
+    "keepRunning": "Keep running",
+    "confirmCancel": "Cancel pipeline",
+    "canceledNotice": "Pipeline cancellation requested",
+    "retryStarted": "Pipeline retry requested",
+    "actionError": "Could not change the pipeline state",
+    "started": "Pipeline started",
+    "page": "Page {{page}}"
   },
   "repositories": {
     "title": "Repositories",
@@ -163,7 +173,15 @@
     "testReport": "Test reports",
     "suite": "Suite",
     "total": "Total",
-    "duration": "Duration"
+    "duration": "Duration",
+    "manualStatus": "Manual status",
+    "statusUpdated": "Job status updated",
+    "attemptsError": "Could not load execution attempts",
+    "logsError": "Could not load logs",
+    "noLogs": "No logs yet",
+    "refreshLogs": "Refresh logs",
+    "manualLog": "Add a log line manually",
+    "reportError": "Could not load the test report"
   },
   "stages": {
     "build": "Build",

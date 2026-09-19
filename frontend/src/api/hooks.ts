@@ -97,11 +97,15 @@ export function useDeleteProject() {
   })
 }
 
-export function usePipelines(projectId: string | undefined) {
+export function usePipelines(projectId: string | undefined, page = 0, pageSize = 20) {
   return useQuery({
-    queryKey: KEYS.pipelines(projectId ?? ''),
-    queryFn: () => api<Pipeline[]>(`/projects/${projectId}/pipelines`),
+    queryKey: [...KEYS.pipelines(projectId ?? ''), page, pageSize],
+    queryFn: () => api<Pipeline[]>(`/projects/${projectId}/pipelines?limit=${pageSize + 1}&offset=${page * pageSize}`),
     enabled: !!projectId,
+    refetchInterval: (query) =>
+      query.state.data?.some((pipeline) => pipeline.status === 'queued' || pipeline.status === 'running')
+        ? 3000
+        : false,
   })
 }
 
@@ -110,7 +114,10 @@ export function useCancelPipeline() {
   return useMutation({
     mutationFn: (pipelineId: string) =>
       api<{ canceled: string }>(`/pipelines/${pipelineId}/cancel`, { method: 'POST' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['pipelines'] }),
+    onSuccess: (_result, pipelineId) => {
+      qc.invalidateQueries({ queryKey: ['pipelines'] })
+      qc.invalidateQueries({ queryKey: KEYS.pipeline(pipelineId) })
+    },
   })
 }
 
@@ -119,7 +126,10 @@ export function useRetryPipeline() {
   return useMutation({
     mutationFn: (pipelineId: string) =>
       api<{ retried: string }>(`/pipelines/${pipelineId}/retry`, { method: 'POST' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['pipelines'] }),
+    onSuccess: (_result, pipelineId) => {
+      qc.invalidateQueries({ queryKey: ['pipelines'] })
+      qc.invalidateQueries({ queryKey: KEYS.pipeline(pipelineId) })
+    },
   })
 }
 
@@ -149,6 +159,10 @@ export function usePipeline(id: string | undefined) {
     queryKey: KEYS.pipeline(id ?? ''),
     queryFn: () => api<PipelineDetail>(`/pipelines/${id}`),
     enabled: !!id,
+    refetchInterval: (query) =>
+      query.state.data?.pipeline.status === 'queued' || query.state.data?.pipeline.status === 'running'
+        ? 3000
+        : false,
   })
 }
 
@@ -161,11 +175,12 @@ export function useUpdateJobStatus() {
   })
 }
 
-export function useJobAttempts(jobId: string | undefined) {
+export function useJobAttempts(jobId: string | undefined, live = false) {
   return useQuery({
     queryKey: KEYS.attempts(jobId ?? ''),
     queryFn: () => api<JobAttempt[]>(`/jobs/${jobId}/attempts`),
     enabled: !!jobId,
+    refetchInterval: live ? 3000 : false,
   })
 }
 
@@ -180,7 +195,7 @@ export function useJobLogs(jobId: string | undefined, attemptId?: string) {
   })
 }
 
-export function useJobLogPages(jobId: string | undefined, attemptId: string | undefined, search = '') {
+export function useJobLogPages(jobId: string | undefined, attemptId: string | undefined, search = '', live = false) {
   const q = search.trim()
   return useInfiniteQuery({
     queryKey: KEYS.attemptLogPages(jobId ?? '', attemptId ?? '', q),
@@ -192,6 +207,7 @@ export function useJobLogPages(jobId: string | undefined, attemptId: string | un
     },
     getNextPageParam: (lastPage) => lastPage.next_after ?? undefined,
     enabled: !!jobId && !!attemptId,
+    refetchInterval: live ? 5000 : false,
   })
 }
 

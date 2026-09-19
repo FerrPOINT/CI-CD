@@ -165,7 +165,7 @@ Configuration: [docs/ENV.md](docs/ENV.md). CLI: [docs/CLI.md](docs/CLI.md).
 
 ![Подтверждение удаления проекта](docs/screenshots/24-project-delete-confirm.png)
 
-Полный визуальный реестр (40 скриншотов, условия съёмки и известные mock-исключения): [docs/assets/screens/manifest.md](docs/assets/screens/manifest.md).
+Полный визуальный реестр (50 скриншотов, условия съёмки и известные mock-исключения): [docs/assets/screens/manifest.md](docs/assets/screens/manifest.md).
 
 ## Архитектура
 
