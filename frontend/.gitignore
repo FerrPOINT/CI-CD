@@ -3,3 +3,4 @@
 playwright-report/
 test-results/
 # generated API client is committed; ESLint ignores it separately
+.pnpm-store/
