@@ -61,7 +61,7 @@ export type DownloadedArtifact = {
   filename: string
 }
 
-/** Download a protected artifact through the same Bearer/refresh policy as JSON API calls. */
+/** Download a protected artifact through the same central Bearer policy as JSON API calls. */
 export async function downloadArtifact(artifactId: string): Promise<DownloadedArtifact> {
   const response = await authenticatedFetch(`/artifacts/${encodeURIComponent(artifactId)}/download`, {
     headers: { Accept: 'application/octet-stream' },
@@ -85,12 +85,7 @@ export function saveDownloadedArtifact(artifact: DownloadedArtifact): void {
 }
 
 export async function authenticatedFetch(path: string, init?: RequestInit): Promise<Response> {
-  let response = await request(path, init)
-  if (response.status !== 401) return response
-
-  // Single-flight refresh + one retry; a second 401 is terminal.
-  const refreshed = await import('./auth').then((m) => m.refresh()).catch(() => null)
-  if (refreshed) response = await request(path, init)
+  const response = await request(path, init)
   if (response.status === 401) terminalAuthHandler?.()
   return response
 }

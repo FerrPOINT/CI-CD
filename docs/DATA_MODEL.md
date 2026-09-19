@@ -739,12 +739,16 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 |---|---|---|---|---|
 | `id` | UUID | NOT NULL | — | PK |
 | `username` | TEXT | NOT NULL | — | UNIQUE |
+| `central_sub` | TEXT | NULL | — | UNIQUE partial index; immutable Central Auth subject |
 | `role` | TEXT | NOT NULL | — | CHECK: `admin`, `maintainer`, `developer`, `viewer` |
 | `enabled` | BOOLEAN | NOT NULL | `TRUE` | — |
 | `token_version` | BIGINT | NOT NULL | `0` | Инкрементируется при refresh-token reuse detection для инвалидизации уже выданных access JWT |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
 
-> Пароли хранятся отдельно в `user_credentials`; роли применяются middleware только при `CICD_AUTH_SECRET`.
+> В платформенном режиме строка является локальной проекцией central subject для
+> FK и аудита. Исторический username не используется для автоматического
+> связывания. Пароли/роли остаются только для legacy-режима; human-доступ в
+> центральном режиме не ограничивается локальными ролями.
 
 ### 9.11 api_tokens
 
@@ -764,7 +768,10 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 | `expires_at` | TIMESTAMPTZ | NULL | — | Optional PAT expiry (`NULL` = без срока) |
 | `revoked_at` | TIMESTAMPTZ | NULL | — | Soft revoke; активные списки фильтруют `revoked_at IS NULL` |
 
-> Полное значение возвращается только при создании. PAT проверяется как Bearer token при включённом `CICD_AUTH_SECRET`; `project_id` ограничивает project-owned API и linked Git repository, `scopes` ограничивают REST/Git операции. Старые записи с `project_id = NULL` остаются legacy global до отзыва.
+> Это legacy CI/CD PAT storage. При включённом Central Auth list/create/revoke
+> endpoints закрыты: личные `sdlc_pat_...` выпускает Central Auth и ими управляет
+> Admin Panel. Старые записи остаются для совместимости legacy-режима. Machine
+> service-account tokens ниже сохраняют отдельный жизненный цикл.
 
 ### 9.10a tenants
 

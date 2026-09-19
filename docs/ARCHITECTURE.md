@@ -4,6 +4,11 @@
 
 Self-hosted CI/CD control plane: Git-хостинг (bare-репозитории + Smart HTTP + post-receive auto-trigger), пайплайны со стадиями и джобами, embedded runner (Docker/shell), внешний `forge-runner` shell MVP поверх runner protocol, платформенные ресурсы (runners, secrets, artifacts, environments, schedules, webhooks, notifications, reports, audit, users, tokens) и React Dashboard.
 
+Human identity, браузерные сессии и личные API-токены принадлежат Central Auth
+(ADR-0010). CI/CD хранит локальную проекцию пользователя по `central_sub` только
+для FK/аудита. Service-account и runner credentials остаются самостоятельными
+машинными границами и не наследуют human session semantics.
+
 > **Переходный период.** Backend мигрирует с монолитного crate на Cargo workspace со слоями (ADR-0005). Ниже описана целевая архитектура; текущее состояние каждого среза отмечено в «Статус миграции». До завершения миграции старые пути (`cicd::domain`, `backend/src/*`) работают через re-export shim и остаются источником истины для ещё не перенесённых вертикалей.
 
 ## 2. Технологический стек

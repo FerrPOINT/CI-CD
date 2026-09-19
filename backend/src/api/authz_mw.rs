@@ -179,12 +179,27 @@ pub(crate) async fn require_auth(
         None => return Ok(next.run(req).await),
     }
     let Some(auth_secret) = state.auth_secret.as_deref() else {
-        return Ok(next.run(req).await); // trusted-network mode: no enforcement
+        return Err(ApiError::service_unavailable(
+            "CI/CD authentication is not configured",
+        ));
     };
     let pool = pool(&state)?;
-    let claims = bearer_identity(pool, auth_secret, req.headers())
-        .await
-        .map_err(|_| ApiError::unauthorized())?;
+    let is_platform_token = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("Bearer sdlc_pat_"));
+    let claims = bearer_identity(pool, auth_secret, req.headers()).await?;
+    if is_platform_token {
+        let required = if matches!(method.as_str(), "GET" | "HEAD" | "OPTIONS") {
+            "ci-cd:read"
+        } else {
+            "ci-cd:write"
+        };
+        if !claims.token_scopes.iter().any(|scope| scope == required) {
+            return Err(ApiError::forbidden());
+        }
+    }
     // Role::parse maps machine principals ("service_account") to the
     // developer class; token scopes still constrain every route.
     let role = crate::authz::Role::parse(&claims.role).ok_or_else(ApiError::unauthorized)?;
@@ -581,7 +596,7 @@ pub(crate) async fn identity_for_bearer_token(
 ) -> Result<crate::auth::AccessClaims, ApiError> {
     // Central fleet auth-server first (ES256 via JWKS); legacy session JWTs
     // and cicd_ PATs remain valid during the migration window.
-    if let Some(central) = crate::central_auth::try_central(token).await {
+    if let Some(central) = crate::central_auth::try_central(token).await? {
         return crate::central_auth::link_central_user(pool, &central).await;
     }
     if token.starts_with("forge_sat_") {
@@ -650,6 +665,9 @@ pub(crate) async fn identity_for_bearer_token(
             exp: now.timestamp() + 900,
         })
     } else {
+        if std::env::var_os("CICD_AUTH__CENTRAL_JWKS_URI").is_some() {
+            return Err(ApiError::unauthorized());
+        }
         let mut claims = crate::auth::verify_access_with_secret(token, auth_secret)
             .map_err(|_| ApiError::unauthorized())?;
         let session_id = claims.sid.ok_or_else(ApiError::unauthorized)?;

@@ -10,7 +10,7 @@
 
 | Файл | Маршрут | Что показывает | Размер |
 |---|---|---|---|
-| [01-login.png](../../screenshots/01-login.png) | `/login` | Вход | 1920×1080 |
+| [01-login.png](../../screenshots/01-login.png) | `/login`, `/sso/callback` | Вход через Central Auth; callback является техническим промежуточным состоянием | 1920×1080 |
 | [02-dashboard.png](../../screenshots/02-dashboard.png) | `/` | Дашборд с метриками запусков | 1920×1080 |
 | [03-projects.png](../../screenshots/03-projects.png) | `/projects` | Проекты | 1920×1080 |
 | [04-repositories.png](../../screenshots/04-repositories.png) | `/repositories` | Репозитории | 1920×1080 |

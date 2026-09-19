@@ -127,6 +127,7 @@ fn cli_exit_codes_are_stable() {
     // Connection refused -> network/server code 3.
     let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
         .env("CICD_API_URL", "http://127.0.0.1:1")
+        .env("CICD_API_TOKEN", "qa-contract-token")
         .args(["project", "list"])
         .output()
         .unwrap();

@@ -1,5 +1,5 @@
 import { lazy, Suspense, type ReactElement } from 'react'
-import { createBrowserRouter, Navigate } from 'react-router'
+import { createBrowserRouter, Navigate, Outlet } from 'react-router'
 import { AppShell } from '@/widgets/app-shell'
 import { AuthProvider } from '@/shared/auth/auth-provider'
 import { ProtectedRoute } from '@/shared/auth/protected-route'
@@ -15,10 +15,10 @@ const PullRequestsPage = lazy(() => import('@/pages/pull-requests').then(m => ({
 const PullRequestDetailPage = lazy(() => import('@/pages/pull-request-detail').then(m => ({ default: m.PullRequestDetailPage })))
 const SettingsPage = lazy(() => import('@/pages/settings').then(m => ({ default: m.SettingsPage })))
 const LoginPage = lazy(() => import('@/pages/login').then(m => ({ default: m.LoginPage })))
+const SsoCallbackPage = lazy(() => import('@/pages/sso-callback').then(m => ({ default: m.SsoCallbackPage })))
 const ForbiddenPage = lazy(() => import('@/pages/forbidden').then(m => ({ default: m.ForbiddenPage })))
 const RunnersPage = lazy(() => import('@/pages/runners').then(m => ({ default: m.RunnersPage })))
 const SecretsPage = lazy(() => import('@/pages/secrets').then(m => ({ default: m.SecretsPage })))
-const ProjectMembersPage = lazy(() => import('@/pages/project-members').then(m => ({ default: m.ProjectMembersPage })))
 const ArtifactsPage = lazy(() => import('@/pages/artifacts').then(m => ({ default: m.ArtifactsPage })))
 const EnvironmentsPage = lazy(() => import('@/pages/environments').then(m => ({ default: m.EnvironmentsPage })))
 const SchedulesPage = lazy(() => import('@/pages/schedules').then(m => ({ default: m.SchedulesPage })))
@@ -35,12 +35,9 @@ const withSuspense = (el: ReactElement) => <Suspense fallback={<PageLoader />}>{
 
 export const appRoutes = [
   {
-    element: (
-      <AuthProvider>
-        <ProtectedRoute />
-      </AuthProvider>
-    ),
+    element: <AuthProvider><Outlet /></AuthProvider>,
     children: [
+    { element: <ProtectedRoute />, children: [
       { element: <AppShell />, children: [
       { path: '/', element: withSuspense(<DashboardPage />) },
       { path: '/projects', element: withSuspense(<ProjectsPage />) },
@@ -54,7 +51,7 @@ export const appRoutes = [
       { path: '/settings', element: withSuspense(<SettingsPage />) },
       { path: '/runners', element: withSuspense(<RunnersPage />) },
       { path: '/projects/:projectId/secrets', element: withSuspense(<SecretsPage />) },
-      { path: '/projects/:projectId/members', element: withSuspense(<ProjectMembersPage />) },
+      { path: '/projects/:projectId/members', element: <Navigate to="/projects" replace /> },
       { path: '/jobs/:jobId/artifacts', element: withSuspense(<ArtifactsPage />) },
       { path: '/projects/:projectId/environments', element: withSuspense(<EnvironmentsPage />) },
       { path: '/projects/:projectId/schedules', element: withSuspense(<SchedulesPage />) },
@@ -63,9 +60,11 @@ export const appRoutes = [
       { path: '/audit-log', element: withSuspense(<AuditLogPage />) },
       { path: '/users', element: withSuspense(<UsersPage />) },
       ] },
+    ] },
+    { path: '/login', element: withSuspense(<LoginPage />) },
+    { path: '/sso/callback', element: withSuspense(<SsoCallbackPage />) },
     ],
   },
-  { path: '/login', element: withSuspense(<LoginPage />) },
   { path: '/forbidden', element: withSuspense(<ForbiddenPage />) },
   { path: '*', element: <Navigate to="/" replace /> },
 ]

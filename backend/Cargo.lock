@@ -443,6 +443,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "reqwest",
+ "sdlc-cli-core",
  "serde_json",
  "sqlx",
  "tokio",
@@ -2274,6 +2275,16 @@ dependencies = [
  "tower 0.5.3",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "sdlc-cli-core"
+version = "0.1.0"
+dependencies = [
+ "reqwest",
+ "serde_json",
+ "thiserror 2.0.20",
+ "url",
 ]
 
 [[package]]

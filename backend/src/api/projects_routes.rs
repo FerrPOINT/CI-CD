@@ -97,6 +97,9 @@ pub(crate) async fn upsert_project_membership(
     Path(project_id): Path<Uuid>,
     Json(input): Json<ProjectMembershipInput>,
 ) -> ApiResult<ProjectMembership> {
+    if std::env::var_os("CICD_AUTH__CENTRAL_JWKS_URI").is_some() {
+        return Err(ApiError::forbidden());
+    }
     let role = input.role.trim();
     if !valid_project_role(role) {
         return Err(ApiError::bad_request(
@@ -123,6 +126,9 @@ pub(crate) async fn delete_project_membership(
     State(state): State<Arc<AppState>>,
     Path((project_id, user_id)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<serde_json::Value> {
+    if std::env::var_os("CICD_AUTH__CENTRAL_JWKS_URI").is_some() {
+        return Err(ApiError::forbidden());
+    }
     let db = pool(&state)?;
     ensure_project_exists(db, project_id).await?;
     let Some(role) = sqlx::query_scalar::<_, String>(

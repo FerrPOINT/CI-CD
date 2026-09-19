@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useLocation, Outlet, useNavigate } from 'react-router'
+import { Link, useLocation, Outlet } from 'react-router'
 import { LayoutDashboard, FolderGit2, Settings, GitFork, Menu, X, History, Users, Cpu } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button, PlatformMark } from '@sdlc/ui/ui'
@@ -44,7 +44,6 @@ function NavigationList({ onNavigate, isActive }: { onNavigate: () => void; isAc
 
 export function AppShell() {
   const { session, logout } = useAuth()
-  const navigate = useNavigate()
   const { t } = useTranslation()
   const location = useLocation()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -109,7 +108,7 @@ export function AppShell() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => void logout().then(() => navigate('/login', { replace: true }))}
+              onClick={() => void logout()}
             >
               {t('navigation.logout', 'Выйти')}
             </Button>

@@ -1,13 +1,14 @@
 use std::{path::PathBuf, time::Duration};
 
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
-use reqwest::{RequestBuilder, Url, header};
+use reqwest::{Method, RequestBuilder, Url, header};
+use sdlc_cli_core::{ApiClient as CoreApiClient, CliError};
 use serde_json::{Map, Value, json};
 
 #[derive(Parser)]
 #[command(name = "cicd", about = "Forge CI/CD control-plane CLI")]
 struct Cli {
-    #[arg(long, env = "CICD_API_URL", default_value = "http://127.0.0.1:22801")]
+    #[arg(long, env = "CICD_API_URL", default_value = "http://127.0.0.1:7711")]
     api_url: String,
     #[arg(long, env = "CICD_API_TOKEN")]
     token: Option<String>,
@@ -581,33 +582,26 @@ enum TokenCommand {
 }
 
 struct ApiClient {
-    base: String,
-    token: Option<String>,
-    client: reqwest::Client,
+    transport: CoreApiClient,
 }
 
 impl ApiClient {
     fn new(api_url: String, token: Option<String>, timeout: Duration) -> anyhow::Result<Self> {
         Ok(Self {
-            base: api_url.trim_end_matches('/').to_string(),
-            token: token.and_then(|token| {
-                let token = token.trim().to_string();
-                (!token.is_empty()).then_some(token)
-            }),
-            client: reqwest::Client::builder().timeout(timeout).build()?,
+            transport: CoreApiClient::new(
+                &format!("{}/api/v1", api_url.trim_end_matches('/')),
+                token.as_deref(),
+                timeout,
+            )?,
         })
-    }
-
-    fn endpoint(&self, path: &str) -> String {
-        format!("{}/api/v1{}", self.base, path)
     }
 
     fn endpoint_with_query(
         &self,
         path: &str,
         params: &[(&str, Option<String>)],
-    ) -> anyhow::Result<Url> {
-        let mut url = Url::parse(&self.endpoint(path))?;
+    ) -> anyhow::Result<String> {
+        let mut url = Url::parse(&format!("http://localhost{path}"))?;
         {
             let mut query = url.query_pairs_mut();
             for (key, value) in params {
@@ -616,18 +610,15 @@ impl ApiClient {
                 }
             }
         }
-        Ok(url)
-    }
-
-    fn auth(&self, request: RequestBuilder) -> RequestBuilder {
-        match &self.token {
-            Some(token) => request.bearer_auth(token),
-            None => request,
-        }
+        Ok(format!(
+            "{}{}",
+            url.path(),
+            url.query().map(|q| format!("?{q}")).unwrap_or_default()
+        ))
     }
 
     fn get(&self, path: &str) -> RequestBuilder {
-        self.auth(self.client.get(self.endpoint(path)))
+        self.transport.request_builder(Method::GET, path)
     }
 
     fn get_query(
@@ -635,46 +626,31 @@ impl ApiClient {
         path: &str,
         params: &[(&str, Option<String>)],
     ) -> anyhow::Result<RequestBuilder> {
-        Ok(self.auth(self.client.get(self.endpoint_with_query(path, params)?)))
+        Ok(self.get(&self.endpoint_with_query(path, params)?))
     }
 
     fn post(&self, path: &str) -> RequestBuilder {
-        self.auth(self.client.post(self.endpoint(path)))
+        self.transport.request_builder(Method::POST, path)
     }
 
     fn patch(&self, path: &str) -> RequestBuilder {
-        self.auth(self.client.patch(self.endpoint(path)))
+        self.transport.request_builder(Method::PATCH, path)
     }
 
     fn put(&self, path: &str) -> RequestBuilder {
-        self.auth(self.client.put(self.endpoint(path)))
+        self.transport.request_builder(Method::PUT, path)
     }
 
     fn delete(&self, path: &str) -> RequestBuilder {
-        self.auth(self.client.delete(self.endpoint(path)))
+        self.transport.request_builder(Method::DELETE, path)
     }
 
     async fn json(&self, request: RequestBuilder) -> anyhow::Result<Value> {
-        let response = request.send().await?;
-        let status = response.status();
-        let body = response.text().await?;
-        if !status.is_success() {
-            anyhow::bail!("API returned {status}: {body}");
-        }
-        if body.trim().is_empty() {
-            return Ok(json!({}));
-        }
-        Ok(serde_json::from_str(&body)?)
+        Ok(self.transport.json(request).await?)
     }
 
     async fn download(&self, request: RequestBuilder) -> anyhow::Result<Vec<u8>> {
-        let response = request.send().await?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            anyhow::bail!("API returned {status}: {body}");
-        }
-        Ok(response.bytes().await?.to_vec())
+        Ok(self.transport.download(request).await?)
     }
 }
 
@@ -732,6 +708,17 @@ fn exit(code: u8) -> std::process::ExitCode {
 
 /// K5: map error chains to stable exit codes (network/4xx/5xx).
 fn classify_error(err: &anyhow::Error) -> u8 {
+    if let Some(error) = err.downcast_ref::<CliError>() {
+        return match error {
+            CliError::Unauthorized => exit_code::UNAUTHORIZED,
+            CliError::Unavailable => exit_code::NETWORK_OR_SERVER,
+            CliError::Rejected(status) if status.as_u16() == 404 => exit_code::NOT_FOUND,
+            CliError::Rejected(status) if status.as_u16() == 400 || status.as_u16() == 422 => {
+                exit_code::VALIDATION
+            }
+            _ => exit_code::USAGE,
+        };
+    }
     let rendered = format!("{err:#}");
     for cause in err.chain() {
         let text = cause.to_string();

@@ -67,10 +67,7 @@ describe('AppShell mobile navigation', () => {
       expires_at: Math.floor(Date.now() / 1000) + 900,
       username: 'admin',
     }
-    authMocks.refresh.mockImplementation(async () => {
-      authMocks.currentSession.mockReturnValue(restoredSession)
-      return restoredSession
-    })
+    authMocks.currentSession.mockReturnValue(restoredSession)
 
     render(
       <ThemeProvider>
