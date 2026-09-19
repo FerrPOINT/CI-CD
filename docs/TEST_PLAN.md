@@ -64,7 +64,7 @@
 | Test Compose PostgreSQL | `backend/docker-compose.test.yml`: `postgres:17-alpine`, `forge_test_cicd`, tmpfs, без host port, healthcheck. Owner fixture -- `forge_owner`; `backend/tests/sql/init-roles.sql` создаёт runtime fixture `forge_runtime`. | **Current verified fixture** |
 | Real-DB harness | Current CI применяет migrations к disposable PostgreSQL service под `forge_owner`. Полная owner/runtime role matrix, prior-schema upgrade и parallel isolated DB/schema остаются target. | **Current verified; target расширение** |
 | Evidence seed | `frontend/scripts/seed-evidence.mjs` создаёт детерминированные demo repositories, projects, pipelines, runners, secrets metadata, environments, deployments, users и tokens для disposable local evidence stack. Запуск: `cd frontend && pnpm seed:evidence`. | **Current verified** |
-| Screenshot evidence | `frontend/scripts/shoot-evidence.mjs` снимает predefined маршруты на `1920x1080` и `375x812`; это visual evidence, а не E2E assertion. | **Current verified** |
+| Screenshot evidence | `frontend/scripts/shoot-evidence.mjs` снимает predefined маршруты на `1920x1080`; это visual evidence, а не E2E assertion. | **Current verified** |
 | E2E Compose evidence | `CI job e2e` использует disposable Compose stack с synthetic `CICD_SECRETS_KEY`, seeded repositories/projects/pipelines/artifacts и Playwright Chromium assertions. | **Current verified MVP** |
 
 Fixture `seed:evidence` содержит только synthetic development values. Он не применяется к shared, staging или production окружению; значения секретов, password, bearer token, `CICD_SECRETS_KEY`, production URL и персональные данные не попадают в fixture output, test name, screenshot, trace или CI artifact.

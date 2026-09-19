@@ -1,8 +1,8 @@
 # Реестр визуальных evidence
 
-> Скриншоты сняты Playwright (Chromium) с живого стенда и deterministic seed (`frontend/scripts/seed-evidence.mjs`). Viewport: desktop 1920×1080, mobile 375×812; итоговая высота full-page PNG указана в таблице. Локаль ru, тема dark, DPR 1. Пересъёмка: `node frontend/scripts/shoot-evidence.mjs`.
+> Скриншоты сняты Playwright (Chromium) с живого стенда и deterministic seed (`frontend/scripts/seed-evidence.mjs`). Viewport: desktop 1920×1080; итоговая высота full-page PNG указана в таблице. Локаль ru, тема dark, DPR 1. Пересъёмка: `node frontend/scripts/shoot-evidence.mjs`.
 >
-> Исключение текущего прохода: `06-pipeline-detail.png`, `m-pipeline-detail.png`, `15-environments.png`, `16-schedules.png`, `20-users.png`, `21-artifacts.png`, `28-env-create.png`, `32-user-create.png`, `33-job-logs.png` и `41-env-approval-controls.png` пересняты через local Vite + мокированные API-ответы, потому что локальный Docker/API на машине недоступен или требовалась изолированная проверка изменённого UI; полный live evidence переснимается командой выше при доступном стенде.
+> Исключение текущего прохода: `06-pipeline-detail.png`, `15-environments.png`, `16-schedules.png`, `20-users.png`, `21-artifacts.png`, `28-env-create.png`, `32-user-create.png`, `33-job-logs.png` и `41-env-approval-controls.png` пересняты через local Vite + мокированные API-ответы, потому что локальный Docker/API на машине недоступен или требовалась изолированная проверка изменённого UI; полный live evidence переснимается командой выше при доступном стенде.
 >
 > Номер `08` зарезервирован за удалённым статичным `/admin` screen. Отдельный `/admin` не входит в текущий baseline; системный срез находится в `/settings`.
 
@@ -10,7 +10,6 @@
 
 | Файл | Маршрут | Что показывает | Размер |
 |---|---|---|---|
-| [01-login.png](../../screenshots/01-login.png) | `/login`, `/sso/callback` | Вход через Central Auth; callback является техническим промежуточным состоянием | 1920×1080 |
 | [02-dashboard.png](../../screenshots/02-dashboard.png) | `/` | Дашборд с метриками запусков | 1920×1080 |
 | [03-projects.png](../../screenshots/03-projects.png) | `/projects` | Проекты | 1920×1080 |
 | [04-repositories.png](../../screenshots/04-repositories.png) | `/repositories` | Репозитории | 1920×1080 |
@@ -61,9 +60,3 @@
 | [23-forbidden.png](../../screenshots/23-forbidden.png) | `/forbidden` | 403 — доступ запрещён (роль без прав) | 1920×1080 |
 | Файл | Маршрут | Что показывает | Размер |
 |---|---|---|---|
-| [m-dashboard.png](../../screenshots/m-dashboard.png) | `/` | Дашборд — мобильная версия | 375×1556 |
-| [m-projects.png](../../screenshots/m-projects.png) | `/projects` | Проекты — мобильная версия | 375×2188 |
-| [m-pipeline-detail.png](../../screenshots/m-pipeline-detail.png) | `/pipelines/:id` | Детали пайплайна с runner tags, declared secrets и artifacts — мобильная версия | 375×812 |
-| [m-runners.png](../../screenshots/m-runners.png) | `/runners` | Runners — мобильная версия (карточный layout) | 375×812 |
-| [m-pull-request.png](../../screenshots/m-pull-request.png) | `/repositories/:repo/pulls/:number` | Pull-запрос — мобильная версия | 375×812 |
-| [m-repo-code.png](../../screenshots/m-repo-code.png) | `/repositories/:repo` → Код | Git-дерево на mobile | 375×812 |

@@ -42,7 +42,6 @@ if (!pullRequest) throw new Error('Evidence seed is missing a platform-core pull
 const pullRequestPath = `/repositories/platform-core/pulls/${pullRequest.number}`
 
 const shots = [
-  { name: '01-login.png', path: '/login', desktop: true },
   { name: '02-dashboard.png', path: '/', desktop: true, wait: 1200 },
   { name: '03-projects.png', path: '/projects', desktop: true },
   { name: '04-repositories.png', path: '/repositories', desktop: true },
@@ -83,12 +82,6 @@ const shots = [
   { name: '37-repo-tags.png', path: '/repositories/platform-core', desktop: true, wait: 1200, click: 'button:has-text("Теги")', settle: 500 },
   { name: '38-releases-create.png', path: '/repositories/platform-core', desktop: true, wait: 1200, click: 'button:has-text("Релизы")', click2: 'button:has-text("Создать релиз")', settle: 500 },
   { name: '39-repo-code-src.png', path: '/repositories/platform-core', desktop: true, wait: 1200, click: 'button:has-text("Код")', click2: 'button:has-text("src")', settle: 500 },
-  { name: 'm-repo-code.png', path: '/repositories/platform-core', mobile: true, wait: 1200, click: 'button:has-text("Код")', settle: 400 },
-  { name: 'm-dashboard.png', path: '/', mobile: true, wait: 1200 },
-  { name: 'm-projects.png', path: '/projects', mobile: true },
-  { name: 'm-pipeline-detail.png', path: `/pipelines/${pipeline.id}`, mobile: true, wait: 1500 },
-  { name: 'm-runners.png', path: '/runners', mobile: true },
-  { name: 'm-pull-request.png', path: pullRequestPath, mobile: true, wait: 1200 },
 ]
 
 const browser = await chromium.launch()

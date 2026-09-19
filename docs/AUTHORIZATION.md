@@ -705,7 +705,7 @@ Route inventory test обязан сверять все `/api/v1/**` routes с d
 - forbidden secrets UI не показывает даже metadata;
 - maintainer создаёт secret metadata, developer получает `403`;
 - project audit screen фильтрует только allowed scope;
-- responsive access-control UI в viewport `375x812`, `1920x1080`, `2560x1440`.
+- responsive access-control UI в viewport `1920x1080`.
 
 ### Security automation
 
