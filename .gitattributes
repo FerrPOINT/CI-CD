@@ -1,0 +1,17 @@
+# SQLx checksums include line endings. Keep applied migration bytes stable.
+backend/migrations/*.sql text eol=lf
+backend/migrations/0001_bootstrap_v1.sql text eol=crlf
+backend/migrations/0002_runtime_role.sql text eol=crlf
+backend/migrations/0003_auth_foundation.sql text eol=crlf
+backend/migrations/0004_outbox_delivery.sql text eol=crlf
+backend/migrations/0005_execution_gaps.sql text eol=crlf
+backend/migrations/0006_git_ci_details.sql text eol=crlf
+backend/migrations/0010_scoped_api_tokens.sql text eol=crlf
+backend/migrations/0026_session_family_reuse.sql text eol=crlf
+backend/migrations/0027_artifact_upload_sessions.sql text eol=crlf
+backend/migrations/0028_project_dispatch_limits.sql text eol=crlf
+backend/migrations/0029_service_accounts.sql text eol=crlf
+backend/migrations/0030_tenants.sql text eol=crlf
+backend/migrations/0031_outbox_email_channel.sql text eol=crlf
+backend/migrations/0032_notification_rules_templates.sql text eol=crlf
+backend/migrations/0033_aggregation_quiet_hours.sql text eol=crlf
