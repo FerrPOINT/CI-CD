@@ -592,6 +592,11 @@ def normalize_frontend_route(path: str) -> str:
     return re.sub(r":[A-Za-z_][A-Za-z0-9_]*", ":param", path.split("?", 1)[0])
 
 
+# Auth screens carry no product-surface evidence and are excluded from the
+# screenshot manifest by the desktop-only README evidence standard.
+MANIFEST_EXEMPT_ROUTES = {"/login", "/sso/callback", "/register"}
+
+
 def frontend_route_paths() -> set[str]:
     router = ROOT / "frontend/src/app/router.tsx"
     if not router.exists():
@@ -599,7 +604,7 @@ def frontend_route_paths() -> set[str]:
         return set()
     routes = set()
     for path in re.findall(r"path:\s*'([^']+)'", read_text(router)):
-        if path == "*":
+        if path == "*" or normalize_frontend_route(path) in MANIFEST_EXEMPT_ROUTES:
             continue
         routes.add(normalize_frontend_route(path))
     return routes
