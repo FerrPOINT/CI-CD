@@ -67,13 +67,13 @@
 
 | Файл | Состояние | Viewport |
 |---|---|---|
-| [list-1280.png](2026-09-19-pipeline/list-1280.png) | Список запусков, первая страница | 1280 px |
-| [list-375.png](2026-09-19-pipeline/list-375.png) | Список запусков, первая страница | 375 px |
-| [list-1920.png](2026-09-19-pipeline/list-1920.png) | Список запусков, первая страница | 1920 px |
-| [list-2560.png](2026-09-19-pipeline/list-2560.png) | Список запусков, первая страница | 2560 px |
-| [detail-1280.png](2026-09-19-pipeline/detail-1280.png) | Детали выполняющегося пайплайна | 1280 px |
-| [detail-375.png](2026-09-19-pipeline/detail-375.png) | Детали выполняющегося пайплайна | 375 px |
-| [detail-1920.png](2026-09-19-pipeline/detail-1920.png) | Детали выполняющегося пайплайна | 1920 px |
-| [detail-2560.png](2026-09-19-pipeline/detail-2560.png) | Детали выполняющегося пайплайна | 2560 px |
-| [logs-375.png](2026-09-19-pipeline/logs-375.png) | Панель логов и попыток | 375 px |
-| [cancel-375.png](2026-09-19-pipeline/cancel-375.png) | Подтверждение отмены | 375 px |
+| [list-1280.png](../../screenshots/2026-09-19-pipeline/list-1280.png) | Список запусков, первая страница | 1280 px |
+| [list-375.png](../../screenshots/2026-09-19-pipeline/list-375.png) | Список запусков, первая страница | 375 px |
+| [list-1920.png](../../screenshots/2026-09-19-pipeline/list-1920.png) | Список запусков, первая страница | 1920 px |
+| [list-2560.png](../../screenshots/2026-09-19-pipeline/list-2560.png) | Список запусков, первая страница | 2560 px |
+| [detail-1280.png](../../screenshots/2026-09-19-pipeline/detail-1280.png) | Детали выполняющегося пайплайна | 1280 px |
+| [detail-375.png](../../screenshots/2026-09-19-pipeline/detail-375.png) | Детали выполняющегося пайплайна | 375 px |
+| [detail-1920.png](../../screenshots/2026-09-19-pipeline/detail-1920.png) | Детали выполняющегося пайплайна | 1920 px |
+| [detail-2560.png](../../screenshots/2026-09-19-pipeline/detail-2560.png) | Детали выполняющегося пайплайна | 2560 px |
+| [logs-375.png](../../screenshots/2026-09-19-pipeline/logs-375.png) | Панель логов и попыток | 375 px |
+| [cancel-375.png](../../screenshots/2026-09-19-pipeline/cancel-375.png) | Подтверждение отмены | 375 px |
