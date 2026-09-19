@@ -38,7 +38,6 @@ Forge CI/CD - self-hosted control plane для Git-репозиториев и C
 2. Если backend запущен с `CICD_AUTH_SECRET`, форма отправляет `POST /api/v1/auth/login`, держит access token в памяти, получает refresh session через HttpOnly cookie + CSRF companion cookie и переводит в Dashboard.
 3. Если `CICD_AUTH_SECRET` не задан или пустой, backend не требует principal, а UI не будет воспринимать `/login` как boundary доступа. Для shared-инстанса задайте секрет и закройте сервис reverse proxy/сетью.
 
-![Страница входа](screenshots/01-login.png)
 
 ## 3. Создание проекта
 
