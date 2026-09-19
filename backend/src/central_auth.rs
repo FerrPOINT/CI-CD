@@ -2,7 +2,7 @@
 //!
 //! JWKS validation and the login proxy live in
 //! `sdlc_auth_core::service_bridge`; this file maps the central identity
-//! to the local users table (shadow accounts by email-derived username).
+//! to a local profile keyed by the immutable central subject.
 
 use crate::auth::AccessClaims;
 use sdlc_auth_core::AuthContext;
@@ -13,22 +13,25 @@ use uuid::Uuid;
 /// Env prefix: CICD_AUTH__CENTRAL_{JWKS_URI,ISSUER,LOGIN_URL,TIMEOUT_SECS}.
 pub static BRIDGE: ServiceBridge = ServiceBridge::new("CICD_AUTH__CENTRAL");
 
-/// Central-first bearer check. `None` = fall back to PAT/legacy session.
-pub async fn try_central(token: &str) -> Option<AuthContext> {
+/// Central-first bearer check. `None` means the token is explicitly outside
+/// the central namespace; configured consumers still reject legacy human JWTs.
+pub async fn try_central(token: &str) -> Result<Option<AuthContext>, crate::api::ApiError> {
     match BRIDGE.try_token(token).await {
-        BridgeOutcome::Validated(ctx) => Some(ctx),
-        BridgeOutcome::Expired => None, // treated as not-ours; middleware 401s later
-        BridgeOutcome::NotOurs | BridgeOutcome::NotConfigured => None,
+        BridgeOutcome::Validated(ctx) => Ok(Some(ctx)),
+        BridgeOutcome::Expired => Err(crate::api::ApiError::unauthorized()),
+        BridgeOutcome::NotOurs | BridgeOutcome::NotConfigured => Ok(None),
         BridgeOutcome::Invalid(reason) => {
-            tracing::debug!(reason, "bearer is not a valid central token; legacy path");
-            None
+            tracing::debug!(reason, "central token rejected");
+            Err(crate::api::ApiError::unauthorized())
         }
+        BridgeOutcome::Unavailable => Err(crate::api::ApiError::service_unavailable(
+            "Central Auth is temporarily unavailable",
+        )),
     }
 }
 
-/// Resolves the local user for a central identity (by email, falling back to
-/// the local-part username), creating a shadow account on first use (no
-/// credential row — local password login impossible for central users).
+/// Resolves only by the immutable central subject; historical usernames stay
+/// untouched even when they match a newly created central account.
 pub async fn link_central_user(
     pool: &PgPool,
     ctx: &AuthContext,
@@ -42,52 +45,49 @@ pub async fn link_central_user(
     if email.is_empty() {
         return Err(crate::api::ApiError::unauthorized());
     }
-    let username = email.split('@').next().unwrap_or_default().to_string();
-    if username.is_empty() {
+    if ctx.user_id.trim().is_empty() {
         return Err(crate::api::ApiError::unauthorized());
     }
-    // Existing user by email-derived username or literal email in username.
-    let user: Option<(Uuid, String)> = sqlx::query_as(
-        "SELECT id, role FROM users WHERE lower(username) = $1 OR lower(username) = $2 LIMIT 1",
+    let id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO users (id, username, role, enabled, central_sub) \
+         VALUES ($1, $2, 'developer', true, $3) \
+         ON CONFLICT (central_sub) WHERE central_sub IS NOT NULL DO NOTHING",
     )
-    .bind(&username)
-    .bind(&email)
-    .fetch_optional(pool)
+    .bind(id)
+    .bind(format!("central-{}", id.simple()))
+    .bind(&ctx.user_id)
+    .execute(pool)
     .await
     .map_err(crate::api::ApiError::internal)?;
-    let (user_id, role) = match user {
-        Some(found) => found,
-        None => {
-            let id = Uuid::new_v4();
-            let created: (Uuid, String) = sqlx::query_as(
-                "INSERT INTO users (id, username, role, enabled) \
-                 VALUES ($1, $2, 'developer', true) RETURNING id, role",
-            )
-            .bind(id)
-            .bind(&username)
+    let (user_id, _historical_role, enabled): (Uuid, String, bool) =
+        sqlx::query_as("SELECT id, role, enabled FROM users WHERE central_sub = $1")
+            .bind(&ctx.user_id)
             .fetch_one(pool)
             .await
             .map_err(crate::api::ApiError::internal)?;
-            tracing::info!(user_id = %created.0, "linked central identity as shadow user");
-            created
-        }
-    };
+    if !enabled {
+        return Err(crate::api::ApiError::unauthorized());
+    }
     let now = chrono::Utc::now();
     Ok(AccessClaims {
         service_account_name: None,
         sub: user_id,
-        sid: None, // central token; session invalidation is central-side
+        sid: ctx
+            .session_id
+            .as_deref()
+            .and_then(|id| Uuid::parse_str(id).ok()),
         token_id: None,
         token_project_id: None,
-        token_scopes: Vec::new(),
-        role,
+        token_scopes: ctx.scopes.iter().cloned().collect(),
+        role: "admin".to_string(),
         ver: 0,
         iat: now.timestamp(),
         exp: now.timestamp() + 900,
     })
 }
 
-/// Central login proxy; `None` = not configured / rejected / unreachable.
+/// Legacy login bridge used only when browser SSO is not configured.
 pub async fn try_login(
     username: &str,
     password: &str,

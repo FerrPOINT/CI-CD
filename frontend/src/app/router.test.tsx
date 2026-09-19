@@ -4,6 +4,12 @@ import { createMemoryRouter, RouterProvider } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ThemeProvider } from '@sdlc/ui/lib'
 import { appRoutes } from './router'
+import { acceptSso, clearSession } from '@/api/auth'
+
+vi.mock('@sdlc/ui/sso', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@sdlc/ui/sso')>()),
+  beginSso: vi.fn().mockResolvedValue(undefined),
+}))
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -93,15 +99,15 @@ const routeCases = [
   { entry: '/settings', marker: 'CICD_RUNNER_REGISTRATION_TOKEN' },
   { entry: '/runners', marker: 'linux-runner-1' },
   { entry: `/projects/${projectId}/secrets`, marker: 'DEPLOY_TOKEN' },
-  { entry: `/projects/${projectId}/members`, marker: 'admin' },
+  { entry: `/projects/${projectId}/members`, marker: 'forge-api' },
   { entry: `/jobs/${jobId}/artifacts`, marker: 'app.tar.gz' },
   { entry: `/projects/${projectId}/environments`, marker: 'https://prod.example.com' },
   { entry: `/projects/${projectId}/schedules`, marker: '0 4 * * 1' },
   { entry: `/projects/${projectId}/webhooks`, marker: 'Pipeline failed' },
   { entry: `/projects/${projectId}/reports`, marker: '75.0%' },
   { entry: '/audit-log', marker: 'project.created' },
-  { entry: '/users', marker: 'admin-token' },
-  { entry: '/login', marker: 'login.description' },
+  { entry: '/users', marker: 'Открыть пользователей' },
+  { entry: '/login', marker: 'Войти через SDLC' },
 ] as const
 
 afterEach(() => {
@@ -119,6 +125,8 @@ describe('app router smoke', () => {
 
 function renderRoute(entry: string) {
   installLocalStorage()
+  if (entry === '/login') clearSession()
+  else acceptSso('test-access', Date.now() + 3600_000, 'admin')
   vi.stubGlobal('fetch', vi.fn(mockFetch))
 
   const client = new QueryClient({

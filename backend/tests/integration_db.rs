@@ -91,6 +91,56 @@ async fn test_pool_in_schema(schema: &str) -> sqlx::PgPool {
     pool
 }
 
+async fn authenticated_app(pool: sqlx::PgPool) -> axum::Router {
+    authenticated_app_with_git(pool, cicd::git_host::GitConfig::default()).await
+}
+
+async fn authenticated_app_with_git(
+    pool: sqlx::PgPool,
+    git: cicd::git_host::GitConfig,
+) -> axum::Router {
+    let user_id = Uuid::new_v4();
+    let username = format!("it-api-user-{}", user_id.simple());
+    let password = "IntegrationPass1!";
+    sqlx::query("INSERT INTO users (id, username, role) VALUES ($1, $2, 'admin')")
+        .bind(user_id)
+        .bind(&username)
+        .execute(&pool)
+        .await
+        .expect("insert API test user");
+    sqlx::query("INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2)")
+        .bind(user_id)
+        .bind(cicd::auth::hash_password(password).expect("hash password"))
+        .execute(&pool)
+        .await
+        .expect("insert API test credential");
+
+    let app = cicd::api::app_with_git_and_auth_secret(
+        Some(pool),
+        git,
+        Some(format!("api-test-secret-{user_id}")),
+    );
+    let token = login_access_token(app.clone(), &username, password).await;
+    let authorization = axum::http::HeaderValue::from_str(&format!("Bearer {token}"))
+        .expect("valid API test token");
+    app.layer(axum::middleware::from_fn(
+        move |mut request: Request<Body>, next: axum::middleware::Next| {
+            let authorization = authorization.clone();
+            async move {
+                if !request
+                    .headers()
+                    .contains_key(axum::http::header::AUTHORIZATION)
+                {
+                    request
+                        .headers_mut()
+                        .insert(axum::http::header::AUTHORIZATION, authorization);
+                }
+                next.run(request).await
+            }
+        },
+    ))
+}
+
 #[tokio::test]
 async fn migrations_apply_and_reapply_idempotently() {
     let pool = test_pool().await;
@@ -146,6 +196,74 @@ async fn readiness_reports_database_and_migrations() {
             .len(),
         0
     );
+}
+
+#[tokio::test]
+async fn authenticated_requests_reach_body_and_header_validation() {
+    let pool = test_pool().await;
+    let user_id = Uuid::new_v4();
+    let username = format!("it-validation-{}", user_id.simple());
+    let password = "IntegrationPass1!";
+    sqlx::query("INSERT INTO users (id, username, role) VALUES ($1, $2, 'admin')")
+        .bind(user_id)
+        .bind(&username)
+        .execute(&pool)
+        .await
+        .expect("insert validation user");
+    sqlx::query("INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2)")
+        .bind(user_id)
+        .bind(cicd::auth::hash_password(password).expect("hash password"))
+        .execute(&pool)
+        .await
+        .expect("insert validation credential");
+
+    let app =
+        cicd::api::app_with_auth_secret(Some(pool), Some(format!("validation-secret-{user_id}")));
+    let token = login_access_token(app.clone(), &username, password).await;
+    let project_id = Uuid::new_v4();
+    let job_id = Uuid::new_v4();
+
+    let empty_patch = app
+        .clone()
+        .oneshot(
+            Request::patch(format!("/api/v1/projects/{project_id}"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(empty_patch.status(), StatusCode::BAD_REQUEST);
+
+    let invalid_idempotency_key = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/projects/{project_id}/pipelines"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .header("Idempotency-Key", "not-a-uuid")
+                .body(Body::from(r#"{"git_ref":"main"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_idempotency_key.status(), StatusCode::BAD_REQUEST);
+
+    let oversized_log = app
+        .oneshot(
+            Request::post(format!("/api/v1/jobs/{job_id}/logs"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(format!(
+                    r#"{{"message":"{}"}}"#,
+                    "x".repeat(1024 * 1024)
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(oversized_log.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
 
 #[tokio::test]
@@ -1176,7 +1294,7 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
         .execute(&pool)
         .await
         .expect("insert project");
-    let secret_app = cicd::api::app(Some(pool.clone()));
+    let secret_app = authenticated_app(pool.clone()).await;
     for (key, value) in [
         ("DEPLOY_TOKEN", "super-secret-token"),
         ("OTHER_SECRET", "do-not-release"),
@@ -2460,7 +2578,7 @@ async fn pipeline_trigger_replays_same_idempotency_key() {
         .await
         .expect("insert project");
 
-    let app = cicd::api::app(Some(pool.clone()));
+    let app = authenticated_app(pool.clone()).await;
     let key = Uuid::new_v4().to_string();
     let body = r#"{"git_ref":"main","variables":{"deploy_env":"staging"}}"#;
     let first = app
@@ -2708,14 +2826,14 @@ jobs:
         .await
         .expect("insert project");
 
-    let app = cicd::api::app_with_git(
-        Some(pool.clone()),
+    let app = authenticated_app_with_git(
+        pool.clone(),
         cicd::git_host::GitConfig {
             root: root.clone(),
             ..Default::default()
         },
-        None,
-    );
+    )
+    .await;
     let response = app
         .oneshot(
             Request::post(format!("/api/v1/projects/{project_id}/pipelines"))
@@ -2921,7 +3039,7 @@ async fn artifact_download_rejects_storage_paths_outside_artifact_root() {
     .await
     .expect("insert attempt");
 
-    let app = cicd::api::app(Some(pool.clone()));
+    let app = authenticated_app(pool.clone()).await;
     let uploaded_body = b"uploaded artifact bytes".to_vec();
     let uploaded_sha256 = format!("{:x}", Sha256::digest(&uploaded_body));
     let response = app
@@ -3095,7 +3213,7 @@ async fn artifact_retention_expires_download_and_purges_file() {
     .await
     .expect("insert attempt");
 
-    let app = cicd::api::app(Some(pool.clone()));
+    let app = authenticated_app(pool.clone()).await;
     let response = app
         .clone()
         .oneshot(
@@ -3345,7 +3463,7 @@ async fn job_retry_preserves_attempt_logs_and_appends_to_new_attempt() {
     .await
     .expect("insert old log");
 
-    let app = cicd::api::app(Some(pool.clone()));
+    let app = authenticated_app(pool.clone()).await;
     let response = app
         .clone()
         .oneshot(
@@ -3507,7 +3625,7 @@ async fn manual_job_start_materializes_queue_row() {
             .expect("count initial queue rows");
     assert_eq!(initially_queued, 0);
 
-    let app = cicd::api::app(Some(pool.clone()));
+    let app = authenticated_app(pool.clone()).await;
     let response = app
         .oneshot(
             Request::post(format!("/api/v1/jobs/{job_id}/start"))
@@ -3614,7 +3732,7 @@ async fn job_log_page_is_bounded_and_searchable() {
         .expect("insert log");
     }
 
-    let app = cicd::api::app(Some(pool.clone()));
+    let app = authenticated_app(pool.clone()).await;
     let response = app
         .clone()
         .oneshot(
@@ -3843,7 +3961,7 @@ async fn cancel_pipeline_marks_open_attempts_canceled() {
     .expect("insert queued queue row");
     queued_tx.commit().await.expect("commit queued queue setup");
 
-    let app = cicd::api::app(Some(pool.clone()));
+    let app = authenticated_app(pool.clone()).await;
     let response = app
         .oneshot(
             Request::post(format!("/api/v1/pipelines/{pipeline_id}/cancel"))
@@ -4019,7 +4137,7 @@ async fn cancel_pipeline_signals_external_runner_until_confirmed() {
     .await
     .expect("insert leased queue row");
 
-    let app = cicd::api::app(Some(pool.clone()));
+    let app = authenticated_app(pool.clone()).await;
     let response = app
         .clone()
         .oneshot(
@@ -4619,7 +4737,7 @@ async fn unacknowledged_external_lease_is_requeued_after_ack_deadline() {
     assert_eq!(lease_status, "expired");
     assert_eq!(lease_terminal_status.as_deref(), Some("failed"));
 
-    let app = cicd::api::app(Some(pool.clone()));
+    let app = authenticated_app(pool.clone()).await;
     let response = app
         .oneshot(
             Request::post("/api/v1/runner/work:poll")
@@ -5154,7 +5272,7 @@ async fn stale_runner_with_active_unexpired_lease_is_not_marked_offline() {
 #[tokio::test]
 async fn list_attempts_returns_not_found_for_unknown_job() {
     let pool = test_pool().await;
-    let app = cicd::api::app(Some(pool));
+    let app = authenticated_app(pool).await;
     let response = app
         .oneshot(
             Request::get(format!("/api/v1/jobs/{}/attempts", Uuid::new_v4()))
@@ -5185,7 +5303,7 @@ async fn cron_schedule_materializes_unique_fire_slots() {
         .await
         .expect("insert project");
 
-    let app = cicd::api::app(Some(pool.clone()));
+    let app = authenticated_app(pool.clone()).await;
     let response = app
         .oneshot(
             Request::post(format!("/api/v1/projects/{project_id}/schedules"))
@@ -5869,7 +5987,7 @@ async fn in_app_notification_events_are_fanned_out_and_delivered() {
     .await;
     assert!(delivered >= 1);
 
-    let app = cicd::api::app(Some(pool.clone()));
+    let app = authenticated_app(pool.clone()).await;
     let response = app
         .oneshot(
             Request::get(format!(
@@ -6230,7 +6348,7 @@ async fn failed_outbox_delivery_records_attempt_and_can_be_requeued() {
         Some("unsupported notification channel: email")
     );
 
-    let app = cicd::api::app(Some(pool.clone()));
+    let app = authenticated_app(pool.clone()).await;
     let response = app
         .clone()
         .oneshot(
@@ -6355,7 +6473,7 @@ async fn protected_environment_deployment_requires_approval_before_pipeline() {
         .execute(&pool)
         .await
         .expect("insert project");
-    let app = cicd::api::app(Some(pool.clone()));
+    let app = authenticated_app(pool.clone()).await;
 
     let environment_response = app
         .clone()
@@ -6436,7 +6554,12 @@ async fn protected_environment_deployment_requires_approval_before_pipeline() {
     let approvals = response_json(approvals_response).await;
     assert_eq!(approvals.as_array().unwrap().len(), 1);
     assert_eq!(approvals[0]["decision"], "approved");
-    assert_eq!(approvals[0]["actor"], "release-manager");
+    let authenticated_actor: Uuid =
+        sqlx::query_scalar("SELECT id FROM users WHERE username LIKE 'it-api-user-%'")
+            .fetch_one(&pool)
+            .await
+            .expect("fetch authenticated approver");
+    assert_eq!(approvals[0]["actor"], authenticated_actor.to_string());
 
     sqlx::query("DELETE FROM projects WHERE id = $1")
         .bind(project_id)
@@ -6457,7 +6580,7 @@ async fn deployment_rollback_creates_separate_traceable_pipeline_record() {
         .execute(&pool)
         .await
         .expect("insert project");
-    let app = cicd::api::app(Some(pool.clone()));
+    let app = authenticated_app(pool.clone()).await;
 
     let environment_response = app
         .clone()
@@ -6977,7 +7100,7 @@ async fn project_patch_null_max_running_jobs_clears_dispatch_cap() {
     .await
     .expect("insert capped project");
 
-    let app = cicd::api::app(Some(pool));
+    let app = authenticated_app(pool).await;
     let response = app
         .oneshot(
             Request::patch(format!("/api/v1/projects/{project_id}"))

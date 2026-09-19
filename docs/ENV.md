@@ -14,6 +14,10 @@
 | `CICD_GIT_INTERNAL_TOKEN` | — | `X-Internal-Token` для post-receive hook; пусто допустимо только для изолированного local development |
 | `CICD_AUTH_SECRET` | — | JWT/PAT auth boundary; пусто оставляет trusted-network режим |
 | `CICD_AUTH_COOKIE_SECURE` | `false` | `Secure` flag для refresh/CSRF cookies; включайте за TLS/reverse proxy |
+| `CICD_AUTH__CENTRAL_JWKS_URI` | — | Внутренний URL JWKS Central Auth; наличие включает fail-closed central human auth |
+| `CICD_AUTH__CENTRAL_ISSUER` | `http://localhost:7701` | Публичный issuer, который должен совпасть с `iss` токена |
+| `CICD_AUTH__CENTRAL_TIMEOUT_SECS` | `5` | Timeout JWKS/session/PAT introspection запросов |
+| `VITE_AUTH_ISSUER` | `http://localhost:7701` | Публичный browser issuer для Authorization Code + PKCE |
 | `CICD_CORS_ALLOWED_ORIGINS` | — | Comma-separated allowlist browser origins для API/Git Dashboard CORS; пусто сохраняет permissive trusted-local режим, explicit `*` запрещён |
 | `CICD_TLS_HOST` | — | Имя internal TLS origin для профиля `docker-compose.tls.yml`; обязательна непустая DNS-safe host label, например `forge.localhost` |
 | `CICD_TLS_HTTPS_PORT` | `22443` | Loopback host/container порт Caddy TLS profile; frontend/API direct ports в этом профиле удалены |
@@ -60,7 +64,7 @@
 | `CICD_RUNNER_NO_CHECKOUT` | `false` | Запускать команды в пустом workspace без Git checkout |
 | `CICD_RUNNER_WORK_DIR` | temp dir `forge-runner` | Workspace root внешнего runner-а |
 | `CICD_RUNNER_KEEP_WORKSPACE` | `false` | Не удалять workspace после job; truthy: `true`, `1`, `yes`, `on` |
-| `CICD_API_URL` | `http://127.0.0.1:22801` | Base URL для `cicd-cli` |
+| `CICD_API_URL` | `http://127.0.0.1:7711` | Base URL для `cicd-cli` в локальном стенде |
 | `CICD_TIMEOUT_SECONDS` | `60` | Общий HTTP timeout для `cicd-cli`; `--timeout-seconds` имеет приоритет |
 | `CICD_API_TOKEN` | пусто | Bearer PAT/JWT для `cicd-cli` в auth-mode |
 | `CICD_OUTPUT` | `json` | Формат вывода `cicd-cli`: `json` или `table` |

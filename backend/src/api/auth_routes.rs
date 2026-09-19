@@ -16,13 +16,16 @@ pub(crate) async fn auth_login(
     State(state): State<Arc<AppState>>,
     Json(input): Json<crate::auth::LoginRequest>,
 ) -> Result<(HeaderMap, Json<crate::auth::TokenPair>), ApiError> {
+    if std::env::var_os("CICD_AUTH__CENTRAL_JWKS_URI").is_some() {
+        return Err(ApiError::forbidden());
+    }
     use crate::auth::*;
     crate::metrics::LOGIN_ATTEMPTS_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let pool = pool(&state)?;
-    // Central fleet auth first; local credential login remains the fallback
-    // during the migration window (central_auth.rs).
+    // This bridge remains available only in legacy deployments where central
+    // browser SSO is not configured.
     if let Some(pair) = crate::central_auth::try_login(&input.username, &input.password).await {
-        if let Some(central) = crate::central_auth::try_central(&pair.access_token).await {
+        if let Some(central) = crate::central_auth::try_central(&pair.access_token).await? {
             let claims = crate::central_auth::link_central_user(pool, &central).await?; // shadow user ensured
             // Issue a local refresh session so the browser survives access-token
             // expiry (the central token itself has no refresh cookie here).
@@ -107,6 +110,9 @@ pub(crate) async fn auth_refresh(
     headers: HeaderMap,
     Json(input): Json<crate::auth::RefreshRequest>,
 ) -> Result<(HeaderMap, Json<crate::auth::TokenPair>), ApiError> {
+    if std::env::var_os("CICD_AUTH__CENTRAL_JWKS_URI").is_some() {
+        return Err(ApiError::unauthorized());
+    }
     use crate::auth::*;
     let pool = pool(&state)?;
     let credential = refresh_credential(&headers, &input.refresh_token)?;

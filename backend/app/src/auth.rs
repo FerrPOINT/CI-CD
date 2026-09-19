@@ -395,10 +395,10 @@ pub async fn rotate_session_with_csrf(
     )
     .ok_or(AuthError::InvalidCredentials)?;
 
-    if let Some(csrf_hash) = old_csrf_hash {
-        if row.csrf_token_hash.as_deref() != Some(csrf_hash) {
-            return Err(AuthError::InvalidCredentials);
-        }
+    if let Some(csrf_hash) = old_csrf_hash
+        && row.csrf_token_hash.as_deref() != Some(csrf_hash)
+    {
+        return Err(AuthError::InvalidCredentials);
     }
 
     if row.replaced_by.is_some() {

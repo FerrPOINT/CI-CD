@@ -1,6 +1,6 @@
 // K2: centralized auth state (FSD shared/auth slice).
 // Wraps the imperative session store (api/auth) in a React context so
-// ProtectedRoute/AppShell react to login/logout/refresh instead of poking
+// ProtectedRoute/AppShell react to central login/logout instead of poking
 // module state from effects.
 
 import {
@@ -13,21 +13,22 @@ import {
   type ReactNode,
 } from 'react'
 import { onTerminalAuthError } from '@/api/client'
+import { endSso, type SsoSession } from '@sdlc/ui/sso'
 import {
-  authRequired,
+  acceptSso as acceptApiSso,
   currentSession,
-  login as apiLogin,
   logout as apiLogout,
-  refresh as apiRefresh,
   type Session,
 } from '@/api/auth'
 
-export type AuthStatus = 'checking' | 'authenticated' | 'anonymous' | 'open-mode'
+export type AuthStatus = 'checking' | 'authenticated' | 'anonymous'
+
+export const ssoConfig = { issuer: import.meta.env.VITE_AUTH_ISSUER ?? 'http://localhost:7701', clientId: 'ci-cd' }
 
 interface AuthContextValue {
   status: AuthStatus
   session: Session | null
-  login: (username: string, password: string) => Promise<void>
+  acceptSso: (sso: SsoSession) => void
   logout: () => Promise<void>
   /** Force a session re-check (e.g. after a terminal 401). */
   invalidate: () => void
@@ -40,38 +41,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>(session ? 'authenticated' : 'checking')
   const [invalidateNonce, setInvalidateNonce] = useState(0)
 
-  // Bootstrap: restore session via cookie refresh, else probe whether the
-  // backend enforces auth at all (trusted-network mode keeps pages public).
+  // Tokens stay in memory. A hard reload re-enters the central browser session.
   useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      if (currentSession()) return // already logged in this tab
-      const restored = await apiRefresh().catch(() => null)
-      if (cancelled) return
-      if (restored || currentSession()) {
-        setSession(currentSession())
-        setStatus('authenticated')
-        return
-      }
-      const required = await authRequired().catch(() => false)
-      if (cancelled) return
-      setStatus(required ? 'anonymous' : 'open-mode')
-    })()
-    return () => {
-      cancelled = true
-    }
+    setStatus(currentSession() ? 'authenticated' : 'anonymous')
   }, [invalidateNonce])
 
   // Terminal 401 anywhere in the app: drop to anonymous (router redirects).
   useEffect(() => {
     onTerminalAuthError(() => {
       setSession(null)
-      setStatus((prev) => (prev === 'open-mode' ? prev : 'anonymous'))
+      setStatus('anonymous')
     })
   }, [])
 
-  const login = useCallback(async (username: string, password: string) => {
-    const next = await apiLogin(username, password)
+  const acceptSso = useCallback((sso: SsoSession) => {
+    const next = acceptApiSso(sso.accessToken, sso.expiresAt, sso.name)
     setSession(next)
     setStatus('authenticated')
   }, [])
@@ -80,6 +64,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await apiLogout().catch(() => undefined)
     setSession(null)
     setStatus('anonymous')
+    endSso(ssoConfig)
   }, [])
 
   const invalidate = useCallback(() => {
@@ -89,8 +74,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo<AuthContextValue>(
-    () => ({ status, session, login, logout, invalidate }),
-    [status, session, login, logout, invalidate],
+    () => ({ status, session, acceptSso, logout, invalidate }),
+    [status, session, acceptSso, logout, invalidate],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

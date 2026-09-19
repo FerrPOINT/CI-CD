@@ -6,7 +6,7 @@ import { Card } from '@sdlc/ui/ui'
 import { Button } from '@sdlc/ui/ui'
 import { Input } from '@sdlc/ui/ui'
 import { Label } from '@sdlc/ui/ui'
-import { FolderGit2, Plus, ChevronRight, Pencil, Trash2, GitFork, KeyRound, Globe, Clock, Webhook, BarChart3, Users } from 'lucide-react'
+import { FolderGit2, Plus, ChevronRight, Pencil, Trash2, GitFork, KeyRound, Globe, Clock, Webhook, BarChart3 } from 'lucide-react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
 import { QueryState } from '@/shared/ui/query-state'
@@ -131,11 +131,6 @@ export function ProjectsPage() {
                 <Button asChild size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs">
                   <Link to={`/repositories?project=${encodeURIComponent(p.name)}`}>
                     <GitFork className="h-3 w-3" /> {t('projects.repositories')}
-                  </Link>
-                </Button>
-                <Button asChild size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs">
-                  <Link to={`/projects/${p.id}/members`}>
-                    <Users className="h-3 w-3" /> {t('projects.members')}
                   </Link>
                 </Button>
                 <Button asChild size="sm" variant="ghost" className="h-7 gap-1 px-2 text-xs">

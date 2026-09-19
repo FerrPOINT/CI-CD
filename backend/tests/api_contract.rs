@@ -42,7 +42,7 @@ async fn project_crud_requires_database() {
 }
 
 #[tokio::test]
-async fn project_update_with_empty_body_is_rejected() {
+async fn project_update_requires_auth_before_body_validation() {
     let response = app(None)
         .oneshot(
             Request::patch("/api/v1/projects/00000000-0000-0000-0000-000000000000")
@@ -52,12 +52,11 @@ async fn project_update_with_empty_body_is_rejected() {
         )
         .await
         .unwrap();
-    // Body validation fires before the DB pool check: empty patch is a 400.
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
 #[tokio::test]
-async fn pipeline_trigger_rejects_invalid_idempotency_key_before_database() {
+async fn pipeline_trigger_requires_auth_before_header_validation() {
     let response = app(None)
         .oneshot(
             Request::post("/api/v1/projects/00000000-0000-0000-0000-000000000000/pipelines")
@@ -68,7 +67,7 @@ async fn pipeline_trigger_rejects_invalid_idempotency_key_before_database() {
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
 #[tokio::test]
@@ -140,7 +139,7 @@ async fn test_report_upload_allows_payloads_above_axum_default() {
 }
 
 #[tokio::test]
-async fn job_log_append_rejects_payloads_above_explicit_limit() {
+async fn job_log_append_requires_auth_before_payload_validation() {
     let body = format!(r#"{{"message":"{}"}}"#, "x".repeat(1024 * 1024));
     let response = app(None)
         .oneshot(
@@ -152,7 +151,7 @@ async fn job_log_append_rejects_payloads_above_explicit_limit() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }
 
 #[tokio::test]

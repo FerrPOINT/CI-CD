@@ -25,8 +25,8 @@ describe('AuthProvider', () => {
     authMod.currentSession.mockReturnValue(null)
   })
 
-  it('restores an expired-tab session via refresh', async () => {
-    authMod.refresh.mockResolvedValue({ access_token: 'x', expires_at: 1 })
+  it('keeps an in-memory central session', async () => {
+    authMod.currentSession.mockReturnValue({ access_token: 'x', expires_at: 1 })
     render(
       <AuthProvider>
         <Probe />
@@ -35,9 +35,7 @@ describe('AuthProvider', () => {
     await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('authenticated'))
   })
 
-  it('falls back to anonymous when refresh fails and auth is enforced', async () => {
-    authMod.refresh.mockResolvedValue(null)
-    authMod.authRequired.mockResolvedValue(true)
+  it('requires central login after a hard reload', async () => {
     render(
       <AuthProvider>
         <Probe />
@@ -46,15 +44,13 @@ describe('AuthProvider', () => {
     await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('anonymous'))
   })
 
-  it('stays open-mode when the backend does not enforce auth', async () => {
-    authMod.refresh.mockResolvedValue(null)
-    authMod.authRequired.mockResolvedValue(false)
+  it('does not enter open mode when central auth is unavailable', async () => {
     render(
       <AuthProvider>
         <Probe />
       </AuthProvider>,
     )
-    await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('open-mode'))
+    await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('anonymous'))
   })
 })
 
@@ -64,9 +60,8 @@ describe('ProtectedRoute', () => {
     authMod.currentSession.mockReturnValue(null)
   })
 
-  it('renders children in open-mode', async () => {
-    authMod.refresh.mockResolvedValue(null)
-    authMod.authRequired.mockResolvedValue(false)
+  it('renders children with a central session', async () => {
+    authMod.currentSession.mockReturnValue({ access_token: 'x', expires_at: 1 })
     render(
       <MemoryRouter initialEntries={['/secret']}>
         <AuthProvider>
@@ -82,8 +77,6 @@ describe('ProtectedRoute', () => {
   })
 
   it('redirects to /login when anonymous', async () => {
-    authMod.refresh.mockResolvedValue(null)
-    authMod.authRequired.mockResolvedValue(true)
     render(
       <MemoryRouter initialEntries={['/secret']}>
         <AuthProvider>

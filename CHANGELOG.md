@@ -11,6 +11,10 @@
 
 ### Added
 
+- Central Auth SSO для Dashboard, read-only центральный каталог пользователей,
+  локальные профили по immutable `sub`, общая CLI transport-библиотека и
+  поддержка центральных scoped personal tokens; локальные human login/user/PAT
+  mutations закрыты в центральном режиме.
 - Этап 5 масштабирования: `CICD_ROLES` (api/worker/runner); exactly-once lease-claim доставки outbox (SKIP LOCKED + 300 c); egress-allowlist `CICD_WEBHOOK_ALLOWLIST`; outbox retention-sweep (30 дней, часовой каденс); `docs/RUNBOOK.md`.
 
 ## [Unreleased]

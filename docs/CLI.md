@@ -6,8 +6,8 @@
 
 ```bash
 # В Rust-контейнере, если cargo на хосте отсутствует:
-docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" -w /workspace \
-  -e CARGO_TARGET_DIR=/workspace/target rust:1.88-bookworm \
+docker run --rm --entrypoint /bin/bash -v "$(dirname "$PWD"):/workspace" -w /workspace/CI-CD/backend \
+  -e CARGO_TARGET_DIR=/workspace/CI-CD/backend/target rust:1.88-bookworm \
   -lc '/usr/local/cargo/bin/cargo build -p cicd-cli'
 
 ./backend/target/debug/cicd-cli --help
@@ -17,8 +17,8 @@ docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" -w /workspac
 
 | Переменная | Default | Назначение |
 |---|---|---|
-| `CICD_API_URL` | `http://127.0.0.1:22801` | Базовый URL API |
-| `CICD_API_TOKEN` | - | Bearer PAT/JWT для auth-mode; эквивалентно `--token` |
+| `CICD_API_URL` | `http://127.0.0.1:7711` | Базовый URL API локального стенда |
+| `CICD_API_TOKEN` / `SDLC_API_TOKEN` | - | Личный токен Central Auth; эквивалентно `--token` |
 | `CICD_TIMEOUT_SECONDS` | `60` | Общий timeout HTTP-запроса; эквивалентно `--timeout-seconds` |
 | `CICD_OUTPUT` | `json` | Формат вывода: `json`, `ndjson` или `table`; эквивалентно `--output` |
 | `CICD_PROFILE` | - | Имя профиля из `~/.config/forge-cli/config.toml`; эквивалентно `--profile` |
@@ -27,7 +27,7 @@ docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" -w /workspac
 Глобальные флаги:
 
 ```bash
-cicd-cli --api-url http://127.0.0.1:22801 --token "$CICD_API_TOKEN" \
+cicd-cli --api-url http://127.0.0.1:7711 --token "$CICD_API_TOKEN" \
   --timeout-seconds 60 --output table project list
 ```
 

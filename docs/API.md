@@ -72,8 +72,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 33,
-    "latest_required_version": 33,
+    "latest_applied_version": 34,
+    "latest_required_version": 34,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],
@@ -1195,6 +1195,12 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 
 ### Users & Roles
 
+При настроенном `CICD_AUTH__CENTRAL_JWKS_URI` `/users` возвращает активный
+центральный каталог, а `POST /users` и `PATCH /users/{user_id}` возвращают
+`403`. Локальные профили создаются по immutable `sub`; все активные люди имеют
+одинаковые пользовательские права, а исторические роли сохраняются только для
+legacy-режима. Управление учётками выполняется в Admin Panel.
+
 | Метод | Путь | Назначение |
 |---|---|---|
 | GET | `/users` | Список пользователей |
@@ -1216,6 +1222,11 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 `password` опционален в trusted-network режиме, но нужен для интерактивного входа через `/login` при включённом `CICD_AUTH_SECRET`. API никогда не возвращает password hash или plaintext.
 
 ### API Tokens
+
+В центральном режиме эти legacy endpoints возвращают `403`: личные токены
+`sdlc_pat_...` выпускает Central Auth для scopes `ci-cd:read/write`, показывает
+секрет один раз и проверяет срок/отзыв при каждом запросе. Service-account и
+runner credentials не являются пользовательскими токенами и остаются рабочими.
 
 | Метод | Путь | Назначение |
 |---|---|---|

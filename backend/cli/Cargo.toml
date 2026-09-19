@@ -14,6 +14,7 @@ path = "src/main.rs"
 integration = []
 
 [dependencies]
+sdlc-cli-core = { path = "../../../services-base/crates/sdlc-cli-core" }
 anyhow.workspace = true
 clap.workspace = true
 clap_complete = "4"

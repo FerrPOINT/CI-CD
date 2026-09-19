@@ -2197,6 +2197,12 @@ pub(crate) struct User {
     enabled: bool,
     created_at: DateTime<Utc>,
 }
+#[derive(Debug, Deserialize)]
+struct CentralDirectoryUser {
+    id: String,
+    email: String,
+    status: String,
+}
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct UserInput {
     username: String,
@@ -2206,7 +2212,65 @@ pub(crate) struct UserInput {
     password: Option<String>,
 }
 #[utoipa::path(get, path = "/api/v1/users", tag = "users", responses((status = 200, body = [User])))]
-async fn list_users(State(state): State<Arc<AppState>>) -> ApiResult<Vec<User>> {
+async fn list_users(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> ApiResult<Vec<User>> {
+    if let Ok(jwks) = std::env::var("CICD_AUTH__CENTRAL_JWKS_URI") {
+        let token = headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .ok_or_else(ApiError::unauthorized)?;
+        let mut url = reqwest::Url::parse(&jwks)
+            .map_err(|_| ApiError::service_unavailable("Central Auth URL is invalid"))?;
+        url.set_path("/auth/users");
+        let client = reqwest::Client::builder()
+            .timeout(StdDuration::from_secs(5))
+            .build()
+            .map_err(|_| ApiError::service_unavailable("Central Auth is unavailable"))?;
+        let mut users = Vec::new();
+        for page in 0..100 {
+            let response = client
+                .get(url.clone())
+                .query(&[("offset", page * 100)])
+                .bearer_auth(token)
+                .send()
+                .await
+                .map_err(|_| ApiError::service_unavailable("Central Auth is unavailable"))?;
+            if !response.status().is_success() {
+                return Err(ApiError::service_unavailable(
+                    "Central Auth directory is unavailable",
+                ));
+            }
+            let batch = response
+                .json::<Vec<CentralDirectoryUser>>()
+                .await
+                .map_err(|_| ApiError::service_unavailable("Central Auth directory is invalid"))?;
+            let count = batch.len();
+            for entry in batch {
+                if entry.status == "disabled" {
+                    continue;
+                }
+                let id = Uuid::new_v4();
+                let mut user: User = sqlx::query_as(
+                    "INSERT INTO users (id, username, role, enabled, central_sub) \
+                     VALUES ($1, $2, 'developer', true, $3) \
+                     ON CONFLICT (central_sub) WHERE central_sub IS NOT NULL DO UPDATE SET enabled = true \
+                     RETURNING id, username, role, enabled, created_at"
+                ).bind(id).bind(format!("central-{}", id.simple())).bind(&entry.id)
+                    .fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
+                user.username = entry.email;
+                users.push(user);
+            }
+            if count < 100 {
+                return Ok(Json(users));
+            }
+        }
+        return Err(ApiError::service_unavailable(
+            "Central Auth directory is too large",
+        ));
+    }
     Ok(Json(
         sqlx::query_as(
             "SELECT id, username, role, enabled, created_at FROM users ORDER BY username",
@@ -2221,6 +2285,9 @@ async fn create_user(
     State(state): State<Arc<AppState>>,
     Json(input): Json<UserInput>,
 ) -> ApiResult<User> {
+    if std::env::var_os("CICD_AUTH__CENTRAL_JWKS_URI").is_some() {
+        return Err(ApiError::forbidden());
+    }
     if input.username.trim().is_empty() || !valid_role(&input.role) {
         return Err(ApiError::bad_request(
             "username and role (admin, maintainer, developer, viewer) are required",
@@ -2246,6 +2313,9 @@ async fn update_user(
     Path(id): Path<Uuid>,
     Json(input): Json<UserInput>,
 ) -> ApiResult<User> {
+    if std::env::var_os("CICD_AUTH__CENTRAL_JWKS_URI").is_some() {
+        return Err(ApiError::forbidden());
+    }
     if input.username.trim().is_empty() || !valid_role(&input.role) {
         return Err(ApiError::bad_request("username and role are required"));
     }
@@ -2302,6 +2372,9 @@ pub(crate) struct CreateToken {
 }
 #[utoipa::path(get, path = "/api/v1/api-tokens", tag = "tokens", responses((status = 200, body = [ApiToken])))]
 async fn list_tokens(State(state): State<Arc<AppState>>) -> ApiResult<Vec<ApiToken>> {
+    if std::env::var_os("CICD_AUTH__CENTRAL_JWKS_URI").is_some() {
+        return Err(ApiError::forbidden());
+    }
     Ok(Json(sqlx::query_as("SELECT id, name, token_hint, user_id, principal_type, service_account_id, project_id, scopes, expires_at, revoked_at, created_at, last_used_at FROM api_tokens WHERE revoked_at IS NULL ORDER BY created_at DESC").fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
 #[utoipa::path(post, path = "/api/v1/api-tokens", tag = "tokens", request_body = CreateToken, responses((status = 200, body = CreatedToken), (status = 400)))]
@@ -2310,6 +2383,9 @@ async fn create_token(
     claims: Option<axum::Extension<crate::auth::AccessClaims>>,
     Json(input): Json<CreateToken>,
 ) -> ApiResult<CreatedToken> {
+    if std::env::var_os("CICD_AUTH__CENTRAL_JWKS_URI").is_some() {
+        return Err(ApiError::forbidden());
+    }
     let auth_enabled = state.auth_secret.is_some();
     let requester = claims.map(|c| c.0);
     let user_id = input
@@ -2354,6 +2430,9 @@ async fn delete_token(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<serde_json::Value> {
+    if std::env::var_os("CICD_AUTH__CENTRAL_JWKS_URI").is_some() {
+        return Err(ApiError::forbidden());
+    }
     let id: Uuid = sqlx::query_scalar(
         "UPDATE api_tokens SET revoked_at = now() \
          WHERE id = $1 AND revoked_at IS NULL RETURNING id",
