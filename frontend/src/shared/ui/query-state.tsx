@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { Inbox } from 'lucide-react'
 import { ApiError } from '@/api/client'
 import { ForbiddenPage } from '@/pages/forbidden'
+import { Button } from '@sdlc/ui/ui'
 
 export function QueryState<T>({
   data,
@@ -13,6 +14,7 @@ export function QueryState<T>({
   error,
   isEmpty,
   empty,
+  onRetry,
   children,
 }: {
   data: T | undefined
@@ -20,13 +22,19 @@ export function QueryState<T>({
   error: unknown
   isEmpty?: (data: T) => boolean
   empty?: { title?: string; description?: string }
+  onRetry?: () => void
   children: (data: T) => ReactNode
 }) {
   const { t } = useTranslation()
 
   if (isLoading) {
     return (
-      <div className="space-y-2" role="status" aria-busy="true" aria-label={t('common.loading', 'Загрузка')}>
+      <div
+        className="space-y-2"
+        role="status"
+        aria-busy="true"
+        aria-label={t('common.loading', 'Загрузка')}
+      >
         <div className="h-8 animate-pulse rounded bg-surface-raised" />
         <div className="h-8 animate-pulse rounded bg-surface-raised" />
         <div className="h-8 animate-pulse rounded bg-surface-raised" />
@@ -39,8 +47,24 @@ export function QueryState<T>({
       return <ForbiddenPage />
     }
     return (
-      <div className="rounded-md border border-status-failed/40 bg-surface p-4 text-sm text-text-secondary" role="alert">
-        {error instanceof Error ? error.message : t('errors.unknown', 'Неизвестная ошибка')}
+      <div
+        className="flex flex-wrap items-center gap-3 rounded-md border border-status-failed/40 bg-surface p-4 text-sm text-text-secondary"
+        role="alert"
+      >
+        <span>
+          {error instanceof Error ? error.message : t('errors.unknown', 'Неизвестная ошибка')}
+        </span>
+        {onRetry && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="min-h-10 sm:min-h-10"
+            onClick={onRetry}
+          >
+            {t('common.retry')}
+          </Button>
+        )}
       </div>
     )
   }
@@ -54,7 +78,9 @@ export function QueryState<T>({
       <div className="flex flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border p-8 text-center">
         <Inbox className="h-8 w-8 text-text-muted" aria-hidden />
         <p className="text-sm font-medium">{empty?.title ?? t('common.empty', 'Пусто')}</p>
-        {empty?.description && <p className="max-w-sm text-xs text-text-secondary">{empty.description}</p>}
+        {empty?.description && (
+          <p className="max-w-sm text-xs text-text-secondary">{empty.description}</p>
+        )}
       </div>
     )
   }

@@ -59,7 +59,17 @@
     "planCommit": "Commit",
     "planEdges": "Зависимости",
     "planConfigHash": "Config SHA-256",
-    "planHash": "Plan SHA-256"
+    "planHash": "Plan SHA-256",
+    "loadError": "Не удалось загрузить пайплайн",
+    "cancelTitle": "Отменить пайплайн?",
+    "cancelDescription": "Выполняющиеся задачи получат сигнал отмены. Это действие нельзя отменить.",
+    "keepRunning": "Продолжить выполнение",
+    "confirmCancel": "Отменить пайплайн",
+    "canceledNotice": "Отмена пайплайна запрошена",
+    "retryStarted": "Повторный запуск запрошен",
+    "actionError": "Не удалось изменить состояние пайплайна",
+    "started": "Пайплайн запущен",
+    "page": "Страница {{page}}"
   },
   "repositories": {
     "title": "Репозитории",
@@ -163,7 +173,15 @@
     "testReport": "Тест-отчёты",
     "suite": "Набор",
     "total": "Всего",
-    "duration": "Время"
+    "duration": "Время",
+    "manualStatus": "Ручной статус",
+    "statusUpdated": "Статус задачи изменён",
+    "attemptsError": "Не удалось загрузить попытки выполнения",
+    "logsError": "Не удалось загрузить логи",
+    "noLogs": "Логов пока нет",
+    "refreshLogs": "Обновить логи",
+    "manualLog": "Добавить строку вручную",
+    "reportError": "Не удалось загрузить тест-отчёт"
   },
   "stages": {
     "build": "Сборка",
