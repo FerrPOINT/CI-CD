@@ -21,6 +21,7 @@ interface ConfirmDialogProps {
   cancelLabel?: string;
   closeOnConfirm?: boolean;
   pending?: boolean;
+  confirmVariant?: "default" | "destructive";
 }
 
 export function ConfirmDialog({
@@ -34,6 +35,7 @@ export function ConfirmDialog({
   cancelLabel,
   closeOnConfirm = true,
   pending = false,
+  confirmVariant = "destructive",
 }: ConfirmDialogProps) {
   const { t } = useTranslation();
   return (
@@ -47,7 +49,7 @@ export function ConfirmDialog({
         <AlertDialogHeader className="min-w-0 text-left">
           <AlertDialogTitle className="min-w-0 break-all">{title}</AlertDialogTitle>
           {description && (
-            <AlertDialogDescription className="break-words">{description}</AlertDialogDescription>
+            <AlertDialogDescription className="[overflow-wrap:anywhere]">{description}</AlertDialogDescription>
           )}
           {error && <p role="alert" className="break-words text-sm text-danger">{error}</p>}
         </AlertDialogHeader>
@@ -56,7 +58,7 @@ export function ConfirmDialog({
             {cancelLabel ?? t("common.cancel")}
           </AlertDialogCancel>
           <AlertDialogAction
-            className="min-h-10 text-danger-foreground hover:opacity-100"
+            className={confirmVariant === "default" ? "bg-accent text-accent-foreground hover:bg-accent-hover" : "min-h-10 text-white hover:opacity-100"}
             disabled={pending}
             onClick={(event) => {
               if (!closeOnConfirm) event.preventDefault();
