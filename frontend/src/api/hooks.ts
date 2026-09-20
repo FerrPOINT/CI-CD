@@ -30,8 +30,6 @@ import type {
   Pipeline,
   PipelineDetail,
   Project,
-  ProjectMembership,
-  ProjectRole,
   ProjectReport,
   PullRequest,
   PullRequestAction,
@@ -399,7 +397,6 @@ const PLATFORM_KEYS = {
   auditLog: ['audit-log'] as const,
   users: ['users'] as const,
   tokens: ['api-tokens'] as const,
-  projectMemberships: (projectId: string) => ['project-memberships', projectId] as const,
 }
 
 function browserNotificationStreamEnabled(): boolean {
@@ -424,32 +421,6 @@ export function useDeleteRunner() {
   return useMutation({
     mutationFn: (id: string) => api<{ deleted: string }>(`/runners/${id}`, { method: 'DELETE' }),
     onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.runners }),
-  })
-}
-
-export function useProjectMemberships(projectId: string | undefined) {
-  return useQuery({
-    queryKey: PLATFORM_KEYS.projectMemberships(projectId ?? ''),
-    queryFn: () => api<ProjectMembership[]>(`/projects/${projectId}/memberships`),
-    enabled: Boolean(projectId),
-  })
-}
-
-export function useUpsertProjectMembership(projectId: string | undefined) {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (input: { user_id: string; role: ProjectRole }) =>
-      api<ProjectMembership>(`/projects/${projectId}/memberships`, { method: 'POST', body: JSON.stringify(input) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.projectMemberships(projectId ?? '') }),
-  })
-}
-
-export function useDeleteProjectMembership(projectId: string | undefined) {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (userId: string) =>
-      api<{ deleted: string; project_id: string }>(`/projects/${projectId}/memberships/${userId}`, { method: 'DELETE' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.projectMemberships(projectId ?? '') }),
   })
 }
 

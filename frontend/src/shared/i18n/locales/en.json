@@ -473,17 +473,6 @@
     "empty": "No users yet.",
     "toggle": "Toggle"
   },
-  "projectMembers": {
-    "title": "Project Members",
-    "user": "User",
-    "role": "Project role",
-    "add": "Save member",
-    "saved": "Member saved",
-    "deleted": "Member removed",
-    "deleteConfirm": "Remove member",
-    "updated": "Updated",
-    "empty": "No members assigned."
-  },
   "tokens": {
     "title": "API Tokens",
     "name": "Token name",

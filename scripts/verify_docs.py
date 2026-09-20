@@ -592,9 +592,8 @@ def normalize_frontend_route(path: str) -> str:
     return re.sub(r":[A-Za-z_][A-Za-z0-9_]*", ":param", path.split("?", 1)[0])
 
 
-# Auth screens carry no product-surface evidence and are excluded from the
-# screenshot manifest by the desktop-only README evidence standard.
-MANIFEST_EXEMPT_ROUTES = {"/login", "/sso/callback", "/register"}
+# Auth screens and redirect-only legacy links have no distinct product surface.
+MANIFEST_EXEMPT_ROUTES = {"/login", "/sso/callback", "/register", "/projects/:param/members"}
 
 
 def frontend_route_paths() -> set[str]:

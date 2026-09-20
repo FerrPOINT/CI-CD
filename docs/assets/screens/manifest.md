@@ -2,7 +2,7 @@
 
 > Скриншоты сняты Playwright (Chromium) с живого стенда и deterministic seed (`frontend/scripts/seed-evidence.mjs`). Viewport: desktop 1920×1080; итоговая высота full-page PNG указана в таблице. Локаль ru, тема dark, DPR 1. Пересъёмка: `node frontend/scripts/shoot-evidence.mjs`.
 >
-> Исключение текущего прохода: `06-pipeline-detail.png`, `15-environments.png`, `16-schedules.png`, `20-users.png`, `21-artifacts.png`, `28-env-create.png`, `32-user-create.png`, `33-job-logs.png` и `41-env-approval-controls.png` пересняты через local Vite + мокированные API-ответы, потому что локальный Docker/API на машине недоступен или требовалась изолированная проверка изменённого UI; полный live evidence переснимается командой выше при доступном стенде.
+> Исключение текущего прохода: `06-pipeline-detail.png`, `15-environments.png`, `16-schedules.png`, `20-users.png`, `21-artifacts.png`, `28-env-create.png`, `33-job-logs.png` и `41-env-approval-controls.png` пересняты через local Vite с изолированным UI или мокированными API-ответами, потому что локальный Docker/API на машине недоступен или требовалась изолированная проверка изменённого UI; полный live evidence переснимается командой выше при доступном стенде.
 >
 > Номер `08` зарезервирован за удалённым статичным `/admin` screen. Отдельный `/admin` не входит в текущий baseline; системный срез находится в `/settings`.
 
@@ -27,9 +27,8 @@
 | [17-webhooks.png](../../screenshots/17-webhooks.png) | `/projects/:id/webhooks` | Webhooks + история доставок + уведомления | 1920×1255 |
 | [18-reports.png](../../screenshots/18-reports.png) | `/projects/:id/reports` | Отчёты | 1920×1080 |
 | [19-audit-log.png](../../screenshots/19-audit-log.png) | `/audit-log` | Журнал аудита | 1920×2361 |
-| [20-users.png](../../screenshots/20-users.png) | `/users` | Пользователи и API-токены | 1920×1080 |
+| [20-users.png](../../screenshots/20-users.png) | `/users` | Переход к управлению пользователями в Admin Panel | 1920×1080 |
 | [21-artifacts.png](../../screenshots/21-artifacts.png) | `/jobs/:jobId/artifacts` | Артефакты | 1920×1080 |
-| [40-project-members.png](../../screenshots/40-project-members.png) | `/projects/:id/members` | Участники проекта | 1920×1080 |
 
 ## Состояния действий (диалоги, формы, панели)
 
@@ -45,7 +44,6 @@
 | [29-schedule-create.png](../../screenshots/29-schedule-create.png) | Расписания → «Создать расписание» | Форма создания расписания | 1920×1080 |
 | [30-webhook-add.png](../../screenshots/30-webhook-add.png) | Webhooks → «Добавить webhook» | Форма добавления webhook | 1920×1080 |
 | [31-pr-create.png](../../screenshots/31-pr-create.png) | PR → «Создать pull-запрос» | Форма создания PR (ветки/заголовок/описание) | 1920×1612 |
-| [32-user-create.png](../../screenshots/32-user-create.png) | Пользователи → «Создать пользователя» | Форма создания пользователя | 1920×1080 |
 | [33-job-logs.png](../../screenshots/33-job-logs.png) | Пайплайн → «Логи» | Панель логов джоба с runner tags, secret names, artifact paths, выводом и поиском | 1920×1080 |
 | [34-pipeline-run-form.png](../../screenshots/34-pipeline-run-form.png) | Пайплайны → «Запустить пайплайн» | Форма запуска (git ref) | 1920×1080 |
 | [35-releases-list.png](../../screenshots/35-releases-list.png) | Репозиторий → «Релизы» | Список release metadata и Git tags | 1920×1080 |

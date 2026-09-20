@@ -61,7 +61,6 @@ const shots = [
   { name: '19-audit-log.png', path: '/audit-log', desktop: true },
   { name: '20-users.png', path: '/users', desktop: true },
   { name: '21-artifacts.png', path: `/jobs/${jobId}/artifacts`, desktop: true, wait: 800 },
-  { name: '40-project-members.png', path: `/projects/${platform.id}/members`, desktop: true },
   // --- Состояния действий: диалоги, диффы, логи, формы ---
   { name: '22-pr-diff.png', path: pullRequestPath, desktop: true, wait: 1200, click: 'a[href*="view=diff"]', settle: 1500 },
   { name: '23-project-create.png', path: '/projects', desktop: true, click: 'button:has-text("Создать проект")' },
@@ -73,7 +72,6 @@ const shots = [
   { name: '29-schedule-create.png', path: `/projects/${platform.id}/schedules`, desktop: true, click: 'button:has-text("Создать расписание")' },
   { name: '30-webhook-add.png', path: `/projects/${platform.id}/webhooks`, desktop: true, click: 'button:has-text("Добавить webhook")' },
   { name: '31-pr-create.png', path: '/repositories/platform-core/pulls', desktop: true, wait: 1000, click: 'button:has-text("Создать pull-запрос")' },
-  { name: '32-user-create.png', path: '/users', desktop: true, click: 'button:has-text("Создать пользователя")' },
   { name: '33-job-logs.png', path: `/pipelines/${pipeline.id}`, desktop: true, wait: 1500, click: 'button:has-text("Логи")', settle: 1200 },
   { name: '34-pipeline-run-form.png', path: `/projects/${platform.id}/pipelines`, desktop: true, wait: 800, click: 'button:has-text("Запустить пайплайн")', settle: 400 },
   // --- Git-server/CI parity: code, tags, releases, JUnit results ---
