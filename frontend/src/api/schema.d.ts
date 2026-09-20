@@ -2267,6 +2267,7 @@ export interface components {
             decision: string;
         };
         RefInfo: {
+            kind: string;
             name: string;
             sha: string;
             target: string;

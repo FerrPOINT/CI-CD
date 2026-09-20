@@ -92,7 +92,7 @@ const routeCases = [
   { entry: `/projects/${projectId}/pipelines`, marker: 'feature/route-smoke' },
   { entry: `/pipelines/${pipelineId}`, marker: 'build-linux' },
   { entry: '/repositories', marker: 'forge-api' },
-  { entry: `/repositories/${repoName}`, marker: 'Add route smoke' },
+  { entry: `/repositories/${repoName}`, marker: 'main.rs' },
   { entry: `/repositories/${repoName}/compare?from=main&to=feature/route-smoke`, marker: 'src/main.rs' },
   { entry: `/repositories/${repoName}/pulls`, marker: 'Add route smoke' },
   { entry: `/repositories/${repoName}/pulls/7`, marker: 'Exercise every dashboard route in CI.' },
@@ -245,8 +245,8 @@ function mockFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respon
   }
   if (path === `/repos/${repoName}/refs`) {
     return json([
-      { name: 'main', sha: 'abcdef1234567890', target: 'refs/heads/main' },
-      { name: 'feature/route-smoke', sha: 'fedcba0987654321', target: 'refs/heads/feature/route-smoke' },
+      { name: 'main', kind: 'branch', sha: 'abcdef1234567890', target: 'refs/heads/main' },
+      { name: 'feature/route-smoke', kind: 'branch', sha: 'fedcba0987654321', target: 'refs/heads/feature/route-smoke' },
     ])
   }
   if (path === `/repos/${repoName}/commits`) {

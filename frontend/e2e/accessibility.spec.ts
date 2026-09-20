@@ -44,7 +44,7 @@ test.describe('accessibility smoke', () => {
       {
         name: 'Repository browser',
         path: `/repositories/${evidenceRepositoryName}`,
-        ready: page => page.getByText('ci: add forge pipeline').first(),
+        ready: page => page.getByText('README.md').first(),
         shell: true,
       },
       {

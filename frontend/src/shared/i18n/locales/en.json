@@ -121,7 +121,19 @@
     "releases": "Releases",
     "emptyTree": "Empty",
     "noTags": "No tags",
-    "binaryFile": "Binary file — preview unavailable"
+    "binaryFile": "Binary file — preview unavailable",
+    "emptyFile": "This file is empty",
+    "truncatedFile": "Showing only the first 512 KiB of this file",
+    "backToTree": "Back to files",
+    "gitRef": "Branch or tag",
+    "defaultRef": "Default branch",
+    "refsLoadError": "Could not load branches and tags",
+    "codeLoadError": "Could not load files",
+    "fileLoadError": "Could not load file",
+    "commitsLoadError": "Could not load commits",
+    "branchesLoadError": "Could not load branches",
+    "tagsLoadError": "Could not load tags",
+    "releasesLoadError": "Could not load releases"
   },
   "compare": {
     "title": "Compare branches",

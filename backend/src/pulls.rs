@@ -16,6 +16,7 @@ use crate::api::{ApiError, AppState};
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct RefInfo {
     pub name: String,
+    pub kind: String,
     pub sha: String,
     pub target: String,
 }
@@ -87,19 +88,26 @@ pub async fn list_refs(
             let raw_ref = parts.next()?;
             let sha = parts.next()?;
             let target = parts.next().unwrap_or("");
-            let name = raw_ref
-                .strip_prefix("refs/heads/")
-                .or_else(|| raw_ref.strip_prefix("refs/tags/"))
-                .unwrap_or(raw_ref)
-                .to_string();
+            let (name, kind) = classify_ref(raw_ref);
             Some(RefInfo {
-                name,
+                name: name.to_string(),
+                kind: kind.to_string(),
                 sha: sha.to_string(),
                 target: target.to_string(),
             })
         })
         .collect();
     Ok(Json(refs))
+}
+
+fn classify_ref(raw_ref: &str) -> (&str, &str) {
+    if let Some(name) = raw_ref.strip_prefix("refs/heads/") {
+        (name, "branch")
+    } else if let Some(name) = raw_ref.strip_prefix("refs/tags/") {
+        (name, "tag")
+    } else {
+        (raw_ref, "other")
+    }
 }
 
 #[utoipa::path(
@@ -116,6 +124,7 @@ pub async fn list_commits(
 ) -> Result<Json<Vec<CommitInfo>>, ApiError> {
     let path = resolve_repo_path(&state, &repo).await?;
     let ref_spec = params.branch.unwrap_or_else(|| "HEAD".into());
+    let ref_spec = resolve_view_ref(&path, &ref_spec).await;
     let limit = params.limit.unwrap_or(50).min(200);
     let output = tokio::process::Command::new("git")
         .arg(format!("--git-dir={}", path.display()))
@@ -595,9 +604,14 @@ async fn resolve_repo_path(state: &AppState, raw: &str) -> Result<PathBuf, ApiEr
 }
 
 /// Resolves a user ref for bare repos: HEAD may be unset after fresh pushes,
-/// so fall back to main, then master.
+/// so fall back to main, then master only for the implicit HEAD.
 async fn resolve_view_ref(path: &std::path::Path, raw: &str) -> String {
-    for candidate in [raw, "main", "master"] {
+    let candidates: Vec<&str> = if raw == "HEAD" {
+        vec![raw, "main", "master"]
+    } else {
+        vec![raw]
+    };
+    for candidate in candidates {
         let ok = tokio::process::Command::new("git")
             .arg(format!("--git-dir={}", path.display()))
             .args(["rev-parse", "--verify", &format!("{candidate}^{{commit}}")])
@@ -661,7 +675,7 @@ pub async fn list_tree(
             };
             let name = name.to_string();
             Some(TreeEntry {
-                path: name.clone(),
+                path: tree_entry_path(subpath, &name),
                 name: name.rsplit('/').next().unwrap_or(&name).to_string(),
                 kind: kind.to_string(),
                 size,
@@ -670,6 +684,14 @@ pub async fn list_tree(
         })
         .collect();
     Ok(Json(entries))
+}
+
+fn tree_entry_path(subpath: &str, name: &str) -> String {
+    if subpath.is_empty() {
+        name.to_string()
+    } else {
+        format!("{subpath}/{name}")
+    }
 }
 
 #[derive(serde::Deserialize, utoipa::IntoParams)]
@@ -769,4 +791,31 @@ pub async fn list_tags(
         })
         .collect();
     Ok(Json(tags))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify_ref, tree_entry_path};
+
+    #[test]
+    fn refs_keep_branch_and_tag_identity() {
+        assert_eq!(
+            classify_ref("refs/heads/release/v1"),
+            ("release/v1", "branch")
+        );
+        assert_eq!(classify_ref("refs/tags/v1"), ("v1", "tag"));
+        assert_eq!(
+            classify_ref("refs/notes/review"),
+            ("refs/notes/review", "other")
+        );
+    }
+
+    #[test]
+    fn tree_entries_keep_their_full_path() {
+        assert_eq!(tree_entry_path("", "src"), "src");
+        assert_eq!(
+            tree_entry_path("src/pages", "index.tsx"),
+            "src/pages/index.tsx"
+        );
+    }
 }

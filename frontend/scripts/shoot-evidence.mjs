@@ -48,7 +48,7 @@ const shots = [
   { name: '05-pipelines.png', path: `/projects/${platform.id}/pipelines`, desktop: true },
   { name: '06-pipeline-detail.png', path: `/pipelines/${pipeline.id}`, desktop: true, wait: 1500 },
   { name: '07-settings.png', path: '/settings', desktop: true },
-  { name: '09-repository-browser.png', path: '/repositories/platform-core', desktop: true, wait: 1200, click: 'button:has-text("Код")', settle: 500 },
+  { name: '09-repository-browser.png', path: '/repositories/platform-core', desktop: true, wait: 1200, settle: 500 },
   { name: '10-compare.png', path: '/repositories/platform-core/compare?from=main&to=feature%2Fcache-layer', desktop: true, wait: 1200 },
   { name: '11-pull-requests.png', path: '/repositories/platform-core/pulls', desktop: true, wait: 1200 },
   { name: '12-pull-request-detail.png', path: pullRequestPath, desktop: true, wait: 1200 },
