@@ -5996,13 +5996,14 @@ async fn invalid_notification_replacement_preserves_existing_configs() {
 
     let app = authenticated_app(pool.clone()).await;
     let response = app
+        .clone()
         .oneshot(
             Request::put(format!("/api/v1/projects/{project_id}/notifications"))
                 .header("content-type", "application/json")
                 .body(Body::from(
                     serde_json::json!([
                         {"channel": "in_app", "target": "replacement"},
-                        {"channel": "generic_webhook", "target": "http://invalid.example"}
+                        {"channel": "in_app", "target": "late-invalid", "quiet_start_min": 1440, "quiet_end_min": 420}
                     ])
                     .to_string(),
                 ))
@@ -6032,6 +6033,40 @@ async fn invalid_notification_replacement_preserves_existing_configs() {
         configs[0].8,
         vec!["failed".to_string(), "canceled".to_string()]
     );
+
+    sqlx::query(
+        "ALTER TABLE notification_configs ADD CONSTRAINT notification_configs_test_reject CHECK (target <> 'db-reject')",
+    )
+    .execute(&pool)
+    .await
+    .expect("add test-only insert failure");
+    let response = app
+        .oneshot(
+            Request::put(format!("/api/v1/projects/{project_id}/notifications"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!([
+                        {"channel": "in_app", "target": "replacement"},
+                        {"channel": "in_app", "target": "db-reject"}
+                    ])
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let after_insert_error: Vec<(Uuid, String, String, bool, i32, i32, i32, String, Vec<String>)> =
+        sqlx::query_as(
+            "SELECT id, channel, target, enabled, aggregation_window_secs, quiet_start_min, quiet_end_min, quiet_action, quiet_bypass_statuses \
+             FROM notification_configs WHERE project_id = $1",
+        )
+        .bind(project_id)
+        .fetch_all(&pool)
+        .await
+        .expect("read notification configs after insert failure");
+    assert_eq!(after_insert_error, configs);
 }
 
 #[tokio::test]

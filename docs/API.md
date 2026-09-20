@@ -1165,13 +1165,13 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 ### Aggregation, quiet hours, destination alerts (stage 4 items 3+5)
 
 - `aggregation_window_secs` (0–3600) в notification-config: повторы того же статуса в окне схлопываются в одно pending-сообщение со счётчиком `payload.agg_count` вместо N доставок.
-- Quiet hours per-config: `quiet_start_min`/`quiet_end_min` (минуты от полуночи, -1 = выкл, окно может переходить через полночь), `quiet_action`: `hold` (по умолчанию — доставка откладывается) или `drop` (сообщение отбрасывается при доставке); `quiet_bypass_statuses` (default `['failed']`) — статусы, которые всегда доставляются.
+- Quiet hours per-config: `quiet_start_min`/`quiet_end_min` (минуты от полуночи `0..1439`, оба `-1` = выкл, окно может переходить через полночь), `quiet_action`: `hold` (по умолчанию — доставка откладывается) или `drop` (сообщение отбрасывается при доставке); `quiet_bypass_statuses` (default `['failed']`) — статусы, которые всегда доставляются.
 - Destination alerts: `GET /api/v1/projects/{project_id}/destination-alerts` — открытые/acknowledged алерты по каналам; `POST /api/v1/destination-alerts/{alert_id}/acknowledge` (Developer+). Алерт открывается автоматически при dead-letter (исчерпаны MAX_ATTEMPTS=8), автозакрывается (`resolved`) при следующей успешной доставке того же destination — «muted success не скрывает failed deployment». (таблицы `notification_rules`, `notification_preferences`, `notification_templates`).
 
 | Метод | Путь | Назначение |
 |---|---|---|
 | GET | `/projects/{project_id}/notifications` | Список каналов уведомлений |
-| PUT | `/projects/{project_id}/notifications` | Атомарно заменить все каналы (array): при ошибке валидации или записи прежняя конфигурация сохраняется |
+| PUT | `/projects/{project_id}/notifications` | Предварительно проверить весь массив и атомарно заменить каналы: невалидный элемент даёт 400, при любой ошибке прежняя конфигурация сохраняется |
 | GET | `/projects/{project_id}/notification-events?limit=` | Последние local notification events проекта |
 | GET | `/projects/{project_id}/notifications/stream` | SSE stream новых local notification events |
 
