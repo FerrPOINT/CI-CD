@@ -2946,21 +2946,9 @@ paths:
         schema:
           type: string
           format: uuid
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/RunnerHeartbeat'
-        required: true
       responses:
-        '200':
-          description: ''
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Runner'
-        '404':
-          description: ''
+        '410':
+          description: Legacy heartbeat is disabled; use the credential-authenticated runner protocol
   /api/v1/schedules/{schedule_id}:
     delete:
       tags:
@@ -5130,13 +5118,6 @@ components:
           format: int32
         terminalStatus:
           type: string
-    RunnerHeartbeat:
-      type: object
-      properties:
-        status:
-          type:
-          - string
-          - 'null'
     RunnerHeartbeatRequest:
       type: object
       required:

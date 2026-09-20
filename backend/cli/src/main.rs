@@ -5,6 +5,9 @@ use reqwest::{Method, RequestBuilder, Url, header};
 use sdlc_cli_core::{ApiClient as CoreApiClient, CliError};
 use serde_json::{Map, Value, json};
 
+const LEGACY_HEARTBEAT_MESSAGE: &str =
+    "Legacy heartbeat is disabled; run forge-runner for credential-authenticated heartbeats";
+
 #[derive(Parser)]
 #[command(name = "cicd", about = "Forge CI/CD control-plane CLI")]
 struct Cli {
@@ -262,6 +265,7 @@ enum RunnerCommand {
         #[arg(long = "tag", value_delimiter = ',')]
         tags: Vec<String>,
     },
+    #[command(about = LEGACY_HEARTBEAT_MESSAGE)]
     Heartbeat {
         #[arg(long)]
         id: String,
@@ -679,6 +683,15 @@ async fn main() -> std::process::ExitCode {
         clap_complete::generate(*shell, &mut cmd, name, &mut std::io::stdout());
         return exit(exit_code::OK);
     }
+    if matches!(
+        &cli.command,
+        Command::Runner {
+            command: RunnerCommand::Heartbeat { .. }
+        }
+    ) {
+        eprintln!("error: {LEGACY_HEARTBEAT_MESSAGE}");
+        return exit(exit_code::USAGE);
+    }
     let output = cli.output;
     let timeout = Duration::from_secs(cli.timeout_seconds);
     let api = match ApiClient::new(cli.api_url, cli.token, timeout) {
@@ -871,12 +884,8 @@ async fn runner(api: &ApiClient, command: RunnerCommand) -> anyhow::Result<Value
             })))
             .await
         }
-        RunnerCommand::Heartbeat { id, status } => {
-            api.json(
-                api.post(&format!("/runners/{id}/heartbeat"))
-                    .json(&json!({"status": status})),
-            )
-            .await
+        RunnerCommand::Heartbeat { .. } => {
+            anyhow::bail!(LEGACY_HEARTBEAT_MESSAGE)
         }
         RunnerCommand::Delete { id } => api.json(api.delete(&format!("/runners/{id}"))).await,
     }

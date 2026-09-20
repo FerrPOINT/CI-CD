@@ -185,7 +185,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::runner_protocol::RunnerSecretItem,
         crate::runner_protocol::RunnerCompleteResponse, crate::runner_protocol::RunnerLogAppendRequest,
         crate::runner_protocol::RunnerLogLine, crate::runner_protocol::RunnerLogAppendResponse,
-        crate::platform::Runner, crate::platform::RegisterRunner, crate::platform::RunnerHeartbeat,
+        crate::platform::Runner, crate::platform::RegisterRunner,
         crate::platform::SecretMetadata, crate::platform::CreateSecret,
         crate::platform::Artifact,
         crate::platform::Environment, crate::platform::CreateEnvironment, crate::platform::UpdateEnvironment,

@@ -72,9 +72,14 @@ cicd-cli job log   --id <JOB_UUID> --message "custom line"
 ```bash
 cicd-cli runner list
 cicd-cli runner register --name shell-01 --tag shell --tag linux
-cicd-cli runner heartbeat --id <RUNNER_UUID> --status online
+cicd-cli runner heartbeat --id <RUNNER_UUID> --status online  # завершится ошибкой миграции
 cicd-cli runner delete --id <RUNNER_UUID>
 ```
+
+`runner register` создаёт только инвентарную запись со статусом offline. Heartbeat
+отправляет запущенный `forge-runner` через credential-authenticated runner protocol;
+операторская команда `runner heartbeat` сохранена для диагностики старых скриптов,
+но не отправляет запрос и завершается ошибкой миграции.
 
 ### secret
 

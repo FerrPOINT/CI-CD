@@ -593,6 +593,10 @@ Platform tables создаются и расширяются через `backend
 | `heartbeat_payload` | JSONB | NOT NULL | `'{}'` | Последний protocol heartbeat payload без secret values |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | Время регистрации |
 
+Ручная инвентарная регистрация через `POST /runners` использует defaults:
+`status='offline'`, `last_seen_at=NULL`. Статус online означает полученный
+heartbeat, а не сам факт создания записи.
+
 Runtime maintenance переводит `status='online'` в `offline`, когда `last_seen_at` старше 120 секунд и у runner-а нет unexpired active row в `job_leases`. Это сохраняет живые long-running attempts для runner-ов, которые продолжают renew/heartbeat, и не делает `last_seen_at` единственным источником истины для active execution.
 
 ### 9.2 project_secrets
