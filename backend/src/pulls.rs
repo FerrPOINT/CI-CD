@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::path::PathBuf;
 
 use axum::{
     Json,
@@ -16,6 +16,7 @@ use crate::api::{ApiError, AppState};
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct RefInfo {
     pub name: String,
+    pub kind: String,
     pub sha: String,
     pub target: String,
 }
@@ -87,19 +88,26 @@ pub async fn list_refs(
             let raw_ref = parts.next()?;
             let sha = parts.next()?;
             let target = parts.next().unwrap_or("");
-            let name = raw_ref
-                .strip_prefix("refs/heads/")
-                .or_else(|| raw_ref.strip_prefix("refs/tags/"))
-                .unwrap_or(raw_ref)
-                .to_string();
+            let (name, kind) = classify_ref(raw_ref);
             Some(RefInfo {
-                name,
+                name: name.to_string(),
+                kind: kind.to_string(),
                 sha: sha.to_string(),
                 target: target.to_string(),
             })
         })
         .collect();
     Ok(Json(refs))
+}
+
+fn classify_ref(raw_ref: &str) -> (&str, &str) {
+    if let Some(name) = raw_ref.strip_prefix("refs/heads/") {
+        (name, "branch")
+    } else if let Some(name) = raw_ref.strip_prefix("refs/tags/") {
+        (name, "tag")
+    } else {
+        (raw_ref, "other")
+    }
 }
 
 #[utoipa::path(
@@ -116,6 +124,7 @@ pub async fn list_commits(
 ) -> Result<Json<Vec<CommitInfo>>, ApiError> {
     let path = resolve_repo_path(&state, &repo).await?;
     let ref_spec = params.branch.unwrap_or_else(|| "HEAD".into());
+    let ref_spec = resolve_view_ref(&path, &ref_spec).await;
     let limit = params.limit.unwrap_or(50).min(200);
     let output = tokio::process::Command::new("git")
         .arg(format!("--git-dir={}", path.display()))
@@ -183,59 +192,6 @@ pub struct DiffFile {
     pub status: String,
     pub additions: u32,
     pub deletions: u32,
-    pub binary: bool,
-}
-
-fn parse_diff_files(numstat: &[u8], name_status: &[u8]) -> Result<Vec<DiffFile>, &'static str> {
-    let mut statuses = HashMap::new();
-    let mut status_fields = name_status
-        .split(|byte| *byte == 0)
-        .filter(|field| !field.is_empty());
-    while let Some(status) = status_fields.next() {
-        let path = status_fields
-            .next()
-            .ok_or("missing path in git name-status")?;
-        statuses.insert(path, status);
-    }
-
-    let mut files = Vec::new();
-    for record in numstat
-        .split(|byte| *byte == 0)
-        .filter(|record| !record.is_empty())
-    {
-        let mut fields = record.splitn(3, |byte| *byte == b'\t');
-        let additions = fields.next().ok_or("missing additions in git numstat")?;
-        let deletions = fields.next().ok_or("missing deletions in git numstat")?;
-        let path = fields.next().ok_or("missing path in git numstat")?;
-        let status = statuses.remove(path).ok_or("unmatched path in git diff")?;
-        let status = match status.first() {
-            Some(b'A') => "added",
-            Some(b'D') => "deleted",
-            Some(b'M' | b'T') => "modified",
-            _ => return Err("unknown git diff status"),
-        };
-        let binary = additions == b"-" && deletions == b"-";
-        if !binary && (additions == b"-" || deletions == b"-") {
-            return Err("incomplete binary git numstat");
-        }
-        let parse_count = |value: &[u8]| -> Result<u32, &'static str> {
-            std::str::from_utf8(value)
-                .map_err(|_| "invalid git numstat count")?
-                .parse()
-                .map_err(|_| "invalid git numstat count")
-        };
-        files.push(DiffFile {
-            path: String::from_utf8_lossy(path).into_owned(),
-            status: status.to_string(),
-            additions: if binary { 0 } else { parse_count(additions)? },
-            deletions: if binary { 0 } else { parse_count(deletions)? },
-            binary,
-        });
-    }
-    if !statuses.is_empty() {
-        return Err("unmatched status in git diff");
-    }
-    Ok(files)
 }
 
 #[utoipa::path(
@@ -270,50 +226,45 @@ pub async fn compare_refs(
         .trim()
         .to_string();
 
-    // NUL-delimited outputs with rename detection disabled share exact paths.
+    // numstat
     let stat_output = tokio::process::Command::new("git")
         .arg(format!("--git-dir={}", path.display()))
-        .args(["diff", "--numstat", "--no-renames", "-z", &merge_base, to])
+        .args(["diff", "--numstat", &merge_base, to])
         .output()
         .await
         .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
-    if !stat_output.status.success() {
-        return Err(ApiError::bad_request("git diff --numstat failed"));
-    }
-    let status_output = tokio::process::Command::new("git")
-        .arg(format!("--git-dir={}", path.display()))
-        .args([
-            "diff",
-            "--name-status",
-            "--no-renames",
-            "-z",
-            &merge_base,
-            to,
-        ])
-        .output()
-        .await
-        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
-    if !status_output.status.success() {
-        return Err(ApiError::bad_request("git diff --name-status failed"));
-    }
-    let files =
-        parse_diff_files(&stat_output.stdout, &status_output.stdout).map_err(|message| {
-            ApiError::internal(sqlx::Error::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                message,
-            )))
-        })?;
+    let files: Vec<DiffFile> = String::from_utf8_lossy(&stat_output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.splitn(3, '\t');
+            let additions = parts.next()?.parse::<u32>().ok()?;
+            let deletions = parts.next()?.parse::<u32>().ok()?;
+            let rest = parts.next()?;
+            let (status, path_str) = if let Some(stripped) = rest.strip_prefix("A\t") {
+                ("added", stripped)
+            } else if let Some(stripped) = rest.strip_prefix("D\t") {
+                ("deleted", stripped)
+            } else if let Some(stripped) = rest.strip_prefix("M\t") {
+                ("modified", stripped)
+            } else {
+                ("modified", rest)
+            };
+            Some(DiffFile {
+                path: path_str.to_string(),
+                status: status.to_string(),
+                additions,
+                deletions,
+            })
+        })
+        .collect();
 
     // patch
     let patch_output = tokio::process::Command::new("git")
         .arg(format!("--git-dir={}", path.display()))
-        .args(["diff", "--no-renames", &merge_base, to])
+        .args(["diff", &merge_base, to])
         .output()
         .await
         .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
-    if !patch_output.status.success() {
-        return Err(ApiError::bad_request("git diff --patch failed"));
-    }
     let patch = String::from_utf8_lossy(&patch_output.stdout).to_string();
 
     Ok(Json(DiffResult {
@@ -653,9 +604,14 @@ async fn resolve_repo_path(state: &AppState, raw: &str) -> Result<PathBuf, ApiEr
 }
 
 /// Resolves a user ref for bare repos: HEAD may be unset after fresh pushes,
-/// so fall back to main, then master.
+/// so fall back to main, then master only for the implicit HEAD.
 async fn resolve_view_ref(path: &std::path::Path, raw: &str) -> String {
-    for candidate in [raw, "main", "master"] {
+    let candidates: Vec<&str> = if raw == "HEAD" {
+        vec![raw, "main", "master"]
+    } else {
+        vec![raw]
+    };
+    for candidate in candidates {
         let ok = tokio::process::Command::new("git")
             .arg(format!("--git-dir={}", path.display()))
             .args(["rev-parse", "--verify", &format!("{candidate}^{{commit}}")])
@@ -719,7 +675,7 @@ pub async fn list_tree(
             };
             let name = name.to_string();
             Some(TreeEntry {
-                path: name.clone(),
+                path: tree_entry_path(subpath, &name),
                 name: name.rsplit('/').next().unwrap_or(&name).to_string(),
                 kind: kind.to_string(),
                 size,
@@ -728,6 +684,14 @@ pub async fn list_tree(
         })
         .collect();
     Ok(Json(entries))
+}
+
+fn tree_entry_path(subpath: &str, name: &str) -> String {
+    if subpath.is_empty() {
+        name.to_string()
+    } else {
+        format!("{subpath}/{name}")
+    }
 }
 
 #[derive(serde::Deserialize, utoipa::IntoParams)]
@@ -830,41 +794,28 @@ pub async fn list_tags(
 }
 
 #[cfg(test)]
-mod compare_tests {
-    use super::parse_diff_files;
+mod tests {
+    use super::{classify_ref, tree_entry_path};
 
     #[test]
-    fn parses_added_modified_and_deleted_files() {
-        let numstat = [
-            b"3\t0\tnew.txt\0".as_slice(),
-            b"1\t2\tsrc/a\tb.txt\0",
-            b"0\t4\told.txt\0",
-        ]
-        .concat();
-        let names = b"A\0new.txt\0M\0src/a\tb.txt\0D\0old.txt\0";
-        let files = parse_diff_files(&numstat, names).unwrap();
-        assert_eq!(files.len(), 3);
-        assert_eq!(files[0].status, "added");
-        assert_eq!(files[0].additions, 3);
-        assert_eq!(files[1].path, "src/a\tb.txt");
-        assert_eq!(files[1].status, "modified");
-        assert_eq!(files[1].deletions, 2);
-        assert_eq!(files[2].status, "deleted");
-        assert_eq!(files[2].deletions, 4);
+    fn refs_keep_branch_and_tag_identity() {
+        assert_eq!(
+            classify_ref("refs/heads/release/v1"),
+            ("release/v1", "branch")
+        );
+        assert_eq!(classify_ref("refs/tags/v1"), ("v1", "tag"));
+        assert_eq!(
+            classify_ref("refs/notes/review"),
+            ("refs/notes/review", "other")
+        );
     }
 
     #[test]
-    fn retains_binary_files_without_inventing_line_counts() {
-        let files = parse_diff_files(b"-\t-\timage.png\0", b"A\0image.png\0").unwrap();
-        assert_eq!(files.len(), 1);
-        assert!(files[0].binary);
-        assert_eq!(files[0].additions, 0);
-        assert_eq!(files[0].deletions, 0);
-    }
-
-    #[test]
-    fn rejects_mismatched_git_outputs() {
-        assert!(parse_diff_files(b"1\t0\tnew.txt\0", b"A\0other.txt\0").is_err());
-        assert!(parse_diff_files(b"1\t0\tnew.txt\0", b"A\0new.txt\0D\0old.txt\0").is_err());
+    fn tree_entries_keep_their_full_path() {
+        assert_eq!(tree_entry_path("", "src"), "src");
+        assert_eq!(
+            tree_entry_path("src/pages", "index.tsx"),
+            "src/pages/index.tsx"
+        );
     }
 }

@@ -56,6 +56,7 @@ export interface Repository {
 
 export interface RepositoryRef {
   name: string
+  kind: 'branch' | 'tag' | 'other'
   sha: string
   target: string
 }

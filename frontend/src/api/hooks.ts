@@ -258,7 +258,7 @@ export function useRepositoryRefs(repo: string | undefined) {
   })
 }
 
-export function useRepositoryCommits(repo: string | undefined, branch = 'main') {
+export function useRepositoryCommits(repo: string | undefined, branch = 'HEAD') {
   return useQuery({
     queryKey: KEYS.commits(repo ?? '', branch),
     queryFn: () => {

@@ -1,7 +1,7 @@
 import { useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { Link, useParams, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
-import { GitBranch, GitCompareArrows, GitPullRequest, ChevronRight, GitCommitHorizontal, Folder, FileText, Tag, Package, ArrowLeft } from 'lucide-react'
+import { GitBranch, GitCompareArrows, GitPullRequest, ChevronRight, Folder, FileText, Tag, Package, ArrowLeft } from 'lucide-react'
 import { toast } from 'sonner'
 import { useRepositoryCommits, useRepositoryRefs, useRepositoryTree, useRepositoryBlob, useRepositoryTags, useReleases, useCreateRelease, useDeleteRelease } from '@/api/hooks'
 import {
@@ -15,17 +15,17 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from '@sdlc/ui/ui'
 import { UserAvatar } from '@/shared/ui/user-avatar'
+import { QueryState } from '@/shared/ui/query-state'
+import type { RepositoryRef } from '@/api/types'
 import { Button } from '@sdlc/ui/ui'
 import { Card } from '@sdlc/ui/ui'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@sdlc/ui/ui'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@sdlc/ui/ui'
+
+const browserTabs = ['code', 'commits', 'branches', 'tags', 'releases'] as const
+
+function parentPath(path: string): string {
+  return path.slice(0, path.lastIndexOf('/'))
+}
 
 function formatDate(value: string, locale: string): string {
   const date = new Date(value)
@@ -35,14 +35,24 @@ function formatDate(value: string, locale: string): string {
 export function RepositoryBrowserPage() {
   const { t, i18n } = useTranslation()
   const { repo } = useParams<{ repo: string }>()
-  const [tab, setTab] = useState('commits')
-  const { data: refs = [], isLoading: refsLoading, isError: refsError, error: refsErrorValue } = useRepositoryRefs(repo)
-  const { data: commits = [], isLoading: commitsLoading, isError: commitsError, error: commitsErrorValue } = useRepositoryCommits(repo)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tabParam = searchParams.get('tab')
+  const tab = browserTabs.find((value) => value === tabParam) ?? 'code'
+  const gitRef = searchParams.get('ref') || 'HEAD'
+  const filePath = searchParams.get('file') || null
+  const dirPath = searchParams.get('dir') ?? (filePath ? parentPath(filePath) : '')
+  const refsQuery = useRepositoryRefs(repo)
 
   if (!repo) return <p className="text-sm text-text-muted">{t('repositories.notFound')}</p>
 
-  const errorValue = refsError ? refsErrorValue : commitsError ? commitsErrorValue : null
-  const error = errorValue instanceof Error ? errorValue : null
+  function updateParams(changes: Record<string, string | null>) {
+    const next = new URLSearchParams(searchParams)
+    for (const [key, value] of Object.entries(changes)) {
+      if (value) next.set(key, value)
+      else next.delete(key)
+    }
+    setSearchParams(next)
+  }
 
   return (
     <div className="space-y-6">
@@ -51,11 +61,11 @@ export function RepositoryBrowserPage() {
           <div className="flex items-center gap-2 text-sm text-text-muted">
             <Link to="/repositories" className="hover:text-text-primary">{t('navigation.repositories')}</Link>
             <ChevronRight className="h-3 w-3" />
-            <span>{repo}</span>
+            <span className="min-w-0 break-all">{repo}</span>
           </div>
           <div className="mt-2 flex items-center gap-3">
             <GitBranch className="h-6 w-6 text-accent" />
-            <h1 className="text-2xl font-bold">{repo}</h1>
+            <h1 className="min-w-0 break-all text-2xl font-bold">{repo}</h1>
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -72,59 +82,30 @@ export function RepositoryBrowserPage() {
         </div>
       </div>
 
-      {error ? (
-        <Card className="p-6 text-sm text-danger">
-          {t('repositoryBrowser.loadError')}: {error.message}
-        </Card>
-      ) : (
-        <Tabs value={tab} onValueChange={setTab}>
-          <TabsList className="h-auto w-full justify-start overflow-x-auto sm:w-auto">
-            <TabsTrigger value="commits">{t('repositoryBrowser.commits')}</TabsTrigger>
-            <TabsTrigger value="branches">{t('repositoryBrowser.branches')}</TabsTrigger>
-            <TabsTrigger value="code">{t('repositoryBrowser.code', 'Код')}</TabsTrigger>
-            <TabsTrigger value="tags">{t('repositoryBrowser.tags', 'Теги')}</TabsTrigger>
-            <TabsTrigger value="releases">{t('repositoryBrowser.releases', 'Релизы')}</TabsTrigger>
-            <TabsTrigger value="compare" asChild>
-              <Link to={`/repositories/${encodeURIComponent(repo)}/compare`}>{t('repositoryBrowser.compare')}</Link>
-            </TabsTrigger>
-            <TabsTrigger value="pulls" asChild>
-              <Link to={`/repositories/${encodeURIComponent(repo)}/pulls`}>{t('repositoryBrowser.pullRequests')}</Link>
-            </TabsTrigger>
+      <Tabs value={tab} onValueChange={(value) => updateParams({ tab: value === 'code' ? null : value })}>
+          <TabsList className="grid h-auto w-full grid-cols-3 gap-1 sm:inline-flex sm:w-auto">
+            <TabsTrigger value="code" className="min-h-10 min-w-0 px-2 sm:px-3">{t('repositoryBrowser.code', 'Код')}</TabsTrigger>
+            <TabsTrigger value="commits" className="min-h-10 min-w-0 px-2 sm:px-3">{t('repositoryBrowser.commits')}</TabsTrigger>
+            <TabsTrigger value="branches" className="min-h-10 min-w-0 px-2 sm:px-3">{t('repositoryBrowser.branches')}</TabsTrigger>
+            <TabsTrigger value="tags" className="min-h-10 min-w-0 px-2 sm:px-3">{t('repositoryBrowser.tags', 'Теги')}</TabsTrigger>
+            <TabsTrigger value="releases" className="min-h-10 min-w-0 px-2 sm:px-3">{t('repositoryBrowser.releases', 'Релизы')}</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="commits" className="mt-4">
-            {commitsLoading ? (
-              <p className="text-sm text-text-muted">{t('common.loading')}</p>
-            ) : commits.length === 0 ? (
-              <Card className="p-8 text-center text-text-muted">{t('repositoryBrowser.noCommits')}</Card>
-            ) : (
-              <Card className="overflow-hidden">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t('repositoryBrowser.sha')}</TableHead>
-                      <TableHead>{t('repositoryBrowser.message')}</TableHead>
-                      <TableHead>{t('repositoryBrowser.author')}</TableHead>
-                      <TableHead>{t('repositoryBrowser.date')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {commits.map((commit) => (
-                      <TableRow key={commit.sha}>
-                        <TableCell><code className="rounded bg-surface-raised px-1.5 py-0.5 text-xs text-accent">{commit.short_sha}</code></TableCell>
-                        <TableCell className="min-w-64 font-medium">{commit.message}</TableCell>
-                        <TableCell className="text-text-secondary">{commit.author}</TableCell>
-                        <TableCell className="whitespace-nowrap text-xs text-text-muted">{formatDate(commit.date, i18n.language)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </Card>
-            )}
-          </TabsContent>
-
           <TabsContent value="code" className="mt-4">
-            <CodeBrowser repo={repo} />
+            <CodeBrowser
+              repo={repo}
+              gitRef={gitRef}
+              dirPath={dirPath}
+              filePath={filePath}
+              refsQuery={refsQuery}
+              onNavigate={updateParams}
+            />
+          </TabsContent>
+          <TabsContent value="commits" className="mt-4">
+            <CommitsList repo={repo} gitRef={gitRef} locale={i18n.language} />
+          </TabsContent>
+          <TabsContent value="branches" className="mt-4">
+            <BranchesList refsQuery={refsQuery} onSelect={(ref) => updateParams({ tab: null, ref: `refs/heads/${ref.name}`, dir: null, file: null })} />
           </TabsContent>
           <TabsContent value="tags" className="mt-4">
             <TagsList repo={repo} />
@@ -132,145 +113,208 @@ export function RepositoryBrowserPage() {
           <TabsContent value="releases" className="mt-4">
             <ReleasesList repo={repo} />
           </TabsContent>
-          <TabsContent value="branches" className="mt-4">
-            {refsLoading ? (
-              <p className="text-sm text-text-muted">{t('common.loading')}</p>
-            ) : refs.length === 0 ? (
-              <Card className="p-8 text-center text-text-muted">{t('repositoryBrowser.noBranches')}</Card>
-            ) : (
-              <Card className="overflow-hidden">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>{t('repositoryBrowser.branch')}</TableHead>
-                      <TableHead>{t('repositoryBrowser.sha')}</TableHead>
-                      <TableHead>{t('repositoryBrowser.target')}</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {refs.map((ref) => (
-                      <TableRow key={`${ref.name}-${ref.sha}`}>
-                        <TableCell className="font-medium"><GitBranch className="mr-2 inline h-4 w-4 text-accent" />{ref.name}</TableCell>
-                        <TableCell><code className="rounded bg-surface-raised px-1.5 py-0.5 text-xs">{ref.sha.slice(0, 7)}</code></TableCell>
-                        <TableCell className="max-w-96 truncate text-text-muted">{ref.target || '-'}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </Card>
-            )}
-          </TabsContent>
-        </Tabs>
-      )}
-
-      <Card className="flex items-center gap-3 border-dashed p-4 text-sm text-text-muted">
-        <GitCommitHorizontal className="h-4 w-4 text-accent" />
-        {t('repositoryBrowser.tip')}
-      </Card>
+      </Tabs>
     </div>
   )
 }
 
-
-function CodeBrowser({ repo }: { repo: string }) {
+function CommitsList({ repo, gitRef, locale }: { repo: string; gitRef: string; locale: string }) {
   const { t } = useTranslation()
-  const [dirPath, setDirPath] = useState<string>('')
-  const [filePath, setFilePath] = useState<string | null>(null)
-  const gitRef = 'HEAD'
-  const { data: entries = [], isLoading, isError, error } = useRepositoryTree(repo, gitRef, dirPath || undefined)
-  const { data: blob } = useRepositoryBlob(repo, gitRef, filePath ?? '')
-
-  if (isError) return <Card className="p-8 text-center text-text-muted">{error instanceof Error ? error.message : t('common.error')}</Card>
-
-  if (filePath) {
-    return (
-      <Card className="overflow-hidden">
-        <div className="flex items-center gap-2 border-b border-border px-4 py-2.5 text-sm">
-          <Button variant="ghost" size="sm" onClick={() => setFilePath(null)}>
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <FileText className="h-4 w-4 text-accent" />
-          <span className="font-medium">{filePath}</span>
-          {blob && <span className="ml-auto text-xs text-text-muted">{blob.size} B · {blob.sha.slice(0, 7)}</span>}
-        </div>
-        <pre className="max-h-[70vh] overflow-auto p-4 text-xs leading-relaxed">
-          <code>{blob?.binary ? t('repositoryBrowser.binaryFile', 'Бинарный файл — предпросмотр недоступен') : blob?.content || t('common.loading')}</code>
-        </pre>
-      </Card>
-    )
-  }
-
-  const crumbs = dirPath ? dirPath.split('/') : []
+  const query = useRepositoryCommits(repo, gitRef)
   return (
-    <Card className="overflow-hidden">
-      <div className="flex items-center gap-2 border-b border-border px-4 py-2.5 text-sm">
-        <Folder className="h-4 w-4 text-accent" />
-        <button className="hover:underline" onClick={() => setDirPath('')}>/</button>
-        {crumbs.map((part, i) => (
-          <span key={i} className="flex items-center gap-1">
-            <button
-              className="hover:underline"
-              onClick={() => setDirPath(crumbs.slice(0, i + 1).join('/'))}
-            >
-              {part}
-            </button>
-            {i < crumbs.length - 1 && <span className="text-text-muted">/</span>}
-          </span>
-        ))}
-      </div>
-      {isLoading ? (
-        <p className="p-4 text-sm text-text-muted">{t('common.loading')}</p>
-      ) : entries.length === 0 ? (
-        <p className="p-4 text-sm text-text-muted">{t('repositoryBrowser.emptyTree', 'Пусто')}</p>
-      ) : (
-        <ul className="divide-y divide-border">
-          {[...entries].sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'tree' ? -1 : 1)).map((entry) => (
-            <li key={entry.path} className="flex items-center gap-3 px-4 py-2 text-sm hover:bg-surface-raised">
-              {entry.kind === 'tree' ? (
-                <button className="flex flex-1 items-center gap-3 text-left" onClick={() => setDirPath(entry.path)}>
-                  <Folder className="h-4 w-4 text-accent" />
-                  <span className="font-medium">{entry.name}</span>
-                </button>
-              ) : (
-                <button className="flex flex-1 items-center gap-3 text-left" onClick={() => setFilePath(entry.path)}>
-                  <FileText className="h-4 w-4 text-text-muted" />
-                  <span>{entry.name}</span>
-                </button>
-              )}
-              <code className="rounded bg-surface-raised px-1.5 py-0.5 text-xs text-text-muted">{entry.sha.slice(0, 7)}</code>
-              {entry.size != null && <span className="w-20 text-right text-xs text-text-muted">{entry.size} B</span>}
+    <QueryState
+      data={query.data}
+      isLoading={query.isLoading}
+      error={query.error}
+      errorMessage={t('repositoryBrowser.commitsLoadError')}
+      onRetry={() => void query.refetch()}
+      isEmpty={(commits) => commits.length === 0}
+      empty={{ title: t('repositoryBrowser.noCommits') }}
+    >
+      {(commits) => (
+        <ul className="divide-y divide-border rounded-md border border-border">
+          {commits.map((commit) => (
+            <li key={commit.sha} className="flex min-w-0 flex-col gap-1 px-3 py-2.5 text-sm sm:flex-row sm:items-center sm:gap-4">
+              <code className="shrink-0 text-xs text-accent">{commit.short_sha}</code>
+              <span className="min-w-0 flex-1 break-words font-medium">{commit.message}</span>
+              <span className="min-w-0 break-words text-xs text-text-secondary">{commit.author}</span>
+              <time className="shrink-0 text-xs text-text-muted" dateTime={commit.date}>{formatDate(commit.date, locale)}</time>
             </li>
           ))}
         </ul>
       )}
-    </Card>
+    </QueryState>
+  )
+}
+
+function BranchesList({ refsQuery, onSelect }: { refsQuery: ReturnType<typeof useRepositoryRefs>; onSelect: (ref: RepositoryRef) => void }) {
+  const { t } = useTranslation()
+  const branches = refsQuery.data?.filter((ref) => ref.kind === 'branch')
+  return (
+    <QueryState
+      data={branches}
+      isLoading={refsQuery.isLoading}
+      error={refsQuery.error}
+      errorMessage={t('repositoryBrowser.branchesLoadError')}
+      onRetry={() => void refsQuery.refetch()}
+      isEmpty={(items) => items.length === 0}
+      empty={{ title: t('repositoryBrowser.noBranches') }}
+    >
+      {(items) => (
+        <ul className="divide-y divide-border rounded-md border border-border">
+          {items.map((ref) => (
+            <li key={ref.name} className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-sm">
+              <button type="button" className="flex min-h-10 min-w-0 flex-1 items-center gap-2 text-left font-medium hover:text-accent" onClick={() => onSelect(ref)}>
+                <GitBranch className="h-4 w-4 shrink-0 text-accent" aria-hidden />
+                <span className="break-all">{ref.name}</span>
+              </button>
+              <code className="text-xs text-text-muted">{ref.sha.slice(0, 7)}</code>
+              {ref.target && <span className="w-full break-words text-xs text-text-muted sm:w-auto sm:max-w-[40%] sm:truncate">{ref.target}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </QueryState>
+  )
+}
+
+type NavigateParams = (changes: Record<string, string | null>) => void
+
+function CodeBrowser({ repo, gitRef, dirPath, filePath, refsQuery, onNavigate }: {
+  repo: string
+  gitRef: string
+  dirPath: string
+  filePath: string | null
+  refsQuery: ReturnType<typeof useRepositoryRefs>
+  onNavigate: NavigateParams
+}) {
+  const { t } = useTranslation()
+  const refs = refsQuery.data?.filter((ref) => ref.kind === 'branch' || ref.kind === 'tag') ?? []
+  const refOptions = refs.map((ref) => ({ value: `refs/${ref.kind === 'branch' ? 'heads' : 'tags'}/${ref.name}`, label: `${ref.kind === 'branch' ? t('repositoryBrowser.branches') : t('repositoryBrowser.tags')} / ${ref.name}` }))
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <label htmlFor="repository-ref" className="text-sm font-medium">{t('repositoryBrowser.gitRef')}</label>
+        <select
+          id="repository-ref"
+          className="min-h-10 min-w-0 max-w-full rounded-md border border-border bg-surface px-3 text-sm text-text-primary"
+          value={gitRef}
+          onChange={(event) => onNavigate({ ref: event.target.value === 'HEAD' ? null : event.target.value, dir: null, file: null })}
+        >
+          <option value="HEAD">{t('repositoryBrowser.defaultRef')}</option>
+          {gitRef !== 'HEAD' && !refOptions.some((option) => option.value === gitRef) && <option value={gitRef}>{gitRef}</option>}
+          {refOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+      </div>
+      {Boolean(refsQuery.error) && (
+        <div role="alert" className="flex flex-wrap items-center gap-3 rounded-md border border-status-failed/40 p-3 text-sm">
+          <span>{t('repositoryBrowser.refsLoadError')}</span>
+          <Button type="button" size="sm" variant="outline" onClick={() => void refsQuery.refetch()}>{t('common.retry')}</Button>
+        </div>
+      )}
+      {filePath ? (
+        <FilePreview repo={repo} gitRef={gitRef} filePath={filePath} onBack={() => onNavigate({ file: null, dir: parentPath(filePath) })} />
+      ) : (
+        <TreeView repo={repo} gitRef={gitRef} dirPath={dirPath} onNavigate={onNavigate} />
+      )}
+    </div>
+  )
+}
+
+function FilePreview({ repo, gitRef, filePath, onBack }: { repo: string; gitRef: string; filePath: string; onBack: () => void }) {
+  const { t } = useTranslation()
+  const query = useRepositoryBlob(repo, gitRef, filePath)
+  return (
+    <div className="overflow-hidden rounded-md border border-border">
+      <div className="flex min-w-0 flex-wrap items-center gap-2 border-b border-border p-2 text-sm">
+        <Button type="button" variant="ghost" size="sm" className="min-h-10 min-w-10" aria-label={t('repositoryBrowser.backToTree')} title={t('repositoryBrowser.backToTree')} onClick={onBack}>
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+        </Button>
+        <FileText className="h-4 w-4 shrink-0 text-accent" aria-hidden />
+        <span className="min-w-0 flex-1 break-all font-medium">{filePath}</span>
+        {query.data && <span className="text-xs text-text-muted">{query.data.size} B · {query.data.sha.slice(0, 7)}</span>}
+      </div>
+      <div className="p-4">
+        <QueryState data={query.data} isLoading={query.isLoading} error={query.error} errorMessage={t('repositoryBrowser.fileLoadError')} onRetry={() => void query.refetch()}>
+          {(blob) => blob.binary ? (
+            <p className="text-sm text-text-muted">{t('repositoryBrowser.binaryFile')}</p>
+          ) : blob.content.length === 0 ? (
+            <p className="text-sm text-text-muted">{t('repositoryBrowser.emptyFile')}</p>
+          ) : (
+            <div>
+              {blob.truncated && <p className="mb-3 text-xs text-text-muted">{t('repositoryBrowser.truncatedFile')}</p>}
+              <pre className="max-h-[70vh] overflow-auto text-xs leading-relaxed"><code>{blob.content}</code></pre>
+            </div>
+          )}
+        </QueryState>
+      </div>
+    </div>
+  )
+}
+
+function TreeView({ repo, gitRef, dirPath, onNavigate }: { repo: string; gitRef: string; dirPath: string; onNavigate: NavigateParams }) {
+  const { t } = useTranslation()
+  const query = useRepositoryTree(repo, gitRef, dirPath || undefined)
+  const crumbs = dirPath ? dirPath.split('/') : []
+  return (
+    <div className="overflow-hidden rounded-md border border-border">
+      <nav aria-label={t('repositoryBrowser.code')} className="flex min-w-0 flex-wrap items-center gap-1 border-b border-border px-2 py-1 text-sm">
+        <Folder className="h-4 w-4 shrink-0 text-accent" aria-hidden />
+        <button type="button" className="min-h-10 px-2 hover:text-accent" onClick={() => onNavigate({ dir: null, file: null })}>/</button>
+        {crumbs.map((part, index) => (
+          <span key={`${index}-${part}`} className="flex min-w-0 items-center gap-1">
+            <span className="text-text-muted">/</span>
+            <button type="button" className="min-h-10 min-w-0 break-all px-2 text-left hover:text-accent" onClick={() => onNavigate({ dir: crumbs.slice(0, index + 1).join('/'), file: null })}>{part}</button>
+          </span>
+        ))}
+      </nav>
+      <div className="p-2">
+        <QueryState data={query.data} isLoading={query.isLoading} error={query.error} errorMessage={t('repositoryBrowser.codeLoadError')} onRetry={() => void query.refetch()} isEmpty={(entries) => entries.length === 0} empty={{ title: t('repositoryBrowser.emptyTree') }}>
+          {(entries) => (
+            <ul className="divide-y divide-border">
+              {[...entries].sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'tree' ? -1 : 1)).map((entry) => (
+                <li key={entry.path} className="flex min-w-0 items-center gap-2 text-sm hover:bg-surface-raised">
+                  <button type="button" className="flex min-h-11 min-w-0 flex-1 items-center gap-3 px-2 text-left" onClick={() => onNavigate(entry.kind === 'tree' ? { dir: entry.path, file: null } : { file: entry.path })}>
+                    {entry.kind === 'tree' ? <Folder className="h-4 w-4 shrink-0 text-accent" aria-hidden /> : <FileText className="h-4 w-4 shrink-0 text-text-muted" aria-hidden />}
+                    <span className="min-w-0 break-all">{entry.name}</span>
+                  </button>
+                  <code className="hidden shrink-0 pr-2 text-xs text-text-muted sm:inline">{entry.sha.slice(0, 7)}</code>
+                  {entry.size != null && <span className="hidden w-20 shrink-0 pr-2 text-right text-xs text-text-muted md:inline">{entry.size} B</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </QueryState>
+      </div>
+    </div>
   )
 }
 
 function TagsList({ repo }: { repo: string }) {
   const { t } = useTranslation()
-  const { data: tags = [], isLoading } = useRepositoryTags(repo)
-  if (isLoading) return <p className="text-sm text-text-muted">{t('common.loading')}</p>
-  if (tags.length === 0) return <Card className="p-8 text-center text-text-muted">{t('repositoryBrowser.noTags', 'Тегов нет')}</Card>
+  const query = useRepositoryTags(repo)
   return (
-    <Card className="overflow-hidden">
-      <ul className="divide-y divide-border">
-        {tags.map((tag) => (
-          <li key={tag.name} className="flex items-center gap-3 px-4 py-2.5 text-sm">
-            <Tag className="h-4 w-4 text-accent" />
-            <span className="font-medium">{tag.name}</span>
-            <code className="rounded bg-surface-raised px-1.5 py-0.5 text-xs text-text-muted">{tag.sha.slice(0, 7)}</code>
-            <span className="ml-auto max-w-96 truncate text-text-muted">{tag.message}</span>
-          </li>
-        ))}
-      </ul>
-    </Card>
+    <QueryState data={query.data} isLoading={query.isLoading} error={query.error} errorMessage={t('repositoryBrowser.tagsLoadError')} onRetry={() => void query.refetch()} isEmpty={(tags) => tags.length === 0} empty={{ title: t('repositoryBrowser.noTags') }}>
+      {(tags) => (
+        <ul className="divide-y divide-border rounded-md border border-border">
+          {tags.map((tag) => (
+            <li key={tag.name} className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5 text-sm">
+              <Tag className="h-4 w-4 shrink-0 text-accent" aria-hidden />
+              <span className="min-w-0 break-all font-medium">{tag.name}</span>
+              <code className="text-xs text-text-muted">{tag.sha.slice(0, 7)}</code>
+              {tag.message && <span className="w-full min-w-0 break-words text-xs text-text-muted sm:ml-auto sm:w-auto sm:max-w-[40%] sm:truncate">{tag.message}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </QueryState>
   )
 }
 
 function ReleasesList({ repo }: { repo: string }) {
   const { t } = useTranslation()
-  const { data: releases = [], isLoading } = useReleases(repo)
+  const releasesQuery = useReleases(repo)
   const createRelease = useCreateRelease(repo)
   const deleteRelease = useDeleteRelease(repo)
   const [open, setOpen] = useState(false)
@@ -297,12 +341,8 @@ function ReleasesList({ repo }: { repo: string }) {
       <div className="flex justify-end">
         <Button onClick={() => setOpen(true)}>+ {t('releases.create', 'Создать релиз')}</Button>
       </div>
-      {isLoading ? (
-        <p className="text-sm text-text-muted">{t('common.loading')}</p>
-      ) : releases.length === 0 ? (
-        <Card className="p-8 text-center text-text-muted">{t('releases.none', 'Релизов нет')}</Card>
-      ) : (
-        <ul className="grid gap-3">
+      <QueryState data={releasesQuery.data} isLoading={releasesQuery.isLoading} error={releasesQuery.error} errorMessage={t('repositoryBrowser.releasesLoadError')} onRetry={() => void releasesQuery.refetch()} isEmpty={(releases) => releases.length === 0} empty={{ title: t('releases.none') }}>
+        {(releases) => <ul className="grid gap-3">
           {releases.map((rel) => (
             <li key={rel.id}>
               <Card className="p-4">
@@ -328,8 +368,8 @@ function ReleasesList({ repo }: { repo: string }) {
               </Card>
             </li>
           ))}
-        </ul>
-      )}
+        </ul>}
+      </QueryState>
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>

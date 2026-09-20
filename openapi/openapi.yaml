@@ -4839,9 +4839,12 @@ components:
       type: object
       required:
       - name
+      - kind
       - sha
       - target
       properties:
+        kind:
+          type: string
         name:
           type: string
         sha:
