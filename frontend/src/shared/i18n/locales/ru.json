@@ -340,6 +340,7 @@
   },
   "webhooks": {
     "title": "Webhook-и",
+    "pageTitle": "Доставка событий",
     "capabilityTitle": "Исходящие webhook-и MVP",
     "capabilityDescription": "Финальные события pipeline доставляются через outbox с базовыми повторами, HMAC и наблюдаемой историей. Полные политики replay/dead-letter остаются target.",
     "create": "Добавить webhook",
@@ -351,6 +352,8 @@
     "created": "Webhook создан",
     "deleted": "Webhook удалён",
     "deleteConfirm": "Удалить webhook",
+    "deleteFailed": "Не удалось удалить webhook. Попробуйте ещё раз.",
+    "loadFailed": "Не удалось загрузить webhook-и.",
     "empty": "Webhook-и не настроены."
   },
   "deliveries": {
@@ -370,6 +373,9 @@
     "error": "Ошибка",
     "requeue": "Повторить",
     "requeued": "Доставка поставлена в повтор",
+    "openDetails": "Открыть попытки {{event}} · {{id}}",
+    "loadFailed": "Не удалось загрузить историю доставок.",
+    "detailFailed": "Не удалось загрузить детали доставки.",
     "pending": "Ожидает",
     "retryScheduled": "Повтор",
     "delivered": "Доставлено",
@@ -392,7 +398,8 @@
     "delivered": "Доставлено",
     "pending": "Ожидает",
     "failed": "Ошибка",
-    "noEvents": "Событий уведомлений пока нет."
+    "noEvents": "Событий уведомлений пока нет.",
+    "eventsFailed": "Не удалось загрузить события уведомлений."
   },
   "reports": {
     "title": "Отчёты",
