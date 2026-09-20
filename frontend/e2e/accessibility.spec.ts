@@ -80,7 +80,7 @@ test.describe('accessibility smoke', () => {
       { name: 'Reports', path: `/projects/${evidence.project.id}/reports`, ready: page => page.getByText('Доля успехов').first(), shell: true },
       { name: 'Audit log', path: '/audit-log', ready: page => page.getByRole('heading', { name: /Журнал аудита|Audit log/ }), shell: true },
       { name: 'Users', path: '/users', ready: page => page.getByRole('heading', { name: 'Пользователи платформы' }), shell: true },
-      { name: 'Login', path: '/login', ready: page => page.getByRole('heading', { name: 'Вход в Forge' }) },
+      { name: 'Login', path: '/login?logged_out', ready: page => page.getByRole('heading', { name: 'Вход в CI/CD' }) },
     ]
 
     for (const route of routes) {
