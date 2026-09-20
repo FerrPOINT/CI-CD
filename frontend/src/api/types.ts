@@ -122,6 +122,7 @@ export interface ChangedFile {
   status: ChangeStatus
   additions: number
   deletions: number
+  binary: boolean
 }
 
 export interface Comparison {

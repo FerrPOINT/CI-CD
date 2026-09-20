@@ -1844,6 +1844,7 @@ export interface components {
         DiffFile: {
             /** Format: int32 */
             additions: number;
+            binary: boolean;
             /** Format: int32 */
             deletions: number;
             path: string;
