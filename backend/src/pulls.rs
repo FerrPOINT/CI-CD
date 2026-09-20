@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use axum::{
     Json,
@@ -192,6 +192,59 @@ pub struct DiffFile {
     pub status: String,
     pub additions: u32,
     pub deletions: u32,
+    pub binary: bool,
+}
+
+fn parse_diff_files(numstat: &[u8], name_status: &[u8]) -> Result<Vec<DiffFile>, &'static str> {
+    let mut statuses = HashMap::new();
+    let mut status_fields = name_status
+        .split(|byte| *byte == 0)
+        .filter(|field| !field.is_empty());
+    while let Some(status) = status_fields.next() {
+        let path = status_fields
+            .next()
+            .ok_or("missing path in git name-status")?;
+        statuses.insert(path, status);
+    }
+
+    let mut files = Vec::new();
+    for record in numstat
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty())
+    {
+        let mut fields = record.splitn(3, |byte| *byte == b'\t');
+        let additions = fields.next().ok_or("missing additions in git numstat")?;
+        let deletions = fields.next().ok_or("missing deletions in git numstat")?;
+        let path = fields.next().ok_or("missing path in git numstat")?;
+        let status = statuses.remove(path).ok_or("unmatched path in git diff")?;
+        let status = match status.first() {
+            Some(b'A') => "added",
+            Some(b'D') => "deleted",
+            Some(b'M' | b'T') => "modified",
+            _ => return Err("unknown git diff status"),
+        };
+        let binary = additions == b"-" && deletions == b"-";
+        if !binary && (additions == b"-" || deletions == b"-") {
+            return Err("incomplete binary git numstat");
+        }
+        let parse_count = |value: &[u8]| -> Result<u32, &'static str> {
+            std::str::from_utf8(value)
+                .map_err(|_| "invalid git numstat count")?
+                .parse()
+                .map_err(|_| "invalid git numstat count")
+        };
+        files.push(DiffFile {
+            path: String::from_utf8_lossy(path).into_owned(),
+            status: status.to_string(),
+            additions: if binary { 0 } else { parse_count(additions)? },
+            deletions: if binary { 0 } else { parse_count(deletions)? },
+            binary,
+        });
+    }
+    if !statuses.is_empty() {
+        return Err("unmatched status in git diff");
+    }
+    Ok(files)
 }
 
 #[utoipa::path(
@@ -226,45 +279,50 @@ pub async fn compare_refs(
         .trim()
         .to_string();
 
-    // numstat
+    // NUL-delimited outputs with rename detection disabled share exact paths.
     let stat_output = tokio::process::Command::new("git")
         .arg(format!("--git-dir={}", path.display()))
-        .args(["diff", "--numstat", &merge_base, to])
+        .args(["diff", "--numstat", "--no-renames", "-z", &merge_base, to])
         .output()
         .await
         .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
-    let files: Vec<DiffFile> = String::from_utf8_lossy(&stat_output.stdout)
-        .lines()
-        .filter_map(|line| {
-            let mut parts = line.splitn(3, '\t');
-            let additions = parts.next()?.parse::<u32>().ok()?;
-            let deletions = parts.next()?.parse::<u32>().ok()?;
-            let rest = parts.next()?;
-            let (status, path_str) = if let Some(stripped) = rest.strip_prefix("A\t") {
-                ("added", stripped)
-            } else if let Some(stripped) = rest.strip_prefix("D\t") {
-                ("deleted", stripped)
-            } else if let Some(stripped) = rest.strip_prefix("M\t") {
-                ("modified", stripped)
-            } else {
-                ("modified", rest)
-            };
-            Some(DiffFile {
-                path: path_str.to_string(),
-                status: status.to_string(),
-                additions,
-                deletions,
-            })
-        })
-        .collect();
+    if !stat_output.status.success() {
+        return Err(ApiError::bad_request("git diff --numstat failed"));
+    }
+    let status_output = tokio::process::Command::new("git")
+        .arg(format!("--git-dir={}", path.display()))
+        .args([
+            "diff",
+            "--name-status",
+            "--no-renames",
+            "-z",
+            &merge_base,
+            to,
+        ])
+        .output()
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if !status_output.status.success() {
+        return Err(ApiError::bad_request("git diff --name-status failed"));
+    }
+    let files =
+        parse_diff_files(&stat_output.stdout, &status_output.stdout).map_err(|message| {
+            ApiError::internal(sqlx::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                message,
+            )))
+        })?;
 
     // patch
     let patch_output = tokio::process::Command::new("git")
         .arg(format!("--git-dir={}", path.display()))
-        .args(["diff", &merge_base, to])
+        .args(["diff", "--no-renames", &merge_base, to])
         .output()
         .await
         .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if !patch_output.status.success() {
+        return Err(ApiError::bad_request("git diff --patch failed"));
+    }
     let patch = String::from_utf8_lossy(&patch_output.stdout).to_string();
 
     Ok(Json(DiffResult {
@@ -795,7 +853,7 @@ pub async fn list_tags(
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_ref, tree_entry_path};
+    use super::{classify_ref, parse_diff_files, tree_entry_path};
 
     #[test]
     fn refs_keep_branch_and_tag_identity() {
@@ -817,5 +875,40 @@ mod tests {
             tree_entry_path("src/pages", "index.tsx"),
             "src/pages/index.tsx"
         );
+    }
+
+    #[test]
+    fn parses_added_modified_and_deleted_files() {
+        let numstat = [
+            b"3\t0\tnew.txt\0".as_slice(),
+            b"1\t2\tsrc/a\tb.txt\0",
+            b"0\t4\told.txt\0",
+        ]
+        .concat();
+        let names = b"A\0new.txt\0M\0src/a\tb.txt\0D\0old.txt\0";
+        let files = parse_diff_files(&numstat, names).unwrap();
+        assert_eq!(files.len(), 3);
+        assert_eq!(files[0].status, "added");
+        assert_eq!(files[0].additions, 3);
+        assert_eq!(files[1].path, "src/a\tb.txt");
+        assert_eq!(files[1].status, "modified");
+        assert_eq!(files[1].deletions, 2);
+        assert_eq!(files[2].status, "deleted");
+        assert_eq!(files[2].deletions, 4);
+    }
+
+    #[test]
+    fn retains_binary_files_without_inventing_line_counts() {
+        let files = parse_diff_files(b"-\t-\timage.png\0", b"A\0image.png\0").unwrap();
+        assert_eq!(files.len(), 1);
+        assert!(files[0].binary);
+        assert_eq!(files[0].additions, 0);
+        assert_eq!(files[0].deletions, 0);
+    }
+
+    #[test]
+    fn rejects_mismatched_git_outputs() {
+        assert!(parse_diff_files(b"1\t0\tnew.txt\0", b"A\0other.txt\0").is_err());
+        assert!(parse_diff_files(b"1\t0\tnew.txt\0", b"A\0new.txt\0D\0old.txt\0").is_err());
     }
 }
