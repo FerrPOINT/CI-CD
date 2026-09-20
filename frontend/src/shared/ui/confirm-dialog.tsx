@@ -20,6 +20,7 @@ interface ConfirmDialogProps {
   cancelLabel?: string;
   closeOnConfirm?: boolean;
   pending?: boolean;
+  confirmVariant?: "default" | "destructive";
 }
 
 export function ConfirmDialog({
@@ -32,6 +33,7 @@ export function ConfirmDialog({
   cancelLabel,
   closeOnConfirm = true,
   pending = false,
+  confirmVariant = "destructive",
 }: ConfirmDialogProps) {
   const { t } = useTranslation();
   return (
@@ -45,7 +47,7 @@ export function ConfirmDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           {description && (
-            <AlertDialogDescription>{description}</AlertDialogDescription>
+            <AlertDialogDescription className="[overflow-wrap:anywhere]">{description}</AlertDialogDescription>
           )}
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -53,6 +55,7 @@ export function ConfirmDialog({
             {cancelLabel ?? t("common.cancel")}
           </AlertDialogCancel>
           <AlertDialogAction
+            className={confirmVariant === "default" ? "bg-accent text-accent-foreground hover:bg-accent-hover" : undefined}
             disabled={pending}
             onClick={(event) => {
               if (!closeOnConfirm) event.preventDefault();
