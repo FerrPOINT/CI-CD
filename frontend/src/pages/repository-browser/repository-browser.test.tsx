@@ -1,6 +1,7 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { toast } from 'sonner'
 import { RepositoryBrowserPage } from './index'
 
 const mocks = vi.hoisted(() => ({
@@ -15,6 +16,10 @@ const mocks = vi.hoisted(() => ({
   refetchTree: vi.fn(),
   refetchBlob: vi.fn(),
   refetchTags: vi.fn(),
+  createRelease: vi.fn(),
+  deleteRelease: vi.fn(),
+  create: vi.fn(),
+  remove: vi.fn(),
 }))
 
 vi.mock('react-i18next', () => ({
@@ -27,9 +32,10 @@ vi.mock('@/api/hooks', () => ({
   useRepositoryBlob: mocks.blob,
   useRepositoryTags: mocks.tags,
   useReleases: mocks.releases,
-  useCreateRelease: () => ({ mutate: vi.fn(), isPending: false }),
-  useDeleteRelease: () => ({ mutate: vi.fn(), isPending: false }),
+  useCreateRelease: mocks.createRelease,
+  useDeleteRelease: mocks.deleteRelease,
 }))
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 function result<T>(data: T, refetch = vi.fn()) {
   return { data, isLoading: false, error: null, refetch }
@@ -50,6 +56,13 @@ function setup(path = '/repositories/demo') {
   )
 }
 
+function release() {
+  return {
+    id: 'release-1', repository_name: 'demo', tag_name: 'v1.0.0', name: 'Version 1',
+    description: 'First release', prerelease: false, created_by: null, created_at: '2026-09-19T00:00:00Z',
+  }
+}
+
 beforeEach(() => {
   mocks.refs.mockReturnValue(result([
     { name: 'main', kind: 'branch', sha: 'abc123456', target: '' },
@@ -60,6 +73,8 @@ beforeEach(() => {
   mocks.commits.mockReturnValue(result([], mocks.refetchCommits))
   mocks.tags.mockReturnValue(result([], mocks.refetchTags))
   mocks.releases.mockReturnValue(result([]))
+  mocks.createRelease.mockReturnValue({ mutate: mocks.create, isPending: false })
+  mocks.deleteRelease.mockReturnValue({ mutate: mocks.remove, isPending: false })
 })
 
 afterEach(() => vi.clearAllMocks())
@@ -151,5 +166,78 @@ describe('RepositoryBrowserPage', () => {
     expect(await screen.findByText('repositoryBrowser.tagsLoadError')).toBeInTheDocument()
     fireEvent.mouseDown(screen.getByRole('tab', { name: 'repositoryBrowser.code' }), { button: 0 })
     expect(screen.getByText('repositoryBrowser.emptyTree')).toBeInTheDocument()
+  })
+
+  it('prevents blank or duplicate release tags and keeps the form open on API failure', () => {
+    mocks.releases.mockReturnValue(result([release()]))
+    mocks.tags.mockReturnValue(result([{ name: 'v1.0.0', sha: 'abc123456', message: '' }]))
+    setup('/repositories/demo?tab=releases')
+    fireEvent.click(screen.getByRole('button', { name: 'releases.create' }))
+    const form = screen.getByRole('form', { name: 'releases.create' })
+    const tag = screen.getByLabelText('releases.tag')
+
+    fireEvent.change(tag, { target: { value: '   ' } })
+    fireEvent.submit(form)
+    expect(screen.getByText('releases.tagRequired')).toBeInTheDocument()
+    fireEvent.change(tag, { target: { value: ' v1.0.0 ' } })
+    fireEvent.submit(form)
+    expect(screen.getByText('releases.alreadyExists')).toBeInTheDocument()
+    expect(mocks.create).not.toHaveBeenCalled()
+
+    fireEvent.change(tag, { target: { value: ' v2.0.0 ' } })
+    fireEvent.submit(form)
+    expect(mocks.create).toHaveBeenCalledWith(
+      { tag_name: 'v2.0.0', name: 'v2.0.0', description: '', prerelease: false },
+      { onSuccess: expect.any(Function), onError: expect.any(Function) },
+    )
+    act(() => mocks.create.mock.calls[0][1].onError(new Error('Unavailable')))
+    expect(form).toBeInTheDocument()
+    expect(toast.error).toHaveBeenCalledWith('Unavailable')
+    act(() => mocks.create.mock.calls[0][1].onSuccess())
+    expect(screen.queryByRole('form', { name: 'releases.create' })).not.toBeInTheDocument()
+    expect(toast.success).toHaveBeenCalledWith('releases.created')
+  })
+
+  it('edits existing release metadata without changing its tag', () => {
+    mocks.releases.mockReturnValue(result([release()]))
+    setup('/repositories/demo?tab=releases')
+    fireEvent.click(screen.getByRole('button', { name: 'releases.edit v1.0.0' }))
+    const form = screen.getByRole('form', { name: 'releases.edit' })
+    expect(screen.getByLabelText('releases.tag')).toHaveAttribute('readonly')
+    expect(screen.getByLabelText('releases.name')).toHaveValue('Version 1')
+    fireEvent.change(screen.getByLabelText('releases.name'), { target: { value: 'Version 1 updated' } })
+    fireEvent.submit(form)
+    expect(mocks.create).toHaveBeenCalledWith(
+      { tag_name: 'v1.0.0', name: 'Version 1 updated', description: 'First release', prerelease: false },
+      { onSuccess: expect.any(Function), onError: expect.any(Function) },
+    )
+    act(() => mocks.create.mock.calls[0][1].onSuccess())
+    expect(toast.success).toHaveBeenCalledWith('releases.updated')
+  })
+
+  it('keeps delete confirmation open on failure and closes it after success', () => {
+    mocks.releases.mockReturnValue(result([release()]))
+    setup('/repositories/demo?tab=releases')
+    fireEvent.click(screen.getByRole('button', { name: 'releases.deleteAction v1.0.0' }))
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('v1.0.0')
+    fireEvent.click(screen.getByRole('button', { name: 'common.delete' }))
+    expect(mocks.remove).toHaveBeenCalledWith('v1.0.0', { onSuccess: expect.any(Function), onError: expect.any(Function) })
+    act(() => mocks.remove.mock.calls[0][1].onError(new Error('Unavailable')))
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    expect(toast.error).toHaveBeenCalledWith('Unavailable')
+    act(() => mocks.remove.mock.calls[0][1].onSuccess())
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+    expect(toast.success).toHaveBeenCalledWith('releases.deleted')
+  })
+
+  it('blocks creation until the current release list can be checked', () => {
+    const refetch = vi.fn()
+    mocks.releases.mockReturnValue({ data: undefined, isLoading: false, error: new Error('offline'), refetch })
+    setup('/repositories/demo?tab=releases')
+    expect(screen.getByRole('button', { name: 'releases.create' })).toBeDisabled()
+    expect(screen.getByText('repositoryBrowser.releasesLoadError')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'common.retry' }))
+    expect(refetch).toHaveBeenCalledOnce()
+    expect(mocks.create).not.toHaveBeenCalled()
   })
 })

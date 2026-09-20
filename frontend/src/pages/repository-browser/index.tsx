@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
-import { GitBranch, GitCompareArrows, GitPullRequest, ChevronRight, Folder, FileText, Tag, Package, ArrowLeft } from 'lucide-react'
+import { GitBranch, GitCompareArrows, GitPullRequest, ChevronRight, Folder, FileText, Tag, Package, ArrowLeft, Plus, Pencil, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useRepositoryCommits, useRepositoryRefs, useRepositoryTree, useRepositoryBlob, useRepositoryTags, useReleases, useCreateRelease, useDeleteRelease } from '@/api/hooks'
 import {
@@ -10,15 +10,10 @@ import {
 import { Input } from '@sdlc/ui/ui'
 import { Label } from '@sdlc/ui/ui'
 import { Textarea } from '@sdlc/ui/ui'
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
-  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from '@sdlc/ui/ui'
-import { UserAvatar } from '@/shared/ui/user-avatar'
+import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
 import { QueryState } from '@/shared/ui/query-state'
-import type { RepositoryRef } from '@/api/types'
+import type { Release, RepositoryRef } from '@/api/types'
 import { Button } from '@sdlc/ui/ui'
-import { Card } from '@sdlc/ui/ui'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@sdlc/ui/ui'
 
 const browserTabs = ['code', 'commits', 'branches', 'tags', 'releases'] as const
@@ -313,23 +308,53 @@ function TagsList({ repo }: { repo: string }) {
 }
 
 function ReleasesList({ repo }: { repo: string }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const releasesQuery = useReleases(repo)
+  const tagsQuery = useRepositoryTags(repo)
   const createRelease = useCreateRelease(repo)
   const deleteRelease = useDeleteRelease(repo)
   const [open, setOpen] = useState(false)
+  const [editingTag, setEditingTag] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
+  const [tagError, setTagError] = useState<string | null>(null)
   const [form, setForm] = useState({ tag_name: '', name: '', description: '', prerelease: false })
+
+  function openCreate() {
+    setEditingTag(null)
+    setTagError(null)
+    setForm({ tag_name: '', name: '', description: '', prerelease: false })
+    setOpen(true)
+  }
+
+  function openEdit(release: Release) {
+    setEditingTag(release.tag_name)
+    setTagError(null)
+    setForm({ tag_name: release.tag_name, name: release.name, description: release.description, prerelease: release.prerelease })
+    setOpen(true)
+  }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (!editingTag && (!releasesQuery.data || releasesQuery.error)) {
+      setTagError(t('releases.listUnavailable'))
+      return
+    }
+    const tagName = form.tag_name.trim()
+    if (!tagName) {
+      setTagError(t('releases.tagRequired'))
+      return
+    }
+    if (!editingTag && releasesQuery.data?.some((release) => release.tag_name === tagName)) {
+      setTagError(t('releases.alreadyExists'))
+      return
+    }
+    setTagError(null)
     createRelease.mutate(
-      { tag_name: form.tag_name.trim(), name: form.name.trim() || form.tag_name.trim(), description: form.description.trim() || undefined, prerelease: form.prerelease },
+      { tag_name: tagName, name: form.name.trim() || tagName, description: form.description.trim(), prerelease: form.prerelease },
       {
         onSuccess: () => {
-          toast.success(t('releases.created', 'Релиз создан'))
+          toast.success(t(editingTag ? 'releases.updated' : 'releases.created'))
           setOpen(false)
-          setForm({ tag_name: '', name: '', description: '', prerelease: false })
         },
         onError: (err) => toast.error(err.message),
       },
@@ -339,55 +364,56 @@ function ReleasesList({ repo }: { repo: string }) {
   return (
     <div className="space-y-3">
       <div className="flex justify-end">
-        <Button onClick={() => setOpen(true)}>+ {t('releases.create', 'Создать релиз')}</Button>
+        <Button type="button" className="min-h-10" disabled={!releasesQuery.data || Boolean(releasesQuery.error)} onClick={openCreate}><Plus className="h-4 w-4" aria-hidden />{t('releases.create')}</Button>
       </div>
       <QueryState data={releasesQuery.data} isLoading={releasesQuery.isLoading} error={releasesQuery.error} errorMessage={t('repositoryBrowser.releasesLoadError')} onRetry={() => void releasesQuery.refetch()} isEmpty={(releases) => releases.length === 0} empty={{ title: t('releases.none') }}>
-        {(releases) => <ul className="grid gap-3">
+        {(releases) => <ul className="divide-y divide-border rounded-md border border-border">
           {releases.map((rel) => (
-            <li key={rel.id}>
-              <Card className="p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <Package className="h-4 w-4 text-accent" />
-                      <p className="truncate font-medium">{rel.name}</p>
-                      {rel.prerelease && (
-                        <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-xs text-amber-500">{t('releases.prerelease', 'пре-релиз')}</span>
-                      )}
-                    </div>
-                    <p className="mt-1 flex items-center gap-2 text-xs text-text-muted">
-                      <Tag className="h-3 w-3" />{rel.tag_name}
-                      {rel.created_by && <><UserAvatar name={rel.created_by} size="xs" />{rel.created_by.slice(0, 8)}</>}
-                    </p>
-                    {rel.description && <p className="mt-2 whitespace-pre-wrap text-sm">{rel.description}</p>}
-                  </div>
-                  <Button variant="outline" size="sm" className="text-destructive" onClick={() => setPendingDelete(rel.tag_name)}>
-                    {t('common.delete')}
-                  </Button>
+            <li key={rel.id} className="flex min-w-0 flex-wrap items-start gap-x-3 gap-y-1 px-3 py-3 text-sm sm:flex-nowrap">
+              <Package className="mt-1 h-4 w-4 shrink-0 text-accent" aria-hidden />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="min-w-0 break-words font-medium">{rel.name}</span>
+                  {rel.prerelease && <span className="rounded-sm bg-warning/15 px-1.5 py-0.5 text-xs text-text-primary">{t('releases.prerelease')}</span>}
                 </div>
-              </Card>
+                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted">
+                  <span className="flex min-w-0 items-center gap-1 break-all"><Tag className="h-3 w-3 shrink-0" aria-hidden />{rel.tag_name}</span>
+                  <time dateTime={rel.created_at}>{formatDate(rel.created_at, i18n.language)}</time>
+                </div>
+                {rel.description && <p className="mt-2 whitespace-pre-wrap break-words text-sm text-text-secondary">{rel.description}</p>}
+              </div>
+              <div className="flex w-full shrink-0 items-center justify-end gap-1 sm:w-auto">
+                <button type="button" className="inline-flex h-10 w-10 items-center justify-center rounded-md text-text-secondary hover:bg-surface-raised hover:text-text-primary focus-visible:outline-2 focus-visible:outline-accent" aria-label={`${t('releases.edit')} ${rel.tag_name}`} title={`${t('releases.edit')} ${rel.tag_name}`} onClick={() => openEdit(rel)}>
+                  <Pencil className="h-4 w-4" aria-hidden />
+                </button>
+                <button type="button" className="inline-flex h-10 w-10 items-center justify-center rounded-md text-danger hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-50" aria-label={`${t('releases.deleteAction')} ${rel.tag_name}`} title={`${t('releases.deleteAction')} ${rel.tag_name}`} disabled={deleteRelease.isPending} onClick={() => setPendingDelete(rel.tag_name)}>
+                  <Trash2 className="h-4 w-4" aria-hidden />
+                </button>
+              </div>
             </li>
           ))}
         </ul>}
       </QueryState>
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={(next) => { if (!createRelease.isPending) setOpen(next) }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{t('releases.create', 'Создать релиз')}</DialogTitle>
+            <DialogTitle>{t(editingTag ? 'releases.edit' : 'releases.create')}</DialogTitle>
           </DialogHeader>
-          <form onSubmit={handleSubmit} className="grid gap-3">
+          <form onSubmit={handleSubmit} aria-label={t(editingTag ? 'releases.edit' : 'releases.create')} className="grid gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="rel-tag">{t('releases.tag', 'Тег')}</Label>
-              <Input id="rel-tag" value={form.tag_name} onChange={(e) => setForm({ ...form, tag_name: e.target.value })} placeholder="v1.0.0" required />
+              <Label htmlFor="rel-tag">{t('releases.tag')}</Label>
+              <Input id="rel-tag" value={form.tag_name} onChange={(e) => { setForm({ ...form, tag_name: e.target.value }); setTagError(null) }} list={editingTag ? undefined : 'release-tags'} readOnly={!!editingTag} aria-invalid={!!tagError} aria-describedby={tagError ? 'rel-tag-error' : undefined} placeholder="v1.0.0" required />
+              <datalist id="release-tags">{tagsQuery.data?.map((tag) => <option key={tag.name} value={tag.name} />)}</datalist>
+              {tagError && <p id="rel-tag-error" role="alert" className="text-xs text-danger">{tagError}</p>}
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="rel-name">{t('releases.name', 'Название')}</Label>
+              <Label htmlFor="rel-name">{t('releases.name')}</Label>
               <Input id="rel-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="rel-desc">{t('releases.description', 'Описание')}</Label>
-              <Textarea id="rel-desc" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+              <Label htmlFor="rel-desc">{t('releases.description')}</Label>
+              <Textarea id="rel-desc" rows={4} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
             </div>
             <div className="flex items-center gap-2">
               <input
@@ -397,36 +423,31 @@ function ReleasesList({ repo }: { repo: string }) {
                 checked={form.prerelease}
                 onChange={(e) => setForm({ ...form, prerelease: e.target.checked })}
               />
-              <Label htmlFor="rel-pre">{t('releases.prerelease', 'пре-релиз')}</Label>
+              <Label htmlFor="rel-pre">{t('releases.prerelease')}</Label>
             </div>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setOpen(false)}>{t('common.cancel')}</Button>
-              <Button type="submit" disabled={createRelease.isPending}>{t('common.create')}</Button>
+              <Button type="button" variant="outline" disabled={createRelease.isPending} onClick={() => setOpen(false)}>{t('common.cancel')}</Button>
+              <Button type="submit" disabled={createRelease.isPending}>{createRelease.isPending ? t('common.saving') : t(editingTag ? 'common.save' : 'common.create')}</Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={!!pendingDelete} onOpenChange={(v) => !v && setPendingDelete(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('releases.deleteTitle', 'Удалить релиз?')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('releases.deleteConfirm', 'Релиз будет удалён. Тег в git останется.')}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setPendingDelete(null)}>{t('common.cancel')}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                if (pendingDelete) deleteRelease.mutate(pendingDelete, { onSuccess: () => setPendingDelete(null) })
-              }}
-            >
-              {t('common.delete')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={pendingDelete ? `${t('releases.deleteTitle')} «${pendingDelete}»?` : ''}
+        description={t('releases.deleteConfirm')}
+        pending={deleteRelease.isPending}
+        closeOnConfirm={false}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => {
+          if (!pendingDelete) return
+          deleteRelease.mutate(pendingDelete, {
+            onSuccess: () => { setPendingDelete(null); toast.success(t('releases.deleted')) },
+            onError: (error) => toast.error(error.message),
+          })
+        }}
+      />
     </div>
   )
 }
