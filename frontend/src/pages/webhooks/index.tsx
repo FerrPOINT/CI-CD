@@ -97,7 +97,7 @@ export function WebhooksPage() {
                   <TableCell className="font-mono text-xs">{w.url}</TableCell>
                   <TableCell className="text-xs text-text-muted">{w.events.length ? w.events.join(', ') : '—'}</TableCell>
                   <TableCell>
-                    <span className={`rounded-full px-2 py-0.5 text-xs ${w.enabled ? 'bg-emerald-500/15 text-emerald-500' : 'bg-surface-raised text-text-muted'}`}>
+                    <span className={`rounded-full px-2 py-0.5 text-xs ${w.enabled ? 'bg-emerald-500/15 text-text-primary' : 'bg-surface-raised text-text-muted'}`}>
                       {w.enabled ? t('webhooks.on') : t('webhooks.off')}
                     </span>
                   </TableCell>
@@ -269,11 +269,11 @@ function DeliveryHistorySection() {
 function DeliveryStatusBadge({ status }: { status: string }) {
   const { t } = useTranslation()
   const tone = status === 'delivered'
-    ? 'bg-emerald-500/15 text-emerald-500'
+    ? 'bg-emerald-500/15 text-text-primary'
     : status === 'failed'
-      ? 'bg-red-500/15 text-red-500'
+      ? 'bg-red-500/15 text-text-primary'
       : status === 'retry_scheduled'
-        ? 'bg-amber-500/15 text-amber-500'
+        ? 'bg-amber-500/15 text-text-primary'
         : 'bg-surface-raised text-text-muted'
   const labelKey = status === 'retry_scheduled' ? 'deliveries.retryScheduled' : `deliveries.${status}`
   return <span className={`rounded-full px-2 py-0.5 text-xs ${tone}`}>{t(labelKey)}</span>
@@ -390,7 +390,7 @@ function NotificationsSection() {
                   </TableCell>
                   <TableCell className="break-all font-mono text-xs">{event.channel} / {event.target}</TableCell>
                   <TableCell>
-                    <span className={`rounded-full px-2 py-0.5 text-xs ${event.last_error ? 'bg-red-500/15 text-red-500' : event.delivered_at ? 'bg-emerald-500/15 text-emerald-500' : 'bg-amber-500/15 text-amber-500'}`}>
+                    <span className={`rounded-full px-2 py-0.5 text-xs text-text-primary ${event.last_error ? 'bg-red-500/15' : event.delivered_at ? 'bg-emerald-500/15' : 'bg-amber-500/15'}`}>
                       {event.last_error ? t('notifications.failed') : event.delivered_at ? t('notifications.delivered') : t('notifications.pending')}
                     </span>
                   </TableCell>
