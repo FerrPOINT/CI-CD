@@ -734,14 +734,21 @@
   },
   "releases": {
     "created": "Release created",
+    "updated": "Release updated",
+    "deleted": "Release deleted",
     "create": "Create release",
+    "edit": "Edit release",
+    "deleteAction": "Delete release",
     "none": "No releases",
     "prerelease": "pre-release",
     "tag": "Tag",
     "name": "Name",
     "description": "Description",
-    "deleteTitle": "Delete release?",
-    "deleteConfirm": "The release will be deleted. The git tag stays."
+    "deleteTitle": "Delete release",
+    "deleteConfirm": "The release will be deleted. The git tag stays.",
+    "tagRequired": "Enter a release tag",
+    "alreadyExists": "A release already exists for this tag. Edit it from the list.",
+    "listUnavailable": "Could not check existing releases. Retry loading the list."
   },
   "errors": {
     "forbidden": {
