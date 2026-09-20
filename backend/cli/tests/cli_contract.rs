@@ -76,6 +76,8 @@ fn cli_exposes_pagination_on_list_commands() {
 
 #[test]
 fn cli_exposes_platform_resource_mutations() {
+    let runner_commands = cli_help(&["runner", "--help"]);
+    assert_contains(&runner_commands, "heartbeat");
     let runner = cli_help(&["runner", "register", "--help"]);
     assert_contains(&runner, "--tag");
 
@@ -102,6 +104,28 @@ fn cli_exposes_platform_resource_mutations() {
     assert_contains(&deployment, "approve");
     assert_contains(&deployment, "reject");
     assert_contains(&deployment, "rollback");
+}
+
+#[test]
+fn legacy_runner_heartbeat_fails_before_any_api_call() {
+    let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
+        .args([
+            "--api-url",
+            "http://127.0.0.1:1",
+            "runner",
+            "heartbeat",
+            "--id",
+            "00000000-0000-4000-8000-000000000001",
+            "--status",
+            "online",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert_contains(
+        &String::from_utf8(output.stderr).unwrap(),
+        "Legacy heartbeat is disabled",
+    );
 }
 
 #[test]

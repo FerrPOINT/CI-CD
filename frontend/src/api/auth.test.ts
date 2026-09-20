@@ -6,6 +6,17 @@ beforeEach(() => {
 })
 
 describe('central browser session', () => {
+  it('purges a legacy refresh token on startup without a successful SSO callback', async () => {
+    window.localStorage.setItem('forge.refresh_token', 'old-secret')
+    window.localStorage.setItem('theme', 'light')
+
+    const { currentSession } = await import('./auth')
+
+    expect(currentSession()).toBeNull()
+    expect(window.localStorage.getItem('forge.refresh_token')).toBeNull()
+    expect(window.localStorage.getItem('theme')).toBe('light')
+  })
+
   it('keeps the access token in memory and removes legacy credentials', async () => {
     window.localStorage.setItem('forge.refresh_token', 'old-secret')
     const { acceptSso, currentSession } = await import('./auth')

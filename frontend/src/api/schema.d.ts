@@ -2386,9 +2386,6 @@ export interface components {
             protocolVersion: number;
             terminalStatus: string;
         };
-        RunnerHeartbeat: {
-            status?: string | null;
-        };
         RunnerHeartbeatRequest: {
             activeLeaseIds?: string[];
             capabilities?: unknown;
@@ -6210,21 +6207,10 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RunnerHeartbeat"];
-            };
-        };
+        requestBody?: never;
         responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["Runner"];
-                };
-            };
-            404: {
+            /** @description Legacy heartbeat is disabled; use the credential-authenticated runner protocol */
+            410: {
                 headers: {
                     [name: string]: unknown;
                 };

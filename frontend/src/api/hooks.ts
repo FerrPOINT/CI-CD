@@ -419,15 +419,6 @@ export function useRegisterRunner() {
   })
 }
 
-export function useRunnerHeartbeat() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: ({ id, status }: { id: string; status?: 'online' | 'offline' | 'paused' }) =>
-      api<Runner>(`/runners/${id}/heartbeat`, { method: 'POST', body: JSON.stringify({ status }) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.runners }),
-  })
-}
-
 export function useDeleteRunner() {
   const qc = useQueryClient()
   return useMutation({

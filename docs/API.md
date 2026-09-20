@@ -1035,7 +1035,7 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 | GET | `/runners` | Список зарегистрированных runner-ов |
 | POST | `/runners` | Ручная инвентарная запись (`name`, `tags[]`); начальный статус offline, heartbeat отсутствует |
 | DELETE | `/runners/{runner_id}` | Удалить runner |
-| POST | `/runners/{runner_id}/heartbeat` | Обновить статус и last_seen_at |
+| POST | `/runners/{runner_id}/heartbeat` | Legacy-маршрут отключён: `410 Gone`; для реального runner-а использовать `/api/v1/runner/heartbeat` |
 
 ### Project Secrets
 
@@ -1319,10 +1319,10 @@ Machine principals для автоматизации (AUTHORIZATION target-step;
 |---|---|---|
 | GET | `/runners` | Список `{id,name,tags,status,last_seen_at,created_at}` |
 | POST | `/runners` | `{name, tags?}` → инвентарная запись со `status=offline`, `last_seen_at=null` до первого heartbeat |
-| POST | `/runners/{runner_id}/heartbeat` | Обновляет `last_seen_at`/status |
+| POST | `/runners/{runner_id}/heartbeat` | Всегда `410 Gone`; больше не позволяет вручную выставить online |
 | DELETE | `/runners/{runner_id}` | Удаляет registry-запись |
 
-Legacy registry остаётся operator inventory и совместимым CRUD-слоем. Ручное создание записи не запускает и не подключает процесс runner-а. Выполнение внешней работы идёт через отдельный runner protocol ниже.
+Legacy registry остаётся operator inventory и совместимым CRUD-слоем. Ручное создание записи не запускает и не подключает процесс runner-а. Legacy heartbeat намеренно отключён: он не проверял identity runner-а. Выполнение внешней работы и heartbeat идут через отдельный credential-authenticated runner protocol ниже.
 
 ### Runner protocol MVP
 

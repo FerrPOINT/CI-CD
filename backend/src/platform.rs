@@ -201,11 +201,6 @@ pub(crate) struct RegisterRunner {
     #[serde(default)]
     tags: Vec<String>,
 }
-#[derive(Debug, Deserialize, utoipa::ToSchema)]
-pub(crate) struct RunnerHeartbeat {
-    status: Option<String>,
-}
-
 #[utoipa::path(get, path = "/api/v1/runners", tag = "runners", responses((status = 200, body = [Runner])))]
 async fn list_runners(State(state): State<Arc<AppState>>) -> ApiResult<Vec<Runner>> {
     Ok(Json(sqlx::query_as("SELECT id, name, tags, status, last_seen_at, created_at FROM runners ORDER BY created_at DESC")
@@ -231,20 +226,11 @@ async fn register_runner(
     .await?;
     Ok(Json(runner))
 }
-#[utoipa::path(post, path = "/api/v1/runners/{runner_id}/heartbeat", tag = "runners", request_body = RunnerHeartbeat, params(("runner_id" = Uuid, Path)), responses((status = 200, body = Runner), (status = 404)))]
-async fn runner_heartbeat(
-    State(state): State<Arc<AppState>>,
-    Path(runner_id): Path<Uuid>,
-    Json(input): Json<RunnerHeartbeat>,
-) -> ApiResult<Runner> {
-    let status = input.status.unwrap_or_else(|| "online".into());
-    if !matches!(status.as_str(), "online" | "offline" | "paused") {
-        return Err(ApiError::bad_request("invalid runner status"));
-    }
-    let runner = sqlx::query_as("UPDATE runners SET status = $2, last_seen_at = now() WHERE id = $1 RETURNING id, name, tags, status, last_seen_at, created_at")
-        .bind(runner_id).bind(status).fetch_optional(pool(&state)?).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?;
-    audit(pool(&state)?, "runner.heartbeat", "runner", runner_id, None).await?;
-    Ok(Json(runner))
+#[utoipa::path(post, path = "/api/v1/runners/{runner_id}/heartbeat", tag = "runners", params(("runner_id" = Uuid, Path)), responses((status = 410, description = "Legacy heartbeat is disabled; use the credential-authenticated runner protocol")))]
+async fn runner_heartbeat() -> Result<StatusCode, ApiError> {
+    Err(ApiError::gone(
+        "legacy heartbeat is disabled; use /api/v1/runner/heartbeat",
+    ))
 }
 #[utoipa::path(delete, path = "/api/v1/runners/{runner_id}", tag = "runners", params(("runner_id" = Uuid, Path)), responses((status = 200), (status = 404)))]
 async fn delete_runner(

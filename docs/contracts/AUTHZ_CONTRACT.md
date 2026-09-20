@@ -84,7 +84,9 @@ Tenant roles: `owner` управляет tenant, projects, memberships, service 
 | POST | `/api/v1/jobs/{job_id}/status` | user/PAT/SAT: `job.write`; runner: matching lease only |
 | GET, POST | `/api/v1/jobs/{job_id}/logs` | `job.logs.read` / `job.write` or matching runner lease |
 | POST | `/api/v1/jobs/{job_id}/retry` | `pipeline.retry` via job project |
-| GET, POST, DELETE, POST | `/api/v1/runners`, `/api/v1/runners`, `/api/v1/runners/{runner_id}`, `/api/v1/runners/{runner_id}/heartbeat` | tenant `runner.manage`; runner heartbeat only own identity |
+| GET, POST, DELETE | `/api/v1/runners`, `/api/v1/runners`, `/api/v1/runners/{runner_id}` | tenant `runner.manage`; ручная запись не подтверждает наличие процесса |
+| POST | `/api/v1/runners/{runner_id}/heartbeat` | legacy route всегда `410 Gone`; не принимает статус от оператора |
+| POST | `/api/v1/runner/heartbeat` | credential-authenticated runner protocol; runner обновляет только собственный статус |
 | GET, POST | `/api/v1/projects/{project_id}/secrets` | `secret.read_metadata` / `secret.manage` |
 | DELETE | `/api/v1/secrets/{secret_id}` | `secret.manage` via secret project |
 | GET, POST | `/api/v1/jobs/{job_id}/artifacts` | `artifact.read` / `artifact.write` or matching runner lease |

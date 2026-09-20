@@ -199,7 +199,7 @@ async fn readiness_reports_database_and_migrations() {
 }
 
 #[tokio::test]
-async fn manual_runner_registration_starts_offline_until_heartbeat() {
+async fn manual_runner_registration_cannot_forge_legacy_heartbeat() {
     let pool = test_pool().await;
     let app = authenticated_app(pool).await;
     let response = app
@@ -219,18 +219,31 @@ async fn manual_runner_registration_starts_offline_until_heartbeat() {
 
     let runner_id = created["id"].as_str().expect("runner id");
     let response = app
+        .clone()
         .oneshot(
             Request::post(format!("/api/v1/runners/{runner_id}/heartbeat"))
                 .header("content-type", "application/json")
-                .body(Body::from("{}"))
+                .body(Body::from(r#"{"status":"online"}"#))
                 .unwrap(),
         )
         .await
         .unwrap();
+    assert_eq!(response.status(), StatusCode::GONE);
+
+    let response = app
+        .oneshot(Request::get("/api/v1/runners").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    let updated = response_json(response).await;
-    assert_eq!(updated["status"], "online");
-    assert!(updated["last_seen_at"].is_string());
+    let listed = response_json(response).await;
+    let unchanged = listed
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|runner| runner["id"] == runner_id)
+        .expect("registered runner remains in inventory");
+    assert_eq!(unchanged["status"], "offline");
+    assert!(unchanged["last_seen_at"].is_null());
 }
 
 #[tokio::test]

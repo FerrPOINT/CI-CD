@@ -9,17 +9,23 @@ export type Session = {
 
 let session: Session | null = null
 
+function purgeLegacyRefreshToken(): void {
+  try {
+    window.localStorage.removeItem(LEGACY_REFRESH_KEY)
+  } catch {
+    // Storage may be unavailable in hardened browsers.
+  }
+}
+
+purgeLegacyRefreshToken()
+
 export function currentSession(): Session | null {
   return session
 }
 
 export function clearSession(): void {
   session = null
-  try {
-    window.localStorage.removeItem(LEGACY_REFRESH_KEY)
-  } catch {
-    // Storage may be unavailable in hardened browsers.
-  }
+  purgeLegacyRefreshToken()
   if (typeof document !== 'undefined') {
     document.cookie = 'forge_csrf=; Path=/; Max-Age=0; SameSite=Lax'
   }
