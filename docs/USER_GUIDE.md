@@ -236,14 +236,18 @@ Embedded runner inject-ит только объявленные `jobs.required_s
 Окружение - metadata-объект проекта с именем, URL, состоянием `available`, `stopped` или `degraded`, optional protected-флагом и числом required approvals. Запись deployment связывает окружение с `git_ref`, опционально с pipeline и статусом `pending`, `running`, `success` или `failed`.
 
 1. Откройте **Environments** (`/projects/{projectId}/environments`).
-2. Создайте окружения, например `staging` и `production`, с URL, если он известен.
-3. Для обычного окружения после выполнения deploy-job добавьте запись deployment с реальным ref и статусом.
-4. Для protected окружения создайте pending deployment-record, затем approve/reject сохранит append-only decision; после нужного числа approvals backend запускает связанный pipeline.
-5. Для rollback нажмите **Rollback** на успешной записи: Forge создаст новую deployment запись с `rollback_of_id` и не изменит исходную историю.
+2. Создайте окружения, например `staging` и `production`, с URL, если он известен. Список можно искать по имени/URL и фильтровать по состоянию.
+3. Для обычного окружения после выполнения deploy-job добавьте запись deployment с реальным ref. UI не выполняет инфраструктурный деплой этой командой; запись без protected-гейта получает статус `success` по умолчанию.
+4. Для protected окружения создайте pending deployment-record. Подтверждение или отклонение требует отдельного действия в диалоге; после нужного числа approvals backend запускает связанный pipeline.
+5. Для rollback подтвердите **Откат** на успешной записи: Forge создаст новую deployment запись с `rollback_of_id` и не изменит исходную историю.
+6. Удаление окружения удаляет и связанную историю деплоев; диалог предупреждает об этом. Ошибки загрузки и операций доступны для повтора без потери формы.
 
 > Forge не выполняет произвольную инфраструктурную оркестрацию только из создания environment/deployment. Protected approval gate и traceable rollback через pipeline уже есть как MVP; расширенные policy rules, multi-approver workflows и rollback orchestration остаются **Target approved**.
 
-![Окружения](screenshots/15-environments.png)
+![Окружения, десктоп](screenshots/2026-09-20-environments/1920-dark.png)
+
+Мобильный вид: [375 px, история деплоев](screenshots/2026-09-20-environments/375-light-expanded.png).
+Скриншоты используют синтетические метаданные, не данные рабочего инстанса.
 
 ## 8. Расписания, webhooks и уведомления
 
