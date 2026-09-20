@@ -104,7 +104,7 @@ const routeCases = [
   { entry: `/projects/${projectId}/environments`, marker: 'https://prod.example.com' },
   { entry: `/projects/${projectId}/schedules`, marker: '0 4 * * 1' },
   { entry: `/projects/${projectId}/webhooks`, marker: 'Pipeline failed' },
-  { entry: `/projects/${projectId}/reports`, marker: '75.0%' },
+  { entry: `/projects/${projectId}/reports`, marker: '75,0' },
   { entry: '/audit-log', marker: 'project.created' },
   { entry: '/users', marker: 'Открыть пользователей' },
   { entry: '/login', marker: 'Войти через SDLC' },

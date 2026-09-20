@@ -399,9 +399,21 @@
     "totalPipelines": "Total pipelines",
     "successful": "Successful",
     "failed": "Failed",
+    "other": "Other statuses",
     "successRate": "Success rate",
     "avgDuration": "Avg. duration",
-    "noData": "No pipeline data yet."
+    "allTime": "All time",
+    "rateScope": "Among runs with a final status: success, failed, or canceled.",
+    "durationScope": "Runs with both start and finish times.",
+    "statusDistribution": "Distribution of all runs",
+    "distribution": "Successful: {{successful}}, failed: {{failed}}, other: {{other}}",
+    "seconds": "s",
+    "minutes": "min",
+    "hours": "h",
+    "openPipelines": "Open runs",
+    "loadFailed": "Could not load the report.",
+    "noData": "No runs yet.",
+    "emptyHint": "Open project runs to start the first pipeline."
   },
   "auditLog": {
     "title": "Audit Log",
