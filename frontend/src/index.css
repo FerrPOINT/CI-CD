@@ -4,10 +4,16 @@
 
 @theme {
   --color-accent-foreground: #000000;
+  --color-danger-strong: #f87171;
 }
 
 [data-theme='gray'] {
   --color-accent-foreground: #000000;
+  --color-danger-strong: #fca5a5;
+}
+
+[data-theme='light'] {
+  --color-danger-strong: #b91c1c;
 }
 
 body {
