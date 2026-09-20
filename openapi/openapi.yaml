@@ -3805,11 +3805,14 @@ components:
       - status
       - additions
       - deletions
+      - binary
       properties:
         additions:
           type: integer
           format: int32
           minimum: 0
+        binary:
+          type: boolean
         deletions:
           type: integer
           format: int32

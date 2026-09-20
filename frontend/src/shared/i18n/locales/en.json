@@ -124,10 +124,15 @@
     "binaryFile": "Binary file — preview unavailable"
   },
   "compare": {
-    "title": "Compare branches",
-    "sourceBranch": "Source branch",
-    "targetBranch": "Target branch",
+    "title": "Compare revisions",
+    "baseRef": "Base branch or tag",
+    "headRef": "Compare branch or tag",
     "compareAction": "Compare",
+    "chooseRefs": "Choose two refs to compare.",
+    "refsMustDiffer": "Base and compare refs must differ.",
+    "loadingRefs": "Loading repository refs…",
+    "refsUnavailable": "Ref suggestions are unavailable. You can enter names manually.",
+    "binaryFile": "Binary file",
     "mergeBase": "Merge base",
     "filesChanged": "Files changed",
     "path": "Path",

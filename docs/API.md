@@ -1368,7 +1368,7 @@ Runner protocol обслуживается на `/api/v1/runner/*` и не ис�
 | DELETE | `/repositories/{name}` | Удаление repository и bare storage |
 | GET | `/repos/{repo}/refs` | Branch/tag refs с SHA |
 | GET | `/repos/{repo}/commits?branch=&limit=` | Commit history; default 50, maximum 200 |
-| GET | `/repos/{repo}/compare?from=&to=` | Merge-base, file stats и unified patch |
+| GET | `/repos/{repo}/compare?from=&to=` | Merge-base для базового `from` и сравниваемого `to`, file stats (`status`, `additions`, `deletions`, `binary`) и unified patch от merge-base к `to` |
 | GET/POST | `/repos/{repo}/pulls` | Список / создание pull request |
 | POST | `/repos/{repo}/pulls/{number}/action` | `{action:"merge"|"close"|"reopen"}` |
 | GET | `/git/{repo}/info/refs?service=git-upload-pack` | Git Smart HTTP discovery |
