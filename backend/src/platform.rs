@@ -1938,9 +1938,10 @@ async fn replace_notifications(
     Json(inputs): Json<Vec<NotificationInput>>,
 ) -> ApiResult<Vec<Notification>> {
     let db = pool(&state)?;
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
     sqlx::query("DELETE FROM notification_configs WHERE project_id = $1")
         .bind(project_id)
-        .execute(db)
+        .execute(&mut *tx)
         .await
         .map_err(ApiError::internal)?;
     for input in inputs {
@@ -2006,10 +2007,11 @@ async fn replace_notifications(
             .bind(quiet_end)
             .bind(&quiet_action)
             .bind(input.quiet_bypass_statuses.clone().unwrap_or_else(|| vec!["failed".to_string()]))
-            .execute(db)
+            .execute(&mut *tx)
             .await
             .map_err(ApiError::internal)?;
     }
+    tx.commit().await.map_err(ApiError::internal)?;
     list_notifications(State(state), Path(project_id)).await
 }
 

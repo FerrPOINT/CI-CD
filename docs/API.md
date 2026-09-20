@@ -1171,7 +1171,7 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 | Метод | Путь | Назначение |
 |---|---|---|
 | GET | `/projects/{project_id}/notifications` | Список каналов уведомлений |
-| PUT | `/projects/{project_id}/notifications` | Заменить все каналы (array) |
+| PUT | `/projects/{project_id}/notifications` | Атомарно заменить все каналы (array): при ошибке валидации или записи прежняя конфигурация сохраняется |
 | GET | `/projects/{project_id}/notification-events?limit=` | Последние local notification events проекта |
 | GET | `/projects/{project_id}/notifications/stream` | SSE stream новых local notification events |
 
