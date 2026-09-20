@@ -51,6 +51,7 @@ export const appRoutes = [
       { path: '/settings', element: withSuspense(<SettingsPage />) },
       { path: '/runners', element: withSuspense(<RunnersPage />) },
       { path: '/projects/:projectId/secrets', element: withSuspense(<SecretsPage />) },
+      // Preserve old bookmarks; membership mutations are unavailable in Central Auth mode.
       { path: '/projects/:projectId/members', element: <Navigate to="/projects" replace /> },
       { path: '/jobs/:jobId/artifacts', element: withSuspense(<ArtifactsPage />) },
       { path: '/projects/:projectId/environments', element: withSuspense(<EnvironmentsPage />) },

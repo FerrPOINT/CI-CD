@@ -99,7 +99,6 @@ const routeCases = [
   { entry: '/settings', marker: 'CICD_RUNNER_REGISTRATION_TOKEN' },
   { entry: '/runners', marker: 'linux-runner-1' },
   { entry: `/projects/${projectId}/secrets`, marker: 'DEPLOY_TOKEN' },
-  { entry: `/projects/${projectId}/members`, marker: 'forge-api' },
   { entry: `/jobs/${jobId}/artifacts`, marker: 'app.tar.gz' },
   { entry: `/projects/${projectId}/environments`, marker: 'https://prod.example.com' },
   { entry: `/projects/${projectId}/schedules`, marker: '0 4 * * 1' },
@@ -122,6 +121,12 @@ describe('app router smoke', () => {
   it.each(routeCases)('renders $entry', async ({ entry, marker }) => {
     renderRoute(entry)
     await expectText(marker)
+  })
+
+  it('redirects an old project-members link to Projects', async () => {
+    const router = renderRoute(`/projects/${projectId}/members`)
+    await waitFor(() => expect(router.state.location.pathname).toBe('/projects'))
+    await expectText('forge-api')
   })
 })
 
@@ -146,6 +151,7 @@ function renderRoute(entry: string) {
       </ThemeProvider>
     </QueryClientProvider>,
   )
+  return router
 }
 
 function installLocalStorage() {

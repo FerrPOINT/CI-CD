@@ -20,23 +20,25 @@ Forge CI/CD - self-hosted control plane для Git-репозиториев и C
 | Секреты проекта | **Current verified** | AES-256-GCM at rest; embedded runner передаёт их в env и маскирует значения в stdout/stderr logs. |
 | Окружения и записи деплоев | **Current verified** | Метаданные окружения и история деплоев; выполнение деплоя определяется job. |
 | Отчёты и аудит | **Current verified** | Сводка по проекту и последние 200 событий аудита. |
-| Пользователи, участники проектов и API-токены | **Current verified MVP** | Хранение, argon2id credentials, session-bound access JWT, sessions, PAT enforcement и project memberships при `CICD_AUTH_SECRET`. |
+| Пользователи и личные токены | **Current verified** | В центральном режиме ими управляет Admin Panel; страница `/users` в CI/CD ведёт туда. Локальное управление участниками проекта в Dashboard недоступно. |
 | Расписания и outgoing webhooks | **Current verified MVP** | Worker запускает enabled schedules по строгому 5-польному UTC cron и доставляет terminal pipeline webhooks с basic retry. |
 | Уведомления (`in_app`/`sse`) | **Current verified MVP** | Каналы показывают terminal pipeline events в Dashboard history/stream. |
 | Email/Slack adapters и inbound provider webhooks | **Target approved** | Внешние уведомления и public provider webhook handlers ещё не исполняют доставку. |
-| Вход, сессии, RBAC | **Current verified conditional** | `/login` работает при непустом `CICD_AUTH_SECRET`; project-owned API проверяет active session, текущую роль и membership, без секрета API и Dashboard остаются trusted-network/open. |
+| Вход, сессии, RBAC | **Current verified** | Dashboard использует Central Auth SSO с PKCE; backend проверяет центральный токен при настроенном `CICD_AUTH__CENTRAL_JWKS_URI`. Локальный password login остаётся только в legacy API. |
 
-> **Безопасность:** для общего окружения задайте `CICD_AUTH_SECRET`, закройте API/Dashboard reverse proxy или сетью и не запускайте Git endpoint в trusted-local режиме без `CICD_AUTH_SECRET`/`CICD_GIT_TOKEN`; обязательно замените dev-значение `CICD_GIT_INTERNAL_TOKEN`.
+> **Безопасность:** для общего окружения настройте Central Auth/JWKS по [ENV](ENV.md), закройте API/Dashboard reverse proxy или сетью и не запускайте Git endpoint в trusted-local режиме; обязательно замените dev-значение `CICD_GIT_INTERNAL_TOKEN`.
 
 ![Дашборд](screenshots/02-dashboard.png)
 
 ## 2. Вход
 
-**Статус процедуры: Current verified conditional.**
+**Статус процедуры: Current verified.**
 
-1. Откройте `/login`.
-2. Если backend запущен с `CICD_AUTH_SECRET`, форма отправляет `POST /api/v1/auth/login`, держит access token в памяти, получает refresh session через HttpOnly cookie + CSRF companion cookie и переводит в Dashboard.
-3. Если `CICD_AUTH_SECRET` не задан или пустой, backend не требует principal, а UI не будет воспринимать `/login` как boundary доступа. Для shared-инстанса задайте секрет и закройте сервис reverse proxy/сетью.
+1. Откройте Dashboard. Если сессии нет, `/login` перенаправит в Central Auth.
+2. Войдите в центральную учётную запись. После Authorization Code + PKCE callback вернёт вас на исходную страницу CI/CD.
+3. Access token хранится только в памяти. После обновления страницы Dashboard повторно проходит SSO через центральную browser-сессию; локальной формы пароля и локального refresh cookie в текущем UI нет.
+
+Локальные `/api/v1/auth/login|refresh` остаются для legacy backend-режима, но при настроенном `CICD_AUTH__CENTRAL_JWKS_URI` они не используются и не открывают вход в Dashboard.
 
 
 ## 3. Создание проекта
@@ -74,18 +76,11 @@ curl -fsS -X POST http://127.0.0.1:22801/api/v1/projects \
 
 ### Участники проекта
 
-**Статус процедуры: Current verified MVP.**
+**Статус процедуры: в текущем Dashboard управление недоступно.**
 
-При включённом `CICD_AUTH_SECRET` список проектов фильтруется по `project_memberships`: `admin` видит всё, остальные пользователи видят только назначенные проекты. Эффективные права ограничены и глобальной ролью пользователя, и ролью в проекте.
+Ссылка `/projects/:projectId/members` перенаправляет на **Projects**; отдельной формы назначения участников в CI/CD нет. При настроенном `CICD_AUTH__CENTRAL_JWKS_URI` запись и удаление `project_memberships` через API возвращают `403`. Не используйте старую инструкцию по назначению `maintainer`, `developer` и `viewer` через Dashboard или CLI в центральном режиме. Для изменения доступа обратитесь к администратору платформы; backend-политика доступа описана в [API](API.md).
 
-1. Откройте **Projects** и выберите **Members** у нужного проекта.
-2. Назначьте пользователю роль `maintainer`, `developer` или `viewer`.
-3. Используйте `maintainer` для управления участниками и секретами проекта; `developer` — для запуска и изменения рабочих ресурсов; `viewer` — для чтения.
-4. Удаляйте ненужные memberships через список. Последнего maintainer удалить нельзя.
-
-Tenant isolation, service-account tokens, tenant-bound Git mapping и scoped Git credentials остаются **Target approved**; scoped PAT, session-bound access invalidation, browser refresh cookie + CSRF, refresh logout/revoke, session-family reuse revocation и Git Smart HTTP read/write checks по linked repository URL уже выполняются сервером.
-
-![Участники проекта](screenshots/40-project-members.png)
+В legacy backend-режиме без central JWKS endpoints memberships остаются доступными согласно его RBAC. Это не возвращает форму в текущий Dashboard.
 
 ## 4. Push в репозиторий и авто-триггер pipeline
 
@@ -320,38 +315,23 @@ Embedded runner inject-ит только объявленные `jobs.required_s
 
 ![Журнал аудита](screenshots/19-audit-log.png)
 
-## 11. Пользователи и API-токены
+## 11. Пользователи и личные токены
 
-### Пользователи и роли
+**Статус процедуры: Current verified для Central Auth.**
 
-**Статус процедуры: Current verified.**
+1. Откройте **Users** (`/users`) в CI/CD.
+2. Перейдите по кнопке **Открыть пользователей** в Admin Panel. Там управляются центральные учётные записи и личные API-токены.
+3. Вернитесь в CI/CD. При действующей центральной сессии повторный ввод пароля не требуется.
 
-1. Откройте **Users** (`/users`).
-2. Создайте пользователя с username, ролью `admin`, `maintainer`, `developer` или `viewer`; для интерактивного входа сразу укажите пароль.
-3. Включайте или отключайте пользователя через action в таблице; отключённый пользователь не проходит login/refresh/access-session checks.
-4. Роль ограничивает API только когда backend запущен с `CICD_AUTH_SECRET`; без него действует trusted-network режим.
+В режиме `CICD_AUTH__CENTRAL_JWKS_URI` страница `/users` только направляет в Admin Panel. Локальные `POST/PATCH /users`, endpoints локальных API-токенов и `POST/DELETE` memberships отвечают `403`; отдельной формы для этих операций в текущем Dashboard нет. Локальные пароли, refresh sessions и project-scoped PAT относятся к legacy backend-режиму без central JWKS, а не к этому пользовательскому сценарию.
 
-Пароли хранятся как `argon2id` credentials и не возвращаются через API. После перезагрузки Dashboard сначала пытается восстановить access session через HttpOnly refresh cookie + CSRF companion cookie и только затем отправляет пользователя на `/login`. Project membership, scoped PAT, session-bound access invalidation, browser refresh cookie + CSRF, refresh logout/revoke и session-family reuse revocation уже используются при включённом `CICD_AUTH_SECRET`; tenant boundary и service-account tokens относятся к **Target approved**.
-
-### API-токены
-
-**Статус процедуры: Current verified.**
-
-1. На странице **Users** создайте токен, укажите понятное имя, проект, срок действия и нужные scopes.
-2. Скопируйте значение немедленно в password manager или secret manager: API показывает полное значение только один раз.
-3. Для REST-клиентов выдавайте `api:read` и только при необходимости `api:write`; для Git clone/fetch нужен `git:read`, для push — `git:write`.
-4. В дальнейшем сверяйте только hint, project binding, scopes, expiry и last-used в списке токенов.
-5. Отзовите токен через UI или `DELETE /api/v1/api-tokens/{token_id}`, если владелец/интеграция больше не нуждается в нём.
-
-Токены хранятся как SHA-256 hash и проверяются как Bearer PAT только при включённом `CICD_AUTH_SECRET`. Новые PAT в auth-mode обязаны иметь `project_id`, scopes и expiry; старые записи без `project_id` остаются legacy global до отзыва. Pepper/HMAC storage, service-account tokens, rotation policy и tenant permissions - **Target approved**.
-
-![Пользователи и API-токены](screenshots/20-users.png)
+![Переход в Admin Panel](screenshots/20-users.png)
 
 ## 12. CLI-команды
 
 **Статус процедуры: Current verified.**
 
-CLI `cicd-cli` работает только через HTTP API и покрывает основные runtime и platform операции: projects, pipelines, jobs/logs/attempts, runners, secrets, artifacts, environments/deployments, schedules, webhooks/outbox, notifications, reports, audit, users, project members и API tokens. Соберите его из корня репозитория, если binary ещё отсутствует:
+CLI `cicd-cli` работает только через HTTP API и покрывает основные runtime и platform операции: projects, pipelines, jobs/logs/attempts, runners, secrets, artifacts, environments/deployments, schedules, webhooks/outbox, notifications, reports и audit. Команды локального управления users/members/API tokens относятся к legacy backend-режиму и возвращают `403` при центральной авторизации. Соберите CLI из корня репозитория, если binary ещё отсутствует:
 
 ```bash
 docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" -w /workspace \
@@ -359,7 +339,7 @@ docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" -w /workspac
   -lc '/usr/local/cargo/bin/cargo build -p cicd-cli'
 
 export CICD_API_URL=http://127.0.0.1:22801
-export CICD_API_TOKEN="$TOKEN"   # нужен только при включённом CICD_AUTH_SECRET
+export CICD_API_TOKEN="$TOKEN"   # bearer token для защищённого API
 export CICD_CLI="$PWD/backend/target/debug/cicd-cli"
 ```
 
@@ -385,7 +365,7 @@ export CICD_CLI="$PWD/backend/target/debug/cicd-cli"
 | Webhooks/outbox | `$CICD_CLI webhook create --project <PROJECT_UUID> --url https://example.com/hook --event pipeline.finished`; `$CICD_CLI outbox requeue --id <DELIVERY_UUID>` |
 | Notifications | `$CICD_CLI notification replace --project <PROJECT_UUID> --config in_app=dashboard`; `$CICD_CLI notification events --project <PROJECT_UUID> --limit 50` |
 | Reports/audit | `$CICD_CLI report summary --project <PROJECT_UUID>`; `$CICD_CLI audit list` |
-| Users/members/tokens | `$CICD_CLI user list`; `$CICD_CLI member upsert --project <PROJECT_UUID> --user <USER_UUID> --role developer`; `$CICD_CLI token create --name deploy-bot --user <USER_UUID> --project <PROJECT_UUID> --scope api:read --expires-in-days 30` |
+| Центральный каталог пользователей | `$CICD_CLI user list` с авторизованным bearer token; изменение пользователей, memberships и локальных токенов в центральном режиме недоступно |
 
 Глобальные флаги `--token`, `--timeout-seconds`, `--output json|table`, `--api-url` и env-переменные `CICD_API_TOKEN`, `CICD_TIMEOUT_SECONDS`, `CICD_OUTPUT`, `CICD_API_URL` описаны в [CLI](CLI.md). Real-API smoke gate для CLI уже входит в CI и покрывает protected API JWT/PAT auth-mode, RBAC denial и project-scoped read-only PAT; CLI profiles (`config.toml`), shell completion and NDJSON are current; OS keyring, YAML output, request tracing and extended token redaction fixtures remain **Target approved**.
 
@@ -445,7 +425,7 @@ curl -fsS -X POST "http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines"
 
 **Статус процедуры: Current verified.**
 
-Проверьте, задан ли непустой `CICD_AUTH_SECRET`. Без него API и Dashboard намеренно работают в trusted-network режиме; с ним JWT/scoped PAT, глобальные роли, project memberships и Git Smart HTTP read/write checks применяются middleware. Tenant isolation, service-account tokens и scoped Git credentials пока target, поэтому shared-доступ всё равно закрывайте reverse proxy/сетью.
+Для текущего Dashboard проверьте конфигурацию Central Auth/JWKS и действующую центральную сессию. При `CICD_AUTH__CENTRAL_JWKS_URI` локальные mutations users, memberships и API-токенов закрыты, поэтому их нельзя проверить старым локальным сценарием. `CICD_AUTH_SECRET` и локальные PAT относятся к legacy backend-режиму; shared-доступ всё равно закрывайте reverse proxy/сетью.
 
 ## Связанные документы
 

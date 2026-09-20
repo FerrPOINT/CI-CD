@@ -309,7 +309,6 @@ export interface AuditEvent {
 }
 
 export type UserRole = 'admin' | 'maintainer' | 'developer' | 'viewer'
-export type ProjectRole = 'maintainer' | 'developer' | 'viewer'
 
 export interface User {
   id: string
@@ -350,5 +349,3 @@ export interface CreateApiTokenInput {
   scopes?: string[]
   expires_in_days?: number
 }
-
-export type ProjectMembership = components['schemas']['ProjectMembership']
