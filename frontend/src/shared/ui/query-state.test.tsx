@@ -46,6 +46,7 @@ describe('QueryState', () => {
           data={undefined}
           isLoading={false}
           error={new ApiError({ kind: 'api', status: 403, message: 'forbidden' })}
+          errorMessage="Could not load"
         >
           {() => <div>data</div>}
         </QueryState>
@@ -58,12 +59,12 @@ describe('QueryState', () => {
   it('[REQ-UI-002] offers retry for recoverable load failures', () => {
     const retry = vi.fn()
     render(
-      <QueryState data={undefined} isLoading={false} error={new Error('offline')} onRetry={retry}>
+      <QueryState data={undefined} isLoading={false} error={new Error('offline')} errorMessage="Could not load" onRetry={retry}>
         {() => <div>data</div>}
       </QueryState>,
     )
 
-    expect(screen.getByRole('alert')).toHaveTextContent('offline')
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not load')
     fireEvent.click(screen.getByRole('button', { name: 'common.retry' }))
     expect(retry).toHaveBeenCalledOnce()
   })
