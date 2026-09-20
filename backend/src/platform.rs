@@ -219,7 +219,7 @@ async fn register_runner(
     if input.name.trim().is_empty() {
         return Err(ApiError::bad_request("runner name is required"));
     }
-    let runner = sqlx::query_as::<_, Runner>("INSERT INTO runners (id, name, tags, status, last_seen_at) VALUES ($1, $2, $3, 'online', now()) RETURNING id, name, tags, status, last_seen_at, created_at")
+    let runner = sqlx::query_as::<_, Runner>("INSERT INTO runners (id, name, tags) VALUES ($1, $2, $3) RETURNING id, name, tags, status, last_seen_at, created_at")
         .bind(Uuid::new_v4()).bind(input.name.trim()).bind(input.tags).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?;
     audit(
         pool(&state)?,

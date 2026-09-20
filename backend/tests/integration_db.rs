@@ -199,6 +199,41 @@ async fn readiness_reports_database_and_migrations() {
 }
 
 #[tokio::test]
+async fn manual_runner_registration_starts_offline_until_heartbeat() {
+    let pool = test_pool().await;
+    let app = authenticated_app(pool).await;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/runners")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"name":"inventory-qa","tags":["linux"]}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let created = response_json(response).await;
+    assert_eq!(created["status"], "offline");
+    assert!(created["last_seen_at"].is_null());
+
+    let runner_id = created["id"].as_str().expect("runner id");
+    let response = app
+        .oneshot(
+            Request::post(format!("/api/v1/runners/{runner_id}/heartbeat"))
+                .header("content-type", "application/json")
+                .body(Body::from("{}"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let updated = response_json(response).await;
+    assert_eq!(updated["status"], "online");
+    assert!(updated["last_seen_at"].is_string());
+}
+
+#[tokio::test]
 async fn authenticated_requests_reach_body_and_header_validation() {
     let pool = test_pool().await;
     let user_id = Uuid::new_v4();

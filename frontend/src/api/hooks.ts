@@ -407,7 +407,7 @@ function browserNotificationStreamEnabled(): boolean {
 }
 
 export function useRunners() {
-  return useQuery({ queryKey: PLATFORM_KEYS.runners, queryFn: () => api<Runner[]>('/runners') })
+  return useQuery({ queryKey: PLATFORM_KEYS.runners, queryFn: () => api<Runner[]>('/runners'), refetchInterval: 30_000 })
 }
 
 export function useRegisterRunner() {
