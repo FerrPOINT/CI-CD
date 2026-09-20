@@ -12,6 +12,7 @@ export function QueryState<T>({
   data,
   isLoading,
   error,
+  errorMessage,
   isEmpty,
   empty,
   onRetry,
@@ -20,6 +21,7 @@ export function QueryState<T>({
   data: T | undefined
   isLoading: boolean
   error: unknown
+  errorMessage?: string
   isEmpty?: (data: T) => boolean
   empty?: { title?: string; description?: string }
   onRetry?: () => void
@@ -52,7 +54,7 @@ export function QueryState<T>({
         role="alert"
       >
         <span>
-          {error instanceof Error ? error.message : t('errors.unknown', 'Неизвестная ошибка')}
+          {errorMessage ?? (error instanceof Error ? error.message : t('errors.unknown', 'Неизвестная ошибка'))}
         </span>
         {onRetry && (
           <Button
