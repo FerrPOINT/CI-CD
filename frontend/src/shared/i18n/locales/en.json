@@ -320,8 +320,6 @@
   },
   "environments": {
     "title": "Environments",
-    "capabilityTitle": "Environments and delivery history",
-    "capabilityDescription": "Environment metadata, deployment records, protected approvals, and rollback through a separate pipeline record are available. Richer policy rules and rollback orchestration remain future work.",
     "create": "Create environment",
     "name": "Name",
     "url": "URL",

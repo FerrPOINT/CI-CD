@@ -6,7 +6,6 @@ import { toast } from 'sonner'
 import { useCreateDeployment, useCreateEnvironment, useDeleteEnvironment, useDeployments, useEnvironments, useRecordDeploymentApproval, useRollbackDeployment } from '@/api/hooks'
 import type { Deployment, Environment, EnvironmentStatus } from '@/api/types'
 import { Button, Input, Label } from '@sdlc/ui/ui'
-import { CapabilityCallout } from '@/shared/ui/capability-callout'
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
 import { QueryState } from '@/shared/ui/query-state'
 
@@ -81,8 +80,6 @@ export function EnvironmentsPage() {
           <Plus className="h-4 w-4" aria-hidden />{t('environments.create')}
         </Button>
       </header>
-
-      <CapabilityCallout tone="mvp" title={t('environments.capabilityTitle')} label={t('capability.currentMvp')} description={t('environments.capabilityDescription')} />
 
       {showForm && (
         <form onSubmit={createEnvironment} className="grid gap-3 border-y border-border py-4 sm:grid-cols-2">
