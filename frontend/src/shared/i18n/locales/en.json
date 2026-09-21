@@ -425,6 +425,7 @@
   },
   "webhooks": {
     "title": "Webhooks",
+    "pageTitle": "Event delivery",
     "capabilityTitle": "Outgoing webhooks MVP",
     "capabilityDescription": "Terminal pipeline events are delivered through the outbox with basic retry, HMAC, and observable history. Full replay/dead-letter policies remain target.",
     "create": "Add webhook",
@@ -436,6 +437,8 @@
     "created": "Webhook created",
     "deleted": "Webhook deleted",
     "deleteConfirm": "Delete webhook",
+    "deleteFailed": "Could not delete the webhook. Try again.",
+    "loadFailed": "Could not load webhooks.",
     "empty": "No webhooks configured."
   },
   "deliveries": {
@@ -455,6 +458,9 @@
     "error": "Error",
     "requeue": "Requeue",
     "requeued": "Delivery requeued",
+    "openDetails": "Open attempts for {{event}} · {{id}}",
+    "loadFailed": "Could not load delivery history.",
+    "detailFailed": "Could not load delivery details.",
     "pending": "Pending",
     "retryScheduled": "Retry",
     "delivered": "Delivered",
@@ -482,7 +488,8 @@
     "delivered": "Delivered",
     "pending": "Pending",
     "failed": "Failed",
-    "noEvents": "No notification events yet."
+    "noEvents": "No notification events yet.",
+    "eventsFailed": "Could not load notification events."
   },
   "reports": {
     "title": "Reports",

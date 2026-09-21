@@ -269,26 +269,28 @@ Embedded runner inject-ит только объявленные `jobs.required_s
 
 **Статус процедуры: Current verified MVP.**
 
-1. Откройте **Webhooks** (`/projects/{projectId}/webhooks`).
+1. Откройте **Webhooks** (`/projects/{projectId}/webhooks`): настройки, история доставок и уведомления находятся на отдельных вкладках.
 2. Укажите HTTPS URL получателя, список событий и enabled.
 3. Сохраните конфигурацию и документируйте владельца получателя.
-4. Worker создаёт outbox-message на terminal pipeline event и отправляет JSON в enabled webhook. Если задан secret, добавляется HMAC header; retry/backoff и история attempts доступны на этой же странице.
-5. Failed delivery можно явно поставить в повтор кнопкой **Повторить**; backend создаёт новую generation и не переписывает исходную историю.
+4. Worker создаёт outbox-message на terminal pipeline event и отправляет JSON в enabled webhook. Если задан secret, добавляется HMAC header; retry/backoff и история attempts доступны на вкладке **История доставок**.
+5. Failed delivery можно явно поставить в повтор кнопкой **Повторить**; backend создаёт новую generation и не переписывает исходную историю. Нажмите на событие, чтобы открыть попытки доставки.
 
 ### Уведомления
 
 **Статус процедуры: Current verified MVP для `in_app`/`sse`; Configuration only для Slack/email.**
 
-1. На странице **Webhooks** добавьте канал `in_app` с target `dashboard` или канал `sse` с понятным target.
+1. На вкладке **Уведомления** страницы **Webhooks** добавьте канал `in_app` с target `dashboard` или канал `sse` с понятным target.
 2. Завершите pipeline в `success`, `failed` или `canceled`.
-3. Проверьте историю уведомлений в таблице на странице **Webhooks** или через `GET /api/v1/projects/{project_id}/notification-events`.
+3. Проверьте историю уведомлений на этой вкладке или через `GET /api/v1/projects/{project_id}/notification-events`.
 4. Не ожидайте email или Slack-сообщение: внешние adapters ещё не реализованы.
 
 Входящие webhooks от GitHub/GitLab/Gitea также являются **Target approved**; текущий Git auto-trigger работает через локальный `post-receive` hook, а не через public inbound webhook.
 
 ![Расписания](screenshots/16-schedules.png)
 
-![Webhooks и уведомления](screenshots/17-webhooks.png)
+![Вкладка webhooks на тестовых данных](screenshots/2026-09-20-webhooks-ux/webhooks-1920.png)
+
+![История доставок на тестовых данных](screenshots/2026-09-20-webhooks-ux/deliveries-1920.png)
 
 ## 9. Отчёты
 
