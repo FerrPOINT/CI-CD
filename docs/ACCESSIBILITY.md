@@ -10,13 +10,13 @@
 
 | Мера | Evidence | Статус |
 |---|---|---|
-| Mobile overlay drawer: кнопка имеет `aria-label`, Escape закрывает drawer, focus возвращается trigger | `frontend/src/widgets/app-shell.tsx` | Current verified |
+| Mobile drawer на Radix Dialog: доступное имя, focus trap, Escape, возврат фокуса trigger | `frontend/src/widgets/app-shell.tsx`, `app-shell.test.tsx` | Current verified |
 | Confirm dialogs используют Radix AlertDialog (focus trap, semantic roles), не `window.confirm` | `frontend/src/shared/ui/confirm-dialog.tsx` | Current verified |
 | Runners/users используют cards на mobile вместо сжатых таблиц | `frontend/src/pages/runners/index.tsx`, `users/index.tsx` | Current verified |
 | Таблицы имеют `caption`/`sr-only` и column headers там, где реализовано | `runners/index.tsx` | Current verified |
 | Статусы не передаются только цветом: есть текст `Онлайн`, `Успешно`, `Открыт` | UI + `m-runners.png` | Current verified |
 | 375 px evidence для ключевых flows | `docs/assets/screens/manifest.md` | Current verified |
-| Playwright mobile drawer contract: открыть drawer, Escape закрывает, focus возвращается trigger | `frontend/e2e/critical-flows.spec.ts` | Current verified MVP |
+| Playwright mobile drawer contract: фокус остаётся внутри, Escape закрывает, focus возвращается trigger | `frontend/e2e/critical-flows.spec.ts` | Current verified MVP |
 | All-route desktop axe smoke без `serious`/`critical` violations на 20 рабочих Dashboard-страницах + `/login` | `frontend/e2e/accessibility.spec.ts`; CI job `e2e` | Current verified MVP |
 
 `min-h-9` (36 px) — текущий минимальный размер компактного элемента. Для primary mobile actions целевая норма — 44×44 CSS px; 36 px допускается только для вторичных dense-table действий с явным aria-label.
@@ -36,7 +36,7 @@
 |---|---|---|
 | axe in Playwright | Current MVP: 0 serious/critical violations на всех 21 baseline route в desktop viewport; target: theme matrix | `frontend/e2e/accessibility.spec.ts` report |
 | Lighthouse | Accessibility score ≥95 на desktop и 375px mobile | CI artifact JSON/HTML |
-| Keyboard journey | Current MVP: mobile drawer Escape/focus; target: Tab/Shift+Tab/Escape/Enter/Space работает для nav, drawer, create forms, dialogs, destructive action | Playwright scenario + manual checklist |
+| Keyboard journey | Current MVP: mobile drawer focus trap/Escape/return; target: Tab/Shift+Tab/Enter/Space для всех форм и destructive actions | Playwright scenario + manual checklist |
 | Contrast | text, controls, focus indicator проходят WCAG AA; non-text UI ≥3:1 | palette audit report |
 | Responsive | 375, 768, 1920 px без horizontal clip у critical flows | screenshots manifest + visual review |
 
@@ -49,6 +49,8 @@
 5. Формы имеют связанный `label`, required/error state и понятный текст ошибки; placeholder не заменяет label.
 6. Dialog/drawer обязаны иметь focus management, Escape close и восстановление focus; использовать Radix primitives вместо самодельного overlay.
 7. Новый маршрут или интерактивный flow добавляет a11y-case в Playwright и обновляет `TRACEABILITY.md` при затрагивании REQ-UI/NFR.
+
+Геометрия и responsive-контракт общей оболочки зафиксированы в `docs/UI_SHELL.md`.
 
 ## 6. Evidence ownership
 

@@ -1,84 +1,96 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter } from 'react-router'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { MemoryRouter, Route, Routes } from 'react-router'
 import { ThemeProvider } from '@sdlc/ui/lib'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const authMocks = vi.hoisted(() => ({
-  authRequired: vi.fn(),
-  currentSession: vi.fn(),
-  refresh: vi.fn(),
-  login: vi.fn(),
+const authState = vi.hoisted(() => ({
   logout: vi.fn(),
+  session: {
+    access_token: 'access-token',
+    expires_at: 2_000_000_000,
+    username: 'admin',
+  },
 }))
-const navigateMock = vi.hoisted(() => vi.fn())
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }))
 
-vi.mock('@/api/auth', () => authMocks)
-
-vi.mock('react-router', async () => {
-  const actual = await vi.importActual<typeof import('react-router')>('react-router')
-  return { ...actual, Outlet: () => <div>outlet</div>, useNavigate: () => navigateMock }
-})
+vi.mock('@/shared/auth/auth-provider', () => ({
+  useAuth: () => ({
+    status: 'authenticated',
+    session: authState.session,
+    logout: authState.logout,
+    acceptSso: vi.fn(),
+    invalidate: vi.fn(),
+  }),
+}))
 
 vi.mock('@sdlc/ui/ui', async () => {
-  const actual = await vi.importActual('@sdlc/ui/ui')
-  return { ...actual, ThemeToggle: () => <button>theme</button> }
+  const actual = await vi.importActual<typeof import('@sdlc/ui/ui')>('@sdlc/ui/ui')
+  return {
+    ...actual,
+    PlatformMark: () => <span aria-hidden>mark</span>,
+    ServiceSwitcher: () => <button type="button">services</button>,
+    ThemeToggle: () => <button type="button">theme</button>,
+  }
 })
 
 import { AppShell } from './app-shell'
-import { AuthProvider } from '@/shared/auth/auth-provider'
+
+function renderShell(path = '/') {
+  return render(
+    <ThemeProvider>
+      <MemoryRouter initialEntries={[path]}>
+        <Routes>
+          <Route element={<AppShell />}>
+            <Route path="*" element={<div>outlet</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>
+    </ThemeProvider>,
+  )
+}
 
 beforeEach(() => {
-  navigateMock.mockReset()
-  authMocks.authRequired.mockReset()
-  authMocks.currentSession.mockReset()
-  authMocks.refresh.mockReset()
-  authMocks.currentSession.mockReturnValue(null)
-  authMocks.refresh.mockResolvedValue(null)
-  authMocks.authRequired.mockResolvedValue(false)
+  authState.logout.mockReset()
+  authState.logout.mockResolvedValue(undefined)
 })
 
 afterEach(() => {
   cleanup()
 })
 
-describe('AppShell mobile navigation', () => {
-  it('gives the mobile drawer trigger an accessible name', () => {
-    render(
-      <ThemeProvider>
-        <AuthProvider>
-          <MemoryRouter>
-            <AppShell />
-          </MemoryRouter>
-        </AuthProvider>
-      </ThemeProvider>,
-    )
+describe('AppShell navigation', () => {
+  it('marks the parent section active on a direct nested route', () => {
+    renderShell('/repositories/platform-core/compare')
 
-    expect(screen.getByRole('button', { name: 'navigation.toggleMenu' })).toBeDefined()
-    expect(screen.getByRole('button', { name: 'navigation.toggleMenu' }).getAttribute('aria-controls')).toBe('mobile-navigation')
+    expect(screen.getByRole('link', { name: 'navigation.repositories' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('link', { name: 'navigation.dashboard' })).not.toHaveAttribute('aria-current')
   })
 
-  it('[REQ-AUTH-001] renders the logout control for an authenticated session', async () => {
-    const restoredSession = {
-      access_token: 'access-token',
-      expires_at: Math.floor(Date.now() / 1000) + 900,
-      username: 'admin',
-    }
-    authMocks.currentSession.mockReturnValue(restoredSession)
+  it('uses an accessible focus-managed mobile drawer', async () => {
+    renderShell()
+    const trigger = screen.getByRole('button', { name: 'navigation.toggleMenu' })
 
-    render(
-      <ThemeProvider>
-        <AuthProvider>
-          <MemoryRouter>
-            <AppShell />
-          </MemoryRouter>
-        </AuthProvider>
-      </ThemeProvider>,
-    )
+    fireEvent.click(trigger)
 
-    await waitFor(() => expect(screen.getByRole('button', { name: 'navigation.logout' })).toBeDefined())
+    const dialog = await screen.findByRole('dialog', { name: 'navigation.toggleMenu' })
+    expect(within(dialog).getByRole('navigation', { name: 'navigation.main' })).toBeInTheDocument()
+    expect(dialog.contains(document.activeElement)).toBe(true)
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'navigation.toggleMenu' })).not.toBeInTheDocument())
+    await waitFor(() => expect(trigger).toHaveFocus())
+  })
+
+  it('[REQ-AUTH-001] exposes the current user and signs out from the header', async () => {
+    renderShell()
+
+    expect(screen.getByLabelText('admin')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'navigation.logout' }))
+
+    await waitFor(() => expect(authState.logout).toHaveBeenCalledOnce())
   })
 })

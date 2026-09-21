@@ -1,0 +1,146 @@
+[
+  {
+    "viewport": {
+      "width": 375,
+      "height": 812
+    },
+    "theme": "light",
+    "errors": [],
+    "metrics": {
+      "horizontalOverflow": 0,
+      "headerHeight": 60,
+      "sidebarWidth": 0,
+      "mainLeft": 0,
+      "activeSettings": "page",
+      "smallControls": [],
+      "unlabeledButtons": 0
+    }
+  },
+  {
+    "drawer": {
+      "width": 320,
+      "focusInsideBefore": true,
+      "focusInsideAfter": true,
+      "focusReturned": true
+    }
+  },
+  {
+    "viewport": {
+      "width": 375,
+      "height": 812
+    },
+    "theme": "dark",
+    "errors": [],
+    "metrics": {
+      "horizontalOverflow": 0,
+      "headerHeight": 60,
+      "sidebarWidth": 0,
+      "mainLeft": 0,
+      "activeSettings": "page",
+      "smallControls": [],
+      "unlabeledButtons": 0
+    }
+  },
+  {
+    "viewport": {
+      "width": 768,
+      "height": 900
+    },
+    "theme": "light",
+    "errors": [],
+    "metrics": {
+      "horizontalOverflow": 0,
+      "headerHeight": 60,
+      "sidebarWidth": 72,
+      "mainLeft": 72,
+      "activeSettings": "page",
+      "smallControls": [],
+      "unlabeledButtons": 0
+    }
+  },
+  {
+    "viewport": {
+      "width": 768,
+      "height": 900
+    },
+    "theme": "dark",
+    "errors": [],
+    "metrics": {
+      "horizontalOverflow": 0,
+      "headerHeight": 60,
+      "sidebarWidth": 72,
+      "mainLeft": 72,
+      "activeSettings": "page",
+      "smallControls": [],
+      "unlabeledButtons": 0
+    }
+  },
+  {
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "theme": "light",
+    "errors": [],
+    "metrics": {
+      "horizontalOverflow": 0,
+      "headerHeight": 60,
+      "sidebarWidth": 264,
+      "mainLeft": 264,
+      "activeSettings": "page",
+      "smallControls": [],
+      "unlabeledButtons": 0
+    }
+  },
+  {
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "theme": "dark",
+    "errors": [],
+    "metrics": {
+      "horizontalOverflow": 0,
+      "headerHeight": 60,
+      "sidebarWidth": 264,
+      "mainLeft": 264,
+      "activeSettings": "page",
+      "smallControls": [],
+      "unlabeledButtons": 0
+    }
+  },
+  {
+    "viewport": {
+      "width": 2560,
+      "height": 1200
+    },
+    "theme": "light",
+    "errors": [],
+    "metrics": {
+      "horizontalOverflow": 0,
+      "headerHeight": 60,
+      "sidebarWidth": 264,
+      "mainLeft": 264,
+      "activeSettings": "page",
+      "smallControls": [],
+      "unlabeledButtons": 0
+    }
+  },
+  {
+    "viewport": {
+      "width": 2560,
+      "height": 1200
+    },
+    "theme": "dark",
+    "errors": [],
+    "metrics": {
+      "horizontalOverflow": 0,
+      "headerHeight": 60,
+      "sidebarWidth": 264,
+      "mainLeft": 264,
+      "activeSettings": "page",
+      "smallControls": [],
+      "unlabeledButtons": 0
+    }
+  }
+]

@@ -1,8 +1,10 @@
 {
   "app": {
-    "name": "Forge CI/CD"
+    "name": "Forge CI/CD",
+    "subtitle": "Платформа сборки и доставки"
   },
   "navigation": {
+    "main": "Основная навигация",
     "dashboard": "Дашборд",
     "projects": "Проекты",
     "pipelines": "Пайплайны",
@@ -13,7 +15,8 @@
     "auditLog": "Журнал аудита",
     "create": "Создать",
     "toggleMenu": "Переключить меню",
-    "logout": "Выйти"
+    "logout": "Выйти",
+    "profileFallback": "Пользователь"
   },
   "projects": {
     "title": "Проекты",
