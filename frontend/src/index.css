@@ -19,6 +19,16 @@
   --color-danger-strong: #b91c1c;
 }
 
+[data-sonner-toast][data-styled='true'] {
+  background-color: var(--color-popover) !important;
+  border-color: var(--color-border-strong) !important;
+  color: var(--color-popover-foreground) !important;
+}
+
+[data-sonner-toast][data-styled='true'] [data-description] {
+  color: var(--color-text-secondary) !important;
+}
+
 body {
   background-color: var(--color-background);
   color: var(--color-text-primary);
