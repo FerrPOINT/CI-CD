@@ -1,0 +1,117 @@
+{
+  "results": [
+    {
+      "label": "list dark 320",
+      "width": 320,
+      "scrollWidth": 320,
+      "smallTargets": [],
+      "serious": [],
+      "screenshot": "list-320.png"
+    },
+    {
+      "label": "list dark 375",
+      "width": 375,
+      "scrollWidth": 375,
+      "smallTargets": [],
+      "serious": [],
+      "screenshot": "list-375.png"
+    },
+    {
+      "label": "list dark 768",
+      "width": 768,
+      "scrollWidth": 768,
+      "smallTargets": [],
+      "serious": [],
+      "screenshot": "list-768.png"
+    },
+    {
+      "label": "list dark 1280",
+      "width": 1280,
+      "scrollWidth": 1280,
+      "smallTargets": [],
+      "serious": [],
+      "screenshot": "list-1280.png"
+    },
+    {
+      "label": "list dark 1920",
+      "width": 1920,
+      "scrollWidth": 1920,
+      "smallTargets": [],
+      "serious": [],
+      "screenshot": "list-1920.png"
+    },
+    {
+      "label": "list dark 2560",
+      "width": 2560,
+      "scrollWidth": 2560,
+      "smallTargets": [],
+      "serious": [],
+      "screenshot": "list-2560.png"
+    },
+    {
+      "label": "list light 375",
+      "width": 375,
+      "scrollWidth": 375,
+      "smallTargets": [],
+      "serious": [],
+      "screenshot": "list-light-375.png"
+    },
+    {
+      "label": "list gray 375",
+      "width": 375,
+      "scrollWidth": 375,
+      "smallTargets": [],
+      "serious": [],
+      "screenshot": "list-gray-375.png"
+    },
+    {
+      "label": "edit dark 375",
+      "width": 375,
+      "scrollWidth": 375,
+      "smallTargets": [],
+      "serious": [],
+      "screenshot": "edit-375.png"
+    },
+    {
+      "label": "create dark 375",
+      "width": 375,
+      "scrollWidth": 375,
+      "smallTargets": [],
+      "serious": [],
+      "screenshot": "create-375.png"
+    },
+    {
+      "label": "delete error dark 375",
+      "width": 375,
+      "scrollWidth": 375,
+      "smallTargets": [],
+      "serious": [],
+      "screenshot": "delete-error-375.png"
+    },
+    {
+      "label": "delete error dark 320",
+      "width": 320,
+      "scrollWidth": 320,
+      "smallTargets": [],
+      "serious": [],
+      "screenshot": "delete-error-dark-320.png"
+    },
+    {
+      "label": "delete error light 375",
+      "width": 375,
+      "scrollWidth": 375,
+      "smallTargets": [],
+      "serious": [],
+      "screenshot": "delete-error-light-375.png"
+    },
+    {
+      "label": "delete error gray 375",
+      "width": 375,
+      "scrollWidth": 375,
+      "smallTargets": [],
+      "serious": [],
+      "screenshot": "delete-error-gray-375.png"
+    }
+  ],
+  "errors": []
+}

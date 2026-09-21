@@ -12,7 +12,7 @@ import { Activity, RotateCcw, Webhook, Plus, Trash2, Bell } from 'lucide-react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
 import { QueryState } from '@/shared/ui/query-state'
-import type { OutboxDelivery, Webhook as WebhookType } from '@/api/types'
+import type { NotificationConfig, NotificationInput, OutboxDelivery, Webhook as WebhookType } from '@/api/types'
 
 export function WebhooksPage() {
   const { t } = useTranslation()
@@ -97,7 +97,7 @@ export function WebhooksPage() {
                   <TableCell className="font-mono text-xs">{w.url}</TableCell>
                   <TableCell className="text-xs text-text-muted">{w.events.length ? w.events.join(', ') : '—'}</TableCell>
                   <TableCell>
-                    <span className={`rounded-full px-2 py-0.5 text-xs ${w.enabled ? 'bg-emerald-500/15 text-emerald-500' : 'bg-surface-raised text-text-muted'}`}>
+                    <span className={`rounded-full px-2 py-0.5 text-xs ${w.enabled ? 'bg-emerald-500/15 text-text-primary' : 'bg-surface-raised text-text-muted'}`}>
                       {w.enabled ? t('webhooks.on') : t('webhooks.off')}
                     </span>
                   </TableCell>
@@ -269,11 +269,11 @@ function DeliveryHistorySection() {
 function DeliveryStatusBadge({ status }: { status: string }) {
   const { t } = useTranslation()
   const tone = status === 'delivered'
-    ? 'bg-emerald-500/15 text-emerald-500'
+    ? 'bg-emerald-500/15 text-text-primary'
     : status === 'failed'
-      ? 'bg-red-500/15 text-red-500'
+      ? 'bg-red-500/15 text-text-primary'
       : status === 'retry_scheduled'
-        ? 'bg-amber-500/15 text-amber-500'
+        ? 'bg-amber-500/15 text-text-primary'
         : 'bg-surface-raised text-text-muted'
   const labelKey = status === 'retry_scheduled' ? 'deliveries.retryScheduled' : `deliveries.${status}`
   return <span className={`rounded-full px-2 py-0.5 text-xs ${tone}`}>{t(labelKey)}</span>
@@ -283,22 +283,34 @@ function NotificationsSection() {
   const { t } = useTranslation()
   const { projectId } = useParams()
   const notificationsQuery = useNotifications(projectId)
-  const isLoading = notificationsQuery.isLoading
   const { data: events = [], isLoading: eventsLoading } = useNotificationEvents(projectId)
   const save = useSaveNotifications(projectId)
-  const [items, setItems] = useState<{ channel: string; target: string }[]>([])
+  const [items, setItems] = useState<NotificationInput[]>([])
+  const [loadedData, setLoadedData] = useState<NotificationConfig[] | undefined>()
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   useEffect(() => {
     if (notificationsQuery.data) {
-      setItems(notificationsQuery.data.map(n => ({ channel: n.channel, target: n.target })))
+      setItems(notificationsQuery.data.map(n => ({
+        channel: n.channel,
+        target: n.target,
+        enabled: n.enabled,
+        aggregation_window_secs: n.aggregation_window_secs,
+        quiet_start_min: n.quiet_start_min,
+        quiet_end_min: n.quiet_end_min,
+        quiet_action: n.quiet_action,
+        quiet_bypass_statuses: n.quiet_bypass_statuses,
+      })))
+      setLoadedData(notificationsQuery.data)
     }
   }, [notificationsQuery.data])
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    setSaveError(null)
     save.mutate(items, {
       onSuccess: () => toast.success(t('notifications.saved')),
-      onError: (err) => toast.error(err.message),
+      onError: () => setSaveError(t('notifications.saveFailed')),
     })
   }
 
@@ -315,29 +327,42 @@ function NotificationsSection() {
         description={t('notifications.capabilityDescription')}
       />
       <Card className="p-4">
-        <form onSubmit={handleSubmit} className="space-y-3">
-          {isLoading ? (
-            <p className="text-sm text-text-muted">{t('common.loading')}</p>
-          ) : (
-            <>
+        <QueryState
+          data={notificationsQuery.data}
+          isLoading={notificationsQuery.isLoading || (!notificationsQuery.error && notificationsQuery.data !== undefined && loadedData !== notificationsQuery.data)}
+          error={notificationsQuery.error}
+          errorMessage={t('notifications.loadFailed')}
+          onRetry={() => void notificationsQuery.refetch()}
+        >
+          {() => <form onSubmit={handleSubmit} className="space-y-3">
               {items.map((item, i) => (
-                <div key={i} className="grid gap-2 sm:grid-cols-[1fr_2fr_auto]">
-                  <Input required placeholder={t('notifications.channelPlaceholder')} value={item.channel} onChange={e => setItems(items.map((it, idx) => idx === i ? { ...it, channel: e.target.value } : it))} />
-                  <Input required placeholder={t('notifications.targetPlaceholder')} value={item.target} onChange={e => setItems(items.map((it, idx) => idx === i ? { ...it, target: e.target.value } : it))} />
-                  <Button type="button" variant="ghost" size="icon" aria-label={t('common.delete')} title={t('common.delete')} className="h-9 w-9 text-danger" onClick={() => setItems(items.filter((_, idx) => idx !== i))}>
+                <div key={i} className="grid gap-2 border-b border-border pb-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto_auto] sm:items-end">
+                  <div className="space-y-1">
+                    <Label htmlFor={`notification-channel-${i}`}>{t('notifications.channel')}</Label>
+                    <Input id={`notification-channel-${i}`} required placeholder={t('notifications.channelPlaceholder')} value={item.channel} onChange={e => setItems(items.map((it, idx) => idx === i ? { ...it, channel: e.target.value } : it))} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor={`notification-target-${i}`}>{t('notifications.target')}</Label>
+                    <Input id={`notification-target-${i}`} required placeholder={t('notifications.targetPlaceholder')} value={item.target} onChange={e => setItems(items.map((it, idx) => idx === i ? { ...it, target: e.target.value } : it))} />
+                  </div>
+                  <label className="flex min-h-10 items-center gap-2 text-sm text-text-secondary">
+                    <input type="checkbox" checked={item.enabled} onChange={e => setItems(items.map((it, idx) => idx === i ? { ...it, enabled: e.target.checked } : it))} className="h-4 w-4 accent-accent" />
+                    {t('notifications.enabled')}
+                  </label>
+                  <Button type="button" variant="ghost" size="icon" aria-label={t('notifications.deleteFor', { channel: item.channel, target: item.target })} title={t('common.delete')} className="h-10 w-10 text-danger" onClick={() => setItems(items.filter((_, idx) => idx !== i))}>
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
               ))}
-              <Button type="button" variant="ghost" size="sm" onClick={() => setItems([...items, { channel: 'in_app', target: 'dashboard' }])}>
+              <Button type="button" variant="ghost" size="sm" onClick={() => setItems([...items, { channel: 'in_app', target: 'dashboard', enabled: true, aggregation_window_secs: 0, quiet_start_min: -1, quiet_end_min: -1, quiet_action: 'hold', quiet_bypass_statuses: ['failed'] }])}>
                 <Plus className="h-4 w-4" /> {t('notifications.add')}
               </Button>
+              {saveError && <p role="alert" className="text-sm text-text-primary">{saveError}</p>}
               <div className="flex gap-2">
                 <Button type="submit" disabled={save.isPending}>{t('common.save')}</Button>
               </div>
-            </>
-          )}
-        </form>
+            </form>}
+        </QueryState>
       </Card>
       <Card>
         <div className="overflow-x-auto">
@@ -365,7 +390,7 @@ function NotificationsSection() {
                   </TableCell>
                   <TableCell className="break-all font-mono text-xs">{event.channel} / {event.target}</TableCell>
                   <TableCell>
-                    <span className={`rounded-full px-2 py-0.5 text-xs ${event.last_error ? 'bg-red-500/15 text-red-500' : event.delivered_at ? 'bg-emerald-500/15 text-emerald-500' : 'bg-amber-500/15 text-amber-500'}`}>
+                    <span className={`rounded-full px-2 py-0.5 text-xs text-text-primary ${event.last_error ? 'bg-red-500/15' : event.delivered_at ? 'bg-emerald-500/15' : 'bg-amber-500/15'}`}>
                       {event.last_error ? t('notifications.failed') : event.delivered_at ? t('notifications.delivered') : t('notifications.pending')}
                     </span>
                   </TableCell>

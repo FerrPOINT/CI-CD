@@ -5973,6 +5973,103 @@ async fn notification_rules_filter_and_templates_render() {
 }
 
 #[tokio::test]
+async fn invalid_notification_replacement_preserves_existing_configs() {
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let config_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(format!("it-notification-replace-{}", project_id.simple()))
+        .bind("https://example.invalid/notification-replace.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO notification_configs (id, project_id, channel, target, enabled, aggregation_window_secs, quiet_start_min, quiet_end_min, quiet_action, quiet_bypass_statuses) \
+         VALUES ($1, $2, 'in_app', 'original', false, 120, 1320, 420, 'drop', ARRAY['failed', 'canceled'])",
+    )
+    .bind(config_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert existing notification config");
+
+    let app = authenticated_app(pool.clone()).await;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::put(format!("/api/v1/projects/{project_id}/notifications"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!([
+                        {"channel": "in_app", "target": "replacement"},
+                        {"channel": "in_app", "target": "late-invalid", "quiet_start_min": 1440, "quiet_end_min": 420}
+                    ])
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let configs: Vec<(Uuid, String, String, bool, i32, i32, i32, String, Vec<String>)> =
+        sqlx::query_as(
+            "SELECT id, channel, target, enabled, aggregation_window_secs, quiet_start_min, quiet_end_min, quiet_action, quiet_bypass_statuses \
+             FROM notification_configs WHERE project_id = $1",
+        )
+        .bind(project_id)
+        .fetch_all(&pool)
+        .await
+        .expect("read notification configs after rejected replacement");
+    assert_eq!(configs.len(), 1);
+    assert_eq!(configs[0].0, config_id);
+    assert_eq!(configs[0].1, "in_app");
+    assert_eq!(configs[0].2, "original");
+    assert!(!configs[0].3);
+    assert_eq!((configs[0].4, configs[0].5, configs[0].6), (120, 1320, 420));
+    assert_eq!(configs[0].7, "drop");
+    assert_eq!(
+        configs[0].8,
+        vec!["failed".to_string(), "canceled".to_string()]
+    );
+
+    sqlx::query(
+        "ALTER TABLE notification_configs ADD CONSTRAINT notification_configs_test_reject CHECK (target <> 'db-reject')",
+    )
+    .execute(&pool)
+    .await
+    .expect("add test-only insert failure");
+    let response = app
+        .oneshot(
+            Request::put(format!("/api/v1/projects/{project_id}/notifications"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!([
+                        {"channel": "in_app", "target": "replacement"},
+                        {"channel": "in_app", "target": "db-reject"}
+                    ])
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let after_insert_error: Vec<(Uuid, String, String, bool, i32, i32, i32, String, Vec<String>)> =
+        sqlx::query_as(
+            "SELECT id, channel, target, enabled, aggregation_window_secs, quiet_start_min, quiet_end_min, quiet_action, quiet_bypass_statuses \
+             FROM notification_configs WHERE project_id = $1",
+        )
+        .bind(project_id)
+        .fetch_all(&pool)
+        .await
+        .expect("read notification configs after insert failure");
+    assert_eq!(after_insert_error, configs);
+}
+
+#[tokio::test]
 async fn in_app_notification_events_are_fanned_out_and_delivered() {
     let pool = test_pool().await;
     let project_id = Uuid::new_v4();
@@ -7192,49 +7289,52 @@ async fn project_dispatch_limit_defers_work_beyond_cap() {
         Some(format!("dispatch-limit-secret-{namespace}")),
     );
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::post("/api/v1/runner/register")
-                .header("content-type", "application/json")
-                .body(Body::from(
-                    serde_json::json!({
-                        "protocolVersion": 1,
-                        "registrationToken": registration_token,
-                        "name": format!("runner-{}", namespace.simple()),
-                        "tags": ["linux"],
-                        "capabilities": {"executorKinds": ["shell"], "os": "linux", "arch": "amd64"}
-                    })
-                    .to_string(),
-                ))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::CREATED);
-    let registered = response_json(response).await;
-    let credential = registered["credential"].as_str().unwrap().to_owned();
-    let runner_id = Uuid::parse_str(registered["runnerId"].as_str().unwrap()).unwrap();
+    let mut credentials = Vec::new();
+    for runner_number in 0..2 {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/runner/register")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "protocolVersion": 1,
+                            "registrationToken": registration_token,
+                            "name": format!("runner-{runner_number}-{}", namespace.simple()),
+                            "tags": ["linux"],
+                            "capabilities": {"executorKinds": ["shell"], "os": "linux", "arch": "amd64"}
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let registered = response_json(response).await;
+        let credential = registered["credential"].as_str().unwrap().to_owned();
 
-    let response = app
-        .clone()
-        .oneshot(
-            Request::post("/api/v1/runner/heartbeat")
-                .header("authorization", format!("Bearer {credential}"))
-                .header("content-type", "application/json")
-                .body(Body::from(serde_json::json!({
-                    "protocolVersion": 1,
-                    "status": "online",
-                    "capacity": {"totalSlots": 10, "busySlots": 0},
-                    "tags": ["linux"],
-                    "capabilities": {"executorKinds": ["shell"], "os": "linux", "arch": "amd64"},
-                    "activeLeaseIds": []
-                }).to_string()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        let response = app
+            .clone()
+            .oneshot(
+                Request::post("/api/v1/runner/heartbeat")
+                    .header("authorization", format!("Bearer {credential}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::json!({
+                        "protocolVersion": 1,
+                        "status": "online",
+                        "capacity": {"totalSlots": 10, "busySlots": 0},
+                        "tags": ["linux"],
+                        "capabilities": {"executorKinds": ["shell"], "os": "linux", "arch": "amd64"},
+                        "activeLeaseIds": []
+                    }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NO_CONTENT);
+        credentials.push(credential);
+    }
 
     // Project with a concurrency cap of 1.
     sqlx::query(
@@ -7326,32 +7426,69 @@ async fn project_dispatch_limit_defers_work_beyond_cap() {
         })
     };
 
-    // Concurrent polls may lock different queue rows, but must never oversubscribe
-    // the project-wide cap. Exactly one request gets an offer.
-    let (first, second) = tokio::join!(
-        poll(app.clone(), credential.clone()),
-        poll(app.clone(), credential.clone()),
-    );
-    let statuses = [first.status(), second.status()];
-    assert!(
-        statuses.contains(&StatusCode::OK),
-        "one poll must claim work: {statuses:?}"
-    );
-    assert!(
-        statuses.contains(&StatusCode::NO_CONTENT),
-        "the sibling poll must observe the cap: {statuses:?}"
-    );
-    let lease_count: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM job_leases WHERE runner_id = $1 AND lease_status = 'active'",
-    )
-    .bind(runner_id)
-    .fetch_one(&pool)
-    .await
-    .expect("count active leases");
-    assert_eq!(
-        lease_count, 1,
-        "project cap must hold under concurrent polls"
-    );
+    // Each round races two runner identities against one project slot. Requeue
+    // the unacknowledged offer so the next round tests a fresh claim.
+    for round in 0..8 {
+        let (first, second, third, fourth) = tokio::join!(
+            poll(app.clone(), credentials[0].clone()),
+            poll(app.clone(), credentials[1].clone()),
+            poll(app.clone(), credentials[0].clone()),
+            poll(app.clone(), credentials[1].clone()),
+        );
+        let responses = [first, second, third, fourth];
+        let statuses = responses.each_ref().map(|response| response.status());
+        assert_eq!(
+            statuses
+                .iter()
+                .filter(|&&status| status == StatusCode::OK)
+                .count(),
+            1,
+            "round {round}: exactly one poll must claim work: {statuses:?}"
+        );
+        assert_eq!(
+            statuses
+                .iter()
+                .filter(|&&status| status == StatusCode::NO_CONTENT)
+                .count(),
+            3,
+            "round {round}: the other polls must observe the cap: {statuses:?}"
+        );
+        let lease_count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM job_leases l \
+             JOIN jobs j ON j.id = l.job_id \
+             JOIN stages s ON s.id = j.stage_id \
+             JOIN pipelines p ON p.id = s.pipeline_id \
+             WHERE p.project_id = $1 AND l.lease_status = 'active' AND l.runner_id IS NOT NULL",
+        )
+        .bind(project_id)
+        .fetch_one(&pool)
+        .await
+        .expect("count active leases");
+        assert_eq!(lease_count, 1, "round {round}: project cap exceeded");
+
+        if round < 7 {
+            let offer = responses
+                .into_iter()
+                .find(|response| response.status() == StatusCode::OK)
+                .expect("one offer");
+            let offer = response_json(offer).await;
+            let lease_id = Uuid::parse_str(offer["leaseId"].as_str().unwrap()).unwrap();
+            sqlx::query(
+                "UPDATE job_leases SET ack_deadline = now() - interval '1 second' WHERE id = $1",
+            )
+            .bind(lease_id)
+            .execute(&pool)
+            .await
+            .expect("expire unacknowledged offer");
+            assert_eq!(
+                cicd::runner::reconcile_unacknowledged_leases(&pool)
+                    .await
+                    .expect("requeue unacknowledged offer"),
+                1,
+                "round {round}: offer must be requeued"
+            );
+        }
+    }
 
     // Raise the cap to 2 — the sibling becomes claimable.
     sqlx::query("UPDATE projects SET max_running_jobs = 2 WHERE id = $1")
@@ -7359,7 +7496,7 @@ async fn project_dispatch_limit_defers_work_beyond_cap() {
         .execute(&pool)
         .await
         .expect("raise cap");
-    let response = poll(app.clone(), credential.clone()).await;
+    let response = poll(app.clone(), credentials[0].clone()).await;
     assert_eq!(response.status(), StatusCode::OK);
     let second_offer = response_json(response).await;
     assert!(
@@ -7388,7 +7525,6 @@ async fn project_dispatch_limit_defers_work_beyond_cap() {
         .execute(&pool)
         .await
         .expect("cleanup project");
-    let _ = runner_id;
     let _ = queue_ids;
 }
 

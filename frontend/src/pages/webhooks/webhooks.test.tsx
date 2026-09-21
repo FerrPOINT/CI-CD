@@ -17,7 +17,7 @@ const pipelineId = '11111111-1111-4111-8111-111111111111'
 const deliveryId = '33333333-3333-4333-8333-333333333333'
 const replayId = '44444444-4444-4444-8444-444444444444'
 
-function renderWebhooksPage(requests: string[]) {
+function renderWebhooksPage(requests: string[], options?: { notificationGetError?: boolean; writes?: string[] }) {
   vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString()
     requests.push(`${init?.method ?? 'GET'} ${url}`)
@@ -90,7 +90,16 @@ function renderWebhooksPage(requests: string[]) {
       return json({ id: replayId, replay_of_id: deliveryId })
     }
     if (url === `/api/v1/projects/${projectId}/notifications`) {
-      return json([{ id: 'n1', channel: 'in_app', target: 'dashboard', enabled: true }])
+      if (init?.method === 'PUT') {
+        options?.writes?.push(String(init.body))
+        return json([])
+      }
+      if (options?.notificationGetError) {
+        return Promise.resolve(new Response('unavailable', { status: 503 }))
+      }
+      return json([{ id: 'n1', channel: 'in_app', target: 'dashboard', enabled: false,
+        aggregation_window_secs: 120, quiet_start_min: 1320, quiet_end_min: 420,
+        quiet_action: 'drop', quiet_bypass_statuses: ['failed', 'canceled'] }])
     }
     if (url === `/api/v1/projects/${projectId}/notification-events?limit=20`) {
       return json([
@@ -145,6 +154,31 @@ afterEach(() => {
 })
 
 describe('WebhooksPage notifications', () => {
+  it('preserves delivery policy when editing a channel', async () => {
+    const writes: string[] = []
+    renderWebhooksPage([], { writes })
+
+    fireEvent.change(await screen.findByLabelText('notifications.target'), { target: { value: 'team-dashboard' } })
+    expect(screen.getByRole('checkbox', { name: 'notifications.enabled' })).not.toBeChecked()
+    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
+
+    await waitFor(() => expect(writes).toHaveLength(1))
+    expect(JSON.parse(writes[0])).toEqual([{
+      channel: 'in_app', target: 'team-dashboard', enabled: false,
+      aggregation_window_secs: 120, quiet_start_min: 1320, quiet_end_min: 420,
+      quiet_action: 'drop', quiet_bypass_statuses: ['failed', 'canceled'],
+    }])
+  })
+
+  it('does not offer replacement when current settings cannot load', async () => {
+    const requests: string[] = []
+    renderWebhooksPage(requests, { notificationGetError: true })
+
+    expect(await screen.findByText('notifications.loadFailed')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'common.save' })).not.toBeInTheDocument()
+    expect(requests).not.toContain(`PUT /api/v1/projects/${projectId}/notifications`)
+  })
+
   it('shows delivered in-app notification events', async () => {
     const requests: string[] = []
     renderWebhooksPage(requests)
