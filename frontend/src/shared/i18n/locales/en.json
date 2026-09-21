@@ -1,8 +1,10 @@
 {
   "app": {
-    "name": "Forge CI/CD"
+    "name": "Forge CI/CD",
+    "subtitle": "Build and delivery platform"
   },
   "navigation": {
+    "main": "Main navigation",
     "dashboard": "Dashboard",
     "projects": "Projects",
     "pipelines": "Pipelines",
@@ -13,7 +15,8 @@
     "auditLog": "Audit Log",
     "create": "Create",
     "toggleMenu": "Toggle menu",
-    "logout": "Sign out"
+    "logout": "Sign out",
+    "profileFallback": "User"
   },
   "projects": {
     "title": "Projects",

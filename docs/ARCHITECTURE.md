@@ -172,7 +172,7 @@ Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-2
 
 - **pages/** — 20 рабочих экранов + login: dashboard, projects/project-members, repositories/browser/compare/pulls, pipelines/detail, runners, secrets, artifacts, environments, schedules, webhooks, reports, audit-log, users, settings, login.
 - **shared/** — ui-kit (shadcn), i18n (ru/en), theme (dark/gray/light).
-- **widgets/** — AppShell (sidebar + header + Outlet).
+- **widgets/** — AppShell (responsive sidebar/rail + header + Outlet); контракт геометрии и доступности описан в `docs/UI_SHELL.md`.
 - **api/** — типизированный клиент/wrappers + generated OpenAPI schema `schema.d.ts`.
 - Целевое: generated transport boundary после стабилизации API-слоя; текущие DTO уже генерируются из `openapi/openapi.yaml`.
 
