@@ -1937,79 +1937,113 @@ async fn replace_notifications(
     Path(project_id): Path<Uuid>,
     Json(inputs): Json<Vec<NotificationInput>>,
 ) -> ApiResult<Vec<Notification>> {
+    struct PreparedNotification {
+        channel: String,
+        target: String,
+        enabled: bool,
+        aggregation_window_secs: i32,
+        quiet_start_min: i32,
+        quiet_end_min: i32,
+        quiet_action: String,
+        quiet_bypass_statuses: Vec<String>,
+    }
+
+    let prepared = inputs
+        .into_iter()
+        .map(|input| {
+            let channel = input.channel.trim().to_ascii_lowercase();
+            let target = input.target.trim().to_string();
+            if channel.is_empty() || target.is_empty() {
+                return Err(ApiError::bad_request(
+                    "notification channel and target are required",
+                ));
+            }
+            // Fail closed on unknown channels (docs/AUTOMATION_ARCHITECTURE.md §9):
+            // in_app/sse are local, slack_webhook/generic_webhook use the shared
+            // HTTP delivery subsystem.
+            if !matches!(
+                channel.as_str(),
+                "in_app" | "sse" | "slack_webhook" | "generic_webhook" | "email"
+            ) {
+                return Err(ApiError::bad_request(
+                    "unsupported notification channel: must be one of in_app, sse, slack_webhook, generic_webhook, email",
+                ));
+            }
+            if (channel == "slack_webhook" || channel == "generic_webhook")
+                && !target.starts_with("https://")
+            {
+                return Err(ApiError::bad_request(
+                    "external notification targets must be https URLs",
+                ));
+            }
+            if channel == "email" && !target.contains('@') {
+                return Err(ApiError::bad_request(
+                    "email notification target must be an email address",
+                ));
+            }
+            let quiet_action = input.quiet_action.unwrap_or_else(|| "hold".to_string());
+            if quiet_action != "hold" && quiet_action != "drop" {
+                return Err(ApiError::bad_request(
+                    "quiet_action must be 'hold' or 'drop'",
+                ));
+            }
+            let quiet_start = input.quiet_start_min.unwrap_or(-1);
+            let quiet_end = input.quiet_end_min.unwrap_or(-1);
+            if (quiet_start == -1) != (quiet_end == -1) {
+                return Err(ApiError::bad_request(
+                    "quiet_start_min and quiet_end_min must be configured together",
+                ));
+            }
+            if !(-1..=1439).contains(&quiet_start) || !(-1..=1439).contains(&quiet_end) {
+                return Err(ApiError::bad_request(
+                    "quiet_start_min and quiet_end_min must be -1 or between 0 and 1439",
+                ));
+            }
+            let window = input.aggregation_window_secs.unwrap_or(0);
+            if !(0..=3600).contains(&window) {
+                return Err(ApiError::bad_request(
+                    "aggregation_window_secs must be between 0 and 3600",
+                ));
+            }
+            Ok(PreparedNotification {
+                channel,
+                target,
+                enabled: input.enabled.unwrap_or(true),
+                aggregation_window_secs: window,
+                quiet_start_min: quiet_start,
+                quiet_end_min: quiet_end,
+                quiet_action,
+                quiet_bypass_statuses: input
+                    .quiet_bypass_statuses
+                    .unwrap_or_else(|| vec!["failed".to_string()]),
+            })
+        })
+        .collect::<Result<Vec<_>, ApiError>>()?;
+
     let db = pool(&state)?;
+    let mut tx = db.begin().await.map_err(ApiError::internal)?;
     sqlx::query("DELETE FROM notification_configs WHERE project_id = $1")
         .bind(project_id)
-        .execute(db)
+        .execute(&mut *tx)
         .await
         .map_err(ApiError::internal)?;
-    for input in inputs {
-        let channel = input.channel.trim().to_ascii_lowercase();
-        if channel.is_empty() || input.target.trim().is_empty() {
-            return Err(ApiError::bad_request(
-                "notification channel and target are required",
-            ));
-        }
-        // Fail closed on unknown channels (docs/AUTOMATION_ARCHITECTURE.md §9):
-        // in_app/sse are local, slack_webhook/generic_webhook use the shared
-        // HTTP delivery subsystem.
-        if !matches!(
-            channel.as_str(),
-            "in_app" | "sse" | "slack_webhook" | "generic_webhook" | "email"
-        ) {
-            return Err(ApiError::bad_request(
-                "unsupported notification channel: must be one of in_app, sse, slack_webhook, generic_webhook, email",
-            ));
-        }
-        if (channel == "slack_webhook" || channel == "generic_webhook")
-            && !input.target.trim().starts_with("https://")
-        {
-            return Err(ApiError::bad_request(
-                "external notification targets must be https URLs",
-            ));
-        }
-        if channel == "email" && !input.target.trim().contains('@') {
-            return Err(ApiError::bad_request(
-                "email notification target must be an email address",
-            ));
-        }
-        let quiet_action = input
-            .quiet_action
-            .clone()
-            .unwrap_or_else(|| "hold".to_string());
-        if quiet_action != "hold" && quiet_action != "drop" {
-            return Err(ApiError::bad_request(
-                "quiet_action must be 'hold' or 'drop'",
-            ));
-        }
-        let quiet_start = input.quiet_start_min.unwrap_or(-1);
-        let quiet_end = input.quiet_end_min.unwrap_or(-1);
-        if (quiet_start >= 0) != (quiet_end >= 0) {
-            return Err(ApiError::bad_request(
-                "quiet_start_min and quiet_end_min must be configured together",
-            ));
-        }
-        let window = input.aggregation_window_secs.unwrap_or(0);
-        if !(0..=3600).contains(&window) {
-            return Err(ApiError::bad_request(
-                "aggregation_window_secs must be between 0 and 3600",
-            ));
-        }
+    for input in prepared {
         sqlx::query("INSERT INTO notification_configs (id, project_id, channel, target, enabled, aggregation_window_secs, quiet_start_min, quiet_end_min, quiet_action, quiet_bypass_statuses) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)")
             .bind(Uuid::new_v4())
             .bind(project_id)
-            .bind(&channel)
-            .bind(input.target.trim())
-            .bind(input.enabled.unwrap_or(true))
-            .bind(window)
-            .bind(quiet_start)
-            .bind(quiet_end)
-            .bind(&quiet_action)
-            .bind(input.quiet_bypass_statuses.clone().unwrap_or_else(|| vec!["failed".to_string()]))
-            .execute(db)
+            .bind(&input.channel)
+            .bind(&input.target)
+            .bind(input.enabled)
+            .bind(input.aggregation_window_secs)
+            .bind(input.quiet_start_min)
+            .bind(input.quiet_end_min)
+            .bind(&input.quiet_action)
+            .bind(&input.quiet_bypass_statuses)
+            .execute(&mut *tx)
             .await
             .map_err(ApiError::internal)?;
     }
+    tx.commit().await.map_err(ApiError::internal)?;
     list_notifications(State(state), Path(project_id)).await
 }
 
