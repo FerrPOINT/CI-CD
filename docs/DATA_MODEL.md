@@ -405,6 +405,12 @@ Foreign-key constraints:
 
 Durable dispatch ledger для current queued attempts. Trigger/retry/manual start создают row на non-manual queued attempt и копируют `jobs.required_tags`; embedded supervisor выбирает только untagged row, external `work:poll` выбирает compatible row через `FOR UPDATE SKIP LOCKED` с правилом `job_queue.required_tags ⊆ runner.tags` и current `shell` executor compatibility по `runners.capabilities.executorKinds`, создаёт `job_leases` и переводит row в `leased`; ack timeout у unacknowledged external lease возвращает row/job/attempt в `queued` с новой claim generation при следующем poll; queue timeout после `CICD_RUNNER_QUEUE_TIMEOUT_SECONDS` завершает только dispatch-eligible row без compatible embedded/protocol execution path с diagnostic `no compatible runner before queue timeout`; terminal/cancel/lease expiry закрывают row в `completed` или `canceled`. Миграция `0022_runner_work_notifications.sql` добавляет PostgreSQL `pg_notify('runner_work_available', pipeline_id)` на queued `job_queue` rows и unblock-события `jobs.status/manual`, а серверный `PgListener` переводит это в process-local wakeup для long-poll runner-ов.
 
+External claim выполняется в транзакции `SERIALIZABLE`: проверка активных lease
+по проекту и создание нового lease должны наблюдать одну сериализуемую историю
+при конкурентных poll разных runner-ов. Конфликт PostgreSQL `40001` повторяется
+с новым lease token до восьми попыток; при исчерпании poll возвращает `204`,
+чтобы runner повторил запрос без выдачи работы сверх `projects.max_running_jobs`.
+
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
 | `id` | UUID | NOT NULL | — | PK queue item |

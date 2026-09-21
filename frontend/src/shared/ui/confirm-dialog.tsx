@@ -16,6 +16,7 @@ interface ConfirmDialogProps {
   onCancel: () => void;
   title: string;
   description?: string;
+  error?: string;
   confirmLabel?: string;
   cancelLabel?: string;
   closeOnConfirm?: boolean;
@@ -28,6 +29,7 @@ export function ConfirmDialog({
   onCancel,
   title,
   description,
+  error,
   confirmLabel,
   cancelLabel,
   closeOnConfirm = true,
@@ -41,18 +43,20 @@ export function ConfirmDialog({
         if (!v && !pending) onCancel();
       }}
     >
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>{title}</AlertDialogTitle>
+      <AlertDialogContent className="min-w-0 w-[calc(100vw-2rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto">
+        <AlertDialogHeader className="min-w-0 text-left">
+          <AlertDialogTitle className="min-w-0 break-all">{title}</AlertDialogTitle>
           {description && (
-            <AlertDialogDescription>{description}</AlertDialogDescription>
+            <AlertDialogDescription className="break-words">{description}</AlertDialogDescription>
           )}
+          {error && <p role="alert" className="break-words text-sm text-danger">{error}</p>}
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={pending} onClick={onCancel}>
+          <AlertDialogCancel className="min-h-10" disabled={pending} onClick={onCancel}>
             {cancelLabel ?? t("common.cancel")}
           </AlertDialogCancel>
           <AlertDialogAction
+            className="min-h-10 text-danger-foreground hover:opacity-100"
             disabled={pending}
             onClick={(event) => {
               if (!closeOnConfirm) event.preventDefault();
