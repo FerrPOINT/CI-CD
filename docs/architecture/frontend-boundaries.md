@@ -43,3 +43,30 @@ frontend/src/
 - Query-key конвенции и инвалидации — `contracts/UI_API_CONTRACT.md`.
 - Live-обновления job logs и `in_app`/`sse` notifications — current SSE endpoints; общая pipeline/events projection остаётся target (`AUTOMATION_ARCHITECTURE.md`).
 - Responsive/a11y-требования — `docs/DELIVERY_ARCHITECTURE.md` + USER_GUIDE.md (Gate 4/5 evidence).
+
+## UI Shell Contract
+
+Forge CI/CD follows the Base [UI Shell Standard](https://github.com/FerrPOINT/services-base/blob/main/docs/platform/UI_SHELL_STANDARD.md).
+`AppShell` owns the shared 264 px/72 px permission-aware navigation, 60 px
+header and full-width right work area. Routes use only `wide`, `reading/form`
+or `detail-with-aside`; they do not select Forge-specific shell geometry.
+
+- Repositories, pipelines, runners, jobs, audit and logs use `wide`. Tables/logs
+  keep deliberate horizontal scroll local and use `minmax(0, 1fr)` so the
+  document itself never overflows.
+- Detail routes use `detail-with-aside`: a fluid primary pane plus a 320 px side
+  context panel. Settings/forms use `reading/form`, with only a 760 px inner
+  column bounded without narrowing data pages.
+- Expanded desktop sidebar, compact tablet rail and mobile drawer keep the same
+  navigation order and active state. Drawer behavior includes keyboard focus,
+  Escape close and focus restoration.
+- Service/profile/theme controls stay in the single global header row. Page
+  title, breadcrumbs, filters and run actions remain in page-owned rows below.
+- Shell/layout evidence covers 375, 1440 and 2560 px, direct-route active nav,
+  one-row header alignment and no document-level horizontal overflow.
+
+## References
+
+- [UI/API Contract](../contracts/UI_API_CONTRACT.md) — query and state boundary.
+- [User Guide](../USER_GUIDE.md) — operator route behavior.
+- [Base UI Shell Standard](https://github.com/FerrPOINT/services-base/blob/main/docs/platform/UI_SHELL_STANDARD.md) — shared shell rules.

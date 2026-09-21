@@ -129,5 +129,6 @@ Proposed / Accepted / Deprecated / Superseded by ADR-NNNN
 - `docs/adr/0007-runner-security-boundary.md` — граница control plane/execution.
 - `docs/adr/0008-versioned-sqlx-migrations.md` — versioned migrations.
 - `docs/adr/0009-canonical-registry.md` — канонический реестр имён и authority matrix.
+- `docs/adr/0016-serializable-runner-claim.md` — сериализуемая проверка проектной квоты при выдаче runner work.
 - `docs/ROADMAP.md` — план разработки.
 - `docs/CODE_STYLE.md` — конвенции кода.

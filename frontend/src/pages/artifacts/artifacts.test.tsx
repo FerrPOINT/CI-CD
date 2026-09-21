@@ -10,7 +10,7 @@ const clientMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({ t: (key: string, options?: { name?: string }) => options?.name ? key + ' ' + options.name : key }),
 }))
 vi.mock('@/api/hooks', () => ({
   useArtifacts: () => ({
@@ -51,12 +51,12 @@ describe('ArtifactsPage', () => {
       </QueryClientProvider>,
     )
 
-    fireEvent.click(await screen.findByRole('button', { name: 'artifacts.download' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'artifacts.downloadFor build.txt' }))
 
     await waitFor(() => {
       expect(clientMocks.downloadArtifact).toHaveBeenCalledWith('artifact-id')
       expect(clientMocks.saveDownloadedArtifact).toHaveBeenCalledWith(artifact)
     })
-    expect(screen.queryByRole('link', { name: 'artifacts.download' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'artifacts.downloadFor build.txt' })).toBeNull()
   })
 })

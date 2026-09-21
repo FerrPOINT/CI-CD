@@ -259,7 +259,14 @@ export interface NotificationConfig {
   channel: string
   target: string
   enabled: boolean
+  aggregation_window_secs: number
+  quiet_start_min: number
+  quiet_end_min: number
+  quiet_action: 'hold' | 'drop'
+  quiet_bypass_statuses: string[]
 }
+
+export type NotificationInput = Omit<NotificationConfig, 'id'>
 
 export interface NotificationEvent {
   id: string

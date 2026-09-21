@@ -97,7 +97,6 @@ describe("ConfirmDialog", () => {
     expect(onConfirm).toHaveBeenCalledOnce();
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
   });
-
   it("keeps dialog actions touch-sized", () => {
     render(<ConfirmDialog open onConfirm={() => {}} onCancel={() => {}} title="Delete" />);
     expect(screen.getByRole("button", { name: "common.delete" })).toHaveClass("min-h-10", "text-danger-foreground");
