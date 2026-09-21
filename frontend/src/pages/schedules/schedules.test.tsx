@@ -1,11 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SchedulesPage } from './index'
 
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({ t: (key: string, options?: { name?: string }) => options?.name ? key + ' ' + options.name : key }),
 }))
 
 vi.mock('sonner', () => ({
@@ -83,10 +83,12 @@ describe('SchedulesPage', () => {
     renderSchedulesPage(requests)
 
     expect(await screen.findByText('0 4 * * *')).toBeInTheDocument()
-    expect(screen.getByText('schedules.nextFire')).toBeInTheDocument()
-    expect(screen.getByText('schedules.lastFire')).toBeInTheDocument()
+    expect(screen.getAllByText(/schedules.nextFire:/)).toHaveLength(2)
+    expect(screen.getAllByText(/schedules.lastFire:/)).toHaveLength(2)
     expect(screen.getByText('bad cron')).toBeInTheDocument()
-    expect(screen.getByTitle('cron must have five fields')).toHaveTextContent('schedules.error')
+    fireEvent.click(screen.getByText('schedules.errorPaused'))
+    expect(screen.getByText('cron must have five fields')).toBeVisible()
+    expect(screen.getByRole('button', { name: /schedules.editFor bad cron/ })).toHaveClass('h-10', 'w-10')
     expect(requests).toContain(`GET /api/v1/projects/${projectId}/schedules`)
   })
 })

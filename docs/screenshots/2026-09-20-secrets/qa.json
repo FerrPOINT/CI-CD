@@ -1,0 +1,122 @@
+{
+  "states": [
+    {
+      "width": 320,
+      "scrollWidth": 320,
+      "clientWidth": 320,
+      "visibleRows": 20,
+      "smallTargets": [],
+      "axeViolations": []
+    },
+    {
+      "width": 375,
+      "scrollWidth": 375,
+      "clientWidth": 375,
+      "visibleRows": 20,
+      "smallTargets": [],
+      "axeViolations": []
+    },
+    {
+      "width": 768,
+      "scrollWidth": 768,
+      "clientWidth": 768,
+      "visibleRows": 20,
+      "smallTargets": [],
+      "axeViolations": []
+    },
+    {
+      "width": 1280,
+      "scrollWidth": 1280,
+      "clientWidth": 1280,
+      "visibleRows": 20,
+      "smallTargets": [],
+      "axeViolations": []
+    },
+    {
+      "width": 1920,
+      "scrollWidth": 1920,
+      "clientWidth": 1920,
+      "visibleRows": 20,
+      "smallTargets": [],
+      "axeViolations": []
+    },
+    {
+      "width": 2560,
+      "scrollWidth": 2560,
+      "clientWidth": 2560,
+      "visibleRows": 20,
+      "smallTargets": [],
+      "axeViolations": []
+    },
+    {
+      "state": "list",
+      "theme": "light",
+      "axeViolations": []
+    },
+    {
+      "state": "list",
+      "theme": "gray",
+      "axeViolations": []
+    },
+    {
+      "state": "create-failed",
+      "formOpen": true,
+      "valuePreserved": true
+    },
+    {
+      "state": "replace",
+      "focused": true
+    },
+    {
+      "state": "delete-failed",
+      "dialogOpen": true,
+      "errorVisible": true,
+      "dialogLayout": {
+        "left": 16,
+        "right": 359,
+        "top": 187,
+        "bottom": 625,
+        "scrollWidth": 341,
+        "clientWidth": 341,
+        "buttons": [
+          {
+            "width": 293,
+            "height": 40
+          },
+          {
+            "width": 293,
+            "height": 40
+          }
+        ]
+      },
+      "axeViolations": []
+    },
+    {
+      "state": "delete-failed",
+      "theme": "light",
+      "axeViolations": []
+    },
+    {
+      "state": "delete-failed",
+      "theme": "gray",
+      "axeViolations": []
+    },
+    {
+      "state": "delete-failed",
+      "width": 320,
+      "dialogLayout": {
+        "left": 16,
+        "right": 304,
+        "top": 173,
+        "bottom": 639,
+        "scrollWidth": 286,
+        "clientWidth": 286
+      },
+      "axeViolations": []
+    }
+  ],
+  "errors": [
+    "Failed to load resource: the server responded with a status of 500 (Internal Server Error)",
+    "Failed to load resource: the server responded with a status of 500 (Internal Server Error)"
+  ]
+}

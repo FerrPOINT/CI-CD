@@ -77,4 +77,29 @@ describe("ConfirmDialog", () => {
     expect(onCancel).not.toHaveBeenCalled();
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
   });
+
+  it("shows an actionable error inside an open confirmation", () => {
+    const onConfirm = vi.fn();
+    render(
+      <ConfirmDialog
+        open
+        onConfirm={onConfirm}
+        onCancel={() => {}}
+        title="Delete secret"
+        description="This cannot be undone"
+        error="Deletion failed"
+        closeOnConfirm={false}
+      />,
+    );
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("This cannot be undone");
+    expect(screen.getByRole("alert")).toHaveTextContent("Deletion failed");
+    fireEvent.click(screen.getByRole("button", { name: "common.delete" }));
+    expect(onConfirm).toHaveBeenCalledOnce();
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+  });
+  it("keeps dialog actions touch-sized", () => {
+    render(<ConfirmDialog open onConfirm={() => {}} onCancel={() => {}} title="Delete" />);
+    expect(screen.getByRole("button", { name: "common.delete" })).toHaveClass("min-h-10", "text-danger-foreground");
+    expect(screen.getByRole("button", { name: "common.cancel" })).toHaveClass("min-h-10");
+  });
 });
