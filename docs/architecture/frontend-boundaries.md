@@ -47,14 +47,16 @@ frontend/src/
 ## UI Shell Contract
 
 Forge CI/CD follows the Base [UI Shell Standard](https://github.com/FerrPOINT/services-base/blob/main/docs/platform/UI_SHELL_STANDARD.md).
-`AppShell` owns one left permission-aware navigation, one global header and a
-fluid right work area; routes select only their page-local content geometry.
+`AppShell` owns the shared 264 px/72 px permission-aware navigation, 60 px
+header and full-width right work area. Routes use only `wide`, `reading/form`
+or `detail-with-aside`; they do not select Forge-specific shell geometry.
 
-- Repositories, pipelines, runners, jobs, audit and logs use available work
-  width. Tables/logs keep deliberate horizontal scroll local and use
-  `minmax(0, 1fr)` so the document itself never overflows.
-- Detail routes use a fluid primary pane with a bounded side context panel;
-  settings/forms use a readable constrained column without narrowing data pages.
+- Repositories, pipelines, runners, jobs, audit and logs use `wide`. Tables/logs
+  keep deliberate horizontal scroll local and use `minmax(0, 1fr)` so the
+  document itself never overflows.
+- Detail routes use `detail-with-aside`: a fluid primary pane plus a 320 px side
+  context panel. Settings/forms use `reading/form`, with only a 760 px inner
+  column bounded without narrowing data pages.
 - Expanded desktop sidebar, compact tablet rail and mobile drawer keep the same
   navigation order and active state. Drawer behavior includes keyboard focus,
   Escape close and focus restoration.
