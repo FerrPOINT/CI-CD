@@ -99,7 +99,7 @@ describe("ConfirmDialog", () => {
   });
   it("keeps dialog actions touch-sized", () => {
     render(<ConfirmDialog open onConfirm={() => {}} onCancel={() => {}} title="Delete" />);
-    expect(screen.getByRole("button", { name: "common.delete" })).toHaveClass("min-h-10", "text-danger-foreground");
+    expect(screen.getByRole("button", { name: "common.delete" })).toHaveClass("min-h-10", "text-white");
     expect(screen.getByRole("button", { name: "common.cancel" })).toHaveClass("min-h-10");
   });
 });

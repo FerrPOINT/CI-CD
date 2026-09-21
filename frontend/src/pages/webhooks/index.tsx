@@ -370,25 +370,15 @@ function NotificationsSection() {
         >
           {() => <form onSubmit={handleSubmit} className="space-y-3">
               {items.map((item, i) => (
-                <div key={i} className="grid gap-2 border-b border-border pb-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto_auto] sm:items-end">
-                  <div className="space-y-1">
-                    <Label htmlFor={`notification-channel-${i}`}>{t('notifications.channel')}</Label>
-                    <Input id={`notification-channel-${i}`} required placeholder={t('notifications.channelPlaceholder')} value={item.channel} onChange={e => setItems(items.map((it, idx) => idx === i ? { ...it, channel: e.target.value } : it))} />
-                  </div>
-                  <div className="space-y-1">
-                    <Label htmlFor={`notification-target-${i}`}>{t('notifications.target')}</Label>
-                    <Input id={`notification-target-${i}`} required placeholder={t('notifications.targetPlaceholder')} value={item.target} onChange={e => setItems(items.map((it, idx) => idx === i ? { ...it, target: e.target.value } : it))} />
-                  </div>
-                  <label className="flex min-h-10 items-center gap-2 text-sm text-text-secondary">
-                    <input type="checkbox" checked={item.enabled} onChange={e => setItems(items.map((it, idx) => idx === i ? { ...it, enabled: e.target.checked } : it))} className="h-4 w-4 accent-accent" />
-                    {t('notifications.enabled')}
-                  </label>
-                  <Button type="button" variant="ghost" size="icon" aria-label={t('notifications.deleteFor', { channel: item.channel, target: item.target })} title={t('common.delete')} className="h-10 w-10 text-danger" onClick={() => setItems(items.filter((_, idx) => idx !== i))}>
+                <div key={i} className="grid gap-2 sm:grid-cols-[1fr_2fr_auto]">
+                  <Input required placeholder={t('notifications.channelPlaceholder')} value={item.channel} onChange={e => setItems(items.map((it, idx) => idx === i ? { ...it, channel: e.target.value } : it))} />
+                  <Input required placeholder={t('notifications.targetPlaceholder')} value={item.target} onChange={e => setItems(items.map((it, idx) => idx === i ? { ...it, target: e.target.value } : it))} />
+                  <Button type="button" variant="ghost" size="icon" aria-label={t('common.delete')} title={t('common.delete')} className="h-10 w-10 sm:h-10 sm:w-10 text-danger" onClick={() => setItems(items.filter((_, idx) => idx !== i))}>
                     <Trash2 className="h-4 w-4" />
                   </Button>
                 </div>
               ))}
-              <Button type="button" variant="ghost" size="sm" className="min-h-10 sm:min-h-10" onClick={() => setItems([...items, { channel: 'in_app', target: 'dashboard', enabled: true, aggregation_window_secs: 0, quiet_start_min: -1, quiet_end_min: -1, quiet_action: 'hold', quiet_bypass_statuses: ['failed'] }])}>
+              <Button type="button" variant="ghost" size="sm" className="min-h-10 sm:min-h-10" onClick={() => setItems([...items, { channel: 'in_app', target: 'dashboard', enabled: true, aggregation_window_secs: 0, quiet_start_min: 0, quiet_end_min: 0, quiet_action: 'hold', quiet_bypass_statuses: [] }])}>
                 <Plus className="h-4 w-4" /> {t('notifications.add')}
               </Button>
               {saveError && <p role="alert" className="text-sm text-text-primary">{saveError}</p>}

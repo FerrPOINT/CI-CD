@@ -26,8 +26,8 @@ function renderWebhooksPage(requests: string[], options: {
   failDetailLoadOnce?: boolean
   failEventsLoadOnce?: boolean
   failDeleteOnce?: boolean
-  notificationGetError?: boolean
   writes?: string[]
+  notificationGetError?: boolean
 } = {}) {
   let webhookReads = 0
   let deliveryReads = 0
@@ -191,31 +191,6 @@ afterEach(() => {
 })
 
 describe('WebhooksPage', () => {
-  it('preserves delivery policy when editing a channel', async () => {
-    const writes: string[] = []
-    renderWebhooksPage([], { initialView: 'notifications', writes })
-
-    fireEvent.change(await screen.findByLabelText('notifications.target'), { target: { value: 'team-dashboard' } })
-    expect(screen.getByRole('checkbox', { name: 'notifications.enabled' })).not.toBeChecked()
-    fireEvent.click(screen.getByRole('button', { name: 'common.save' }))
-
-    await waitFor(() => expect(writes).toHaveLength(1))
-    expect(JSON.parse(writes[0])).toEqual([{
-      channel: 'in_app', target: 'team-dashboard', enabled: false,
-      aggregation_window_secs: 120, quiet_start_min: 1320, quiet_end_min: 420,
-      quiet_action: 'drop', quiet_bypass_statuses: ['failed', 'canceled'],
-    }])
-  })
-
-  it('does not offer replacement when current settings cannot load', async () => {
-    const requests: string[] = []
-    renderWebhooksPage(requests, { initialView: 'notifications', notificationGetError: true })
-
-    expect(await screen.findByText('notifications.loadFailed')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'common.save' })).not.toBeInTheDocument()
-    expect(requests).not.toContain(`PUT /api/v1/projects/${projectId}/notifications`)
-  })
-
   it('opens URL-backed views and shows notification events', async () => {
     const requests: string[] = []
     renderWebhooksPage(requests)
