@@ -167,9 +167,9 @@ Embedded runner каждые две секунды выбирает доступ
 **Статус процедуры: Current verified.**
 
 1. Откройте **Artifacts** для job (`/jobs/{jobId}/artifacts`).
-2. Загрузите файл через UI либо отправьте raw body с заголовком `X-Artifact-Name`.
-3. Сверьте SHA-256 в списке при расследовании повреждения или переноса backup.
-4. Скачайте сохранённый файл по ссылке в списке.
+2. Job или runner загружает объявленные артефакты. Для ручной загрузки используйте CLI/API с raw body и заголовком `X-Artifact-Name`; UI предназначен для просмотра и скачивания.
+3. Найдите файл по имени или типу и отфильтруйте доступные, истёкшие или очищенные записи. Для сверки SHA-256 скопируйте полный digest кнопкой у записи.
+4. Скачайте доступный файл кнопкой у записи. Ошибка остаётся рядом с файлом для повтора; истёкшие и очищенные файлы скачать нельзя.
 5. Учитывайте лимит 50 MiB на один файл и локальный характер хранилища `CICD_ARTIFACTS_DIR`.
 
 ```bash
@@ -184,7 +184,10 @@ curl -fsS "http://127.0.0.1:22801/api/v1/jobs/$JOB_ID/artifacts"
 
 Retention/TTL уже работает для новых локальных uploads через `CICD_ARTIFACT_RETENTION_DAYS`, `expires_at` и purge worker. S3/object storage, legal hold, quotas, directory/glob upload и multipart/resumable sessions - **Target approved**.
 
-![Артефакты](screenshots/21-artifacts.png)
+![Артефакты, десктоп](screenshots/2026-09-20-artifacts/1920-dark.png)
+
+Мобильный вид: [375 px, светлая тема](screenshots/2026-09-20-artifacts/375-light.png).
+Скриншоты используют синтетические метаданные, а не данные рабочего инстанса.
 
 ### Репозиторий и pull-запрос
 
