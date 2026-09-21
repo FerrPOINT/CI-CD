@@ -5973,6 +5973,103 @@ async fn notification_rules_filter_and_templates_render() {
 }
 
 #[tokio::test]
+async fn invalid_notification_replacement_preserves_existing_configs() {
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let config_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(format!("it-notification-replace-{}", project_id.simple()))
+        .bind("https://example.invalid/notification-replace.git")
+        .execute(&pool)
+        .await
+        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO notification_configs (id, project_id, channel, target, enabled, aggregation_window_secs, quiet_start_min, quiet_end_min, quiet_action, quiet_bypass_statuses) \
+         VALUES ($1, $2, 'in_app', 'original', false, 120, 1320, 420, 'drop', ARRAY['failed', 'canceled'])",
+    )
+    .bind(config_id)
+    .bind(project_id)
+    .execute(&pool)
+    .await
+    .expect("insert existing notification config");
+
+    let app = authenticated_app(pool.clone()).await;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::put(format!("/api/v1/projects/{project_id}/notifications"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!([
+                        {"channel": "in_app", "target": "replacement"},
+                        {"channel": "in_app", "target": "late-invalid", "quiet_start_min": 1440, "quiet_end_min": 420}
+                    ])
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+    let configs: Vec<(Uuid, String, String, bool, i32, i32, i32, String, Vec<String>)> =
+        sqlx::query_as(
+            "SELECT id, channel, target, enabled, aggregation_window_secs, quiet_start_min, quiet_end_min, quiet_action, quiet_bypass_statuses \
+             FROM notification_configs WHERE project_id = $1",
+        )
+        .bind(project_id)
+        .fetch_all(&pool)
+        .await
+        .expect("read notification configs after rejected replacement");
+    assert_eq!(configs.len(), 1);
+    assert_eq!(configs[0].0, config_id);
+    assert_eq!(configs[0].1, "in_app");
+    assert_eq!(configs[0].2, "original");
+    assert!(!configs[0].3);
+    assert_eq!((configs[0].4, configs[0].5, configs[0].6), (120, 1320, 420));
+    assert_eq!(configs[0].7, "drop");
+    assert_eq!(
+        configs[0].8,
+        vec!["failed".to_string(), "canceled".to_string()]
+    );
+
+    sqlx::query(
+        "ALTER TABLE notification_configs ADD CONSTRAINT notification_configs_test_reject CHECK (target <> 'db-reject')",
+    )
+    .execute(&pool)
+    .await
+    .expect("add test-only insert failure");
+    let response = app
+        .oneshot(
+            Request::put(format!("/api/v1/projects/{project_id}/notifications"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!([
+                        {"channel": "in_app", "target": "replacement"},
+                        {"channel": "in_app", "target": "db-reject"}
+                    ])
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let after_insert_error: Vec<(Uuid, String, String, bool, i32, i32, i32, String, Vec<String>)> =
+        sqlx::query_as(
+            "SELECT id, channel, target, enabled, aggregation_window_secs, quiet_start_min, quiet_end_min, quiet_action, quiet_bypass_statuses \
+             FROM notification_configs WHERE project_id = $1",
+        )
+        .bind(project_id)
+        .fetch_all(&pool)
+        .await
+        .expect("read notification configs after insert failure");
+    assert_eq!(after_insert_error, configs);
+}
+
+#[tokio::test]
 async fn in_app_notification_events_are_fanned_out_and_delivered() {
     let pool = test_pool().await;
     let project_id = Uuid::new_v4();

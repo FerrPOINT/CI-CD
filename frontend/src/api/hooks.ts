@@ -24,6 +24,7 @@ import type {
   JobLog,
   JobLogPage,
   NotificationConfig,
+  NotificationInput,
   NotificationEvent,
   OutboxDelivery,
   OutboxDeliveryDetail,
@@ -735,7 +736,7 @@ export function useNotificationEvents(projectId: string | undefined) {
 export function useSaveNotifications(projectId: string | undefined) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (inputs: { channel: string; target: string; enabled?: boolean }[]) =>
+    mutationFn: (inputs: NotificationInput[]) =>
       api<NotificationConfig[]>(`/projects/${projectId}/notifications`, { method: 'PUT', body: JSON.stringify(inputs) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.notifications(projectId ?? '') }),
   })
