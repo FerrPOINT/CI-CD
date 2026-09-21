@@ -146,6 +146,7 @@ describe('EnvironmentsPage protected delivery controls', () => {
 
     expect(await screen.findByText('production')).toBeInTheDocument()
     expect(screen.getByText('environments.protected · 1')).toBeInTheDocument()
+    expect(screen.queryByText('environments.capabilityTitle')).not.toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'environments.deploymentsFor production' }))
 
