@@ -79,7 +79,7 @@ export function AppShell() {
     <div className="min-h-screen bg-background text-text-primary">
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-[72px] flex-col border-r border-border bg-surface md:flex xl:w-[264px]">
         <div className="flex h-[60px] shrink-0 items-center justify-center border-b border-border px-3 xl:justify-start xl:px-5">
-          <div className="flex min-w-0 items-center gap-3" aria-label={t('app.name')}>
+          <div className="flex min-w-0 items-center gap-3" role="img" aria-label={t('app.name')}>
             <PlatformMark size="sm" withName={false} />
             <div className="hidden min-w-0 xl:block">
               <div className="truncate text-sm font-semibold">{t('app.name')}</div>
@@ -125,7 +125,11 @@ export function AppShell() {
               </DialogContent>
             </Dialog>
 
-            <div className="flex min-w-0 items-center gap-2 md:hidden" aria-label={t('app.name')}>
+            <div
+              className="flex min-w-0 items-center gap-2 md:hidden"
+              role="img"
+              aria-label={t('app.name')}
+            >
               <PlatformMark size="sm" withName={false} />
               <span className="hidden truncate text-sm font-semibold min-[420px]:inline">{t('app.name')}</span>
             </div>
@@ -140,9 +144,11 @@ export function AppShell() {
               <ThemeToggle />
             </div>
             {session && (
-              <div className="flex h-10 items-center" title={username} aria-label={username}>
+              <div className="flex h-10 items-center" title={username}>
                 <CircleUserRound className="h-5 w-5 text-text-muted" aria-hidden />
-                <span className="ml-2 hidden max-w-36 truncate text-sm text-text-secondary xl:inline">{username}</span>
+                <span className="sr-only ml-2 max-w-36 truncate text-sm text-text-secondary xl:not-sr-only">
+                  {username}
+                </span>
               </div>
             )}
             {session && (

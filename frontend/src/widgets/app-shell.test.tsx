@@ -88,7 +88,9 @@ describe('AppShell navigation', () => {
   it('[REQ-AUTH-001] exposes the current user and signs out from the header', async () => {
     renderShell()
 
-    expect(screen.getByLabelText('admin')).toBeInTheDocument()
+    expect(screen.getAllByRole('img', { name: 'app.name' })).toHaveLength(2)
+    expect(screen.getByText('admin')).toBeInTheDocument()
+    expect(screen.getByTitle('admin')).not.toHaveAttribute('aria-label')
     fireEvent.click(screen.getByRole('button', { name: 'navigation.logout' }))
 
     await waitFor(() => expect(authState.logout).toHaveBeenCalledOnce())
