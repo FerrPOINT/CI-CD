@@ -39,6 +39,7 @@ const MAX_LOG_LINES: usize = 100;
 const MAX_LOG_MESSAGE_LEN: usize = 8192;
 const MAX_SECRET_NAMES: usize = 64;
 const SECRET_BUNDLE_TTL_SECONDS: i64 = 300;
+const CLAIM_SERIALIZATION_ATTEMPTS: usize = 8;
 
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
@@ -1135,10 +1136,18 @@ async fn claim_next_work(
     crate::store::enqueue_missing_ready_jobs(db)
         .await
         .map_err(ApiError::internal)?;
-    let lease_id = Uuid::new_v4();
-    let lease_token = new_opaque_token("cicd_lease");
-    let lease_token_hash = crate::auth::hash_token(&lease_token);
-    let row = sqlx::query_as::<_, ClaimedWork>(
+    // The project cap reads active leases before inserting a new one. A single
+    // READ COMMITTED statement can oversubscribe it under concurrent polls.
+    for _ in 0..CLAIM_SERIALIZATION_ATTEMPTS {
+        let lease_id = Uuid::new_v4();
+        let lease_token = new_opaque_token("cicd_lease");
+        let lease_token_hash = crate::auth::hash_token(&lease_token);
+        let mut tx = db.begin().await.map_err(ApiError::internal)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+            .execute(&mut *tx)
+            .await
+            .map_err(ApiError::internal)?;
+        let row = sqlx::query_as::<_, ClaimedWork>(
         "WITH candidate AS ( \
              SELECT q.id AS queue_id, q.attempt_id, \
                     j.id AS job_id, j.stage_id, j.name AS job_name, j.image, j.command, \
@@ -1242,44 +1251,72 @@ async fn claim_next_work(
     .bind(ACK_DEADLINE_SECONDS)
     .bind(PROTOCOL_VERSION)
     .bind(runner_tags)
-    .fetch_optional(db)
-    .await
-    .map_err(ApiError::internal)?;
+        .fetch_optional(&mut *tx)
+        .await;
+        let row = match row {
+            Ok(Some(row)) => row,
+            Ok(None) => {
+                tx.rollback().await.map_err(ApiError::internal)?;
+                return Ok(None);
+            }
+            Err(error) if is_claim_serialization_failure(&error) => {
+                tx.rollback().await.map_err(ApiError::internal)?;
+                tokio::task::yield_now().await;
+                continue;
+            }
+            Err(error) => return Err(ApiError::internal(error)),
+        };
+        match tx.commit().await {
+            Ok(()) => {}
+            Err(error) if is_claim_serialization_failure(&error) => {
+                tokio::task::yield_now().await;
+                continue;
+            }
+            Err(error) => return Err(ApiError::internal(error)),
+        }
+        crate::api::refresh_statuses(db, row.stage_id).await?;
 
-    let Some(row) = row else {
-        return Ok(None);
-    };
-    crate::api::refresh_statuses(db, row.stage_id).await?;
-
-    Ok(Some(RunnerLeaseOffer {
-        protocol_version: PROTOCOL_VERSION,
-        lease_id: row.lease_id,
-        lease_token,
-        fencing_token: row.generation,
-        ack_deadline: row.ack_deadline,
-        lease_expires_at: row.lease_expires_at,
-        plan_sha256: row.plan_sha256,
-        attempt: RunnerAttemptSpec {
-            id: row.attempt_id,
-            number: row.attempt_no,
-            pipeline_id: row.pipeline_id,
-            job_id: row.job_id,
-            job_key: row.job_name,
-            git_ref: row.git_ref,
-            commit_sha: row.commit_sha,
-            executor: "shell".to_string(),
-            image: row.image,
-            commands: vec![row.command],
-            environment: BTreeMap::new(),
-            secrets: row.required_secrets,
-            timeout_seconds: row.timeout_seconds,
-            workspace: RunnerWorkspace {
-                checkout: true,
-                checkout_url: Some(row.repository_url),
+        return Ok(Some(RunnerLeaseOffer {
+            protocol_version: PROTOCOL_VERSION,
+            lease_id: row.lease_id,
+            lease_token,
+            fencing_token: row.generation,
+            ack_deadline: row.ack_deadline,
+            lease_expires_at: row.lease_expires_at,
+            plan_sha256: row.plan_sha256,
+            attempt: RunnerAttemptSpec {
+                id: row.attempt_id,
+                number: row.attempt_no,
+                pipeline_id: row.pipeline_id,
+                job_id: row.job_id,
+                job_key: row.job_name,
+                git_ref: row.git_ref,
+                commit_sha: row.commit_sha,
+                executor: "shell".to_string(),
+                image: row.image,
+                commands: vec![row.command],
+                environment: BTreeMap::new(),
+                secrets: row.required_secrets,
+                timeout_seconds: row.timeout_seconds,
+                workspace: RunnerWorkspace {
+                    checkout: true,
+                    checkout_url: Some(row.repository_url),
+                },
+                artifacts: row.artifact_paths,
             },
-            artifacts: row.artifact_paths,
-        },
-    }))
+        }));
+    }
+
+    tracing::warn!(
+        runner_id = %runner.id,
+        attempts = CLAIM_SERIALIZATION_ATTEMPTS,
+        "runner claim remained contended after serialization retries"
+    );
+    Ok(None)
+}
+
+fn is_claim_serialization_failure(error: &sqlx::Error) -> bool {
+    matches!(error, sqlx::Error::Database(db_error) if db_error.code().as_deref() == Some("40001"))
 }
 
 async fn authenticate_runner(
