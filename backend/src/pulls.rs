@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, process::Stdio};
 
 use axum::{
     Json,
@@ -7,6 +7,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use tokio::io::AsyncReadExt;
 use uuid::Uuid;
 
 use crate::api::{ApiError, AppState};
@@ -773,23 +774,12 @@ pub async fn get_blob(
         .unwrap_or("HEAD");
     let git_ref = resolve_view_ref(&path, git_ref).await;
     let spec = format!("{git_ref}:{}", params.path);
-    let output = tokio::process::Command::new("git")
-        .arg(format!("--git-dir={}", path.display()))
-        .args(["show", &spec])
-        .output()
-        .await
-        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
-    if !output.status.success() {
-        return Err(ApiError::not_found_named("blob not found"));
-    }
-    let bytes = output.stdout;
+    let (bytes, size, truncated) = read_blob(&path, &spec).await?;
     let binary = bytes.iter().take(8000).any(|b| *b == 0);
-    const MAX_LEN: usize = 512 * 1024;
-    let truncated = bytes.len() > MAX_LEN;
     let content = if binary {
         String::new()
     } else {
-        String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_LEN)]).into_owned()
+        String::from_utf8_lossy(&bytes).into_owned()
     };
     // Resolve blob sha for the response.
     let sha_output = tokio::process::Command::new("git")
@@ -804,11 +794,68 @@ pub async fn get_blob(
     Ok(Json(BlobContent {
         path: params.path,
         sha,
-        size: bytes.len() as i64,
+        size,
         content,
         binary,
         truncated,
     }))
+}
+
+const MAX_BLOB_LEN: usize = 512 * 1024;
+
+async fn read_blob(path: &std::path::Path, spec: &str) -> Result<(Vec<u8>, i64, bool), ApiError> {
+    let size_output = tokio::process::Command::new("git")
+        .arg(format!("--git-dir={}", path.display()))
+        .args(["cat-file", "-s", spec])
+        .output()
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if !size_output.status.success() {
+        return Err(ApiError::not_found_named("blob not found"));
+    }
+    let size = String::from_utf8_lossy(&size_output.stdout)
+        .trim()
+        .parse::<i64>()
+        .map_err(|_| ApiError::bad_request("git returned an invalid blob size"))?;
+    if size < 0 {
+        return Err(ApiError::bad_request("git returned an invalid blob size"));
+    }
+
+    let mut child = tokio::process::Command::new("git")
+        .arg(format!("--git-dir={}", path.display()))
+        .args(["cat-file", "blob", spec])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        ApiError::internal(sqlx::Error::Io(std::io::Error::other(
+            "git cat-file stdout is unavailable",
+        )))
+    })?;
+    let mut bytes = Vec::with_capacity(MAX_BLOB_LEN + 1);
+    let mut bounded = stdout.take((MAX_BLOB_LEN + 1) as u64);
+    bounded
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    drop(bounded);
+
+    let truncated = size > MAX_BLOB_LEN as i64 || bytes.len() > MAX_BLOB_LEN;
+    if bytes.len() > MAX_BLOB_LEN {
+        bytes.truncate(MAX_BLOB_LEN);
+    }
+    if truncated {
+        let _ = child.start_kill();
+    }
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if !truncated && !status.success() {
+        return Err(ApiError::not_found_named("blob not found"));
+    }
+    Ok((bytes, size, truncated))
 }
 
 #[derive(serde::Deserialize, utoipa::IntoParams)]
@@ -853,7 +900,8 @@ pub async fn list_tags(
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_ref, parse_diff_files, tree_entry_path};
+    use super::{MAX_BLOB_LEN, classify_ref, parse_diff_files, read_blob, tree_entry_path};
+    use uuid::Uuid;
 
     #[test]
     fn refs_keep_branch_and_tag_identity() {
@@ -910,5 +958,55 @@ mod tests {
     fn rejects_mismatched_git_outputs() {
         assert!(parse_diff_files(b"1\t0\tnew.txt\0", b"A\0other.txt\0").is_err());
         assert!(parse_diff_files(b"1\t0\tnew.txt\0", b"A\0new.txt\0D\0old.txt\0").is_err());
+    }
+
+    #[tokio::test]
+    async fn blob_read_stops_after_the_response_limit() {
+        let directory = std::env::temp_dir().join(format!("forge-large-blob-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .expect("create repository directory");
+
+        for args in [
+            vec!["init", "--quiet"],
+            vec!["config", "user.name", "Forge Test"],
+            vec!["config", "user.email", "forge@example.test"],
+        ] {
+            let status = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(args)
+                .status()
+                .await
+                .expect("run git setup command");
+            assert!(status.success());
+        }
+
+        let full_size = MAX_BLOB_LEN + 4096;
+        tokio::fs::write(directory.join("large.txt"), vec![b'x'; full_size])
+            .await
+            .expect("write large fixture");
+        for args in [
+            vec!["add", "large.txt"],
+            vec!["commit", "--quiet", "-m", "Large blob"],
+        ] {
+            let status = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(args)
+                .status()
+                .await
+                .expect("create blob commit");
+            assert!(status.success());
+        }
+
+        let (bytes, size, truncated) = read_blob(&directory.join(".git"), "HEAD:large.txt")
+            .await
+            .expect("read bounded blob");
+        assert!(truncated);
+        assert_eq!(size, full_size as i64);
+        assert_eq!(bytes.len(), MAX_BLOB_LEN);
+
+        let _ = tokio::fs::remove_dir_all(directory).await;
     }
 }

@@ -27,6 +27,17 @@ function formatDate(value: string, locale: string): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale)
 }
 
+function formatBytes(value: number, locale: string): string {
+  const units = ['B', 'KiB', 'MiB', 'GiB']
+  let amount = Math.max(0, value)
+  let unit = 0
+  while (amount >= 1024 && unit < units.length - 1) {
+    amount /= 1024
+    unit += 1
+  }
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: unit === 0 ? 0 : 1 }).format(amount)} ${units[unit]}`
+}
+
 export function RepositoryBrowserPage() {
   const { t, i18n } = useTranslation()
   const { repo } = useParams<{ repo: string }>()
@@ -54,7 +65,7 @@ export function RepositoryBrowserPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="flex items-center gap-2 text-sm text-text-muted">
-            <Link to="/repositories" className="hover:text-text-primary">{t('navigation.repositories')}</Link>
+            <Link to="/repositories" className="inline-flex min-h-10 items-center hover:text-text-primary">{t('navigation.repositories')}</Link>
             <ChevronRight className="h-3 w-3" />
             <span className="min-w-0 break-all">{repo}</span>
           </div>
@@ -64,12 +75,12 @@ export function RepositoryBrowserPage() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button asChild variant="outline" size="sm">
+          <Button asChild variant="outline" size="sm" className="h-10">
             <Link to={`/repositories/${encodeURIComponent(repo)}/compare`}>
               <GitCompareArrows className="h-4 w-4" /> {t('repositoryBrowser.compareChanges')}
             </Link>
           </Button>
-          <Button asChild size="sm">
+          <Button asChild size="sm" className="h-10">
             <Link to={`/repositories/${encodeURIComponent(repo)}/pulls`}>
               <GitPullRequest className="h-4 w-4" /> {t('repositoryBrowser.createPullRequest')}
             </Link>
@@ -205,7 +216,7 @@ function CodeBrowser({ repo, gitRef, dirPath, filePath, refsQuery, onNavigate }:
       {Boolean(refsQuery.error) && (
         <div role="alert" className="flex flex-wrap items-center gap-3 rounded-md border border-status-failed/40 p-3 text-sm">
           <span>{t('repositoryBrowser.refsLoadError')}</span>
-          <Button type="button" size="sm" variant="outline" onClick={() => void refsQuery.refetch()}>{t('common.retry')}</Button>
+          <Button type="button" size="sm" variant="outline" className="h-10" onClick={() => void refsQuery.refetch()}>{t('common.retry')}</Button>
         </div>
       )}
       {filePath ? (
@@ -218,17 +229,17 @@ function CodeBrowser({ repo, gitRef, dirPath, filePath, refsQuery, onNavigate }:
 }
 
 function FilePreview({ repo, gitRef, filePath, onBack }: { repo: string; gitRef: string; filePath: string; onBack: () => void }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const query = useRepositoryBlob(repo, gitRef, filePath)
   return (
     <div className="overflow-hidden rounded-md border border-border">
       <div className="flex min-w-0 flex-wrap items-center gap-2 border-b border-border p-2 text-sm">
-        <Button type="button" variant="ghost" size="sm" className="min-h-10 min-w-10" aria-label={t('repositoryBrowser.backToTree')} title={t('repositoryBrowser.backToTree')} onClick={onBack}>
+        <Button type="button" variant="ghost" size="sm" className="h-10 min-w-10" aria-label={t('repositoryBrowser.backToTree')} title={t('repositoryBrowser.backToTree')} onClick={onBack}>
           <ArrowLeft className="h-4 w-4" aria-hidden />
         </Button>
         <FileText className="h-4 w-4 shrink-0 text-accent" aria-hidden />
         <span className="min-w-0 flex-1 break-all font-medium">{filePath}</span>
-        {query.data && <span className="text-xs text-text-muted">{query.data.size} B · {query.data.sha.slice(0, 7)}</span>}
+        {query.data && <span className="text-xs text-text-muted">{formatBytes(query.data.size, i18n.language)} · {query.data.sha.slice(0, 7)}</span>}
       </div>
       <div className="p-4">
         <QueryState data={query.data} isLoading={query.isLoading} error={query.error} errorMessage={t('repositoryBrowser.fileLoadError')} onRetry={() => void query.refetch()}>
@@ -238,8 +249,8 @@ function FilePreview({ repo, gitRef, filePath, onBack }: { repo: string; gitRef:
             <p className="text-sm text-text-muted">{t('repositoryBrowser.emptyFile')}</p>
           ) : (
             <div>
-              {blob.truncated && <p className="mb-3 text-xs text-text-muted">{t('repositoryBrowser.truncatedFile')}</p>}
-              <pre className="max-h-[70vh] overflow-auto text-xs leading-relaxed"><code>{blob.content}</code></pre>
+              {blob.truncated && <p role="status" className="mb-3 text-sm text-text-muted">{t('repositoryBrowser.truncatedFile')}</p>}
+              <pre tabIndex={0} aria-label={t('repositoryBrowser.filePreview', { path: filePath })} className="max-h-[70vh] overflow-auto text-xs leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"><code>{blob.content}</code></pre>
             </div>
           )}
         </QueryState>

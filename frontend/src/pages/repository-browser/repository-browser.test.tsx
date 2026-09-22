@@ -128,8 +128,10 @@ describe('RepositoryBrowserPage', () => {
   it('warns when the displayed text is truncated', () => {
     mocks.blob.mockReturnValue(result({ path: 'large.txt', sha: 'abc123456', size: 600000, content: 'partial text', binary: false, truncated: true }))
     setup('/repositories/demo?file=large.txt')
-    expect(screen.getByText('repositoryBrowser.truncatedFile')).toBeInTheDocument()
+    expect(screen.getByText('repositoryBrowser.truncatedFile')).toHaveAttribute('role', 'status')
     expect(screen.getByText('partial text')).toBeInTheDocument()
+    expect(screen.getByLabelText('repositoryBrowser.filePreview')).toHaveAttribute('tabindex', '0')
+    expect(screen.getByText(/585.9 KiB/)).toBeInTheDocument()
   })
 
   it('retries a tree error without hiding the other tabs', () => {
