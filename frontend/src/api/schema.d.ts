@@ -180,6 +180,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/audit-log/page": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_audit_log_page"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/login": {
         parameters: {
             query?: never;
@@ -1685,6 +1701,16 @@ export interface components {
             resource_id?: string | null;
             resource_type: string;
         };
+        AuditLogPage: {
+            actions: string[];
+            items: components["schemas"]["AuditEvent"][];
+            /** Format: int32 */
+            limit: number;
+            /** Format: int64 */
+            offset: number;
+            /** Format: int64 */
+            total: number;
+        };
         BlobContent: {
             binary: boolean;
             content: string;
@@ -3036,6 +3062,40 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["AuditEvent"][];
                 };
+            };
+        };
+    };
+    list_audit_log_page: {
+        parameters: {
+            query?: {
+                /** @description Maximum number of events to return. */
+                limit?: number | null;
+                /** @description Number of matching events to skip. */
+                offset?: number;
+                /** @description Optional exact action filter. */
+                action?: string | null;
+                /** @description Optional case-insensitive literal search across raw event fields. */
+                q?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditLogPage"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

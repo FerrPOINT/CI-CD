@@ -253,9 +253,12 @@ let cors = CorsLayer::new()
 
 ## 13. Audit Logging
 
-- Current: `audit_log` append-only table, API возвращает последние 200 событий.
+- Current: `audit_log` append-only table; legacy API возвращает последние 200
+  событий, а отдельный page endpoint даёт полный журнал со stable ordering,
+  bounded pagination, exact action filter и literal search.
 - Current: login, denied request, runner, secret, artifact, environment, deployment, schedule, webhook, notification, user/token и часть pipeline/job mutations пишут события.
-- Target: immutable authorisation context, filters/pagination/export, retention policy и alerting.
+- Target: immutable authorisation context, tenant/project scope, export,
+  retention policy и alerting.
 
 ## References
 

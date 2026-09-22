@@ -308,6 +308,8 @@ export interface AuditEvent {
   created_at: string
 }
 
+export type AuditLogPage = components['schemas']['AuditLogPage']
+
 export type UserRole = 'admin' | 'maintainer' | 'developer' | 'viewer'
 
 export interface User {

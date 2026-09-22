@@ -176,6 +176,12 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
         Role::Developer,
     ),
     user(GET, "/api/v1/audit-log", Action::Read, Role::Maintainer),
+    user(
+        GET,
+        "/api/v1/audit-log/page",
+        Action::Read,
+        Role::Maintainer,
+    ),
     user(GET, "/api/v1/users", Action::Read, Role::Maintainer),
     user(POST, "/api/v1/users", Action::Admin, Role::Admin),
     user(PATCH, "/api/v1/users/{user_id}", Action::Admin, Role::Admin),
@@ -760,6 +766,8 @@ mod tests {
         ));
         assert!(!allows(Role::Maintainer, "POST", "/api/v1/users"));
         assert!(allows(Role::Admin, "POST", "/api/v1/users"));
+        assert!(!allows(Role::Developer, "GET", "/api/v1/audit-log/page"));
+        assert!(allows(Role::Maintainer, "GET", "/api/v1/audit-log/page"));
     }
 
     #[test]

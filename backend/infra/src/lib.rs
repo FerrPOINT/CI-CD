@@ -228,6 +228,8 @@ pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::Error> {
         CREATE INDEX IF NOT EXISTS idx_schedule_fires_pending ON schedule_fires(scheduled_for) WHERE status = 'pending';
         CREATE INDEX IF NOT EXISTS idx_webhooks_project ON webhooks(project_id);
         CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_audit_log_created_id ON audit_log(created_at DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_audit_log_action_created_id ON audit_log(action, created_at DESC, id DESC);
         CREATE INDEX IF NOT EXISTS idx_pipelines_project_id ON pipelines(project_id);
         CREATE INDEX IF NOT EXISTS idx_api_tokens_active_owner_project ON api_tokens(user_id, project_id) WHERE revoked_at IS NULL;
         CREATE INDEX IF NOT EXISTS idx_api_tokens_active_project ON api_tokens(project_id) WHERE revoked_at IS NULL;

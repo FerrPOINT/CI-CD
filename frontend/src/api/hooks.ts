@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef } from 'react'
 import { api, apiRetry, authenticatedFetch } from './client'
 import type {
@@ -10,7 +10,7 @@ import type {
 
   ApiToken,
   Artifact,
-  AuditEvent,
+  AuditLogPage,
   Commit,
   Comparison,
   CreateApiTokenInput,
@@ -721,8 +721,26 @@ export function useProjectReport(projectId: string | undefined) {
   })
 }
 
-export function useAuditLog() {
-  return useQuery({ queryKey: PLATFORM_KEYS.auditLog, queryFn: () => api<AuditEvent[]>('/audit-log') })
+export function useAuditLog(filters?: { action?: string; q?: string; limit?: number; offset?: number }) {
+  return useQuery({
+    queryKey: [
+      ...PLATFORM_KEYS.auditLog,
+      filters?.action ?? 'all',
+      filters?.q ?? '',
+      filters?.limit ?? 20,
+      filters?.offset ?? 0,
+    ],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        limit: String(filters?.limit ?? 20),
+        offset: String(filters?.offset ?? 0),
+      })
+      if (filters?.action) params.set('action', filters.action)
+      if (filters?.q) params.set('q', filters.q)
+      return api<AuditLogPage>(`/audit-log/page?${params.toString()}`)
+    },
+    placeholderData: keepPreviousData,
+  })
 }
 
 export function useUsers() {
