@@ -287,6 +287,7 @@ export interface NotificationEvent {
 }
 
 export type OutboxDelivery = components['schemas']['OutboxDelivery']
+export type OutboxDeliveryPage = components['schemas']['OutboxDeliveryPage']
 export type OutboxDeliveryAttempt = components['schemas']['OutboxDeliveryAttempt']
 export type OutboxDeliveryDetail = components['schemas']['OutboxDeliveryDetail']
 export type RequeuedOutboxDelivery = components['schemas']['RequeuedOutboxDelivery']

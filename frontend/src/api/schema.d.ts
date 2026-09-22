@@ -877,6 +877,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/outbox-deliveries/page": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_outbox_delivery_page"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/pipelines": {
         parameters: {
             query?: never;
@@ -2167,6 +2183,15 @@ export interface components {
         OutboxDeliveryDetail: {
             attempts: components["schemas"]["OutboxDeliveryAttempt"][];
             delivery: components["schemas"]["OutboxDelivery"];
+        };
+        OutboxDeliveryPage: {
+            items: components["schemas"]["OutboxDelivery"][];
+            /** Format: int32 */
+            limit: number;
+            /** Format: int32 */
+            offset: number;
+            /** Format: int64 */
+            total: number;
         };
         Pipeline: {
             /** Format: date-time */
@@ -4649,6 +4674,8 @@ export interface operations {
             query?: {
                 /** @description Maximum number of recent deliveries to return. */
                 limit?: number | null;
+                /** @description Number of matching deliveries to skip. */
+                offset?: number;
                 /** @description Optional status filter: pending, retry_scheduled, delivered or failed. */
                 status?: string | null;
                 /** @description Optional channel filter: webhook, notification or sse. */
@@ -4668,6 +4695,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OutboxDelivery"][];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_outbox_delivery_page: {
+        parameters: {
+            query?: {
+                /** @description Maximum number of recent deliveries to return. */
+                limit?: number | null;
+                /** @description Number of matching deliveries to skip. */
+                offset?: number;
+                /** @description Optional status filter: pending, retry_scheduled, delivered or failed. */
+                status?: string | null;
+                /** @description Optional channel filter: webhook, notification or sse. */
+                channel?: string | null;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutboxDeliveryPage"];
                 };
             };
             400: {

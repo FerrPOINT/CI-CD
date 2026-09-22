@@ -101,6 +101,7 @@ Tenant roles: `owner` управляет tenant, projects, memberships, service 
 | GET, POST | `/api/v1/projects/{project_id}/webhooks` | `automation.read` / `automation.manage` |
 | DELETE | `/api/v1/webhooks/{webhook_id}` | `automation.manage` |
 | GET | `/api/v1/projects/{project_id}/outbox-deliveries` | `automation.read` |
+| GET | `/api/v1/projects/{project_id}/outbox-deliveries/page` | `automation.read` |
 | GET | `/api/v1/outbox-deliveries/{delivery_id}` | `automation.read` via delivery project |
 | POST | `/api/v1/outbox-deliveries/{delivery_id}/requeue` | `automation.manage` via delivery project |
 | GET, PUT | `/api/v1/projects/{project_id}/notifications` | `automation.read` / `automation.manage` |

@@ -1108,13 +1108,31 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 
 | Метод | Путь | Назначение |
 |---|---|---|
-| GET | `/projects/{project_id}/outbox-deliveries?limit=&status=&channel=` | Последние delivery rows проекта |
+| GET | `/projects/{project_id}/outbox-deliveries?limit=&offset=&status=&channel=` | Legacy-массив delivery rows проекта |
+| GET | `/projects/{project_id}/outbox-deliveries/page?limit=&offset=&status=&channel=` | Страница delivery rows с общим количеством |
 | GET | `/outbox-deliveries/{delivery_id}` | Delivery detail + попытки |
 | POST | `/outbox-deliveries/{delivery_id}/requeue` | Явно поставить failed delivery в повтор новой generation |
 
-`GET /projects/{project_id}/outbox-deliveries` возвращает bounded список (`limit` `1..200`, default `50`) со stable ordering `created_at DESC, id DESC`. Фильтры allowlisted: `status=pending|retry_scheduled|delivered|failed`, `channel=webhook|notification|sse`.
+Оба list endpoint используют `limit` `1..200` (default `50`), `offset >= 0` (default `0`) и stable ordering `created_at DESC, id DESC`. Фильтры allowlisted: `status=pending|retry_scheduled|delivered|failed`, `channel=webhook|notification|sse`. Legacy endpoint сохраняет ответ-массив для обратной совместимости; Dashboard использует `/page`, чтобы показывать точное число совпадений и постраничную навигацию.
 
-**Response 200:**
+**Paged response 200:**
+```json
+{
+  "items": [
+    {
+      "id": "delivery-uuid",
+      "status": "failed",
+      "channel": "webhook",
+      "created_at": "2026-08-31T11:58:00Z"
+    }
+  ],
+  "total": 43,
+  "limit": 20,
+  "offset": 20
+}
+```
+
+**Legacy response 200:**
 ```json
 [
   {
@@ -1450,6 +1468,7 @@ Git Smart HTTP допускает unauthenticated read только для `repo
 | `/api/v1/projects/{project_id}/notifications` | Notifications |
 | `/api/v1/projects/{project_id}/notifications/stream` | Notifications |
 | `/api/v1/projects/{project_id}/outbox-deliveries` | Outbox |
+| `/api/v1/projects/{project_id}/outbox-deliveries/page` | Outbox |
 | `/api/v1/projects/{project_id}/pipelines` | Pipelines |
 | `/api/v1/projects/{project_id}/reports/summary` | Reports |
 | `/api/v1/projects/{project_id}/schedules` | Schedules |
