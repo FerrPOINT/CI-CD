@@ -14,10 +14,10 @@
 | Confirm dialogs используют Radix AlertDialog (focus trap, semantic roles), не `window.confirm` | `frontend/src/shared/ui/confirm-dialog.tsx` | Current verified |
 | Runners/users используют cards на mobile вместо сжатых таблиц | `frontend/src/pages/runners/index.tsx`, `users/index.tsx` | Current verified |
 | Таблицы имеют `caption`/`sr-only` и column headers там, где реализовано | `runners/index.tsx` | Current verified |
-| Статусы не передаются только цветом: есть текст `Онлайн`, `Успешно`, `Открыт` | UI + `m-runners.png` | Current verified |
-| 375 px evidence для ключевых flows | `docs/assets/screens/manifest.md` | Current verified |
+| Статусы не передаются только цветом: есть текст `Онлайн`, `Успешно`, `Открыт` | UI component tests | Current verified |
+| Narrow-viewport behavior ключевых flows | Component/Playwright UI QA, не README manifest | Current verified |
 | Playwright mobile drawer contract: фокус остаётся внутри, Escape закрывает, focus возвращается trigger | `frontend/e2e/critical-flows.spec.ts` | Current verified MVP |
-| All-route desktop axe smoke без `serious`/`critical` violations на 20 рабочих Dashboard-страницах + `/login` | `frontend/e2e/accessibility.spec.ts`; CI job `e2e` | Current verified MVP |
+| All-route desktop axe smoke без `serious`/`critical` violations на рабочих Dashboard-страницах + `/login` | `frontend/e2e/accessibility.spec.ts`; локальный E2E gate | Local verification |
 
 `min-h-9` (36 px) — текущий минимальный размер компактного элемента. Для primary mobile actions целевая норма — 44×44 CSS px; 36 px допускается только для вторичных dense-table действий с явным aria-label.
 

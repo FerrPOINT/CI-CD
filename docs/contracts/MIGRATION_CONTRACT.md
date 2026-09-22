@@ -79,7 +79,7 @@ just migrate-verify
 just db-test-down
 ```
 
-Required CI job `migration-test` поднимает test DB, применяет/verify migrations, выполняет real PostgreSQL tests и cleanup. Backend gate дополнительно запускает `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` и `cargo build --release --workspace`. CI должен использовать SQLx 0.8.x в pinned Rust container и подтверждать чистый `git diff` после generated migration artifacts, если они введены.
+Hosted backend job поднимает PostgreSQL service и запускает `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db -- --test-threads=1` и OpenAPI drift. Expanded `migration-test` lifecycle (owner/runtime matrix, prior-schema upgrade и unconditional cleanup) остаётся target; release build и compatibility checks запускаются локально по scope. CI использует SQLx 0.8.x в pinned Rust toolchain; generated migration artifacts, если будут введены, обязаны оставлять чистый `git diff`.
 
 Минимальная migration suite содержит: empty bootstrap, upgrade от предыдущей released schema, legacy mismatch без history mutation, runtime DDL denial, checksum mismatch failure и concurrent migrator/advisory-lock behavior.
 

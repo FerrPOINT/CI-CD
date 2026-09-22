@@ -1,6 +1,6 @@
 // Evidence screenshots for Forge CI/CD README and docs.
 // Usage: node scripts/shoot-evidence.mjs
-// Viewports: desktop 1920x1080 full-page, mobile 375x812.
+// Viewport: desktop 1920x1080 full-page.
 import { chromium } from 'playwright'
 import { mkdirSync } from 'node:fs'
 import { join, dirname } from 'node:path'
@@ -111,7 +111,7 @@ async function normalizeVolatileText(page) {
 
 async function shoot(shot) {
   const ctx = await browser.newContext({
-    viewport: shot.mobile ? { width: 375, height: 812 } : { width: 1920, height: 1080 },
+    viewport: { width: 1920, height: 1080 },
     deviceScaleFactor: 1,
     locale: 'ru-RU',
   })
