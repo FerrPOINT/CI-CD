@@ -3829,6 +3829,7 @@ components:
       - merge_base
       - files
       - patch
+      - patch_truncated
       properties:
         files:
           type: array
@@ -3840,6 +3841,8 @@ components:
           type: string
         patch:
           type: string
+        patch_truncated:
+          type: boolean
         to:
           type: string
     Environment:
