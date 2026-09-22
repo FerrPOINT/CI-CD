@@ -56,7 +56,8 @@ const KEYS = {
   attemptLogPages: (jobId: string, attemptId: string, search: string) => ['logs', jobId, attemptId, 'page', search] as const,
   repositories: ['repositories'] as const,
   refs: (repo: string) => ['repository-refs', repo] as const,
-  commits: (repo: string, branch: string) => ['repository-commits', repo, branch] as const,
+  commits: (repo: string, branch: string, page: number, pageSize: number) =>
+    ['repository-commits', repo, branch, page, pageSize] as const,
   comparison: (repo: string, from: string, to: string) => ['repository-comparison', repo, from, to] as const,
   pullRequests: (repo: string) => ['pull-requests', repo] as const,
   repositoryTree: (repo: string, gitRef: string, path: string) => ['repository-tree', repo, gitRef, path] as const,
@@ -256,14 +257,19 @@ export function useRepositoryRefs(repo: string | undefined) {
   })
 }
 
-export function useRepositoryCommits(repo: string | undefined, branch = 'HEAD') {
+export function useRepositoryCommits(repo: string | undefined, branch = 'HEAD', page = 1, pageSize = 50) {
+  const offset = (page - 1) * pageSize
   return useQuery({
-    queryKey: KEYS.commits(repo ?? '', branch),
-    queryFn: () => {
-      const params = new URLSearchParams({ branch, limit: '50' })
-      return api<Commit[]>(`/repos/${repositoryPath(repo ?? '')}/commits?${params}`)
+    queryKey: KEYS.commits(repo ?? '', branch, page, pageSize),
+    queryFn: async () => {
+      const params = new URLSearchParams({ branch, limit: String(pageSize + 1), offset: String(offset) })
+      const commits = await api<Commit[]>(`/repos/${repositoryPath(repo ?? '')}/commits?${params}`)
+      return {
+        items: commits.slice(0, pageSize),
+        hasMore: commits.length > pageSize,
+      }
     },
-    enabled: Boolean(repo && branch),
+    enabled: Boolean(repo && branch && page > 0 && pageSize > 0),
     retry: apiRetry,
   })
 }

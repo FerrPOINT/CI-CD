@@ -134,6 +134,10 @@
     "codeLoadError": "Не удалось загрузить файлы",
     "fileLoadError": "Не удалось загрузить файл",
     "commitsLoadError": "Не удалось загрузить коммиты",
+    "commitPages": "Страницы истории коммитов",
+    "commitPage": "Страница {{page}}",
+    "previousCommits": "Новые коммиты",
+    "nextCommits": "Более ранние коммиты",
     "branchesLoadError": "Не удалось загрузить ветки",
     "tagsLoadError": "Не удалось загрузить теги",
     "releasesLoadError": "Не удалось загрузить релизы"

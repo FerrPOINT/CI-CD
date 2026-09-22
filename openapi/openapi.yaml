@@ -1980,6 +1980,16 @@ paths:
         schema:
           type: integer
           format: int32
+          default: 50
+          maximum: 200
+          minimum: 1
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 0
           minimum: 0
       - name: repo
         in: path
