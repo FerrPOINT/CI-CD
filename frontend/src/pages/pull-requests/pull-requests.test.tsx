@@ -44,10 +44,14 @@ function pullRequest(number: number, status: PullRequest['status'] = 'open'): Pu
   }
 }
 
-function setup(pullRequests: PullRequest[], path = '/repositories/platform/pulls', errors: { list?: Error; diff?: Error } = {}) {
-  mocks.list.mockReturnValue({ data: pullRequests, isLoading: false, error: errors.list ?? null, refetch: mocks.refetchList })
+function setup(
+  pullRequests: PullRequest[],
+  path = '/repositories/platform/pulls',
+  options: { list?: Error; diff?: Error; comparison?: unknown } = {},
+) {
+  mocks.list.mockReturnValue({ data: pullRequests, isLoading: false, error: options.list ?? null, refetch: mocks.refetchList })
   mocks.refs.mockReturnValue({ data: [{ name: 'main', sha: 'abc', target: '' }, { name: 'feature/1', sha: 'def', target: '' }], isLoading: false, error: null, refetch: mocks.refetchRefs })
-  mocks.comparison.mockReturnValue({ data: null, isLoading: false, isError: Boolean(errors.diff), error: errors.diff ?? null, refetch: mocks.refetchDiff })
+  mocks.comparison.mockReturnValue({ data: options.comparison ?? null, isLoading: false, isError: Boolean(options.diff), error: options.diff ?? null, refetch: mocks.refetchDiff })
   render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
@@ -149,5 +153,30 @@ describe('pull request workflow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'common.retry' }))
     expect(mocks.refetchDiff).toHaveBeenCalled()
     expect(screen.getByRole('link', { name: '#1' })).toHaveAttribute('href', '/repositories/platform/pulls/1')
+  })
+
+  it('labels binary changes instead of presenting invented line counts', () => {
+    setup([pullRequest(1)], '/repositories/platform/pulls/1?view=diff', {
+      comparison: {
+        from: 'main',
+        to: 'feature/1',
+        merge_base: 'abc123',
+        patch: '',
+        files: [
+          {
+            path: 'assets/screenshot.png',
+            status: 'modified',
+            additions: 0,
+            deletions: 0,
+            binary: true,
+          },
+        ],
+      },
+    })
+
+    const file = screen.getByText('assets/screenshot.png').closest('li')
+    expect(file).toHaveTextContent('compare.binaryFile')
+    expect(screen.queryByText('+0')).not.toBeInTheDocument()
+    expect(screen.queryByText('−0')).not.toBeInTheDocument()
   })
 })

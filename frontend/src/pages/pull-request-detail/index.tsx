@@ -98,17 +98,28 @@ export function PullRequestDetailPage() {
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-y border-border py-3 text-sm">
               <span className="text-text-muted">{t('compare.mergeBase')}: </span>
               <code className="break-all rounded bg-surface-raised px-1.5 py-0.5">{comparison.merge_base}</code>
-              <span className="text-success">+{comparison.files.reduce((sum, file) => sum + file.additions, 0)}</span>
-              <span className="text-danger">−{comparison.files.reduce((sum, file) => sum + file.deletions, 0)}</span>
+              {comparison.files.some((file) => !file.binary) ? (
+                <>
+                  <span className="text-success">+{comparison.files.reduce((sum, file) => sum + file.additions, 0)}</span>
+                  <span className="text-danger">−{comparison.files.reduce((sum, file) => sum + file.deletions, 0)}</span>
+                </>
+              ) : null}
             </div>
             <div>
               <h2 className="text-sm font-semibold uppercase tracking-wide">{t('compare.filesChanged')}</h2>
               <ul className="mt-3 divide-y divide-border overflow-hidden rounded-md border border-border">
                 {comparison.files.map((file) => (
                   <li key={file.path} className="flex items-center gap-3 px-4 py-3 text-sm">
-                    <FileDiff className="h-4 w-4 text-text-muted" />
+                    <FileDiff className="h-4 w-4 text-text-muted" aria-hidden />
                     <code className="flex-1 truncate">{file.path}</code>
-                    <span className="text-success">+{file.additions}</span><span className="text-danger">−{file.deletions}</span>
+                    {file.binary ? (
+                      <span className="text-text-muted">{t('compare.binaryFile')}</span>
+                    ) : (
+                      <>
+                        <span className="text-success">+{file.additions}</span>
+                        <span className="text-danger">−{file.deletions}</span>
+                      </>
+                    )}
                   </li>
                 ))}
               </ul>
