@@ -353,6 +353,84 @@ pub struct PullRequest {
     pub merge_commit_sha: Option<String>,
 }
 
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct PullRequestPage {
+    pub items: Vec<PullRequest>,
+    pub total: i64,
+    #[schema(minimum = 1, maximum = 100)]
+    pub limit: u32,
+    pub offset: u32,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum PullRequestStatusFilter {
+    Open,
+    Closed,
+    Merged,
+}
+
+impl PullRequestStatusFilter {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Closed => "closed",
+            Self::Merged => "merged",
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct PullRequestListParams {
+    #[param(default = 20, minimum = 1, maximum = 100)]
+    pub limit: Option<u32>,
+    #[param(default = 0, minimum = 0)]
+    pub offset: Option<u32>,
+    #[param(inline)]
+    pub status: Option<PullRequestStatusFilter>,
+    #[param(max_length = 200)]
+    pub search: Option<String>,
+}
+
+struct NormalizedPullRequestListParams {
+    limit: u32,
+    offset: u32,
+    status: Option<String>,
+    search: Option<String>,
+}
+
+impl PullRequestListParams {
+    fn normalize(self) -> Result<NormalizedPullRequestListParams, ApiError> {
+        let limit = self.limit.unwrap_or(20);
+        if !(1..=100).contains(&limit) {
+            return Err(ApiError::bad_request("limit must be between 1 and 100"));
+        }
+
+        let status = self.status.map(|value| value.as_str().to_string());
+
+        let search = self
+            .search
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        if search
+            .as_deref()
+            .is_some_and(|value| value.chars().count() > 200)
+        {
+            return Err(ApiError::bad_request(
+                "search must not exceed 200 characters",
+            ));
+        }
+
+        Ok(NormalizedPullRequestListParams {
+            limit,
+            offset: self.offset.unwrap_or(0),
+            status,
+            search,
+        })
+    }
+}
+
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub struct CreatePullRequest {
     pub repository_name: String,
@@ -378,13 +456,93 @@ pub async fn list_pull_requests(
 ) -> Result<Json<Vec<PullRequest>>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     let prs = sqlx::query_as::<_, PullRequest>(
-        "SELECT id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha FROM pull_requests WHERE repository_name = $1 ORDER BY number DESC",
+        "SELECT id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha \
+         FROM pull_requests WHERE repository_name = $1 ORDER BY number DESC",
     )
     .bind(&repo)
     .fetch_all(pool)
     .await
     .map_err(ApiError::internal)?;
     Ok(Json(prs))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/repos/{repo}/pulls/page",
+    tag = "pulls",
+    params(PullRequestListParams, ("repo" = String, Path, description = "Repository name")),
+    responses((status = 200, body = PullRequestPage), (status = 400)),
+)]
+pub async fn list_pull_request_page(
+    State(state): State<std::sync::Arc<AppState>>,
+    AxumPath(repo): AxumPath<String>,
+    Query(params): Query<PullRequestListParams>,
+) -> Result<Json<PullRequestPage>, ApiError> {
+    let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    let params = params.normalize()?;
+    let total = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM pull_requests \
+         WHERE repository_name = $1 \
+           AND ($2::text IS NULL OR status = $2) \
+           AND ($3::text IS NULL OR POSITION(LOWER($3::text) IN LOWER(CONCAT_WS(' ', number::text, title, source_branch, target_branch, created_by))) > 0)",
+    )
+    .bind(&repo)
+    .bind(params.status.as_deref())
+    .bind(params.search.as_deref())
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    let prs = sqlx::query_as::<_, PullRequest>(
+        "SELECT id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha \
+         FROM pull_requests \
+         WHERE repository_name = $1 \
+           AND ($2::text IS NULL OR status = $2) \
+           AND ($3::text IS NULL OR POSITION(LOWER($3::text) IN LOWER(CONCAT_WS(' ', number::text, title, source_branch, target_branch, created_by))) > 0) \
+         ORDER BY number DESC \
+         LIMIT $4 OFFSET $5",
+    )
+    .bind(&repo)
+    .bind(params.status.as_deref())
+    .bind(params.search.as_deref())
+    .bind(i64::from(params.limit))
+    .bind(i64::from(params.offset))
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(Json(PullRequestPage {
+        items: prs,
+        total,
+        limit: params.limit,
+        offset: params.offset,
+    }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/repos/{repo}/pulls/{number}",
+    tag = "pulls",
+    params(
+        ("repo" = String, Path, description = "Repository name"),
+        ("number" = i32, Path, description = "Pull request number"),
+    ),
+    responses((status = 200, body = PullRequest), (status = 404)),
+)]
+pub async fn get_pull_request(
+    State(state): State<std::sync::Arc<AppState>>,
+    AxumPath((repo, number)): AxumPath<(String, i32)>,
+) -> Result<Json<PullRequest>, ApiError> {
+    let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    let pr = sqlx::query_as::<_, PullRequest>(
+        "SELECT id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha \
+         FROM pull_requests WHERE repository_name = $1 AND number = $2",
+    )
+    .bind(&repo)
+    .bind(number)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)?;
+    Ok(Json(pr))
 }
 
 #[utoipa::path(
@@ -853,7 +1011,10 @@ pub async fn list_tags(
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_ref, parse_diff_files, tree_entry_path};
+    use super::{
+        PullRequestListParams, PullRequestStatusFilter, classify_ref, parse_diff_files,
+        tree_entry_path,
+    };
 
     #[test]
     fn refs_keep_branch_and_tag_identity() {
@@ -910,5 +1071,42 @@ mod tests {
     fn rejects_mismatched_git_outputs() {
         assert!(parse_diff_files(b"1\t0\tnew.txt\0", b"A\0other.txt\0").is_err());
         assert!(parse_diff_files(b"1\t0\tnew.txt\0", b"A\0new.txt\0D\0old.txt\0").is_err());
+    }
+
+    #[test]
+    fn pull_request_list_params_are_normalized() {
+        let params = PullRequestListParams {
+            limit: Some(50),
+            offset: Some(100),
+            status: Some(PullRequestStatusFilter::Open),
+            search: Some("  release branch  ".to_string()),
+        }
+        .normalize()
+        .unwrap();
+
+        assert_eq!(params.limit, 50);
+        assert_eq!(params.offset, 100);
+        assert_eq!(params.status.as_deref(), Some("open"));
+        assert_eq!(params.search.as_deref(), Some("release branch"));
+    }
+
+    #[test]
+    fn pull_request_list_params_reject_invalid_bounds_and_search() {
+        assert!(
+            PullRequestListParams {
+                limit: Some(0),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+        assert!(
+            PullRequestListParams {
+                search: Some("x".repeat(201)),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
     }
 }

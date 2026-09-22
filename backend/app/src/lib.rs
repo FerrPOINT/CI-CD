@@ -624,6 +624,18 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
         Role::Viewer,
     ),
     user(
+        GET,
+        "/api/v1/repos/{repo}/pulls/page",
+        Action::Read,
+        Role::Viewer,
+    ),
+    user(
+        GET,
+        "/api/v1/repos/{repo}/pulls/{number}",
+        Action::Read,
+        Role::Viewer,
+    ),
+    user(
         POST,
         "/api/v1/repos/{repo}/pulls",
         Action::Write,

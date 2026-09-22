@@ -1,0 +1,246 @@
+{
+  "ok": true,
+  "matrix": [
+    {
+      "theme": "light",
+      "width": 375,
+      "viewportWidth": 375,
+      "documentWidth": 375,
+      "rows": 20,
+      "smallTargets": [],
+      "unnamedControls": [],
+      "seriousOrCriticalAxeViolations": []
+    },
+    {
+      "theme": "light",
+      "width": 768,
+      "viewportWidth": 768,
+      "documentWidth": 768,
+      "rows": 20,
+      "smallTargets": [],
+      "unnamedControls": [],
+      "seriousOrCriticalAxeViolations": []
+    },
+    {
+      "theme": "light",
+      "width": 1280,
+      "viewportWidth": 1280,
+      "documentWidth": 1280,
+      "rows": 20,
+      "smallTargets": [],
+      "unnamedControls": [],
+      "seriousOrCriticalAxeViolations": []
+    },
+    {
+      "theme": "light",
+      "width": 1920,
+      "viewportWidth": 1920,
+      "documentWidth": 1920,
+      "rows": 20,
+      "smallTargets": [],
+      "unnamedControls": [],
+      "seriousOrCriticalAxeViolations": []
+    },
+    {
+      "theme": "light",
+      "width": 2560,
+      "viewportWidth": 2560,
+      "documentWidth": 2560,
+      "rows": 20,
+      "smallTargets": [],
+      "unnamedControls": [],
+      "seriousOrCriticalAxeViolations": []
+    },
+    {
+      "theme": "gray",
+      "width": 375,
+      "viewportWidth": 375,
+      "documentWidth": 375,
+      "rows": 20,
+      "smallTargets": [],
+      "unnamedControls": [],
+      "seriousOrCriticalAxeViolations": []
+    },
+    {
+      "theme": "gray",
+      "width": 768,
+      "viewportWidth": 768,
+      "documentWidth": 768,
+      "rows": 20,
+      "smallTargets": [],
+      "unnamedControls": [],
+      "seriousOrCriticalAxeViolations": []
+    },
+    {
+      "theme": "gray",
+      "width": 1280,
+      "viewportWidth": 1280,
+      "documentWidth": 1280,
+      "rows": 20,
+      "smallTargets": [],
+      "unnamedControls": [],
+      "seriousOrCriticalAxeViolations": []
+    },
+    {
+      "theme": "gray",
+      "width": 1920,
+      "viewportWidth": 1920,
+      "documentWidth": 1920,
+      "rows": 20,
+      "smallTargets": [],
+      "unnamedControls": [],
+      "seriousOrCriticalAxeViolations": []
+    },
+    {
+      "theme": "gray",
+      "width": 2560,
+      "viewportWidth": 2560,
+      "documentWidth": 2560,
+      "rows": 20,
+      "smallTargets": [],
+      "unnamedControls": [],
+      "seriousOrCriticalAxeViolations": []
+    },
+    {
+      "theme": "dark",
+      "width": 375,
+      "viewportWidth": 375,
+      "documentWidth": 375,
+      "rows": 20,
+      "smallTargets": [],
+      "unnamedControls": [],
+      "seriousOrCriticalAxeViolations": []
+    },
+    {
+      "theme": "dark",
+      "width": 768,
+      "viewportWidth": 768,
+      "documentWidth": 768,
+      "rows": 20,
+      "smallTargets": [],
+      "unnamedControls": [],
+      "seriousOrCriticalAxeViolations": []
+    },
+    {
+      "theme": "dark",
+      "width": 1280,
+      "viewportWidth": 1280,
+      "documentWidth": 1280,
+      "rows": 20,
+      "smallTargets": [],
+      "unnamedControls": [],
+      "seriousOrCriticalAxeViolations": []
+    },
+    {
+      "theme": "dark",
+      "width": 1920,
+      "viewportWidth": 1920,
+      "documentWidth": 1920,
+      "rows": 20,
+      "smallTargets": [],
+      "unnamedControls": [],
+      "seriousOrCriticalAxeViolations": []
+    },
+    {
+      "theme": "dark",
+      "width": 2560,
+      "viewportWidth": 2560,
+      "documentWidth": 2560,
+      "rows": 20,
+      "smallTargets": [],
+      "unnamedControls": [],
+      "seriousOrCriticalAxeViolations": []
+    }
+  ],
+  "interactions": [
+    {
+      "name": "pagination",
+      "page": 2,
+      "rows": 20,
+      "range": [
+        33,
+        14
+      ]
+    },
+    {
+      "name": "debounced-server-search",
+      "query": "release",
+      "total": 7,
+      "pageReset": true
+    },
+    {
+      "name": "server-status-filter",
+      "status": "closed",
+      "total": 18,
+      "persistedAfterReload": true
+    },
+    {
+      "name": "branch-suggestions",
+      "options": [
+        "main",
+        "feature/pr-pagination",
+        "release/2026-q4"
+      ],
+      "excludesTagsAndOtherRefs": true,
+      "manualEntry": true
+    },
+    {
+      "name": "direct-detail-query",
+      "number": 7,
+      "seriousOrCriticalAxeViolations": []
+    }
+  ],
+  "pageRequests": [
+    {
+      "limit": 20,
+      "offset": 0,
+      "status": null,
+      "search": null,
+      "total": 53
+    },
+    {
+      "limit": 20,
+      "offset": 20,
+      "status": null,
+      "search": null,
+      "total": 53
+    },
+    {
+      "limit": 20,
+      "offset": 0,
+      "status": null,
+      "search": "release",
+      "total": 7
+    },
+    {
+      "limit": 20,
+      "offset": 0,
+      "status": null,
+      "search": null,
+      "total": 53
+    },
+    {
+      "limit": 20,
+      "offset": 0,
+      "status": "closed",
+      "search": null,
+      "total": 18
+    },
+    {
+      "limit": 20,
+      "offset": 0,
+      "status": "closed",
+      "search": null,
+      "total": 18
+    },
+    {
+      "limit": 20,
+      "offset": 0,
+      "status": null,
+      "search": null,
+      "total": 53
+    }
+  ],
+  "errors": [],
+  "mutations": []
+}
