@@ -196,19 +196,37 @@ export function useJobLogs(jobId: string | undefined, attemptId?: string) {
 
 export function useJobLogPages(jobId: string | undefined, attemptId: string | undefined, search = '', live = false) {
   const q = search.trim()
+  const tailMode = q.length === 0
+  const initialPageParam: JobLogPageCursor = tailMode
+    ? { before: LOG_TAIL_CURSOR }
+    : { after: 0 }
   return useInfiniteQuery({
     queryKey: KEYS.attemptLogPages(jobId ?? '', attemptId ?? '', q),
-    initialPageParam: 0,
+    initialPageParam,
     queryFn: ({ pageParam }) => {
-      const params = new URLSearchParams({ limit: '200', after: String(pageParam) })
+      const params = new URLSearchParams({ limit: String(LOG_PAGE_SIZE) })
+      if ('before' in pageParam) params.set('before', String(pageParam.before))
+      else params.set('after', String(pageParam.after))
       if (q) params.set('q', q)
       return api<JobLogPage>(`/jobs/${jobId}/attempts/${attemptId}/logs/page?${params.toString()}`)
     },
-    getNextPageParam: (lastPage) => lastPage.next_after ?? undefined,
+    getNextPageParam: (lastPage): JobLogPageCursor | undefined => {
+      if (lastPage.next_after == null) return undefined
+      if (tailMode) {
+        return lastPage.has_more_before ? { before: lastPage.next_after } : undefined
+      }
+      return { after: lastPage.next_after }
+    },
     enabled: !!jobId && !!attemptId,
     refetchInterval: live ? 5000 : false,
   })
 }
+
+const LOG_PAGE_SIZE = 200
+// The API's exclusive `before` cursor is an int32 sequence.
+const LOG_TAIL_CURSOR = 2_147_483_647
+
+type JobLogPageCursor = { after: number } | { before: number }
 
 export function useAppendLog() {
   const qc = useQueryClient()

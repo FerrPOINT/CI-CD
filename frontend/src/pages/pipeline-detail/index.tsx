@@ -40,6 +40,8 @@ import {
   RotateCcw,
   Package,
   FileCode2,
+  ArrowDownToLine,
+  History,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import type { PipelinePlan, Status } from '@/api/types'
@@ -490,7 +492,20 @@ function JobLogPanel({
   const [appliedLogSearch, setAppliedLogSearch] = useState('')
   const selectedAttempt = attempts.find((a) => a.id === selectedAttemptId) ?? attempts[0]
   const logPages = useJobLogPages(jobId, selectedAttempt?.id, appliedLogSearch, live)
-  const logs = logPages.data?.pages.flatMap((page) => page.items) ?? []
+  const tailMode = appliedLogSearch.length === 0
+  const logs = useMemo(() => {
+    const pages = logPages.data?.pages ?? []
+    const orderedPages = tailMode ? [...pages].reverse() : pages
+    return orderedPages.flatMap((page) => page.items)
+  }, [logPages.data, tailMode])
+  const logViewportRef = useRef<HTMLPreElement>(null)
+  const followTailRef = useRef(true)
+  const preserveScrollHeightRef = useRef<number | null>(null)
+  const previousLastSequenceRef = useRef<number | null>(null)
+  const [showLatestLogs, setShowLatestLogs] = useState(false)
+  const initialLogsError = logPages.isError && logPages.data == null
+  const nextLogsError = logPages.isFetchNextPageError
+  const refreshLogsError = logPages.isRefetchError && !nextLogsError
   const appendLog = useAppendLog()
   const activeAttemptId = attempts[0]?.id
   const canAppend = !!selectedAttempt && selectedAttempt.id === activeAttemptId
@@ -509,6 +524,58 @@ function JobLogPanel({
       setSelectedAttemptId(attempts[0].id)
     }
   }, [attempts, selectedAttemptId])
+
+  useEffect(() => {
+    followTailRef.current = tailMode
+    preserveScrollHeightRef.current = null
+    previousLastSequenceRef.current = null
+    setShowLatestLogs(false)
+  }, [appliedLogSearch, selectedAttempt?.id, tailMode])
+
+  useEffect(() => {
+    const lastSequence = logs[logs.length - 1]?.sequence ?? null
+    if (!tailMode) {
+      previousLastSequenceRef.current = lastSequence
+      return
+    }
+
+    const viewport = logViewportRef.current
+    const preservedHeight = preserveScrollHeightRef.current
+    if (viewport && preservedHeight != null) {
+      viewport.scrollTop += viewport.scrollHeight - preservedHeight
+      preserveScrollHeightRef.current = null
+      previousLastSequenceRef.current = lastSequence
+      return
+    }
+
+    const previousLastSequence = previousLastSequenceRef.current
+    if (viewport && followTailRef.current && logs.length > 0) {
+      viewport.scrollTop = viewport.scrollHeight
+    } else if (
+      previousLastSequence != null &&
+      lastSequence != null &&
+      lastSequence > previousLastSequence
+    ) {
+      setShowLatestLogs(true)
+    }
+    previousLastSequenceRef.current = lastSequence
+  }, [logs, tailMode])
+
+  function loadNextLogPage() {
+    if (tailMode) {
+      preserveScrollHeightRef.current = logViewportRef.current?.scrollHeight ?? null
+      followTailRef.current = false
+      setShowLatestLogs(true)
+    }
+    void logPages.fetchNextPage()
+  }
+
+  function scrollToLatestLog() {
+    const viewport = logViewportRef.current
+    if (viewport) viewport.scrollTop = viewport.scrollHeight
+    followTailRef.current = true
+    setShowLatestLogs(false)
+  }
 
   return (
     <div className="mt-3 space-y-3">
@@ -596,7 +663,7 @@ function JobLogPanel({
               <RotateCcw className="h-4 w-4" aria-hidden /> {t('jobs.refreshLogs')}
             </Button>
           </div>
-          {logPages.isError && (
+          {initialLogsError && (
             <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-danger">
               <span>{t('jobs.logsError')}</span>
               <Button
@@ -609,10 +676,59 @@ function JobLogPanel({
               </Button>
             </div>
           )}
-          {!logPages.isError && (
+          {nextLogsError && (
+            <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-danger">
+              <span>{t('jobs.logsPageError')}</span>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-10"
+                onClick={loadNextLogPage}
+              >
+                {t('common.retry')}
+              </Button>
+            </div>
+          )}
+          {refreshLogsError && (
+            <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-danger">
+              <span>{t('jobs.logsRefreshError')}</span>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-10"
+                onClick={() => void logPages.refetch()}
+              >
+                {t('common.retry')}
+              </Button>
+            </div>
+          )}
+          {tailMode && logPages.hasNextPage && !initialLogsError && !nextLogsError && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="min-h-10 sm:min-h-10"
+              disabled={logPages.isFetchingNextPage}
+              onClick={loadNextLogPage}
+            >
+              <History className="h-4 w-4" aria-hidden />
+              {logPages.isFetchingNextPage ? t('common.loading') : t('jobs.loadEarlierLogs')}
+            </Button>
+          )}
+          {!initialLogsError && (
             <pre
+              ref={logViewportRef}
               role="log"
               aria-label={t('jobs.logs')}
+              tabIndex={0}
+              onScroll={(event) => {
+                if (!tailMode) return
+                const viewport = event.currentTarget
+                const nearBottom =
+                  viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 24
+                followTailRef.current = nearBottom
+                setShowLatestLogs(!nearBottom)
+              }}
               className="max-h-80 overflow-auto rounded-md bg-zinc-950 p-3 text-xs text-green-400"
             >
               {logPages.isLoading
@@ -624,14 +740,25 @@ function JobLogPanel({
                       .join('\n')}
             </pre>
           )}
-          {logPages.hasNextPage && !logPages.isError && (
+          {tailMode && showLatestLogs && logs.length > 0 && !initialLogsError && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="min-h-10 sm:min-h-10"
+              onClick={scrollToLatestLog}
+            >
+              <ArrowDownToLine className="h-4 w-4" aria-hidden /> {t('jobs.latestLogs')}
+            </Button>
+          )}
+          {!tailMode && logPages.hasNextPage && !initialLogsError && !nextLogsError && (
             <Button
               type="button"
               size="sm"
               variant="outline"
               className="min-h-10 sm:min-h-10"
               disabled={logPages.isFetchingNextPage}
-              onClick={() => void logPages.fetchNextPage()}
+              onClick={loadNextLogPage}
             >
               {logPages.isFetchingNextPage ? t('common.loading') : t('jobs.loadMoreLogs')}
             </Button>

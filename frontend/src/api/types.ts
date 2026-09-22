@@ -33,6 +33,8 @@ export interface JobLog {
 export interface JobLogPage {
   items: JobLog[]
   next_after: number | null
+  total: number
+  has_more_before: boolean
 }
 
 export interface JobAttempt {
