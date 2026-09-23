@@ -5538,6 +5538,9 @@ export interface operations {
             query?: {
                 ref?: string;
                 path?: string;
+                limit?: number;
+                offset?: number;
+                search?: string;
             };
             header?: never;
             path: {

@@ -8,6 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use uuid::Uuid;
 
 use crate::api::{ApiError, AppState};
@@ -901,7 +902,7 @@ async fn resolve_view_ref(path: &std::path::Path, raw: &str) -> String {
 
 // ---- Code browsing: tree + blob (P0 git-server parity) ----
 
-#[utoipa::path(get, path = "/api/v1/repos/{repo}/tree", tag = "git", params(("repo" = String, Path), ("ref" = Option<String>, Query), ("path" = Option<String>, Query)), responses((status = 200, body = [TreeEntry])))]
+#[utoipa::path(get, path = "/api/v1/repos/{repo}/tree", tag = "git", params(("repo" = String, Path), ("ref" = Option<String>, Query), ("path" = Option<String>, Query), ("limit" = Option<usize>, Query), ("offset" = Option<usize>, Query), ("search" = Option<String>, Query)), responses((status = 200, body = [TreeEntry])))]
 pub async fn list_tree(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath(repo): AxumPath<String>,
@@ -920,9 +921,12 @@ pub async fn list_tree(
     } else {
         format!("{git_ref}:{subpath}")
     };
+    if let Some(page) = params.page() {
+        return Ok(Json(read_tree_page(&path, &spec, subpath, page).await?));
+    }
     let output = tokio::process::Command::new("git")
         .arg(format!("--git-dir={}", path.display()))
-        .args(["ls-tree", "-l", "--", &spec])
+        .args(["ls-tree", "-l", "-z", "--", &spec])
         .output()
         .await
         .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
@@ -933,30 +937,161 @@ pub async fn list_tree(
             err.trim()
         )));
     }
-    let entries: Vec<TreeEntry> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            // "<mode> <type> <sha> <size>\t<path>"
-            let (meta, name) = line.split_once('\t')?;
-            let mut parts = meta.split_whitespace();
-            let _mode = parts.next()?;
-            let kind = parts.next()?;
-            let sha = parts.next()?.to_string();
-            let size = match parts.next()? {
-                "-" => None,
-                s => s.parse().ok(),
-            };
-            let name = name.to_string();
-            Some(TreeEntry {
-                path: tree_entry_path(subpath, &name),
-                name: name.rsplit('/').next().unwrap_or(&name).to_string(),
-                kind: kind.to_string(),
-                size,
-                sha,
-            })
-        })
+    let entries: Vec<TreeEntry> = output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter_map(|record| parse_tree_entry(record, subpath))
         .collect();
     Ok(Json(entries))
+}
+
+const DEFAULT_TREE_LIMIT: usize = 100;
+const MAX_TREE_LIMIT: usize = 200;
+
+#[derive(Clone, Copy)]
+struct TreePage<'a> {
+    limit: usize,
+    offset: usize,
+    search: Option<&'a str>,
+}
+
+async fn read_tree_page(
+    path: &std::path::Path,
+    spec: &str,
+    subpath: &str,
+    page: TreePage<'_>,
+) -> Result<Vec<TreeEntry>, ApiError> {
+    let search = page.search.map(str::to_lowercase);
+    let mut entries = Vec::with_capacity(page.limit);
+    let mut seen = 0;
+
+    let page_is_full = collect_tree_entries(
+        path,
+        spec,
+        subpath,
+        true,
+        search.as_deref(),
+        page,
+        &mut seen,
+        &mut entries,
+    )
+    .await?;
+    if !page_is_full {
+        collect_tree_entries(
+            path,
+            spec,
+            subpath,
+            false,
+            search.as_deref(),
+            page,
+            &mut seen,
+            &mut entries,
+        )
+        .await?;
+    }
+    Ok(entries)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn collect_tree_entries(
+    path: &std::path::Path,
+    spec: &str,
+    subpath: &str,
+    directories_only: bool,
+    search: Option<&str>,
+    page: TreePage<'_>,
+    seen: &mut usize,
+    entries: &mut Vec<TreeEntry>,
+) -> Result<bool, ApiError> {
+    let mut command = tokio::process::Command::new("git");
+    command
+        .arg(format!("--git-dir={}", path.display()))
+        .args(["ls-tree", "-l", "-z"]);
+    if directories_only {
+        command.arg("-d");
+    }
+    let mut child = command
+        .args(["--", spec])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        ApiError::internal(sqlx::Error::Io(std::io::Error::other(
+            "git ls-tree stdout is unavailable",
+        )))
+    })?;
+    let mut reader = BufReader::new(stdout);
+    let mut record = Vec::new();
+    let mut stopped = false;
+
+    loop {
+        record.clear();
+        let read = reader
+            .read_until(0, &mut record)
+            .await
+            .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+        if read == 0 {
+            break;
+        }
+        if record.last() == Some(&0) {
+            record.pop();
+        }
+        let Some(entry) = parse_tree_entry(&record, subpath) else {
+            continue;
+        };
+        if !directories_only && entry.kind == "tree" {
+            continue;
+        }
+        if search.is_some_and(|needle| !entry.name.to_lowercase().contains(needle)) {
+            continue;
+        }
+        if *seen < page.offset {
+            *seen += 1;
+            continue;
+        }
+        *seen += 1;
+        entries.push(entry);
+        if entries.len() >= page.limit {
+            stopped = true;
+            break;
+        }
+    }
+    drop(reader);
+
+    if stopped {
+        let _ = child.start_kill();
+    }
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if !stopped && !status.success() {
+        return Err(ApiError::not_found_named("tree not found"));
+    }
+    Ok(stopped)
+}
+
+fn parse_tree_entry(record: &[u8], subpath: &str) -> Option<TreeEntry> {
+    // "<mode> <type> <sha> <size>\t<path>\0"
+    let separator = record.iter().position(|byte| *byte == b'\t')?;
+    let meta = String::from_utf8_lossy(&record[..separator]);
+    let name = String::from_utf8_lossy(&record[separator + 1..]).into_owned();
+    let mut parts = meta.split_whitespace();
+    let _mode = parts.next()?;
+    let kind = parts.next()?;
+    let sha = parts.next()?.to_string();
+    let size = match parts.next()? {
+        "-" => None,
+        value => value.parse().ok(),
+    };
+    Some(TreeEntry {
+        path: tree_entry_path(subpath, &name),
+        name: name.rsplit('/').next().unwrap_or(&name).to_string(),
+        kind: kind.to_string(),
+        size,
+        sha,
+    })
 }
 
 fn tree_entry_path(subpath: &str, name: &str) -> String {
@@ -972,6 +1107,30 @@ pub struct TreeQuery {
     #[serde(rename = "ref")]
     git_ref: Option<String>,
     path: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+    search: Option<String>,
+}
+
+impl TreeQuery {
+    fn page(&self) -> Option<TreePage<'_>> {
+        let search = self
+            .search
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if self.limit.is_none() && self.offset.is_none() && search.is_none() {
+            return None;
+        }
+        Some(TreePage {
+            limit: self
+                .limit
+                .unwrap_or(DEFAULT_TREE_LIMIT)
+                .clamp(1, MAX_TREE_LIMIT),
+            offset: self.offset.unwrap_or(0),
+            search,
+        })
+    }
 }
 
 #[utoipa::path(get, path = "/api/v1/repos/{repo}/blob", tag = "git", params(("repo" = String, Path), ("ref" = Option<String>, Query), ("path" = String, Query)), responses((status = 200, body = BlobContent)))]
@@ -1115,8 +1274,9 @@ pub async fn list_tags(
 #[cfg(test)]
 mod tests {
     use super::{
-        CommitParams, MAX_BLOB_LEN, MAX_PATCH_LEN, PullRequestListParams, PullRequestStatusFilter,
-        classify_ref, parse_diff_files, read_blob, read_commits, read_patch, tree_entry_path,
+        CommitParams, MAX_BLOB_LEN, MAX_PATCH_LEN, MAX_TREE_LIMIT, PullRequestListParams,
+        PullRequestStatusFilter, TreePage, TreeQuery, classify_ref, parse_diff_files,
+        parse_tree_entry, read_blob, read_commits, read_patch, read_tree_page, tree_entry_path,
     };
     use uuid::Uuid;
 
@@ -1140,6 +1300,109 @@ mod tests {
             tree_entry_path("src/pages", "index.tsx"),
             "src/pages/index.tsx"
         );
+        let entry = parse_tree_entry(b"100644 blob abc123 12\tline\tbreak\n.txt", "src/pages")
+            .expect("parse NUL-safe tree record");
+        assert_eq!(entry.name, "line\tbreak\n.txt");
+        assert_eq!(entry.path, "src/pages/line\tbreak\n.txt");
+    }
+
+    #[test]
+    fn tree_page_parameters_are_optional_and_bounded() {
+        let legacy = TreeQuery {
+            git_ref: None,
+            path: None,
+            limit: None,
+            offset: None,
+            search: Some("  ".to_string()),
+        };
+        assert!(legacy.page().is_none());
+
+        let paged = TreeQuery {
+            git_ref: None,
+            path: None,
+            limit: Some(usize::MAX),
+            offset: Some(25),
+            search: Some("  FILE  ".to_string()),
+        };
+        let page = paged.page().expect("bounded page");
+        assert_eq!(page.limit, MAX_TREE_LIMIT);
+        assert_eq!(page.offset, 25);
+        assert_eq!(page.search, Some("FILE"));
+    }
+
+    #[tokio::test]
+    async fn tree_page_streams_directories_before_files_and_filters_names() {
+        let directory = std::env::temp_dir().join(format!("forge-large-tree-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .expect("create repository directory");
+        run_git(&directory, &["init", "--quiet"]).await;
+        run_git(&directory, &["config", "user.name", "Forge Test"]).await;
+        run_git(&directory, &["config", "user.email", "forge@example.test"]).await;
+
+        for index in 1..=12 {
+            let path = directory.join(format!("dir-{index:04}"));
+            tokio::fs::create_dir_all(&path)
+                .await
+                .expect("create tree fixture directory");
+            tokio::fs::write(path.join("README.txt"), b"directory\n")
+                .await
+                .expect("write tree fixture directory file");
+        }
+        for index in 1..=20 {
+            tokio::fs::write(directory.join(format!("file-{index:04}.txt")), b"file\n")
+                .await
+                .expect("write tree fixture file");
+        }
+        run_git(&directory, &["add", "."]).await;
+        run_git(&directory, &["commit", "--quiet", "-m", "Large tree"]).await;
+
+        let git_dir = directory.join(".git");
+        let page = read_tree_page(
+            &git_dir,
+            "HEAD",
+            "",
+            TreePage {
+                limit: 5,
+                offset: 10,
+                search: None,
+            },
+        )
+        .await
+        .expect("read bounded tree page");
+        assert_eq!(
+            page.iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "dir-0011",
+                "dir-0012",
+                "file-0001.txt",
+                "file-0002.txt",
+                "file-0003.txt",
+            ]
+        );
+
+        let matches = read_tree_page(
+            &git_dir,
+            "HEAD",
+            "",
+            TreePage {
+                limit: 20,
+                offset: 0,
+                search: Some("FILE-001"),
+            },
+        )
+        .await
+        .expect("search bounded tree page");
+        assert_eq!(matches.len(), 10);
+        assert!(
+            matches
+                .iter()
+                .all(|entry| entry.name.starts_with("file-001"))
+        );
+
+        let _ = tokio::fs::remove_dir_all(directory).await;
     }
 
     #[test]
@@ -1176,6 +1439,17 @@ mod tests {
         assert!(parse_diff_files(b"1\t0\tnew.txt\0", b"A\0other.txt\0").is_err());
         assert!(parse_diff_files(b"1\t0\tnew.txt\0", b"A\0new.txt\0D\0old.txt\0").is_err());
     }
+    async fn run_git(directory: &std::path::Path, args: &[&str]) {
+        let status = tokio::process::Command::new("git")
+            .arg("-C")
+            .arg(directory)
+            .args(args)
+            .status()
+            .await
+            .expect("run git command");
+        assert!(status.success(), "git command failed: {args:?}");
+    }
+
     #[tokio::test]
     async fn blob_read_stops_after_the_response_limit() {
         let directory = std::env::temp_dir().join(format!("forge-large-blob-{}", Uuid::new_v4()));

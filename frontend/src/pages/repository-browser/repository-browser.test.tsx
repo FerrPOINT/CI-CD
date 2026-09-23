@@ -87,13 +87,43 @@ describe('RepositoryBrowserPage', () => {
     setup()
 
     expect(screen.getByRole('tab', { name: 'repositoryBrowser.code' })).toHaveAttribute('data-state', 'active')
+    expect(screen.getByRole('link', { name: 'navigation.repositories' })).toHaveClass('min-h-10')
+    expect(screen.getByRole('link', { name: 'repositoryBrowser.compareChanges' })).toHaveClass('h-10')
+    expect(screen.getByRole('link', { name: 'repositoryBrowser.createPullRequest' })).toHaveClass('h-10')
+    expect(screen.getByRole('button', { name: '/' })).toHaveClass('min-h-10', 'min-w-10')
     fireEvent.click(screen.getByRole('button', { name: 'src' }))
     expect(screen.getByTestId('location')).toHaveTextContent('dir=src')
-    expect(mocks.tree).toHaveBeenLastCalledWith('demo', 'HEAD', 'src')
+    expect(mocks.tree).toHaveBeenLastCalledWith('demo', 'HEAD', 'src', { limit: 101, offset: 0, search: '' })
     fireEvent.click(screen.getByRole('button', { name: 'index.tsx' }))
     expect(screen.getByTestId('location')).toHaveTextContent('file=src%2Findex.tsx')
     expect(mocks.blob).toHaveBeenCalledWith('demo', 'HEAD', 'src/index.tsx')
     expect(screen.getByRole('button', { name: 'repositoryBrowser.backToTree' })).toBeInTheDocument()
+  })
+
+  it('bounds large directories with URL pagination and server-side search', () => {
+    mocks.tree.mockReturnValue(result(Array.from({ length: 101 }, (_, index) => ({
+      path: `file-${String(index + 1).padStart(4, '0')}.txt`,
+      name: `file-${String(index + 1).padStart(4, '0')}.txt`,
+      kind: 'blob',
+      sha: `sha-${index}`,
+      size: index,
+    }))))
+    setup('/repositories/demo?treePage=2&treeSearch=release')
+
+    expect(mocks.tree).toHaveBeenLastCalledWith('demo', 'HEAD', undefined, { limit: 101, offset: 100, search: 'release' })
+    expect(screen.getByText('file-0100.txt')).toBeInTheDocument()
+    expect(screen.queryByText('file-0101.txt')).not.toBeInTheDocument()
+    expect(screen.getByText('repositoryBrowser.treePage')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'repositoryBrowser.nextTreePage' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('treePage=3')
+    expect(mocks.tree).toHaveBeenLastCalledWith('demo', 'HEAD', undefined, { limit: 101, offset: 200, search: 'release' })
+
+    fireEvent.change(screen.getByRole('searchbox', { name: 'repositoryBrowser.searchTree' }), { target: { value: 'hotfix' } })
+    fireEvent.click(screen.getByRole('button', { name: 'repositoryBrowser.applyTreeSearch' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('treeSearch=hotfix')
+    expect(screen.getByTestId('location')).not.toHaveTextContent('treePage=')
+    expect(mocks.tree).toHaveBeenLastCalledWith('demo', 'HEAD', undefined, { limit: 101, offset: 0, search: 'hotfix' })
   })
 
   it('opens a deep-linked empty file without a tree request or endless loading state', () => {
@@ -151,7 +181,7 @@ describe('RepositoryBrowserPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'main' }))
     expect(screen.getByTestId('location')).toHaveTextContent('ref=refs%2Fheads%2Fmain')
     expect(screen.getByRole('tab', { name: 'repositoryBrowser.code' })).toHaveAttribute('data-state', 'active')
-    expect(mocks.tree).toHaveBeenLastCalledWith('demo', 'refs/heads/main', undefined)
+    expect(mocks.tree).toHaveBeenLastCalledWith('demo', 'refs/heads/main', undefined, { limit: 101, offset: 0, search: '' })
   })
 
   it('isolates commits and tags errors from the code tab', async () => {
