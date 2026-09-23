@@ -2181,7 +2181,7 @@ mod tests {
     }
 
     #[test]
-    fn seccomp_profile_allows_package_manager_symlink_syscalls() {
+    fn seccomp_profile_allows_package_manager_filesystem_syscalls() {
         let profile_path =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../deploy/forge-job-seccomp.json");
         let profile: serde_json::Value = serde_json::from_str(
@@ -2200,6 +2200,7 @@ mod tests {
 
         assert!(allowed.contains("symlink"));
         assert!(allowed.contains("symlinkat"));
+        assert!(allowed.contains("sendfile"));
     }
 
     #[test]
