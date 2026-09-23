@@ -1,6 +1,7 @@
 import { Link, useParams, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
-import { usePullRequests, useRepositoryComparison } from '@/api/hooks'
+import { usePullRequest, useRepositoryComparison } from '@/api/hooks'
+import { ApiError } from '@/api/client'
 import { Button } from '@sdlc/ui/ui'
 import { ChevronRight, GitPullRequest, FileDiff, ArrowLeft } from 'lucide-react'
 import type { PullRequest, PullRequestStatus } from '@/api/types'
@@ -47,9 +48,10 @@ export function PullRequestDetailPage() {
   const { t, i18n } = useTranslation()
   const { repo, number } = useParams<{ repo: string; number: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
-  const { data: pullRequests = [], isLoading, error, refetch } = usePullRequests(repo)
+  const parsedNumber = Number(number)
+  const pullRequestNumber = Number.isSafeInteger(parsedNumber) && parsedNumber > 0 ? parsedNumber : undefined
+  const { data: pr, isLoading, error, refetch } = usePullRequest(repo, pullRequestNumber)
 
-  const pr = pullRequests.find(p => String(p.number) === number)
   const showDiff = searchParams.get('view') === 'diff'
   const { data: comparison, isLoading: diffLoading, isError: diffError, error: diffErrorValue, refetch: refetchDiff } = useRepositoryComparison(
     repo,
@@ -58,8 +60,11 @@ export function PullRequestDetailPage() {
   )
 
   if (!repo) return <p className="text-sm text-text-muted">{t('repositories.notFound')}</p>
+  if (!pullRequestNumber || error instanceof ApiError && error.status === 404) {
+    return <p className="text-sm text-text-muted">{t('pulls.notFound')}</p>
+  }
   if (isLoading || error) return (
-    <QueryState data={pullRequests} isLoading={isLoading} error={error} onRetry={() => refetch()}>
+    <QueryState data={pr} isLoading={isLoading} error={error} onRetry={() => refetch()}>
       {() => null}
     </QueryState>
   )

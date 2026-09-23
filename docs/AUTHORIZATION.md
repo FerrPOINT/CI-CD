@@ -41,7 +41,7 @@ Forge CI/CD является multi-tenant control plane: один экземпл
 | Secrets | `project_secrets`, AES-256-GCM at rest, API не возвращает value; embedded runner injects env and masks stdout/stderr best-effort | Нет scoped lease, key version/rotation и full redaction coverage |
 | Runners | Registry + heartbeat; embedded supervisor выполняет jobs | Runner не обладает отдельной криптографической идентичностью; registry не является границей доступа |
 | Git | Public read для public repo; private read/write через legacy `CICD_GIT_TOKEN` либо JWT/PAT + project membership + `git:*` PAT scopes при `CICD_AUTH_SECRET`; hook token | Нет tenant-bound repository model, отдельного scoped Git credential class, signed push events и deny audit для Git |
-| Audit | `audit_log` с action/resource/actor text, login/denied и многие mutation events | Actor не является нормализованным principal, нет tenant/project scope и фильтров/export |
+| Audit | `audit_log` с action/resource/actor text, login/denied и многие mutation events; полный page endpoint с action-фильтром и literal search | Actor не является нормализованным principal, нет tenant/project scope, export и retention policy |
 | CORS и transport | `CICD_CORS_ALLOWED_ORIGINS` включает allowlist origins; пустое значение оставляет permissive CORS только для isolated dev; cookie-backed refresh/logout требует CSRF proof; HTTP в dev | Для production необходим TLS, `CICD_AUTH_COOKIE_SECURE=true` и непустой allowlist |
 
 До внедрения целевой модели open/trusted-network режим допустим только в изолированной локальной сети разработки. Публичный или shared deployment без непустого `CICD_AUTH_SECRET`, reverse proxy/network boundary и непустых Git/internal tokens запрещён.

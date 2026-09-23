@@ -72,8 +72,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 34,
-    "latest_required_version": 34,
+    "latest_applied_version": 35,
+    "latest_required_version": 35,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],
@@ -1108,13 +1108,31 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 
 | Метод | Путь | Назначение |
 |---|---|---|
-| GET | `/projects/{project_id}/outbox-deliveries?limit=&status=&channel=` | Последние delivery rows проекта |
+| GET | `/projects/{project_id}/outbox-deliveries?limit=&offset=&status=&channel=` | Legacy-массив delivery rows проекта |
+| GET | `/projects/{project_id}/outbox-deliveries/page?limit=&offset=&status=&channel=` | Страница delivery rows с общим количеством |
 | GET | `/outbox-deliveries/{delivery_id}` | Delivery detail + попытки |
 | POST | `/outbox-deliveries/{delivery_id}/requeue` | Явно поставить failed delivery в повтор новой generation |
 
-`GET /projects/{project_id}/outbox-deliveries` возвращает bounded список (`limit` `1..200`, default `50`) со stable ordering `created_at DESC, id DESC`. Фильтры allowlisted: `status=pending|retry_scheduled|delivered|failed`, `channel=webhook|notification|sse`.
+Оба list endpoint используют `limit` `1..200` (default `50`), `offset >= 0` (default `0`) и stable ordering `created_at DESC, id DESC`. Фильтры allowlisted: `status=pending|retry_scheduled|delivered|failed`, `channel=webhook|notification|sse`. Legacy endpoint сохраняет ответ-массив для обратной совместимости; Dashboard использует `/page`, чтобы показывать точное число совпадений и постраничную навигацию.
 
-**Response 200:**
+**Paged response 200:**
+```json
+{
+  "items": [
+    {
+      "id": "delivery-uuid",
+      "status": "failed",
+      "channel": "webhook",
+      "created_at": "2026-08-31T11:58:00Z"
+    }
+  ],
+  "total": 43,
+  "limit": 20,
+  "offset": 20
+}
+```
+
+**Legacy response 200:**
 ```json
 [
   {
@@ -1191,7 +1209,46 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 
 | Метод | Путь | Назначение |
 |---|---|---|
-| GET | `/audit-log` | Последние 200 событий аудита |
+| GET | `/audit-log` | Legacy-массив последних 200 событий аудита |
+| GET | `/audit-log/page` | Полный журнал с серверной пагинацией, поиском и action-фильтром |
+
+`GET /audit-log/page` сортирует события стабильно по `created_at DESC, id DESC`.
+`action` сравнивается точно, а `q` выполняет case-insensitive literal substring
+search по raw-полям `action`, `resource_type`, `actor` и `resource_id`. Символы
+`%`, `_` и `\` в `q` не являются SQL wildcard. Endpoint требует maintainer role
+в текущей route-policy, как и legacy endpoint.
+
+| Параметр | Тип | Default | Ограничение |
+|---|---|---:|---|
+| `limit` | integer | `20` | `1..200` |
+| `offset` | integer | `0` | `0..2147483647` |
+| `action` | string | — | точное значение, не более 128 символов |
+| `q` | string | — | literal substring, не более 128 символов |
+
+**Response 200:**
+```json
+{
+  "items": [
+    {
+      "id": 2401,
+      "action": "auth.login_failed",
+      "resource_type": "user",
+      "resource_id": "550e8400-e29b-41d4-a716-446655440000",
+      "actor": "alice@example.com",
+      "created_at": "2026-09-22T18:00:00Z"
+    }
+  ],
+  "total": 2417,
+  "limit": 20,
+  "offset": 20,
+  "actions": ["auth.login_failed", "auth.login_success"]
+}
+```
+
+`actions` содержит отсортированный набор действий всего журнала и не зависит от
+текущей страницы или фильтров. `400` возвращается для невалидных границ или
+слишком длинных `action`/`q`. Legacy `/audit-log` намеренно сохранён без
+изменения response shape для CLI и внешних клиентов.
 
 ### Users & Roles
 
@@ -1367,15 +1424,24 @@ Runner protocol обслуживается на `/api/v1/runner/*` и не ис�
 | GET/POST | `/repositories` | Список / создание bare repository (`{name}`) |
 | DELETE | `/repositories/{name}` | Удаление repository и bare storage |
 | GET | `/repos/{repo}/refs` | Refs с `name`, `kind` (`branch`, `tag`, `other`), SHA и target |
-| GET | `/repos/{repo}/commits?branch=&limit=` | Commit history; default 50, maximum 200 |
+| GET | `/repos/{repo}/commits?branch=&limit=&offset=` | Commit history; default limit 50, maximum 200; offset defaults to 0 |
 | GET | `/repos/{repo}/compare?from=&to=` | Merge-base для базового `from` и сравниваемого `to`, полные file stats (`status`, `additions`, `deletions`, `binary`) и unified patch от merge-base к `to`; patch ограничен 512 КиБ, усечение отмечает `patch_truncated` |
-| GET/POST | `/repos/{repo}/pulls` | Список / создание pull request |
+| GET | `/repos/{repo}/pulls` | Legacy-список всех pull requests; сохранён для обратной совместимости |
+| POST | `/repos/{repo}/pulls` | Создание pull request |
+| GET | `/repos/{repo}/pulls/page?limit=&offset=&status=&search=` | Основной постраничный каталог; `status` принимает `open`, `closed`, `merged`, поиск охватывает номер, заголовок, ветки и автора |
+| GET | `/repos/{repo}/pulls/{number}` | Один pull request по номеру |
 | POST | `/repos/{repo}/pulls/{number}/action` | `{action:"merge"|"close"|"reopen"}` |
 | GET | `/git/{repo}/info/refs?service=git-upload-pack` | Git Smart HTTP discovery |
 | POST | `/git/{repo}/git-upload-pack` | Smart HTTP fetch/clone service |
 | POST | `/git/{repo}/git-receive-pack` | Smart HTTP push service |
 
 Git Smart HTTP допускает unauthenticated read только для `repositories.visibility = public`. Private read и receive-pack требуют legacy `CICD_GIT_TOKEN` либо, при непустом `CICD_AUTH_SECRET`, JWT/PAT principal с `project_memberships`: `viewer+` для read, `developer+` для write; PAT также требует `git:read`/`git:write` и проходит только в своём `project_id`. Связанный проект определяется по `repository_url` exact tail `/{repo}.git`, `:{repo}.git` или `{repo}.git`. Полный lifecycle — `docs/GIT_HOSTING.md`; PR merge semantics — `docs/PULL_REQUESTS.md`.
+
+`GET /repos/{repo}/pulls/page` использует `limit=20` и `offset=0` по умолчанию;
+`limit` должен находиться в диапазоне `1..100`. Пустые `status` и `search`
+игнорируются, поиск ограничен 200 символами и не зависит от регистра. Ответ
+содержит `items`, `total`, фактические `limit` и `offset`, поэтому UI не должен
+загружать весь каталог для локальной пагинации.
 
 ### Internal Git hook
 
@@ -1412,6 +1478,7 @@ Git Smart HTTP допускает unauthenticated read только для `repo
 | `/api/v1/auth/principal` | Auth |
 | `/api/v1/artifacts/{artifact_id}/download` | Artifacts |
 | `/api/v1/audit-log` | Audit |
+| `/api/v1/audit-log/page` | Audit |
 | `/api/v1/auth/login` | Auth |
 | `/api/v1/auth/refresh` | Auth |
 | `/api/v1/auth/logout` | Auth |
@@ -1450,6 +1517,7 @@ Git Smart HTTP допускает unauthenticated read только для `repo
 | `/api/v1/projects/{project_id}/notifications` | Notifications |
 | `/api/v1/projects/{project_id}/notifications/stream` | Notifications |
 | `/api/v1/projects/{project_id}/outbox-deliveries` | Outbox |
+| `/api/v1/projects/{project_id}/outbox-deliveries/page` | Outbox |
 | `/api/v1/projects/{project_id}/pipelines` | Pipelines |
 | `/api/v1/projects/{project_id}/reports/summary` | Reports |
 | `/api/v1/projects/{project_id}/schedules` | Schedules |
@@ -1459,6 +1527,8 @@ Git Smart HTTP допускает unauthenticated read только для `repo
 | `/api/v1/repos/{repo}/commits` | Git repositories |
 | `/api/v1/repos/{repo}/compare` | Pull requests |
 | `/api/v1/repos/{repo}/pulls` | Pull requests |
+| `/api/v1/repos/{repo}/pulls/page` | Pull requests |
+| `/api/v1/repos/{repo}/pulls/{number}` | Pull requests |
 | `/api/v1/repos/{repo}/pulls/{number}/action` | Pull requests |
 | `/api/v1/repos/{repo}/refs` | Git repositories |
 | `/api/v1/repos/{repo}/releases` | Releases |
