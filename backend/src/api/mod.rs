@@ -131,7 +131,8 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::platform::list_schedules, crate::platform::create_schedule,
         crate::platform::update_schedule, crate::platform::delete_schedule,
         crate::platform::list_webhooks, crate::platform::create_webhook, crate::platform::delete_webhook,
-        crate::platform::list_outbox_deliveries, crate::platform::get_outbox_delivery,
+        crate::platform::list_outbox_deliveries, crate::platform::list_outbox_delivery_page,
+        crate::platform::get_outbox_delivery,
         crate::platform::requeue_outbox_delivery,
         crate::platform::list_notifications, crate::platform::replace_notifications,
         crate::platform::list_destination_alerts,
@@ -196,7 +197,8 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::platform::RollbackDeployment,
         crate::platform::Schedule, crate::platform::ScheduleInput,
         crate::platform::Webhook, crate::platform::CreateWebhook,
-        crate::platform::OutboxDelivery, crate::platform::OutboxDeliveryAttempt,
+        crate::platform::OutboxDelivery, crate::platform::OutboxDeliveryPage,
+        crate::platform::OutboxDeliveryAttempt,
         crate::platform::OutboxDeliveryDetail, crate::platform::RequeuedOutboxDelivery,
         crate::platform::Notification, crate::platform::NotificationInput,
         crate::platform::DestinationAlert,
@@ -522,6 +524,12 @@ mod tests {
         );
         assert_eq!(
             project_scope_ref(&format!("/api/v1/projects/{project_id}/outbox-deliveries")),
+            Some(ProjectScopeRef::Project(project_id))
+        );
+        assert_eq!(
+            project_scope_ref(&format!(
+                "/api/v1/projects/{project_id}/outbox-deliveries/page"
+            )),
             Some(ProjectScopeRef::Project(project_id))
         );
         assert_eq!(

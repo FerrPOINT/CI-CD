@@ -26,7 +26,7 @@ import type {
   NotificationConfig,
   NotificationInput,
   NotificationEvent,
-  OutboxDelivery,
+  OutboxDeliveryPage,
   OutboxDeliveryDetail,
   Pipeline,
   PipelineDetail,
@@ -623,21 +623,26 @@ export function useDeleteWebhook() {
   })
 }
 
-export function useOutboxDeliveries(projectId: string | undefined, filters?: { status?: string; channel?: string; limit?: number }) {
+export function useOutboxDeliveries(projectId: string | undefined, filters?: { status?: string; channel?: string; limit?: number; offset?: number }) {
   return useQuery({
     queryKey: [
       ...PLATFORM_KEYS.outboxDeliveries(projectId ?? ''),
       filters?.status ?? 'all',
       filters?.channel ?? 'all',
       filters?.limit ?? 20,
+      filters?.offset ?? 0,
     ],
     queryFn: () => {
-      const params = new URLSearchParams({ limit: String(filters?.limit ?? 20) })
+      const params = new URLSearchParams({
+        limit: String(filters?.limit ?? 20),
+        offset: String(filters?.offset ?? 0),
+      })
       if (filters?.status) params.set('status', filters.status)
       if (filters?.channel) params.set('channel', filters.channel)
-      return api<OutboxDelivery[]>(`/projects/${projectId}/outbox-deliveries?${params.toString()}`)
+      return api<OutboxDeliveryPage>(`/projects/${projectId}/outbox-deliveries/page?${params.toString()}`)
     },
     enabled: Boolean(projectId),
+    placeholderData: keepPreviousData,
     refetchInterval: browserNotificationStreamEnabled() ? 10_000 : false,
   })
 }

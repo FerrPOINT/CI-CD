@@ -6513,6 +6513,26 @@ async fn failed_outbox_delivery_records_attempt_and_can_be_requeued() {
     assert_eq!(deliveries[0]["attempts"], cicd::outbox::MAX_ATTEMPTS);
     assert_eq!(deliveries[0]["generation"], 0);
 
+    let page = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/projects/{project_id}/outbox-deliveries/page?status=failed&channel=notification&limit=1&offset=0"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.status(), StatusCode::OK);
+    let page = response_json(page).await;
+    assert_eq!(page["total"], 1);
+    assert_eq!(page["limit"], 1);
+    assert_eq!(page["offset"], 0);
+    assert_eq!(page["items"].as_array().unwrap().len(), 1);
+    assert_eq!(page["items"][0]["id"], message_id.to_string());
+    assert_eq!(page["items"][0]["status"], "failed");
+
     let detail = app
         .clone()
         .oneshot(
@@ -6578,6 +6598,23 @@ async fn failed_outbox_delivery_records_attempt_and_can_be_requeued() {
     let pending = response_json(pending).await;
     assert_eq!(pending.as_array().unwrap().len(), 1);
     assert_eq!(pending[0]["id"], replay_id.to_string());
+
+    let second_page = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/projects/{project_id}/outbox-deliveries/page?limit=1&offset=1"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second_page.status(), StatusCode::OK);
+    let second_page = response_json(second_page).await;
+    assert_eq!(second_page["total"], 2);
+    assert_eq!(second_page["items"].as_array().unwrap().len(), 1);
+    assert_eq!(second_page["items"][0]["id"], message_id.to_string());
 
     let non_failed_requeue = app
         .oneshot(
