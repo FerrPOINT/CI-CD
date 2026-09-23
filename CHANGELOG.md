@@ -9,6 +9,12 @@
 
 ## [Unreleased]
 
+- Имя Docker network для job-контейнеров embedded runner теперь задаётся через
+  `CICD_RUNNER_DOCKER_NETWORK`, поэтому umbrella Compose не зависит от
+  захардкоженного project name standalone-стенда.
+- Общие локальные исходники могут передаваться job через отдельный read-only
+  volume `CICD_RUNNER_SHARED_SOURCES_VOLUME`, не смешиваясь с writable checkout.
+
 ### Fixed
 
 - Новые внутренние Git-репозитории сразу используют `main` как символический
