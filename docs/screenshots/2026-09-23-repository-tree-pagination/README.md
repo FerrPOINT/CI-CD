@@ -34,4 +34,3 @@ The automated checks confirmed:
 - `tree-375-light.png` records the narrow mobile layout.
 - `tree-1920-gray.png` records the desktop gray theme.
 - `tree-2560-dark.png` records the wide dark theme.
-

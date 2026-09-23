@@ -143,6 +143,7 @@ describe('pull request workflow', () => {
     setup([])
     fireEvent.click(screen.getByRole('button', { name: 'pulls.create' }))
     const form = screen.getByRole('form', { name: 'pulls.create' })
+    expect(mocks.refs).toHaveBeenCalledWith('platform', { kind: 'branch', limit: 51, search: '' })
     expect([...document.querySelectorAll<HTMLOptionElement>('#pr-source-refs option')].map((option) => option.value))
       .toEqual(['main', 'feature/1'])
     expect(screen.getByLabelText('pulls.sourceBranch')).toHaveValue('')

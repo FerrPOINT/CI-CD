@@ -9,6 +9,7 @@ import type { PullRequest, PullRequestStatus } from '@/api/types'
 import { formatDate } from '@/shared/lib/format'
 import { QueryState } from '@/shared/ui/query-state'
 import { UserAvatar } from '@/shared/ui/user-avatar'
+import { useDebouncedValue } from '@/shared/lib/use-debounced-value'
 import { Button, Input, Label, Textarea } from '@sdlc/ui/ui'
 import { PullRequestActions } from './actions'
 
@@ -23,11 +24,15 @@ const statusStyles: Record<PullRequestStatus, string> = {
 
 function CreatePullRequestForm({ repo, onClose }: { repo: string; onClose: () => void }) {
   const { t } = useTranslation()
-  const { data: refs = [], isLoading: refsLoading, error: refsError, refetch: refetchRefs } = useRepositoryRefs(repo)
   const createPullRequest = useCreatePullRequest(repo)
   const [form, setForm] = useState({ title: '', description: '', source_branch: '', target_branch: '' })
+  const deferredSource = useDebouncedValue(form.source_branch.trim())
+  const deferredTarget = useDebouncedValue(form.target_branch.trim())
+  const sourceRefs = useRepositoryRefs(repo, { kind: 'branch', limit: 51, search: deferredSource })
+  const targetRefs = useRepositoryRefs(repo, { kind: 'branch', limit: 51, search: deferredTarget })
+  const refsLoading = sourceRefs.isLoading || targetRefs.isLoading
+  const refsError = sourceRefs.error || targetRefs.error
   const sameBranch = Boolean(form.source_branch.trim() && form.source_branch.trim() === form.target_branch.trim())
-  const branches = refs.filter((ref) => ref.kind === 'branch')
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -58,20 +63,21 @@ function CreatePullRequestForm({ repo, onClose }: { repo: string; onClose: () =>
         <Label htmlFor="pr-source">{t('pulls.sourceBranch')}</Label>
         <Input id="pr-source" required list="pr-source-refs" className="font-mono"
           value={form.source_branch} onChange={(event) => setForm({ ...form, source_branch: event.target.value })} />
-        <datalist id="pr-source-refs">{branches.map((ref) => <option key={ref.name} value={ref.name} />)}</datalist>
+        <datalist id="pr-source-refs">{sourceRefs.data?.filter((ref) => ref.kind === 'branch').slice(0, 50).map((ref) => <option key={ref.name} value={ref.name} />)}</datalist>
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="pr-target">{t('pulls.targetBranch')}</Label>
         <Input id="pr-target" required list="pr-target-refs" className="font-mono"
           value={form.target_branch} onChange={(event) => setForm({ ...form, target_branch: event.target.value })} />
-        <datalist id="pr-target-refs">{branches.map((ref) => <option key={ref.name} value={ref.name} />)}</datalist>
+        <datalist id="pr-target-refs">{targetRefs.data?.filter((ref) => ref.kind === 'branch').slice(0, 50).map((ref) => <option key={ref.name} value={ref.name} />)}</datalist>
       </div>
       {sameBranch && <p role="alert" className="text-sm text-danger sm:col-span-2">{t('pulls.branchesMustDiffer')}</p>}
       {refsLoading && <p role="status" className="text-xs text-text-muted sm:col-span-2">{t('pulls.loadingRefs')}</p>}
+      {((sourceRefs.data?.length ?? 0) > 50 || (targetRefs.data?.length ?? 0) > 50) && <p role="status" className="text-xs text-text-muted sm:col-span-2">{t('pulls.refSuggestionsLimited')}</p>}
       {Boolean(refsError) && (
         <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-text-secondary sm:col-span-2">
           <span>{t('pulls.refsUnavailable')}</span>
-          <Button type="button" size="sm" variant="outline" className="min-h-10 sm:min-h-10" onClick={() => refetchRefs()}>{t('common.retry')}</Button>
+          <Button type="button" size="sm" variant="outline" className="min-h-10 sm:min-h-10" onClick={() => { if (sourceRefs.error) void sourceRefs.refetch(); if (targetRefs.error) void targetRefs.refetch() }}>{t('common.retry')}</Button>
         </div>
       )}
       <div className="space-y-1.5 sm:col-span-2">

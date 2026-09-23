@@ -15,6 +15,8 @@ import {
   usePullRequest,
   usePullRequests,
   useRepositoryCommits,
+  useRepositoryRefs,
+  useRepositoryTags,
   useRepositoryTree,
 } from './hooks'
 
@@ -23,6 +25,12 @@ const originalUserAgent = window.navigator.userAgent
 
 function NotificationEventsProbe() {
   useNotificationEvents(projectId)
+  return null
+}
+
+function RepositoryRefsProbe() {
+  useRepositoryRefs('demo', { limit: 101, offset: 200, search: ' release ', kind: 'branch' })
+  useRepositoryTags('demo', { limit: 51, offset: 100, search: ' v1 ' })
   return null
 }
 
@@ -79,6 +87,27 @@ describe('notification event stream', () => {
     ))
   })
 })
+describe('repository ref queries', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    clientMocks.api.mockResolvedValue([])
+  })
+
+  it('sends bounded kind, search, and offset parameters', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RepositoryRefsProbe />
+      </QueryClientProvider>,
+    )
+
+    await waitFor(() => {
+      expect(clientMocks.api).toHaveBeenCalledWith('/repos/demo/refs?limit=101&offset=200&search=release&kind=branch')
+      expect(clientMocks.api).toHaveBeenCalledWith('/repos/demo/tags?limit=51&offset=100&search=v1')
+    })
+  })
+})
+
 describe('repository tree query', () => {
   beforeEach(() => {
     vi.clearAllMocks()

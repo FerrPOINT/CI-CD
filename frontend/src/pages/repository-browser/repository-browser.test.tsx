@@ -143,7 +143,7 @@ describe('RepositoryBrowserPage', () => {
     mocks.blob.mockReturnValue({ ...result(undefined, mocks.refetchBlob), error: new Error('missing') })
     setup('/repositories/demo?file=README.md')
 
-    expect(screen.getAllByRole('alert')[0]).toHaveTextContent('repositoryBrowser.refsLoadError')
+    expect(screen.getAllByRole('alert')[0]).toHaveTextContent('repositoryBrowser.refsUnavailable')
     expect(screen.getByText('repositoryBrowser.fileLoadError')).toBeInTheDocument()
     fireEvent.click(screen.getAllByRole('button', { name: 'common.retry' })[1])
     expect(mocks.refetchBlob).toHaveBeenCalledOnce()
@@ -176,12 +176,52 @@ describe('RepositoryBrowserPage', () => {
   it('shows only branches in the branch tab and opens the selected ref', () => {
     setup('/repositories/demo?tab=branches')
 
+    expect(mocks.refs).toHaveBeenLastCalledWith('demo', { kind: 'branch', limit: 101, offset: 0, search: '' })
     expect(screen.getByRole('button', { name: 'main' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'v1' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'main' }))
     expect(screen.getByTestId('location')).toHaveTextContent('ref=refs%2Fheads%2Fmain')
     expect(screen.getByRole('tab', { name: 'repositoryBrowser.code' })).toHaveAttribute('data-state', 'active')
     expect(mocks.tree).toHaveBeenLastCalledWith('demo', 'refs/heads/main', undefined, { limit: 101, offset: 0, search: '' })
+  })
+
+  it('bounds branch pages, searches on the server, and resets the page', () => {
+    mocks.refs.mockReturnValue(result(Array.from({ length: 101 }, (_, index) => ({
+      name: `release/${String(index + 1).padStart(3, '0')}`,
+      kind: 'branch',
+      sha: `sha-${index}`,
+      target: '',
+    }))))
+    setup('/repositories/demo?tab=branches&refPage=2&refSearch=release')
+
+    expect(mocks.refs).toHaveBeenLastCalledWith('demo', { kind: 'branch', limit: 101, offset: 100, search: 'release' })
+    expect(screen.getByRole('button', { name: 'release/100' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'release/101' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'repositoryBrowser.nextRefPage' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('refPage=3')
+    expect(mocks.refs).toHaveBeenLastCalledWith('demo', { kind: 'branch', limit: 101, offset: 200, search: 'release' })
+
+    fireEvent.change(screen.getByRole('searchbox', { name: 'repositoryBrowser.searchRefs' }), { target: { value: 'hotfix' } })
+    fireEvent.click(screen.getByRole('button', { name: 'repositoryBrowser.applyRefSearch' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('refSearch=hotfix')
+    expect(screen.getByTestId('location')).not.toHaveTextContent('refPage=')
+  })
+
+  it('uses bounded ref suggestions and opens a manually entered revision', () => {
+    setup()
+    expect(mocks.refs).toHaveBeenLastCalledWith('demo', { limit: 51, search: '' })
+    fireEvent.change(screen.getByLabelText('repositoryBrowser.gitRef'), { target: { value: 'refs/tags/v2' } })
+    fireEvent.click(screen.getByRole('button', { name: 'repositoryBrowser.applyRef' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('ref=refs%2Ftags%2Fv2')
+  })
+
+  it('pages tags and opens the selected tag in the code tab', () => {
+    mocks.tags.mockReturnValue(result([{ name: 'v2.0.0', sha: 'abc123456', message: 'Version 2' }]))
+    setup('/repositories/demo?tab=tags')
+    expect(mocks.tags).toHaveBeenLastCalledWith('demo', { limit: 101, offset: 0, search: '' })
+    fireEvent.click(screen.getByRole('button', { name: 'v2.0.0' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('ref=refs%2Ftags%2Fv2.0.0')
+    expect(screen.getByRole('tab', { name: 'repositoryBrowser.code' })).toHaveAttribute('data-state', 'active')
   })
 
   it('isolates commits and tags errors from the code tab', async () => {
@@ -252,6 +292,7 @@ describe('RepositoryBrowserPage', () => {
     mocks.releases.mockReturnValue(result([release()]))
     mocks.tags.mockReturnValue(result([{ name: 'v1.0.0', sha: 'abc123456', message: '' }]))
     setup('/repositories/demo?tab=releases')
+    expect(mocks.tags).toHaveBeenLastCalledWith('demo', { limit: 51, search: '' })
     fireEvent.click(screen.getByRole('button', { name: 'releases.create' }))
     const form = screen.getByRole('form', { name: 'releases.create' })
     const tag = screen.getByLabelText('releases.tag')

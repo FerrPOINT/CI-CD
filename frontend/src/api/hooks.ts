@@ -57,7 +57,8 @@ const KEYS = {
   attemptLogs: (jobId: string, attemptId: string) => ['logs', jobId, attemptId] as const,
   attemptLogPages: (jobId: string, attemptId: string, search: string) => ['logs', jobId, attemptId, 'page', search] as const,
   repositories: ['repositories'] as const,
-  refs: (repo: string) => ['repository-refs', repo] as const,
+  refs: (repo: string, limit: number | undefined, offset: number | undefined, search: string, kind: string) =>
+    ['repository-refs', repo, limit, offset, search, kind] as const,
   commits: (repo: string, branch: string, page: number, pageSize: number) =>
     ['repository-commits', repo, branch, page, pageSize] as const,
   comparison: (repo: string, from: string, to: string) => ['repository-comparison', repo, from, to] as const,
@@ -68,7 +69,8 @@ const KEYS = {
     [...KEYS.pullRequests(repo), 'list', limit, offset, status, search] as const,
   pullRequest: (repo: string, number: number) => [...KEYS.pullRequests(repo), 'detail', number] as const,
   repositoryBlob: (repo: string, gitRef: string, path: string) => ['repository-blob', repo, gitRef, path] as const,
-  repositoryTags: (repo: string) => ['repository-tags', repo] as const,
+  repositoryTags: (repo: string, limit: number | undefined, offset: number | undefined, search: string) =>
+    ['repository-tags', repo, limit, offset, search] as const,
   releases: (repo: string) => ['releases', repo] as const,
   testReport: (jobId: string) => ['test-report', jobId] as const,
 }
@@ -272,10 +274,21 @@ function repositoryPath(repo: string): string {
   return encodeURIComponent(repo)
 }
 
-export function useRepositoryRefs(repo: string | undefined) {
+export function useRepositoryRefs(
+  repo: string | undefined,
+  options: { limit?: number; offset?: number; search?: string; kind?: 'branch' | 'tag' | 'other' } = {},
+) {
+  const search = options.search?.trim() ?? ''
+  const kind = options.kind ?? ''
+  const params = new URLSearchParams({
+    ...(options.limit != null ? { limit: String(options.limit) } : {}),
+    ...(options.offset != null ? { offset: String(options.offset) } : {}),
+    ...(search ? { search } : {}),
+    ...(kind ? { kind } : {}),
+  }).toString()
   return useQuery({
-    queryKey: KEYS.refs(repo ?? ''),
-    queryFn: () => api<RepositoryRef[]>(`/repos/${repositoryPath(repo ?? '')}/refs`),
+    queryKey: KEYS.refs(repo ?? '', options.limit, options.offset, search, kind),
+    queryFn: () => api<RepositoryRef[]>(`/repos/${repositoryPath(repo ?? '')}/refs${params ? `?${params}` : ''}`),
     enabled: Boolean(repo),
     retry: apiRetry,
   })
@@ -374,10 +387,19 @@ export function useRepositoryBlob(repo: string | undefined, gitRef: string | und
   })
 }
 
-export function useRepositoryTags(repo: string | undefined) {
+export function useRepositoryTags(
+  repo: string | undefined,
+  options: { limit?: number; offset?: number; search?: string } = {},
+) {
+  const search = options.search?.trim() ?? ''
+  const params = new URLSearchParams({
+    ...(options.limit != null ? { limit: String(options.limit) } : {}),
+    ...(options.offset != null ? { offset: String(options.offset) } : {}),
+    ...(search ? { search } : {}),
+  }).toString()
   return useQuery({
-    queryKey: KEYS.repositoryTags(repo ?? ''),
-    queryFn: () => api<TagInfo[]>(`/repos/${repositoryPath(repo ?? '')}/tags`),
+    queryKey: KEYS.repositoryTags(repo ?? '', options.limit, options.offset, search),
+    queryFn: () => api<TagInfo[]>(`/repos/${repositoryPath(repo ?? '')}/tags${params ? `?${params}` : ''}`),
     enabled: !!repo,
   })
 }
