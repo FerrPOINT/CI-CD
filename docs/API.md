@@ -564,7 +564,7 @@ curl -sS http://127.0.0.1:22801/api/v1/pipelines/$PIPELINE_ID
 | Метод | Путь | Назначение |
 |---|---|---|
 | GET | `/repos/{repo}/tree?ref=&path=` | Содержимое каталога bare-репозитория |
-| GET | `/repos/{repo}/blob?ref=&path=` | Текст файла, до 512 KiB; binary возвращает флаг без content |
+| GET | `/repos/{repo}/blob?ref=&path=` | Текст файла, до 512 KiB с bounded чтением Git stdout; полный `size` сохраняется, binary возвращает флаг без content |
 | GET | `/repos/{repo}/tags` | Git tags, отсортированные по дате |
 | GET/POST | `/repos/{repo}/releases` | Список / создание или обновление release metadata |
 | GET/DELETE | `/repos/{repo}/releases/{tag}` | Один release / удаление metadata (Git tag сохраняется) |

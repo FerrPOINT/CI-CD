@@ -127,6 +127,7 @@
     "binaryFile": "Binary file — preview unavailable",
     "emptyFile": "This file is empty",
     "truncatedFile": "Showing only the first 512 KiB of this file",
+    "filePreview": "File preview: {{path}}",
     "backToTree": "Back to files",
     "gitRef": "Branch or tag",
     "defaultRef": "Default branch",
