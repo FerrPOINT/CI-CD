@@ -143,6 +143,7 @@ describe('pull request workflow', () => {
     setup([])
     fireEvent.click(screen.getByRole('button', { name: 'pulls.create' }))
     const form = screen.getByRole('form', { name: 'pulls.create' })
+    expect(mocks.refs).toHaveBeenCalledWith('platform', { kind: 'branch', limit: 51, search: '' })
     expect([...document.querySelectorAll<HTMLOptionElement>('#pr-source-refs option')].map((option) => option.value))
       .toEqual(['main', 'feature/1'])
     expect(screen.getByLabelText('pulls.sourceBranch')).toHaveValue('')
@@ -224,7 +225,8 @@ describe('pull request workflow', () => {
         from: 'main',
         to: 'feature/1',
         merge_base: 'abc123',
-        patch: '',
+        patch: '+bounded change',
+        patch_truncated: true,
         files: [
           {
             path: 'assets/screenshot.png',
@@ -241,5 +243,7 @@ describe('pull request workflow', () => {
     expect(file).toHaveTextContent('compare.binaryFile')
     expect(screen.queryByText('+0')).not.toBeInTheDocument()
     expect(screen.queryByText('−0')).not.toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('compare.patchTruncated')
+    expect(screen.getByLabelText('compare.patch')).toHaveAttribute('tabindex', '0')
   })
 })

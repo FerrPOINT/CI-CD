@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
-import { GitBranch, GitCompareArrows, GitPullRequest, ChevronRight, Folder, FileText, Tag, Package, ArrowLeft, Plus, Pencil, Trash2 } from 'lucide-react'
+import { ArrowLeft, Check, ChevronLeft, ChevronRight, FileText, Folder, GitBranch, GitCompareArrows, GitPullRequest, Package, Pencil, Plus, Search, Tag, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { useRepositoryCommits, useRepositoryRefs, useRepositoryTree, useRepositoryBlob, useRepositoryTags, useReleases, useCreateRelease, useDeleteRelease } from '@/api/hooks'
 import {
@@ -12,11 +12,17 @@ import { Label } from '@sdlc/ui/ui'
 import { Textarea } from '@sdlc/ui/ui'
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
 import { QueryState } from '@/shared/ui/query-state'
+import { useDebouncedValue } from '@/shared/lib/use-debounced-value'
 import type { Release, RepositoryRef } from '@/api/types'
 import { Button } from '@sdlc/ui/ui'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@sdlc/ui/ui'
 
 const browserTabs = ['code', 'commits', 'branches', 'tags', 'releases'] as const
+const refPageSize = 100
+const refSuggestionLimit = 51
+const treePageSize = 100
+const commitPageSize = 25
+const maxCommitPage = Math.floor(0xffffffff / commitPageSize) + 1
 
 function parentPath(path: string): string {
   return path.slice(0, path.lastIndexOf('/'))
@@ -27,6 +33,22 @@ function formatDate(value: string, locale: string): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString(locale)
 }
 
+function parsePage(value: string | null): number {
+  const page = Number(value)
+  return Number.isSafeInteger(page) && page > 0 ? page : 1
+}
+
+function formatBytes(value: number, locale: string): string {
+  const units = ['B', 'KiB', 'MiB', 'GiB']
+  let amount = Math.max(0, value)
+  let unit = 0
+  while (amount >= 1024 && unit < units.length - 1) {
+    amount /= 1024
+    unit += 1
+  }
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: unit === 0 ? 0 : 1 }).format(amount)} ${units[unit]}`
+}
+
 export function RepositoryBrowserPage() {
   const { t, i18n } = useTranslation()
   const { repo } = useParams<{ repo: string }>()
@@ -34,19 +56,24 @@ export function RepositoryBrowserPage() {
   const tabParam = searchParams.get('tab')
   const tab = browserTabs.find((value) => value === tabParam) ?? 'code'
   const gitRef = searchParams.get('ref') || 'HEAD'
+  const rawCommitPage = Number(searchParams.get('commitPage'))
+  const commitPage = Number.isSafeInteger(rawCommitPage) && rawCommitPage > 0 && rawCommitPage <= maxCommitPage ? rawCommitPage : 1
   const filePath = searchParams.get('file') || null
   const dirPath = searchParams.get('dir') ?? (filePath ? parentPath(filePath) : '')
-  const refsQuery = useRepositoryRefs(repo)
+  const refPage = parsePage(searchParams.get('refPage'))
+  const refSearch = searchParams.get('refSearch')?.trim() ?? ''
+  const treePage = parsePage(searchParams.get('treePage'))
+  const treeSearch = searchParams.get('treeSearch')?.trim() ?? ''
 
   if (!repo) return <p className="text-sm text-text-muted">{t('repositories.notFound')}</p>
 
-  function updateParams(changes: Record<string, string | null>) {
+  function updateParams(changes: Record<string, string | null>, options?: { replace?: boolean }) {
     const next = new URLSearchParams(searchParams)
     for (const [key, value] of Object.entries(changes)) {
       if (value) next.set(key, value)
       else next.delete(key)
     }
-    setSearchParams(next)
+    setSearchParams(next, options)
   }
 
   return (
@@ -54,7 +81,7 @@ export function RepositoryBrowserPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="flex items-center gap-2 text-sm text-text-muted">
-            <Link to="/repositories" className="hover:text-text-primary">{t('navigation.repositories')}</Link>
+            <Link to="/repositories" className="inline-flex min-h-10 items-center hover:text-text-primary">{t('navigation.repositories')}</Link>
             <ChevronRight className="h-3 w-3" />
             <span className="min-w-0 break-all">{repo}</span>
           </div>
@@ -64,12 +91,12 @@ export function RepositoryBrowserPage() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button asChild variant="outline" size="sm">
+          <Button asChild variant="outline" size="sm" className="h-10">
             <Link to={`/repositories/${encodeURIComponent(repo)}/compare`}>
               <GitCompareArrows className="h-4 w-4" /> {t('repositoryBrowser.compareChanges')}
             </Link>
           </Button>
-          <Button asChild size="sm">
+          <Button asChild size="sm" className="h-10">
             <Link to={`/repositories/${encodeURIComponent(repo)}/pulls`}>
               <GitPullRequest className="h-4 w-4" /> {t('repositoryBrowser.createPullRequest')}
             </Link>
@@ -77,7 +104,7 @@ export function RepositoryBrowserPage() {
         </div>
       </div>
 
-      <Tabs value={tab} onValueChange={(value) => updateParams({ tab: value === 'code' ? null : value })}>
+      <Tabs value={tab} onValueChange={(value) => updateParams({ tab: value === 'code' ? null : value, refPage: null, refSearch: null })}>
           <TabsList className="grid h-auto w-full grid-cols-3 gap-1 sm:inline-flex sm:w-auto">
             <TabsTrigger value="code" className="min-h-10 min-w-0 px-2 sm:px-3">{t('repositoryBrowser.code', 'Код')}</TabsTrigger>
             <TabsTrigger value="commits" className="min-h-10 min-w-0 px-2 sm:px-3">{t('repositoryBrowser.commits')}</TabsTrigger>
@@ -92,18 +119,25 @@ export function RepositoryBrowserPage() {
               gitRef={gitRef}
               dirPath={dirPath}
               filePath={filePath}
-              refsQuery={refsQuery}
+              treePage={treePage}
+              treeSearch={treeSearch}
               onNavigate={updateParams}
             />
           </TabsContent>
           <TabsContent value="commits" className="mt-4">
-            <CommitsList repo={repo} gitRef={gitRef} locale={i18n.language} />
+            <CommitsList
+              repo={repo}
+              gitRef={gitRef}
+              locale={i18n.language}
+              page={commitPage}
+              onPageChange={(page, replace) => updateParams({ commitPage: page === 1 ? null : String(page) }, { replace })}
+            />
           </TabsContent>
           <TabsContent value="branches" className="mt-4">
-            <BranchesList refsQuery={refsQuery} onSelect={(ref) => updateParams({ tab: null, ref: `refs/heads/${ref.name}`, dir: null, file: null })} />
+            <BranchesList repo={repo} page={refPage} search={refSearch} onNavigate={updateParams} onSelect={(ref) => updateParams({ tab: null, ref: `refs/heads/${ref.name}`, dir: null, file: null, refPage: null, refSearch: null, treePage: null, treeSearch: null })} />
           </TabsContent>
           <TabsContent value="tags" className="mt-4">
-            <TagsList repo={repo} />
+            <TagsList repo={repo} page={refPage} search={refSearch} onNavigate={updateParams} onSelect={(tag) => updateParams({ tab: null, ref: `refs/tags/${tag.name}`, dir: null, file: null, refPage: null, refSearch: null, treePage: null, treeSearch: null })} />
           </TabsContent>
           <TabsContent value="releases" className="mt-4">
             <ReleasesList repo={repo} />
@@ -113,9 +147,34 @@ export function RepositoryBrowserPage() {
   )
 }
 
-function CommitsList({ repo, gitRef, locale }: { repo: string; gitRef: string; locale: string }) {
+function CommitsList({ repo, gitRef, locale, page, onPageChange }: {
+  repo: string
+  gitRef: string
+  locale: string
+  page: number
+  onPageChange: (page: number, replace?: boolean) => void
+}) {
   const { t } = useTranslation()
-  const query = useRepositoryCommits(repo, gitRef)
+  const query = useRepositoryCommits(repo, gitRef, page, commitPageSize)
+
+  useEffect(() => {
+    if (page > 1 && query.data?.items.length === 0) onPageChange(1, true)
+  }, [onPageChange, page, query.data])
+
+  if (query.error && page > 1) {
+    return (
+      <div className="flex flex-wrap items-center gap-3 rounded-md border border-status-failed/40 bg-surface p-4 text-sm text-text-secondary" role="alert">
+        <span>{t('repositoryBrowser.commitsLoadError')}</span>
+        <Button type="button" size="sm" variant="outline" className="min-h-10 sm:min-h-10" onClick={() => void query.refetch()}>
+          {t('common.retry')}
+        </Button>
+        <Button type="button" size="sm" variant="ghost" className="min-h-10 sm:min-h-10" onClick={() => onPageChange(page - 1)}>
+          {t('repositoryBrowser.previousCommits')}
+        </Button>
+      </div>
+    )
+  }
+
   return (
     <QueryState
       data={query.data}
@@ -123,51 +182,33 @@ function CommitsList({ repo, gitRef, locale }: { repo: string; gitRef: string; l
       error={query.error}
       errorMessage={t('repositoryBrowser.commitsLoadError')}
       onRetry={() => void query.refetch()}
-      isEmpty={(commits) => commits.length === 0}
+      isEmpty={(result) => result.items.length === 0}
       empty={{ title: t('repositoryBrowser.noCommits') }}
     >
-      {(commits) => (
-        <ul className="divide-y divide-border rounded-md border border-border">
-          {commits.map((commit) => (
-            <li key={commit.sha} className="flex min-w-0 flex-col gap-1 px-3 py-2.5 text-sm sm:flex-row sm:items-center sm:gap-4">
-              <code className="shrink-0 text-xs text-accent">{commit.short_sha}</code>
-              <span className="min-w-0 flex-1 break-words font-medium">{commit.message}</span>
-              <span className="min-w-0 break-words text-xs text-text-secondary">{commit.author}</span>
-              <time className="shrink-0 text-xs text-text-muted" dateTime={commit.date}>{formatDate(commit.date, locale)}</time>
-            </li>
-          ))}
-        </ul>
-      )}
-    </QueryState>
-  )
-}
-
-function BranchesList({ refsQuery, onSelect }: { refsQuery: ReturnType<typeof useRepositoryRefs>; onSelect: (ref: RepositoryRef) => void }) {
-  const { t } = useTranslation()
-  const branches = refsQuery.data?.filter((ref) => ref.kind === 'branch')
-  return (
-    <QueryState
-      data={branches}
-      isLoading={refsQuery.isLoading}
-      error={refsQuery.error}
-      errorMessage={t('repositoryBrowser.branchesLoadError')}
-      onRetry={() => void refsQuery.refetch()}
-      isEmpty={(items) => items.length === 0}
-      empty={{ title: t('repositoryBrowser.noBranches') }}
-    >
-      {(items) => (
-        <ul className="divide-y divide-border rounded-md border border-border">
-          {items.map((ref) => (
-            <li key={ref.name} className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-sm">
-              <button type="button" className="flex min-h-10 min-w-0 flex-1 items-center gap-2 text-left font-medium hover:text-accent" onClick={() => onSelect(ref)}>
-                <GitBranch className="h-4 w-4 shrink-0 text-accent" aria-hidden />
-                <span className="break-all">{ref.name}</span>
-              </button>
-              <code className="text-xs text-text-muted">{ref.sha.slice(0, 7)}</code>
-              {ref.target && <span className="w-full break-words text-xs text-text-muted sm:w-auto sm:max-w-[40%] sm:truncate">{ref.target}</span>}
-            </li>
-          ))}
-        </ul>
+      {(result) => (
+        <section className="space-y-3" aria-busy={query.isFetching}>
+          <ul className="divide-y divide-border rounded-md border border-border">
+            {result.items.map((commit) => (
+              <li key={commit.sha} className="flex min-w-0 flex-col gap-1 px-3 py-2.5 text-sm sm:flex-row sm:items-center sm:gap-4">
+                <code className="shrink-0 text-xs text-accent">{commit.short_sha}</code>
+                <span className="min-w-0 flex-1 break-words font-medium">{commit.message}</span>
+                <span className="min-w-0 break-words text-xs text-text-secondary">{commit.author}</span>
+                <time className="shrink-0 text-xs text-text-muted" dateTime={commit.date}>{formatDate(commit.date, locale)}</time>
+              </li>
+            ))}
+          </ul>
+          {(page > 1 || result.hasMore) && (
+            <nav aria-label={t('repositoryBrowser.commitPages')} className="grid grid-cols-2 items-center gap-2 sm:flex sm:justify-end">
+              <Button type="button" size="sm" variant="outline" className="min-h-10 w-full sm:min-h-10 sm:w-auto" disabled={page === 1 || query.isFetching} onClick={() => onPageChange(page - 1)}>
+                {t('repositoryBrowser.previousCommits')}
+              </Button>
+              <span className="col-span-2 row-start-1 text-center text-sm text-text-muted sm:col-auto sm:row-auto" aria-live="polite">{t('repositoryBrowser.commitPage', { page })}</span>
+              <Button type="button" size="sm" variant="outline" className="min-h-10 w-full sm:min-h-10 sm:w-auto" disabled={!result.hasMore || query.isFetching} onClick={() => onPageChange(page + 1)}>
+                {t('repositoryBrowser.nextCommits')}
+              </Button>
+            </nav>
+          )}
+        </section>
       )}
     </QueryState>
   )
@@ -175,60 +216,152 @@ function BranchesList({ refsQuery, onSelect }: { refsQuery: ReturnType<typeof us
 
 type NavigateParams = (changes: Record<string, string | null>) => void
 
-function CodeBrowser({ repo, gitRef, dirPath, filePath, refsQuery, onNavigate }: {
+function RefListSearch({ search, onSearch }: { search: string; onSearch: (search: string) => void }) {
+  const { t } = useTranslation()
+  const [draft, setDraft] = useState(search)
+
+  useEffect(() => setDraft(search), [search])
+
+  return (
+    <form className="flex min-w-0 items-center gap-2" role="search" onSubmit={(event) => { event.preventDefault(); onSearch(draft.trim()) }}>
+      <div className="relative min-w-0 flex-1 sm:max-w-sm">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" aria-hidden />
+        <Input type="search" className="h-10 pl-9" aria-label={t('repositoryBrowser.searchRefs')} placeholder={t('repositoryBrowser.searchRefs')} value={draft} onChange={(event) => setDraft(event.target.value)} />
+      </div>
+      <Button type="submit" variant="outline" size="sm" className="h-10 w-10 p-0" aria-label={t('repositoryBrowser.applyRefSearch')} title={t('repositoryBrowser.applyRefSearch')}>
+        <Search className="h-4 w-4" aria-hidden />
+      </Button>
+      {(draft || search) && (
+        <Button type="button" variant="ghost" size="sm" className="h-10 w-10 p-0" aria-label={t('repositoryBrowser.clearRefSearch')} title={t('repositoryBrowser.clearRefSearch')} onClick={() => { setDraft(''); onSearch('') }}>
+          <X className="h-4 w-4" aria-hidden />
+        </Button>
+      )}
+    </form>
+  )
+}
+
+function RefPagination({ page, hasNext, onPage }: { page: number; hasNext: boolean; onPage: (page: number) => void }) {
+  const { t } = useTranslation()
+  if (page <= 1 && !hasNext) return null
+  return (
+    <nav aria-label={t('repositoryBrowser.refPagination')} className="flex items-center justify-center gap-3 border-t border-border pt-2">
+      <Button type="button" variant="outline" size="sm" className="h-10 w-10 p-0" disabled={page <= 1} aria-label={t('repositoryBrowser.previousRefPage')} title={t('repositoryBrowser.previousRefPage')} onClick={() => onPage(page - 1)}>
+        <ChevronLeft className="h-4 w-4" aria-hidden />
+      </Button>
+      <span className="text-sm text-text-secondary">{t('repositoryBrowser.refPage', { page })}</span>
+      <Button type="button" variant="outline" size="sm" className="h-10 w-10 p-0" disabled={!hasNext} aria-label={t('repositoryBrowser.nextRefPage')} title={t('repositoryBrowser.nextRefPage')} onClick={() => onPage(page + 1)}>
+        <ChevronRight className="h-4 w-4" aria-hidden />
+      </Button>
+    </nav>
+  )
+}
+
+function BranchesList({ repo, page, search, onNavigate, onSelect }: { repo: string; page: number; search: string; onNavigate: NavigateParams; onSelect: (ref: RepositoryRef) => void }) {
+  const { t } = useTranslation()
+  const query = useRepositoryRefs(repo, { kind: 'branch', limit: refPageSize + 1, offset: (page - 1) * refPageSize, search })
+  const allBranches = query.data?.filter((ref) => ref.kind === 'branch')
+  const branches = allBranches?.slice(0, refPageSize)
+  const hasNext = (allBranches?.length ?? 0) > refPageSize
+  return (
+    <div className="space-y-2">
+      <RefListSearch search={search} onSearch={(value) => onNavigate({ refSearch: value || null, refPage: null })} />
+      <QueryState data={branches} isLoading={query.isLoading} error={query.error} errorMessage={t('repositoryBrowser.branchesLoadError')} onRetry={() => void query.refetch()} isEmpty={(items) => items.length === 0} empty={{ title: search ? t('repositoryBrowser.noBranchMatches') : t('repositoryBrowser.noBranches') }}>
+        {(items) => (
+          <ul className="divide-y divide-border rounded-md border border-border">
+            {items.map((ref) => (
+              <li key={ref.name} className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-sm">
+                <button type="button" className="flex min-h-10 min-w-0 flex-1 items-center gap-2 text-left font-medium hover:text-accent" onClick={() => onSelect(ref)}>
+                  <GitBranch className="h-4 w-4 shrink-0 text-accent" aria-hidden />
+                  <span className="break-all">{ref.name}</span>
+                </button>
+                <code className="text-xs text-text-muted">{ref.sha.slice(0, 7)}</code>
+                {ref.target && <span className="w-full break-words text-xs text-text-muted sm:w-auto sm:max-w-[40%] sm:truncate">{ref.target}</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </QueryState>
+      <RefPagination page={page} hasNext={hasNext} onPage={(nextPage) => onNavigate({ refPage: nextPage > 1 ? String(nextPage) : null })} />
+    </div>
+  )
+}
+
+function CodeBrowser({ repo, gitRef, dirPath, filePath, treePage, treeSearch, onNavigate }: {
   repo: string
   gitRef: string
   dirPath: string
   filePath: string | null
-  refsQuery: ReturnType<typeof useRepositoryRefs>
+  treePage: number
+  treeSearch: string
   onNavigate: NavigateParams
 }) {
   const { t } = useTranslation()
-  const refs = refsQuery.data?.filter((ref) => ref.kind === 'branch' || ref.kind === 'tag') ?? []
+  const [draftRef, setDraftRef] = useState(gitRef === 'HEAD' ? '' : gitRef)
+  const deferredRef = useDebouncedValue(draftRef.trim().replace(/^refs\/(?:heads|tags)\//, ''))
+  const refsQuery = useRepositoryRefs(repo, { limit: refSuggestionLimit, search: deferredRef })
+  const refs = refsQuery.data?.filter((ref) => ref.kind === 'branch' || ref.kind === 'tag').slice(0, refSuggestionLimit - 1) ?? []
   const refOptions = refs.map((ref) => ({ value: `refs/${ref.kind === 'branch' ? 'heads' : 'tags'}/${ref.name}`, label: `${ref.kind === 'branch' ? t('repositoryBrowser.branches') : t('repositoryBrowser.tags')} / ${ref.name}` }))
+
+  useEffect(() => setDraftRef(gitRef === 'HEAD' ? '' : gitRef), [gitRef])
+
+  function applyRef(event: React.FormEvent) {
+    event.preventDefault()
+    const value = draftRef.trim()
+    onNavigate({ ref: value && value !== 'HEAD' ? value : null, dir: null, file: null, treePage: null, treeSearch: null })
+  }
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-3">
+      <form className="flex min-w-0 flex-wrap items-end gap-2" role="search" aria-label={t('repositoryBrowser.refPicker')} onSubmit={applyRef}>
+        <div className="min-w-0 flex-1 space-y-1.5 sm:max-w-md">
         <label htmlFor="repository-ref" className="text-sm font-medium">{t('repositoryBrowser.gitRef')}</label>
-        <select
+        <Input
           id="repository-ref"
-          className="min-h-10 min-w-0 max-w-full rounded-md border border-border bg-surface px-3 text-sm text-text-primary"
-          value={gitRef}
-          onChange={(event) => onNavigate({ ref: event.target.value === 'HEAD' ? null : event.target.value, dir: null, file: null })}
-        >
+          type="search"
+          list="repository-ref-options"
+          className="h-10 font-mono"
+          placeholder={t('repositoryBrowser.defaultRef')}
+          value={draftRef}
+          onChange={(event) => setDraftRef(event.target.value)}
+        />
+        <datalist id="repository-ref-options">
           <option value="HEAD">{t('repositoryBrowser.defaultRef')}</option>
-          {gitRef !== 'HEAD' && !refOptions.some((option) => option.value === gitRef) && <option value={gitRef}>{gitRef}</option>}
-          {refOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-        </select>
-      </div>
+          {refOptions.map((option) => <option key={option.value} value={option.value} label={option.label} />)}
+        </datalist>
+        </div>
+        <Button type="submit" variant="outline" size="sm" className="h-10 w-10 p-0" aria-label={t('repositoryBrowser.applyRef')} title={t('repositoryBrowser.applyRef')}>
+          <Check className="h-4 w-4" aria-hidden />
+        </Button>
+      </form>
+      {refsQuery.isLoading && <p role="status" className="text-xs text-text-muted">{t('repositoryBrowser.loadingRefs')}</p>}
+      {(refsQuery.data?.length ?? 0) > refSuggestionLimit - 1 && <p role="status" className="text-xs text-text-muted">{t('repositoryBrowser.refSuggestionsLimited')}</p>}
       {Boolean(refsQuery.error) && (
         <div role="alert" className="flex flex-wrap items-center gap-3 rounded-md border border-status-failed/40 p-3 text-sm">
-          <span>{t('repositoryBrowser.refsLoadError')}</span>
-          <Button type="button" size="sm" variant="outline" onClick={() => void refsQuery.refetch()}>{t('common.retry')}</Button>
+          <span>{t('repositoryBrowser.refsUnavailable')}</span>
+          <Button type="button" size="sm" variant="outline" className="h-10" onClick={() => void refsQuery.refetch()}>{t('common.retry')}</Button>
         </div>
       )}
       {filePath ? (
         <FilePreview repo={repo} gitRef={gitRef} filePath={filePath} onBack={() => onNavigate({ file: null, dir: parentPath(filePath) })} />
       ) : (
-        <TreeView repo={repo} gitRef={gitRef} dirPath={dirPath} onNavigate={onNavigate} />
+        <TreeView repo={repo} gitRef={gitRef} dirPath={dirPath} page={treePage} search={treeSearch} onNavigate={onNavigate} />
       )}
     </div>
   )
 }
 
 function FilePreview({ repo, gitRef, filePath, onBack }: { repo: string; gitRef: string; filePath: string; onBack: () => void }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const query = useRepositoryBlob(repo, gitRef, filePath)
   return (
     <div className="overflow-hidden rounded-md border border-border">
       <div className="flex min-w-0 flex-wrap items-center gap-2 border-b border-border p-2 text-sm">
-        <Button type="button" variant="ghost" size="sm" className="min-h-10 min-w-10" aria-label={t('repositoryBrowser.backToTree')} title={t('repositoryBrowser.backToTree')} onClick={onBack}>
+        <Button type="button" variant="ghost" size="sm" className="h-10 min-w-10" aria-label={t('repositoryBrowser.backToTree')} title={t('repositoryBrowser.backToTree')} onClick={onBack}>
           <ArrowLeft className="h-4 w-4" aria-hidden />
         </Button>
         <FileText className="h-4 w-4 shrink-0 text-accent" aria-hidden />
         <span className="min-w-0 flex-1 break-all font-medium">{filePath}</span>
-        {query.data && <span className="text-xs text-text-muted">{query.data.size} B · {query.data.sha.slice(0, 7)}</span>}
+        {query.data && <span className="text-xs text-text-muted">{formatBytes(query.data.size, i18n.language)} · {query.data.sha.slice(0, 7)}</span>}
       </div>
       <div className="p-4">
         <QueryState data={query.data} isLoading={query.isLoading} error={query.error} errorMessage={t('repositoryBrowser.fileLoadError')} onRetry={() => void query.refetch()}>
@@ -238,8 +371,8 @@ function FilePreview({ repo, gitRef, filePath, onBack }: { repo: string; gitRef:
             <p className="text-sm text-text-muted">{t('repositoryBrowser.emptyFile')}</p>
           ) : (
             <div>
-              {blob.truncated && <p className="mb-3 text-xs text-text-muted">{t('repositoryBrowser.truncatedFile')}</p>}
-              <pre className="max-h-[70vh] overflow-auto text-xs leading-relaxed"><code>{blob.content}</code></pre>
+              {blob.truncated && <p role="status" className="mb-3 text-sm text-text-muted">{t('repositoryBrowser.truncatedFile')}</p>}
+              <pre tabIndex={0} aria-label={t('repositoryBrowser.filePreview', { path: filePath })} className="max-h-[70vh] overflow-auto text-xs leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"><code>{blob.content}</code></pre>
             </div>
           )}
         </QueryState>
@@ -248,29 +381,78 @@ function FilePreview({ repo, gitRef, filePath, onBack }: { repo: string; gitRef:
   )
 }
 
-function TreeView({ repo, gitRef, dirPath, onNavigate }: { repo: string; gitRef: string; dirPath: string; onNavigate: NavigateParams }) {
+function TreeView({ repo, gitRef, dirPath, page, search, onNavigate }: {
+  repo: string
+  gitRef: string
+  dirPath: string
+  page: number
+  search: string
+  onNavigate: NavigateParams
+}) {
   const { t } = useTranslation()
-  const query = useRepositoryTree(repo, gitRef, dirPath || undefined)
+  const [draftSearch, setDraftSearch] = useState(search)
+  const query = useRepositoryTree(repo, gitRef, dirPath || undefined, {
+    limit: treePageSize + 1,
+    offset: (page - 1) * treePageSize,
+    search,
+  })
   const crumbs = dirPath ? dirPath.split('/') : []
+  const entries = query.data?.slice(0, treePageSize)
+  const hasNext = (query.data?.length ?? 0) > treePageSize
+
+  useEffect(() => setDraftSearch(search), [search])
+
+  function submitSearch(event: React.FormEvent) {
+    event.preventDefault()
+    const value = draftSearch.trim()
+    onNavigate({ treeSearch: value || null, treePage: null })
+  }
+
+  function clearSearch() {
+    setDraftSearch('')
+    onNavigate({ treeSearch: null, treePage: null })
+  }
+
   return (
     <div className="overflow-hidden rounded-md border border-border">
       <nav aria-label={t('repositoryBrowser.code')} className="flex min-w-0 flex-wrap items-center gap-1 border-b border-border px-2 py-1 text-sm">
         <Folder className="h-4 w-4 shrink-0 text-accent" aria-hidden />
-        <button type="button" className="min-h-10 px-2 hover:text-accent" onClick={() => onNavigate({ dir: null, file: null })}>/</button>
+        <button type="button" className="min-h-10 min-w-10 px-2 hover:text-accent" onClick={() => onNavigate({ dir: null, file: null, treePage: null, treeSearch: null })}>/</button>
         {crumbs.map((part, index) => (
           <span key={`${index}-${part}`} className="flex min-w-0 items-center gap-1">
             <span className="text-text-muted">/</span>
-            <button type="button" className="min-h-10 min-w-0 break-all px-2 text-left hover:text-accent" onClick={() => onNavigate({ dir: crumbs.slice(0, index + 1).join('/'), file: null })}>{part}</button>
+            <button type="button" className="min-h-10 min-w-0 break-all px-2 text-left hover:text-accent" onClick={() => onNavigate({ dir: crumbs.slice(0, index + 1).join('/'), file: null, treePage: null, treeSearch: null })}>{part}</button>
           </span>
         ))}
       </nav>
-      <div className="p-2">
-        <QueryState data={query.data} isLoading={query.isLoading} error={query.error} errorMessage={t('repositoryBrowser.codeLoadError')} onRetry={() => void query.refetch()} isEmpty={(entries) => entries.length === 0} empty={{ title: t('repositoryBrowser.emptyTree') }}>
-          {(entries) => (
+      <div className="space-y-2 p-2">
+        <form className="flex min-w-0 items-center gap-2" role="search" onSubmit={submitSearch}>
+          <div className="relative min-w-0 flex-1 sm:max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" aria-hidden />
+            <Input
+              type="search"
+              className="h-10 pl-9"
+              aria-label={t('repositoryBrowser.searchTree')}
+              placeholder={t('repositoryBrowser.searchTree')}
+              value={draftSearch}
+              onChange={(event) => setDraftSearch(event.target.value)}
+            />
+          </div>
+          <Button type="submit" variant="outline" size="sm" className="h-10 w-10 p-0" aria-label={t('repositoryBrowser.applyTreeSearch')} title={t('repositoryBrowser.applyTreeSearch')}>
+            <Search className="h-4 w-4" aria-hidden />
+          </Button>
+          {(draftSearch || search) && (
+            <Button type="button" variant="ghost" size="sm" className="h-10 w-10 p-0" aria-label={t('repositoryBrowser.clearTreeSearch')} title={t('repositoryBrowser.clearTreeSearch')} onClick={clearSearch}>
+              <X className="h-4 w-4" aria-hidden />
+            </Button>
+          )}
+        </form>
+        <QueryState data={entries} isLoading={query.isLoading} error={query.error} errorMessage={t('repositoryBrowser.codeLoadError')} onRetry={() => void query.refetch()} isEmpty={(items) => items.length === 0} empty={{ title: search ? t('repositoryBrowser.noTreeMatches') : t('repositoryBrowser.emptyTree') }}>
+          {(items) => (
             <ul className="divide-y divide-border">
-              {[...entries].sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'tree' ? -1 : 1)).map((entry) => (
+              {items.map((entry) => (
                 <li key={entry.path} className="flex min-w-0 items-center gap-2 text-sm hover:bg-surface-raised">
-                  <button type="button" className="flex min-h-11 min-w-0 flex-1 items-center gap-3 px-2 text-left" onClick={() => onNavigate(entry.kind === 'tree' ? { dir: entry.path, file: null } : { file: entry.path })}>
+                  <button type="button" className="flex min-h-11 min-w-0 flex-1 items-center gap-3 px-2 text-left" onClick={() => onNavigate(entry.kind === 'tree' ? { dir: entry.path, file: null, treePage: null, treeSearch: null } : { file: entry.path })}>
                     {entry.kind === 'tree' ? <Folder className="h-4 w-4 shrink-0 text-accent" aria-hidden /> : <FileText className="h-4 w-4 shrink-0 text-text-muted" aria-hidden />}
                     <span className="min-w-0 break-all">{entry.name}</span>
                   </button>
@@ -281,36 +463,54 @@ function TreeView({ repo, gitRef, dirPath, onNavigate }: { repo: string; gitRef:
             </ul>
           )}
         </QueryState>
+        {(page > 1 || hasNext) && (
+          <nav aria-label={t('repositoryBrowser.treePagination')} className="flex items-center justify-center gap-3 border-t border-border pt-2">
+            <Button type="button" variant="outline" size="sm" className="h-10 w-10 p-0" disabled={page <= 1} aria-label={t('repositoryBrowser.previousTreePage')} title={t('repositoryBrowser.previousTreePage')} onClick={() => onNavigate({ treePage: page > 2 ? String(page - 1) : null })}>
+              <ChevronLeft className="h-4 w-4" aria-hidden />
+            </Button>
+            <span className="text-sm text-text-secondary">{t('repositoryBrowser.treePage', { page })}</span>
+            <Button type="button" variant="outline" size="sm" className="h-10 w-10 p-0" disabled={!hasNext} aria-label={t('repositoryBrowser.nextTreePage')} title={t('repositoryBrowser.nextTreePage')} onClick={() => onNavigate({ treePage: String(page + 1) })}>
+              <ChevronRight className="h-4 w-4" aria-hidden />
+            </Button>
+          </nav>
+        )}
       </div>
     </div>
   )
 }
 
-function TagsList({ repo }: { repo: string }) {
+function TagsList({ repo, page, search, onNavigate, onSelect }: { repo: string; page: number; search: string; onNavigate: NavigateParams; onSelect: (tag: { name: string }) => void }) {
   const { t } = useTranslation()
-  const query = useRepositoryTags(repo)
+  const query = useRepositoryTags(repo, { limit: refPageSize + 1, offset: (page - 1) * refPageSize, search })
+  const tags = query.data?.slice(0, refPageSize)
+  const hasNext = (query.data?.length ?? 0) > refPageSize
   return (
-    <QueryState data={query.data} isLoading={query.isLoading} error={query.error} errorMessage={t('repositoryBrowser.tagsLoadError')} onRetry={() => void query.refetch()} isEmpty={(tags) => tags.length === 0} empty={{ title: t('repositoryBrowser.noTags') }}>
-      {(tags) => (
-        <ul className="divide-y divide-border rounded-md border border-border">
-          {tags.map((tag) => (
-            <li key={tag.name} className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5 text-sm">
-              <Tag className="h-4 w-4 shrink-0 text-accent" aria-hidden />
-              <span className="min-w-0 break-all font-medium">{tag.name}</span>
-              <code className="text-xs text-text-muted">{tag.sha.slice(0, 7)}</code>
-              {tag.message && <span className="w-full min-w-0 break-words text-xs text-text-muted sm:ml-auto sm:w-auto sm:max-w-[40%] sm:truncate">{tag.message}</span>}
-            </li>
-          ))}
-        </ul>
-      )}
-    </QueryState>
+    <div className="space-y-2">
+      <RefListSearch search={search} onSearch={(value) => onNavigate({ refSearch: value || null, refPage: null })} />
+      <QueryState data={tags} isLoading={query.isLoading} error={query.error} errorMessage={t('repositoryBrowser.tagsLoadError')} onRetry={() => void query.refetch()} isEmpty={(items) => items.length === 0} empty={{ title: search ? t('repositoryBrowser.noTagMatches') : t('repositoryBrowser.noTags') }}>
+        {(items) => (
+          <ul className="divide-y divide-border rounded-md border border-border">
+            {items.map((tag) => (
+              <li key={tag.name} className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
+                <button type="button" className="flex min-h-10 min-w-0 flex-1 items-center gap-2 text-left font-medium hover:text-accent" onClick={() => onSelect(tag)}>
+                  <Tag className="h-4 w-4 shrink-0 text-accent" aria-hidden />
+                  <span className="break-all">{tag.name}</span>
+                </button>
+                <code className="text-xs text-text-muted">{tag.sha.slice(0, 7)}</code>
+                {tag.message && <span className="w-full min-w-0 break-words text-xs text-text-muted sm:w-auto sm:max-w-[40%] sm:truncate">{tag.message}</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </QueryState>
+      <RefPagination page={page} hasNext={hasNext} onPage={(nextPage) => onNavigate({ refPage: nextPage > 1 ? String(nextPage) : null })} />
+    </div>
   )
 }
 
 function ReleasesList({ repo }: { repo: string }) {
   const { t, i18n } = useTranslation()
   const releasesQuery = useReleases(repo)
-  const tagsQuery = useRepositoryTags(repo)
   const createRelease = useCreateRelease(repo)
   const deleteRelease = useDeleteRelease(repo)
   const [open, setOpen] = useState(false)
@@ -318,6 +518,8 @@ function ReleasesList({ repo }: { repo: string }) {
   const [pendingDelete, setPendingDelete] = useState<string | null>(null)
   const [tagError, setTagError] = useState<string | null>(null)
   const [form, setForm] = useState({ tag_name: '', name: '', description: '', prerelease: false })
+  const deferredTag = useDebouncedValue(form.tag_name.trim())
+  const tagsQuery = useRepositoryTags(repo, { limit: refSuggestionLimit, search: deferredTag })
 
   function openCreate() {
     setEditingTag(null)
@@ -404,8 +606,11 @@ function ReleasesList({ repo }: { repo: string }) {
             <div className="space-y-1.5">
               <Label htmlFor="rel-tag">{t('releases.tag')}</Label>
               <Input id="rel-tag" value={form.tag_name} onChange={(e) => { setForm({ ...form, tag_name: e.target.value }); setTagError(null) }} list={editingTag ? undefined : 'release-tags'} readOnly={!!editingTag} aria-invalid={!!tagError} aria-describedby={tagError ? 'rel-tag-error' : undefined} placeholder="v1.0.0" required />
-              <datalist id="release-tags">{tagsQuery.data?.map((tag) => <option key={tag.name} value={tag.name} />)}</datalist>
+              <datalist id="release-tags">{tagsQuery.data?.slice(0, refSuggestionLimit - 1).map((tag) => <option key={tag.name} value={tag.name} />)}</datalist>
               {tagError && <p id="rel-tag-error" role="alert" className="text-xs text-danger">{tagError}</p>}
+              {tagsQuery.isLoading && <p role="status" className="text-xs text-text-muted">{t('repositoryBrowser.loadingRefs')}</p>}
+              {(tagsQuery.data?.length ?? 0) > refSuggestionLimit - 1 && <p role="status" className="text-xs text-text-muted">{t('repositoryBrowser.refSuggestionsLimited')}</p>}
+              {Boolean(tagsQuery.error) && <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-text-secondary"><span>{t('repositoryBrowser.refsUnavailable')}</span><Button type="button" size="sm" variant="outline" className="min-h-10" onClick={() => void tagsQuery.refetch()}>{t('common.retry')}</Button></div>}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="rel-name">{t('releases.name')}</Label>

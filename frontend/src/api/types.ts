@@ -134,6 +134,7 @@ export interface Comparison {
   merge_base: string
   files: ChangedFile[]
   patch: string
+  patch_truncated: boolean
 }
 
 export type PullRequestStatus = 'open' | 'closed' | 'merged'

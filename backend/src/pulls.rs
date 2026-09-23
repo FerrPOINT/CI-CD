@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, process::Stdio};
 
 use axum::{
     Json,
@@ -7,6 +7,8 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use uuid::Uuid;
 
 use crate::api::{ApiError, AppState};
@@ -57,18 +59,70 @@ pub struct CommitInfo {
     pub date: String,
 }
 
+const DEFAULT_REF_LIMIT: usize = 100;
+const MAX_REF_LIMIT: usize = 200;
+
+#[derive(Clone, Copy)]
+struct GitListPage<'a> {
+    limit: usize,
+    offset: usize,
+    search: Option<&'a str>,
+}
+
+#[derive(Deserialize, utoipa::IntoParams)]
+pub struct RefsQuery {
+    limit: Option<usize>,
+    offset: Option<usize>,
+    search: Option<String>,
+    kind: Option<String>,
+}
+
+impl RefsQuery {
+    fn page(&self) -> Result<Option<(GitListPage<'_>, Option<&str>)>, ApiError> {
+        let search = normalized_search(self.search.as_deref());
+        let kind = normalized_search(self.kind.as_deref());
+        if self.limit.is_none() && self.offset.is_none() && search.is_none() && kind.is_none() {
+            return Ok(None);
+        }
+        if kind.is_some_and(|value| !matches!(value, "branch" | "tag" | "other")) {
+            return Err(ApiError::bad_request(
+                "ref kind must be branch, tag, or other",
+            ));
+        }
+        Ok(Some((
+            GitListPage {
+                limit: self
+                    .limit
+                    .unwrap_or(DEFAULT_REF_LIMIT)
+                    .clamp(1, MAX_REF_LIMIT),
+                offset: self.offset.unwrap_or(0),
+                search,
+            },
+            kind,
+        )))
+    }
+}
+
+fn normalized_search(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
 #[utoipa::path(
     get,
     path = "/api/v1/repos/{repo}/refs",
     tag = "repos",
-    params(("repo" = String, Path, description = "Repository name")),
+    params(("repo" = String, Path, description = "Repository name"), ("limit" = Option<usize>, Query), ("offset" = Option<usize>, Query), ("search" = Option<String>, Query), ("kind" = Option<String>, Query)),
     responses((status = 200, body = [RefInfo]), (status = 404)),
 )]
 pub async fn list_refs(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath(repo): AxumPath<String>,
+    Query(params): Query<RefsQuery>,
 ) -> Result<Json<Vec<RefInfo>>, ApiError> {
     let path = resolve_repo_path(&state, &repo).await?;
+    if let Some((page, kind)) = params.page()? {
+        return Ok(Json(read_refs_page(&path, page, kind).await?));
+    }
     let output = tokio::process::Command::new("git")
         .arg(format!("--git-dir={}", path.display()))
         .args([
@@ -83,21 +137,120 @@ pub async fn list_refs(
     }
     let refs: Vec<RefInfo> = String::from_utf8_lossy(&output.stdout)
         .lines()
-        .filter_map(|line| {
-            let mut parts = line.splitn(3, ' ');
-            let raw_ref = parts.next()?;
-            let sha = parts.next()?;
-            let target = parts.next().unwrap_or("");
-            let (name, kind) = classify_ref(raw_ref);
-            Some(RefInfo {
-                name: name.to_string(),
-                kind: kind.to_string(),
-                sha: sha.to_string(),
-                target: target.to_string(),
-            })
-        })
+        .filter_map(parse_ref_line)
         .collect();
     Ok(Json(refs))
+}
+
+async fn read_refs_page(
+    path: &std::path::Path,
+    page: GitListPage<'_>,
+    kind: Option<&str>,
+) -> Result<Vec<RefInfo>, ApiError> {
+    let pattern = match kind {
+        Some("branch") => Some("refs/heads"),
+        Some("tag") => Some("refs/tags"),
+        _ => None,
+    };
+    let mut arguments = vec!["--format=%(refname) %(objectname) %(contents:subject)"];
+    if let Some(pattern) = pattern {
+        arguments.push(pattern);
+    }
+    stream_for_each_ref(path, &arguments, page, |line| {
+        let entry = parse_ref_line(line)?;
+        if kind.is_some_and(|expected| entry.kind != expected) {
+            return None;
+        }
+        Some((entry.name.clone(), entry))
+    })
+    .await
+}
+
+fn parse_ref_line(line: &str) -> Option<RefInfo> {
+    let mut parts = line.splitn(3, ' ');
+    let raw_ref = parts.next()?;
+    let sha = parts.next()?;
+    let target = parts.next().unwrap_or("");
+    let (name, kind) = classify_ref(raw_ref);
+    Some(RefInfo {
+        name: name.to_string(),
+        kind: kind.to_string(),
+        sha: sha.to_string(),
+        target: target.to_string(),
+    })
+}
+
+async fn stream_for_each_ref<T, F>(
+    path: &std::path::Path,
+    arguments: &[&str],
+    page: GitListPage<'_>,
+    mut parse: F,
+) -> Result<Vec<T>, ApiError>
+where
+    F: FnMut(&str) -> Option<(String, T)>,
+{
+    let search = page.search.map(str::to_lowercase);
+    let mut child = tokio::process::Command::new("git")
+        .arg(format!("--git-dir={}", path.display()))
+        .arg("for-each-ref")
+        .args(arguments)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        ApiError::internal(sqlx::Error::Io(std::io::Error::other(
+            "git for-each-ref stdout is unavailable",
+        )))
+    })?;
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    let mut seen = 0;
+    let mut items = Vec::with_capacity(page.limit);
+    let mut page_is_full = false;
+
+    loop {
+        line.clear();
+        let read = reader
+            .read_line(&mut line)
+            .await
+            .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+        if read == 0 {
+            break;
+        }
+        let Some((name, item)) = parse(line.trim_end_matches(['\r', '\n'])) else {
+            continue;
+        };
+        if search
+            .as_deref()
+            .is_some_and(|needle| !name.to_lowercase().contains(needle))
+        {
+            continue;
+        }
+        if seen < page.offset {
+            seen += 1;
+            continue;
+        }
+        seen += 1;
+        items.push(item);
+        if items.len() >= page.limit {
+            page_is_full = true;
+            break;
+        }
+    }
+    drop(reader);
+
+    if page_is_full {
+        let _ = child.start_kill();
+    }
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if !page_is_full && !status.success() {
+        return Err(ApiError::bad_request("git for-each-ref failed"));
+    }
+    Ok(items)
 }
 
 fn classify_ref(raw_ref: &str) -> (&str, &str) {
@@ -123,16 +276,28 @@ pub async fn list_commits(
     Query(params): Query<CommitParams>,
 ) -> Result<Json<Vec<CommitInfo>>, ApiError> {
     let path = resolve_repo_path(&state, &repo).await?;
+    let (limit, offset) = params.page();
     let ref_spec = params.branch.unwrap_or_else(|| "HEAD".into());
     let ref_spec = resolve_view_ref(&path, &ref_spec).await;
-    let limit = params.limit.unwrap_or(50).min(200);
+    Ok(Json(read_commits(&path, &ref_spec, limit, offset).await?))
+}
+
+async fn read_commits(
+    path: &std::path::Path,
+    ref_spec: &str,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<CommitInfo>, ApiError> {
+    let max_count = format!("--max-count={limit}");
+    let skip = format!("--skip={offset}");
     let output = tokio::process::Command::new("git")
         .arg(format!("--git-dir={}", path.display()))
         .args([
             "log",
-            &format!("-{limit}"),
+            &max_count,
+            &skip,
             "--format=%H%n%an%n%ae%n%s%n%ci",
-            &ref_spec,
+            ref_spec,
         ])
         .output()
         .await
@@ -158,14 +323,26 @@ pub async fn list_commits(
             date: chunk[4].to_string(),
         });
     }
-    Ok(Json(commits))
+    Ok(commits)
 }
 
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct CommitParams {
     pub branch: Option<String>,
+    #[param(default = 50, minimum = 1, maximum = 200)]
     pub limit: Option<u32>,
+    #[param(default = 0, minimum = 0)]
+    pub offset: Option<u32>,
+}
+
+impl CommitParams {
+    fn page(&self) -> (u32, u32) {
+        (
+            self.limit.unwrap_or(50).clamp(1, 200),
+            self.offset.unwrap_or(0),
+        )
+    }
 }
 
 // ─── compare (diff) ───
@@ -184,6 +361,7 @@ pub struct DiffResult {
     pub merge_base: String,
     pub files: Vec<DiffFile>,
     pub patch: String,
+    pub patch_truncated: bool,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -245,6 +423,46 @@ fn parse_diff_files(numstat: &[u8], name_status: &[u8]) -> Result<Vec<DiffFile>,
         return Err("unmatched status in git diff");
     }
     Ok(files)
+}
+
+const MAX_PATCH_LEN: usize = 512 * 1024;
+
+async fn read_patch(
+    path: &std::path::Path,
+    merge_base: &str,
+    to: &str,
+) -> Result<(String, bool), ApiError> {
+    let mut child = tokio::process::Command::new("git")
+        .arg(format!("--git-dir={}", path.display()))
+        .args(["diff", "--no-renames", merge_base, to])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        ApiError::internal(sqlx::Error::Io(std::io::Error::other(
+            "git diff stdout is unavailable",
+        )))
+    })?;
+    let mut bytes = Vec::with_capacity(MAX_PATCH_LEN + 1);
+    let mut bounded = stdout.take((MAX_PATCH_LEN + 1) as u64);
+    bounded
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    let truncated = bytes.len() > MAX_PATCH_LEN;
+    if truncated {
+        bytes.truncate(MAX_PATCH_LEN);
+        let _ = child.start_kill();
+    }
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if !truncated && !status.success() {
+        return Err(ApiError::bad_request("git diff --patch failed"));
+    }
+    Ok((String::from_utf8_lossy(&bytes).into_owned(), truncated))
 }
 
 #[utoipa::path(
@@ -313,17 +531,7 @@ pub async fn compare_refs(
             )))
         })?;
 
-    // patch
-    let patch_output = tokio::process::Command::new("git")
-        .arg(format!("--git-dir={}", path.display()))
-        .args(["diff", "--no-renames", &merge_base, to])
-        .output()
-        .await
-        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
-    if !patch_output.status.success() {
-        return Err(ApiError::bad_request("git diff --patch failed"));
-    }
-    let patch = String::from_utf8_lossy(&patch_output.stdout).to_string();
+    let (patch, patch_truncated) = read_patch(&path, &merge_base, to).await?;
 
     Ok(Json(DiffResult {
         from: from.clone(),
@@ -331,6 +539,7 @@ pub async fn compare_refs(
         merge_base,
         files,
         patch,
+        patch_truncated,
     }))
 }
 
@@ -844,7 +1053,7 @@ async fn resolve_view_ref(path: &std::path::Path, raw: &str) -> String {
 
 // ---- Code browsing: tree + blob (P0 git-server parity) ----
 
-#[utoipa::path(get, path = "/api/v1/repos/{repo}/tree", tag = "git", params(("repo" = String, Path), ("ref" = Option<String>, Query), ("path" = Option<String>, Query)), responses((status = 200, body = [TreeEntry])))]
+#[utoipa::path(get, path = "/api/v1/repos/{repo}/tree", tag = "git", params(("repo" = String, Path), ("ref" = Option<String>, Query), ("path" = Option<String>, Query), ("limit" = Option<usize>, Query), ("offset" = Option<usize>, Query), ("search" = Option<String>, Query)), responses((status = 200, body = [TreeEntry])))]
 pub async fn list_tree(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath(repo): AxumPath<String>,
@@ -863,9 +1072,12 @@ pub async fn list_tree(
     } else {
         format!("{git_ref}:{subpath}")
     };
+    if let Some(page) = params.page() {
+        return Ok(Json(read_tree_page(&path, &spec, subpath, page).await?));
+    }
     let output = tokio::process::Command::new("git")
         .arg(format!("--git-dir={}", path.display()))
-        .args(["ls-tree", "-l", "--", &spec])
+        .args(["ls-tree", "-l", "-z", "--", &spec])
         .output()
         .await
         .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
@@ -876,30 +1088,161 @@ pub async fn list_tree(
             err.trim()
         )));
     }
-    let entries: Vec<TreeEntry> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            // "<mode> <type> <sha> <size>\t<path>"
-            let (meta, name) = line.split_once('\t')?;
-            let mut parts = meta.split_whitespace();
-            let _mode = parts.next()?;
-            let kind = parts.next()?;
-            let sha = parts.next()?.to_string();
-            let size = match parts.next()? {
-                "-" => None,
-                s => s.parse().ok(),
-            };
-            let name = name.to_string();
-            Some(TreeEntry {
-                path: tree_entry_path(subpath, &name),
-                name: name.rsplit('/').next().unwrap_or(&name).to_string(),
-                kind: kind.to_string(),
-                size,
-                sha,
-            })
-        })
+    let entries: Vec<TreeEntry> = output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter_map(|record| parse_tree_entry(record, subpath))
         .collect();
     Ok(Json(entries))
+}
+
+const DEFAULT_TREE_LIMIT: usize = 100;
+const MAX_TREE_LIMIT: usize = 200;
+
+#[derive(Clone, Copy)]
+struct TreePage<'a> {
+    limit: usize,
+    offset: usize,
+    search: Option<&'a str>,
+}
+
+async fn read_tree_page(
+    path: &std::path::Path,
+    spec: &str,
+    subpath: &str,
+    page: TreePage<'_>,
+) -> Result<Vec<TreeEntry>, ApiError> {
+    let search = page.search.map(str::to_lowercase);
+    let mut entries = Vec::with_capacity(page.limit);
+    let mut seen = 0;
+
+    let page_is_full = collect_tree_entries(
+        path,
+        spec,
+        subpath,
+        true,
+        search.as_deref(),
+        page,
+        &mut seen,
+        &mut entries,
+    )
+    .await?;
+    if !page_is_full {
+        collect_tree_entries(
+            path,
+            spec,
+            subpath,
+            false,
+            search.as_deref(),
+            page,
+            &mut seen,
+            &mut entries,
+        )
+        .await?;
+    }
+    Ok(entries)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn collect_tree_entries(
+    path: &std::path::Path,
+    spec: &str,
+    subpath: &str,
+    directories_only: bool,
+    search: Option<&str>,
+    page: TreePage<'_>,
+    seen: &mut usize,
+    entries: &mut Vec<TreeEntry>,
+) -> Result<bool, ApiError> {
+    let mut command = tokio::process::Command::new("git");
+    command
+        .arg(format!("--git-dir={}", path.display()))
+        .args(["ls-tree", "-l", "-z"]);
+    if directories_only {
+        command.arg("-d");
+    }
+    let mut child = command
+        .args(["--", spec])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        ApiError::internal(sqlx::Error::Io(std::io::Error::other(
+            "git ls-tree stdout is unavailable",
+        )))
+    })?;
+    let mut reader = BufReader::new(stdout);
+    let mut record = Vec::new();
+    let mut stopped = false;
+
+    loop {
+        record.clear();
+        let read = reader
+            .read_until(0, &mut record)
+            .await
+            .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+        if read == 0 {
+            break;
+        }
+        if record.last() == Some(&0) {
+            record.pop();
+        }
+        let Some(entry) = parse_tree_entry(&record, subpath) else {
+            continue;
+        };
+        if !directories_only && entry.kind == "tree" {
+            continue;
+        }
+        if search.is_some_and(|needle| !entry.name.to_lowercase().contains(needle)) {
+            continue;
+        }
+        if *seen < page.offset {
+            *seen += 1;
+            continue;
+        }
+        *seen += 1;
+        entries.push(entry);
+        if entries.len() >= page.limit {
+            stopped = true;
+            break;
+        }
+    }
+    drop(reader);
+
+    if stopped {
+        let _ = child.start_kill();
+    }
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if !stopped && !status.success() {
+        return Err(ApiError::not_found_named("tree not found"));
+    }
+    Ok(stopped)
+}
+
+fn parse_tree_entry(record: &[u8], subpath: &str) -> Option<TreeEntry> {
+    // "<mode> <type> <sha> <size>\t<path>\0"
+    let separator = record.iter().position(|byte| *byte == b'\t')?;
+    let meta = String::from_utf8_lossy(&record[..separator]);
+    let name = String::from_utf8_lossy(&record[separator + 1..]).into_owned();
+    let mut parts = meta.split_whitespace();
+    let _mode = parts.next()?;
+    let kind = parts.next()?;
+    let sha = parts.next()?.to_string();
+    let size = match parts.next()? {
+        "-" => None,
+        value => value.parse().ok(),
+    };
+    Some(TreeEntry {
+        path: tree_entry_path(subpath, &name),
+        name: name.rsplit('/').next().unwrap_or(&name).to_string(),
+        kind: kind.to_string(),
+        size,
+        sha,
+    })
 }
 
 fn tree_entry_path(subpath: &str, name: &str) -> String {
@@ -915,6 +1258,30 @@ pub struct TreeQuery {
     #[serde(rename = "ref")]
     git_ref: Option<String>,
     path: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+    search: Option<String>,
+}
+
+impl TreeQuery {
+    fn page(&self) -> Option<TreePage<'_>> {
+        let search = self
+            .search
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if self.limit.is_none() && self.offset.is_none() && search.is_none() {
+            return None;
+        }
+        Some(TreePage {
+            limit: self
+                .limit
+                .unwrap_or(DEFAULT_TREE_LIMIT)
+                .clamp(1, MAX_TREE_LIMIT),
+            offset: self.offset.unwrap_or(0),
+            search,
+        })
+    }
 }
 
 #[utoipa::path(get, path = "/api/v1/repos/{repo}/blob", tag = "git", params(("repo" = String, Path), ("ref" = Option<String>, Query), ("path" = String, Query)), responses((status = 200, body = BlobContent)))]
@@ -931,23 +1298,12 @@ pub async fn get_blob(
         .unwrap_or("HEAD");
     let git_ref = resolve_view_ref(&path, git_ref).await;
     let spec = format!("{git_ref}:{}", params.path);
-    let output = tokio::process::Command::new("git")
-        .arg(format!("--git-dir={}", path.display()))
-        .args(["show", &spec])
-        .output()
-        .await
-        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
-    if !output.status.success() {
-        return Err(ApiError::not_found_named("blob not found"));
-    }
-    let bytes = output.stdout;
+    let (bytes, size, truncated) = read_blob(&path, &spec).await?;
     let binary = bytes.iter().take(8000).any(|b| *b == 0);
-    const MAX_LEN: usize = 512 * 1024;
-    let truncated = bytes.len() > MAX_LEN;
     let content = if binary {
         String::new()
     } else {
-        String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_LEN)]).into_owned()
+        String::from_utf8_lossy(&bytes).into_owned()
     };
     // Resolve blob sha for the response.
     let sha_output = tokio::process::Command::new("git")
@@ -962,11 +1318,68 @@ pub async fn get_blob(
     Ok(Json(BlobContent {
         path: params.path,
         sha,
-        size: bytes.len() as i64,
+        size,
         content,
         binary,
         truncated,
     }))
+}
+
+const MAX_BLOB_LEN: usize = 512 * 1024;
+
+async fn read_blob(path: &std::path::Path, spec: &str) -> Result<(Vec<u8>, i64, bool), ApiError> {
+    let size_output = tokio::process::Command::new("git")
+        .arg(format!("--git-dir={}", path.display()))
+        .args(["cat-file", "-s", spec])
+        .output()
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if !size_output.status.success() {
+        return Err(ApiError::not_found_named("blob not found"));
+    }
+    let size = String::from_utf8_lossy(&size_output.stdout)
+        .trim()
+        .parse::<i64>()
+        .map_err(|_| ApiError::bad_request("git returned an invalid blob size"))?;
+    if size < 0 {
+        return Err(ApiError::bad_request("git returned an invalid blob size"));
+    }
+
+    let mut child = tokio::process::Command::new("git")
+        .arg(format!("--git-dir={}", path.display()))
+        .args(["cat-file", "blob", spec])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        ApiError::internal(sqlx::Error::Io(std::io::Error::other(
+            "git cat-file stdout is unavailable",
+        )))
+    })?;
+    let mut bytes = Vec::with_capacity(MAX_BLOB_LEN + 1);
+    let mut bounded = stdout.take((MAX_BLOB_LEN + 1) as u64);
+    bounded
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    drop(bounded);
+
+    let truncated = size > MAX_BLOB_LEN as i64 || bytes.len() > MAX_BLOB_LEN;
+    if bytes.len() > MAX_BLOB_LEN {
+        bytes.truncate(MAX_BLOB_LEN);
+    }
+    if truncated {
+        let _ = child.start_kill();
+    }
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if !truncated && !status.success() {
+        return Err(ApiError::not_found_named("blob not found"));
+    }
+    Ok((bytes, size, truncated))
 }
 
 #[derive(serde::Deserialize, utoipa::IntoParams)]
@@ -976,12 +1389,40 @@ pub struct BlobQuery {
     path: String,
 }
 
-#[utoipa::path(get, path = "/api/v1/repos/{repo}/tags", tag = "git", params(("repo" = String, Path)), responses((status = 200, body = [TagInfo])))]
+#[derive(Deserialize, utoipa::IntoParams)]
+pub struct TagsQuery {
+    limit: Option<usize>,
+    offset: Option<usize>,
+    search: Option<String>,
+}
+
+impl TagsQuery {
+    fn page(&self) -> Option<GitListPage<'_>> {
+        let search = normalized_search(self.search.as_deref());
+        if self.limit.is_none() && self.offset.is_none() && search.is_none() {
+            return None;
+        }
+        Some(GitListPage {
+            limit: self
+                .limit
+                .unwrap_or(DEFAULT_REF_LIMIT)
+                .clamp(1, MAX_REF_LIMIT),
+            offset: self.offset.unwrap_or(0),
+            search,
+        })
+    }
+}
+
+#[utoipa::path(get, path = "/api/v1/repos/{repo}/tags", tag = "git", params(("repo" = String, Path), ("limit" = Option<usize>, Query), ("offset" = Option<usize>, Query), ("search" = Option<String>, Query)), responses((status = 200, body = [TagInfo])))]
 pub async fn list_tags(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath(repo): AxumPath<String>,
+    Query(params): Query<TagsQuery>,
 ) -> Result<Json<Vec<TagInfo>>, ApiError> {
     let path = resolve_repo_path(&state, &repo).await?;
+    if let Some(page) = params.page() {
+        return Ok(Json(read_tags_page(&path, page).await?));
+    }
     let output = tokio::process::Command::new("git")
         .arg(format!("--git-dir={}", path.display()))
         .args([
@@ -998,23 +1439,49 @@ pub async fn list_tags(
     }
     let tags: Vec<TagInfo> = String::from_utf8_lossy(&output.stdout)
         .lines()
-        .filter_map(|line| {
-            let mut parts = line.splitn(3, ' ');
-            let name = parts.next()?.to_string();
-            let sha = parts.next()?.to_string();
-            let message = parts.next().unwrap_or("").to_string();
-            Some(TagInfo { name, sha, message })
-        })
+        .filter_map(parse_tag_line)
         .collect();
     Ok(Json(tags))
+}
+
+async fn read_tags_page(
+    path: &std::path::Path,
+    page: GitListPage<'_>,
+) -> Result<Vec<TagInfo>, ApiError> {
+    stream_for_each_ref(
+        path,
+        &[
+            "--sort=refname",
+            "--sort=-creatordate",
+            "--format=%(refname:short) %(objectname) %(contents:subject)",
+            "refs/tags",
+        ],
+        page,
+        |line| {
+            let tag = parse_tag_line(line)?;
+            Some((tag.name.clone(), tag))
+        },
+    )
+    .await
+}
+
+fn parse_tag_line(line: &str) -> Option<TagInfo> {
+    let mut parts = line.splitn(3, ' ');
+    let name = parts.next()?.to_string();
+    let sha = parts.next()?.to_string();
+    let message = parts.next().unwrap_or("").to_string();
+    Some(TagInfo { name, sha, message })
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        PullRequestListParams, PullRequestStatusFilter, classify_ref, parse_diff_files,
-        tree_entry_path,
+        CommitParams, GitListPage, MAX_BLOB_LEN, MAX_PATCH_LEN, MAX_REF_LIMIT, MAX_TREE_LIMIT,
+        PullRequestListParams, PullRequestStatusFilter, RefsQuery, TagsQuery, TreePage, TreeQuery,
+        classify_ref, parse_diff_files, parse_tree_entry, read_blob, read_commits, read_patch,
+        read_refs_page, read_tags_page, read_tree_page, tree_entry_path,
     };
+    use uuid::Uuid;
 
     #[test]
     fn refs_keep_branch_and_tag_identity() {
@@ -1030,12 +1497,252 @@ mod tests {
     }
 
     #[test]
+    fn ref_page_parameters_are_optional_bounded_and_validated() {
+        let legacy = RefsQuery {
+            limit: None,
+            offset: None,
+            search: Some("  ".to_string()),
+            kind: None,
+        };
+        assert!(legacy.page().expect("legacy params").is_none());
+
+        let paged = RefsQuery {
+            limit: Some(usize::MAX),
+            offset: Some(25),
+            search: Some("  release  ".to_string()),
+            kind: Some("branch".to_string()),
+        };
+        let (page, kind) = paged.page().expect("valid params").expect("bounded page");
+        assert_eq!(page.limit, MAX_REF_LIMIT);
+        assert_eq!(page.offset, 25);
+        assert_eq!(page.search, Some("release"));
+        assert_eq!(kind, Some("branch"));
+
+        let invalid = RefsQuery {
+            limit: None,
+            offset: None,
+            search: None,
+            kind: Some("commit".to_string()),
+        };
+        assert!(invalid.page().is_err());
+
+        let tags = TagsQuery {
+            limit: Some(0),
+            offset: None,
+            search: None,
+        };
+        assert_eq!(tags.page().expect("tag page").limit, 1);
+    }
+
+    #[tokio::test]
+    async fn ref_pages_stream_kind_search_and_offset() {
+        let directory = std::env::temp_dir().join(format!("forge-many-refs-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .expect("create repository directory");
+        run_git(&directory, &["init", "--quiet", "--initial-branch=primary"]).await;
+        run_git(&directory, &["config", "user.name", "Forge Test"]).await;
+        run_git(&directory, &["config", "user.email", "forge@example.test"]).await;
+        tokio::fs::write(directory.join("README.md"), b"fixture\n")
+            .await
+            .expect("write repository fixture");
+        run_git(&directory, &["add", "."]).await;
+        run_git(&directory, &["commit", "--quiet", "-m", "Fixture"]).await;
+
+        for index in 1..=12 {
+            run_git(
+                &directory,
+                &[
+                    "update-ref",
+                    &format!("refs/heads/feature/ref-{index:04}"),
+                    "HEAD",
+                ],
+            )
+            .await;
+        }
+        for index in 1..=5 {
+            run_git(
+                &directory,
+                &["update-ref", &format!("refs/tags/v1.0.{index:04}"), "HEAD"],
+            )
+            .await;
+        }
+        run_git(&directory, &["update-ref", "refs/notes/review", "HEAD"]).await;
+
+        let git_dir = directory.join(".git");
+        let branches = read_refs_page(
+            &git_dir,
+            GitListPage {
+                limit: 5,
+                offset: 10,
+                search: None,
+            },
+            Some("branch"),
+        )
+        .await
+        .expect("read branch page");
+        assert_eq!(
+            branches
+                .iter()
+                .map(|reference| reference.name.as_str())
+                .collect::<Vec<_>>(),
+            ["feature/ref-0011", "feature/ref-0012", "primary"]
+        );
+        assert!(branches.iter().all(|reference| reference.kind == "branch"));
+
+        let matches = read_refs_page(
+            &git_dir,
+            GitListPage {
+                limit: 10,
+                offset: 0,
+                search: Some("REF-001"),
+            },
+            Some("branch"),
+        )
+        .await
+        .expect("search branch page");
+        assert_eq!(matches.len(), 3);
+
+        let other = read_refs_page(
+            &git_dir,
+            GitListPage {
+                limit: 10,
+                offset: 0,
+                search: None,
+            },
+            Some("other"),
+        )
+        .await
+        .expect("read other refs");
+        assert_eq!(other.len(), 1);
+        assert_eq!(other[0].name, "refs/notes/review");
+
+        let tags = read_tags_page(
+            &git_dir,
+            GitListPage {
+                limit: 3,
+                offset: 1,
+                search: Some("V1.0"),
+            },
+        )
+        .await
+        .expect("read tag page");
+        assert_eq!(tags.len(), 3);
+        assert!(tags.iter().all(|tag| tag.name.starts_with("v1.0.")));
+
+        let _ = tokio::fs::remove_dir_all(directory).await;
+    }
+
+    #[test]
     fn tree_entries_keep_their_full_path() {
         assert_eq!(tree_entry_path("", "src"), "src");
         assert_eq!(
             tree_entry_path("src/pages", "index.tsx"),
             "src/pages/index.tsx"
         );
+        let entry = parse_tree_entry(b"100644 blob abc123 12\tline\tbreak\n.txt", "src/pages")
+            .expect("parse NUL-safe tree record");
+        assert_eq!(entry.name, "line\tbreak\n.txt");
+        assert_eq!(entry.path, "src/pages/line\tbreak\n.txt");
+    }
+
+    #[test]
+    fn tree_page_parameters_are_optional_and_bounded() {
+        let legacy = TreeQuery {
+            git_ref: None,
+            path: None,
+            limit: None,
+            offset: None,
+            search: Some("  ".to_string()),
+        };
+        assert!(legacy.page().is_none());
+
+        let paged = TreeQuery {
+            git_ref: None,
+            path: None,
+            limit: Some(usize::MAX),
+            offset: Some(25),
+            search: Some("  FILE  ".to_string()),
+        };
+        let page = paged.page().expect("bounded page");
+        assert_eq!(page.limit, MAX_TREE_LIMIT);
+        assert_eq!(page.offset, 25);
+        assert_eq!(page.search, Some("FILE"));
+    }
+
+    #[tokio::test]
+    async fn tree_page_streams_directories_before_files_and_filters_names() {
+        let directory = std::env::temp_dir().join(format!("forge-large-tree-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .expect("create repository directory");
+        run_git(&directory, &["init", "--quiet"]).await;
+        run_git(&directory, &["config", "user.name", "Forge Test"]).await;
+        run_git(&directory, &["config", "user.email", "forge@example.test"]).await;
+
+        for index in 1..=12 {
+            let path = directory.join(format!("dir-{index:04}"));
+            tokio::fs::create_dir_all(&path)
+                .await
+                .expect("create tree fixture directory");
+            tokio::fs::write(path.join("README.txt"), b"directory\n")
+                .await
+                .expect("write tree fixture directory file");
+        }
+        for index in 1..=20 {
+            tokio::fs::write(directory.join(format!("file-{index:04}.txt")), b"file\n")
+                .await
+                .expect("write tree fixture file");
+        }
+        run_git(&directory, &["add", "."]).await;
+        run_git(&directory, &["commit", "--quiet", "-m", "Large tree"]).await;
+
+        let git_dir = directory.join(".git");
+        let page = read_tree_page(
+            &git_dir,
+            "HEAD",
+            "",
+            TreePage {
+                limit: 5,
+                offset: 10,
+                search: None,
+            },
+        )
+        .await
+        .expect("read bounded tree page");
+        assert_eq!(
+            page.iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "dir-0011",
+                "dir-0012",
+                "file-0001.txt",
+                "file-0002.txt",
+                "file-0003.txt",
+            ]
+        );
+
+        let matches = read_tree_page(
+            &git_dir,
+            "HEAD",
+            "",
+            TreePage {
+                limit: 20,
+                offset: 0,
+                search: Some("FILE-001"),
+            },
+        )
+        .await
+        .expect("search bounded tree page");
+        assert_eq!(matches.len(), 10);
+        assert!(
+            matches
+                .iter()
+                .all(|entry| entry.name.starts_with("file-001"))
+        );
+
+        let _ = tokio::fs::remove_dir_all(directory).await;
     }
 
     #[test]
@@ -1071,6 +1778,219 @@ mod tests {
     fn rejects_mismatched_git_outputs() {
         assert!(parse_diff_files(b"1\t0\tnew.txt\0", b"A\0other.txt\0").is_err());
         assert!(parse_diff_files(b"1\t0\tnew.txt\0", b"A\0new.txt\0D\0old.txt\0").is_err());
+    }
+    async fn run_git(directory: &std::path::Path, args: &[&str]) {
+        let status = tokio::process::Command::new("git")
+            .arg("-C")
+            .arg(directory)
+            .args(args)
+            .status()
+            .await
+            .expect("run git command");
+        assert!(status.success(), "git command failed: {args:?}");
+    }
+    #[tokio::test]
+    async fn blob_read_stops_after_the_response_limit() {
+        let directory = std::env::temp_dir().join(format!("forge-large-blob-{}", Uuid::new_v4()));
+
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .expect("create repository directory");
+
+        for args in [
+            vec!["init", "--quiet"],
+            vec!["config", "user.name", "Forge Test"],
+            vec!["config", "user.email", "forge@example.test"],
+        ] {
+            let status = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(args)
+                .status()
+                .await
+                .expect("run git setup command");
+            assert!(status.success());
+        }
+
+        let full_size = MAX_BLOB_LEN + 4096;
+        tokio::fs::write(directory.join("large.txt"), vec![b'x'; full_size])
+            .await
+            .expect("write large fixture");
+        for args in [
+            vec!["add", "large.txt"],
+            vec!["commit", "--quiet", "-m", "Large blob"],
+        ] {
+            let status = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(args)
+                .status()
+                .await
+                .expect("create blob commit");
+            assert!(status.success());
+        }
+
+        let (bytes, size, truncated) = read_blob(&directory.join(".git"), "HEAD:large.txt")
+            .await
+            .expect("read bounded blob");
+        assert!(truncated);
+        assert_eq!(size, full_size as i64);
+        assert_eq!(bytes.len(), MAX_BLOB_LEN);
+
+        let _ = tokio::fs::remove_dir_all(directory).await;
+    }
+
+    #[tokio::test]
+    async fn compare_patch_stops_after_the_response_limit() {
+        let directory = std::env::temp_dir().join(format!("forge-large-patch-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .expect("create repository directory");
+
+        for args in [
+            vec!["init", "--quiet"],
+            vec!["config", "user.name", "Forge Test"],
+            vec!["config", "user.email", "forge@example.test"],
+        ] {
+            let status = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(args)
+                .status()
+                .await
+                .expect("run git setup command");
+            assert!(status.success());
+        }
+
+        tokio::fs::write(directory.join("large.txt"), "base\n")
+            .await
+            .expect("write base fixture");
+        for args in [
+            vec!["add", "large.txt"],
+            vec!["commit", "--quiet", "-m", "Base"],
+        ] {
+            let status = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(args)
+                .status()
+                .await
+                .expect("create base commit");
+            assert!(status.success());
+        }
+
+        tokio::fs::write(
+            directory.join("large.txt"),
+            vec![b'x'; MAX_PATCH_LEN + 4096],
+        )
+        .await
+        .expect("write large fixture");
+        for args in [
+            vec!["add", "large.txt"],
+            vec!["commit", "--quiet", "-m", "Large change"],
+        ] {
+            let status = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(args)
+                .status()
+                .await
+                .expect("create large commit");
+            assert!(status.success());
+        }
+
+        let (patch, truncated) = read_patch(&directory.join(".git"), "HEAD~1", "HEAD")
+            .await
+            .expect("read bounded patch");
+        assert!(truncated);
+        assert_eq!(patch.len(), MAX_PATCH_LEN);
+
+        let _ = tokio::fs::remove_dir_all(directory).await;
+    }
+
+    #[test]
+    fn commit_pages_keep_the_requested_offset_and_bound_the_limit() {
+        assert_eq!(
+            CommitParams {
+                branch: Some("main".to_string()),
+                limit: Some(51),
+                offset: Some(100),
+            }
+            .page(),
+            (51, 100)
+        );
+        assert_eq!(
+            CommitParams {
+                branch: None,
+                limit: Some(500),
+                offset: None,
+            }
+            .page(),
+            (200, 0)
+        );
+        assert_eq!(
+            CommitParams {
+                branch: None,
+                limit: Some(0),
+                offset: Some(50),
+            }
+            .page(),
+            (1, 50)
+        );
+    }
+
+    #[tokio::test]
+    async fn commit_pages_read_history_after_the_first_window() {
+        let directory = std::env::temp_dir().join(format!("forge-commit-page-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .expect("create repository directory");
+
+        for args in [
+            vec!["init", "--quiet"],
+            vec!["config", "user.name", "Forge Test"],
+            vec!["config", "user.email", "forge@example.test"],
+        ] {
+            let status = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(args)
+                .status()
+                .await
+                .expect("run git setup command");
+            assert!(status.success());
+        }
+
+        for number in 1..=3 {
+            tokio::fs::write(directory.join("history.txt"), number.to_string())
+                .await
+                .expect("write commit fixture");
+            let add = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(["add", "history.txt"])
+                .status()
+                .await
+                .expect("stage commit fixture");
+            assert!(add.success());
+            let commit = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(["commit", "--quiet", "-m", &format!("Commit {number}")])
+                .status()
+                .await
+                .expect("create commit fixture");
+            assert!(commit.success());
+        }
+
+        let commits = read_commits(&directory.join(".git"), "HEAD", 2, 1)
+            .await
+            .expect("read second commit page");
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].message, "Commit 2");
+        assert_eq!(commits[1].message, "Commit 1");
+
+        let _ = tokio::fs::remove_dir_all(directory).await;
     }
 
     #[test]

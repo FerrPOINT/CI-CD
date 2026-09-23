@@ -1929,6 +1929,7 @@ export interface components {
             from: string;
             merge_base: string;
             patch: string;
+            patch_truncated: boolean;
             to: string;
         };
         Environment: {
@@ -5144,6 +5145,7 @@ export interface operations {
             query?: {
                 branch?: string;
                 limit?: number;
+                offset?: number;
             };
             header?: never;
             path: {
@@ -5384,7 +5386,12 @@ export interface operations {
     };
     list_refs: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+                offset?: number;
+                search?: string;
+                kind?: string;
+            };
             header?: never;
             path: {
                 /** @description Repository name */
@@ -5512,7 +5519,11 @@ export interface operations {
     };
     list_tags: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+                offset?: number;
+                search?: string;
+            };
             header?: never;
             path: {
                 repo: string;
@@ -5536,6 +5547,9 @@ export interface operations {
             query?: {
                 ref?: string;
                 path?: string;
+                limit?: number;
+                offset?: number;
+                search?: string;
             };
             header?: never;
             path: {

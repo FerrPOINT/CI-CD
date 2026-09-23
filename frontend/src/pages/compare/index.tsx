@@ -5,6 +5,7 @@ import { ChevronRight, FileDiff, GitCompareArrows } from 'lucide-react'
 import { useRepositoryComparison, useRepositoryRefs } from '@/api/hooks'
 import type { ChangeStatus, Comparison } from '@/api/types'
 import { QueryState } from '@/shared/ui/query-state'
+import { useDebouncedValue } from '@/shared/lib/use-debounced-value'
 import { Button, Input, Label } from '@sdlc/ui/ui'
 
 const changeStatusStyles: Record<ChangeStatus, string> = {
@@ -13,19 +14,23 @@ const changeStatusStyles: Record<ChangeStatus, string> = {
   deleted: 'bg-danger/15 text-text-primary',
 }
 
-function PatchView({ patch }: { patch: string }) {
+function PatchView({ patch, truncated }: { patch: string; truncated: boolean }) {
+  const { t } = useTranslation()
   return (
-    <pre className="max-h-[48rem] overflow-auto rounded-md bg-zinc-950 p-4 text-xs leading-relaxed">
-      {patch.split('\n').map((line, index) => {
-        const key = `${index}-${line}`
-        if (line.startsWith('+++') || line.startsWith('---')) return <span key={key} className="block font-mono text-indigo-300">{line}</span>
-        if (line.startsWith('@@')) return <span key={key} className="block font-mono text-sky-400">{line}</span>
-        if (line.startsWith('+')) return <span key={key} className="block bg-green-500/10 font-mono text-green-400">{line}</span>
-        if (line.startsWith('-')) return <span key={key} className="block bg-red-500/10 font-mono text-red-400">{line}</span>
-        if (line.startsWith('diff --git') || line.startsWith('index ')) return <span key={key} className="block font-mono text-zinc-400">{line}</span>
-        return <span key={key} className="block font-mono text-zinc-300">{line}</span>
-      })}
-    </pre>
+    <div className="space-y-2">
+      {truncated && <p role="status" className="text-sm text-text-muted">{t('compare.patchTruncated')}</p>}
+      <pre tabIndex={0} aria-label={t('compare.patch')} className="max-h-[48rem] overflow-auto rounded-md bg-zinc-950 p-4 text-xs leading-relaxed">
+        {patch.split('\n').map((line, index) => {
+          const key = `${index}-${line}`
+          if (line.startsWith('+++') || line.startsWith('---')) return <span key={key} className="block font-mono text-indigo-300">{line}</span>
+          if (line.startsWith('@@')) return <span key={key} className="block font-mono text-sky-400">{line}</span>
+          if (line.startsWith('+')) return <span key={key} className="block bg-green-500/10 font-mono text-green-400">{line}</span>
+          if (line.startsWith('-')) return <span key={key} className="block bg-red-500/10 font-mono text-red-400">{line}</span>
+          if (line.startsWith('diff --git') || line.startsWith('index ')) return <span key={key} className="block font-mono text-zinc-400">{line}</span>
+          return <span key={key} className="block font-mono text-zinc-300">{line}</span>
+        })}
+      </pre>
+    </div>
   )
 }
 
@@ -68,7 +73,7 @@ function ComparisonResults({ comparison }: { comparison: Comparison }) {
       {comparison.patch.trim() && (
         <div className="min-w-0 space-y-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide">{t('compare.patch')}</h2>
-          <PatchView patch={comparison.patch} />
+          <PatchView patch={comparison.patch} truncated={comparison.patch_truncated} />
         </div>
       )}
     </section>
@@ -83,9 +88,12 @@ export function ComparePage() {
   const toParam = searchParams.get('to')?.trim() ?? ''
   const [from, setFrom] = useState(fromParam)
   const [to, setTo] = useState(toParam)
+  const deferredFrom = useDebouncedValue(from.trim())
+  const deferredTo = useDebouncedValue(to.trim())
   const sameRef = Boolean(from.trim() && from.trim() === to.trim())
   const canCompare = Boolean(fromParam && toParam && fromParam !== toParam)
-  const refs = useRepositoryRefs(repo)
+  const fromRefs = useRepositoryRefs(repo, { limit: 51, search: deferredFrom })
+  const toRefs = useRepositoryRefs(repo, { limit: 51, search: deferredTo })
   const { data: comparison, isLoading, error, refetch } = useRepositoryComparison(repo, fromParam, canCompare ? toParam : '')
 
   useEffect(() => {
@@ -107,9 +115,9 @@ export function ComparePage() {
     <div className="space-y-5">
       <div>
         <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-text-muted">
-          <Link to="/repositories" className="hover:text-text-primary">{t('navigation.repositories')}</Link>
+          <Link to="/repositories" className="inline-flex min-h-10 items-center hover:text-text-primary">{t('navigation.repositories')}</Link>
           <ChevronRight className="h-3 w-3" aria-hidden />
-          <Link to={`/repositories/${encodeURIComponent(repo)}`} className="break-all hover:text-text-primary">{repo}</Link>
+          <Link to={`/repositories/${encodeURIComponent(repo)}`} className="inline-flex min-h-10 items-center break-all hover:text-text-primary">{repo}</Link>
           <ChevronRight className="h-3 w-3" aria-hidden />
           <span>{t('repositoryBrowser.compare')}</span>
         </div>
@@ -123,21 +131,22 @@ export function ComparePage() {
         <div className="min-w-0 space-y-1.5">
           <Label htmlFor="compare-from">{t('compare.baseRef')}</Label>
           <Input id="compare-from" required list="compare-refs-from" className="min-h-10 font-mono" value={from} onChange={(event) => setFrom(event.target.value)} />
-          <datalist id="compare-refs-from">{refs.data?.map((ref) => <option key={ref.name} value={ref.name} />)}</datalist>
+          <datalist id="compare-refs-from">{fromRefs.data?.slice(0, 50).map((ref) => <option key={`${ref.kind}-${ref.name}`} value={ref.name} />)}</datalist>
         </div>
         <GitCompareArrows className="mb-3 hidden h-4 w-4 text-text-muted sm:block" aria-hidden />
         <div className="min-w-0 space-y-1.5">
           <Label htmlFor="compare-to">{t('compare.headRef')}</Label>
           <Input id="compare-to" required list="compare-refs-to" className="min-h-10 font-mono" value={to} onChange={(event) => setTo(event.target.value)} />
-          <datalist id="compare-refs-to">{refs.data?.map((ref) => <option key={ref.name} value={ref.name} />)}</datalist>
+          <datalist id="compare-refs-to">{toRefs.data?.slice(0, 50).map((ref) => <option key={`${ref.kind}-${ref.name}`} value={ref.name} />)}</datalist>
         </div>
-        <Button type="submit" className="min-h-10" disabled={sameRef}>{t('compare.compareAction')}</Button>
+        <Button type="submit" className="h-10" disabled={sameRef}>{t('compare.compareAction')}</Button>
         {sameRef && <p role="alert" className="border-l-2 border-danger pl-2 text-sm text-text-primary sm:col-span-4">{t('compare.refsMustDiffer')}</p>}
-        {refs.isLoading && <p role="status" className="text-xs text-text-muted sm:col-span-4">{t('compare.loadingRefs')}</p>}
-        {Boolean(refs.error) && (
+        {(fromRefs.isLoading || toRefs.isLoading) && <p role="status" className="text-xs text-text-muted sm:col-span-4">{t('compare.loadingRefs')}</p>}
+        {((fromRefs.data?.length ?? 0) > 50 || (toRefs.data?.length ?? 0) > 50) && <p role="status" className="text-xs text-text-muted sm:col-span-4">{t('compare.refSuggestionsLimited')}</p>}
+        {Boolean(fromRefs.error || toRefs.error) && (
           <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-text-secondary sm:col-span-4">
             <span>{t('compare.refsUnavailable')}</span>
-            <Button type="button" size="sm" variant="outline" className="min-h-10 sm:min-h-10" onClick={() => refs.refetch()}>{t('common.retry')}</Button>
+            <Button type="button" size="sm" variant="outline" className="min-h-10 sm:min-h-10" onClick={() => { if (fromRefs.error) void fromRefs.refetch(); if (toRefs.error) void toRefs.refetch() }}>{t('common.retry')}</Button>
           </div>
         )}
       </form>

@@ -10,13 +10,37 @@ const clientMocks = vi.hoisted(() => ({
 
 vi.mock('./client', () => clientMocks)
 
-import { useNotificationEvents, usePullRequest, usePullRequests } from './hooks'
+import {
+  useNotificationEvents,
+  usePullRequest,
+  usePullRequests,
+  useRepositoryCommits,
+  useRepositoryRefs,
+  useRepositoryTags,
+  useRepositoryTree,
+} from './hooks'
 
 const projectId = '22222222-2222-4222-8222-222222222222'
 const originalUserAgent = window.navigator.userAgent
 
 function NotificationEventsProbe() {
   useNotificationEvents(projectId)
+  return null
+}
+
+function RepositoryRefsProbe() {
+  useRepositoryRefs('demo', { limit: 101, offset: 200, search: ' release ', kind: 'branch' })
+  useRepositoryTags('demo', { limit: 51, offset: 100, search: ' v1 ' })
+  return null
+}
+
+function RepositoryTreeProbe() {
+  useRepositoryTree('demo', 'refs/heads/main', 'src', { limit: 101, offset: 200, search: ' release ' })
+  return null
+}
+
+function RepositoryCommitsProbe() {
+  useRepositoryCommits('platform core', 'refs/heads/release/v1', 2, 50)
   return null
 }
 
@@ -60,6 +84,66 @@ describe('notification event stream', () => {
     await waitFor(() => expect(clientMocks.authenticatedFetch).toHaveBeenCalledWith(
       `/projects/${projectId}/notifications/stream`,
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    ))
+  })
+})
+describe('repository ref queries', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    clientMocks.api.mockResolvedValue([])
+  })
+
+  it('sends bounded kind, search, and offset parameters', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RepositoryRefsProbe />
+      </QueryClientProvider>,
+    )
+
+    await waitFor(() => {
+      expect(clientMocks.api).toHaveBeenCalledWith('/repos/demo/refs?limit=101&offset=200&search=release&kind=branch')
+      expect(clientMocks.api).toHaveBeenCalledWith('/repos/demo/tags?limit=51&offset=100&search=v1')
+    })
+  })
+})
+
+describe('repository tree query', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    clientMocks.api.mockResolvedValue([])
+  })
+
+  it('sends bounded pagination and trimmed search parameters', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RepositoryTreeProbe />
+      </QueryClientProvider>,
+    )
+
+    await waitFor(() => expect(clientMocks.api).toHaveBeenCalledWith(
+      '/repos/demo/tree?ref=refs%2Fheads%2Fmain&path=src&limit=101&offset=200&search=release',
+    ))
+  })
+})
+
+describe('repository commit queries', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    clientMocks.api.mockResolvedValue([])
+  })
+
+  it('requests one look-ahead row at the requested history offset', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RepositoryCommitsProbe />
+      </QueryClientProvider>,
+    )
+
+    await waitFor(() => expect(clientMocks.api).toHaveBeenCalledWith(
+      '/repos/platform%20core/commits?branch=refs%2Fheads%2Frelease%2Fv1&limit=51&offset=50',
     ))
   })
 })

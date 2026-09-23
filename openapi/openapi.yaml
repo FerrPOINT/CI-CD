@@ -2105,6 +2105,16 @@ paths:
         schema:
           type: integer
           format: int32
+          default: 50
+          maximum: 200
+          minimum: 1
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 0
           minimum: 0
       - name: repo
         in: path
@@ -2338,6 +2348,28 @@ paths:
         required: true
         schema:
           type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+      - name: search
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: kind
+        in: query
+        required: false
+        schema:
+          type: string
       responses:
         '200':
           description: ''
@@ -2448,6 +2480,23 @@ paths:
         required: true
         schema:
           type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+      - name: search
+        in: query
+        required: false
+        schema:
+          type: string
       responses:
         '200':
           description: ''
@@ -2474,6 +2523,23 @@ paths:
         schema:
           type: string
       - name: path
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+      - name: search
         in: query
         required: false
         schema:
@@ -4065,6 +4131,7 @@ components:
       - merge_base
       - files
       - patch
+      - patch_truncated
       properties:
         files:
           type: array
@@ -4076,6 +4143,8 @@ components:
           type: string
         patch:
           type: string
+        patch_truncated:
+          type: boolean
         to:
           type: string
     Environment:

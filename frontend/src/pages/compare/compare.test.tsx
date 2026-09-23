@@ -24,6 +24,7 @@ afterEach(() => vi.clearAllMocks())
 describe('ComparePage', () => {
   it('starts without fabricated refs and waits for an explicit comparison', () => {
     setup()
+    expect(mocks.refs).toHaveBeenCalledWith('platform', { limit: 51, search: '' })
     expect(screen.getByLabelText('compare.baseRef')).toHaveValue('')
     expect(screen.getByLabelText('compare.headRef')).toHaveValue('')
     expect(screen.getByRole('status')).toHaveTextContent('compare.chooseRefs')
@@ -46,7 +47,7 @@ describe('ComparePage', () => {
   it('shows accurate status and a binary marker instead of invented line counts', () => {
     setup('/repositories/platform/compare?from=main&to=feature%2Fcache', {
       comparison: {
-        from: 'main', to: 'feature/cache', merge_base: 'abc123', patch: '+new line',
+        from: 'main', to: 'feature/cache', merge_base: 'abc123', patch: '+new line', patch_truncated: true,
         files: [
           { path: 'new.txt', status: 'added', additions: 1, deletions: 0, binary: false },
           { path: 'old.txt', status: 'deleted', additions: 0, deletions: 3, binary: false },
@@ -59,6 +60,8 @@ describe('ComparePage', () => {
     expect(within(files).getByText('compare.status_deleted')).toBeInTheDocument()
     expect(within(files).getByText('compare.binaryFile')).toBeInTheDocument()
     expect(within(files).getByText('image.png').closest('li')).not.toHaveTextContent('+0')
+    expect(screen.getByRole('status')).toHaveTextContent('compare.patchTruncated')
+    expect(screen.getByLabelText('compare.patch')).toHaveAttribute('tabindex', '0')
   })
 
   it('offers retry for comparison and ref-suggestion failures without blocking manual entry', () => {
