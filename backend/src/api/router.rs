@@ -24,7 +24,8 @@ use crate::git_host::{
     list_repositories,
 };
 use crate::pulls::{
-    compare_refs, create_pull_request, list_commits, list_pull_requests, list_refs, pr_action,
+    compare_refs, create_pull_request, get_pull_request, list_commits, list_pull_request_page,
+    list_pull_requests, list_refs, pr_action,
 };
 use axum::Router;
 use axum::http::{HeaderName, HeaderValue, Method, Uri, header};
@@ -246,6 +247,11 @@ pub(crate) fn build_router_with_cors(
             "/api/v1/repos/{repo}/pulls",
             get(list_pull_requests).post(create_pull_request),
         )
+        .route(
+            "/api/v1/repos/{repo}/pulls/page",
+            get(list_pull_request_page),
+        )
+        .route("/api/v1/repos/{repo}/pulls/{number}", get(get_pull_request))
         .route(
             "/api/v1/repos/{repo}/pulls/{number}/action",
             post(pr_action),

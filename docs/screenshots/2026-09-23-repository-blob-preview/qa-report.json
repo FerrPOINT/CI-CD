@@ -1,0 +1,339 @@
+{
+  "generatedAt": "2026-09-22T23:18:00.455Z",
+  "url": "http://localhost:7712/repositories/qa-blob?file=large.txt&ref=refs%2Fheads%2Fmain",
+  "matrix": "5 viewports x 3 themes",
+  "runtimeErrors": [],
+  "failedRequests": [],
+  "results": [
+    {
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "scrollable": [
+        {
+          "tag": "pre",
+          "ariaLabel": "Предпросмотр файла: large.txt",
+          "overflowX": 984,
+          "overflowY": 48182
+        }
+      ],
+      "unexpectedScrollers": [],
+      "activeTag": "pre",
+      "statusText": "Показаны только первые 512 КиБ файла",
+      "metadataText": "large.txt35,7 MiB · a1b2c3d",
+      "seriousAxe": []
+    },
+    {
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "scrollable": [
+        {
+          "tag": "pre",
+          "ariaLabel": "Предпросмотр файла: large.txt",
+          "overflowX": 984,
+          "overflowY": 48182
+        }
+      ],
+      "unexpectedScrollers": [],
+      "activeTag": "pre",
+      "statusText": "Показаны только первые 512 КиБ файла",
+      "metadataText": "large.txt35,7 MiB · a1b2c3d",
+      "seriousAxe": []
+    },
+    {
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "scrollable": [
+        {
+          "tag": "pre",
+          "ariaLabel": "Предпросмотр файла: large.txt",
+          "overflowX": 984,
+          "overflowY": 48182
+        }
+      ],
+      "unexpectedScrollers": [],
+      "activeTag": "pre",
+      "statusText": "Показаны только первые 512 КиБ файла",
+      "metadataText": "large.txt35,7 MiB · a1b2c3d",
+      "seriousAxe": []
+    },
+    {
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "scrollable": [
+        {
+          "tag": "pre",
+          "ariaLabel": "Предпросмотр файла: large.txt",
+          "overflowX": 679,
+          "overflowY": 48120
+        }
+      ],
+      "unexpectedScrollers": [],
+      "activeTag": "pre",
+      "statusText": "Показаны только первые 512 КиБ файла",
+      "metadataText": "large.txt35,7 MiB · a1b2c3d",
+      "seriousAxe": []
+    },
+    {
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "scrollable": [
+        {
+          "tag": "pre",
+          "ariaLabel": "Предпросмотр файла: large.txt",
+          "overflowX": 679,
+          "overflowY": 48120
+        }
+      ],
+      "unexpectedScrollers": [],
+      "activeTag": "pre",
+      "statusText": "Показаны только первые 512 КиБ файла",
+      "metadataText": "large.txt35,7 MiB · a1b2c3d",
+      "seriousAxe": []
+    },
+    {
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "scrollable": [
+        {
+          "tag": "pre",
+          "ariaLabel": "Предпросмотр файла: large.txt",
+          "overflowX": 679,
+          "overflowY": 48120
+        }
+      ],
+      "unexpectedScrollers": [],
+      "activeTag": "pre",
+      "statusText": "Показаны только первые 512 КиБ файла",
+      "metadataText": "large.txt35,7 MiB · a1b2c3d",
+      "seriousAxe": []
+    },
+    {
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "scrollable": [
+        {
+          "tag": "pre",
+          "ariaLabel": "Предпросмотр файла: large.txt",
+          "overflowX": 359,
+          "overflowY": 48120
+        }
+      ],
+      "unexpectedScrollers": [],
+      "activeTag": "pre",
+      "statusText": "Показаны только первые 512 КиБ файла",
+      "metadataText": "large.txt35,7 MiB · a1b2c3d",
+      "seriousAxe": []
+    },
+    {
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "scrollable": [
+        {
+          "tag": "pre",
+          "ariaLabel": "Предпросмотр файла: large.txt",
+          "overflowX": 359,
+          "overflowY": 48120
+        }
+      ],
+      "unexpectedScrollers": [],
+      "activeTag": "pre",
+      "statusText": "Показаны только первые 512 КиБ файла",
+      "metadataText": "large.txt35,7 MiB · a1b2c3d",
+      "seriousAxe": []
+    },
+    {
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "scrollable": [
+        {
+          "tag": "pre",
+          "ariaLabel": "Предпросмотр файла: large.txt",
+          "overflowX": 359,
+          "overflowY": 48120
+        }
+      ],
+      "unexpectedScrollers": [],
+      "activeTag": "pre",
+      "statusText": "Показаны только первые 512 КиБ файла",
+      "metadataText": "large.txt35,7 MiB · a1b2c3d",
+      "seriousAxe": []
+    },
+    {
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "scrollable": [
+        {
+          "tag": "pre",
+          "ariaLabel": "Предпросмотр файла: large.txt",
+          "overflowX": 0,
+          "overflowY": 47994
+        }
+      ],
+      "unexpectedScrollers": [],
+      "activeTag": "pre",
+      "statusText": "Показаны только первые 512 КиБ файла",
+      "metadataText": "large.txt35,7 MiB · a1b2c3d",
+      "seriousAxe": []
+    },
+    {
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "scrollable": [
+        {
+          "tag": "pre",
+          "ariaLabel": "Предпросмотр файла: large.txt",
+          "overflowX": 0,
+          "overflowY": 47994
+        }
+      ],
+      "unexpectedScrollers": [],
+      "activeTag": "pre",
+      "statusText": "Показаны только первые 512 КиБ файла",
+      "metadataText": "large.txt35,7 MiB · a1b2c3d",
+      "seriousAxe": []
+    },
+    {
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "scrollable": [
+        {
+          "tag": "pre",
+          "ariaLabel": "Предпросмотр файла: large.txt",
+          "overflowX": 0,
+          "overflowY": 47994
+        }
+      ],
+      "unexpectedScrollers": [],
+      "activeTag": "pre",
+      "statusText": "Показаны только первые 512 КиБ файла",
+      "metadataText": "large.txt35,7 MiB · a1b2c3d",
+      "seriousAxe": []
+    },
+    {
+      "viewport": {
+        "width": 2560,
+        "height": 1440
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "scrollable": [
+        {
+          "tag": "pre",
+          "ariaLabel": "Предпросмотр файла: large.txt",
+          "overflowX": 0,
+          "overflowY": 47742
+        }
+      ],
+      "unexpectedScrollers": [],
+      "activeTag": "pre",
+      "statusText": "Показаны только первые 512 КиБ файла",
+      "metadataText": "large.txt35,7 MiB · a1b2c3d",
+      "seriousAxe": []
+    },
+    {
+      "viewport": {
+        "width": 2560,
+        "height": 1440
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "scrollable": [
+        {
+          "tag": "pre",
+          "ariaLabel": "Предпросмотр файла: large.txt",
+          "overflowX": 0,
+          "overflowY": 47742
+        }
+      ],
+      "unexpectedScrollers": [],
+      "activeTag": "pre",
+      "statusText": "Показаны только первые 512 КиБ файла",
+      "metadataText": "large.txt35,7 MiB · a1b2c3d",
+      "seriousAxe": []
+    },
+    {
+      "viewport": {
+        "width": 2560,
+        "height": 1440
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "scrollable": [
+        {
+          "tag": "pre",
+          "ariaLabel": "Предпросмотр файла: large.txt",
+          "overflowX": 0,
+          "overflowY": 47742
+        }
+      ],
+      "unexpectedScrollers": [],
+      "activeTag": "pre",
+      "statusText": "Показаны только первые 512 КиБ файла",
+      "metadataText": "large.txt35,7 MiB · a1b2c3d",
+      "seriousAxe": []
+    }
+  ]
+}

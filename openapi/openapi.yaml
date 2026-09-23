@@ -273,6 +273,61 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/AuditEvent'
+  /api/v1/audit-log/page:
+    get:
+      tags:
+      - audit
+      operationId: list_audit_log_page
+      parameters:
+      - name: limit
+        in: query
+        description: Maximum number of events to return.
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          default: 20
+          maximum: 200
+          minimum: 1
+      - name: offset
+        in: query
+        description: Number of matching events to skip.
+        required: false
+        schema:
+          type: integer
+          format: int64
+          default: 0
+          maximum: 2147483647
+          minimum: 0
+      - name: action
+        in: query
+        description: Optional exact action filter.
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          maxLength: 128
+      - name: q
+        in: query
+        description: Optional case-insensitive literal search across raw event fields.
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          maxLength: 128
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogPage'
+        '400':
+          description: ''
   /api/v1/auth/login:
     post:
       tags:
@@ -1670,6 +1725,18 @@ paths:
           - integer
           - 'null'
           format: int64
+          default: 50
+          maximum: 200
+          minimum: 1
+      - name: offset
+        in: query
+        description: Number of matching deliveries to skip.
+        required: false
+        schema:
+          type: integer
+          format: int64
+          default: 0
+          minimum: 0
       - name: status
         in: query
         description: 'Optional status filter: pending, retry_scheduled, delivered or failed.'
@@ -1695,6 +1762,64 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/OutboxDelivery'
+        '400':
+          description: ''
+  /api/v1/projects/{project_id}/outbox-deliveries/page:
+    get:
+      tags:
+      - outbox
+      operationId: list_outbox_delivery_page
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: limit
+        in: query
+        description: Maximum number of recent deliveries to return.
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          default: 50
+          maximum: 200
+          minimum: 1
+      - name: offset
+        in: query
+        description: Number of matching deliveries to skip.
+        required: false
+        schema:
+          type: integer
+          format: int64
+          default: 0
+          minimum: 0
+      - name: status
+        in: query
+        description: 'Optional status filter: pending, retry_scheduled, delivered or failed.'
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: channel
+        in: query
+        description: 'Optional channel filter: webhook, notification or sse.'
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OutboxDeliveryPage'
         '400':
           description: ''
   /api/v1/projects/{project_id}/pipelines:
@@ -1980,6 +2105,16 @@ paths:
         schema:
           type: integer
           format: int32
+          default: 50
+          maximum: 200
+          minimum: 1
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 0
           minimum: 0
       - name: repo
         in: path
@@ -2081,6 +2216,87 @@ paths:
               schema:
                 $ref: '#/components/schemas/PullRequest'
         '400':
+          description: ''
+  /api/v1/repos/{repo}/pulls/page:
+    get:
+      tags:
+      - pulls
+      operationId: list_pull_request_page
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+          maximum: 100
+          minimum: 1
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 0
+          minimum: 0
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - open
+          - closed
+          - merged
+      - name: search
+        in: query
+        required: false
+        schema:
+          type: string
+          maxLength: 200
+      - name: repo
+        in: path
+        description: Repository name
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullRequestPage'
+        '400':
+          description: ''
+  /api/v1/repos/{repo}/pulls/{number}:
+    get:
+      tags:
+      - pulls
+      operationId: get_pull_request
+      parameters:
+      - name: repo
+        in: path
+        description: Repository name
+        required: true
+        schema:
+          type: string
+      - name: number
+        in: path
+        description: Pull request number
+        required: true
+        schema:
+          type: integer
+          format: int32
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullRequest'
+        '404':
           description: ''
   /api/v1/repos/{repo}/pulls/{number}/action:
     post:
@@ -3449,6 +3665,36 @@ components:
           format: uuid
         resource_type:
           type: string
+    AuditLogPage:
+      type: object
+      required:
+      - items
+      - total
+      - limit
+      - offset
+      - actions
+      properties:
+        actions:
+          type: array
+          items:
+            type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditEvent'
+        limit:
+          type: integer
+          format: int32
+          maximum: 200
+          minimum: 1
+        offset:
+          type: integer
+          format: int64
+          maximum: 2147483647
+          minimum: 0
+        total:
+          type: integer
+          format: int64
     BlobContent:
       type: object
       required:
@@ -3846,6 +4092,7 @@ components:
       - merge_base
       - files
       - patch
+      - patch_truncated
       properties:
         files:
           type: array
@@ -3857,6 +4104,8 @@ components:
           type: string
         patch:
           type: string
+        patch_truncated:
+          type: boolean
         to:
           type: string
     Environment:
@@ -4613,6 +4862,30 @@ components:
             $ref: '#/components/schemas/OutboxDeliveryAttempt'
         delivery:
           $ref: '#/components/schemas/OutboxDelivery'
+    OutboxDeliveryPage:
+      type: object
+      required:
+      - items
+      - total
+      - limit
+      - offset
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OutboxDelivery'
+        limit:
+          type: integer
+          format: int32
+          maximum: 200
+          minimum: 1
+        offset:
+          type: integer
+          format: int32
+          minimum: 0
+        total:
+          type: integer
+          format: int64
     Pipeline:
       type: object
       required:
@@ -4821,6 +5094,30 @@ components:
         updated_at:
           type: string
           format: date-time
+    PullRequestPage:
+      type: object
+      required:
+      - items
+      - total
+      - limit
+      - offset
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PullRequest'
+        limit:
+          type: integer
+          format: int32
+          maximum: 100
+          minimum: 1
+        offset:
+          type: integer
+          format: int32
+          minimum: 0
+        total:
+          type: integer
+          format: int64
     Readiness:
       type: object
       required:

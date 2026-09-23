@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WebhooksPage } from './index'
 
@@ -19,6 +19,34 @@ const replayId = '44444444-4444-4444-8444-444444444444'
 const webhookId = '55555555-5555-4555-8555-555555555555'
 const webhookUrl = 'https://example.invalid/hooks/pipeline'
 
+function deliveryFixture(index = 0) {
+  return {
+    id: index === 0 ? deliveryId : `33333333-3333-4333-8333-${String(index).padStart(12, '0')}`,
+    project_id: projectId,
+    event_id: `de${index + 1}`,
+    replay_of_id: null,
+    generation: 0,
+    subscription_id: 'notification:external',
+    channel: 'notification',
+    destination: `project:${projectId}`,
+    event_type: `pipeline.failed.${index + 1}`,
+    aggregate_type: 'pipeline',
+    aggregate_id: pipelineId,
+    status: 'failed',
+    attempts: 8,
+    next_attempt_at: '2026-08-31T12:00:00Z',
+    delivered_at: null,
+    failed_at: '2026-08-31T12:00:00Z',
+    last_error: 'unsupported notification channel: email',
+    created_at: '2026-08-31T12:00:00Z',
+  }
+}
+
+function LocationProbe() {
+  const location = useLocation()
+  return <output data-testid="location">{location.pathname}{location.search}</output>
+}
+
 function renderWebhooksPage(requests: string[], options: {
   initialView?: 'webhooks' | 'deliveries' | 'notifications'
   failWebhookLoadOnce?: boolean
@@ -28,6 +56,8 @@ function renderWebhooksPage(requests: string[], options: {
   failDeleteOnce?: boolean
   writes?: string[]
   notificationGetError?: boolean
+  deliveryCount?: number
+  initialSearch?: string
 } = {}) {
   let webhookReads = 0
   let deliveryReads = 0
@@ -51,31 +81,18 @@ function renderWebhooksPage(requests: string[], options: {
       if (options.failDeleteOnce && deleteRequests === 1) return failure()
       return json({ deleted: webhookId })
     }
-    if (url === `/api/v1/projects/${projectId}/outbox-deliveries?limit=20`) {
+    const parsed = new URL(url, 'https://cicd.test')
+    if (parsed.pathname === `/api/v1/projects/${projectId}/outbox-deliveries/page`) {
       deliveryReads++
       if (options.failDeliveryLoadOnce && deliveryReads === 1) return failure()
-      return json([
-        {
-          id: deliveryId,
-          project_id: projectId,
-          event_id: 'de1',
-          replay_of_id: null,
-          generation: 0,
-          subscription_id: 'notification:external',
-          channel: 'notification',
-          destination: `project:${projectId}`,
-          event_type: 'pipeline.failed',
-          aggregate_type: 'pipeline',
-          aggregate_id: pipelineId,
-          status: 'failed',
-          attempts: 8,
-          next_attempt_at: '2026-08-31T12:00:00Z',
-          delivered_at: null,
-          failed_at: '2026-08-31T12:00:00Z',
-          last_error: 'unsupported notification channel: email',
-          created_at: '2026-08-31T12:00:00Z',
-        },
-      ])
+      const limit = Number(parsed.searchParams.get('limit') ?? 20)
+      const offset = Number(parsed.searchParams.get('offset') ?? 0)
+      const status = parsed.searchParams.get('status')
+      const channel = parsed.searchParams.get('channel')
+      const deliveries = Array.from({ length: options.deliveryCount ?? 1 }, (_, index) => deliveryFixture(index))
+        .filter(delivery => !status || delivery.status === status)
+        .filter(delivery => !channel || delivery.channel === channel)
+      return json({ items: deliveries.slice(offset, offset + limit), total: deliveries.length, limit, offset })
     }
     if (url === `/api/v1/outbox-deliveries/${deliveryId}`) {
       detailReads++
@@ -165,9 +182,9 @@ function renderWebhooksPage(requests: string[], options: {
 
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[`/projects/${projectId}/webhooks${options.initialView ? `?view=${options.initialView}` : ''}`]}>
+      <MemoryRouter initialEntries={[`/projects/${projectId}/webhooks${options.initialSearch ?? (options.initialView ? `?view=${options.initialView}` : '')}`]}>
         <Routes>
-          <Route path="/projects/:projectId/webhooks" element={<WebhooksPage />} />
+          <Route path="/projects/:projectId/webhooks" element={<><WebhooksPage /><LocationProbe /></>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -205,7 +222,45 @@ describe('WebhooksPage', () => {
     expect(requests).toContain(`GET /api/v1/projects/${projectId}/notification-events?limit=20`)
     fireEvent.mouseDown(screen.getByRole('tab', { name: 'deliveries.title' }), { button: 0 })
     expect(await screen.findAllByRole('button', { name: 'deliveries.openDetails' })).toHaveLength(2)
-    expect(requests).toContain(`GET /api/v1/projects/${projectId}/outbox-deliveries?limit=20`)
+    expect(requests).toContain(`GET /api/v1/projects/${projectId}/outbox-deliveries/page?limit=20&offset=0`)
+  })
+
+  it('keeps delivery filters and pagination in the URL', async () => {
+    const requests: string[] = []
+    renderWebhooksPage(requests, {
+      deliveryCount: 43,
+      initialSearch: '?view=deliveries&page=2&status=failed&channel=notification',
+    })
+
+    await waitFor(() => expect(requests).toContain(
+      `GET /api/v1/projects/${projectId}/outbox-deliveries/page?limit=20&offset=20&status=failed&channel=notification`,
+    ))
+    expect(screen.getByTestId('location')).toHaveTextContent('?view=deliveries&page=2&status=failed&channel=notification')
+    expect(await screen.findByRole('combobox', { name: 'deliveries.statusFilter' })).toHaveValue('failed')
+    expect(screen.getByRole('combobox', { name: 'deliveries.channelFilter' })).toHaveValue('notification')
+
+    fireEvent.click(screen.getByRole('button', { name: 'deliveries.next' }))
+    await waitFor(() => expect(requests).toContain(
+      `GET /api/v1/projects/${projectId}/outbox-deliveries/page?limit=20&offset=40&status=failed&channel=notification`,
+    ))
+    expect(screen.getByTestId('location')).toHaveTextContent('page=3')
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'deliveries.statusFilter' }), { target: { value: 'delivered' } })
+    expect(await screen.findByText('deliveries.noMatches')).toBeInTheDocument()
+    expect(screen.getByTestId('location')).toHaveTextContent('?view=deliveries&status=delivered&channel=notification')
+    expect(screen.getByTestId('location')).not.toHaveTextContent('page=')
+  })
+
+  it('falls back to the first delivery page for an unsafe URL offset', async () => {
+    const requests: string[] = []
+    renderWebhooksPage(requests, {
+      initialSearch: '?view=deliveries&page=9999999999999999',
+    })
+
+    await waitFor(() => expect(requests).toContain(
+      `GET /api/v1/projects/${projectId}/outbox-deliveries/page?limit=20&offset=0`,
+    ))
+    expect(await screen.findAllByRole('button', { name: 'deliveries.openDetails' })).toHaveLength(2)
   })
 
   it('opens delivery details through a real button and requeues a failure', async () => {

@@ -18,6 +18,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@sdlc/ui/ui'
 
 const browserTabs = ['code', 'commits', 'branches', 'tags', 'releases'] as const
 const treePageSize = 100
+const commitPageSize = 25
+const maxCommitPage = Math.floor(0xffffffff / commitPageSize) + 1
 
 function parentPath(path: string): string {
   return path.slice(0, path.lastIndexOf('/'))
@@ -33,6 +35,17 @@ function parsePage(value: string | null): number {
   return Number.isSafeInteger(page) && page > 0 ? page : 1
 }
 
+function formatBytes(value: number, locale: string): string {
+  const units = ['B', 'KiB', 'MiB', 'GiB']
+  let amount = Math.max(0, value)
+  let unit = 0
+  while (amount >= 1024 && unit < units.length - 1) {
+    amount /= 1024
+    unit += 1
+  }
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: unit === 0 ? 0 : 1 }).format(amount)} ${units[unit]}`
+}
+
 export function RepositoryBrowserPage() {
   const { t, i18n } = useTranslation()
   const { repo } = useParams<{ repo: string }>()
@@ -40,6 +53,8 @@ export function RepositoryBrowserPage() {
   const tabParam = searchParams.get('tab')
   const tab = browserTabs.find((value) => value === tabParam) ?? 'code'
   const gitRef = searchParams.get('ref') || 'HEAD'
+  const rawCommitPage = Number(searchParams.get('commitPage'))
+  const commitPage = Number.isSafeInteger(rawCommitPage) && rawCommitPage > 0 && rawCommitPage <= maxCommitPage ? rawCommitPage : 1
   const filePath = searchParams.get('file') || null
   const dirPath = searchParams.get('dir') ?? (filePath ? parentPath(filePath) : '')
   const treePage = parsePage(searchParams.get('treePage'))
@@ -48,13 +63,13 @@ export function RepositoryBrowserPage() {
 
   if (!repo) return <p className="text-sm text-text-muted">{t('repositories.notFound')}</p>
 
-  function updateParams(changes: Record<string, string | null>) {
+  function updateParams(changes: Record<string, string | null>, options?: { replace?: boolean }) {
     const next = new URLSearchParams(searchParams)
     for (const [key, value] of Object.entries(changes)) {
       if (value) next.set(key, value)
       else next.delete(key)
     }
-    setSearchParams(next)
+    setSearchParams(next, options)
   }
 
   return (
@@ -107,7 +122,13 @@ export function RepositoryBrowserPage() {
             />
           </TabsContent>
           <TabsContent value="commits" className="mt-4">
-            <CommitsList repo={repo} gitRef={gitRef} locale={i18n.language} />
+            <CommitsList
+              repo={repo}
+              gitRef={gitRef}
+              locale={i18n.language}
+              page={commitPage}
+              onPageChange={(page, replace) => updateParams({ commitPage: page === 1 ? null : String(page) }, { replace })}
+            />
           </TabsContent>
           <TabsContent value="branches" className="mt-4">
             <BranchesList refsQuery={refsQuery} onSelect={(ref) => updateParams({ tab: null, ref: `refs/heads/${ref.name}`, dir: null, file: null, treePage: null, treeSearch: null })} />
@@ -123,9 +144,34 @@ export function RepositoryBrowserPage() {
   )
 }
 
-function CommitsList({ repo, gitRef, locale }: { repo: string; gitRef: string; locale: string }) {
+function CommitsList({ repo, gitRef, locale, page, onPageChange }: {
+  repo: string
+  gitRef: string
+  locale: string
+  page: number
+  onPageChange: (page: number, replace?: boolean) => void
+}) {
   const { t } = useTranslation()
-  const query = useRepositoryCommits(repo, gitRef)
+  const query = useRepositoryCommits(repo, gitRef, page, commitPageSize)
+
+  useEffect(() => {
+    if (page > 1 && query.data?.items.length === 0) onPageChange(1, true)
+  }, [onPageChange, page, query.data])
+
+  if (query.error && page > 1) {
+    return (
+      <div className="flex flex-wrap items-center gap-3 rounded-md border border-status-failed/40 bg-surface p-4 text-sm text-text-secondary" role="alert">
+        <span>{t('repositoryBrowser.commitsLoadError')}</span>
+        <Button type="button" size="sm" variant="outline" className="min-h-10 sm:min-h-10" onClick={() => void query.refetch()}>
+          {t('common.retry')}
+        </Button>
+        <Button type="button" size="sm" variant="ghost" className="min-h-10 sm:min-h-10" onClick={() => onPageChange(page - 1)}>
+          {t('repositoryBrowser.previousCommits')}
+        </Button>
+      </div>
+    )
+  }
+
   return (
     <QueryState
       data={query.data}
@@ -133,20 +179,33 @@ function CommitsList({ repo, gitRef, locale }: { repo: string; gitRef: string; l
       error={query.error}
       errorMessage={t('repositoryBrowser.commitsLoadError')}
       onRetry={() => void query.refetch()}
-      isEmpty={(commits) => commits.length === 0}
+      isEmpty={(result) => result.items.length === 0}
       empty={{ title: t('repositoryBrowser.noCommits') }}
     >
-      {(commits) => (
-        <ul className="divide-y divide-border rounded-md border border-border">
-          {commits.map((commit) => (
-            <li key={commit.sha} className="flex min-w-0 flex-col gap-1 px-3 py-2.5 text-sm sm:flex-row sm:items-center sm:gap-4">
-              <code className="shrink-0 text-xs text-accent">{commit.short_sha}</code>
-              <span className="min-w-0 flex-1 break-words font-medium">{commit.message}</span>
-              <span className="min-w-0 break-words text-xs text-text-secondary">{commit.author}</span>
-              <time className="shrink-0 text-xs text-text-muted" dateTime={commit.date}>{formatDate(commit.date, locale)}</time>
-            </li>
-          ))}
-        </ul>
+      {(result) => (
+        <section className="space-y-3" aria-busy={query.isFetching}>
+          <ul className="divide-y divide-border rounded-md border border-border">
+            {result.items.map((commit) => (
+              <li key={commit.sha} className="flex min-w-0 flex-col gap-1 px-3 py-2.5 text-sm sm:flex-row sm:items-center sm:gap-4">
+                <code className="shrink-0 text-xs text-accent">{commit.short_sha}</code>
+                <span className="min-w-0 flex-1 break-words font-medium">{commit.message}</span>
+                <span className="min-w-0 break-words text-xs text-text-secondary">{commit.author}</span>
+                <time className="shrink-0 text-xs text-text-muted" dateTime={commit.date}>{formatDate(commit.date, locale)}</time>
+              </li>
+            ))}
+          </ul>
+          {(page > 1 || result.hasMore) && (
+            <nav aria-label={t('repositoryBrowser.commitPages')} className="grid grid-cols-2 items-center gap-2 sm:flex sm:justify-end">
+              <Button type="button" size="sm" variant="outline" className="min-h-10 w-full sm:min-h-10 sm:w-auto" disabled={page === 1 || query.isFetching} onClick={() => onPageChange(page - 1)}>
+                {t('repositoryBrowser.previousCommits')}
+              </Button>
+              <span className="col-span-2 row-start-1 text-center text-sm text-text-muted sm:col-auto sm:row-auto" aria-live="polite">{t('repositoryBrowser.commitPage', { page })}</span>
+              <Button type="button" size="sm" variant="outline" className="min-h-10 w-full sm:min-h-10 sm:w-auto" disabled={!result.hasMore || query.isFetching} onClick={() => onPageChange(page + 1)}>
+                {t('repositoryBrowser.nextCommits')}
+              </Button>
+            </nav>
+          )}
+        </section>
       )}
     </QueryState>
   )
@@ -217,7 +276,7 @@ function CodeBrowser({ repo, gitRef, dirPath, filePath, treePage, treeSearch, re
       {Boolean(refsQuery.error) && (
         <div role="alert" className="flex flex-wrap items-center gap-3 rounded-md border border-status-failed/40 p-3 text-sm">
           <span>{t('repositoryBrowser.refsLoadError')}</span>
-          <Button type="button" size="sm" variant="outline" onClick={() => void refsQuery.refetch()}>{t('common.retry')}</Button>
+          <Button type="button" size="sm" variant="outline" className="h-10" onClick={() => void refsQuery.refetch()}>{t('common.retry')}</Button>
         </div>
       )}
       {filePath ? (
@@ -230,17 +289,17 @@ function CodeBrowser({ repo, gitRef, dirPath, filePath, treePage, treeSearch, re
 }
 
 function FilePreview({ repo, gitRef, filePath, onBack }: { repo: string; gitRef: string; filePath: string; onBack: () => void }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const query = useRepositoryBlob(repo, gitRef, filePath)
   return (
     <div className="overflow-hidden rounded-md border border-border">
       <div className="flex min-w-0 flex-wrap items-center gap-2 border-b border-border p-2 text-sm">
-        <Button type="button" variant="ghost" size="sm" className="min-h-10 min-w-10" aria-label={t('repositoryBrowser.backToTree')} title={t('repositoryBrowser.backToTree')} onClick={onBack}>
+        <Button type="button" variant="ghost" size="sm" className="h-10 min-w-10" aria-label={t('repositoryBrowser.backToTree')} title={t('repositoryBrowser.backToTree')} onClick={onBack}>
           <ArrowLeft className="h-4 w-4" aria-hidden />
         </Button>
         <FileText className="h-4 w-4 shrink-0 text-accent" aria-hidden />
         <span className="min-w-0 flex-1 break-all font-medium">{filePath}</span>
-        {query.data && <span className="text-xs text-text-muted">{query.data.size} B · {query.data.sha.slice(0, 7)}</span>}
+        {query.data && <span className="text-xs text-text-muted">{formatBytes(query.data.size, i18n.language)} · {query.data.sha.slice(0, 7)}</span>}
       </div>
       <div className="p-4">
         <QueryState data={query.data} isLoading={query.isLoading} error={query.error} errorMessage={t('repositoryBrowser.fileLoadError')} onRetry={() => void query.refetch()}>
@@ -250,8 +309,8 @@ function FilePreview({ repo, gitRef, filePath, onBack }: { repo: string; gitRef:
             <p className="text-sm text-text-muted">{t('repositoryBrowser.emptyFile')}</p>
           ) : (
             <div>
-              {blob.truncated && <p className="mb-3 text-xs text-text-muted">{t('repositoryBrowser.truncatedFile')}</p>}
-              <pre className="max-h-[70vh] overflow-auto text-xs leading-relaxed"><code>{blob.content}</code></pre>
+              {blob.truncated && <p role="status" className="mb-3 text-sm text-text-muted">{t('repositoryBrowser.truncatedFile')}</p>}
+              <pre tabIndex={0} aria-label={t('repositoryBrowser.filePreview', { path: filePath })} className="max-h-[70vh] overflow-auto text-xs leading-relaxed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"><code>{blob.content}</code></pre>
             </div>
           )}
         </QueryState>
