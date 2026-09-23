@@ -893,6 +893,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/outbox-deliveries/page": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_outbox_delivery_page"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/pipelines": {
         parameters: {
             query?: never;
@@ -1047,6 +1063,38 @@ export interface paths {
         get: operations["list_pull_requests"];
         put?: never;
         post: operations["create_pull_request"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/repos/{repo}/pulls/page": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_pull_request_page"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/repos/{repo}/pulls/{number}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_pull_request"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2194,6 +2242,15 @@ export interface components {
             attempts: components["schemas"]["OutboxDeliveryAttempt"][];
             delivery: components["schemas"]["OutboxDelivery"];
         };
+        OutboxDeliveryPage: {
+            items: components["schemas"]["OutboxDelivery"][];
+            /** Format: int32 */
+            limit: number;
+            /** Format: int32 */
+            offset: number;
+            /** Format: int64 */
+            total: number;
+        };
         Pipeline: {
             /** Format: date-time */
             created_at: string;
@@ -2281,6 +2338,15 @@ export interface components {
             title: string;
             /** Format: date-time */
             updated_at: string;
+        };
+        PullRequestPage: {
+            items: components["schemas"]["PullRequest"][];
+            /** Format: int32 */
+            limit: number;
+            /** Format: int32 */
+            offset: number;
+            /** Format: int64 */
+            total: number;
         };
         Readiness: {
             database: string;
@@ -4709,6 +4775,8 @@ export interface operations {
             query?: {
                 /** @description Maximum number of recent deliveries to return. */
                 limit?: number | null;
+                /** @description Number of matching deliveries to skip. */
+                offset?: number;
                 /** @description Optional status filter: pending, retry_scheduled, delivered or failed. */
                 status?: string | null;
                 /** @description Optional channel filter: webhook, notification or sse. */
@@ -4728,6 +4796,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OutboxDelivery"][];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_outbox_delivery_page: {
+        parameters: {
+            query?: {
+                /** @description Maximum number of recent deliveries to return. */
+                limit?: number | null;
+                /** @description Number of matching deliveries to skip. */
+                offset?: number;
+                /** @description Optional status filter: pending, retry_scheduled, delivered or failed. */
+                status?: string | null;
+                /** @description Optional channel filter: webhook, notification or sse. */
+                channel?: string | null;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OutboxDeliveryPage"];
                 };
             };
             400: {
@@ -5162,6 +5266,69 @@ export interface operations {
                 };
             };
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_pull_request_page: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                status?: "open" | "closed" | "merged";
+                search?: string;
+            };
+            header?: never;
+            path: {
+                /** @description Repository name */
+                repo: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequestPage"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_pull_request: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Repository name */
+                repo: string;
+                /** @description Pull request number */
+                number: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PullRequest"];
+                };
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

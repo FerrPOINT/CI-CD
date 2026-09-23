@@ -153,6 +153,13 @@ export interface PullRequest {
   merge_commit_sha: string | null
 }
 
+export interface PullRequestPage {
+  items: PullRequest[]
+  total: number
+  limit: number
+  offset: number
+}
+
 export interface CreatePullRequestInput {
   repository_name: string
   title: string
@@ -287,6 +294,7 @@ export interface NotificationEvent {
 }
 
 export type OutboxDelivery = components['schemas']['OutboxDelivery']
+export type OutboxDeliveryPage = components['schemas']['OutboxDeliveryPage']
 export type OutboxDeliveryAttempt = components['schemas']['OutboxDeliveryAttempt']
 export type OutboxDeliveryDetail = components['schemas']['OutboxDeliveryDetail']
 export type RequeuedOutboxDelivery = components['schemas']['RequeuedOutboxDelivery']

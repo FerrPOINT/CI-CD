@@ -268,6 +268,10 @@ function mockFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respon
     ])
   }
   if (path === `/repos/${repoName}/compare`) return json(comparison)
+  if (path === `/repos/${repoName}/pulls/page`) {
+    return json({ items: [pullRequest], total: 1, limit: 20, offset: 0 })
+  }
+  if (path === `/repos/${repoName}/pulls/7`) return json(pullRequest)
   if (path === `/repos/${repoName}/pulls`) return json([pullRequest])
   if (path === `/repos/${repoName}/tree`) {
     return json([{ path: 'src/main.rs', name: 'main.rs', kind: 'blob', size: 42, sha: 'abcdef1234567890' }])

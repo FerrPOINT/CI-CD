@@ -6513,6 +6513,26 @@ async fn failed_outbox_delivery_records_attempt_and_can_be_requeued() {
     assert_eq!(deliveries[0]["attempts"], cicd::outbox::MAX_ATTEMPTS);
     assert_eq!(deliveries[0]["generation"], 0);
 
+    let page = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/projects/{project_id}/outbox-deliveries/page?status=failed&channel=notification&limit=1&offset=0"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.status(), StatusCode::OK);
+    let page = response_json(page).await;
+    assert_eq!(page["total"], 1);
+    assert_eq!(page["limit"], 1);
+    assert_eq!(page["offset"], 0);
+    assert_eq!(page["items"].as_array().unwrap().len(), 1);
+    assert_eq!(page["items"][0]["id"], message_id.to_string());
+    assert_eq!(page["items"][0]["status"], "failed");
+
     let detail = app
         .clone()
         .oneshot(
@@ -6578,6 +6598,23 @@ async fn failed_outbox_delivery_records_attempt_and_can_be_requeued() {
     let pending = response_json(pending).await;
     assert_eq!(pending.as_array().unwrap().len(), 1);
     assert_eq!(pending[0]["id"], replay_id.to_string());
+
+    let second_page = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/projects/{project_id}/outbox-deliveries/page?limit=1&offset=1"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second_page.status(), StatusCode::OK);
+    let second_page = response_json(second_page).await;
+    assert_eq!(second_page["total"], 2);
+    assert_eq!(second_page["items"].as_array().unwrap().len(), 1);
+    assert_eq!(second_page["items"][0]["id"], message_id.to_string());
 
     let non_failed_requeue = app
         .oneshot(
@@ -8062,6 +8099,114 @@ async fn tenants_crud_and_project_scoping() {
         !names2.iter().any(|n| n.starts_with("tenant-proj-")),
         "suspended tenant projects must be hidden, got: {names2:?}"
     );
+}
+
+#[tokio::test]
+async fn pull_requests_are_paged_filtered_and_readable_by_number() {
+    let pool = test_pool().await;
+    let repository_name = format!("pulls-{}", Uuid::new_v4().simple());
+    sqlx::query("INSERT INTO repositories (id, name) VALUES ($1, $2)")
+        .bind(Uuid::new_v4())
+        .bind(&repository_name)
+        .execute(&pool)
+        .await
+        .expect("insert pull request test repository");
+
+    for number in 1..=25 {
+        let status = if number % 5 == 0 { "closed" } else { "open" };
+        let title = if number == 7 {
+            "Release candidate".to_string()
+        } else {
+            format!("Change {number}")
+        };
+        sqlx::query(
+            "INSERT INTO pull_requests \
+             (id, repository_name, number, title, source_branch, target_branch, status, created_by) \
+             VALUES ($1, $2, $3, $4, $5, 'main', $6, 'reviewer')",
+        )
+        .bind(Uuid::new_v4())
+        .bind(&repository_name)
+        .bind(number)
+        .bind(title)
+        .bind(format!("feature/{number}"))
+        .bind(status)
+        .execute(&pool)
+        .await
+        .expect("insert pull request fixture");
+    }
+
+    let app = authenticated_app(pool).await;
+    let legacy = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/repos/{repository_name}/pulls"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(legacy.status(), StatusCode::OK);
+    assert_eq!(response_json(legacy).await.as_array().unwrap().len(), 25);
+
+    let page = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/repos/{repository_name}/pulls/page?limit=5&offset=5&status=open"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.status(), StatusCode::OK);
+    let page = response_json(page).await;
+    assert_eq!(page["total"], 20);
+    assert_eq!(page["limit"], 5);
+    assert_eq!(page["offset"], 5);
+    assert_eq!(page["items"].as_array().unwrap().len(), 5);
+    assert_eq!(page["items"][0]["number"], 18);
+
+    let search = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/repos/{repository_name}/pulls/page?search=RELEASE"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(search.status(), StatusCode::OK);
+    let search = response_json(search).await;
+    assert_eq!(search["total"], 1);
+    assert_eq!(search["items"][0]["number"], 7);
+
+    let detail = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/repos/{repository_name}/pulls/7"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(detail.status(), StatusCode::OK);
+    let detail = response_json(detail).await;
+    assert_eq!(detail["title"], "Release candidate");
+
+    let invalid = app
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/repos/{repository_name}/pulls/page?status=draft"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
 }
 
 async fn bearer(response: axum::response::Response) -> String {

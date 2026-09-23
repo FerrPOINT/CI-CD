@@ -108,6 +108,10 @@ pub fn routes() -> Router<Arc<AppState>> {
             get(list_outbox_deliveries),
         )
         .route(
+            "/api/v1/projects/{project_id}/outbox-deliveries/page",
+            get(list_outbox_delivery_page),
+        )
+        .route(
             "/api/v1/outbox-deliveries/{delivery_id}",
             get(get_outbox_delivery),
         )
@@ -1356,33 +1360,53 @@ async fn delete_webhook(
     Ok(Json(serde_json::json!({"deleted": id})))
 }
 
-#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct OutboxDeliveriesParams {
     /// Maximum number of recent deliveries to return.
+    #[param(nullable = true, default = 50, minimum = 1, maximum = 200)]
     limit: Option<i64>,
+    /// Number of matching deliveries to skip.
+    #[param(default = 0, minimum = 0)]
+    offset: Option<i64>,
     /// Optional status filter: pending, retry_scheduled, delivered or failed.
+    #[param(nullable = true)]
     status: Option<String>,
     /// Optional channel filter: webhook, notification or sse.
+    #[param(nullable = true)]
     channel: Option<String>,
 }
+
+struct NormalizedOutboxDeliveriesParams {
+    limit: u32,
+    offset: u32,
+    status: Option<String>,
+    channel: Option<String>,
+}
+
 impl OutboxDeliveriesParams {
-    fn bounded_limit(&self) -> Result<i64, ApiError> {
+    fn normalize(self) -> Result<NormalizedOutboxDeliveriesParams, ApiError> {
         let limit = self.limit.unwrap_or(50);
         if !(1..=200).contains(&limit) {
             return Err(ApiError::bad_request("limit must be between 1 and 200"));
         }
-        Ok(limit)
-    }
-
-    fn status_filter(&self) -> Result<Option<String>, ApiError> {
-        optional_allowlisted(
+        let offset = self.offset.unwrap_or(0);
+        if !(0..=i64::from(u32::MAX)).contains(&offset) {
+            return Err(ApiError::bad_request(
+                "offset must be between 0 and 4294967295",
+            ));
+        }
+        let status = optional_allowlisted(
             &self.status,
             &["pending", "retry_scheduled", "delivered", "failed"],
-        )
-    }
-
-    fn channel_filter(&self) -> Result<Option<String>, ApiError> {
-        optional_allowlisted(&self.channel, &["webhook", "notification", "sse"])
+        )?;
+        let channel = optional_allowlisted(&self.channel, &["webhook", "notification", "sse"])?;
+        Ok(NormalizedOutboxDeliveriesParams {
+            limit: limit as u32,
+            offset: offset as u32,
+            status,
+            channel,
+        })
     }
 }
 
@@ -1406,6 +1430,15 @@ pub(crate) struct OutboxDelivery {
     failed_at: Option<DateTime<Utc>>,
     last_error: Option<String>,
     created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct OutboxDeliveryPage {
+    items: Vec<OutboxDelivery>,
+    total: i64,
+    #[schema(minimum = 1, maximum = 200)]
+    limit: u32,
+    offset: u32,
 }
 
 #[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
@@ -1440,17 +1473,59 @@ pub(crate) async fn list_outbox_deliveries(
     Path(project_id): Path<Uuid>,
     Query(params): Query<OutboxDeliveriesParams>,
 ) -> ApiResult<Vec<OutboxDelivery>> {
+    let params = params.normalize()?;
     Ok(Json(
         project_outbox_deliveries(
             pool(&state)?,
             project_id,
-            params.bounded_limit()?,
-            params.status_filter()?,
-            params.channel_filter()?,
+            params.limit,
+            params.offset,
+            params.status.as_deref(),
+            params.channel.as_deref(),
         )
         .await
         .map_err(ApiError::internal)?,
     ))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/outbox-deliveries/page",
+    tag = "outbox",
+    params(("project_id" = Uuid, Path), OutboxDeliveriesParams),
+    responses((status = 200, body = OutboxDeliveryPage), (status = 400)),
+)]
+pub(crate) async fn list_outbox_delivery_page(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+    Query(params): Query<OutboxDeliveriesParams>,
+) -> ApiResult<OutboxDeliveryPage> {
+    let db = pool(&state)?;
+    let params = params.normalize()?;
+    let total = project_outbox_delivery_count(
+        db,
+        project_id,
+        params.status.as_deref(),
+        params.channel.as_deref(),
+    )
+    .await
+    .map_err(ApiError::internal)?;
+    let items = project_outbox_deliveries(
+        db,
+        project_id,
+        params.limit,
+        params.offset,
+        params.status.as_deref(),
+        params.channel.as_deref(),
+    )
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(Json(OutboxDeliveryPage {
+        items,
+        total,
+        limit: params.limit,
+        offset: params.offset,
+    }))
 }
 
 #[utoipa::path(get, path = "/api/v1/outbox-deliveries/{delivery_id}", tag = "outbox", params(("delivery_id" = Uuid, Path)), responses((status = 200, body = OutboxDeliveryDetail), (status = 404)))]
@@ -1519,9 +1594,10 @@ fn optional_allowlisted(
 async fn project_outbox_deliveries(
     pool: &PgPool,
     project_id: Uuid,
-    limit: i64,
-    status: Option<String>,
-    channel: Option<String>,
+    limit: u32,
+    offset: u32,
+    status: Option<&str>,
+    channel: Option<&str>,
 ) -> Result<Vec<OutboxDelivery>, sqlx::Error> {
     sqlx::query_as::<_, OutboxDelivery>(
         "SELECT * FROM ( \
@@ -1539,13 +1615,40 @@ async fn project_outbox_deliveries(
              WHERE m.project_id = $1 AND ($2::text IS NULL OR m.channel = $2) \
          ) deliveries \
          WHERE $3::text IS NULL OR status = $3 \
-         ORDER BY created_at DESC, id DESC LIMIT $4",
+         ORDER BY created_at DESC, id DESC LIMIT $4 OFFSET $5",
     )
     .bind(project_id)
     .bind(channel)
     .bind(status)
-    .bind(limit)
+    .bind(i64::from(limit))
+    .bind(i64::from(offset))
     .fetch_all(pool)
+    .await
+}
+
+async fn project_outbox_delivery_count(
+    pool: &PgPool,
+    project_id: Uuid,
+    status: Option<&str>,
+    channel: Option<&str>,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM ( \
+            SELECT CASE \
+                WHEN delivered_at IS NOT NULL THEN 'delivered' \
+                WHEN failed_at IS NOT NULL THEN 'failed' \
+                WHEN attempts > 0 THEN 'retry_scheduled' \
+                ELSE 'pending' \
+            END AS status \
+            FROM outbox_messages \
+            WHERE project_id = $1 AND ($2::text IS NULL OR channel = $2) \
+         ) deliveries \
+         WHERE $3::text IS NULL OR status = $3",
+    )
+    .bind(project_id)
+    .bind(channel)
+    .bind(status)
+    .fetch_one(pool)
     .await
 }
 
@@ -3028,6 +3131,57 @@ mod tests {
         assert!(
             AuditLogParams {
                 q: Some("я".repeat(129)),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+    }
+    #[test]
+    fn outbox_delivery_params_are_normalized() {
+        let params = OutboxDeliveriesParams {
+            limit: Some(25),
+            offset: Some(50),
+            status: Some(" FAILED ".to_string()),
+            channel: Some(" Notification ".to_string()),
+        }
+        .normalize()
+        .unwrap();
+
+        assert_eq!(params.limit, 25);
+        assert_eq!(params.offset, 50);
+        assert_eq!(params.status.as_deref(), Some("failed"));
+        assert_eq!(params.channel.as_deref(), Some("notification"));
+    }
+    #[test]
+    fn outbox_delivery_params_reject_invalid_values() {
+        assert!(
+            OutboxDeliveriesParams {
+                limit: Some(0),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+        assert!(
+            OutboxDeliveriesParams {
+                status: Some("unknown".to_string()),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+        assert!(
+            OutboxDeliveriesParams {
+                offset: Some(-1),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+        assert!(
+            OutboxDeliveriesParams {
+                offset: Some(i64::from(u32::MAX) + 1),
                 ..Default::default()
             }
             .normalize()

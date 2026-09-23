@@ -26,7 +26,7 @@ import type {
   NotificationConfig,
   NotificationInput,
   NotificationEvent,
-  OutboxDelivery,
+  OutboxDeliveryPage,
   OutboxDeliveryDetail,
   Pipeline,
   PipelineDetail,
@@ -34,6 +34,8 @@ import type {
   ProjectReport,
   PullRequest,
   PullRequestAction,
+  PullRequestPage,
+  PullRequestStatus,
   RequeuedOutboxDelivery,
   Repository,
   RepositoryRef,
@@ -59,6 +61,9 @@ const KEYS = {
   commits: (repo: string, branch: string) => ['repository-commits', repo, branch] as const,
   comparison: (repo: string, from: string, to: string) => ['repository-comparison', repo, from, to] as const,
   pullRequests: (repo: string) => ['pull-requests', repo] as const,
+  pullRequestList: (repo: string, limit: number, offset: number, status: string, search: string) =>
+    [...KEYS.pullRequests(repo), 'list', limit, offset, status, search] as const,
+  pullRequest: (repo: string, number: number) => [...KEYS.pullRequests(repo), 'detail', number] as const,
   repositoryTree: (repo: string, gitRef: string, path: string) => ['repository-tree', repo, gitRef, path] as const,
   repositoryBlob: (repo: string, gitRef: string, path: string) => ['repository-blob', repo, gitRef, path] as const,
   repositoryTags: (repo: string) => ['repository-tags', repo] as const,
@@ -280,11 +285,33 @@ export function useRepositoryComparison(repo: string | undefined, from: string, 
   })
 }
 
-export function usePullRequests(repo: string | undefined) {
+export function usePullRequests(
+  repo: string | undefined,
+  options: { limit?: number; offset?: number; status?: PullRequestStatus; search?: string } = {},
+) {
+  const limit = options.limit ?? 20
+  const offset = options.offset ?? 0
+  const status = options.status ?? ''
+  const search = options.search?.trim() ?? ''
   return useQuery({
-    queryKey: KEYS.pullRequests(repo ?? ''),
-    queryFn: () => api<PullRequest[]>(`/repos/${repositoryPath(repo ?? '')}/pulls`),
+    queryKey: KEYS.pullRequestList(repo ?? '', limit, offset, status, search),
+    queryFn: () => {
+      const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+      if (status) params.set('status', status)
+      if (search) params.set('search', search)
+      return api<PullRequestPage>(`/repos/${repositoryPath(repo ?? '')}/pulls/page?${params}`)
+    },
     enabled: Boolean(repo),
+    retry: apiRetry,
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function usePullRequest(repo: string | undefined, number: number | undefined) {
+  return useQuery({
+    queryKey: KEYS.pullRequest(repo ?? '', number ?? 0),
+    queryFn: () => api<PullRequest>(`/repos/${repositoryPath(repo ?? '')}/pulls/${number}`),
+    enabled: Boolean(repo && number),
     retry: apiRetry,
   })
 }
@@ -596,21 +623,26 @@ export function useDeleteWebhook() {
   })
 }
 
-export function useOutboxDeliveries(projectId: string | undefined, filters?: { status?: string; channel?: string; limit?: number }) {
+export function useOutboxDeliveries(projectId: string | undefined, filters?: { status?: string; channel?: string; limit?: number; offset?: number }) {
   return useQuery({
     queryKey: [
       ...PLATFORM_KEYS.outboxDeliveries(projectId ?? ''),
       filters?.status ?? 'all',
       filters?.channel ?? 'all',
       filters?.limit ?? 20,
+      filters?.offset ?? 0,
     ],
     queryFn: () => {
-      const params = new URLSearchParams({ limit: String(filters?.limit ?? 20) })
+      const params = new URLSearchParams({
+        limit: String(filters?.limit ?? 20),
+        offset: String(filters?.offset ?? 0),
+      })
       if (filters?.status) params.set('status', filters.status)
       if (filters?.channel) params.set('channel', filters.channel)
-      return api<OutboxDelivery[]>(`/projects/${projectId}/outbox-deliveries?${params.toString()}`)
+      return api<OutboxDeliveryPage>(`/projects/${projectId}/outbox-deliveries/page?${params.toString()}`)
     },
     enabled: Boolean(projectId),
+    placeholderData: keepPreviousData,
     refetchInterval: browserNotificationStreamEnabled() ? 10_000 : false,
   })
 }

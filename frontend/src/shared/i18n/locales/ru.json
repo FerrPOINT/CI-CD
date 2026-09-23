@@ -500,7 +500,19 @@
     "delivered": "Доставлено",
     "failed": "Ошибка",
     "empty": "Доставок пока нет.",
-    "noAttempts": "Попыток ещё нет."
+    "noAttempts": "Попыток ещё нет.",
+    "statusFilter": "Фильтр по статусу",
+    "channelFilter": "Фильтр по каналу",
+    "allStatuses": "Все статусы",
+    "allChannels": "Все каналы",
+    "channel_webhook": "Webhook",
+    "channel_notification": "Уведомления",
+    "channel_sse": "SSE",
+    "shown": "Показано {{from}}–{{to}} из {{total}}",
+    "noMatches": "Доставки с такими фильтрами не найдены.",
+    "pages": "Страницы истории доставок",
+    "previous": "Назад",
+    "next": "Вперёд"
   },
   "notifications": {
     "title": "Уведомления",

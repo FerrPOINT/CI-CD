@@ -25,7 +25,7 @@
 | Audit log | ✅ | append-only; legacy array последних 200 сохранён, полный `/audit-log/page` поддерживает server pagination, exact action filter, literal search и stable ordering |
 | Schedules | ✅ MVP | строгий 5-польный UTC cron, persisted `next_fire_at`, unique `schedule_fires` slot и idempotent pipeline trigger; строки с `last_fire_error` ждут явного PATCH/исправления; IANA timezone/DST/misfire и multi-replica leases остаются target |
 | Outgoing webhooks | ✅ MVP | terminal pipeline event -> `domain_events`/`outbox_messages`; basic retry/backoff, optional HMAC |
-| Outbox delivery history | ✅ MVP | project-scoped `/outbox-deliveries` API показывает статус, attempts, `failed_at`/`last_error`; failed delivery можно явно requeue новой generation |
+| Outbox delivery history | ✅ MVP | project-scoped paged `/outbox-deliveries/page` API показывает всю фильтруемую историю, статус, attempts, `failed_at`/`last_error`; failed delivery можно явно requeue новой generation |
 | Notifications | ✅ MVP | `in_app`/`sse` каналы создают durable local outbox event на terminal pipeline events; история доступна через `/notification-events`, live stream — через `/notifications/stream`; email/Slack adapters и inbound provider handlers остаются target |
 | Login UI | ✅ | `/login` запускает Central Auth Authorization Code + PKCE, `/sso/callback` завершает обмен, access token хранится только в памяти; hard reload повторно использует центральную HttpOnly browser session без локальной password form |
 | Project membership RBAC | ✅ MVP | `project_memberships`, фильтрация списка проектов, deny-before-load для project-owned API и name-based repo API; `admin` bypass, tenant isolation/SAT ещё target |

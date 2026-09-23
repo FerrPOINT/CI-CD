@@ -500,7 +500,19 @@
     "delivered": "Delivered",
     "failed": "Failed",
     "empty": "No deliveries yet.",
-    "noAttempts": "No attempts yet."
+    "noAttempts": "No attempts yet.",
+    "statusFilter": "Filter by status",
+    "channelFilter": "Filter by channel",
+    "allStatuses": "All statuses",
+    "allChannels": "All channels",
+    "channel_webhook": "Webhook",
+    "channel_notification": "Notifications",
+    "channel_sse": "SSE",
+    "shown": "Showing {{from}}–{{to}} of {{total}}",
+    "noMatches": "No deliveries match these filters.",
+    "pages": "Delivery history pages",
+    "previous": "Previous",
+    "next": "Next"
   },
   "notifications": {
     "title": "Notifications",

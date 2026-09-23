@@ -487,6 +487,12 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
     ),
     user(
         GET,
+        "/api/v1/projects/{project_id}/outbox-deliveries/page",
+        Action::Read,
+        Role::Viewer,
+    ),
+    user(
+        GET,
         "/api/v1/outbox-deliveries/{delivery_id}",
         Action::Read,
         Role::Viewer,
@@ -626,6 +632,18 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
     user(
         GET,
         "/api/v1/repos/{repo}/pulls",
+        Action::Read,
+        Role::Viewer,
+    ),
+    user(
+        GET,
+        "/api/v1/repos/{repo}/pulls/page",
+        Action::Read,
+        Role::Viewer,
+    ),
+    user(
+        GET,
+        "/api/v1/repos/{repo}/pulls/{number}",
         Action::Read,
         Role::Viewer,
     ),
