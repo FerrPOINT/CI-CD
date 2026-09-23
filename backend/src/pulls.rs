@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, process::Stdio};
 
 use axum::{
     Json,
@@ -7,6 +7,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use uuid::Uuid;
 
 use crate::api::{ApiError, AppState};
@@ -57,18 +58,70 @@ pub struct CommitInfo {
     pub date: String,
 }
 
+const DEFAULT_REF_LIMIT: usize = 100;
+const MAX_REF_LIMIT: usize = 200;
+
+#[derive(Clone, Copy)]
+struct GitListPage<'a> {
+    limit: usize,
+    offset: usize,
+    search: Option<&'a str>,
+}
+
+#[derive(Deserialize, utoipa::IntoParams)]
+pub struct RefsQuery {
+    limit: Option<usize>,
+    offset: Option<usize>,
+    search: Option<String>,
+    kind: Option<String>,
+}
+
+impl RefsQuery {
+    fn page(&self) -> Result<Option<(GitListPage<'_>, Option<&str>)>, ApiError> {
+        let search = normalized_search(self.search.as_deref());
+        let kind = normalized_search(self.kind.as_deref());
+        if self.limit.is_none() && self.offset.is_none() && search.is_none() && kind.is_none() {
+            return Ok(None);
+        }
+        if kind.is_some_and(|value| !matches!(value, "branch" | "tag" | "other")) {
+            return Err(ApiError::bad_request(
+                "ref kind must be branch, tag, or other",
+            ));
+        }
+        Ok(Some((
+            GitListPage {
+                limit: self
+                    .limit
+                    .unwrap_or(DEFAULT_REF_LIMIT)
+                    .clamp(1, MAX_REF_LIMIT),
+                offset: self.offset.unwrap_or(0),
+                search,
+            },
+            kind,
+        )))
+    }
+}
+
+fn normalized_search(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
 #[utoipa::path(
     get,
     path = "/api/v1/repos/{repo}/refs",
     tag = "repos",
-    params(("repo" = String, Path, description = "Repository name")),
+    params(("repo" = String, Path, description = "Repository name"), ("limit" = Option<usize>, Query), ("offset" = Option<usize>, Query), ("search" = Option<String>, Query), ("kind" = Option<String>, Query)),
     responses((status = 200, body = [RefInfo]), (status = 404)),
 )]
 pub async fn list_refs(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath(repo): AxumPath<String>,
+    Query(params): Query<RefsQuery>,
 ) -> Result<Json<Vec<RefInfo>>, ApiError> {
     let path = resolve_repo_path(&state, &repo).await?;
+    if let Some((page, kind)) = params.page()? {
+        return Ok(Json(read_refs_page(&path, page, kind).await?));
+    }
     let output = tokio::process::Command::new("git")
         .arg(format!("--git-dir={}", path.display()))
         .args([
@@ -83,21 +136,120 @@ pub async fn list_refs(
     }
     let refs: Vec<RefInfo> = String::from_utf8_lossy(&output.stdout)
         .lines()
-        .filter_map(|line| {
-            let mut parts = line.splitn(3, ' ');
-            let raw_ref = parts.next()?;
-            let sha = parts.next()?;
-            let target = parts.next().unwrap_or("");
-            let (name, kind) = classify_ref(raw_ref);
-            Some(RefInfo {
-                name: name.to_string(),
-                kind: kind.to_string(),
-                sha: sha.to_string(),
-                target: target.to_string(),
-            })
-        })
+        .filter_map(parse_ref_line)
         .collect();
     Ok(Json(refs))
+}
+
+async fn read_refs_page(
+    path: &std::path::Path,
+    page: GitListPage<'_>,
+    kind: Option<&str>,
+) -> Result<Vec<RefInfo>, ApiError> {
+    let pattern = match kind {
+        Some("branch") => Some("refs/heads"),
+        Some("tag") => Some("refs/tags"),
+        _ => None,
+    };
+    let mut arguments = vec!["--format=%(refname) %(objectname) %(contents:subject)"];
+    if let Some(pattern) = pattern {
+        arguments.push(pattern);
+    }
+    stream_for_each_ref(path, &arguments, page, |line| {
+        let entry = parse_ref_line(line)?;
+        if kind.is_some_and(|expected| entry.kind != expected) {
+            return None;
+        }
+        Some((entry.name.clone(), entry))
+    })
+    .await
+}
+
+fn parse_ref_line(line: &str) -> Option<RefInfo> {
+    let mut parts = line.splitn(3, ' ');
+    let raw_ref = parts.next()?;
+    let sha = parts.next()?;
+    let target = parts.next().unwrap_or("");
+    let (name, kind) = classify_ref(raw_ref);
+    Some(RefInfo {
+        name: name.to_string(),
+        kind: kind.to_string(),
+        sha: sha.to_string(),
+        target: target.to_string(),
+    })
+}
+
+async fn stream_for_each_ref<T, F>(
+    path: &std::path::Path,
+    arguments: &[&str],
+    page: GitListPage<'_>,
+    mut parse: F,
+) -> Result<Vec<T>, ApiError>
+where
+    F: FnMut(&str) -> Option<(String, T)>,
+{
+    let search = page.search.map(str::to_lowercase);
+    let mut child = tokio::process::Command::new("git")
+        .arg(format!("--git-dir={}", path.display()))
+        .arg("for-each-ref")
+        .args(arguments)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        ApiError::internal(sqlx::Error::Io(std::io::Error::other(
+            "git for-each-ref stdout is unavailable",
+        )))
+    })?;
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    let mut seen = 0;
+    let mut items = Vec::with_capacity(page.limit);
+    let mut page_is_full = false;
+
+    loop {
+        line.clear();
+        let read = reader
+            .read_line(&mut line)
+            .await
+            .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+        if read == 0 {
+            break;
+        }
+        let Some((name, item)) = parse(line.trim_end_matches(['\r', '\n'])) else {
+            continue;
+        };
+        if search
+            .as_deref()
+            .is_some_and(|needle| !name.to_lowercase().contains(needle))
+        {
+            continue;
+        }
+        if seen < page.offset {
+            seen += 1;
+            continue;
+        }
+        seen += 1;
+        items.push(item);
+        if items.len() >= page.limit {
+            page_is_full = true;
+            break;
+        }
+    }
+    drop(reader);
+
+    if page_is_full {
+        let _ = child.start_kill();
+    }
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if !page_is_full && !status.success() {
+        return Err(ApiError::bad_request("git for-each-ref failed"));
+    }
+    Ok(items)
 }
 
 fn classify_ref(raw_ref: &str) -> (&str, &str) {
@@ -818,12 +970,40 @@ pub struct BlobQuery {
     path: String,
 }
 
-#[utoipa::path(get, path = "/api/v1/repos/{repo}/tags", tag = "git", params(("repo" = String, Path)), responses((status = 200, body = [TagInfo])))]
+#[derive(Deserialize, utoipa::IntoParams)]
+pub struct TagsQuery {
+    limit: Option<usize>,
+    offset: Option<usize>,
+    search: Option<String>,
+}
+
+impl TagsQuery {
+    fn page(&self) -> Option<GitListPage<'_>> {
+        let search = normalized_search(self.search.as_deref());
+        if self.limit.is_none() && self.offset.is_none() && search.is_none() {
+            return None;
+        }
+        Some(GitListPage {
+            limit: self
+                .limit
+                .unwrap_or(DEFAULT_REF_LIMIT)
+                .clamp(1, MAX_REF_LIMIT),
+            offset: self.offset.unwrap_or(0),
+            search,
+        })
+    }
+}
+
+#[utoipa::path(get, path = "/api/v1/repos/{repo}/tags", tag = "git", params(("repo" = String, Path), ("limit" = Option<usize>, Query), ("offset" = Option<usize>, Query), ("search" = Option<String>, Query)), responses((status = 200, body = [TagInfo])))]
 pub async fn list_tags(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath(repo): AxumPath<String>,
+    Query(params): Query<TagsQuery>,
 ) -> Result<Json<Vec<TagInfo>>, ApiError> {
     let path = resolve_repo_path(&state, &repo).await?;
+    if let Some(page) = params.page() {
+        return Ok(Json(read_tags_page(&path, page).await?));
+    }
     let output = tokio::process::Command::new("git")
         .arg(format!("--git-dir={}", path.display()))
         .args([
@@ -840,20 +1020,47 @@ pub async fn list_tags(
     }
     let tags: Vec<TagInfo> = String::from_utf8_lossy(&output.stdout)
         .lines()
-        .filter_map(|line| {
-            let mut parts = line.splitn(3, ' ');
-            let name = parts.next()?.to_string();
-            let sha = parts.next()?.to_string();
-            let message = parts.next().unwrap_or("").to_string();
-            Some(TagInfo { name, sha, message })
-        })
+        .filter_map(parse_tag_line)
         .collect();
     Ok(Json(tags))
 }
 
+async fn read_tags_page(
+    path: &std::path::Path,
+    page: GitListPage<'_>,
+) -> Result<Vec<TagInfo>, ApiError> {
+    stream_for_each_ref(
+        path,
+        &[
+            "--sort=refname",
+            "--sort=-creatordate",
+            "--format=%(refname:short) %(objectname) %(contents:subject)",
+            "refs/tags",
+        ],
+        page,
+        |line| {
+            let tag = parse_tag_line(line)?;
+            Some((tag.name.clone(), tag))
+        },
+    )
+    .await
+}
+
+fn parse_tag_line(line: &str) -> Option<TagInfo> {
+    let mut parts = line.splitn(3, ' ');
+    let name = parts.next()?.to_string();
+    let sha = parts.next()?.to_string();
+    let message = parts.next().unwrap_or("").to_string();
+    Some(TagInfo { name, sha, message })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{classify_ref, parse_diff_files, tree_entry_path};
+    use super::{
+        GitListPage, MAX_REF_LIMIT, RefsQuery, TagsQuery, classify_ref, parse_diff_files,
+        read_refs_page, read_tags_page, tree_entry_path,
+    };
+    use uuid::Uuid;
 
     #[test]
     fn refs_keep_branch_and_tag_identity() {
@@ -866,6 +1073,143 @@ mod tests {
             classify_ref("refs/notes/review"),
             ("refs/notes/review", "other")
         );
+    }
+
+    #[test]
+    fn ref_page_parameters_are_optional_bounded_and_validated() {
+        let legacy = RefsQuery {
+            limit: None,
+            offset: None,
+            search: Some("  ".to_string()),
+            kind: None,
+        };
+        assert!(legacy.page().expect("legacy params").is_none());
+
+        let paged = RefsQuery {
+            limit: Some(usize::MAX),
+            offset: Some(25),
+            search: Some("  release  ".to_string()),
+            kind: Some("branch".to_string()),
+        };
+        let (page, kind) = paged.page().expect("valid params").expect("bounded page");
+        assert_eq!(page.limit, MAX_REF_LIMIT);
+        assert_eq!(page.offset, 25);
+        assert_eq!(page.search, Some("release"));
+        assert_eq!(kind, Some("branch"));
+
+        let invalid = RefsQuery {
+            limit: None,
+            offset: None,
+            search: None,
+            kind: Some("commit".to_string()),
+        };
+        assert!(invalid.page().is_err());
+
+        let tags = TagsQuery {
+            limit: Some(0),
+            offset: None,
+            search: None,
+        };
+        assert_eq!(tags.page().expect("tag page").limit, 1);
+    }
+
+    #[tokio::test]
+    async fn ref_pages_stream_kind_search_and_offset() {
+        let directory = std::env::temp_dir().join(format!("forge-many-refs-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .expect("create repository directory");
+        run_git(&directory, &["init", "--quiet", "--initial-branch=primary"]).await;
+        run_git(&directory, &["config", "user.name", "Forge Test"]).await;
+        run_git(&directory, &["config", "user.email", "forge@example.test"]).await;
+        tokio::fs::write(directory.join("README.md"), b"fixture\n")
+            .await
+            .expect("write repository fixture");
+        run_git(&directory, &["add", "."]).await;
+        run_git(&directory, &["commit", "--quiet", "-m", "Fixture"]).await;
+
+        for index in 1..=12 {
+            run_git(
+                &directory,
+                &[
+                    "update-ref",
+                    &format!("refs/heads/feature/ref-{index:04}"),
+                    "HEAD",
+                ],
+            )
+            .await;
+        }
+        for index in 1..=5 {
+            run_git(
+                &directory,
+                &["update-ref", &format!("refs/tags/v1.0.{index:04}"), "HEAD"],
+            )
+            .await;
+        }
+        run_git(&directory, &["update-ref", "refs/notes/review", "HEAD"]).await;
+
+        let git_dir = directory.join(".git");
+        let branches = read_refs_page(
+            &git_dir,
+            GitListPage {
+                limit: 5,
+                offset: 10,
+                search: None,
+            },
+            Some("branch"),
+        )
+        .await
+        .expect("read branch page");
+        assert_eq!(
+            branches
+                .iter()
+                .map(|reference| reference.name.as_str())
+                .collect::<Vec<_>>(),
+            ["feature/ref-0011", "feature/ref-0012", "primary"]
+        );
+        assert!(branches.iter().all(|reference| reference.kind == "branch"));
+
+        let matches = read_refs_page(
+            &git_dir,
+            GitListPage {
+                limit: 10,
+                offset: 0,
+                search: Some("REF-001"),
+            },
+            Some("branch"),
+        )
+        .await
+        .expect("search branch page");
+        assert_eq!(matches.len(), 3);
+
+        let other = read_refs_page(
+            &git_dir,
+            GitListPage {
+                limit: 10,
+                offset: 0,
+                search: None,
+            },
+            Some("other"),
+        )
+        .await
+        .expect("read other refs");
+        assert_eq!(other.len(), 1);
+        assert_eq!(other[0].name, "refs/notes/review");
+
+        let tags = read_tags_page(
+            &git_dir,
+            GitListPage {
+                limit: 3,
+                offset: 1,
+                search: Some("V1.0"),
+            },
+        )
+        .await
+        .expect("read tag page");
+        assert_eq!(tags.len(), 3);
+        assert!(tags.iter().all(|tag| tag.name.starts_with("v1.0.")));
+
+        let _ = tokio::fs::remove_dir_all(directory).await;
     }
 
     #[test]
@@ -910,5 +1254,16 @@ mod tests {
     fn rejects_mismatched_git_outputs() {
         assert!(parse_diff_files(b"1\t0\tnew.txt\0", b"A\0other.txt\0").is_err());
         assert!(parse_diff_files(b"1\t0\tnew.txt\0", b"A\0new.txt\0D\0old.txt\0").is_err());
+    }
+
+    async fn run_git(directory: &std::path::Path, args: &[&str]) {
+        let status = tokio::process::Command::new("git")
+            .arg("-C")
+            .arg(directory)
+            .args(args)
+            .status()
+            .await
+            .expect("run git command");
+        assert!(status.success(), "git command failed: {args:?}");
     }
 }

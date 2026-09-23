@@ -89,6 +89,7 @@ describe('pull request workflow', () => {
     setup([])
     fireEvent.click(screen.getByRole('button', { name: 'pulls.create' }))
     const form = screen.getByRole('form', { name: 'pulls.create' })
+    expect(mocks.refs).toHaveBeenCalledWith('platform', { kind: 'branch', limit: 51, search: '' })
     expect(screen.getByLabelText('pulls.sourceBranch')).toHaveValue('')
     expect(screen.getByLabelText('pulls.targetBranch')).toHaveValue('')
     fireEvent.change(screen.getByLabelText('pulls.titleField'), { target: { value: '  Add cache  ' } })

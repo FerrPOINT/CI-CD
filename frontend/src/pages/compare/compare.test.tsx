@@ -24,6 +24,7 @@ afterEach(() => vi.clearAllMocks())
 describe('ComparePage', () => {
   it('starts without fabricated refs and waits for an explicit comparison', () => {
     setup()
+    expect(mocks.refs).toHaveBeenCalledWith('platform', { limit: 51, search: '' })
     expect(screen.getByLabelText('compare.baseRef')).toHaveValue('')
     expect(screen.getByLabelText('compare.headRef')).toHaveValue('')
     expect(screen.getByRole('status')).toHaveTextContent('compare.chooseRefs')

@@ -5,6 +5,7 @@ import { ChevronRight, FileDiff, GitCompareArrows } from 'lucide-react'
 import { useRepositoryComparison, useRepositoryRefs } from '@/api/hooks'
 import type { ChangeStatus, Comparison } from '@/api/types'
 import { QueryState } from '@/shared/ui/query-state'
+import { useDebouncedValue } from '@/shared/lib/use-debounced-value'
 import { Button, Input, Label } from '@sdlc/ui/ui'
 
 const changeStatusStyles: Record<ChangeStatus, string> = {
@@ -83,9 +84,12 @@ export function ComparePage() {
   const toParam = searchParams.get('to')?.trim() ?? ''
   const [from, setFrom] = useState(fromParam)
   const [to, setTo] = useState(toParam)
+  const deferredFrom = useDebouncedValue(from.trim())
+  const deferredTo = useDebouncedValue(to.trim())
   const sameRef = Boolean(from.trim() && from.trim() === to.trim())
   const canCompare = Boolean(fromParam && toParam && fromParam !== toParam)
-  const refs = useRepositoryRefs(repo)
+  const fromRefs = useRepositoryRefs(repo, { limit: 51, search: deferredFrom })
+  const toRefs = useRepositoryRefs(repo, { limit: 51, search: deferredTo })
   const { data: comparison, isLoading, error, refetch } = useRepositoryComparison(repo, fromParam, canCompare ? toParam : '')
 
   useEffect(() => {
@@ -123,21 +127,22 @@ export function ComparePage() {
         <div className="min-w-0 space-y-1.5">
           <Label htmlFor="compare-from">{t('compare.baseRef')}</Label>
           <Input id="compare-from" required list="compare-refs-from" className="min-h-10 font-mono" value={from} onChange={(event) => setFrom(event.target.value)} />
-          <datalist id="compare-refs-from">{refs.data?.map((ref) => <option key={ref.name} value={ref.name} />)}</datalist>
+          <datalist id="compare-refs-from">{fromRefs.data?.slice(0, 50).map((ref) => <option key={`${ref.kind}-${ref.name}`} value={ref.name} />)}</datalist>
         </div>
         <GitCompareArrows className="mb-3 hidden h-4 w-4 text-text-muted sm:block" aria-hidden />
         <div className="min-w-0 space-y-1.5">
           <Label htmlFor="compare-to">{t('compare.headRef')}</Label>
           <Input id="compare-to" required list="compare-refs-to" className="min-h-10 font-mono" value={to} onChange={(event) => setTo(event.target.value)} />
-          <datalist id="compare-refs-to">{refs.data?.map((ref) => <option key={ref.name} value={ref.name} />)}</datalist>
+          <datalist id="compare-refs-to">{toRefs.data?.slice(0, 50).map((ref) => <option key={`${ref.kind}-${ref.name}`} value={ref.name} />)}</datalist>
         </div>
         <Button type="submit" className="min-h-10" disabled={sameRef}>{t('compare.compareAction')}</Button>
         {sameRef && <p role="alert" className="border-l-2 border-danger pl-2 text-sm text-text-primary sm:col-span-4">{t('compare.refsMustDiffer')}</p>}
-        {refs.isLoading && <p role="status" className="text-xs text-text-muted sm:col-span-4">{t('compare.loadingRefs')}</p>}
-        {Boolean(refs.error) && (
+        {(fromRefs.isLoading || toRefs.isLoading) && <p role="status" className="text-xs text-text-muted sm:col-span-4">{t('compare.loadingRefs')}</p>}
+        {((fromRefs.data?.length ?? 0) > 50 || (toRefs.data?.length ?? 0) > 50) && <p role="status" className="text-xs text-text-muted sm:col-span-4">{t('compare.refSuggestionsLimited')}</p>}
+        {Boolean(fromRefs.error || toRefs.error) && (
           <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-text-secondary sm:col-span-4">
             <span>{t('compare.refsUnavailable')}</span>
-            <Button type="button" size="sm" variant="outline" className="min-h-10 sm:min-h-10" onClick={() => refs.refetch()}>{t('common.retry')}</Button>
+            <Button type="button" size="sm" variant="outline" className="min-h-10 sm:min-h-10" onClick={() => { if (fromRefs.error) void fromRefs.refetch(); if (toRefs.error) void toRefs.refetch() }}>{t('common.retry')}</Button>
           </div>
         )}
       </form>

@@ -565,11 +565,21 @@ curl -sS http://127.0.0.1:22801/api/v1/pipelines/$PIPELINE_ID
 |---|---|---|
 | GET | `/repos/{repo}/tree?ref=&path=` | Содержимое каталога bare-репозитория |
 | GET | `/repos/{repo}/blob?ref=&path=` | Текст файла, до 512 KiB; binary возвращает флаг без content |
-| GET | `/repos/{repo}/tags` | Git tags, отсортированные по дате |
+| GET | `/repos/{repo}/tags?limit=&offset=&search=` | Git tags, отсортированные по дате; optional bounded page/search |
 | GET/POST | `/repos/{repo}/releases` | Список / создание или обновление release metadata |
 | GET/DELETE | `/repos/{repo}/releases/{tag}` | Один release / удаление metadata (Git tag сохраняется) |
 
 `ref` проходит только в Git через уже валидированный bare repository; пустой `HEAD` автоматически берёт `main`, затем `master`. Для Smart HTTP fetch public repository доступен без credential; private repository и весь `git-receive-pack` требуют credential. При непустом `CICD_AUTH_SECRET` принимается legacy `CICD_GIT_TOKEN` либо JWT/PAT в `Authorization: Bearer`/Basic password с проверкой роли в проекте, связанном через `repository_url` exact tail `/{repo}.git`, `:{repo}.git` или `{repo}.git`; PAT дополнительно требует `git:read` или `git:write` и соблюдает свой `project_id`.
+
+`GET /repos/{repo}/refs` и `GET /repos/{repo}/tags` сохраняют legacy-форму полного
+array, когда paging/search параметры отсутствуют. Любой `limit`, `offset`,
+непустой `search` или `kind` включает bounded streaming mode: `limit` по
+умолчанию равен 100 и ограничен диапазоном `1..200`, `offset` по умолчанию 0,
+а `search` регистронезависимо проверяет короткое имя. Для `/refs` фильтр `kind`
+принимает `branch`, `tag` или `other`; branch/tag дополнительно ограничивают сам
+`git for-each-ref` соответствующим namespace. Dashboard запрашивает 101 запись,
+показывает 100 и использует лишнюю запись как признак следующей страницы;
+подсказки форм запрашивают максимум 51 запись и показывают 50.
 
 ### Дополнительные CI-результаты
 
@@ -1366,7 +1376,7 @@ Runner protocol обслуживается на `/api/v1/runner/*` и не ис�
 |---|---|---|
 | GET/POST | `/repositories` | Список / создание bare repository (`{name}`) |
 | DELETE | `/repositories/{name}` | Удаление repository и bare storage |
-| GET | `/repos/{repo}/refs` | Refs с `name`, `kind` (`branch`, `tag`, `other`), SHA и target |
+| GET | `/repos/{repo}/refs?limit=&offset=&search=&kind=` | Refs с `name`, `kind` (`branch`, `tag`, `other`), SHA и target; optional bounded page/search/kind filter |
 | GET | `/repos/{repo}/commits?branch=&limit=` | Commit history; default 50, maximum 200 |
 | GET | `/repos/{repo}/compare?from=&to=` | Merge-base для базового `from` и сравниваемого `to`, file stats (`status`, `additions`, `deletions`, `binary`) и unified patch от merge-base к `to` |
 | GET/POST | `/repos/{repo}/pulls` | Список / создание pull request |

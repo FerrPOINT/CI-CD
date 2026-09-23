@@ -2132,6 +2132,28 @@ paths:
         required: true
         schema:
           type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+      - name: search
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: kind
+        in: query
+        required: false
+        schema:
+          type: string
       responses:
         '200':
           description: ''
@@ -2240,6 +2262,23 @@ paths:
       - name: repo
         in: path
         required: true
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+      - name: search
+        in: query
+        required: false
         schema:
           type: string
       responses:
