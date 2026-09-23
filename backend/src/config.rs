@@ -10,6 +10,7 @@ pub const DEFAULT_ARTIFACT_RETENTION_DAYS: i64 = 30;
 pub const MAX_ARTIFACT_RETENTION_DAYS: i64 = 3650;
 pub const DEFAULT_RUNNER_QUEUE_TIMEOUT_SECONDS: i64 = 86_400;
 pub const MAX_RUNNER_QUEUE_TIMEOUT_SECONDS: i64 = 2_592_000;
+pub const DEFAULT_RUNNER_DOCKER_NETWORK: &str = "sdlc-local_cicd";
 pub const INSECURE_GIT_INTERNAL_TOKEN: &str = "forge-internal-dev-token";
 
 const TEST_DATABASE_URL: &str = "postgresql://cicd-test-placeholder";
@@ -189,6 +190,10 @@ pub struct RunnerConfig {
     /// mounted at /workspaces in the compose file (including any project
     /// prefix).
     pub workspace_volume: String,
+    /// Docker network attached to embedded job containers.
+    pub docker_network: String,
+    /// Optional Docker volume exposed read-only at /runner-sources in jobs.
+    pub shared_sources_volume: Option<String>,
     pub registration_token: Option<String>,
 }
 
@@ -269,6 +274,11 @@ impl RuntimeConfig {
             workspace_volume: get("CICD_RUNNER_WORKSPACE_VOLUME")
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "forge_runner_workspaces".to_string()),
+            docker_network: string_from_env(
+                get("CICD_RUNNER_DOCKER_NETWORK"),
+                DEFAULT_RUNNER_DOCKER_NETWORK,
+            ),
+            shared_sources_volume: optional_trimmed(get("CICD_RUNNER_SHARED_SOURCES_VOLUME")),
             registration_token: optional_secret_value(get("CICD_RUNNER_REGISTRATION_TOKEN")),
         };
         let auth = AuthConfig {
@@ -329,6 +339,8 @@ impl RuntimeConfig {
                 queue_timeout_seconds: Some(DEFAULT_RUNNER_QUEUE_TIMEOUT_SECONDS),
                 keep_workspace: false,
                 workspace_volume: "forge_runner_workspaces".to_string(),
+                docker_network: DEFAULT_RUNNER_DOCKER_NETWORK.to_string(),
+                shared_sources_volume: None,
                 registration_token: None,
             },
             auth: AuthConfig { secret: None },
@@ -606,6 +618,8 @@ mod tests {
                 "CICD_EMBEDDED_RUNNER_ENABLED" => Some(" off ".into()),
                 "CICD_RUNNER_QUEUE_TIMEOUT_SECONDS" => Some(" 0 ".into()),
                 "CICD_RUNNER_KEEP_WORKSPACE" => Some(" true ".into()),
+                "CICD_RUNNER_DOCKER_NETWORK" => Some(" workspace_cicd ".into()),
+                "CICD_RUNNER_SHARED_SOURCES_VOLUME" => Some(" runner_sources ".into()),
                 "CICD_RUNNER_REGISTRATION_TOKEN" => Some(" reg-token ".into()),
                 "CICD_AUTH_SECRET" => Some(" auth-secret ".into()),
                 "CICD_SECRETS_KEY" => Some(key.clone()),
@@ -634,6 +648,11 @@ mod tests {
         assert!(!config.runner.embedded_enabled);
         assert_eq!(config.runner.queue_timeout_seconds, None);
         assert!(config.runner.keep_workspace);
+        assert_eq!(config.runner.docker_network, "workspace_cicd");
+        assert_eq!(
+            config.runner.shared_sources_volume.as_deref(),
+            Some("runner_sources")
+        );
         assert_eq!(
             config.runner.registration_token.as_deref(),
             Some("reg-token")

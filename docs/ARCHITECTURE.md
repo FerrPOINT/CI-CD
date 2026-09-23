@@ -136,6 +136,8 @@ Composition root: чтение конфига, создание `PgPool`, реп
 | `CICD_ARTIFACT_RETENTION_DAYS` | TTL новых артефактов; default 30, диапазон `1..3650` |
 | `CICD_EMBEDDED_RUNNER_ENABLED` | `true` по умолчанию; `false` отключает embedded execution в backend |
 | `CICD_RUNNER_MODE` | `host` в local compose; `docker`/`host` в backend binary |
+| `CICD_RUNNER_DOCKER_NETWORK` | Docker network для embedded job-контейнеров; default сохраняет standalone Compose, umbrella deployment передаёт своё имя сети |
+| `CICD_RUNNER_SHARED_SOURCES_VOLUME` | Опциональный read-only volume, монтируемый в job как `/runner-sources`; отделён от writable workspace и Cargo cache |
 | `CICD_RUNNER_QUEUE_TIMEOUT_SECONDS` | safety timeout queued job без compatible runner-а; default 86400, `0` отключает |
 | `CICD_RUNNER_REGISTRATION_TOKEN` | bootstrap token для `/api/v1/runner/register`; пусто отключает external registration |
 | `CICD_RUNNER_CREDENTIAL` | bearer credential для уже зарегистрированного `forge-runner` |

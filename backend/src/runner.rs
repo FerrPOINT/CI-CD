@@ -47,6 +47,8 @@ pub struct RuntimeRunnerConfig {
     pub keep_workspace: bool,
     pub git_root: PathBuf,
     pub workspace_volume: String,
+    pub docker_network: String,
+    pub shared_sources_volume: Option<String>,
     pub artifacts: ArtifactsConfig,
     pub secrets: SecretsConfig,
 }
@@ -60,6 +62,8 @@ impl RuntimeRunnerConfig {
             keep_workspace: config.runner.keep_workspace,
             git_root: config.git.root.clone(),
             workspace_volume: config.runner.workspace_volume.clone(),
+            docker_network: config.runner.docker_network.clone(),
+            shared_sources_volume: config.runner.shared_sources_volume.clone(),
             artifacts: config.artifacts.clone(),
             secrets: config.secrets.clone(),
         }
@@ -983,6 +987,8 @@ async fn run_job_inner(
             &job.image,
             &command_shell,
             &config.workspace_volume,
+            &config.docker_network,
+            config.shared_sources_volume.as_deref(),
             &workspace_subdir,
         ));
         for (k, v) in &envs {
@@ -1863,6 +1869,8 @@ fn docker_run_args(
     image: &str,
     command: &str,
     volume_name: &str,
+    docker_network: &str,
+    shared_sources_volume: Option<&str>,
     workspace_subdir: &str,
 ) -> Vec<String> {
     let class = ResourceClass::from_env();
@@ -1875,7 +1883,7 @@ fn docker_run_args(
         // (crates.nu + git smart-http only); no-new-privileges and the rest
         // of the sandbox stay. `none` starves cargo of its registry.
         "--network".into(),
-        "sdlc-local_cicd".into(),
+        docker_network.into(),
         "--cap-drop".into(),
         "ALL".into(),
         "--security-opt".into(),
@@ -1915,6 +1923,14 @@ fn docker_run_args(
         // only, so the image toolchain (/usr/local/cargo/bin) stays intact.
         "--mount".into(),
         format!("type=volume,src={volume_name}_cargo,dst=/usr/local/cargo/registry"),
+    ]);
+    if let Some(volume) = shared_sources_volume {
+        args.extend([
+            "--mount".into(),
+            format!("type=volume,src={volume},dst=/runner-sources,readonly"),
+        ]);
+    }
+    args.extend([
         image.into(),
         "sh".into(),
         // NOT a login shell: `-l` sources /etc/profile and resets PATH,
@@ -1997,6 +2013,8 @@ mod tests {
             "rust:1.86",
             "cargo test",
             "forge_runner_workspaces",
+            "workspace_cicd",
+            Some("runner_sources"),
             "forge-runner-123",
         );
         assert!(args.iter().any(|arg| {
@@ -2011,7 +2029,7 @@ mod tests {
         // isolation comes from no-new-privileges + cap-drop + read-only rootfs.
         assert!(
             args.windows(2)
-                .any(|pair| pair == ["--network", "sdlc-local_cicd"])
+                .any(|pair| pair == ["--network", "workspace_cicd"])
         );
         assert!(
             args.windows(2)
@@ -2019,6 +2037,11 @@ mod tests {
         );
         assert!(args.windows(2).any(|pair| pair == ["--cap-drop", "ALL"]));
         assert!(args.iter().any(|arg| arg == "rust:1.86"));
+        assert!(
+            args.iter().any(|arg| {
+                arg == "type=volume,src=runner_sources,dst=/runner-sources,readonly"
+            })
+        );
         assert!(
             args.windows(3)
                 .any(|pair| pair == ["sh", "-c", "cargo test"])
@@ -2107,7 +2130,15 @@ mod tests {
 
     #[test]
     fn docker_args_carry_resource_class_limits() {
-        let args = docker_run_args("forge-job-rc", "alpine:3.21", "true", "v", "sub");
+        let args = docker_run_args(
+            "forge-job-rc",
+            "alpine:3.21",
+            "true",
+            "v",
+            "workspace_cicd",
+            None,
+            "sub",
+        );
         // Standard class defaults from env.
         assert!(args.windows(2).any(|p| p == ["--memory", "4g"]));
         assert!(args.windows(2).any(|p| p == ["--pids-limit", "512"]));
@@ -2129,7 +2160,15 @@ mod tests {
 
     #[test]
     fn seccomp_profile_mounted_into_job_container_when_available() {
-        let args = docker_run_args("forge-job-sec", "alpine:3.21", "true", "v", "sub");
+        let args = docker_run_args(
+            "forge-job-sec",
+            "alpine:3.21",
+            "true",
+            "v",
+            "workspace_cicd",
+            None,
+            "sub",
+        );
         if let Some(profile) = seccomp_profile_path() {
             let expected = format!("seccomp={profile}");
             assert!(
