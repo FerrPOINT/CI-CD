@@ -33,6 +33,8 @@ export interface JobLog {
 export interface JobLogPage {
   items: JobLog[]
   next_after: number | null
+  total: number
+  has_more_before: boolean
 }
 
 export interface JobAttempt {
@@ -151,6 +153,13 @@ export interface PullRequest {
   updated_at: string
   merged_at: string | null
   merge_commit_sha: string | null
+}
+
+export interface PullRequestPage {
+  items: PullRequest[]
+  total: number
+  limit: number
+  offset: number
 }
 
 export interface CreatePullRequestInput {
@@ -287,6 +296,7 @@ export interface NotificationEvent {
 }
 
 export type OutboxDelivery = components['schemas']['OutboxDelivery']
+export type OutboxDeliveryPage = components['schemas']['OutboxDeliveryPage']
 export type OutboxDeliveryAttempt = components['schemas']['OutboxDeliveryAttempt']
 export type OutboxDeliveryDetail = components['schemas']['OutboxDeliveryDetail']
 export type RequeuedOutboxDelivery = components['schemas']['RequeuedOutboxDelivery']
@@ -307,6 +317,8 @@ export interface AuditEvent {
   actor: string | null
   created_at: string
 }
+
+export type AuditLogPage = components['schemas']['AuditLogPage']
 
 export type UserRole = 'admin' | 'maintainer' | 'developer' | 'viewer'
 

@@ -176,6 +176,12 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
         Role::Developer,
     ),
     user(GET, "/api/v1/audit-log", Action::Read, Role::Maintainer),
+    user(
+        GET,
+        "/api/v1/audit-log/page",
+        Action::Read,
+        Role::Maintainer,
+    ),
     user(GET, "/api/v1/users", Action::Read, Role::Maintainer),
     user(POST, "/api/v1/users", Action::Admin, Role::Admin),
     user(PATCH, "/api/v1/users/{user_id}", Action::Admin, Role::Admin),
@@ -481,6 +487,12 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
     ),
     user(
         GET,
+        "/api/v1/projects/{project_id}/outbox-deliveries/page",
+        Action::Read,
+        Role::Viewer,
+    ),
+    user(
+        GET,
         "/api/v1/outbox-deliveries/{delivery_id}",
         Action::Read,
         Role::Viewer,
@@ -624,6 +636,18 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
         Role::Viewer,
     ),
     user(
+        GET,
+        "/api/v1/repos/{repo}/pulls/page",
+        Action::Read,
+        Role::Viewer,
+    ),
+    user(
+        GET,
+        "/api/v1/repos/{repo}/pulls/{number}",
+        Action::Read,
+        Role::Viewer,
+    ),
+    user(
         POST,
         "/api/v1/repos/{repo}/pulls",
         Action::Write,
@@ -760,6 +784,8 @@ mod tests {
         ));
         assert!(!allows(Role::Maintainer, "POST", "/api/v1/users"));
         assert!(allows(Role::Admin, "POST", "/api/v1/users"));
+        assert!(!allows(Role::Developer, "GET", "/api/v1/audit-log/page"));
+        assert!(allows(Role::Maintainer, "GET", "/api/v1/audit-log/page"));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef } from 'react'
 import { api, apiRetry, authenticatedFetch } from './client'
 import type {
@@ -10,7 +10,7 @@ import type {
 
   ApiToken,
   Artifact,
-  AuditEvent,
+  AuditLogPage,
   Commit,
   Comparison,
   CreateApiTokenInput,
@@ -26,7 +26,7 @@ import type {
   NotificationConfig,
   NotificationInput,
   NotificationEvent,
-  OutboxDelivery,
+  OutboxDeliveryPage,
   OutboxDeliveryDetail,
   Pipeline,
   PipelineDetail,
@@ -34,6 +34,8 @@ import type {
   ProjectReport,
   PullRequest,
   PullRequestAction,
+  PullRequestPage,
+  PullRequestStatus,
   RequeuedOutboxDelivery,
   Repository,
   RepositoryRef,
@@ -60,6 +62,9 @@ const KEYS = {
     ['repository-commits', repo, branch, page, pageSize] as const,
   comparison: (repo: string, from: string, to: string) => ['repository-comparison', repo, from, to] as const,
   pullRequests: (repo: string) => ['pull-requests', repo] as const,
+  pullRequestList: (repo: string, limit: number, offset: number, status: string, search: string) =>
+    [...KEYS.pullRequests(repo), 'list', limit, offset, status, search] as const,
+  pullRequest: (repo: string, number: number) => [...KEYS.pullRequests(repo), 'detail', number] as const,
   repositoryTree: (repo: string, gitRef: string, path: string) => ['repository-tree', repo, gitRef, path] as const,
   repositoryBlob: (repo: string, gitRef: string, path: string) => ['repository-blob', repo, gitRef, path] as const,
   repositoryTags: (repo: string) => ['repository-tags', repo] as const,
@@ -197,19 +202,37 @@ export function useJobLogs(jobId: string | undefined, attemptId?: string) {
 
 export function useJobLogPages(jobId: string | undefined, attemptId: string | undefined, search = '', live = false) {
   const q = search.trim()
+  const tailMode = q.length === 0
+  const initialPageParam: JobLogPageCursor = tailMode
+    ? { before: LOG_TAIL_CURSOR }
+    : { after: 0 }
   return useInfiniteQuery({
     queryKey: KEYS.attemptLogPages(jobId ?? '', attemptId ?? '', q),
-    initialPageParam: 0,
+    initialPageParam,
     queryFn: ({ pageParam }) => {
-      const params = new URLSearchParams({ limit: '200', after: String(pageParam) })
+      const params = new URLSearchParams({ limit: String(LOG_PAGE_SIZE) })
+      if ('before' in pageParam) params.set('before', String(pageParam.before))
+      else params.set('after', String(pageParam.after))
       if (q) params.set('q', q)
       return api<JobLogPage>(`/jobs/${jobId}/attempts/${attemptId}/logs/page?${params.toString()}`)
     },
-    getNextPageParam: (lastPage) => lastPage.next_after ?? undefined,
+    getNextPageParam: (lastPage): JobLogPageCursor | undefined => {
+      if (lastPage.next_after == null) return undefined
+      if (tailMode) {
+        return lastPage.has_more_before ? { before: lastPage.next_after } : undefined
+      }
+      return { after: lastPage.next_after }
+    },
     enabled: !!jobId && !!attemptId,
     refetchInterval: live ? 5000 : false,
   })
 }
+
+const LOG_PAGE_SIZE = 200
+// The API's exclusive `before` cursor is an int32 sequence.
+const LOG_TAIL_CURSOR = 2_147_483_647
+
+type JobLogPageCursor = { after: number } | { before: number }
 
 export function useAppendLog() {
   const qc = useQueryClient()
@@ -286,11 +309,33 @@ export function useRepositoryComparison(repo: string | undefined, from: string, 
   })
 }
 
-export function usePullRequests(repo: string | undefined) {
+export function usePullRequests(
+  repo: string | undefined,
+  options: { limit?: number; offset?: number; status?: PullRequestStatus; search?: string } = {},
+) {
+  const limit = options.limit ?? 20
+  const offset = options.offset ?? 0
+  const status = options.status ?? ''
+  const search = options.search?.trim() ?? ''
   return useQuery({
-    queryKey: KEYS.pullRequests(repo ?? ''),
-    queryFn: () => api<PullRequest[]>(`/repos/${repositoryPath(repo ?? '')}/pulls`),
+    queryKey: KEYS.pullRequestList(repo ?? '', limit, offset, status, search),
+    queryFn: () => {
+      const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+      if (status) params.set('status', status)
+      if (search) params.set('search', search)
+      return api<PullRequestPage>(`/repos/${repositoryPath(repo ?? '')}/pulls/page?${params}`)
+    },
     enabled: Boolean(repo),
+    retry: apiRetry,
+    placeholderData: keepPreviousData,
+  })
+}
+
+export function usePullRequest(repo: string | undefined, number: number | undefined) {
+  return useQuery({
+    queryKey: KEYS.pullRequest(repo ?? '', number ?? 0),
+    queryFn: () => api<PullRequest>(`/repos/${repositoryPath(repo ?? '')}/pulls/${number}`),
+    enabled: Boolean(repo && number),
     retry: apiRetry,
   })
 }
@@ -602,21 +647,26 @@ export function useDeleteWebhook() {
   })
 }
 
-export function useOutboxDeliveries(projectId: string | undefined, filters?: { status?: string; channel?: string; limit?: number }) {
+export function useOutboxDeliveries(projectId: string | undefined, filters?: { status?: string; channel?: string; limit?: number; offset?: number }) {
   return useQuery({
     queryKey: [
       ...PLATFORM_KEYS.outboxDeliveries(projectId ?? ''),
       filters?.status ?? 'all',
       filters?.channel ?? 'all',
       filters?.limit ?? 20,
+      filters?.offset ?? 0,
     ],
     queryFn: () => {
-      const params = new URLSearchParams({ limit: String(filters?.limit ?? 20) })
+      const params = new URLSearchParams({
+        limit: String(filters?.limit ?? 20),
+        offset: String(filters?.offset ?? 0),
+      })
       if (filters?.status) params.set('status', filters.status)
       if (filters?.channel) params.set('channel', filters.channel)
-      return api<OutboxDelivery[]>(`/projects/${projectId}/outbox-deliveries?${params.toString()}`)
+      return api<OutboxDeliveryPage>(`/projects/${projectId}/outbox-deliveries/page?${params.toString()}`)
     },
     enabled: Boolean(projectId),
+    placeholderData: keepPreviousData,
     refetchInterval: browserNotificationStreamEnabled() ? 10_000 : false,
   })
 }
@@ -727,8 +777,26 @@ export function useProjectReport(projectId: string | undefined) {
   })
 }
 
-export function useAuditLog() {
-  return useQuery({ queryKey: PLATFORM_KEYS.auditLog, queryFn: () => api<AuditEvent[]>('/audit-log') })
+export function useAuditLog(filters?: { action?: string; q?: string; limit?: number; offset?: number }) {
+  return useQuery({
+    queryKey: [
+      ...PLATFORM_KEYS.auditLog,
+      filters?.action ?? 'all',
+      filters?.q ?? '',
+      filters?.limit ?? 20,
+      filters?.offset ?? 0,
+    ],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        limit: String(filters?.limit ?? 20),
+        offset: String(filters?.offset ?? 0),
+      })
+      if (filters?.action) params.set('action', filters.action)
+      if (filters?.q) params.set('q', filters.q)
+      return api<AuditLogPage>(`/audit-log/page?${params.toString()}`)
+    },
+    placeholderData: keepPreviousData,
+  })
 }
 
 export function useUsers() {
