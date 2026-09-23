@@ -17,9 +17,9 @@
 
 ### Fixed
 
-- Seccomp-профиль Docker job теперь разрешает обычный `symlink` вместе с
-  `symlinkat`, поэтому pnpm может создать project link в store без снятия
-  остальных ограничений runner sandbox.
+- Seccomp-профиль Docker job теперь разрешает `symlink`, `symlinkat` и
+  используемый Node.js `sendfile`, поэтому pnpm может создать project link и
+  скопировать package-файлы без снятия остальных ограничений runner sandbox.
 - Новые внутренние Git-репозитории сразу используют `main` как символический
   `HEAD`, поэтому первый clone после push не открывает несуществующий `master`.
 - Большие наборы Git refs и tags больше не захватываются и не рендерятся

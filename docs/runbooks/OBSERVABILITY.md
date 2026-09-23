@@ -28,7 +28,7 @@ docker compose -f /opt/dev/sdlc/docker-compose.local.yml --profile observability
 `forge_jobs_failed_24h > 20` 15m.
 1. UI: Jobs → фильтр failed; или CLI `cicd-cli job attempts --id ...`.
 2. Логи попыток: `GET /api/v1/attempts/{id}/logs/page`.
-3. Частые причины: seccomp-профиль запретил syscall (EPERM/ENOSYS в error_tail — сначала воспроизведи команду в том же image с профилем и без него; package manager-ам нужны оба `symlink` и `symlinkat`; после обоснованного узкого изменения `deploy/forge-job-seccomp.json` повтори job), OOM по resource class (поднять `CICD_RUNNER_RESOURCE_CLASS`), инвалидный `.forge-ci.yml` (400 от parser).
+3. Частые причины: seccomp-профиль запретил syscall (EPERM/ENOSYS в error_tail — сначала воспроизведи команду в том же image с профилем и без него; Node/pnpm используют `symlink`, `symlinkat` и `sendfile`; после обоснованного узкого изменения `deploy/forge-job-seccomp.json` повтори job), OOM по resource class (поднять `CICD_RUNNER_RESOURCE_CLASS`), инвалидный `.forge-ci.yml` (400 от parser).
 
 ### ForgeQueueStuck (critical)
 queued > 0 и runners online = 0.
