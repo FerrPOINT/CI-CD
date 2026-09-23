@@ -1,0 +1,203 @@
+{
+  "states": [
+    {
+      "name": "page-1-light-375",
+      "width": 375,
+      "theme": "light",
+      "overflow": 0,
+      "smallTargets": [],
+      "nestedScrollers": [],
+      "serious": []
+    },
+    {
+      "name": "page-1-light-768",
+      "width": 768,
+      "theme": "light",
+      "overflow": 0,
+      "smallTargets": [],
+      "nestedScrollers": [],
+      "serious": []
+    },
+    {
+      "name": "page-1-light-1280",
+      "width": 1280,
+      "theme": "light",
+      "overflow": 0,
+      "smallTargets": [],
+      "nestedScrollers": [],
+      "serious": []
+    },
+    {
+      "name": "page-1-light-1920",
+      "width": 1920,
+      "theme": "light",
+      "overflow": 0,
+      "smallTargets": [],
+      "nestedScrollers": [],
+      "serious": []
+    },
+    {
+      "name": "page-1-light-2560",
+      "width": 2560,
+      "theme": "light",
+      "overflow": 0,
+      "smallTargets": [],
+      "nestedScrollers": [],
+      "serious": []
+    },
+    {
+      "name": "page-1-gray-375",
+      "width": 375,
+      "theme": "gray",
+      "overflow": 0,
+      "smallTargets": [],
+      "nestedScrollers": [],
+      "serious": []
+    },
+    {
+      "name": "page-1-gray-768",
+      "width": 768,
+      "theme": "gray",
+      "overflow": 0,
+      "smallTargets": [],
+      "nestedScrollers": [],
+      "serious": []
+    },
+    {
+      "name": "page-1-gray-1280",
+      "width": 1280,
+      "theme": "gray",
+      "overflow": 0,
+      "smallTargets": [],
+      "nestedScrollers": [],
+      "serious": []
+    },
+    {
+      "name": "page-1-gray-1920",
+      "width": 1920,
+      "theme": "gray",
+      "overflow": 0,
+      "smallTargets": [],
+      "nestedScrollers": [],
+      "serious": []
+    },
+    {
+      "name": "page-1-gray-2560",
+      "width": 2560,
+      "theme": "gray",
+      "overflow": 0,
+      "smallTargets": [],
+      "nestedScrollers": [],
+      "serious": []
+    },
+    {
+      "name": "page-1-dark-375",
+      "width": 375,
+      "theme": "dark",
+      "overflow": 0,
+      "smallTargets": [],
+      "nestedScrollers": [],
+      "serious": []
+    },
+    {
+      "name": "page-1-dark-768",
+      "width": 768,
+      "theme": "dark",
+      "overflow": 0,
+      "smallTargets": [],
+      "nestedScrollers": [],
+      "serious": []
+    },
+    {
+      "name": "page-1-dark-1280",
+      "width": 1280,
+      "theme": "dark",
+      "overflow": 0,
+      "smallTargets": [],
+      "nestedScrollers": [],
+      "serious": []
+    },
+    {
+      "name": "page-1-dark-1920",
+      "width": 1920,
+      "theme": "dark",
+      "overflow": 0,
+      "smallTargets": [],
+      "nestedScrollers": [],
+      "serious": []
+    },
+    {
+      "name": "page-1-dark-2560",
+      "width": 2560,
+      "theme": "dark",
+      "overflow": 0,
+      "smallTargets": [],
+      "nestedScrollers": [],
+      "serious": []
+    },
+    {
+      "name": "page-2-light-375",
+      "width": 375,
+      "theme": "light",
+      "overflow": 0,
+      "smallTargets": [],
+      "nestedScrollers": [],
+      "serious": []
+    },
+    {
+      "name": "action-filter-light-375",
+      "width": 375,
+      "theme": "light",
+      "overflow": 0,
+      "smallTargets": [],
+      "nestedScrollers": [],
+      "serious": []
+    },
+    {
+      "name": "search-light-375",
+      "width": 375,
+      "theme": "light",
+      "overflow": 0,
+      "smallTargets": [],
+      "nestedScrollers": [],
+      "serious": []
+    },
+    {
+      "name": "no-match-light-375",
+      "width": 375,
+      "theme": "light",
+      "overflow": 0,
+      "smallTargets": [],
+      "nestedScrollers": [],
+      "serious": []
+    },
+    {
+      "name": "error-light-375",
+      "width": 375,
+      "theme": "light",
+      "overflow": 0,
+      "smallTargets": [],
+      "nestedScrollers": [],
+      "serious": []
+    },
+    {
+      "name": "retry-light-375",
+      "width": 375,
+      "theme": "light",
+      "overflow": 0,
+      "smallTargets": [],
+      "nestedScrollers": [],
+      "serious": []
+    },
+    {
+      "name": "unsafe-page-guard-light-375",
+      "width": 375,
+      "theme": "light",
+      "overflow": 0,
+      "smallTargets": [],
+      "nestedScrollers": [],
+      "serious": []
+    }
+  ],
+  "unexpectedErrors": []
+}

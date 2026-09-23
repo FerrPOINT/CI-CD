@@ -741,7 +741,9 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 | `actor` | TEXT | NULL | — | Инициатор (NULL = system) |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
 
-> Append-only. GET `/audit-log` возвращает последние 200 событий.
+> Append-only. Legacy GET `/audit-log` возвращает последние 200 событий;
+> `/audit-log/page` читает полный журнал со stable `created_at DESC, id DESC`,
+> server pagination, exact action filter и literal search.
 
 ### 9.10 users
 
@@ -926,6 +928,8 @@ idx_schedule_fires_schedule_created ON schedule_fires(schedule_id, scheduled_for
 idx_schedule_fires_pending   ON schedule_fires(scheduled_for) WHERE status = 'pending'
 idx_webhooks_project         ON webhooks(project_id)
 idx_audit_log_created        ON audit_log(created_at DESC)
+idx_audit_log_created_id     ON audit_log(created_at DESC, id DESC)
+idx_audit_log_action_created_id ON audit_log(action, created_at DESC, id DESC)
 idx_pipelines_project_id     ON pipelines(project_id)
 idx_stages_pipeline_id       ON stages(pipeline_id)
 idx_jobs_stage_id            ON jobs(stage_id)

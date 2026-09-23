@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { GitBranch, GitCompareArrows, GitPullRequest, ChevronRight, Folder, FileText, Tag, Package, ArrowLeft, Plus, Pencil, Trash2 } from 'lucide-react'
@@ -17,6 +17,8 @@ import { Button } from '@sdlc/ui/ui'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@sdlc/ui/ui'
 
 const browserTabs = ['code', 'commits', 'branches', 'tags', 'releases'] as const
+const commitPageSize = 25
+const maxCommitPage = Math.floor(0xffffffff / commitPageSize) + 1
 
 function parentPath(path: string): string {
   return path.slice(0, path.lastIndexOf('/'))
@@ -45,19 +47,21 @@ export function RepositoryBrowserPage() {
   const tabParam = searchParams.get('tab')
   const tab = browserTabs.find((value) => value === tabParam) ?? 'code'
   const gitRef = searchParams.get('ref') || 'HEAD'
+  const rawCommitPage = Number(searchParams.get('commitPage'))
+  const commitPage = Number.isSafeInteger(rawCommitPage) && rawCommitPage > 0 && rawCommitPage <= maxCommitPage ? rawCommitPage : 1
   const filePath = searchParams.get('file') || null
   const dirPath = searchParams.get('dir') ?? (filePath ? parentPath(filePath) : '')
   const refsQuery = useRepositoryRefs(repo)
 
   if (!repo) return <p className="text-sm text-text-muted">{t('repositories.notFound')}</p>
 
-  function updateParams(changes: Record<string, string | null>) {
+  function updateParams(changes: Record<string, string | null>, options?: { replace?: boolean }) {
     const next = new URLSearchParams(searchParams)
     for (const [key, value] of Object.entries(changes)) {
       if (value) next.set(key, value)
       else next.delete(key)
     }
-    setSearchParams(next)
+    setSearchParams(next, options)
   }
 
   return (
@@ -108,7 +112,13 @@ export function RepositoryBrowserPage() {
             />
           </TabsContent>
           <TabsContent value="commits" className="mt-4">
-            <CommitsList repo={repo} gitRef={gitRef} locale={i18n.language} />
+            <CommitsList
+              repo={repo}
+              gitRef={gitRef}
+              locale={i18n.language}
+              page={commitPage}
+              onPageChange={(page, replace) => updateParams({ commitPage: page === 1 ? null : String(page) }, { replace })}
+            />
           </TabsContent>
           <TabsContent value="branches" className="mt-4">
             <BranchesList refsQuery={refsQuery} onSelect={(ref) => updateParams({ tab: null, ref: `refs/heads/${ref.name}`, dir: null, file: null })} />
@@ -124,9 +134,34 @@ export function RepositoryBrowserPage() {
   )
 }
 
-function CommitsList({ repo, gitRef, locale }: { repo: string; gitRef: string; locale: string }) {
+function CommitsList({ repo, gitRef, locale, page, onPageChange }: {
+  repo: string
+  gitRef: string
+  locale: string
+  page: number
+  onPageChange: (page: number, replace?: boolean) => void
+}) {
   const { t } = useTranslation()
-  const query = useRepositoryCommits(repo, gitRef)
+  const query = useRepositoryCommits(repo, gitRef, page, commitPageSize)
+
+  useEffect(() => {
+    if (page > 1 && query.data?.items.length === 0) onPageChange(1, true)
+  }, [onPageChange, page, query.data])
+
+  if (query.error && page > 1) {
+    return (
+      <div className="flex flex-wrap items-center gap-3 rounded-md border border-status-failed/40 bg-surface p-4 text-sm text-text-secondary" role="alert">
+        <span>{t('repositoryBrowser.commitsLoadError')}</span>
+        <Button type="button" size="sm" variant="outline" className="min-h-10 sm:min-h-10" onClick={() => void query.refetch()}>
+          {t('common.retry')}
+        </Button>
+        <Button type="button" size="sm" variant="ghost" className="min-h-10 sm:min-h-10" onClick={() => onPageChange(page - 1)}>
+          {t('repositoryBrowser.previousCommits')}
+        </Button>
+      </div>
+    )
+  }
+
   return (
     <QueryState
       data={query.data}
@@ -134,20 +169,33 @@ function CommitsList({ repo, gitRef, locale }: { repo: string; gitRef: string; l
       error={query.error}
       errorMessage={t('repositoryBrowser.commitsLoadError')}
       onRetry={() => void query.refetch()}
-      isEmpty={(commits) => commits.length === 0}
+      isEmpty={(result) => result.items.length === 0}
       empty={{ title: t('repositoryBrowser.noCommits') }}
     >
-      {(commits) => (
-        <ul className="divide-y divide-border rounded-md border border-border">
-          {commits.map((commit) => (
-            <li key={commit.sha} className="flex min-w-0 flex-col gap-1 px-3 py-2.5 text-sm sm:flex-row sm:items-center sm:gap-4">
-              <code className="shrink-0 text-xs text-accent">{commit.short_sha}</code>
-              <span className="min-w-0 flex-1 break-words font-medium">{commit.message}</span>
-              <span className="min-w-0 break-words text-xs text-text-secondary">{commit.author}</span>
-              <time className="shrink-0 text-xs text-text-muted" dateTime={commit.date}>{formatDate(commit.date, locale)}</time>
-            </li>
-          ))}
-        </ul>
+      {(result) => (
+        <section className="space-y-3" aria-busy={query.isFetching}>
+          <ul className="divide-y divide-border rounded-md border border-border">
+            {result.items.map((commit) => (
+              <li key={commit.sha} className="flex min-w-0 flex-col gap-1 px-3 py-2.5 text-sm sm:flex-row sm:items-center sm:gap-4">
+                <code className="shrink-0 text-xs text-accent">{commit.short_sha}</code>
+                <span className="min-w-0 flex-1 break-words font-medium">{commit.message}</span>
+                <span className="min-w-0 break-words text-xs text-text-secondary">{commit.author}</span>
+                <time className="shrink-0 text-xs text-text-muted" dateTime={commit.date}>{formatDate(commit.date, locale)}</time>
+              </li>
+            ))}
+          </ul>
+          {(page > 1 || result.hasMore) && (
+            <nav aria-label={t('repositoryBrowser.commitPages')} className="grid grid-cols-2 items-center gap-2 sm:flex sm:justify-end">
+              <Button type="button" size="sm" variant="outline" className="min-h-10 w-full sm:min-h-10 sm:w-auto" disabled={page === 1 || query.isFetching} onClick={() => onPageChange(page - 1)}>
+                {t('repositoryBrowser.previousCommits')}
+              </Button>
+              <span className="col-span-2 row-start-1 text-center text-sm text-text-muted sm:col-auto sm:row-auto" aria-live="polite">{t('repositoryBrowser.commitPage', { page })}</span>
+              <Button type="button" size="sm" variant="outline" className="min-h-10 w-full sm:min-h-10 sm:w-auto" disabled={!result.hasMore || query.isFetching} onClick={() => onPageChange(page + 1)}>
+                {t('repositoryBrowser.nextCommits')}
+              </Button>
+            </nav>
+          )}
+        </section>
       )}
     </QueryState>
   )

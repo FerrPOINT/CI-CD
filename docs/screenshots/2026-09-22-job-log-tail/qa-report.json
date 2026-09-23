@@ -1,0 +1,21 @@
+{
+  "logRequests": [
+    "?limit=200&before=2147483647",
+    "?limit=200&before=301",
+    "?limit=200&before=2147483647",
+    "?limit=200&before=302",
+    "?limit=200&after=0&q=error",
+    "?limit=200&before=2147483647",
+    "?limit=200&before=302"
+  ],
+  "runtimeErrors": [],
+  "seriousAccessibility": [],
+  "nestedScrollers": [
+    {
+      "tag": "pre",
+      "role": "log",
+      "label": "Логи"
+    }
+  ],
+  "smallTargets": []
+}
