@@ -268,6 +268,10 @@ function mockFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respon
     ])
   }
   if (path === `/repos/${repoName}/compare`) return json(comparison)
+  if (path === `/repos/${repoName}/pulls/page`) {
+    return json({ items: [pullRequest], total: 1, limit: 20, offset: 0 })
+  }
+  if (path === `/repos/${repoName}/pulls/7`) return json(pullRequest)
   if (path === `/repos/${repoName}/pulls`) return json([pullRequest])
   if (path === `/repos/${repoName}/tree`) {
     return json([{ path: 'src/main.rs', name: 'main.rs', kind: 'blob', size: 42, sha: 'abcdef1234567890' }])
@@ -405,8 +409,14 @@ function mockFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respon
   if (path === `/projects/${projectId}/reports/summary`) {
     return json({ total_pipelines: 4, successful_pipelines: 3, failed_pipelines: 1, success_rate: 0.75, average_duration_seconds: 90 })
   }
-  if (path === '/audit-log') {
-    return json([{ id: 1, action: 'project.created', resource_type: 'project', resource_id: projectId, actor: 'admin', created_at: now }])
+  if (path === '/audit-log/page') {
+    return json({
+      items: [{ id: 1, action: 'project.created', resource_type: 'project', resource_id: projectId, actor: 'admin', created_at: now }],
+      total: 1,
+      limit: 20,
+      offset: 0,
+      actions: ['project.created'],
+    })
   }
   if (path === '/api-tokens') {
     return json([
