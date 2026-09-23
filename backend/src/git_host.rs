@@ -66,6 +66,19 @@ fn repo_path(root: &Path, name: &str) -> PathBuf {
     root.join(format!("{name}.git"))
 }
 
+async fn init_bare_repository(path: &Path) -> Result<(), ApiError> {
+    let status = Command::new("git")
+        .args(["init", "--bare", "--quiet", "--initial-branch=main"])
+        .arg(path)
+        .status()
+        .await
+        .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
+    if !status.success() {
+        return Err(ApiError::bad_request("git init failed"));
+    }
+    Ok(())
+}
+
 fn configured_internal_token(internal_token: Option<&str>) -> Option<&str> {
     internal_token
         .map(str::trim)
@@ -156,15 +169,7 @@ pub async fn create_repository_core(
     tokio::fs::create_dir_all(&config.root)
         .await
         .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
-    let status = Command::new("git")
-        .args(["init", "--bare", "--quiet"])
-        .arg(&path)
-        .status()
-        .await
-        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
-    if !status.success() {
-        return Err(ApiError::bad_request("git init failed"));
-    }
+    init_bare_repository(&path).await?;
     let hook_path = path.join("hooks").join("post-receive");
     tokio::fs::write(
         &hook_path,
@@ -902,14 +907,13 @@ mod tests {
             .expect("create temp dir");
         // Minimal in-memory check is impossible without Postgres; verify hook + git layout directly.
         let path = repo_path(&dir, "demo");
-        let status = Command::new("git")
-            .args(["init", "--bare", "--quiet"])
-            .arg(&path)
-            .status()
-            .await
-            .expect("git init");
-        assert!(status.success());
-        assert!(path.join("HEAD").exists());
+        init_bare_repository(&path).await.expect("git init");
+        assert_eq!(
+            tokio::fs::read_to_string(path.join("HEAD"))
+                .await
+                .expect("read repository HEAD"),
+            "ref: refs/heads/main\n"
+        );
         let hook = post_receive_hook("demo", config.internal_token.as_deref());
         assert!(hook.contains("x-internal-token: test-internal"));
         assert!(hook.contains("demo"));
