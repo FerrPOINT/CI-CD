@@ -29,7 +29,7 @@ export function SsoCallbackPage() {
     return () => { active = false }
   }, [acceptSso, navigate])
   return <main className="grid min-h-screen place-items-center bg-background p-4">
-    {error ? <div className="space-y-4 text-center"><p role="alert">{error}</p><Button onClick={() => navigate('/login', { replace: true })}>Повторить вход</Button></div>
+    {error ? <div className="space-y-4 text-center"><p role="alert">{error}</p><Button className="min-h-10 sm:min-h-10" onClick={() => navigate('/login', { replace: true })}>Повторить вход</Button></div>
       : <p role="status">Завершаем вход...</p>}
   </main>
 }

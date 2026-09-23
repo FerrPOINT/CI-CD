@@ -20,7 +20,7 @@ export function LoginPage() {
       <PlatformMark withName />
       <h1 className="text-xl font-semibold">Вход в CI/CD</h1>
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-      <Button className="w-full" onClick={() => void beginSso(ssoConfig, returnTo).catch(() => setError('Central Auth временно недоступен.'))}>Войти через SDLC</Button>
+      <Button className="min-h-10 w-full sm:min-h-10" onClick={() => void beginSso(ssoConfig, returnTo).catch(() => setError('Central Auth временно недоступен.'))}>Войти через SDLC</Button>
     </div>
   </main>
 }

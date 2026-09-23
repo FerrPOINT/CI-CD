@@ -1,0 +1,1466 @@
+{
+  "generatedAt": "2026-09-23T02:23:31.370Z",
+  "url": "http://localhost:7712",
+  "liveProjects": {
+    "status": 200,
+    "count": 0
+  },
+  "matrix": "6 routes x 5 viewports x 3 themes",
+  "matrixCases": 90,
+  "runtimeErrors": [],
+  "expectedConsoleErrorCount": 45,
+  "failedRequests": [],
+  "expectedFailedResponses": [
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000002/pipelines"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/runners"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/runners"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/runners"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/runners"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects"
+    },
+    {
+      "method": "GET",
+      "status": 503,
+      "url": "http://localhost:7712/api/v1/projects"
+    },
+    {
+      "method": "POST",
+      "status": 500,
+      "url": "http://localhost:7712/api/v1/projects"
+    },
+    {
+      "method": "PATCH",
+      "status": 500,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "method": "DELETE",
+      "status": 500,
+      "url": "http://localhost:7712/api/v1/projects/00000000-0000-4000-8000-000000000001"
+    }
+  ],
+  "mutations": [
+    {
+      "method": "POST",
+      "path": "/projects"
+    },
+    {
+      "method": "PATCH",
+      "path": "/projects/00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "method": "DELETE",
+      "path": "/projects/00000000-0000-4000-8000-000000000001"
+    }
+  ],
+  "workflows": {
+    "partialRuns": {
+      "rowsKept": 8,
+      "recoveredLocally": true
+    },
+    "runnerRetry": {
+      "recoveredLocally": true
+    },
+    "projectRetry": {
+      "localizedError": true,
+      "recoveredLocally": true
+    },
+    "projectDirectory": {
+      "secondPageRows": 12,
+      "searchRows": 1,
+      "distinctNoMatch": true
+    },
+    "createFailure": {
+      "draftPreserved": true
+    },
+    "editFailure": {
+      "draftPreserved": true
+    },
+    "deleteFailure": {
+      "dialogPreserved": true
+    },
+    "settingsSearch": {
+      "filtered": true,
+      "noMatch": true,
+      "cleared": true
+    },
+    "usersHandoff": {
+      "target": "http://localhost:7772/users"
+    },
+    "mobileDrawer": {
+      "focusTrapped": true,
+      "escapeClosed": true,
+      "focusReturned": true
+    }
+  },
+  "results": [
+    {
+      "route": "dashboard",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "projects",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "settings",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "users",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "dashboard",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "projects",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "settings",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "users",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "dashboard",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "projects",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "settings",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "users",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "dashboard",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "projects",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "settings",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "users",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "dashboard",
+      "viewport": {
+        "width": 2560,
+        "height": 1440
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "projects",
+      "viewport": {
+        "width": 2560,
+        "height": 1440
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "settings",
+      "viewport": {
+        "width": 2560,
+        "height": 1440
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "users",
+      "viewport": {
+        "width": 2560,
+        "height": 1440
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "dashboard",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "projects",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "settings",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "users",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "dashboard",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "projects",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "settings",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "users",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "dashboard",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "projects",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "settings",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "users",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "dashboard",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "projects",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "settings",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "users",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "dashboard",
+      "viewport": {
+        "width": 2560,
+        "height": 1440
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "projects",
+      "viewport": {
+        "width": 2560,
+        "height": 1440
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "settings",
+      "viewport": {
+        "width": 2560,
+        "height": 1440
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "users",
+      "viewport": {
+        "width": 2560,
+        "height": 1440
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "dashboard",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "projects",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "settings",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "users",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "dashboard",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "projects",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "settings",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "users",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "dashboard",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "projects",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "settings",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "users",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "dashboard",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "projects",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "settings",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "users",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "dashboard",
+      "viewport": {
+        "width": 2560,
+        "height": 1440
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "projects",
+      "viewport": {
+        "width": 2560,
+        "height": 1440
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "settings",
+      "viewport": {
+        "width": 2560,
+        "height": 1440
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "users",
+      "viewport": {
+        "width": 2560,
+        "height": 1440
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "login",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "sso-callback-error",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "login",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "sso-callback-error",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "login",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "sso-callback-error",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "login",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "sso-callback-error",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "login",
+      "viewport": {
+        "width": 2560,
+        "height": 1440
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "sso-callback-error",
+      "viewport": {
+        "width": 2560,
+        "height": 1440
+      },
+      "theme": "light",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "login",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "sso-callback-error",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "login",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "sso-callback-error",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "login",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "sso-callback-error",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "login",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "sso-callback-error",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "login",
+      "viewport": {
+        "width": 2560,
+        "height": 1440
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "sso-callback-error",
+      "viewport": {
+        "width": 2560,
+        "height": 1440
+      },
+      "theme": "gray",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "login",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "sso-callback-error",
+      "viewport": {
+        "width": 375,
+        "height": 812
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "login",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "sso-callback-error",
+      "viewport": {
+        "width": 768,
+        "height": 900
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "login",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "sso-callback-error",
+      "viewport": {
+        "width": 1280,
+        "height": 900
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "login",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "sso-callback-error",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "login",
+      "viewport": {
+        "width": 2560,
+        "height": 1440
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    },
+    {
+      "route": "sso-callback-error",
+      "viewport": {
+        "width": 2560,
+        "height": 1440
+      },
+      "theme": "dark",
+      "horizontalOverflow": 0,
+      "undersizedTargets": [],
+      "unnamedControls": [],
+      "unexpectedScrollers": [],
+      "seriousAxe": []
+    }
+  ]
+}

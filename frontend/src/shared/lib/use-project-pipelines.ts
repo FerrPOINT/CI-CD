@@ -14,5 +14,8 @@ export function useProjectPipelines(projects: Project[]) {
     runs: lists.flatMap(q => q.data ?? []),
     isLoading: lists.some(q => q.isPending),
     error: lists.find(q => q.error)?.error ?? null,
+    failedCount: lists.filter(q => q.error).length,
+    hasData: lists.some(q => q.data !== undefined),
+    refetch: () => Promise.all(lists.map(q => q.refetch())),
   }
 }
