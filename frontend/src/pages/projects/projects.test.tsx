@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   create: vi.fn(),
   update: vi.fn(),
   remove: vi.fn(),
+  refetch: vi.fn(),
 }));
 
 vi.mock("react-i18next", () => ({
@@ -39,7 +40,12 @@ function setup(count: number) {
     data: Array.from({ length: count }, (_, index) => project(index + 1)),
     isLoading: false,
     error: null,
+    refetch: mocks.refetch,
   });
+  renderPage();
+}
+
+function renderPage() {
   render(
     <MemoryRouter>
       <ProjectsPage />
@@ -163,5 +169,39 @@ describe("ProjectsPage", () => {
 
     act(() => mocks.remove.mock.calls[0][1].onSuccess());
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("offers a local retry after the initial project request fails", () => {
+    mocks.useProjects.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error("Service Unavailable"),
+      refetch: mocks.refetch,
+    });
+    renderPage();
+
+    expect(screen.getByRole("alert")).toHaveTextContent("projects.loadError");
+    expect(screen.queryByText("Service Unavailable")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "common.retry" }));
+    expect(mocks.refetch).toHaveBeenCalledOnce();
+  });
+
+  it("keeps stale project rows visible when a refresh fails", () => {
+    mocks.useProjects.mockReturnValue({
+      data: [project(1)],
+      isLoading: false,
+      error: new Error("Service Unavailable"),
+      refetch: mocks.refetch,
+    });
+    renderPage();
+
+    expect(
+      screen.getByRole("link", { name: "projects.openPipelines Project 01" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "projects.refreshError",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "common.retry" }));
+    expect(mocks.refetch).toHaveBeenCalledOnce();
   });
 });

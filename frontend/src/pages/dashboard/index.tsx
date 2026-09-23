@@ -8,18 +8,48 @@ import { Button } from '@sdlc/ui/ui'
 import { ArrowRight, Clock3, FolderGit2, Play, Server } from 'lucide-react'
 import { summarizePipelines } from './model'
 
+function RetryNotice({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const { t } = useTranslation()
+
+  return (
+    <div role="alert" className="flex flex-wrap items-center gap-3 border-l-2 border-danger py-2 pl-3 text-sm text-text-secondary">
+      <span className="min-w-0 flex-1">{message}</span>
+      <Button type="button" size="sm" variant="outline" className="min-h-10 sm:min-h-10" onClick={onRetry}>
+        {t('common.retry')}
+      </Button>
+    </div>
+  )
+}
+
 export function DashboardPage() {
   const { t, i18n } = useTranslation()
-  const { data: projects = [], isLoading: projectsLoading, error: projectsError } = useProjects()
-  const { data: runners = [], isLoading: runnersLoading, error: runnersError } = useRunners()
+  const {
+    data: projectsData,
+    isLoading: projectsLoading,
+    error: projectsError,
+    refetch: refetchProjects,
+  } = useProjects()
+  const {
+    data: runnersData,
+    isLoading: runnersLoading,
+    error: runnersError,
+    refetch: refetchRunners,
+  } = useRunners()
+  const projects = projectsData ?? []
+  const runners = runnersData ?? []
+  const hasProjectData = projectsData !== undefined
+  const hasRunnerData = runnersData !== undefined
   const pipelineQuery = useProjectPipelines(projects)
   const summary = summarizePipelines(pipelineQuery.runs)
   const projectNames = new Map(projects.map(project => [project.id, project.name]))
   const unavailableRunners = runners.filter(runner => runner.status !== 'online').length
-  const runsReady = !projectsLoading && !projectsError && !pipelineQuery.isLoading && !pipelineQuery.error
+  const runsReady = !projectsLoading
+    && hasProjectData
+    && !pipelineQuery.isLoading
+    && (projects.length === 0 || pipelineQuery.hasData)
 
   const stats = [
-    { label: t('dashboard.projects'), value: projectsLoading ? '…' : projectsError ? '—' : projects.length, tone: 'text-text-primary' },
+    { label: t('dashboard.projects'), value: projectsLoading && !hasProjectData ? '…' : hasProjectData ? projects.length : '—', tone: 'text-text-primary' },
     { label: t('dashboard.queued'), value: runsReady ? summary.queued : pipelineQuery.isLoading ? '…' : '—', tone: 'text-text-primary' },
     { label: t('dashboard.running'), value: runsReady ? summary.running : pipelineQuery.isLoading ? '…' : '—', tone: 'text-warning' },
     { label: t('dashboard.failed'), value: runsReady ? summary.failed : pipelineQuery.isLoading ? '…' : '—', tone: 'text-danger' },
@@ -29,7 +59,7 @@ export function DashboardPage() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-bold sm:text-2xl">{t('navigation.dashboard')}</h1>
-        <Button asChild size="sm">
+        <Button asChild size="sm" className="min-h-10 sm:min-h-10">
           <Link to="/projects"><FolderGit2 className="h-4 w-4" />{t('navigation.projects')}</Link>
         </Button>
       </div>
@@ -43,6 +73,13 @@ export function DashboardPage() {
         ))}
       </div>
 
+      {projectsError && hasProjectData && (
+        <RetryNotice
+          message={t('dashboard.projectsRefreshError')}
+          onRetry={() => { void refetchProjects() }}
+        />
+      )}
+
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.7fr)_minmax(18rem,1fr)]">
         <section className="min-w-0" aria-labelledby="recent-runs-heading">
           <div className="mb-2 flex items-center justify-between gap-3">
@@ -50,47 +87,59 @@ export function DashboardPage() {
             {projects.length > 0 && <span className="text-xs text-text-muted">{t('dashboard.latestEight')}</span>}
           </div>
           <QueryState
-            data={projects}
+            data={projectsData}
             isLoading={projectsLoading}
-            error={projectsError}
+            error={hasProjectData ? null : projectsError}
+            errorMessage={t('dashboard.projectsError')}
+            onRetry={() => { void refetchProjects() }}
             isEmpty={list => list.length === 0}
             empty={{ title: t('dashboard.noProjects'), description: t('dashboard.noProjectsHint') }}
           >
             {() => pipelineQuery.isLoading ? (
               <div role="status" className="py-5 text-sm text-text-muted">{t('common.loading')}</div>
-            ) : pipelineQuery.error ? (
-              <div role="alert" className="border-l-2 border-danger py-2 pl-3 text-sm text-text-secondary">{t('dashboard.runsError')}</div>
-            ) : summary.recent.length === 0 ? (
-              <div className="border-y border-border py-5 text-sm text-text-muted">{t('dashboard.noRuns')}</div>
             ) : (
-              <ul className="divide-y divide-border border-y border-border">
-                {summary.recent.map(run => (
-                  <li key={run.id}>
-                    <Link to={`/pipelines/${run.id}`} className="flex min-h-14 items-center gap-3 py-2 transition-colors hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-accent">
-                      <span aria-hidden className={`h-2 w-2 shrink-0 rounded-full ${run.status === 'success' ? 'bg-success' : run.status === 'failed' ? 'bg-danger' : run.status === 'running' ? 'bg-warning' : 'bg-text-muted'}`} />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-medium">{projectNames.get(run.project_id) ?? run.project_id}</span>
-                        <span className="block truncate text-xs text-text-muted">{run.git_ref}</span>
-                      </span>
-                      <span className="hidden shrink-0 text-xs text-text-muted sm:block">{formatDate(run.created_at, i18n.language)}</span>
-                      <span className="w-24 shrink-0 text-right text-xs">{t(`pipelines.${run.status}`)}</span>
-                      <ArrowRight className="h-4 w-4 shrink-0 text-text-muted" aria-hidden />
-                    </Link>
-                  </li>
-                ))}
-              </ul>
+              <div className="space-y-3">
+                {pipelineQuery.error && (
+                  <RetryNotice
+                    message={pipelineQuery.hasData
+                      ? t('dashboard.runsPartialError', { count: pipelineQuery.failedCount })
+                      : t('dashboard.runsError')}
+                    onRetry={() => { void pipelineQuery.refetch() }}
+                  />
+                )}
+                {pipelineQuery.error && !pipelineQuery.hasData ? null : summary.recent.length === 0 ? (
+                  <div className="border-y border-border py-5 text-sm text-text-muted">{t('dashboard.noRuns')}</div>
+                ) : (
+                  <ul className="divide-y divide-border border-y border-border">
+                    {summary.recent.map(run => (
+                      <li key={run.id}>
+                        <Link to={`/pipelines/${run.id}`} className="flex min-h-14 items-center gap-3 py-2 transition-colors hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-accent">
+                          <span aria-hidden className={`h-2 w-2 shrink-0 rounded-full ${run.status === 'success' ? 'bg-success' : run.status === 'failed' ? 'bg-danger' : run.status === 'running' ? 'bg-warning' : 'bg-text-muted'}`} />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium">{projectNames.get(run.project_id) ?? run.project_id}</span>
+                            <span className="block truncate text-xs text-text-muted">{run.git_ref}</span>
+                          </span>
+                          <span className="hidden shrink-0 text-xs text-text-muted sm:block">{formatDate(run.created_at, i18n.language)}</span>
+                          <span className="w-24 shrink-0 text-right text-xs">{t(`pipelines.${run.status}`)}</span>
+                          <ArrowRight className="h-4 w-4 shrink-0 text-text-muted" aria-hidden />
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             )}
           </QueryState>
           {projects.length > 0 && <p className="mt-2 text-xs text-text-muted">{t('dashboard.runsScope')}</p>}
         </section>
 
         <div className="space-y-5">
-          {(projects.length > 0 || projectsLoading || projectsError) && <section aria-labelledby="projects-heading">
+          {(projects.length > 0 || projectsLoading) && <section aria-labelledby="projects-heading">
             <div className="mb-2 flex items-center justify-between gap-3">
               <h2 id="projects-heading" className="text-base font-semibold">{t('navigation.projects')}</h2>
               <Link to="/projects" className="inline-flex min-h-10 items-center gap-1 text-sm text-accent hover:underline">{t('dashboard.allProjects')} <ArrowRight className="h-4 w-4" /></Link>
             </div>
-            <QueryState data={projects} isLoading={projectsLoading} error={projectsError} isEmpty={list => list.length === 0} empty={{ title: t('projects.empty') }}>
+            <QueryState data={projectsData} isLoading={projectsLoading} error={null} isEmpty={list => list.length === 0} empty={{ title: t('projects.empty') }}>
               {() => <ul className="divide-y divide-border border-y border-border">
                 {projects.slice(0, 6).map(project => (
                   <li key={project.id}>
@@ -111,10 +160,17 @@ export function DashboardPage() {
               <h2 id="runners-heading" className="text-base font-semibold">{t('navigation.runners')}</h2>
               <Link to="/runners" className="inline-flex min-h-10 items-center gap-1 text-sm text-accent hover:underline">{t('dashboard.manageRunners')} <ArrowRight className="h-4 w-4" /></Link>
             </div>
-            <div className="flex items-center gap-3 border-y border-border py-3 text-sm">
-              <Server className="h-4 w-4 shrink-0 text-text-muted" aria-hidden />
-              {runnersLoading ? <span>{t('common.loading')}</span> : runnersError ? <span role="alert">{t('dashboard.runnersError')}</span> : runners.length === 0 ? <span className="text-text-muted">{t('dashboard.noRunners')}</span> : (
-                <span>{t('dashboard.runnerHealth', { online: runners.length - unavailableRunners, total: runners.length })}{unavailableRunners > 0 && <span className="ml-2 text-warning">{t('dashboard.unavailableRunners', { count: unavailableRunners })}</span>}</span>
+            <div className="space-y-2">
+              <div className="flex items-center gap-3 border-y border-border py-3 text-sm">
+                <Server className="h-4 w-4 shrink-0 text-text-muted" aria-hidden />
+                {runnersLoading && !hasRunnerData ? <span>{t('common.loading')}</span> : runnersError && !hasRunnerData ? (
+                  <RetryNotice message={t('dashboard.runnersError')} onRetry={() => { void refetchRunners() }} />
+                ) : runners.length === 0 ? <span className="text-text-muted">{t('dashboard.noRunners')}</span> : (
+                  <span>{t('dashboard.runnerHealth', { online: runners.length - unavailableRunners, total: runners.length })}{unavailableRunners > 0 && <span className="ml-2 text-warning">{t('dashboard.unavailableRunners', { count: unavailableRunners })}</span>}</span>
+                )}
+              </div>
+              {runnersError && hasRunnerData && (
+                <RetryNotice message={t('dashboard.runnersRefreshError')} onRetry={() => { void refetchRunners() }} />
               )}
             </div>
           </section>

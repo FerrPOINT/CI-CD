@@ -41,7 +41,9 @@
     "actionsFor": "Actions for project {{name}}",
     "pages": "Project pages",
     "previous": "Previous",
-    "next": "Next"
+    "next": "Next",
+    "loadError": "Could not load projects.",
+    "refreshError": "Could not refresh projects. Previously loaded data is still shown."
   },
   "pipelines": {
     "title": "Pipelines",
@@ -754,12 +756,16 @@
     "noProjects": "No projects yet",
     "noProjectsHint": "Add a project to start running pipelines.",
     "noRuns": "No runs yet. Open a project to start a pipeline.",
+    "projectsError": "Could not load projects.",
+    "projectsRefreshError": "Could not refresh projects. Previously loaded data is still shown.",
     "runsError": "Could not load runs. Try again later.",
+    "runsPartialError": "Could not load runs for some projects: {{count}}. Available data is still shown.",
     "runsScope": "Summary covers accessible projects and loaded runs.",
     "allProjects": "All projects",
     "manageRunners": "Manage",
     "noRunners": "No runners connected.",
     "runnersError": "Could not load runner status.",
+    "runnersRefreshError": "Could not refresh runner status. Previously loaded data is still shown.",
     "runnerHealth": "Online: {{online}} of {{total}}",
     "unavailableRunners": "Unavailable or paused: {{count}}",
     "chooseProject": "Choose project to run"

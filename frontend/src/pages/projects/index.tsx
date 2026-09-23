@@ -42,7 +42,14 @@ const emptyForm = { name: "", repository_url: "", default_branch: "main" };
 
 export function ProjectsPage() {
   const { t } = useTranslation();
-  const { data: projects = [], isLoading, error: listError } = useProjects();
+  const {
+    data: projectsData,
+    isLoading,
+    error: listError,
+    refetch,
+  } = useProjects();
+  const projects = projectsData ?? [];
+  const hasProjectData = projectsData !== undefined;
   const createProject = useCreateProject();
   const updateProject = useUpdateProject();
   const deleteProject = useDeleteProject();
@@ -185,10 +192,36 @@ export function ProjectsPage() {
         </form>
       )}
 
+      {listError && hasProjectData && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-3 border-l-2 border-danger py-2 pl-3 text-sm text-text-secondary"
+        >
+          <span className="min-w-0 flex-1">
+            {t("projects.refreshError")}
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="min-h-10 sm:min-h-10"
+            onClick={() => {
+              void refetch();
+            }}
+          >
+            {t("common.retry")}
+          </Button>
+        </div>
+      )}
+
       <QueryState
-        data={projects}
+        data={projectsData}
         isLoading={isLoading}
-        error={listError}
+        error={hasProjectData ? null : listError}
+        errorMessage={t("projects.loadError")}
+        onRetry={() => {
+          void refetch();
+        }}
         isEmpty={(list) => list.length === 0}
         empty={{ title: t("projects.empty") }}
       >
