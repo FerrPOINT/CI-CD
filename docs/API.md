@@ -72,8 +72,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 34,
-    "latest_required_version": 34,
+    "latest_applied_version": 35,
+    "latest_required_version": 35,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],
@@ -1209,7 +1209,46 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 
 | Метод | Путь | Назначение |
 |---|---|---|
-| GET | `/audit-log` | Последние 200 событий аудита |
+| GET | `/audit-log` | Legacy-массив последних 200 событий аудита |
+| GET | `/audit-log/page` | Полный журнал с серверной пагинацией, поиском и action-фильтром |
+
+`GET /audit-log/page` сортирует события стабильно по `created_at DESC, id DESC`.
+`action` сравнивается точно, а `q` выполняет case-insensitive literal substring
+search по raw-полям `action`, `resource_type`, `actor` и `resource_id`. Символы
+`%`, `_` и `\` в `q` не являются SQL wildcard. Endpoint требует maintainer role
+в текущей route-policy, как и legacy endpoint.
+
+| Параметр | Тип | Default | Ограничение |
+|---|---|---:|---|
+| `limit` | integer | `20` | `1..200` |
+| `offset` | integer | `0` | `0..2147483647` |
+| `action` | string | — | точное значение, не более 128 символов |
+| `q` | string | — | literal substring, не более 128 символов |
+
+**Response 200:**
+```json
+{
+  "items": [
+    {
+      "id": 2401,
+      "action": "auth.login_failed",
+      "resource_type": "user",
+      "resource_id": "550e8400-e29b-41d4-a716-446655440000",
+      "actor": "alice@example.com",
+      "created_at": "2026-09-22T18:00:00Z"
+    }
+  ],
+  "total": 2417,
+  "limit": 20,
+  "offset": 20,
+  "actions": ["auth.login_failed", "auth.login_success"]
+}
+```
+
+`actions` содержит отсортированный набор действий всего журнала и не зависит от
+текущей страницы или фильтров. `400` возвращается для невалидных границ или
+слишком длинных `action`/`q`. Legacy `/audit-log` намеренно сохранён без
+изменения response shape для CLI и внешних клиентов.
 
 ### Users & Roles
 
@@ -1439,6 +1478,7 @@ Git Smart HTTP допускает unauthenticated read только для `repo
 | `/api/v1/auth/principal` | Auth |
 | `/api/v1/artifacts/{artifact_id}/download` | Artifacts |
 | `/api/v1/audit-log` | Audit |
+| `/api/v1/audit-log/page` | Audit |
 | `/api/v1/auth/login` | Auth |
 | `/api/v1/auth/refresh` | Auth |
 | `/api/v1/auth/logout` | Auth |

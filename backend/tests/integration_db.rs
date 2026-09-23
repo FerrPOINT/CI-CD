@@ -7565,6 +7565,108 @@ async fn project_dispatch_limit_defers_work_beyond_cap() {
     let _ = queue_ids;
 }
 
+#[tokio::test]
+async fn audit_log_page_reads_beyond_legacy_limit_and_applies_filters() {
+    let pool = test_pool().await;
+    let marker = format!("audit-page-{}", Uuid::new_v4().simple());
+    sqlx::query(
+        "INSERT INTO audit_log (action, resource_type, resource_id, actor, created_at) \
+         SELECT CASE WHEN n % 2 = 0 THEN 'audit.page.even' ELSE 'audit.page.odd' END, \
+                'pipeline', gen_random_uuid(), $1 || '-' || n::text, \
+                TIMESTAMPTZ '2026-01-01T00:00:00Z' + n * INTERVAL '1 millisecond' \
+         FROM generate_series(1, 205) AS n",
+    )
+    .bind(&marker)
+    .execute(&pool)
+    .await
+    .expect("insert audit page fixtures");
+
+    let created_index: Option<String> =
+        sqlx::query_scalar("SELECT to_regclass('idx_audit_log_created_id')::text")
+            .fetch_one(&pool)
+            .await
+            .expect("read audit ordering index");
+    assert_eq!(created_index.as_deref(), Some("idx_audit_log_created_id"));
+
+    let action_index: Option<String> =
+        sqlx::query_scalar("SELECT to_regclass('idx_audit_log_action_created_id')::text")
+            .fetch_one(&pool)
+            .await
+            .expect("read audit pagination index");
+    assert_eq!(
+        action_index.as_deref(),
+        Some("idx_audit_log_action_created_id")
+    );
+
+    let app = authenticated_app(pool).await;
+    let page = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/audit-log/page?limit=5&offset=200&q={marker}"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(page.status(), StatusCode::OK);
+    let page = response_json(page).await;
+    assert_eq!(page["total"], 205);
+    assert_eq!(page["limit"], 5);
+    assert_eq!(page["offset"], 200);
+    assert_eq!(page["items"].as_array().unwrap().len(), 5);
+    assert_eq!(page["items"][0]["actor"], format!("{marker}-5"));
+    assert_eq!(page["items"][4]["actor"], format!("{marker}-1"));
+    assert!(
+        page["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|action| action == "audit.page.even")
+    );
+    assert!(
+        page["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|action| action == "audit.page.odd")
+    );
+
+    let filtered = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/audit-log/page?limit=3&offset=3&action=audit.page.even&q={marker}"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(filtered.status(), StatusCode::OK);
+    let filtered = response_json(filtered).await;
+    assert_eq!(filtered["total"], 102);
+    assert_eq!(filtered["items"].as_array().unwrap().len(), 3);
+    assert!(
+        filtered["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|event| event["action"] == "audit.page.even")
+    );
+
+    let invalid = app
+        .oneshot(
+            Request::get("/api/v1/audit-log/page?offset=-1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+}
+
 async fn response_json(response: axum::response::Response) -> serde_json::Value {
     let body = to_bytes(response.into_body(), usize::MAX)
         .await

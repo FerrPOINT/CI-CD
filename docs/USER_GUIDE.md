@@ -310,11 +310,22 @@ Embedded runner inject-ит только объявленные `jobs.required_s
 **Статус процедуры: Current verified.**
 
 1. Откройте **Audit log** (`/audit-log`).
-2. Найдите действие по времени, actor, resource и action.
-3. Для интеграции запросите `GET /api/v1/audit-log`; API возвращает не более последних 200 событий.
-4. Сохраняйте критичные расследования вне Forge, если нужен срок хранения или экспорт больше встроенного окна.
+2. Используйте поиск по инициатору, исходному имени действия, типу или ID
+   ресурса; для конкретного действия выберите точный фильтр. Страница и фильтры
+   сохраняются
+   в URL, поэтому результат можно открыть повторно или передать коллеге.
+3. Переходите по страницам полного журнала; счётчик показывает точный диапазон
+   и общее число совпадений, а не только последние 200 событий.
+4. Для интеграции используйте `GET /api/v1/audit-log/page`. Legacy
+   `GET /api/v1/audit-log` продолжает возвращать массив последних 200 событий.
+5. Сохраняйте критичные расследования вне Forge, если нужен отдельный срок
+   хранения или экспорт.
 
-Аудит append-only для текущих mutation-операций, включая runner, secret, artifact и token. Полный authorisation context, фильтры, pagination и export - **Target approved**. Он не заменяет delivery history webhooks; execution attempts смотрите в деталях job и через attempts API.
+Аудит append-only для текущих mutation-операций, включая runner, secret,
+artifact и token. Серверные поиск, action-фильтр и pagination реализованы;
+полный authorisation context, tenant/project scope и export - **Target
+approved**. Он не заменяет delivery history webhooks; execution attempts
+смотрите в деталях задания и через API попыток.
 
 ![Журнал аудита](screenshots/19-audit-log.png)
 

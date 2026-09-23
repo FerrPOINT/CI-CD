@@ -22,7 +22,7 @@
 | Environments/deployments | ✅ MVP | metadata + append-only deployment history; protected environments require approval before backend starts the linked deployment pipeline, decisions are stored in `deployment_approvals`, and rollback creates a separate `rollback_of_id` deployment record. Richer policy rules, multi-approver workflows and rollback orchestration remain target |
 | Reports | ✅ | агрегаты success rate/duration |
 | Users/roles + API-токены | ✅ | хранение + enforcement при `CICD_AUTH_SECRET`; Dashboard user-create передаёт optional password для interactive login; session-bound access JWT с `users.token_version`, refresh session rotate/logout и session-family reuse revocation; новые PAT требуют project scope, scopes и expiry; глобальная роль ограничивает максимум прав |
-| Audit log | ✅ | append-only, последние 200 |
+| Audit log | ✅ | append-only; legacy array последних 200 сохранён, полный `/audit-log/page` поддерживает server pagination, exact action filter, literal search и stable ordering |
 | Schedules | ✅ MVP | строгий 5-польный UTC cron, persisted `next_fire_at`, unique `schedule_fires` slot и idempotent pipeline trigger; строки с `last_fire_error` ждут явного PATCH/исправления; IANA timezone/DST/misfire и multi-replica leases остаются target |
 | Outgoing webhooks | ✅ MVP | terminal pipeline event -> `domain_events`/`outbox_messages`; basic retry/backoff, optional HMAC |
 | Outbox delivery history | ✅ MVP | project-scoped paged `/outbox-deliveries/page` API показывает всю фильтруемую историю, статус, attempts, `failed_at`/`last_error`; failed delivery можно явно requeue новой generation |
