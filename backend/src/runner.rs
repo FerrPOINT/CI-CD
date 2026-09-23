@@ -2181,6 +2181,28 @@ mod tests {
     }
 
     #[test]
+    fn seccomp_profile_allows_package_manager_symlink_syscalls() {
+        let profile_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../deploy/forge-job-seccomp.json");
+        let profile: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&profile_path).expect("read seccomp profile"),
+        )
+        .expect("parse seccomp profile");
+        let allowed = profile["syscalls"]
+            .as_array()
+            .expect("syscalls array")
+            .iter()
+            .filter(|rule| rule["action"] == "SCMP_ACT_ALLOW")
+            .filter_map(|rule| rule["names"].as_array())
+            .flatten()
+            .filter_map(serde_json::Value::as_str)
+            .collect::<std::collections::HashSet<_>>();
+
+        assert!(allowed.contains("symlink"));
+        assert!(allowed.contains("symlinkat"));
+    }
+
+    #[test]
     fn ssh_urls_are_detected_for_early_rejection() {
         // The embedded runner cannot SSH-clone; these URLs must be caught
         // before spawning git so the job gets a clear error, not "cannot

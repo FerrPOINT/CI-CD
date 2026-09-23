@@ -180,6 +180,7 @@
         "stat",
         "statfs",
         "statx",
+        "symlink",
         "symlinkat",
         "sync",
         "sync_file_range",
