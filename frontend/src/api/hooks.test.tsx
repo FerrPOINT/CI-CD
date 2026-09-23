@@ -10,13 +10,23 @@ const clientMocks = vi.hoisted(() => ({
 
 vi.mock('./client', () => clientMocks)
 
-import { useNotificationEvents, usePullRequest, usePullRequests } from './hooks'
+import {
+  useNotificationEvents,
+  usePullRequest,
+  usePullRequests,
+  useRepositoryCommits,
+} from './hooks'
 
 const projectId = '22222222-2222-4222-8222-222222222222'
 const originalUserAgent = window.navigator.userAgent
 
 function NotificationEventsProbe() {
   useNotificationEvents(projectId)
+  return null
+}
+
+function RepositoryCommitsProbe() {
+  useRepositoryCommits('platform core', 'refs/heads/release/v1', 2, 50)
   return null
 }
 
@@ -60,6 +70,25 @@ describe('notification event stream', () => {
     await waitFor(() => expect(clientMocks.authenticatedFetch).toHaveBeenCalledWith(
       `/projects/${projectId}/notifications/stream`,
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    ))
+  })
+})
+describe('repository commit queries', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    clientMocks.api.mockResolvedValue([])
+  })
+
+  it('requests one look-ahead row at the requested history offset', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RepositoryCommitsProbe />
+      </QueryClientProvider>,
+    )
+
+    await waitFor(() => expect(clientMocks.api).toHaveBeenCalledWith(
+      '/repos/platform%20core/commits?branch=refs%2Fheads%2Frelease%2Fv1&limit=51&offset=50',
     ))
   })
 })

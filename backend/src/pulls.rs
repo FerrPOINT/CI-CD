@@ -123,16 +123,28 @@ pub async fn list_commits(
     Query(params): Query<CommitParams>,
 ) -> Result<Json<Vec<CommitInfo>>, ApiError> {
     let path = resolve_repo_path(&state, &repo).await?;
+    let (limit, offset) = params.page();
     let ref_spec = params.branch.unwrap_or_else(|| "HEAD".into());
     let ref_spec = resolve_view_ref(&path, &ref_spec).await;
-    let limit = params.limit.unwrap_or(50).min(200);
+    Ok(Json(read_commits(&path, &ref_spec, limit, offset).await?))
+}
+
+async fn read_commits(
+    path: &std::path::Path,
+    ref_spec: &str,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<CommitInfo>, ApiError> {
+    let max_count = format!("--max-count={limit}");
+    let skip = format!("--skip={offset}");
     let output = tokio::process::Command::new("git")
         .arg(format!("--git-dir={}", path.display()))
         .args([
             "log",
-            &format!("-{limit}"),
+            &max_count,
+            &skip,
             "--format=%H%n%an%n%ae%n%s%n%ci",
-            &ref_spec,
+            ref_spec,
         ])
         .output()
         .await
@@ -158,14 +170,26 @@ pub async fn list_commits(
             date: chunk[4].to_string(),
         });
     }
-    Ok(Json(commits))
+    Ok(commits)
 }
 
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct CommitParams {
     pub branch: Option<String>,
+    #[param(default = 50, minimum = 1, maximum = 200)]
     pub limit: Option<u32>,
+    #[param(default = 0, minimum = 0)]
+    pub offset: Option<u32>,
+}
+
+impl CommitParams {
+    fn page(&self) -> (u32, u32) {
+        (
+            self.limit.unwrap_or(50).clamp(1, 200),
+            self.offset.unwrap_or(0),
+        )
+    }
 }
 
 // ─── compare (diff) ───
@@ -1012,9 +1036,10 @@ pub async fn list_tags(
 #[cfg(test)]
 mod tests {
     use super::{
-        PullRequestListParams, PullRequestStatusFilter, classify_ref, parse_diff_files,
-        tree_entry_path,
+        CommitParams, PullRequestListParams, PullRequestStatusFilter, classify_ref,
+        parse_diff_files, read_commits, tree_entry_path,
     };
+    use uuid::Uuid;
 
     #[test]
     fn refs_keep_branch_and_tag_identity() {
@@ -1071,6 +1096,90 @@ mod tests {
     fn rejects_mismatched_git_outputs() {
         assert!(parse_diff_files(b"1\t0\tnew.txt\0", b"A\0other.txt\0").is_err());
         assert!(parse_diff_files(b"1\t0\tnew.txt\0", b"A\0new.txt\0D\0old.txt\0").is_err());
+    }
+    #[test]
+    fn commit_pages_keep_the_requested_offset_and_bound_the_limit() {
+        assert_eq!(
+            CommitParams {
+                branch: Some("main".to_string()),
+                limit: Some(51),
+                offset: Some(100),
+            }
+            .page(),
+            (51, 100)
+        );
+        assert_eq!(
+            CommitParams {
+                branch: None,
+                limit: Some(500),
+                offset: None,
+            }
+            .page(),
+            (200, 0)
+        );
+        assert_eq!(
+            CommitParams {
+                branch: None,
+                limit: Some(0),
+                offset: Some(50),
+            }
+            .page(),
+            (1, 50)
+        );
+    }
+
+    #[tokio::test]
+    async fn commit_pages_read_history_after_the_first_window() {
+        let directory = std::env::temp_dir().join(format!("forge-commit-page-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .expect("create repository directory");
+
+        for args in [
+            vec!["init", "--quiet"],
+            vec!["config", "user.name", "Forge Test"],
+            vec!["config", "user.email", "forge@example.test"],
+        ] {
+            let status = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(args)
+                .status()
+                .await
+                .expect("run git setup command");
+            assert!(status.success());
+        }
+
+        for number in 1..=3 {
+            tokio::fs::write(directory.join("history.txt"), number.to_string())
+                .await
+                .expect("write commit fixture");
+            let add = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(["add", "history.txt"])
+                .status()
+                .await
+                .expect("stage commit fixture");
+            assert!(add.success());
+            let commit = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(["commit", "--quiet", "-m", &format!("Commit {number}")])
+                .status()
+                .await
+                .expect("create commit fixture");
+            assert!(commit.success());
+        }
+
+        let commits = read_commits(&directory.join(".git"), "HEAD", 2, 1)
+            .await
+            .expect("read second commit page");
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].message, "Commit 2");
+        assert_eq!(commits[1].message, "Commit 1");
+
+        let _ = tokio::fs::remove_dir_all(directory).await;
     }
 
     #[test]

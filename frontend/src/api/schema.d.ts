@@ -5144,6 +5144,7 @@ export interface operations {
             query?: {
                 branch?: string;
                 limit?: number;
+                offset?: number;
             };
             header?: never;
             path: {
