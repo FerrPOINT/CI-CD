@@ -1929,6 +1929,7 @@ export interface components {
             from: string;
             merge_base: string;
             patch: string;
+            patch_truncated: boolean;
             to: string;
         };
         Environment: {

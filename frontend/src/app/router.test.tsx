@@ -68,6 +68,7 @@ const comparison = {
   merge_base: 'abc0000abc0000abc0000abc0000abc0000abc0',
   files: [{ path: 'src/main.rs', status: 'modified', additions: 12, deletions: 3 }],
   patch: 'diff --git a/src/main.rs b/src/main.rs\n@@ -1 +1 @@\n-route smoke old\n+route smoke new\n',
+  patch_truncated: false,
 }
 
 const pullRequest = {

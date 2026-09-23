@@ -157,6 +157,7 @@
     "path": "Path",
     "status": "Status",
     "patch": "Patch",
+    "patchTruncated": "This patch is too large. Showing the first 512 KiB.",
     "noChanges": "No changes between these branches.",
     "status_added": "Added",
     "status_modified": "Modified",

@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::{collections::HashMap, path::PathBuf, process::Stdio};
 
 use axum::{
     Json,
@@ -7,6 +7,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use tokio::io::AsyncReadExt;
 use uuid::Uuid;
 
 use crate::api::{ApiError, AppState};
@@ -208,6 +209,7 @@ pub struct DiffResult {
     pub merge_base: String,
     pub files: Vec<DiffFile>,
     pub patch: String,
+    pub patch_truncated: bool,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -269,6 +271,46 @@ fn parse_diff_files(numstat: &[u8], name_status: &[u8]) -> Result<Vec<DiffFile>,
         return Err("unmatched status in git diff");
     }
     Ok(files)
+}
+
+const MAX_PATCH_LEN: usize = 512 * 1024;
+
+async fn read_patch(
+    path: &std::path::Path,
+    merge_base: &str,
+    to: &str,
+) -> Result<(String, bool), ApiError> {
+    let mut child = tokio::process::Command::new("git")
+        .arg(format!("--git-dir={}", path.display()))
+        .args(["diff", "--no-renames", merge_base, to])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        ApiError::internal(sqlx::Error::Io(std::io::Error::other(
+            "git diff stdout is unavailable",
+        )))
+    })?;
+    let mut bytes = Vec::with_capacity(MAX_PATCH_LEN + 1);
+    let mut bounded = stdout.take((MAX_PATCH_LEN + 1) as u64);
+    bounded
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    let truncated = bytes.len() > MAX_PATCH_LEN;
+    if truncated {
+        bytes.truncate(MAX_PATCH_LEN);
+        let _ = child.start_kill();
+    }
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if !truncated && !status.success() {
+        return Err(ApiError::bad_request("git diff --patch failed"));
+    }
+    Ok((String::from_utf8_lossy(&bytes).into_owned(), truncated))
 }
 
 #[utoipa::path(
@@ -337,17 +379,7 @@ pub async fn compare_refs(
             )))
         })?;
 
-    // patch
-    let patch_output = tokio::process::Command::new("git")
-        .arg(format!("--git-dir={}", path.display()))
-        .args(["diff", "--no-renames", &merge_base, to])
-        .output()
-        .await
-        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
-    if !patch_output.status.success() {
-        return Err(ApiError::bad_request("git diff --patch failed"));
-    }
-    let patch = String::from_utf8_lossy(&patch_output.stdout).to_string();
+    let (patch, patch_truncated) = read_patch(&path, &merge_base, to).await?;
 
     Ok(Json(DiffResult {
         from: from.clone(),
@@ -355,6 +387,7 @@ pub async fn compare_refs(
         merge_base,
         files,
         patch,
+        patch_truncated,
     }))
 }
 
@@ -1036,8 +1069,8 @@ pub async fn list_tags(
 #[cfg(test)]
 mod tests {
     use super::{
-        CommitParams, PullRequestListParams, PullRequestStatusFilter, classify_ref,
-        parse_diff_files, read_commits, tree_entry_path,
+        CommitParams, MAX_PATCH_LEN, PullRequestListParams, PullRequestStatusFilter, classify_ref,
+        parse_diff_files, read_commits, read_patch, tree_entry_path,
     };
     use uuid::Uuid;
 
@@ -1097,6 +1130,75 @@ mod tests {
         assert!(parse_diff_files(b"1\t0\tnew.txt\0", b"A\0other.txt\0").is_err());
         assert!(parse_diff_files(b"1\t0\tnew.txt\0", b"A\0new.txt\0D\0old.txt\0").is_err());
     }
+    #[tokio::test]
+    async fn compare_patch_stops_after_the_response_limit() {
+        let directory = std::env::temp_dir().join(format!("forge-large-patch-{}", Uuid::new_v4()));
+
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .expect("create repository directory");
+
+        for args in [
+            vec!["init", "--quiet"],
+            vec!["config", "user.name", "Forge Test"],
+            vec!["config", "user.email", "forge@example.test"],
+        ] {
+            let status = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(args)
+                .status()
+                .await
+                .expect("run git setup command");
+            assert!(status.success());
+        }
+
+        tokio::fs::write(directory.join("large.txt"), "base\n")
+            .await
+            .expect("write base fixture");
+        for args in [
+            vec!["add", "large.txt"],
+            vec!["commit", "--quiet", "-m", "Base"],
+        ] {
+            let status = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(args)
+                .status()
+                .await
+                .expect("create base commit");
+            assert!(status.success());
+        }
+
+        tokio::fs::write(
+            directory.join("large.txt"),
+            vec![b'x'; MAX_PATCH_LEN + 4096],
+        )
+        .await
+        .expect("write large fixture");
+        for args in [
+            vec!["add", "large.txt"],
+            vec!["commit", "--quiet", "-m", "Large change"],
+        ] {
+            let status = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(args)
+                .status()
+                .await
+                .expect("create large commit");
+            assert!(status.success());
+        }
+
+        let (patch, truncated) = read_patch(&directory.join(".git"), "HEAD~1", "HEAD")
+            .await
+            .expect("read bounded patch");
+        assert!(truncated);
+        assert_eq!(patch.len(), MAX_PATCH_LEN);
+
+        let _ = tokio::fs::remove_dir_all(directory).await;
+    }
+
     #[test]
     fn commit_pages_keep_the_requested_offset_and_bound_the_limit() {
         assert_eq!(

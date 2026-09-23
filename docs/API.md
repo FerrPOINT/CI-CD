@@ -1425,7 +1425,7 @@ Runner protocol обслуживается на `/api/v1/runner/*` и не ис�
 | DELETE | `/repositories/{name}` | Удаление repository и bare storage |
 | GET | `/repos/{repo}/refs` | Refs с `name`, `kind` (`branch`, `tag`, `other`), SHA и target |
 | GET | `/repos/{repo}/commits?branch=&limit=&offset=` | Commit history; default limit 50, maximum 200; offset defaults to 0 |
-| GET | `/repos/{repo}/compare?from=&to=` | Merge-base для базового `from` и сравниваемого `to`, file stats (`status`, `additions`, `deletions`, `binary`) и unified patch от merge-base к `to` |
+| GET | `/repos/{repo}/compare?from=&to=` | Merge-base для базового `from` и сравниваемого `to`, полные file stats (`status`, `additions`, `deletions`, `binary`) и unified patch от merge-base к `to`; patch ограничен 512 КиБ, усечение отмечает `patch_truncated` |
 | GET | `/repos/{repo}/pulls` | Legacy-список всех pull requests; сохранён для обратной совместимости |
 | POST | `/repos/{repo}/pulls` | Создание pull request |
 | GET | `/repos/{repo}/pulls/page?limit=&offset=&status=&search=` | Основной постраничный каталог; `status` принимает `open`, `closed`, `merged`, поиск охватывает номер, заголовок, ветки и автора |
