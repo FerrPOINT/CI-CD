@@ -153,6 +153,13 @@ export interface PullRequest {
   merge_commit_sha: string | null
 }
 
+export interface PullRequestPage {
+  items: PullRequest[]
+  total: number
+  limit: number
+  offset: number
+}
+
 export interface CreatePullRequestInput {
   repository_name: string
   title: string

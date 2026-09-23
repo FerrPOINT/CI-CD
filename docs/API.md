@@ -1369,13 +1369,22 @@ Runner protocol обслуживается на `/api/v1/runner/*` и не ис�
 | GET | `/repos/{repo}/refs` | Refs с `name`, `kind` (`branch`, `tag`, `other`), SHA и target |
 | GET | `/repos/{repo}/commits?branch=&limit=` | Commit history; default 50, maximum 200 |
 | GET | `/repos/{repo}/compare?from=&to=` | Merge-base для базового `from` и сравниваемого `to`, file stats (`status`, `additions`, `deletions`, `binary`) и unified patch от merge-base к `to` |
-| GET/POST | `/repos/{repo}/pulls` | Список / создание pull request |
+| GET | `/repos/{repo}/pulls` | Legacy-список всех pull requests; сохранён для обратной совместимости |
+| POST | `/repos/{repo}/pulls` | Создание pull request |
+| GET | `/repos/{repo}/pulls/page?limit=&offset=&status=&search=` | Основной постраничный каталог; `status` принимает `open`, `closed`, `merged`, поиск охватывает номер, заголовок, ветки и автора |
+| GET | `/repos/{repo}/pulls/{number}` | Один pull request по номеру |
 | POST | `/repos/{repo}/pulls/{number}/action` | `{action:"merge"|"close"|"reopen"}` |
 | GET | `/git/{repo}/info/refs?service=git-upload-pack` | Git Smart HTTP discovery |
 | POST | `/git/{repo}/git-upload-pack` | Smart HTTP fetch/clone service |
 | POST | `/git/{repo}/git-receive-pack` | Smart HTTP push service |
 
 Git Smart HTTP допускает unauthenticated read только для `repositories.visibility = public`. Private read и receive-pack требуют legacy `CICD_GIT_TOKEN` либо, при непустом `CICD_AUTH_SECRET`, JWT/PAT principal с `project_memberships`: `viewer+` для read, `developer+` для write; PAT также требует `git:read`/`git:write` и проходит только в своём `project_id`. Связанный проект определяется по `repository_url` exact tail `/{repo}.git`, `:{repo}.git` или `{repo}.git`. Полный lifecycle — `docs/GIT_HOSTING.md`; PR merge semantics — `docs/PULL_REQUESTS.md`.
+
+`GET /repos/{repo}/pulls/page` использует `limit=20` и `offset=0` по умолчанию;
+`limit` должен находиться в диапазоне `1..100`. Пустые `status` и `search`
+игнорируются, поиск ограничен 200 символами и не зависит от регистра. Ответ
+содержит `items`, `total`, фактические `limit` и `offset`, поэтому UI не должен
+загружать весь каталог для локальной пагинации.
 
 ### Internal Git hook
 
@@ -1459,6 +1468,8 @@ Git Smart HTTP допускает unauthenticated read только для `repo
 | `/api/v1/repos/{repo}/commits` | Git repositories |
 | `/api/v1/repos/{repo}/compare` | Pull requests |
 | `/api/v1/repos/{repo}/pulls` | Pull requests |
+| `/api/v1/repos/{repo}/pulls/page` | Pull requests |
+| `/api/v1/repos/{repo}/pulls/{number}` | Pull requests |
 | `/api/v1/repos/{repo}/pulls/{number}/action` | Pull requests |
 | `/api/v1/repos/{repo}/refs` | Git repositories |
 | `/api/v1/repos/{repo}/releases` | Releases |

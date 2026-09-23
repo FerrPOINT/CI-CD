@@ -89,7 +89,21 @@ curl -fsS -X POST http://127.0.0.1:22801/api/v1/projects \
 
 Если проект не связан с репозиторием, push остаётся успешным, но pipeline не создаётся.
 
-## 6. Конфигурация
+## 6. Pull requests и refs
+
+Основной каталог pull requests читается страницами через
+`GET /api/v1/repos/{repo}/pulls/page`. Сервер применяет `limit`, `offset`, фильтр
+`status` и регистронезависимый `search` до выборки; ответ возвращает `items` и
+`total`. Карточка PR использует отдельный
+`GET /api/v1/repos/{repo}/pulls/{number}` и поэтому не зависит от текущей
+страницы каталога. Legacy `GET /api/v1/repos/{repo}/pulls` сохраняет прежний
+массив целиком только для обратной совместимости; frontend его не использует.
+
+`GET /api/v1/repos/{repo}/refs` сохраняет тип каждого ref: `branch`, `tag` или
+`other`. В форме создания PR подсказки source и target ограничены `branch`;
+ручной ввод остаётся доступен, если каталог refs временно недоступен.
+
+## 7. Конфигурация
 
 | Переменная | Default | Назначение |
 |---|---|---|
@@ -99,7 +113,7 @@ curl -fsS -X POST http://127.0.0.1:22801/api/v1/projects \
 
 Данные репозиториев находятся в named volume `cicd_git_repos`, независимом от PostgreSQL volume. Удаление проекта не удаляет репозиторий; удаление репозитория через API удаляет и строку БД, и bare directory.
 
-## 7. Аутентификация
+## 8. Аутентификация
 
 Git Smart HTTP различает read и write:
 
@@ -124,7 +138,7 @@ curl -H "x-git-token: <TOKEN>" ...
 
 `CICD_GIT_INTERNAL_TOKEN` ведёт себя так же строго по границе окружения: пустое значение отключает проверку только для trusted-local hook traffic, shared deployment обязан задать уникальный токен. Устаревшее значение `forge-internal-dev-token` отклоняется при старте backend.
 
-## 8. Ограничения MVP и следующий этап
+## 9. Ограничения MVP и следующий этап
 
 - Нет organization/tenant-bound repository model и отдельного scoped Git credential class; current read/write RBAC строится на project membership и PAT scopes через `repository_url`.
 - Нет Git LFS HTTP endpoints несмотря на наличие `git-lfs` в образе.
@@ -134,7 +148,7 @@ curl -H "x-git-token: <TOKEN>" ...
 
 Следующая фаза: per-project repository mapping вместо URL suffix lookup, scoped Git credentials, signed internal events с one-time event ID, Git LFS, SSH transport, отдельный production runner checkout boundary и stricter checkout/commit identity guarantees.
 
-## 9. Проверка
+## 10. Проверка
 
 ```bash
 # Создать репозиторий и убедиться, что discovery работает

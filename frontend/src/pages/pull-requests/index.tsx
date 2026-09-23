@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { useEffect, useState } from 'react'
+import { Link, useParams, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { ChevronRight, FileDiff, GitPullRequest, Plus, Search } from 'lucide-react'
 import { toast } from 'sonner'
@@ -13,6 +13,7 @@ import { Button, Input, Label, Textarea } from '@sdlc/ui/ui'
 import { PullRequestActions } from './actions'
 
 const pageSize = 20
+const pullRequestStatuses: PullRequestStatus[] = ['open', 'closed', 'merged']
 
 const statusStyles: Record<PullRequestStatus, string> = {
   open: 'bg-accent/15 text-accent',
@@ -26,6 +27,7 @@ function CreatePullRequestForm({ repo, onClose }: { repo: string; onClose: () =>
   const createPullRequest = useCreatePullRequest(repo)
   const [form, setForm] = useState({ title: '', description: '', source_branch: '', target_branch: '' })
   const sameBranch = Boolean(form.source_branch.trim() && form.source_branch.trim() === form.target_branch.trim())
+  const branches = refs.filter((ref) => ref.kind === 'branch')
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -56,13 +58,13 @@ function CreatePullRequestForm({ repo, onClose }: { repo: string; onClose: () =>
         <Label htmlFor="pr-source">{t('pulls.sourceBranch')}</Label>
         <Input id="pr-source" required list="pr-source-refs" className="font-mono"
           value={form.source_branch} onChange={(event) => setForm({ ...form, source_branch: event.target.value })} />
-        <datalist id="pr-source-refs">{refs.map((ref) => <option key={ref.name} value={ref.name} />)}</datalist>
+        <datalist id="pr-source-refs">{branches.map((ref) => <option key={ref.name} value={ref.name} />)}</datalist>
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="pr-target">{t('pulls.targetBranch')}</Label>
         <Input id="pr-target" required list="pr-target-refs" className="font-mono"
           value={form.target_branch} onChange={(event) => setForm({ ...form, target_branch: event.target.value })} />
-        <datalist id="pr-target-refs">{refs.map((ref) => <option key={ref.name} value={ref.name} />)}</datalist>
+        <datalist id="pr-target-refs">{branches.map((ref) => <option key={ref.name} value={ref.name} />)}</datalist>
       </div>
       {sameBranch && <p role="alert" className="text-sm text-danger sm:col-span-2">{t('pulls.branchesMustDiffer')}</p>}
       {refsLoading && <p role="status" className="text-xs text-text-muted sm:col-span-2">{t('pulls.loadingRefs')}</p>}
@@ -126,22 +128,73 @@ function PullRequestRow({ repo, pullRequest, locale }: { repo: string; pullReque
 export function PullRequestsPage() {
   const { t, i18n } = useTranslation()
   const { repo } = useParams<{ repo: string }>()
-  const { data: pullRequests = [], isLoading, error, refetch } = usePullRequests(repo)
+  const [searchParams, setSearchParams] = useSearchParams()
   const [showForm, setShowForm] = useState(false)
-  const [search, setSearch] = useState('')
-  const [status, setStatus] = useState<PullRequestStatus | 'all'>('all')
-  const [page, setPage] = useState(1)
+  const urlSearch = searchParams.get('q')?.slice(0, 200) ?? ''
+  const rawStatus = searchParams.get('status')
+  const status: PullRequestStatus | 'all' = pullRequestStatuses.includes(rawStatus as PullRequestStatus)
+    ? rawStatus as PullRequestStatus
+    : 'all'
+  const rawPage = Number(searchParams.get('page'))
+  const page = Number.isSafeInteger(rawPage) && rawPage > 0 ? rawPage : 1
+  const [searchDraft, setSearchDraft] = useState(urlSearch)
+  const { data, isLoading, isFetching, isPlaceholderData, error, refetch } = usePullRequests(repo, {
+    limit: pageSize,
+    offset: (page - 1) * pageSize,
+    status: status === 'all' ? undefined : status,
+    search: urlSearch || undefined,
+  })
+  const hasFilters = Boolean(urlSearch || status !== 'all')
+
+  useEffect(() => setSearchDraft(urlSearch), [urlSearch])
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      const nextQuery = searchDraft.trim()
+      if (nextQuery === urlSearch) return
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current)
+        if (nextQuery) next.set('q', nextQuery)
+        else next.delete('q')
+        next.delete('page')
+        return next
+      }, { replace: true })
+    }, 300)
+    return () => window.clearTimeout(timeout)
+  }, [searchDraft, setSearchParams, urlSearch])
+
+  useEffect(() => {
+    if (!data || isPlaceholderData) return
+    const lastPage = Math.max(1, Math.ceil(data.total / pageSize))
+    if (page <= lastPage) return
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current)
+      if (lastPage === 1) next.delete('page')
+      else next.set('page', String(lastPage))
+      return next
+    }, { replace: true })
+  }, [data, isPlaceholderData, page, setSearchParams])
+
+  function changePage(nextPage: number) {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current)
+      if (nextPage <= 1) next.delete('page')
+      else next.set('page', String(nextPage))
+      return next
+    })
+  }
+
+  function changeStatus(nextStatus: PullRequestStatus | 'all') {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current)
+      if (nextStatus === 'all') next.delete('status')
+      else next.set('status', nextStatus)
+      next.delete('page')
+      return next
+    }, { replace: true })
+  }
 
   if (!repo) return <p className="text-sm text-text-muted">{t('repositories.notFound')}</p>
-
-  const query = search.trim().toLocaleLowerCase()
-  const filtered = pullRequests.filter((pr) => (status === 'all' || pr.status === status) && (
-    !query || [String(pr.number), pr.title, pr.source_branch, pr.target_branch, pr.created_by]
-      .some((value) => value.toLocaleLowerCase().includes(query))
-  ))
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
-  const currentPage = Math.min(page, pageCount)
-  const visible = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
 
   return (
     <div className="space-y-5">
@@ -166,18 +219,21 @@ export function PullRequestsPage() {
 
       {showForm && <CreatePullRequestForm repo={repo} onClose={() => setShowForm(false)} />}
 
-      <QueryState data={pullRequests} isLoading={isLoading} error={error} onRetry={() => refetch()}
-        isEmpty={(list) => list.length === 0} empty={{ title: t('pulls.empty') }}>
-        {() => (
-          <section aria-label={t('pulls.title')} className="space-y-3">
+      <QueryState data={data} isLoading={isLoading} error={error} onRetry={() => refetch()}
+        isEmpty={(result) => result.total === 0 && !hasFilters} empty={{ title: t('pulls.empty') }}>
+        {(result) => {
+          const pageCount = Math.max(1, Math.ceil(result.total / pageSize))
+          return (
+          <section aria-label={t('pulls.title')} aria-busy={isFetching} className="space-y-3">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <div className="relative min-w-0 flex-1">
                 <Search className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-text-muted" aria-hidden />
                 <Input type="search" aria-label={t('pulls.search')} placeholder={t('pulls.search')}
-                  className="min-h-10 pl-9" value={search} onChange={(event) => { setSearch(event.target.value); setPage(1) }} />
+                  className="min-h-10 pl-9" maxLength={200} value={searchDraft}
+                  onChange={(event) => setSearchDraft(event.target.value)} />
               </div>
               <Label htmlFor="pr-status" className="sr-only">{t('pulls.statusFilter')}</Label>
-              <select id="pr-status" value={status} onChange={(event) => { setStatus(event.target.value as PullRequestStatus | 'all'); setPage(1) }}
+              <select id="pr-status" value={status} onChange={(event) => changeStatus(event.target.value as PullRequestStatus | 'all')}
                 className="min-h-10 rounded-md border border-border bg-surface px-2 text-sm text-text-primary outline-none focus-visible:border-accent sm:w-40">
                 <option value="all">{t('pulls.allStatuses')}</option>
                 <option value="open">{t('pulls.status_open')}</option>
@@ -185,23 +241,27 @@ export function PullRequestsPage() {
                 <option value="merged">{t('pulls.status_merged')}</option>
               </select>
             </div>
-            <p className="text-xs text-text-muted">{t('pulls.shown', { count: visible.length, total: filtered.length })}</p>
-            {filtered.length === 0 ? (
+            <p className="flex flex-wrap gap-2 text-xs text-text-muted" aria-live="polite">
+              <span>{t('pulls.shown', { count: result.items.length, total: result.total })}</span>
+              {isFetching && <span>{t('common.loading')}</span>}
+            </p>
+            {result.total === 0 ? (
               <p role="status" className="border-y border-border py-6 text-sm text-text-muted">{t('pulls.noMatches')}</p>
             ) : (
               <ul className="divide-y divide-border border-y border-border">
-                {visible.map((pullRequest) => <PullRequestRow key={pullRequest.id} repo={repo} pullRequest={pullRequest} locale={i18n.language} />)}
+                {result.items.map((pullRequest) => <PullRequestRow key={pullRequest.id} repo={repo} pullRequest={pullRequest} locale={i18n.language} />)}
               </ul>
             )}
-            {filtered.length > pageSize && (
+            {result.total > pageSize && (
               <nav aria-label={t('pulls.pages')} className="flex items-center justify-end gap-2">
-                <Button type="button" size="sm" variant="outline" className="min-h-10 sm:min-h-10" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>{t('pulls.previous')}</Button>
-                <span className="text-sm text-text-muted">{currentPage} / {pageCount}</span>
-                <Button type="button" size="sm" variant="outline" className="min-h-10 sm:min-h-10" disabled={currentPage === pageCount} onClick={() => setPage(currentPage + 1)}>{t('pulls.next')}</Button>
+                <Button type="button" size="sm" variant="outline" className="min-h-10 sm:min-h-10" disabled={page === 1 || isFetching} onClick={() => changePage(page - 1)}>{t('pulls.previous')}</Button>
+                <span className="text-sm text-text-muted">{page} / {pageCount}</span>
+                <Button type="button" size="sm" variant="outline" className="min-h-10 sm:min-h-10" disabled={page === pageCount || isFetching} onClick={() => changePage(page + 1)}>{t('pulls.next')}</Button>
               </nav>
             )}
           </section>
-        )}
+          )
+        }}
       </QueryState>
     </div>
   )
