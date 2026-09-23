@@ -59,7 +59,8 @@ const KEYS = {
   commits: (repo: string, branch: string) => ['repository-commits', repo, branch] as const,
   comparison: (repo: string, from: string, to: string) => ['repository-comparison', repo, from, to] as const,
   pullRequests: (repo: string) => ['pull-requests', repo] as const,
-  repositoryTree: (repo: string, gitRef: string, path: string) => ['repository-tree', repo, gitRef, path] as const,
+  repositoryTree: (repo: string, gitRef: string, path: string, limit: number | undefined, offset: number | undefined, search: string) =>
+    ['repository-tree', repo, gitRef, path, limit, offset, search] as const,
   repositoryBlob: (repo: string, gitRef: string, path: string) => ['repository-blob', repo, gitRef, path] as const,
   repositoryTags: (repo: string) => ['repository-tags', repo] as const,
   releases: (repo: string) => ['releases', repo] as const,
@@ -289,13 +290,22 @@ export function usePullRequests(repo: string | undefined) {
   })
 }
 
-export function useRepositoryTree(repo: string | undefined, gitRef: string | undefined, path: string | undefined) {
+export function useRepositoryTree(
+  repo: string | undefined,
+  gitRef: string | undefined,
+  path: string | undefined,
+  options: { limit?: number; offset?: number; search?: string } = {},
+) {
+  const search = options.search?.trim() ?? ''
   return useQuery({
-    queryKey: KEYS.repositoryTree(repo ?? '', gitRef ?? '', path ?? ''),
+    queryKey: KEYS.repositoryTree(repo ?? '', gitRef ?? '', path ?? '', options.limit, options.offset, search),
     queryFn: () =>
       api<TreeEntry[]>(`/repos/${repositoryPath(repo ?? '')}/tree?${new URLSearchParams({
         ...(gitRef ? { ref: gitRef } : {}),
         ...(path ? { path } : {}),
+        ...(options.limit != null ? { limit: String(options.limit) } : {}),
+        ...(options.offset != null ? { offset: String(options.offset) } : {}),
+        ...(search ? { search } : {}),
       })}`),
     enabled: !!repo,
   })

@@ -10,13 +10,18 @@ const clientMocks = vi.hoisted(() => ({
 
 vi.mock('./client', () => clientMocks)
 
-import { useNotificationEvents } from './hooks'
+import { useNotificationEvents, useRepositoryTree } from './hooks'
 
 const projectId = '22222222-2222-4222-8222-222222222222'
 const originalUserAgent = window.navigator.userAgent
 
 function NotificationEventsProbe() {
   useNotificationEvents(projectId)
+  return null
+}
+
+function RepositoryTreeProbe() {
+  useRepositoryTree('demo', 'refs/heads/main', 'src', { limit: 101, offset: 200, search: ' release ' })
   return null
 }
 
@@ -49,6 +54,26 @@ describe('notification event stream', () => {
     await waitFor(() => expect(clientMocks.authenticatedFetch).toHaveBeenCalledWith(
       `/projects/${projectId}/notifications/stream`,
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    ))
+  })
+})
+
+describe('repository tree query', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    clientMocks.api.mockResolvedValue([])
+  })
+
+  it('sends bounded pagination and trimmed search parameters', async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RepositoryTreeProbe />
+      </QueryClientProvider>,
+    )
+
+    await waitFor(() => expect(clientMocks.api).toHaveBeenCalledWith(
+      '/repos/demo/tree?ref=refs%2Fheads%2Fmain&path=src&limit=101&offset=200&search=release',
     ))
   })
 })
