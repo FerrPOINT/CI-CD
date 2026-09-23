@@ -7,6 +7,7 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
+use tokio::io::AsyncReadExt;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use uuid::Uuid;
 
@@ -275,16 +276,28 @@ pub async fn list_commits(
     Query(params): Query<CommitParams>,
 ) -> Result<Json<Vec<CommitInfo>>, ApiError> {
     let path = resolve_repo_path(&state, &repo).await?;
+    let (limit, offset) = params.page();
     let ref_spec = params.branch.unwrap_or_else(|| "HEAD".into());
     let ref_spec = resolve_view_ref(&path, &ref_spec).await;
-    let limit = params.limit.unwrap_or(50).min(200);
+    Ok(Json(read_commits(&path, &ref_spec, limit, offset).await?))
+}
+
+async fn read_commits(
+    path: &std::path::Path,
+    ref_spec: &str,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<CommitInfo>, ApiError> {
+    let max_count = format!("--max-count={limit}");
+    let skip = format!("--skip={offset}");
     let output = tokio::process::Command::new("git")
         .arg(format!("--git-dir={}", path.display()))
         .args([
             "log",
-            &format!("-{limit}"),
+            &max_count,
+            &skip,
             "--format=%H%n%an%n%ae%n%s%n%ci",
-            &ref_spec,
+            ref_spec,
         ])
         .output()
         .await
@@ -310,14 +323,26 @@ pub async fn list_commits(
             date: chunk[4].to_string(),
         });
     }
-    Ok(Json(commits))
+    Ok(commits)
 }
 
 #[derive(Deserialize, utoipa::IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct CommitParams {
     pub branch: Option<String>,
+    #[param(default = 50, minimum = 1, maximum = 200)]
     pub limit: Option<u32>,
+    #[param(default = 0, minimum = 0)]
+    pub offset: Option<u32>,
+}
+
+impl CommitParams {
+    fn page(&self) -> (u32, u32) {
+        (
+            self.limit.unwrap_or(50).clamp(1, 200),
+            self.offset.unwrap_or(0),
+        )
+    }
 }
 
 // ─── compare (diff) ───
@@ -336,6 +361,7 @@ pub struct DiffResult {
     pub merge_base: String,
     pub files: Vec<DiffFile>,
     pub patch: String,
+    pub patch_truncated: bool,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -397,6 +423,46 @@ fn parse_diff_files(numstat: &[u8], name_status: &[u8]) -> Result<Vec<DiffFile>,
         return Err("unmatched status in git diff");
     }
     Ok(files)
+}
+
+const MAX_PATCH_LEN: usize = 512 * 1024;
+
+async fn read_patch(
+    path: &std::path::Path,
+    merge_base: &str,
+    to: &str,
+) -> Result<(String, bool), ApiError> {
+    let mut child = tokio::process::Command::new("git")
+        .arg(format!("--git-dir={}", path.display()))
+        .args(["diff", "--no-renames", merge_base, to])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        ApiError::internal(sqlx::Error::Io(std::io::Error::other(
+            "git diff stdout is unavailable",
+        )))
+    })?;
+    let mut bytes = Vec::with_capacity(MAX_PATCH_LEN + 1);
+    let mut bounded = stdout.take((MAX_PATCH_LEN + 1) as u64);
+    bounded
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    let truncated = bytes.len() > MAX_PATCH_LEN;
+    if truncated {
+        bytes.truncate(MAX_PATCH_LEN);
+        let _ = child.start_kill();
+    }
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if !truncated && !status.success() {
+        return Err(ApiError::bad_request("git diff --patch failed"));
+    }
+    Ok((String::from_utf8_lossy(&bytes).into_owned(), truncated))
 }
 
 #[utoipa::path(
@@ -465,17 +531,7 @@ pub async fn compare_refs(
             )))
         })?;
 
-    // patch
-    let patch_output = tokio::process::Command::new("git")
-        .arg(format!("--git-dir={}", path.display()))
-        .args(["diff", "--no-renames", &merge_base, to])
-        .output()
-        .await
-        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
-    if !patch_output.status.success() {
-        return Err(ApiError::bad_request("git diff --patch failed"));
-    }
-    let patch = String::from_utf8_lossy(&patch_output.stdout).to_string();
+    let (patch, patch_truncated) = read_patch(&path, &merge_base, to).await?;
 
     Ok(Json(DiffResult {
         from: from.clone(),
@@ -483,6 +539,7 @@ pub async fn compare_refs(
         merge_base,
         files,
         patch,
+        patch_truncated,
     }))
 }
 
@@ -503,6 +560,84 @@ pub struct PullRequest {
     pub updated_at: DateTime<Utc>,
     pub merged_at: Option<DateTime<Utc>>,
     pub merge_commit_sha: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct PullRequestPage {
+    pub items: Vec<PullRequest>,
+    pub total: i64,
+    #[schema(minimum = 1, maximum = 100)]
+    pub limit: u32,
+    pub offset: u32,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum PullRequestStatusFilter {
+    Open,
+    Closed,
+    Merged,
+}
+
+impl PullRequestStatusFilter {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Closed => "closed",
+            Self::Merged => "merged",
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub struct PullRequestListParams {
+    #[param(default = 20, minimum = 1, maximum = 100)]
+    pub limit: Option<u32>,
+    #[param(default = 0, minimum = 0)]
+    pub offset: Option<u32>,
+    #[param(inline)]
+    pub status: Option<PullRequestStatusFilter>,
+    #[param(max_length = 200)]
+    pub search: Option<String>,
+}
+
+struct NormalizedPullRequestListParams {
+    limit: u32,
+    offset: u32,
+    status: Option<String>,
+    search: Option<String>,
+}
+
+impl PullRequestListParams {
+    fn normalize(self) -> Result<NormalizedPullRequestListParams, ApiError> {
+        let limit = self.limit.unwrap_or(20);
+        if !(1..=100).contains(&limit) {
+            return Err(ApiError::bad_request("limit must be between 1 and 100"));
+        }
+
+        let status = self.status.map(|value| value.as_str().to_string());
+
+        let search = self
+            .search
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        if search
+            .as_deref()
+            .is_some_and(|value| value.chars().count() > 200)
+        {
+            return Err(ApiError::bad_request(
+                "search must not exceed 200 characters",
+            ));
+        }
+
+        Ok(NormalizedPullRequestListParams {
+            limit,
+            offset: self.offset.unwrap_or(0),
+            status,
+            search,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -530,13 +665,93 @@ pub async fn list_pull_requests(
 ) -> Result<Json<Vec<PullRequest>>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     let prs = sqlx::query_as::<_, PullRequest>(
-        "SELECT id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha FROM pull_requests WHERE repository_name = $1 ORDER BY number DESC",
+        "SELECT id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha \
+         FROM pull_requests WHERE repository_name = $1 ORDER BY number DESC",
     )
     .bind(&repo)
     .fetch_all(pool)
     .await
     .map_err(ApiError::internal)?;
     Ok(Json(prs))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/repos/{repo}/pulls/page",
+    tag = "pulls",
+    params(PullRequestListParams, ("repo" = String, Path, description = "Repository name")),
+    responses((status = 200, body = PullRequestPage), (status = 400)),
+)]
+pub async fn list_pull_request_page(
+    State(state): State<std::sync::Arc<AppState>>,
+    AxumPath(repo): AxumPath<String>,
+    Query(params): Query<PullRequestListParams>,
+) -> Result<Json<PullRequestPage>, ApiError> {
+    let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    let params = params.normalize()?;
+    let total = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM pull_requests \
+         WHERE repository_name = $1 \
+           AND ($2::text IS NULL OR status = $2) \
+           AND ($3::text IS NULL OR POSITION(LOWER($3::text) IN LOWER(CONCAT_WS(' ', number::text, title, source_branch, target_branch, created_by))) > 0)",
+    )
+    .bind(&repo)
+    .bind(params.status.as_deref())
+    .bind(params.search.as_deref())
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    let prs = sqlx::query_as::<_, PullRequest>(
+        "SELECT id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha \
+         FROM pull_requests \
+         WHERE repository_name = $1 \
+           AND ($2::text IS NULL OR status = $2) \
+           AND ($3::text IS NULL OR POSITION(LOWER($3::text) IN LOWER(CONCAT_WS(' ', number::text, title, source_branch, target_branch, created_by))) > 0) \
+         ORDER BY number DESC \
+         LIMIT $4 OFFSET $5",
+    )
+    .bind(&repo)
+    .bind(params.status.as_deref())
+    .bind(params.search.as_deref())
+    .bind(i64::from(params.limit))
+    .bind(i64::from(params.offset))
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(Json(PullRequestPage {
+        items: prs,
+        total,
+        limit: params.limit,
+        offset: params.offset,
+    }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/repos/{repo}/pulls/{number}",
+    tag = "pulls",
+    params(
+        ("repo" = String, Path, description = "Repository name"),
+        ("number" = i32, Path, description = "Pull request number"),
+    ),
+    responses((status = 200, body = PullRequest), (status = 404)),
+)]
+pub async fn get_pull_request(
+    State(state): State<std::sync::Arc<AppState>>,
+    AxumPath((repo, number)): AxumPath<(String, i32)>,
+) -> Result<Json<PullRequest>, ApiError> {
+    let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    let pr = sqlx::query_as::<_, PullRequest>(
+        "SELECT id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha \
+         FROM pull_requests WHERE repository_name = $1 AND number = $2",
+    )
+    .bind(&repo)
+    .bind(number)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)?;
+    Ok(Json(pr))
 }
 
 #[utoipa::path(
@@ -838,7 +1053,7 @@ async fn resolve_view_ref(path: &std::path::Path, raw: &str) -> String {
 
 // ---- Code browsing: tree + blob (P0 git-server parity) ----
 
-#[utoipa::path(get, path = "/api/v1/repos/{repo}/tree", tag = "git", params(("repo" = String, Path), ("ref" = Option<String>, Query), ("path" = Option<String>, Query)), responses((status = 200, body = [TreeEntry])))]
+#[utoipa::path(get, path = "/api/v1/repos/{repo}/tree", tag = "git", params(("repo" = String, Path), ("ref" = Option<String>, Query), ("path" = Option<String>, Query), ("limit" = Option<usize>, Query), ("offset" = Option<usize>, Query), ("search" = Option<String>, Query)), responses((status = 200, body = [TreeEntry])))]
 pub async fn list_tree(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath(repo): AxumPath<String>,
@@ -857,9 +1072,12 @@ pub async fn list_tree(
     } else {
         format!("{git_ref}:{subpath}")
     };
+    if let Some(page) = params.page() {
+        return Ok(Json(read_tree_page(&path, &spec, subpath, page).await?));
+    }
     let output = tokio::process::Command::new("git")
         .arg(format!("--git-dir={}", path.display()))
-        .args(["ls-tree", "-l", "--", &spec])
+        .args(["ls-tree", "-l", "-z", "--", &spec])
         .output()
         .await
         .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
@@ -870,30 +1088,161 @@ pub async fn list_tree(
             err.trim()
         )));
     }
-    let entries: Vec<TreeEntry> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            // "<mode> <type> <sha> <size>\t<path>"
-            let (meta, name) = line.split_once('\t')?;
-            let mut parts = meta.split_whitespace();
-            let _mode = parts.next()?;
-            let kind = parts.next()?;
-            let sha = parts.next()?.to_string();
-            let size = match parts.next()? {
-                "-" => None,
-                s => s.parse().ok(),
-            };
-            let name = name.to_string();
-            Some(TreeEntry {
-                path: tree_entry_path(subpath, &name),
-                name: name.rsplit('/').next().unwrap_or(&name).to_string(),
-                kind: kind.to_string(),
-                size,
-                sha,
-            })
-        })
+    let entries: Vec<TreeEntry> = output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter_map(|record| parse_tree_entry(record, subpath))
         .collect();
     Ok(Json(entries))
+}
+
+const DEFAULT_TREE_LIMIT: usize = 100;
+const MAX_TREE_LIMIT: usize = 200;
+
+#[derive(Clone, Copy)]
+struct TreePage<'a> {
+    limit: usize,
+    offset: usize,
+    search: Option<&'a str>,
+}
+
+async fn read_tree_page(
+    path: &std::path::Path,
+    spec: &str,
+    subpath: &str,
+    page: TreePage<'_>,
+) -> Result<Vec<TreeEntry>, ApiError> {
+    let search = page.search.map(str::to_lowercase);
+    let mut entries = Vec::with_capacity(page.limit);
+    let mut seen = 0;
+
+    let page_is_full = collect_tree_entries(
+        path,
+        spec,
+        subpath,
+        true,
+        search.as_deref(),
+        page,
+        &mut seen,
+        &mut entries,
+    )
+    .await?;
+    if !page_is_full {
+        collect_tree_entries(
+            path,
+            spec,
+            subpath,
+            false,
+            search.as_deref(),
+            page,
+            &mut seen,
+            &mut entries,
+        )
+        .await?;
+    }
+    Ok(entries)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn collect_tree_entries(
+    path: &std::path::Path,
+    spec: &str,
+    subpath: &str,
+    directories_only: bool,
+    search: Option<&str>,
+    page: TreePage<'_>,
+    seen: &mut usize,
+    entries: &mut Vec<TreeEntry>,
+) -> Result<bool, ApiError> {
+    let mut command = tokio::process::Command::new("git");
+    command
+        .arg(format!("--git-dir={}", path.display()))
+        .args(["ls-tree", "-l", "-z"]);
+    if directories_only {
+        command.arg("-d");
+    }
+    let mut child = command
+        .args(["--", spec])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        ApiError::internal(sqlx::Error::Io(std::io::Error::other(
+            "git ls-tree stdout is unavailable",
+        )))
+    })?;
+    let mut reader = BufReader::new(stdout);
+    let mut record = Vec::new();
+    let mut stopped = false;
+
+    loop {
+        record.clear();
+        let read = reader
+            .read_until(0, &mut record)
+            .await
+            .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+        if read == 0 {
+            break;
+        }
+        if record.last() == Some(&0) {
+            record.pop();
+        }
+        let Some(entry) = parse_tree_entry(&record, subpath) else {
+            continue;
+        };
+        if !directories_only && entry.kind == "tree" {
+            continue;
+        }
+        if search.is_some_and(|needle| !entry.name.to_lowercase().contains(needle)) {
+            continue;
+        }
+        if *seen < page.offset {
+            *seen += 1;
+            continue;
+        }
+        *seen += 1;
+        entries.push(entry);
+        if entries.len() >= page.limit {
+            stopped = true;
+            break;
+        }
+    }
+    drop(reader);
+
+    if stopped {
+        let _ = child.start_kill();
+    }
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if !stopped && !status.success() {
+        return Err(ApiError::not_found_named("tree not found"));
+    }
+    Ok(stopped)
+}
+
+fn parse_tree_entry(record: &[u8], subpath: &str) -> Option<TreeEntry> {
+    // "<mode> <type> <sha> <size>\t<path>\0"
+    let separator = record.iter().position(|byte| *byte == b'\t')?;
+    let meta = String::from_utf8_lossy(&record[..separator]);
+    let name = String::from_utf8_lossy(&record[separator + 1..]).into_owned();
+    let mut parts = meta.split_whitespace();
+    let _mode = parts.next()?;
+    let kind = parts.next()?;
+    let sha = parts.next()?.to_string();
+    let size = match parts.next()? {
+        "-" => None,
+        value => value.parse().ok(),
+    };
+    Some(TreeEntry {
+        path: tree_entry_path(subpath, &name),
+        name: name.rsplit('/').next().unwrap_or(&name).to_string(),
+        kind: kind.to_string(),
+        size,
+        sha,
+    })
 }
 
 fn tree_entry_path(subpath: &str, name: &str) -> String {
@@ -909,6 +1258,30 @@ pub struct TreeQuery {
     #[serde(rename = "ref")]
     git_ref: Option<String>,
     path: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+    search: Option<String>,
+}
+
+impl TreeQuery {
+    fn page(&self) -> Option<TreePage<'_>> {
+        let search = self
+            .search
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if self.limit.is_none() && self.offset.is_none() && search.is_none() {
+            return None;
+        }
+        Some(TreePage {
+            limit: self
+                .limit
+                .unwrap_or(DEFAULT_TREE_LIMIT)
+                .clamp(1, MAX_TREE_LIMIT),
+            offset: self.offset.unwrap_or(0),
+            search,
+        })
+    }
 }
 
 #[utoipa::path(get, path = "/api/v1/repos/{repo}/blob", tag = "git", params(("repo" = String, Path), ("ref" = Option<String>, Query), ("path" = String, Query)), responses((status = 200, body = BlobContent)))]
@@ -925,23 +1298,12 @@ pub async fn get_blob(
         .unwrap_or("HEAD");
     let git_ref = resolve_view_ref(&path, git_ref).await;
     let spec = format!("{git_ref}:{}", params.path);
-    let output = tokio::process::Command::new("git")
-        .arg(format!("--git-dir={}", path.display()))
-        .args(["show", &spec])
-        .output()
-        .await
-        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
-    if !output.status.success() {
-        return Err(ApiError::not_found_named("blob not found"));
-    }
-    let bytes = output.stdout;
+    let (bytes, size, truncated) = read_blob(&path, &spec).await?;
     let binary = bytes.iter().take(8000).any(|b| *b == 0);
-    const MAX_LEN: usize = 512 * 1024;
-    let truncated = bytes.len() > MAX_LEN;
     let content = if binary {
         String::new()
     } else {
-        String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_LEN)]).into_owned()
+        String::from_utf8_lossy(&bytes).into_owned()
     };
     // Resolve blob sha for the response.
     let sha_output = tokio::process::Command::new("git")
@@ -956,11 +1318,68 @@ pub async fn get_blob(
     Ok(Json(BlobContent {
         path: params.path,
         sha,
-        size: bytes.len() as i64,
+        size,
         content,
         binary,
         truncated,
     }))
+}
+
+const MAX_BLOB_LEN: usize = 512 * 1024;
+
+async fn read_blob(path: &std::path::Path, spec: &str) -> Result<(Vec<u8>, i64, bool), ApiError> {
+    let size_output = tokio::process::Command::new("git")
+        .arg(format!("--git-dir={}", path.display()))
+        .args(["cat-file", "-s", spec])
+        .output()
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if !size_output.status.success() {
+        return Err(ApiError::not_found_named("blob not found"));
+    }
+    let size = String::from_utf8_lossy(&size_output.stdout)
+        .trim()
+        .parse::<i64>()
+        .map_err(|_| ApiError::bad_request("git returned an invalid blob size"))?;
+    if size < 0 {
+        return Err(ApiError::bad_request("git returned an invalid blob size"));
+    }
+
+    let mut child = tokio::process::Command::new("git")
+        .arg(format!("--git-dir={}", path.display()))
+        .args(["cat-file", "blob", spec])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        ApiError::internal(sqlx::Error::Io(std::io::Error::other(
+            "git cat-file stdout is unavailable",
+        )))
+    })?;
+    let mut bytes = Vec::with_capacity(MAX_BLOB_LEN + 1);
+    let mut bounded = stdout.take((MAX_BLOB_LEN + 1) as u64);
+    bounded
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    drop(bounded);
+
+    let truncated = size > MAX_BLOB_LEN as i64 || bytes.len() > MAX_BLOB_LEN;
+    if bytes.len() > MAX_BLOB_LEN {
+        bytes.truncate(MAX_BLOB_LEN);
+    }
+    if truncated {
+        let _ = child.start_kill();
+    }
+    let status = child
+        .wait()
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if !truncated && !status.success() {
+        return Err(ApiError::not_found_named("blob not found"));
+    }
+    Ok((bytes, size, truncated))
 }
 
 #[derive(serde::Deserialize, utoipa::IntoParams)]
@@ -1057,8 +1476,10 @@ fn parse_tag_line(line: &str) -> Option<TagInfo> {
 #[cfg(test)]
 mod tests {
     use super::{
-        GitListPage, MAX_REF_LIMIT, RefsQuery, TagsQuery, classify_ref, parse_diff_files,
-        read_refs_page, read_tags_page, tree_entry_path,
+        CommitParams, GitListPage, MAX_BLOB_LEN, MAX_PATCH_LEN, MAX_REF_LIMIT, MAX_TREE_LIMIT,
+        PullRequestListParams, PullRequestStatusFilter, RefsQuery, TagsQuery, TreePage, TreeQuery,
+        classify_ref, parse_diff_files, parse_tree_entry, read_blob, read_commits, read_patch,
+        read_refs_page, read_tags_page, read_tree_page, tree_entry_path,
     };
     use uuid::Uuid;
 
@@ -1219,6 +1640,109 @@ mod tests {
             tree_entry_path("src/pages", "index.tsx"),
             "src/pages/index.tsx"
         );
+        let entry = parse_tree_entry(b"100644 blob abc123 12\tline\tbreak\n.txt", "src/pages")
+            .expect("parse NUL-safe tree record");
+        assert_eq!(entry.name, "line\tbreak\n.txt");
+        assert_eq!(entry.path, "src/pages/line\tbreak\n.txt");
+    }
+
+    #[test]
+    fn tree_page_parameters_are_optional_and_bounded() {
+        let legacy = TreeQuery {
+            git_ref: None,
+            path: None,
+            limit: None,
+            offset: None,
+            search: Some("  ".to_string()),
+        };
+        assert!(legacy.page().is_none());
+
+        let paged = TreeQuery {
+            git_ref: None,
+            path: None,
+            limit: Some(usize::MAX),
+            offset: Some(25),
+            search: Some("  FILE  ".to_string()),
+        };
+        let page = paged.page().expect("bounded page");
+        assert_eq!(page.limit, MAX_TREE_LIMIT);
+        assert_eq!(page.offset, 25);
+        assert_eq!(page.search, Some("FILE"));
+    }
+
+    #[tokio::test]
+    async fn tree_page_streams_directories_before_files_and_filters_names() {
+        let directory = std::env::temp_dir().join(format!("forge-large-tree-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .expect("create repository directory");
+        run_git(&directory, &["init", "--quiet"]).await;
+        run_git(&directory, &["config", "user.name", "Forge Test"]).await;
+        run_git(&directory, &["config", "user.email", "forge@example.test"]).await;
+
+        for index in 1..=12 {
+            let path = directory.join(format!("dir-{index:04}"));
+            tokio::fs::create_dir_all(&path)
+                .await
+                .expect("create tree fixture directory");
+            tokio::fs::write(path.join("README.txt"), b"directory\n")
+                .await
+                .expect("write tree fixture directory file");
+        }
+        for index in 1..=20 {
+            tokio::fs::write(directory.join(format!("file-{index:04}.txt")), b"file\n")
+                .await
+                .expect("write tree fixture file");
+        }
+        run_git(&directory, &["add", "."]).await;
+        run_git(&directory, &["commit", "--quiet", "-m", "Large tree"]).await;
+
+        let git_dir = directory.join(".git");
+        let page = read_tree_page(
+            &git_dir,
+            "HEAD",
+            "",
+            TreePage {
+                limit: 5,
+                offset: 10,
+                search: None,
+            },
+        )
+        .await
+        .expect("read bounded tree page");
+        assert_eq!(
+            page.iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "dir-0011",
+                "dir-0012",
+                "file-0001.txt",
+                "file-0002.txt",
+                "file-0003.txt",
+            ]
+        );
+
+        let matches = read_tree_page(
+            &git_dir,
+            "HEAD",
+            "",
+            TreePage {
+                limit: 20,
+                offset: 0,
+                search: Some("FILE-001"),
+            },
+        )
+        .await
+        .expect("search bounded tree page");
+        assert_eq!(matches.len(), 10);
+        assert!(
+            matches
+                .iter()
+                .all(|entry| entry.name.starts_with("file-001"))
+        );
+
+        let _ = tokio::fs::remove_dir_all(directory).await;
     }
 
     #[test]
@@ -1255,7 +1779,6 @@ mod tests {
         assert!(parse_diff_files(b"1\t0\tnew.txt\0", b"A\0other.txt\0").is_err());
         assert!(parse_diff_files(b"1\t0\tnew.txt\0", b"A\0new.txt\0D\0old.txt\0").is_err());
     }
-
     async fn run_git(directory: &std::path::Path, args: &[&str]) {
         let status = tokio::process::Command::new("git")
             .arg("-C")
@@ -1265,5 +1788,245 @@ mod tests {
             .await
             .expect("run git command");
         assert!(status.success(), "git command failed: {args:?}");
+    }
+    #[tokio::test]
+    async fn blob_read_stops_after_the_response_limit() {
+        let directory = std::env::temp_dir().join(format!("forge-large-blob-{}", Uuid::new_v4()));
+
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .expect("create repository directory");
+
+        for args in [
+            vec!["init", "--quiet"],
+            vec!["config", "user.name", "Forge Test"],
+            vec!["config", "user.email", "forge@example.test"],
+        ] {
+            let status = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(args)
+                .status()
+                .await
+                .expect("run git setup command");
+            assert!(status.success());
+        }
+
+        let full_size = MAX_BLOB_LEN + 4096;
+        tokio::fs::write(directory.join("large.txt"), vec![b'x'; full_size])
+            .await
+            .expect("write large fixture");
+        for args in [
+            vec!["add", "large.txt"],
+            vec!["commit", "--quiet", "-m", "Large blob"],
+        ] {
+            let status = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(args)
+                .status()
+                .await
+                .expect("create blob commit");
+            assert!(status.success());
+        }
+
+        let (bytes, size, truncated) = read_blob(&directory.join(".git"), "HEAD:large.txt")
+            .await
+            .expect("read bounded blob");
+        assert!(truncated);
+        assert_eq!(size, full_size as i64);
+        assert_eq!(bytes.len(), MAX_BLOB_LEN);
+
+        let _ = tokio::fs::remove_dir_all(directory).await;
+    }
+
+    #[tokio::test]
+    async fn compare_patch_stops_after_the_response_limit() {
+        let directory = std::env::temp_dir().join(format!("forge-large-patch-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .expect("create repository directory");
+
+        for args in [
+            vec!["init", "--quiet"],
+            vec!["config", "user.name", "Forge Test"],
+            vec!["config", "user.email", "forge@example.test"],
+        ] {
+            let status = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(args)
+                .status()
+                .await
+                .expect("run git setup command");
+            assert!(status.success());
+        }
+
+        tokio::fs::write(directory.join("large.txt"), "base\n")
+            .await
+            .expect("write base fixture");
+        for args in [
+            vec!["add", "large.txt"],
+            vec!["commit", "--quiet", "-m", "Base"],
+        ] {
+            let status = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(args)
+                .status()
+                .await
+                .expect("create base commit");
+            assert!(status.success());
+        }
+
+        tokio::fs::write(
+            directory.join("large.txt"),
+            vec![b'x'; MAX_PATCH_LEN + 4096],
+        )
+        .await
+        .expect("write large fixture");
+        for args in [
+            vec!["add", "large.txt"],
+            vec!["commit", "--quiet", "-m", "Large change"],
+        ] {
+            let status = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(args)
+                .status()
+                .await
+                .expect("create large commit");
+            assert!(status.success());
+        }
+
+        let (patch, truncated) = read_patch(&directory.join(".git"), "HEAD~1", "HEAD")
+            .await
+            .expect("read bounded patch");
+        assert!(truncated);
+        assert_eq!(patch.len(), MAX_PATCH_LEN);
+
+        let _ = tokio::fs::remove_dir_all(directory).await;
+    }
+
+    #[test]
+    fn commit_pages_keep_the_requested_offset_and_bound_the_limit() {
+        assert_eq!(
+            CommitParams {
+                branch: Some("main".to_string()),
+                limit: Some(51),
+                offset: Some(100),
+            }
+            .page(),
+            (51, 100)
+        );
+        assert_eq!(
+            CommitParams {
+                branch: None,
+                limit: Some(500),
+                offset: None,
+            }
+            .page(),
+            (200, 0)
+        );
+        assert_eq!(
+            CommitParams {
+                branch: None,
+                limit: Some(0),
+                offset: Some(50),
+            }
+            .page(),
+            (1, 50)
+        );
+    }
+
+    #[tokio::test]
+    async fn commit_pages_read_history_after_the_first_window() {
+        let directory = std::env::temp_dir().join(format!("forge-commit-page-{}", Uuid::new_v4()));
+        tokio::fs::create_dir_all(&directory)
+            .await
+            .expect("create repository directory");
+
+        for args in [
+            vec!["init", "--quiet"],
+            vec!["config", "user.name", "Forge Test"],
+            vec!["config", "user.email", "forge@example.test"],
+        ] {
+            let status = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(args)
+                .status()
+                .await
+                .expect("run git setup command");
+            assert!(status.success());
+        }
+
+        for number in 1..=3 {
+            tokio::fs::write(directory.join("history.txt"), number.to_string())
+                .await
+                .expect("write commit fixture");
+            let add = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(["add", "history.txt"])
+                .status()
+                .await
+                .expect("stage commit fixture");
+            assert!(add.success());
+            let commit = tokio::process::Command::new("git")
+                .arg("-C")
+                .arg(&directory)
+                .args(["commit", "--quiet", "-m", &format!("Commit {number}")])
+                .status()
+                .await
+                .expect("create commit fixture");
+            assert!(commit.success());
+        }
+
+        let commits = read_commits(&directory.join(".git"), "HEAD", 2, 1)
+            .await
+            .expect("read second commit page");
+        assert_eq!(commits.len(), 2);
+        assert_eq!(commits[0].message, "Commit 2");
+        assert_eq!(commits[1].message, "Commit 1");
+
+        let _ = tokio::fs::remove_dir_all(directory).await;
+    }
+
+    #[test]
+    fn pull_request_list_params_are_normalized() {
+        let params = PullRequestListParams {
+            limit: Some(50),
+            offset: Some(100),
+            status: Some(PullRequestStatusFilter::Open),
+            search: Some("  release branch  ".to_string()),
+        }
+        .normalize()
+        .unwrap();
+
+        assert_eq!(params.limit, 50);
+        assert_eq!(params.offset, 100);
+        assert_eq!(params.status.as_deref(), Some("open"));
+        assert_eq!(params.search.as_deref(), Some("release branch"));
+    }
+
+    #[test]
+    fn pull_request_list_params_reject_invalid_bounds_and_search() {
+        assert!(
+            PullRequestListParams {
+                limit: Some(0),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+        assert!(
+            PullRequestListParams {
+                search: Some("x".repeat(201)),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
     }
 }

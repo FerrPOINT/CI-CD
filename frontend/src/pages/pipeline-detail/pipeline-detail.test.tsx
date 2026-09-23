@@ -26,12 +26,16 @@ function renderPipelineDetail(
     attemptErrorTail?: string | null
     failFirstDetail?: boolean
     failFirstLogs?: boolean
+    failFirstOlderLogs?: boolean
+    newLogOnRefresh?: boolean
   } = {},
 ) {
   const jobStatus = options.jobStatus ?? 'running'
   const attemptErrorTail = options.attemptErrorTail ?? null
   let detailCalls = 0
   let logCalls = 0
+  let tailCalls = 0
+  let olderLogCalls = 0
   vi.stubGlobal(
     'fetch',
     vi.fn((input: RequestInfo | URL) => {
@@ -127,17 +131,34 @@ function renderPipelineDetail(
           return json({
             items: [logRow(2, 'unit error: expected status')],
             next_after: null,
+            total: 1,
+            has_more_before: false,
           })
         }
-        if (params.get('after') === '2') {
+        if (params.get('before') === '201') {
+          if (options.failFirstOlderLogs && olderLogCalls++ === 0) {
+            return Promise.resolve(new Response('unavailable', { status: 503 }))
+          }
           return json({
-            items: [logRow(3, 'package artifacts')],
+            items: [logRow(199, 'compile sources'), logRow(200, 'package artifacts')],
             next_after: null,
+            total: 200,
+            has_more_before: false,
+          })
+        }
+        if (params.get('before') === '2147483647' && options.newLogOnRefresh && tailCalls++ > 0) {
+          return json({
+            items: [logRow(202, 'deploy complete'), logRow(203, 'cleanup complete')],
+            next_after: 202,
+            total: 203,
+            has_more_before: true,
           })
         }
         return json({
-          items: [logRow(1, 'checkout sources'), logRow(2, 'unit error: expected status')],
-          next_after: 2,
+          items: [logRow(201, 'upload artifacts'), logRow(202, 'deploy complete')],
+          next_after: 201,
+          total: 202,
+          has_more_before: true,
         })
       }
       return Promise.resolve(new Response('not found', { status: 404 }))
@@ -211,18 +232,25 @@ describe('PipelineDetailPage logs', () => {
     expect(screen.getByText('target/release/app.tar.gz')).toBeInTheDocument()
   })
 
-  it('loads log pages and refetches them with search', async () => {
+  it('opens at the latest logs, loads older rows in order, and searches forward', async () => {
     const requests: string[] = []
     renderPipelineDetail(requests)
 
     fireEvent.click(await screen.findByRole('button', { name: /jobs\.logs/ }))
 
-    await waitFor(() => expect(logOutput()).toContain('001  checkout sources'))
-    expect(logOutput()).toContain('002  unit error: expected status')
+    await waitFor(() => expect(logOutput()).toContain('201  upload artifacts'))
+    expect(screen.getByRole('log')).toHaveAttribute('tabindex', '0')
+    expect(logOutput()).toContain('202  deploy complete')
+    expect(
+      requests.some((url) => url.includes('before=2147483647') && !url.includes('after=')),
+    ).toBe(true)
 
-    fireEvent.click(screen.getByRole('button', { name: 'jobs.loadMoreLogs' }))
-    await waitFor(() => expect(logOutput()).toContain('003  package artifacts'))
-    expect(requests.some((url) => url.includes('after=2'))).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'jobs.loadEarlierLogs' }))
+    await waitFor(() => expect(logOutput()).toContain('199  compile sources'))
+    expect(requests.some((url) => url.includes('before=201'))).toBe(true)
+    expect(logOutput().indexOf('199  compile sources')).toBeLessThan(
+      logOutput().indexOf('201  upload artifacts'),
+    )
 
     fireEvent.change(screen.getByPlaceholderText('jobs.searchLogs'), {
       target: { value: 'error' },
@@ -230,8 +258,9 @@ describe('PipelineDetailPage logs', () => {
 
     await waitFor(() => {
       expect(requests.some((url) => url.includes('q=error'))).toBe(true)
+      expect(requests.some((url) => url.includes('q=error') && url.includes('after=0'))).toBe(true)
       expect(logOutput()).toContain('002  unit error: expected status')
-      expect(logOutput()).not.toContain('001  checkout sources')
+      expect(logOutput()).not.toContain('201  upload artifacts')
     })
   })
 
@@ -244,6 +273,43 @@ describe('PipelineDetailPage logs', () => {
 
     expect(await screen.findByText('no compatible runner before queue timeout')).toBeInTheDocument()
     expect(requests).toContain(`/api/v1/jobs/${jobId}/attempts`)
+  })
+
+  it('keeps a reader in place when new live output arrives', async () => {
+    const requests: string[] = []
+    renderPipelineDetail(requests, { newLogOnRefresh: true })
+
+    fireEvent.click(await screen.findByRole('button', { name: /jobs\.logs/ }))
+    const output = await screen.findByRole('log')
+    await waitFor(() => expect(output.textContent).toContain('202  deploy complete'))
+    Object.defineProperties(output, {
+      scrollHeight: { configurable: true, value: 1_000 },
+      clientHeight: { configurable: true, value: 300 },
+      scrollTop: { configurable: true, writable: true, value: 100 },
+    })
+
+    fireEvent.scroll(output)
+    fireEvent.click(screen.getByRole('button', { name: 'jobs.refreshLogs' }))
+
+    await waitFor(() => expect(output.textContent).toContain('203  cleanup complete'))
+    expect(output.scrollTop).toBe(100)
+    fireEvent.click(screen.getByRole('button', { name: 'jobs.latestLogs' }))
+    expect(output.scrollTop).toBe(1_000)
+    expect(screen.queryByRole('button', { name: 'jobs.latestLogs' })).not.toBeInTheDocument()
+  })
+
+  it('keeps loaded logs visible and retries a failed older page', async () => {
+    const requests: string[] = []
+    renderPipelineDetail(requests, { failFirstOlderLogs: true })
+
+    fireEvent.click(await screen.findByRole('button', { name: /jobs\.logs/ }))
+    await waitFor(() => expect(logOutput()).toContain('202  deploy complete'))
+    fireEvent.click(screen.getByRole('button', { name: 'jobs.loadEarlierLogs' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('jobs.logsPageError')
+    expect(logOutput()).toContain('202  deploy complete')
+    fireEvent.click(within(screen.getByRole('alert')).getByRole('button', { name: 'common.retry' }))
+    await waitFor(() => expect(logOutput()).toContain('199  compile sources'))
   })
 
   it('shows a recoverable error instead of an endless loading state', async () => {
@@ -303,7 +369,7 @@ describe('PipelineDetailPage logs', () => {
     fireEvent.click(await screen.findByRole('button', { name: /jobs\.logs/ }))
     expect(await screen.findByRole('alert')).toHaveTextContent('jobs.logsError')
     fireEvent.click(within(screen.getByRole('alert')).getByRole('button', { name: 'common.retry' }))
-    await waitFor(() => expect(logOutput()).toContain('001  checkout sources'))
+    await waitFor(() => expect(logOutput()).toContain('201  upload artifacts'))
   })
 })
 

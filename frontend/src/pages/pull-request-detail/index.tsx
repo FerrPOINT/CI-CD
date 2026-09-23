@@ -1,6 +1,7 @@
 import { Link, useParams, useSearchParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
-import { usePullRequests, useRepositoryComparison } from '@/api/hooks'
+import { usePullRequest, useRepositoryComparison } from '@/api/hooks'
+import { ApiError } from '@/api/client'
 import { Button } from '@sdlc/ui/ui'
 import { ChevronRight, GitPullRequest, FileDiff, ArrowLeft } from 'lucide-react'
 import type { PullRequest, PullRequestStatus } from '@/api/types'
@@ -17,19 +18,23 @@ export function buildPrDiffHref(pr: Pick<PullRequest, 'repository_name' | 'numbe
   return `/repositories/${encodeURIComponent(pr.repository_name)}/pulls/${pr.number}?view=diff`
 }
 
-function PatchView({ patch }: { patch: string }) {
+function PatchView({ patch, truncated }: { patch: string; truncated: boolean }) {
+  const { t } = useTranslation()
   return (
-    <pre className="max-h-[48rem] overflow-auto rounded-md bg-zinc-950 p-4 text-xs leading-relaxed">
-      {patch.split('\n').map((line, index) => {
-        const key = `${index}-${line}`
-        if (line.startsWith('+++') || line.startsWith('---')) return <span key={key} className="block font-mono text-indigo-300">{line}</span>
-        if (line.startsWith('@@')) return <span key={key} className="block font-mono text-sky-400">{line}</span>
-        if (line.startsWith('+')) return <span key={key} className="block bg-green-500/10 font-mono text-green-400">{line}</span>
-        if (line.startsWith('-')) return <span key={key} className="block bg-red-500/10 font-mono text-red-400">{line}</span>
-        if (line.startsWith('diff --git') || line.startsWith('index ')) return <span key={key} className="block font-mono text-zinc-400">{line}</span>
-        return <span key={key} className="block font-mono text-zinc-300">{line}</span>
-      })}
-    </pre>
+    <div className="space-y-2">
+      {truncated && <p role="status" className="text-sm text-text-muted">{t('compare.patchTruncated')}</p>}
+      <pre tabIndex={0} aria-label={t('compare.patch')} className="max-h-[48rem] overflow-auto rounded-md bg-zinc-950 p-4 text-xs leading-relaxed">
+        {patch.split('\n').map((line, index) => {
+          const key = `${index}-${line}`
+          if (line.startsWith('+++') || line.startsWith('---')) return <span key={key} className="block font-mono text-indigo-300">{line}</span>
+          if (line.startsWith('@@')) return <span key={key} className="block font-mono text-sky-400">{line}</span>
+          if (line.startsWith('+')) return <span key={key} className="block bg-green-500/10 font-mono text-green-400">{line}</span>
+          if (line.startsWith('-')) return <span key={key} className="block bg-red-500/10 font-mono text-red-400">{line}</span>
+          if (line.startsWith('diff --git') || line.startsWith('index ')) return <span key={key} className="block font-mono text-zinc-400">{line}</span>
+          return <span key={key} className="block font-mono text-zinc-300">{line}</span>
+        })}
+      </pre>
+    </div>
   )
 }
 
@@ -43,9 +48,10 @@ export function PullRequestDetailPage() {
   const { t, i18n } = useTranslation()
   const { repo, number } = useParams<{ repo: string; number: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
-  const { data: pullRequests = [], isLoading, error, refetch } = usePullRequests(repo)
+  const parsedNumber = Number(number)
+  const pullRequestNumber = Number.isSafeInteger(parsedNumber) && parsedNumber > 0 ? parsedNumber : undefined
+  const { data: pr, isLoading, error, refetch } = usePullRequest(repo, pullRequestNumber)
 
-  const pr = pullRequests.find(p => String(p.number) === number)
   const showDiff = searchParams.get('view') === 'diff'
   const { data: comparison, isLoading: diffLoading, isError: diffError, error: diffErrorValue, refetch: refetchDiff } = useRepositoryComparison(
     repo,
@@ -54,8 +60,11 @@ export function PullRequestDetailPage() {
   )
 
   if (!repo) return <p className="text-sm text-text-muted">{t('repositories.notFound')}</p>
+  if (!pullRequestNumber || error instanceof ApiError && error.status === 404) {
+    return <p className="text-sm text-text-muted">{t('pulls.notFound')}</p>
+  }
   if (isLoading || error) return (
-    <QueryState data={pullRequests} isLoading={isLoading} error={error} onRetry={() => refetch()}>
+    <QueryState data={pr} isLoading={isLoading} error={error} onRetry={() => refetch()}>
       {() => null}
     </QueryState>
   )
@@ -66,11 +75,11 @@ export function PullRequestDetailPage() {
       <div className="space-y-6">
         <div>
           <div className="flex flex-wrap items-center gap-2 text-sm text-text-muted">
-            <Link to="/repositories" className="hover:text-text-primary">{t('navigation.repositories')}</Link>
+            <Link to="/repositories" className="inline-flex min-h-10 items-center hover:text-text-primary">{t('navigation.repositories')}</Link>
             <ChevronRight className="h-3 w-3" />
-            <Link to={`/repositories/${encodeURIComponent(repo)}/pulls`} className="hover:text-text-primary">{t('repositoryBrowser.pullRequests')}</Link>
+            <Link to={`/repositories/${encodeURIComponent(repo)}/pulls`} className="inline-flex min-h-10 items-center hover:text-text-primary">{t('repositoryBrowser.pullRequests')}</Link>
             <ChevronRight className="h-3 w-3" />
-            <Link to={`/repositories/${encodeURIComponent(repo)}/pulls/${pr.number}`} className="hover:text-text-primary">#{pr.number}</Link>
+            <Link to={`/repositories/${encodeURIComponent(repo)}/pulls/${pr.number}`} className="inline-flex min-h-10 items-center hover:text-text-primary">#{pr.number}</Link>
             <ChevronRight className="h-3 w-3" />
             <span>{t('pulls.viewDiff')}</span>
           </div>
@@ -81,7 +90,7 @@ export function PullRequestDetailPage() {
           <p className="mt-2 break-all font-mono text-sm text-text-secondary">{pr.target_branch} → {pr.source_branch}</p>
           <p className="mt-2 text-sm text-text-muted">{pr.title}</p>
         </div>
-        <Button variant="outline" onClick={() => setSearchParams({}, { replace: true })}>
+        <Button variant="outline" className="h-10" onClick={() => setSearchParams({}, { replace: true })}>
           <ArrowLeft className="h-4 w-4" /> {t('common.back')}
         </Button>
         {diffLoading ? (
@@ -89,7 +98,7 @@ export function PullRequestDetailPage() {
         ) : diffError ? (
           <div role="alert" className="flex flex-wrap items-center gap-3 border-y border-border py-4 text-sm text-danger">
             <span>{t('common.error')}: {diffErrorValue instanceof Error ? diffErrorValue.message : String(diffErrorValue)}</span>
-            <Button type="button" variant="outline" className="min-h-10" onClick={() => refetchDiff()}>{t('common.retry')}</Button>
+            <Button type="button" variant="outline" className="h-10" onClick={() => refetchDiff()}>{t('common.retry')}</Button>
           </div>
         ) : !comparison || comparison.files.length === 0 ? (
           <p className="border-y border-border py-6 text-center text-sm text-text-muted">{t('compare.noChanges')}</p>
@@ -124,7 +133,7 @@ export function PullRequestDetailPage() {
                 ))}
               </ul>
             </div>
-            {comparison.patch.trim() && <><h2 className="text-sm font-semibold uppercase tracking-wide">{t('compare.patch')}</h2><PatchView patch={comparison.patch} /></>}
+            {comparison.patch.trim() && <><h2 className="text-sm font-semibold uppercase tracking-wide">{t('compare.patch')}</h2><PatchView patch={comparison.patch} truncated={comparison.patch_truncated} /></>}
           </>
         )}
       </div>
@@ -135,11 +144,11 @@ export function PullRequestDetailPage() {
     <div className="space-y-6">
       <div>
         <div className="flex flex-wrap items-center gap-2 text-sm text-text-muted">
-          <Link to="/repositories" className="hover:text-text-primary">{t('navigation.repositories')}</Link>
+          <Link to="/repositories" className="inline-flex min-h-10 items-center hover:text-text-primary">{t('navigation.repositories')}</Link>
           <ChevronRight className="h-3 w-3" />
-          <Link to={`/repositories/${encodeURIComponent(repo)}`} className="hover:text-text-primary">{repo}</Link>
+          <Link to={`/repositories/${encodeURIComponent(repo)}`} className="inline-flex min-h-10 items-center break-all hover:text-text-primary">{repo}</Link>
           <ChevronRight className="h-3 w-3" />
-          <Link to={`/repositories/${encodeURIComponent(repo)}/pulls`} className="hover:text-text-primary">{t('repositoryBrowser.pullRequests')}</Link>
+          <Link to={`/repositories/${encodeURIComponent(repo)}/pulls`} className="inline-flex min-h-10 items-center hover:text-text-primary">{t('repositoryBrowser.pullRequests')}</Link>
           <ChevronRight className="h-3 w-3" />
           <span>#{pr.number}</span>
         </div>
@@ -186,7 +195,7 @@ export function PullRequestDetailPage() {
         <aside className="h-fit lg:w-60">
           <h2 className="text-sm font-semibold uppercase tracking-wide">{t('pulls.actions')}</h2>
           <div className="mt-3 flex flex-col gap-2">
-            <Button asChild variant="outline" className="min-h-10 justify-start">
+            <Button asChild variant="outline" className="h-10 justify-start">
               <Link to={buildPrDiffHref(pr)}>
                 <FileDiff className="h-4 w-4" /> {t('pulls.viewDiff')}
               </Link>

@@ -101,13 +101,14 @@ Tenant roles: `owner` управляет tenant, projects, memberships, service 
 | GET, POST | `/api/v1/projects/{project_id}/webhooks` | `automation.read` / `automation.manage` |
 | DELETE | `/api/v1/webhooks/{webhook_id}` | `automation.manage` |
 | GET | `/api/v1/projects/{project_id}/outbox-deliveries` | `automation.read` |
+| GET | `/api/v1/projects/{project_id}/outbox-deliveries/page` | `automation.read` |
 | GET | `/api/v1/outbox-deliveries/{delivery_id}` | `automation.read` via delivery project |
 | POST | `/api/v1/outbox-deliveries/{delivery_id}/requeue` | `automation.manage` via delivery project |
 | GET, PUT | `/api/v1/projects/{project_id}/notifications` | `automation.read` / `automation.manage` |
 | GET | `/api/v1/projects/{project_id}/notification-events` | `automation.read` |
 | GET | `/api/v1/projects/{project_id}/notifications/stream` | `automation.read` |
 | GET | `/api/v1/projects/{project_id}/reports/summary` | `report.read` |
-| GET | `/api/v1/audit-log` | `audit.read_project` or tenant/instance audit scope; always filtered |
+| GET | `/api/v1/audit-log`, `/api/v1/audit-log/page` | `audit.read_project` or tenant/instance audit scope; always filtered |
 | GET, POST | `/api/v1/users` | `identity.manage`; creation assigns no implicit owner |
 | PATCH | `/api/v1/users/{user_id}` | self for safe profile fields, otherwise `identity.manage` |
 | GET, POST | `/api/v1/api-tokens` | token owner for own tokens; tenant owner/admin for scoped service tokens |

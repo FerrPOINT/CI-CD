@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'sonner'
 import { PullRequestsPage } from './index'
@@ -8,11 +8,13 @@ import type { PullRequest } from '@/api/types'
 
 const mocks = vi.hoisted(() => ({
   list: vi.fn(),
+  detail: vi.fn(),
   refs: vi.fn(),
   comparison: vi.fn(),
   create: vi.fn(),
   action: vi.fn(),
   refetchList: vi.fn(),
+  refetchDetail: vi.fn(),
   refetchRefs: vi.fn(),
   refetchDiff: vi.fn(),
 }))
@@ -27,6 +29,7 @@ vi.mock('react-i18next', () => ({
 }))
 vi.mock('@/api/hooks', () => ({
   usePullRequests: mocks.list,
+  usePullRequest: mocks.detail,
   useRepositoryRefs: mocks.refs,
   useRepositoryComparison: mocks.comparison,
   useCreatePullRequest: () => ({ mutate: mocks.create, isPending: false }),
@@ -47,13 +50,47 @@ function pullRequest(number: number, status: PullRequest['status'] = 'open'): Pu
 function setup(
   pullRequests: PullRequest[],
   path = '/repositories/platform/pulls',
-  options: { list?: Error; diff?: Error; comparison?: unknown } = {},
+  options: { list?: Error; detail?: Error; diff?: Error; comparison?: unknown } = {},
 ) {
-  mocks.list.mockReturnValue({ data: pullRequests, isLoading: false, error: options.list ?? null, refetch: mocks.refetchList })
-  mocks.refs.mockReturnValue({ data: [{ name: 'main', sha: 'abc', target: '' }, { name: 'feature/1', sha: 'def', target: '' }], isLoading: false, error: null, refetch: mocks.refetchRefs })
+  mocks.list.mockImplementation((_repo: string, query: { limit?: number; offset?: number; status?: PullRequest['status']; search?: string } = {}) => {
+    const search = query.search?.toLocaleLowerCase() ?? ''
+    const filtered = [...pullRequests]
+      .sort((left, right) => right.number - left.number)
+      .filter((pr) => (!query.status || pr.status === query.status) && (
+        !search || [String(pr.number), pr.title, pr.source_branch, pr.target_branch, pr.created_by]
+          .some((value) => value.toLocaleLowerCase().includes(search))
+      ))
+    const offset = query.offset ?? 0
+    const limit = query.limit ?? 20
+    return {
+      data: options.list ? undefined : { items: filtered.slice(offset, offset + limit), total: filtered.length, limit, offset },
+      isLoading: false,
+      isFetching: false,
+      isPlaceholderData: false,
+      error: options.list ?? null,
+      refetch: mocks.refetchList,
+    }
+  })
+  mocks.detail.mockImplementation((_repo: string, number: number) => ({
+    data: options.detail ? undefined : pullRequests.find((pr) => pr.number === number),
+    isLoading: false,
+    error: options.detail ?? null,
+    refetch: mocks.refetchDetail,
+  }))
+  mocks.refs.mockReturnValue({
+    data: [
+      { name: 'main', kind: 'branch', sha: 'abc', target: '' },
+      { name: 'feature/1', kind: 'branch', sha: 'def', target: '' },
+      { name: 'v1.0.0', kind: 'tag', sha: 'fed', target: '' },
+    ],
+    isLoading: false,
+    error: null,
+    refetch: mocks.refetchRefs,
+  })
   mocks.comparison.mockReturnValue({ data: options.comparison ?? null, isLoading: false, isError: Boolean(options.diff), error: options.diff ?? null, refetch: mocks.refetchDiff })
   render(
     <MemoryRouter initialEntries={[path]}>
+      <LocationProbe />
       <Routes>
         <Route path="/repositories/:repo/pulls" element={<PullRequestsPage />} />
         <Route path="/repositories/:repo/pulls/:number" element={<PullRequestDetailPage />} />
@@ -62,26 +99,43 @@ function setup(
   )
 }
 
-afterEach(() => vi.clearAllMocks())
+function LocationProbe() {
+  const location = useLocation()
+  return <div data-testid="location">{location.search}</div>
+}
+
+afterEach(() => {
+  vi.clearAllMocks()
+  vi.useRealTimers()
+})
 
 describe('pull request workflow', () => {
-  it('shows compact filtered pages and an explicit no-matches state', () => {
+  it('loads compact server pages and keeps search and page state in the URL', () => {
+    vi.useFakeTimers()
     setup(Array.from({ length: 21 }, (_, index) => pullRequest(index + 1)))
     expect(screen.getAllByRole('link', { name: /^#\d+ Change/ })).toHaveLength(20)
+    expect(screen.getByText('pulls.shown 20/21')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'pulls.next' }))
     expect(screen.getAllByRole('link', { name: /^#\d+ Change/ })).toHaveLength(1)
+    expect(screen.getByRole('link', { name: '#1 Change 1' })).toBeInTheDocument()
+    expect(screen.getByTestId('location')).toHaveTextContent('?page=2')
+    expect(mocks.list).toHaveBeenLastCalledWith('platform', expect.objectContaining({ limit: 20, offset: 20 }))
     fireEvent.change(screen.getByRole('searchbox', { name: 'pulls.search' }), { target: { value: 'feature/7' } })
+    act(() => vi.advanceTimersByTime(300))
     expect(screen.getByRole('link', { name: '#7 Change 7' })).toBeInTheDocument()
+    expect(screen.getByTestId('location')).toHaveTextContent('?q=feature%2F7')
     expect(screen.queryByRole('navigation', { name: 'pulls.pages' })).not.toBeInTheDocument()
     fireEvent.change(screen.getByRole('searchbox', { name: 'pulls.search' }), { target: { value: 'missing' } })
+    act(() => vi.advanceTimersByTime(300))
     expect(screen.getByRole('status')).toHaveTextContent('pulls.noMatches')
   })
 
-  it('filters by status and resets pagination when the filter changes', () => {
-    setup([...Array.from({ length: 20 }, (_, index) => pullRequest(index + 1)), pullRequest(21, 'closed')])
-    fireEvent.click(screen.getByRole('button', { name: 'pulls.next' }))
+  it('requests a server status filter and resets pagination', () => {
+    setup([...Array.from({ length: 20 }, (_, index) => pullRequest(index + 1)), pullRequest(21, 'closed')], '/repositories/platform/pulls?page=2')
     fireEvent.change(screen.getByLabelText('pulls.statusFilter'), { target: { value: 'closed' } })
     expect(screen.getByRole('link', { name: '#21 Change 21' })).toBeInTheDocument()
+    expect(screen.getByTestId('location')).toHaveTextContent('?status=closed')
+    expect(mocks.list).toHaveBeenLastCalledWith('platform', expect.objectContaining({ offset: 0, status: 'closed' }))
     expect(screen.queryByRole('navigation', { name: 'pulls.pages' })).not.toBeInTheDocument()
   })
 
@@ -90,6 +144,8 @@ describe('pull request workflow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'pulls.create' }))
     const form = screen.getByRole('form', { name: 'pulls.create' })
     expect(mocks.refs).toHaveBeenCalledWith('platform', { kind: 'branch', limit: 51, search: '' })
+    expect([...document.querySelectorAll<HTMLOptionElement>('#pr-source-refs option')].map((option) => option.value))
+      .toEqual(['main', 'feature/1'])
     expect(screen.getByLabelText('pulls.sourceBranch')).toHaveValue('')
     expect(screen.getByLabelText('pulls.targetBranch')).toHaveValue('')
     fireEvent.change(screen.getByLabelText('pulls.titleField'), { target: { value: '  Add cache  ' } })
@@ -130,7 +186,14 @@ describe('pull request workflow', () => {
   })
 
   it('keeps manual branch entry available when ref suggestions fail', () => {
-    mocks.list.mockReturnValue({ data: [], isLoading: false, error: null, refetch: mocks.refetchList })
+    mocks.list.mockReturnValue({
+      data: { items: [], total: 0, limit: 20, offset: 0 },
+      isLoading: false,
+      isFetching: false,
+      isPlaceholderData: false,
+      error: null,
+      refetch: mocks.refetchList,
+    })
     mocks.refs.mockReturnValue({ data: [], isLoading: false, error: new Error('Unavailable'), refetch: mocks.refetchRefs })
     render(<MemoryRouter initialEntries={['/repositories/platform/pulls']}><Routes><Route path="/repositories/:repo/pulls" element={<PullRequestsPage />} /></Routes></MemoryRouter>)
     fireEvent.click(screen.getByRole('button', { name: 'pulls.create' }))
@@ -141,11 +204,11 @@ describe('pull request workflow', () => {
   })
 
   it('distinguishes a detail load error from a missing pull request and retries', () => {
-    setup([], '/repositories/platform/pulls/1', { list: new Error('Unavailable') })
+    setup([], '/repositories/platform/pulls/1', { detail: new Error('Unavailable') })
     expect(screen.getByRole('alert')).toHaveTextContent('Unavailable')
     expect(screen.queryByText('pulls.notFound')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'common.retry' }))
-    expect(mocks.refetchList).toHaveBeenCalled()
+    expect(mocks.refetchDetail).toHaveBeenCalled()
   })
 
   it('retries a failed diff request without losing the pull request context', () => {
@@ -162,7 +225,8 @@ describe('pull request workflow', () => {
         from: 'main',
         to: 'feature/1',
         merge_base: 'abc123',
-        patch: '',
+        patch: '+bounded change',
+        patch_truncated: true,
         files: [
           {
             path: 'assets/screenshot.png',
@@ -179,5 +243,7 @@ describe('pull request workflow', () => {
     expect(file).toHaveTextContent('compare.binaryFile')
     expect(screen.queryByText('+0')).not.toBeInTheDocument()
     expect(screen.queryByText('−0')).not.toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('compare.patchTruncated')
+    expect(screen.getByLabelText('compare.patch')).toHaveAttribute('tabindex', '0')
   })
 })

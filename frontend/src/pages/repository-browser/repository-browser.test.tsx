@@ -70,7 +70,7 @@ beforeEach(() => {
   ], mocks.refetchRefs))
   mocks.tree.mockReturnValue(result([], mocks.refetchTree))
   mocks.blob.mockReturnValue(result({ path: 'empty.txt', sha: 'abc123456', size: 0, content: '', binary: false, truncated: false }, mocks.refetchBlob))
-  mocks.commits.mockReturnValue(result([], mocks.refetchCommits))
+  mocks.commits.mockReturnValue(result({ items: [], hasMore: false }, mocks.refetchCommits))
   mocks.tags.mockReturnValue(result([], mocks.refetchTags))
   mocks.releases.mockReturnValue(result([]))
   mocks.createRelease.mockReturnValue({ mutate: mocks.create, isPending: false })
@@ -87,13 +87,43 @@ describe('RepositoryBrowserPage', () => {
     setup()
 
     expect(screen.getByRole('tab', { name: 'repositoryBrowser.code' })).toHaveAttribute('data-state', 'active')
+    expect(screen.getByRole('link', { name: 'navigation.repositories' })).toHaveClass('min-h-10')
+    expect(screen.getByRole('link', { name: 'repositoryBrowser.compareChanges' })).toHaveClass('h-10')
+    expect(screen.getByRole('link', { name: 'repositoryBrowser.createPullRequest' })).toHaveClass('h-10')
+    expect(screen.getByRole('button', { name: '/' })).toHaveClass('min-h-10', 'min-w-10')
     fireEvent.click(screen.getByRole('button', { name: 'src' }))
     expect(screen.getByTestId('location')).toHaveTextContent('dir=src')
-    expect(mocks.tree).toHaveBeenLastCalledWith('demo', 'HEAD', 'src')
+    expect(mocks.tree).toHaveBeenLastCalledWith('demo', 'HEAD', 'src', { limit: 101, offset: 0, search: '' })
     fireEvent.click(screen.getByRole('button', { name: 'index.tsx' }))
     expect(screen.getByTestId('location')).toHaveTextContent('file=src%2Findex.tsx')
     expect(mocks.blob).toHaveBeenCalledWith('demo', 'HEAD', 'src/index.tsx')
     expect(screen.getByRole('button', { name: 'repositoryBrowser.backToTree' })).toBeInTheDocument()
+  })
+
+  it('bounds large directories with URL pagination and server-side search', () => {
+    mocks.tree.mockReturnValue(result(Array.from({ length: 101 }, (_, index) => ({
+      path: `file-${String(index + 1).padStart(4, '0')}.txt`,
+      name: `file-${String(index + 1).padStart(4, '0')}.txt`,
+      kind: 'blob',
+      sha: `sha-${index}`,
+      size: index,
+    }))))
+    setup('/repositories/demo?treePage=2&treeSearch=release')
+
+    expect(mocks.tree).toHaveBeenLastCalledWith('demo', 'HEAD', undefined, { limit: 101, offset: 100, search: 'release' })
+    expect(screen.getByText('file-0100.txt')).toBeInTheDocument()
+    expect(screen.queryByText('file-0101.txt')).not.toBeInTheDocument()
+    expect(screen.getByText('repositoryBrowser.treePage')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'repositoryBrowser.nextTreePage' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('treePage=3')
+    expect(mocks.tree).toHaveBeenLastCalledWith('demo', 'HEAD', undefined, { limit: 101, offset: 200, search: 'release' })
+
+    fireEvent.change(screen.getByRole('searchbox', { name: 'repositoryBrowser.searchTree' }), { target: { value: 'hotfix' } })
+    fireEvent.click(screen.getByRole('button', { name: 'repositoryBrowser.applyTreeSearch' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('treeSearch=hotfix')
+    expect(screen.getByTestId('location')).not.toHaveTextContent('treePage=')
+    expect(mocks.tree).toHaveBeenLastCalledWith('demo', 'HEAD', undefined, { limit: 101, offset: 0, search: 'hotfix' })
   })
 
   it('opens a deep-linked empty file without a tree request or endless loading state', () => {
@@ -128,8 +158,10 @@ describe('RepositoryBrowserPage', () => {
   it('warns when the displayed text is truncated', () => {
     mocks.blob.mockReturnValue(result({ path: 'large.txt', sha: 'abc123456', size: 600000, content: 'partial text', binary: false, truncated: true }))
     setup('/repositories/demo?file=large.txt')
-    expect(screen.getByText('repositoryBrowser.truncatedFile')).toBeInTheDocument()
+    expect(screen.getByText('repositoryBrowser.truncatedFile')).toHaveAttribute('role', 'status')
     expect(screen.getByText('partial text')).toBeInTheDocument()
+    expect(screen.getByLabelText('repositoryBrowser.filePreview')).toHaveAttribute('tabindex', '0')
+    expect(screen.getByText(/585.9 KiB/)).toBeInTheDocument()
   })
 
   it('retries a tree error without hiding the other tabs', () => {
@@ -150,7 +182,7 @@ describe('RepositoryBrowserPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'main' }))
     expect(screen.getByTestId('location')).toHaveTextContent('ref=refs%2Fheads%2Fmain')
     expect(screen.getByRole('tab', { name: 'repositoryBrowser.code' })).toHaveAttribute('data-state', 'active')
-    expect(mocks.tree).toHaveBeenLastCalledWith('demo', 'refs/heads/main', undefined)
+    expect(mocks.tree).toHaveBeenLastCalledWith('demo', 'refs/heads/main', undefined, { limit: 101, offset: 0, search: '' })
   })
 
   it('bounds branch pages, searches on the server, and resets the page', () => {
@@ -201,11 +233,59 @@ describe('RepositoryBrowserPage', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('tab=commits')
     expect(screen.getByRole('tab', { name: 'repositoryBrowser.commits' })).toHaveAttribute('data-state', 'active')
     expect(await screen.findByText('repositoryBrowser.commitsLoadError')).toBeInTheDocument()
-    expect(mocks.commits).toHaveBeenCalledWith('demo', 'HEAD')
+    expect(mocks.commits).toHaveBeenCalledWith('demo', 'HEAD', 1, 25)
     fireEvent.mouseDown(screen.getByRole('tab', { name: 'repositoryBrowser.tags' }), { button: 0 })
     expect(await screen.findByText('repositoryBrowser.tagsLoadError')).toBeInTheDocument()
     fireEvent.mouseDown(screen.getByRole('tab', { name: 'repositoryBrowser.code' }), { button: 0 })
     expect(screen.getByText('repositoryBrowser.emptyTree')).toBeInTheDocument()
+  })
+
+  it('falls back to the first commit page when the URL offset exceeds the API range', () => {
+    mocks.commits.mockReturnValue(result({ items: [], hasMore: false }, mocks.refetchCommits))
+    setup('/repositories/demo?tab=commits&commitPage=9007199254740991')
+
+    expect(mocks.commits).toHaveBeenLastCalledWith('demo', 'HEAD', 1, 25)
+  })
+
+  it('opens commit history beyond the first 50 rows and keeps the page in the URL', () => {
+    const commits = Array.from({ length: 51 }, (_, index) => ({
+      sha: String(index + 1).padStart(40, '0'),
+      short_sha: String(index + 1).padStart(7, '0'),
+      author: 'Reviewer',
+      email: 'reviewer@example.test',
+      message: `Commit ${index + 1}`,
+      date: '2026-09-22T12:00:00Z',
+    }))
+    mocks.commits.mockImplementation((_repo: string, _ref: string, page: number) => result({
+      items: commits.slice((page - 1) * 25, page * 25),
+      hasMore: page * 25 < commits.length,
+    }, mocks.refetchCommits))
+    setup('/repositories/demo?tab=commits')
+
+    expect(screen.getByText('Commit 1')).toBeInTheDocument()
+    expect(screen.queryByText('Commit 51')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'repositoryBrowser.nextCommits' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('tab=commits&commitPage=2')
+    expect(mocks.commits).toHaveBeenLastCalledWith('demo', 'HEAD', 2, 25)
+    expect(screen.getByText('Commit 50')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'repositoryBrowser.nextCommits' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('tab=commits&commitPage=3')
+    expect(mocks.commits).toHaveBeenLastCalledWith('demo', 'HEAD', 3, 25)
+    expect(screen.getByText('Commit 51')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'repositoryBrowser.previousCommits' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'repositoryBrowser.nextCommits' })).toBeDisabled()
+  })
+
+  it('retries a failed older commit page or returns to the loaded range', () => {
+    mocks.commits.mockReturnValue({ ...result(undefined, mocks.refetchCommits), error: new Error('offline') })
+    setup('/repositories/demo?tab=commits&commitPage=2')
+
+    expect(screen.getByRole('alert')).toHaveTextContent('repositoryBrowser.commitsLoadError')
+    fireEvent.click(screen.getByRole('button', { name: 'common.retry' }))
+    expect(mocks.refetchCommits).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByRole('button', { name: 'repositoryBrowser.previousCommits' }))
+    expect(screen.getByTestId('location')).toHaveTextContent('?tab=commits')
+    expect(screen.getByTestId('location')).not.toHaveTextContent('commitPage')
   })
 
   it('prevents blank or duplicate release tags and keeps the form open on API failure', () => {

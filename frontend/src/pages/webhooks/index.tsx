@@ -8,7 +8,7 @@ import { Input } from '@sdlc/ui/ui'
 import { Label } from '@sdlc/ui/ui'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@sdlc/ui/ui'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@sdlc/ui/ui'
-import { RotateCcw, Webhook, Plus, Trash2, X } from 'lucide-react'
+import { ChevronLeft, ChevronRight, RotateCcw, Webhook, Plus, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
 import { QueryState } from '@/shared/ui/query-state'
@@ -19,6 +19,13 @@ import type {
   OutboxDelivery,
   Webhook as WebhookType,
 } from '@/api/types'
+
+const deliveryPageSize = 20
+const maxDeliveryPage = Math.floor(0xffff_ffff / deliveryPageSize) + 1
+const deliveryStatuses = ['pending', 'retry_scheduled', 'delivered', 'failed'] as const
+const deliveryChannels = ['webhook', 'notification', 'sse'] as const
+type DeliveryStatusFilter = typeof deliveryStatuses[number] | 'all'
+type DeliveryChannelFilter = typeof deliveryChannels[number] | 'all'
 
 export function WebhooksPage() {
   const { t } = useTranslation()
@@ -177,11 +184,61 @@ function WebhookStatusBadge({ enabled }: { enabled: boolean }) {
 function DeliveryHistorySection() {
   const { t } = useTranslation()
   const { projectId } = useParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const deliveriesQuery = useOutboxDeliveries(projectId, { limit: 20 })
+  const rawPage = Number(searchParams.get('page'))
+  const page = Number.isSafeInteger(rawPage) && rawPage > 0 && rawPage <= maxDeliveryPage ? rawPage : 1
+  const rawStatus = searchParams.get('status')
+  const status: DeliveryStatusFilter = deliveryStatuses.includes(rawStatus as typeof deliveryStatuses[number])
+    ? rawStatus as typeof deliveryStatuses[number]
+    : 'all'
+  const rawChannel = searchParams.get('channel')
+  const channel: DeliveryChannelFilter = deliveryChannels.includes(rawChannel as typeof deliveryChannels[number])
+    ? rawChannel as typeof deliveryChannels[number]
+    : 'all'
+  const deliveriesQuery = useOutboxDeliveries(projectId, {
+    limit: deliveryPageSize,
+    offset: (page - 1) * deliveryPageSize,
+    status: status === 'all' ? undefined : status,
+    channel: channel === 'all' ? undefined : channel,
+  })
   const detail = useOutboxDelivery(selectedId)
   const requeue = useRequeueOutboxDelivery()
   const selectedDelivery = detail.data?.delivery
+  const hasFilters = status !== 'all' || channel !== 'all'
+
+  useEffect(() => setSelectedId(null), [page, status, channel])
+
+  useEffect(() => {
+    if (!deliveriesQuery.data || deliveriesQuery.isPlaceholderData) return
+    const lastPage = Math.max(1, Math.ceil(deliveriesQuery.data.total / deliveryPageSize))
+    if (page <= lastPage) return
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current)
+      if (lastPage === 1) next.delete('page')
+      else next.set('page', String(lastPage))
+      return next
+    }, { replace: true })
+  }, [deliveriesQuery.data, deliveriesQuery.isPlaceholderData, page, setSearchParams])
+
+  function changePage(nextPage: number) {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current)
+      if (nextPage <= 1) next.delete('page')
+      else next.set('page', String(nextPage))
+      return next
+    })
+  }
+
+  function changeFilter(key: 'status' | 'channel', value: string) {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current)
+      if (value === 'all') next.delete(key)
+      else next.set(key, value)
+      next.delete('page')
+      return next
+    }, { replace: true })
+  }
 
   function handleRequeue(delivery: OutboxDelivery) {
     requeue.mutate(delivery.id, {
@@ -201,12 +258,41 @@ function DeliveryHistorySection() {
         error={deliveriesQuery.error}
         errorMessage={t('deliveries.loadFailed')}
         onRetry={() => void deliveriesQuery.refetch()}
-        isEmpty={list => list.length === 0}
+        isEmpty={result => result.total === 0 && !hasFilters}
         empty={{ title: t('deliveries.empty') }}
       >
-        {deliveries => <Card className="overflow-hidden">
+        {result => {
+          const pageCount = Math.max(1, Math.ceil(result.total / deliveryPageSize))
+          const firstItem = result.total === 0 ? 0 : result.offset + 1
+          const lastItem = result.offset + result.items.length
+          return <section aria-label={t('deliveries.title')} aria-busy={deliveriesQuery.isFetching} className="space-y-3">
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div>
+                <Label htmlFor="delivery-status" className="sr-only">{t('deliveries.statusFilter')}</Label>
+                <select id="delivery-status" value={status} onChange={event => changeFilter('status', event.target.value)}
+                  className="min-h-10 w-full rounded-md border border-border bg-surface px-2 text-sm text-text-primary outline-none focus-visible:border-accent">
+                  <option value="all">{t('deliveries.allStatuses')}</option>
+                  {deliveryStatuses.map(value => <option key={value} value={value}>{t(value === 'retry_scheduled' ? 'deliveries.retryScheduled' : `deliveries.${value}`)}</option>)}
+                </select>
+              </div>
+              <div>
+                <Label htmlFor="delivery-channel" className="sr-only">{t('deliveries.channelFilter')}</Label>
+                <select id="delivery-channel" value={channel} onChange={event => changeFilter('channel', event.target.value)}
+                  className="min-h-10 w-full rounded-md border border-border bg-surface px-2 text-sm text-text-primary outline-none focus-visible:border-accent">
+                  <option value="all">{t('deliveries.allChannels')}</option>
+                  {deliveryChannels.map(value => <option key={value} value={value}>{t(`deliveries.channel_${value}`)}</option>)}
+                </select>
+              </div>
+            </div>
+            <p className="flex flex-wrap gap-2 text-xs text-text-muted" aria-live="polite">
+              <span>{t('deliveries.shown', { from: firstItem, to: lastItem, total: result.total })}</span>
+              {deliveriesQuery.isFetching && <span>{t('common.loading')}</span>}
+            </p>
+            {result.total === 0 ? (
+              <p role="status" className="border-y border-border py-6 text-sm text-text-muted">{t('deliveries.noMatches')}</p>
+            ) : <Card className="overflow-hidden">
           <div className="divide-y divide-border md:hidden">
-            {deliveries.map(delivery => <div key={delivery.id} className="space-y-2 p-3">
+            {result.items.map(delivery => <div key={delivery.id} className="space-y-2 p-3">
               <DeliveryOpenButton delivery={delivery} selected={selectedId === delivery.id} onClick={() => setSelectedId(current => current === delivery.id ? null : delivery.id)} />
               <p className="break-all font-mono text-xs text-text-secondary">{delivery.channel} / {delivery.destination}</p>
               <div className="flex flex-wrap items-center gap-3 text-xs text-text-secondary">
@@ -232,7 +318,7 @@ function DeliveryHistorySection() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {deliveries.map(delivery => <TableRow key={delivery.id}>
+                {result.items.map(delivery => <TableRow key={delivery.id}>
                   <TableCell className="max-w-xl">
                     <DeliveryOpenButton delivery={delivery} selected={selectedId === delivery.id} onClick={() => setSelectedId(current => current === delivery.id ? null : delivery.id)} />
                   </TableCell>
@@ -250,6 +336,19 @@ function DeliveryHistorySection() {
             </Table>
           </div>
         </Card>}
+            {result.total > deliveryPageSize && (
+              <nav aria-label={t('deliveries.pages')} className="flex items-center justify-end gap-2">
+                <Button type="button" size="sm" variant="outline" className="min-h-10 sm:min-h-10" disabled={page === 1 || deliveriesQuery.isFetching} onClick={() => changePage(page - 1)}>
+                  <ChevronLeft className="h-4 w-4" aria-hidden />{t('deliveries.previous')}
+                </Button>
+                <span className="min-w-16 text-center text-sm text-text-muted">{page} / {pageCount}</span>
+                <Button type="button" size="sm" variant="outline" className="min-h-10 sm:min-h-10" disabled={page === pageCount || deliveriesQuery.isFetching} onClick={() => changePage(page + 1)}>
+                  {t('deliveries.next')}<ChevronRight className="h-4 w-4" aria-hidden />
+                </Button>
+              </nav>
+            )}
+          </section>
+        }}
       </QueryState>
       {selectedId && (
         <Card id="delivery-details" className="p-4">

@@ -108,6 +108,10 @@ pub fn routes() -> Router<Arc<AppState>> {
             get(list_outbox_deliveries),
         )
         .route(
+            "/api/v1/projects/{project_id}/outbox-deliveries/page",
+            get(list_outbox_delivery_page),
+        )
+        .route(
             "/api/v1/outbox-deliveries/{delivery_id}",
             get(get_outbox_delivery),
         )
@@ -152,6 +156,7 @@ pub fn routes() -> Router<Arc<AppState>> {
             get(project_report),
         )
         .route("/api/v1/audit-log", get(list_audit_log))
+        .route("/api/v1/audit-log/page", get(list_audit_log_page))
         .route("/api/v1/users", get(list_users).post(create_user))
         .route("/api/v1/users/{user_id}", patch(update_user))
         .route("/api/v1/api-tokens", get(list_tokens).post(create_token))
@@ -1355,33 +1360,53 @@ async fn delete_webhook(
     Ok(Json(serde_json::json!({"deleted": id})))
 }
 
-#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct OutboxDeliveriesParams {
     /// Maximum number of recent deliveries to return.
+    #[param(nullable = true, default = 50, minimum = 1, maximum = 200)]
     limit: Option<i64>,
+    /// Number of matching deliveries to skip.
+    #[param(default = 0, minimum = 0)]
+    offset: Option<i64>,
     /// Optional status filter: pending, retry_scheduled, delivered or failed.
+    #[param(nullable = true)]
     status: Option<String>,
     /// Optional channel filter: webhook, notification or sse.
+    #[param(nullable = true)]
     channel: Option<String>,
 }
+
+struct NormalizedOutboxDeliveriesParams {
+    limit: u32,
+    offset: u32,
+    status: Option<String>,
+    channel: Option<String>,
+}
+
 impl OutboxDeliveriesParams {
-    fn bounded_limit(&self) -> Result<i64, ApiError> {
+    fn normalize(self) -> Result<NormalizedOutboxDeliveriesParams, ApiError> {
         let limit = self.limit.unwrap_or(50);
         if !(1..=200).contains(&limit) {
             return Err(ApiError::bad_request("limit must be between 1 and 200"));
         }
-        Ok(limit)
-    }
-
-    fn status_filter(&self) -> Result<Option<String>, ApiError> {
-        optional_allowlisted(
+        let offset = self.offset.unwrap_or(0);
+        if !(0..=i64::from(u32::MAX)).contains(&offset) {
+            return Err(ApiError::bad_request(
+                "offset must be between 0 and 4294967295",
+            ));
+        }
+        let status = optional_allowlisted(
             &self.status,
             &["pending", "retry_scheduled", "delivered", "failed"],
-        )
-    }
-
-    fn channel_filter(&self) -> Result<Option<String>, ApiError> {
-        optional_allowlisted(&self.channel, &["webhook", "notification", "sse"])
+        )?;
+        let channel = optional_allowlisted(&self.channel, &["webhook", "notification", "sse"])?;
+        Ok(NormalizedOutboxDeliveriesParams {
+            limit: limit as u32,
+            offset: offset as u32,
+            status,
+            channel,
+        })
     }
 }
 
@@ -1405,6 +1430,15 @@ pub(crate) struct OutboxDelivery {
     failed_at: Option<DateTime<Utc>>,
     last_error: Option<String>,
     created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct OutboxDeliveryPage {
+    items: Vec<OutboxDelivery>,
+    total: i64,
+    #[schema(minimum = 1, maximum = 200)]
+    limit: u32,
+    offset: u32,
 }
 
 #[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
@@ -1439,17 +1473,59 @@ pub(crate) async fn list_outbox_deliveries(
     Path(project_id): Path<Uuid>,
     Query(params): Query<OutboxDeliveriesParams>,
 ) -> ApiResult<Vec<OutboxDelivery>> {
+    let params = params.normalize()?;
     Ok(Json(
         project_outbox_deliveries(
             pool(&state)?,
             project_id,
-            params.bounded_limit()?,
-            params.status_filter()?,
-            params.channel_filter()?,
+            params.limit,
+            params.offset,
+            params.status.as_deref(),
+            params.channel.as_deref(),
         )
         .await
         .map_err(ApiError::internal)?,
     ))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/outbox-deliveries/page",
+    tag = "outbox",
+    params(("project_id" = Uuid, Path), OutboxDeliveriesParams),
+    responses((status = 200, body = OutboxDeliveryPage), (status = 400)),
+)]
+pub(crate) async fn list_outbox_delivery_page(
+    State(state): State<Arc<AppState>>,
+    Path(project_id): Path<Uuid>,
+    Query(params): Query<OutboxDeliveriesParams>,
+) -> ApiResult<OutboxDeliveryPage> {
+    let db = pool(&state)?;
+    let params = params.normalize()?;
+    let total = project_outbox_delivery_count(
+        db,
+        project_id,
+        params.status.as_deref(),
+        params.channel.as_deref(),
+    )
+    .await
+    .map_err(ApiError::internal)?;
+    let items = project_outbox_deliveries(
+        db,
+        project_id,
+        params.limit,
+        params.offset,
+        params.status.as_deref(),
+        params.channel.as_deref(),
+    )
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(Json(OutboxDeliveryPage {
+        items,
+        total,
+        limit: params.limit,
+        offset: params.offset,
+    }))
 }
 
 #[utoipa::path(get, path = "/api/v1/outbox-deliveries/{delivery_id}", tag = "outbox", params(("delivery_id" = Uuid, Path)), responses((status = 200, body = OutboxDeliveryDetail), (status = 404)))]
@@ -1518,9 +1594,10 @@ fn optional_allowlisted(
 async fn project_outbox_deliveries(
     pool: &PgPool,
     project_id: Uuid,
-    limit: i64,
-    status: Option<String>,
-    channel: Option<String>,
+    limit: u32,
+    offset: u32,
+    status: Option<&str>,
+    channel: Option<&str>,
 ) -> Result<Vec<OutboxDelivery>, sqlx::Error> {
     sqlx::query_as::<_, OutboxDelivery>(
         "SELECT * FROM ( \
@@ -1538,13 +1615,40 @@ async fn project_outbox_deliveries(
              WHERE m.project_id = $1 AND ($2::text IS NULL OR m.channel = $2) \
          ) deliveries \
          WHERE $3::text IS NULL OR status = $3 \
-         ORDER BY created_at DESC, id DESC LIMIT $4",
+         ORDER BY created_at DESC, id DESC LIMIT $4 OFFSET $5",
     )
     .bind(project_id)
     .bind(channel)
     .bind(status)
-    .bind(limit)
+    .bind(i64::from(limit))
+    .bind(i64::from(offset))
     .fetch_all(pool)
+    .await
+}
+
+async fn project_outbox_delivery_count(
+    pool: &PgPool,
+    project_id: Uuid,
+    status: Option<&str>,
+    channel: Option<&str>,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM ( \
+            SELECT CASE \
+                WHEN delivered_at IS NOT NULL THEN 'delivered' \
+                WHEN failed_at IS NOT NULL THEN 'failed' \
+                WHEN attempts > 0 THEN 'retry_scheduled' \
+                ELSE 'pending' \
+            END AS status \
+            FROM outbox_messages \
+            WHERE project_id = $1 AND ($2::text IS NULL OR channel = $2) \
+         ) deliveries \
+         WHERE $3::text IS NULL OR status = $3",
+    )
+    .bind(project_id)
+    .bind(channel)
+    .bind(status)
+    .fetch_one(pool)
     .await
 }
 
@@ -2189,6 +2293,176 @@ pub(crate) struct AuditEvent {
 async fn list_audit_log(State(state): State<Arc<AppState>>) -> ApiResult<Vec<AuditEvent>> {
     Ok(Json(sqlx::query_as("SELECT id, action, resource_type, resource_id, actor, created_at FROM audit_log ORDER BY created_at DESC LIMIT 200").fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
+
+#[derive(Debug, Default, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
+pub(crate) struct AuditLogParams {
+    /// Maximum number of events to return.
+    #[param(nullable = true, default = 20, minimum = 1, maximum = 200)]
+    limit: Option<i64>,
+    /// Number of matching events to skip.
+    #[param(default = 0, minimum = 0, maximum = 2147483647)]
+    offset: Option<i64>,
+    /// Optional exact action filter.
+    #[param(nullable = true, max_length = 128)]
+    action: Option<String>,
+    /// Optional case-insensitive literal search across raw event fields.
+    #[param(nullable = true, max_length = 128)]
+    q: Option<String>,
+}
+
+struct NormalizedAuditLogParams {
+    limit: u32,
+    offset: u32,
+    action: Option<String>,
+    search_pattern: Option<String>,
+}
+
+impl AuditLogParams {
+    fn normalize(self) -> Result<NormalizedAuditLogParams, ApiError> {
+        let limit = self.limit.unwrap_or(20);
+        if !(1..=200).contains(&limit) {
+            return Err(ApiError::bad_request("limit must be between 1 and 200"));
+        }
+        let offset = self.offset.unwrap_or(0);
+        if !(0..=i64::from(i32::MAX)).contains(&offset) {
+            return Err(ApiError::bad_request(
+                "offset must be between 0 and 2147483647",
+            ));
+        }
+        let action = trim_optional(self.action);
+        if action
+            .as_ref()
+            .is_some_and(|value| value.chars().count() > 128)
+        {
+            return Err(ApiError::bad_request(
+                "action must not exceed 128 characters",
+            ));
+        }
+        let query = trim_optional(self.q);
+        if query
+            .as_ref()
+            .is_some_and(|value| value.chars().count() > 128)
+        {
+            return Err(ApiError::bad_request("q must not exceed 128 characters"));
+        }
+        let search_pattern = query.map(|value| format!("%{}%", escape_audit_like(&value)));
+
+        Ok(NormalizedAuditLogParams {
+            limit: limit as u32,
+            offset: offset as u32,
+            action,
+            search_pattern,
+        })
+    }
+}
+
+fn escape_audit_like(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if matches!(ch, '%' | '_' | '\\') {
+            escaped.push('\\');
+        }
+        escaped.push(ch);
+    }
+    escaped
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub(crate) struct AuditLogPage {
+    items: Vec<AuditEvent>,
+    total: i64,
+    #[schema(minimum = 1, maximum = 200)]
+    limit: u32,
+    #[schema(minimum = 0, maximum = 2147483647)]
+    offset: i64,
+    actions: Vec<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/audit-log/page",
+    tag = "audit",
+    params(AuditLogParams),
+    responses((status = 200, body = AuditLogPage), (status = 400)),
+)]
+pub(crate) async fn list_audit_log_page(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<AuditLogParams>,
+) -> ApiResult<AuditLogPage> {
+    let db = pool(&state)?;
+    let params = params.normalize()?;
+    let action = params.action.as_deref();
+    let search_pattern = params.search_pattern.as_deref();
+    let (items, total, actions) = tokio::try_join!(
+        audit_log_items(db, params.limit, params.offset, action, search_pattern,),
+        audit_log_count(db, action, search_pattern),
+        audit_log_actions(db),
+    )
+    .map_err(ApiError::internal)?;
+
+    Ok(Json(AuditLogPage {
+        items,
+        total,
+        limit: params.limit,
+        offset: i64::from(params.offset),
+        actions,
+    }))
+}
+
+async fn audit_log_items(
+    db: &PgPool,
+    limit: u32,
+    offset: u32,
+    action: Option<&str>,
+    search_pattern: Option<&str>,
+) -> Result<Vec<AuditEvent>, sqlx::Error> {
+    sqlx::query_as::<_, AuditEvent>(
+        "SELECT id, action, resource_type, resource_id, actor, created_at \
+         FROM audit_log \
+         WHERE ($1::text IS NULL OR action = $1) \
+           AND ($2::text IS NULL \
+             OR action ILIKE $2 ESCAPE '\\' \
+             OR resource_type ILIKE $2 ESCAPE '\\' \
+             OR COALESCE(actor, '') ILIKE $2 ESCAPE '\\' \
+             OR COALESCE(resource_id::text, '') ILIKE $2 ESCAPE '\\') \
+         ORDER BY created_at DESC, id DESC \
+         LIMIT $3 OFFSET $4",
+    )
+    .bind(action)
+    .bind(search_pattern)
+    .bind(i64::from(limit))
+    .bind(i64::from(offset))
+    .fetch_all(db)
+    .await
+}
+
+async fn audit_log_count(
+    db: &PgPool,
+    action: Option<&str>,
+    search_pattern: Option<&str>,
+) -> Result<i64, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT count(*)::bigint FROM audit_log \
+         WHERE ($1::text IS NULL OR action = $1) \
+           AND ($2::text IS NULL \
+             OR action ILIKE $2 ESCAPE '\\' \
+             OR resource_type ILIKE $2 ESCAPE '\\' \
+             OR COALESCE(actor, '') ILIKE $2 ESCAPE '\\' \
+             OR COALESCE(resource_id::text, '') ILIKE $2 ESCAPE '\\')",
+    )
+    .bind(action)
+    .bind(search_pattern)
+    .fetch_one(db)
+    .await
+}
+
+async fn audit_log_actions(db: &PgPool) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar("SELECT DISTINCT action FROM audit_log ORDER BY action")
+        .fetch_all(db)
+        .await
+}
+
 pub(crate) async fn audit(
     db: &PgPool,
     action: &str,
@@ -2803,6 +3077,116 @@ mod tests {
         assert!(artifact_retention_days_from_env(Some("0".to_string())).is_err());
         assert!(artifact_retention_days_from_env(Some("3651".to_string())).is_err());
         assert!(artifact_retention_days_from_env(Some("soon".to_string())).is_err());
+    }
+    #[test]
+    fn audit_log_params_are_normalized_and_escape_literal_search() {
+        let params = AuditLogParams {
+            limit: Some(25),
+            offset: Some(50),
+            action: Some(" auth.login_failed ".to_string()),
+            q: Some(r" actor_%\name ".to_string()),
+        }
+        .normalize()
+        .unwrap();
+
+        assert_eq!(params.limit, 25);
+        assert_eq!(params.offset, 50);
+        assert_eq!(params.action.as_deref(), Some("auth.login_failed"));
+        assert_eq!(params.search_pattern.as_deref(), Some(r"%actor\_\%\\name%"));
+    }
+    #[test]
+    fn audit_log_params_reject_invalid_bounds() {
+        assert!(
+            AuditLogParams {
+                limit: Some(0),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+        assert!(
+            AuditLogParams {
+                offset: Some(-1),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+        assert!(
+            AuditLogParams {
+                offset: Some(i64::from(i32::MAX) + 1),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+        assert!(
+            AuditLogParams {
+                action: Some("a".repeat(129)),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+        assert!(
+            AuditLogParams {
+                q: Some("я".repeat(129)),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+    }
+    #[test]
+    fn outbox_delivery_params_are_normalized() {
+        let params = OutboxDeliveriesParams {
+            limit: Some(25),
+            offset: Some(50),
+            status: Some(" FAILED ".to_string()),
+            channel: Some(" Notification ".to_string()),
+        }
+        .normalize()
+        .unwrap();
+
+        assert_eq!(params.limit, 25);
+        assert_eq!(params.offset, 50);
+        assert_eq!(params.status.as_deref(), Some("failed"));
+        assert_eq!(params.channel.as_deref(), Some("notification"));
+    }
+    #[test]
+    fn outbox_delivery_params_reject_invalid_values() {
+        assert!(
+            OutboxDeliveriesParams {
+                limit: Some(0),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+        assert!(
+            OutboxDeliveriesParams {
+                status: Some("unknown".to_string()),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+        assert!(
+            OutboxDeliveriesParams {
+                offset: Some(-1),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
+        assert!(
+            OutboxDeliveriesParams {
+                offset: Some(i64::from(u32::MAX) + 1),
+                ..Default::default()
+            }
+            .normalize()
+            .is_err()
+        );
     }
 }
 
