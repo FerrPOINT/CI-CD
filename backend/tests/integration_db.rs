@@ -7741,6 +7741,8 @@ async fn service_account_tokens_authenticate_as_machine_principal() {
     let pool = test_pool().await;
     // Admin issues a service account.
     let admin_id = Uuid::new_v4();
+    let project_id = Uuid::new_v4();
+    let other_project_id = Uuid::new_v4();
     let admin_name = format!("sa-admin-{}", admin_id.simple());
     sqlx::query("INSERT INTO users (id, username, role) VALUES ($1, $2, 'admin')")
         .bind(admin_id)
@@ -7755,6 +7757,22 @@ async fn service_account_tokens_authenticate_as_machine_principal() {
         .execute(&pool)
         .await
         .expect("insert credential");
+    sqlx::query(
+        "INSERT INTO projects (id, name, repository_url) \
+         VALUES ($1, $2, $3), ($4, $5, $6)",
+    )
+    .bind(project_id)
+    .bind(format!("sa-project-{}", project_id.simple()))
+    .bind(format!("https://forge.example/{}.git", project_id.simple()))
+    .bind(other_project_id)
+    .bind(format!("sa-project-{}", other_project_id.simple()))
+    .bind(format!(
+        "https://forge.example/{}.git",
+        other_project_id.simple()
+    ))
+    .execute(&pool)
+    .await
+    .expect("insert service account projects");
 
     let app =
         cicd::api::app_with_auth_secret(Some(pool.clone()), Some(format!("sa-secret-{admin_id}")));
@@ -7815,9 +7833,9 @@ async fn service_account_tokens_authenticate_as_machine_principal() {
             Request::post(format!("/api/v1/admin/service-accounts/{sa_id}/tokens"))
                 .header("content-type", "application/json")
                 .header("authorization", format!("Bearer {admin_access}"))
-                .body(Body::from(
-                    r#"{"name":"ci-bot-token","scopes":["api:read"]}"#,
-                ))
+                .body(Body::from(format!(
+                    r#"{{"name":"ci-bot-token","project_id":"{project_id}","scopes":["api:read"]}}"#
+                )))
                 .unwrap(),
         )
         .await
@@ -7834,6 +7852,7 @@ async fn service_account_tokens_authenticate_as_machine_principal() {
         raw_token.starts_with("forge_sat_"),
         "service-account tokens use forge_sat_ prefix, got {raw_token}"
     );
+    assert_eq!(issued["project_id"], project_id.to_string());
 
     // The SAT authenticates and exposes principal metadata.
     let who = app
@@ -7855,6 +7874,7 @@ async fn service_account_tokens_authenticate_as_machine_principal() {
     .unwrap();
     assert_eq!(me["principal_type"], "service_account");
     assert_eq!(me["service_account"]["name"], "ci-bot");
+    assert_eq!(me["project_id"], project_id.to_string());
 
     // SAT carries its scopes into protected routes (read-only scope list).
     let projects = app
@@ -7872,6 +7892,108 @@ async fn service_account_tokens_authenticate_as_machine_principal() {
         StatusCode::OK,
         "SAT must reach scoped routes"
     );
+    let visible_projects: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(projects.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(visible_projects.as_array().unwrap().len(), 1);
+    assert_eq!(visible_projects[0]["id"], project_id.to_string());
+
+    let allowed_project = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/projects/{project_id}"))
+                .header("authorization", format!("Bearer {raw_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(allowed_project.status(), StatusCode::OK);
+
+    let denied_project = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/projects/{other_project_id}"))
+                .header("authorization", format!("Bearer {raw_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(denied_project.status(), StatusCode::FORBIDDEN);
+
+    let invalid_scope = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/admin/service-accounts/{sa_id}/tokens"))
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {admin_access}"))
+                .body(Body::from(format!(
+                    r#"{{"name":"invalid-project","project_id":"{}","scopes":["api:read"]}}"#,
+                    Uuid::new_v4()
+                )))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_scope.status(), StatusCode::BAD_REQUEST);
+
+    let unscoped_issue = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/admin/service-accounts/{sa_id}/tokens"))
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {admin_access}"))
+                .body(Body::from(
+                    r#"{"name":"unscoped-token","scopes":["api:read"]}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unscoped_issue.status(), StatusCode::CREATED);
+    let unscoped: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(unscoped_issue.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(unscoped["project_id"].is_null());
+    let unscoped_token = unscoped["token"].as_str().unwrap();
+
+    let unscoped_projects = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/projects")
+                .header("authorization", format!("Bearer {unscoped_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unscoped_projects.status(), StatusCode::OK);
+    let unscoped_projects: serde_json::Value = serde_json::from_slice(
+        &axum::body::to_bytes(unscoped_projects.into_body(), usize::MAX)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(unscoped_projects.as_array().unwrap().is_empty());
+
+    let unscoped_project = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/projects/{project_id}"))
+                .header("authorization", format!("Bearer {unscoped_token}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(unscoped_project.status(), StatusCode::FORBIDDEN);
 
     // Disabling the service account blocks its tokens.
     sqlx::query("UPDATE service_accounts SET enabled = false WHERE id = $1")
