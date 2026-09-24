@@ -3474,6 +3474,8 @@ async fn update_service_account(
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 pub(crate) struct IssueServiceAccountToken {
     name: String,
+    #[serde(default)]
+    project_id: Option<Uuid>,
     #[serde(default = "default_token_scope_strings")]
     scopes: Vec<String>,
     #[serde(default)]
@@ -3486,6 +3488,7 @@ pub(crate) struct IssuedServiceAccountToken {
     name: String,
     token: String,
     token_hint: String,
+    project_id: Option<Uuid>,
     scopes: Vec<String>,
     expires_at: Option<DateTime<Utc>>,
 }
@@ -3520,18 +3523,40 @@ async fn issue_service_account_token(
     if exists.is_none() {
         return Err(ApiError::not_found());
     }
-    let row = sqlx::query_as::<_, (Uuid, String, String, Vec<String>, Option<DateTime<Utc>>)>(
+    if let Some(project_id) = input.project_id {
+        let project_exists: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects WHERE id = $1)")
+                .bind(project_id)
+                .fetch_one(db)
+                .await
+                .map_err(ApiError::internal)?;
+        if !project_exists {
+            return Err(ApiError::bad_request("project not found"));
+        }
+    }
+    let row = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            String,
+            String,
+            Option<Uuid>,
+            Vec<String>,
+            Option<DateTime<Utc>>,
+        ),
+    >(
         "INSERT INTO api_tokens \
          (id, name, token_hash, token_hint, principal_type, service_account_id, \
           user_id, project_id, scopes, expires_at) \
-         VALUES ($1, $2, $3, $4, 'service_account', $5, NULL, NULL, $6, $7) \
-         RETURNING id, name, token_hint, scopes, expires_at",
+         VALUES ($1, $2, $3, $4, 'service_account', $5, NULL, $6, $7, $8) \
+         RETURNING id, name, token_hint, project_id, scopes, expires_at",
     )
     .bind(Uuid::new_v4())
     .bind(input.name.trim())
     .bind(token_hash)
     .bind(hint)
     .bind(account_id)
+    .bind(input.project_id)
     .bind(scopes)
     .bind(expires_at)
     .fetch_one(db)
@@ -3545,8 +3570,9 @@ async fn issue_service_account_token(
             name: row.1,
             token: value,
             token_hint: row.2,
-            scopes: row.3,
-            expires_at: row.4,
+            project_id: row.3,
+            scopes: row.4,
+            expires_at: row.5,
         }),
     ))
 }
@@ -3568,6 +3594,7 @@ pub(crate) async fn auth_principal(
                 "id": claims.sub,
                 "name": claims.service_account_name,
             },
+            "project_id": claims.token_project_id,
             "scopes": claims.token_scopes,
         })))
     } else {

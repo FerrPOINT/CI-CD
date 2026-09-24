@@ -4210,6 +4210,11 @@ components:
           format: int32
         name:
           type: string
+        project_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
         scopes:
           type: array
           items:
@@ -4233,6 +4238,11 @@ components:
           format: uuid
         name:
           type: string
+        project_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
         scopes:
           type: array
           items:

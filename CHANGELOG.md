@@ -17,6 +17,9 @@
 
 ### Fixed
 
+- Service-account token можно привязать к конкретному проекту; такой machine
+  principal видит и изменяет только его ресурсы, а токен без binding не получает
+  доступ к проектам.
 - Seccomp-профиль Docker job теперь разрешает `symlink`, `symlinkat` и
   используемый Node.js `sendfile`, поэтому pnpm может создать project link и
   скопировать package-файлы без снятия остальных ограничений runner sandbox.

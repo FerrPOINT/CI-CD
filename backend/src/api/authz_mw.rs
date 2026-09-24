@@ -250,7 +250,9 @@ async fn project_scope_allows(
 ) -> Result<bool, ApiError> {
     let Some(scope_ref) = project_scope_ref(path) else {
         if claims.token_id.is_some() && claims.token_project_id.is_some() {
-            return Ok(method == "GET" && path == "/api/v1/projects");
+            return Ok(
+                method == "GET" && matches!(path, "/api/v1/projects" | "/api/v1/auth/principal")
+            );
         }
         return Ok(true);
     };
@@ -259,6 +261,12 @@ async fn project_scope_allows(
     };
     let scope_ref = match scope_ref {
         ProjectScopeRef::Repository(name) => {
+            if claims.role == "service_account" {
+                return match claims.token_project_id {
+                    Some(project_id) => repository_linked_to_project(pool, &name, project_id).await,
+                    None => Ok(false),
+                };
+            }
             let (_, min_role) = crate::authz::required_role(method, path);
             return repository_scope_allows(
                 pool,
@@ -279,6 +287,9 @@ async fn project_scope_allows(
         if project_id != token_project_id {
             return Ok(false);
         }
+    }
+    if claims.role == "service_account" {
+        return Ok(claims.token_project_id == Some(project_id));
     }
     if global_role == crate::authz::Role::Admin {
         return Ok(true);
@@ -409,6 +420,21 @@ pub(crate) async fn list_projects_for_claims(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Project>, ApiError> {
+    if claims.role == "service_account" {
+        let Some(project_id) = claims.token_project_id else {
+            return Ok(Vec::new());
+        };
+        return sqlx::query_as::<_, Project>(
+            "SELECT id, name, repository_url, default_branch, max_running_jobs, created_at \
+             FROM projects WHERE id = $3 ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+        )
+        .bind(limit)
+        .bind(offset)
+        .bind(project_id)
+        .fetch_all(pool)
+        .await
+        .map_err(ApiError::internal);
+    }
     match (role, claims.token_project_id) {
         (crate::authz::Role::Admin, Some(project_id)) => sqlx::query_as::<_, Project>(
             "SELECT id, name, repository_url, default_branch, max_running_jobs, created_at \

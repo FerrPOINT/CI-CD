@@ -1956,6 +1956,8 @@ export interface components {
             /** Format: int32 */
             expires_in_days?: number | null;
             name: string;
+            /** Format: uuid */
+            project_id?: string | null;
             scopes?: string[];
         };
         IssuedServiceAccountToken: {
@@ -1964,6 +1966,8 @@ export interface components {
             /** Format: uuid */
             id: string;
             name: string;
+            /** Format: uuid */
+            project_id?: string | null;
             scopes: string[];
             token: string;
             token_hint: string;

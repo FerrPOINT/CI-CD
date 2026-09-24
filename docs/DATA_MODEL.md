@@ -773,7 +773,7 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 | `user_id` | UUID | NULL | — | FK → `users(id)` SET NULL; NULL для `principal_type='service_account'` |
 | `principal_type` | TEXT | NOT NULL | `'user'` | `user` \| `service_account` (CHECK) |
 | `service_account_id` | UUID | NULL | — | FK → `service_accounts(id)` CASCADE; NOT NULL при `principal_type='service_account'` |
-| `project_id` | UUID | NULL | — | FK → `projects(id)` CASCADE; обязателен для новых PAT при `CICD_AUTH_SECRET` |
+| `project_id` | UUID | NULL | — | FK → `projects(id)` CASCADE; обязателен для новых PAT при `CICD_AUTH_SECRET`, ограничивает service-account token одним проектом |
 | `scopes` | TEXT[] | NOT NULL | `ARRAY['api:read','api:write','git:read','git:write']` | Разрешённые области PAT: REST read/write и Git read/write |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
 | `last_used_at` | TIMESTAMPTZ | NULL | — | — |
@@ -783,7 +783,8 @@ Outgoing delivery создаёт `outbox_messages` на terminal pipeline events
 > Это legacy CI/CD PAT storage. При включённом Central Auth list/create/revoke
 > endpoints закрыты: личные `sdlc_pat_...` выпускает Central Auth и ими управляет
 > Admin Panel. Старые записи остаются для совместимости legacy-режима. Machine
-> service-account tokens ниже сохраняют отдельный жизненный цикл.
+> service-account tokens ниже сохраняют отдельный жизненный цикл; без
+> `project_id` они аутентифицируются, но не получают доступ к проектам.
 
 ### 9.10a tenants
 

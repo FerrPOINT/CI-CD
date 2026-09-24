@@ -1317,9 +1317,9 @@ Machine principals для автоматизации (AUTHORIZATION target-step;
 | GET | `/admin/service-accounts` | admin | Список service accounts |
 | POST | `/admin/service-accounts` | admin | Создать (`name` 1–64 уникальный, `description?`) → 201 |
 | PATCH | `/admin/service-accounts/{account_id}` | admin | Изменить `description`/`enabled` |
-| POST | `/admin/service-accounts/{account_id}/tokens` | admin | Выпустить `forge_sat_…` токен (`name`, `scopes`, `expires_in_days?`) → 201, `token` показывается один раз |
+| POST | `/admin/service-accounts/{account_id}/tokens` | admin | Выпустить `forge_sat_…` токен (`name`, `project_id?`, `scopes`, `expires_in_days?`) → 201, `token` показывается один раз |
 
-Токены service account: формат `forge_sat_<random>` (≥256 бит), SHA-256 hash at rest, `principal_type='service_account'`, `user_id=NULL`. Аутентификация Bearer `forge_sat_…`; principal действует как developer-class субъект, ограниченный скопами токена (`api:read`/`api:write`/`git:read`/`git:write`) и project-биндингами; admin-only маршруты недоступны. `enabled=false` аккаунта мгновенно блокирует его токены.
+Токены service account: формат `forge_sat_<random>` (≥256 бит), SHA-256 hash at rest, `principal_type='service_account'`, `user_id=NULL`. Аутентификация Bearer `forge_sat_…`; principal действует как developer-class субъект, ограниченный скопами токена (`api:read`/`api:write`/`git:read`/`git:write`) и `project_id`. Project-scoped токен видит только связанный проект и его ресурсы; токен без `project_id` не получает доступ к проектам. Admin-only маршруты недоступны. `enabled=false` аккаунта мгновенно блокирует его токены.
 
 ### Tenants
 
