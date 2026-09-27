@@ -82,7 +82,7 @@ export function SchedulesPage() {
   }
 
   return (
-    <div className="min-w-0 max-w-5xl space-y-5">
+    <div className="min-w-0 space-y-5">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-bold sm:text-2xl">{t('schedules.title')}</h1>
         <Button

@@ -67,6 +67,22 @@ describe('AppShell navigation', () => {
 
     expect(screen.getByRole('link', { name: 'navigation.repositories' })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByRole('link', { name: 'navigation.dashboard' })).not.toHaveAttribute('aria-current')
+    expect(screen.getByText('outlet').parentElement).toHaveAttribute('data-page-layout', 'wide')
+  })
+
+  it('uses the shared readable work-area mode for settings', () => {
+    renderShell('/settings')
+
+    expect(screen.getByText('outlet').parentElement).toHaveAttribute('data-page-layout', 'reading')
+  })
+
+  it('uses the shared detail mode for pipeline runs', () => {
+    renderShell('/pipelines/pipeline-1')
+
+    expect(screen.getByText('outlet').parentElement).toHaveAttribute(
+      'data-page-layout',
+      'detail-with-aside',
+    )
   })
 
   it('uses an accessible focus-managed mobile drawer', async () => {
