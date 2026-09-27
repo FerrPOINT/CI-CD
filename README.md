@@ -99,7 +99,13 @@ Configuration: [docs/ENV.md](docs/ENV.md). CLI: [docs/CLI.md](docs/CLI.md).
 
 ## Визуальные доказательства
 
-Скриншоты — реальные поверхности Dashboard с seeded-данными.
+Скриншоты — реальные поверхности Dashboard с seeded-данными. Desktop-галерея
+снята при `1920x1080`; mobile `375x812` подтверждает единые режимы рабочей
+области и отсутствие горизонтального переполнения.
+
+| Wide | Reading | Detail with aside |
+|---|---|---|
+| ![Дашборд, mobile](docs/screenshots/375x812/wide.png) | ![Настройки, mobile](docs/screenshots/375x812/reading.png) | ![Пайплайн, mobile](docs/screenshots/375x812/detail-with-aside.png) |
 
 ### Дашборд
 
@@ -165,7 +171,8 @@ Configuration: [docs/ENV.md](docs/ENV.md). CLI: [docs/CLI.md](docs/CLI.md).
 
 ![Подтверждение удаления проекта](docs/screenshots/24-project-delete-confirm.png)
 
-Полный визуальный реестр (38 desktop-скриншотов, условия съёмки и известные mock-исключения): [docs/assets/screens/manifest.md](docs/assets/screens/manifest.md).
+Расширенный визуальный реестр (desktop routes, action states, responsive modes и
+условия съёмки): [docs/assets/screens/manifest.md](docs/assets/screens/manifest.md).
 
 ## Архитектура
 
