@@ -54,8 +54,8 @@
 
 ## Responsive modes
 
-| Файл | Маршрут | Режим | Размер PNG (viewport 375×812) |
-|---|---|---|---|
-| [wide.png](../../screenshots/375x812/wide.png) | `/` | `wide` | 375×1306 |
-| [reading.png](../../screenshots/375x812/reading.png) | `/settings` | `reading` | 375×1886 |
-| [detail-with-aside.png](../../screenshots/375x812/detail-with-aside.png) | `/pipelines/:id` | `detail-with-aside` | 375×1032 |
+| Файл | Маршрут | Режим | Viewport | Размер PNG |
+|---|---|---|---|---|
+| [wide.png](../../screenshots/375x812/wide.png) | `/` | `wide` | 375×812 | 375×1306 |
+| [reading.png](../../screenshots/375x812/reading.png) | `/settings` | `reading` | 375×812 | 375×1886 |
+| [detail-with-aside.png](../../screenshots/375x812/detail-with-aside.png) | `/pipelines/:id` | `detail-with-aside` | 375×812 | 375×1032 |

@@ -99,45 +99,23 @@ Configuration: [docs/ENV.md](docs/ENV.md). CLI: [docs/CLI.md](docs/CLI.md).
 
 ## Визуальные доказательства
 
-Скриншоты — реальные поверхности Dashboard с seeded-данными. Desktop-галерея
-снята при `1920x1080`; mobile `375x812` подтверждает единые режимы рабочей
-области и отсутствие горизонтального переполнения.
+Представительные кадры сняты на реальных маршрутах при `1920x1080` с seeded-
+данными и default theme. Responsive QA, включая `375px`, ведётся отдельно в
+тестах и screenshot manifest.
 
-| Wide | Reading | Detail with aside |
-|---|---|---|
-| ![Дашборд, mobile](docs/screenshots/375x812/wide.png) | ![Настройки, mobile](docs/screenshots/375x812/reading.png) | ![Пайплайн, mobile](docs/screenshots/375x812/detail-with-aside.png) |
-
-### Дашборд
+### Дашборд (`wide`)
 
 ![Дашборд](docs/screenshots/02-dashboard.png)
 
-### Проекты
+### Настройки (`reading/form`)
 
-![Проекты](docs/screenshots/03-projects.png)
+![Настройки](docs/screenshots/07-settings.png)
 
-### Пайплайны
-
-![Пайплайны](docs/screenshots/05-pipelines.png)
-
-### Детали пайплайна
+### Детали пайплайна (`detail-with-aside`)
 
 ![Детали пайплайна](docs/screenshots/06-pipeline-detail.png)
 
-### Код репозитория
-
-![Код репозитория](docs/screenshots/09-repository-browser.png)
-
-### Сравнение веток
-
-![Сравнение веток](docs/screenshots/10-compare.png)
-
-### Pull-запросы
-
-![Pull-запросы](docs/screenshots/11-pull-requests.png)
-
-### Детали pull-запроса
-
-![Детали pull-запроса](docs/screenshots/12-pull-request-detail.png)
+Полный список маршрутов и responsive capture metadata: [визуальный manifest](docs/assets/screens/manifest.md).
 
 ### Diff конкретного pull-запроса
 
