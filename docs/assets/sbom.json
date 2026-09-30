@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:00000000-0000-0000-0000-000000000000",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-09-30T22:45:01Z",
+    "timestamp": "2026-09-30T22:54:10Z",
     "component": {
       "type": "application",
       "name": "forge-ci-cd",
@@ -2518,6 +2518,14 @@
     },
     {
       "type": "library",
+      "name": "@sdlc/ui",
+      "version": "file:../../services-base/frontend",
+      "purl": "pkg:npm/@sdlc/ui@file:../../services-base/frontend",
+      "license": "unknown",
+      "scope": "required"
+    },
+    {
+      "type": "library",
       "name": "@tanstack/react-query",
       "version": "5.74.4",
       "purl": "pkg:npm/@tanstack/react-query@5.74.4",
@@ -2599,8 +2607,8 @@
     {
       "type": "library",
       "name": "react-router",
-      "version": "8.1.0",
-      "purl": "pkg:npm/react-router@8.1.0",
+      "version": "8.4.0",
+      "purl": "pkg:npm/react-router@8.4.0",
       "license": "unknown",
       "scope": "required"
     },
@@ -2625,14 +2633,6 @@
       "name": "zustand",
       "version": "5.0.3",
       "purl": "pkg:npm/zustand@5.0.3",
-      "license": "unknown",
-      "scope": "required"
-    },
-    {
-      "type": "library",
-      "name": "@sdlc/ui",
-      "version": "file:../../services-base/frontend",
-      "purl": "pkg:npm/@sdlc/ui@file:../../services-base/frontend",
       "license": "unknown",
       "scope": "required"
     },
