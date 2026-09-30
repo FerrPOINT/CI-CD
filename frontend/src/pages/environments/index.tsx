@@ -70,7 +70,7 @@ export function EnvironmentsPage() {
   }
 
   return (
-    <div className="min-w-0 max-w-6xl space-y-5">
+    <div className="min-w-0 space-y-5">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Globe className="h-5 w-5 text-accent" aria-hidden />

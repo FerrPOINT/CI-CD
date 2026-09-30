@@ -12,7 +12,7 @@ export function ReportsPage() {
   const pipelinesPath = `/projects/${projectId}/pipelines`
 
   return (
-    <div className="max-w-5xl space-y-5">
+    <div className="space-y-5">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <BarChart3 className="h-5 w-5 text-accent" aria-hidden />

@@ -1,8 +1,6 @@
 # Реестр визуальных evidence
 
-> Скриншоты сняты Playwright (Chromium) с живого стенда и deterministic seed (`frontend/scripts/seed-evidence.mjs`). Viewport: desktop 1920×1080; итоговая высота full-page PNG указана в таблице. Локаль ru, тема dark, DPR 1. Пересъёмка: `node frontend/scripts/shoot-evidence.mjs`.
->
-> Исключение текущего прохода: `06-pipeline-detail.png`, `15-environments.png`, `16-schedules.png`, `20-users.png`, `21-artifacts.png`, `28-env-create.png`, `33-job-logs.png` и `41-env-approval-controls.png` пересняты через local Vite с изолированным UI или мокированными API-ответами, потому что локальный Docker/API на машине недоступен или требовалась изолированная проверка изменённого UI; полный live evidence переснимается командой выше при доступном стенде.
+> Скриншоты сняты Playwright (Chromium) с живого disposable стенда и deterministic seed (`frontend/scripts/seed-evidence.mjs`). Viewport: desktop 1920×1080 и mobile 375×812; итоговая высота full-page PNG может быть больше viewport. Локаль ru, тема dark, DPR 1. Пересъёмка: `cd frontend && pnpm seed:evidence && pnpm shoot:evidence`. Для быстрой пересъёмки только README-набора используется `EVIDENCE_README_ONLY=true`.
 >
 > Номер `08` зарезервирован за удалённым статичным `/admin` screen. Отдельный `/admin` не входит в текущий baseline; системный срез находится в `/settings`.
 
@@ -18,7 +16,7 @@
 | [07-settings.png](../../screenshots/07-settings.png) | `/settings` | Системные настройки и `CICD_` окружение | 1920×1110 |
 | [09-repository-browser.png](../../screenshots/09-repository-browser.png) | `/repositories/:repo` → «Код» | Дерево и preview Git-файлов | 1920×1080 |
 | [10-compare.png](../../screenshots/10-compare.png) | `/repositories/:repo/compare` | Сравнение веток: diff + статистика | 1920×1080 |
-| [11-pull-requests.png](../../screenshots/11-pull-requests.png) | `/repositories/:repo/pulls` | Pull-запросы | 1920×1440 |
+| [11-pull-requests.png](../../screenshots/11-pull-requests.png) | `/repositories/:repo/pulls` | Pull-запросы | 1920×1080 |
 | [12-pull-request-detail.png](../../screenshots/12-pull-request-detail.png) | `/repositories/:repo/pulls/:number` | Pull-запрос: карточка и действия | 1920×1080 |
 | [13-runners.png](../../screenshots/13-runners.png) | `/runners` | Runners | 1920×1080 |
 | [14-secrets.png](../../screenshots/14-secrets.png) | `/projects/:id/secrets` | Секреты проекта | 1920×1080 |
@@ -26,7 +24,7 @@
 | [16-schedules.png](../../screenshots/16-schedules.png) | `/projects/:id/schedules` | Расписания | 1920×1080 |
 | [17-webhooks.png](../../screenshots/17-webhooks.png) | `/projects/:id/webhooks` | Webhooks + история доставок + уведомления | 1920×1255 |
 | [18-reports.png](../../screenshots/18-reports.png) | `/projects/:id/reports` | Отчёты | 1920×1080 |
-| [19-audit-log.png](../../screenshots/19-audit-log.png) | `/audit-log` | Журнал аудита | 1920×2361 |
+| [19-audit-log.png](../../screenshots/19-audit-log.png) | `/audit-log` | Журнал аудита | 1920×1080 |
 | [20-users.png](../../screenshots/20-users.png) | `/users` | Переход к управлению пользователями в Admin Panel | 1920×1080 |
 | [21-artifacts.png](../../screenshots/21-artifacts.png) | `/jobs/:jobId/artifacts` | Артефакты | 1920×1080 |
 
@@ -53,3 +51,11 @@
 | [39-repo-code-src.png](../../screenshots/39-repo-code-src.png) | Репозиторий → Код → `src` | Навигация по подкаталогу | 1920×1080 |
 | [41-env-approval-controls.png](../../screenshots/41-env-approval-controls.png) | Окружения → «Деплои» | Protected deployment approval controls и rollback action | 1920×1080 |
 | [23-forbidden.png](../../screenshots/23-forbidden.png) | `/forbidden` | 403 — доступ запрещён (роль без прав) | 1920×1080 |
+
+## Responsive modes
+
+| Файл | Маршрут | Режим | Viewport | Размер PNG |
+|---|---|---|---|---|
+| [wide.png](../../screenshots/375x812/wide.png) | `/` | `wide` | 375×812 | 375×1306 |
+| [reading.png](../../screenshots/375x812/reading.png) | `/settings` | `reading` | 375×812 | 375×1886 |
+| [detail-with-aside.png](../../screenshots/375x812/detail-with-aside.png) | `/pipelines/:id` | `detail-with-aside` | 375×812 | 375×1032 |

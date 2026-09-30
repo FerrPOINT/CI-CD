@@ -99,39 +99,23 @@ Configuration: [docs/ENV.md](docs/ENV.md). CLI: [docs/CLI.md](docs/CLI.md).
 
 ## Визуальные доказательства
 
-Скриншоты — реальные поверхности Dashboard с seeded-данными.
+Представительные кадры сняты на реальных маршрутах при `1920x1080` с seeded-
+данными и default theme. Responsive QA, включая `375px`, ведётся отдельно в
+тестах и screenshot manifest.
 
-### Дашборд
+### Дашборд (`wide`)
 
 ![Дашборд](docs/screenshots/02-dashboard.png)
 
-### Проекты
+### Настройки (`reading/form`)
 
-![Проекты](docs/screenshots/03-projects.png)
+![Настройки](docs/screenshots/07-settings.png)
 
-### Пайплайны
-
-![Пайплайны](docs/screenshots/05-pipelines.png)
-
-### Детали пайплайна
+### Детали пайплайна (`detail-with-aside`)
 
 ![Детали пайплайна](docs/screenshots/06-pipeline-detail.png)
 
-### Код репозитория
-
-![Код репозитория](docs/screenshots/09-repository-browser.png)
-
-### Сравнение веток
-
-![Сравнение веток](docs/screenshots/10-compare.png)
-
-### Pull-запросы
-
-![Pull-запросы](docs/screenshots/11-pull-requests.png)
-
-### Детали pull-запроса
-
-![Детали pull-запроса](docs/screenshots/12-pull-request-detail.png)
+Полный список маршрутов и responsive capture metadata: [визуальный manifest](docs/assets/screens/manifest.md).
 
 ### Diff конкретного pull-запроса
 
@@ -165,7 +149,8 @@ Configuration: [docs/ENV.md](docs/ENV.md). CLI: [docs/CLI.md](docs/CLI.md).
 
 ![Подтверждение удаления проекта](docs/screenshots/24-project-delete-confirm.png)
 
-Полный визуальный реестр (38 desktop-скриншотов, условия съёмки и известные mock-исключения): [docs/assets/screens/manifest.md](docs/assets/screens/manifest.md).
+Расширенный визуальный реестр (desktop routes, action states, responsive modes и
+условия съёмки): [docs/assets/screens/manifest.md](docs/assets/screens/manifest.md).
 
 ## Архитектура
 

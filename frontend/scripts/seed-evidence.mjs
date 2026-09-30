@@ -9,13 +9,20 @@ import { fileURLToPath } from 'node:url'
 
 const API = process.env.E2E_API_URL ?? 'http://127.0.0.1:22801/api/v1'
 const HTTP_BASE = API.replace(/\/api\/v1\/?$/, '')
+const ACCESS_TOKEN = process.env.E2E_ACCESS_TOKEN?.trim()
+const GIT_TOKEN = process.env.E2E_GIT_TOKEN?.trim()
+const CENTRAL_AUTH = process.env.E2E_CENTRAL_AUTH === 'true'
+const RESET_LOCAL_AUDIT = process.env.E2E_RESET_LOCAL_AUDIT !== 'false'
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const demoRunnerNames = new Set(['docker-runner-01', 'shell-runner-02'])
 
 async function api(method, path, body) {
   const res = await fetch(`${API}${path}`, {
     method,
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      ...(ACCESS_TOKEN ? { authorization: `Bearer ${ACCESS_TOKEN}` } : {}),
+    },
     body: body ? JSON.stringify(body) : undefined,
   })
   const text = await res.text()
@@ -24,7 +31,16 @@ async function api(method, path, body) {
 }
 
 function git(cwd, ...args) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8' })
+  const commandArgs = GIT_TOKEN
+    ? [
+        '-c',
+        'credential.helper=',
+        '-c',
+        `http.extraHeader=Authorization: Basic ${Buffer.from(`oauth2:${GIT_TOKEN}`).toString('base64')}`,
+        ...args,
+      ]
+    : args
+  return execFileSync('git', commandArgs, { cwd, encoding: 'utf8' })
 }
 
 function resetEvidenceAudit() {
@@ -45,14 +61,28 @@ async function deleteDemoRunners(runners) {
   }
 }
 
-async function seedRepository(name, commits, branches = {}) {
+async function seedRepository(name, commits, branches = {}, projectName) {
   const existing = (await api('GET', '/repositories')).find(r => r.name === name)
   if (!existing) await api('POST', '/repositories', { name })
+  if (CENTRAL_AUTH && projectName) {
+    const projects = await api('GET', '/projects')
+    if (!projects.some(project => project.name === projectName)) {
+      await api('POST', '/projects', {
+        name: projectName,
+        repository_url: `http://backend:22801/git/${name}.git`,
+        default_branch: 'main',
+      })
+    }
+  }
   const dir = mkdtempSync(join(tmpdir(), `forge-${name}-`))
   git(dir, 'init', '-b', 'main')
   git(dir, 'config', 'user.email', 'azhukov@forge.local')
   git(dir, 'config', 'user.name', 'Александр Жуков')
-  const repoUrl = `${HTTP_BASE}/git/${name}.git`
+  const gitCredential = GIT_TOKEN ? undefined : ACCESS_TOKEN
+  const repoBase = gitCredential
+    ? HTTP_BASE.replace('://', `://oauth2:${encodeURIComponent(gitCredential)}@`)
+    : HTTP_BASE
+  const repoUrl = `${repoBase}/git/${name}.git`
   git(dir, 'remote', 'add', 'origin', repoUrl)
   writeFileSync(join(dir, 'README.md'), `# ${name}\n\nForge CI/CD demo repository.\n`)
   git(dir, 'add', '.')
@@ -112,20 +142,20 @@ async function main() {
     await api('DELETE', `/projects/${p.id}`)
   }
   await deleteDemoRunners(demoRunners)
-  resetEvidenceAudit()
+  if (RESET_LOCAL_AUDIT) resetEvidenceAudit()
 
   // Repositories with real content
   await seedRepository('platform-core', [
     { file: '.forge-ci.yml', content: FORGE_CI, message: 'ci: add forge pipeline' },
     { file: 'src/main.rs', content: 'fn main() { println!("platform-core"); }\n', message: 'feat: core entrypoint' },
-  ], { 'feature/cache-layer': 'main' })
+  ], { 'feature/cache-layer': 'main' }, 'forge-demo-platform')
   await seedRepository('web-frontend', [
     { file: '.forge-ci.yml', content: FORGE_CI, message: 'ci: frontend pipeline' },
     { file: 'index.html', content: '<!doctype html><title>web</title>\n', message: 'feat: landing page' },
-  ])
+  ], {}, 'forge-demo-web')
   await seedRepository('api-gateway', [
     { file: '.forge-ci.yml', content: FORGE_CI, message: 'ci: gateway pipeline' },
-  ], { 'feature/rate-limit': 'main' })
+  ], { 'feature/rate-limit': 'main' }, 'forge-demo-gateway')
 
   // Projects bound to local repos
   const mk = async (name, repo) => {
@@ -143,26 +173,28 @@ async function main() {
     await api('POST', `/projects/${project}/pipelines`, { git_ref: ref })
   }
 
-  // Users (idempotent, trusted-network mode)
-  for (const u of [
-    { username: 'a.zhukov', role: 'admin' },
-    { username: 'm.petrova', role: 'maintainer' },
-    { username: 'd.orlov', role: 'developer' },
-  ]) {
-    const users = await api('GET', '/users')
-    if (!users.some(x => x.username === u.username)) await api('POST', '/users', u)
-  }
-
-  const seedUsers = await api('GET', '/users')
-  const usersByName = Object.fromEntries(seedUsers.map(user => [user.username, user]))
-  for (const project of [core, web, gw]) {
-    for (const [username, role] of [
-      ['a.zhukov', 'maintainer'],
-      ['m.petrova', 'maintainer'],
-      ['d.orlov', 'developer'],
+  if (!CENTRAL_AUTH) {
+    // Local identities exist only in the legacy trusted-network profile.
+    for (const u of [
+      { username: 'a.zhukov', role: 'admin' },
+      { username: 'm.petrova', role: 'maintainer' },
+      { username: 'd.orlov', role: 'developer' },
     ]) {
-      const user = usersByName[username]
-      if (user) await api('POST', `/projects/${project.id}/memberships`, { user_id: user.id, role })
+      const users = await api('GET', '/users')
+      if (!users.some(x => x.username === u.username)) await api('POST', '/users', u)
+    }
+
+    const seedUsers = await api('GET', '/users')
+    const usersByName = Object.fromEntries(seedUsers.map(user => [user.username, user]))
+    for (const project of [core, web, gw]) {
+      for (const [username, role] of [
+        ['a.zhukov', 'maintainer'],
+        ['m.petrova', 'maintainer'],
+        ['d.orlov', 'developer'],
+      ]) {
+        const user = usersByName[username]
+        if (user) await api('POST', `/projects/${project.id}/memberships`, { user_id: user.id, role })
+      }
     }
   }
 
@@ -196,9 +228,10 @@ async function main() {
   const deps = await api('GET', `/environments/${staging.id}/deployments`)
   if (deps.length === 0) await api('POST', `/environments/${staging.id}/deployments`, { git_ref: 'main' })
 
-  // Users + token
-  const users = await api('GET', '/users')
-  if (!users.some(u => u.username === 'developer01')) await api('POST', '/users', { username: 'developer01', role: 'developer' })
+  if (!CENTRAL_AUTH) {
+    const users = await api('GET', '/users')
+    if (!users.some(u => u.username === 'developer01')) await api('POST', '/users', { username: 'developer01', role: 'developer' })
+  }
 
   console.log(JSON.stringify({ ok: true, projects: 3 + projects.filter(p => !p.name.startsWith('forge-demo-')).length, runners: 2, secrets: 2, envs: [staging.name, prod.name] }))
 }
