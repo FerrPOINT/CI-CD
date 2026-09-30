@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+- Frontend lockfile обновлён против текущего Base: исправлены advisories
+  brace-expansion в dev-tooling, синхронизированы общие UI-зависимости и
+  минимальная версия react-router 8.4.0 согласно peer contract `@sdlc/ui`.
+
 - Backend lockfile синхронизирован с текущим общим Base telemetry/OTLP;
   umbrella build использует `--locked` и не обновляет зависимости незаметно.
 
