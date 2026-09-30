@@ -9,6 +9,9 @@
 
 ## [Unreleased]
 
+- Backend lockfile синхронизирован с текущим общим Base telemetry/OTLP;
+  umbrella build использует `--locked` и не обновляет зависимости незаметно.
+
 - Central logout больше не переводит frontend в локальный anonymous до перехода
   браузера в Central Auth.
 
