@@ -10,12 +10,17 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 const OUT = join(ROOT, 'docs', 'screenshots')
 mkdirSync(OUT, { recursive: true })
 
-const BASE = 'http://127.0.0.1:22802'
-const API = 'http://127.0.0.1:22801/api/v1'
+const BASE = process.env.E2E_BASE_URL ?? 'http://127.0.0.1:22802'
+const API = process.env.E2E_API_URL ?? 'http://127.0.0.1:22801/api/v1'
+const ACCESS_TOKEN = process.env.E2E_ACCESS_TOKEN?.trim()
+const LOGIN_EMAIL = process.env.E2E_LOGIN_EMAIL?.trim()
+const LOGIN_PASSWORD = process.env.E2E_LOGIN_PASSWORD
 const THEME = process.env.EVIDENCE_THEME ?? 'dark'
 
 async function getJson(path) {
-  const res = await fetch(`${API}${path}`)
+  const res = await fetch(`${API}${path}`, {
+    headers: ACCESS_TOKEN ? { authorization: `Bearer ${ACCESS_TOKEN}` } : {},
+  })
   const text = await res.text()
   if (!res.ok) throw new Error(`GET ${path} -> ${res.status}: ${text.slice(0, 300)}`)
   return text ? JSON.parse(text) : null
@@ -64,7 +69,14 @@ const shots = [
   // --- Состояния действий: диалоги, диффы, логи, формы ---
   { name: '22-pr-diff.png', path: pullRequestPath, desktop: true, wait: 1200, click: 'a[href*="view=diff"]', settle: 1500 },
   { name: '23-project-create.png', path: '/projects', desktop: true, click: 'button:has-text("Создать проект")' },
-  { name: '24-project-delete-confirm.png', path: '/projects', desktop: true, click: 'button:has-text("Удалить")', settle: 600 },
+  {
+    name: '24-project-delete-confirm.png',
+    path: '/projects',
+    desktop: true,
+    click: 'button[aria-label^="Действия с проектом"]',
+    click2: '[role="menuitem"]:has-text("Удалить")',
+    settle: 600,
+  },
   { name: '25-repo-create.png', path: '/repositories', desktop: true, click: 'button:has-text("Создать репозиторий")' },
   { name: '26-runner-register.png', path: '/runners', desktop: true, click: 'button:has-text("Зарегистрировать runner")' },
   { name: '27-secret-add.png', path: `/projects/${platform.id}/secrets`, desktop: true, click: 'button:has-text("Добавить секрет")' },
@@ -81,6 +93,34 @@ const shots = [
   { name: '38-releases-create.png', path: '/repositories/platform-core', desktop: true, wait: 1200, click: 'button:has-text("Релизы")', click2: 'button:has-text("Создать релиз")', settle: 500 },
   { name: '39-repo-code-src.png', path: '/repositories/platform-core', desktop: true, wait: 1200, click: 'button:has-text("Код")', click2: 'button:has-text("src")', settle: 500 },
 ]
+
+const responsiveShots = [
+  { name: 'wide.png', path: '/', wait: 1200 },
+  { name: 'reading.png', path: '/settings' },
+  { name: 'detail-with-aside.png', path: `/pipelines/${pipeline.id}`, wait: 1500 },
+]
+
+const readmeShotNames = new Set([
+  '02-dashboard.png',
+  '03-projects.png',
+  '05-pipelines.png',
+  '06-pipeline-detail.png',
+  '09-repository-browser.png',
+  '10-compare.png',
+  '11-pull-requests.png',
+  '12-pull-request-detail.png',
+  '13-runners.png',
+  '14-secrets.png',
+  '15-environments.png',
+  '19-audit-log.png',
+  '21-artifacts.png',
+  '22-pr-diff.png',
+  '24-project-delete-confirm.png',
+  '33-job-logs.png',
+])
+const desktopShots = process.env.EVIDENCE_README_ONLY === 'true'
+  ? shots.filter(shot => readmeShotNames.has(shot.name))
+  : shots
 
 const browser = await chromium.launch()
 
@@ -109,20 +149,35 @@ async function normalizeVolatileText(page) {
   })
 }
 
-async function shoot(shot) {
-  const ctx = await browser.newContext({
-    viewport: { width: 1920, height: 1080 },
-    deviceScaleFactor: 1,
-    locale: 'ru-RU',
-  })
-  const page = await ctx.newPage()
-  await page.addInitScript((theme) => {
-    localStorage.setItem('theme', theme)
-    localStorage.setItem('forge.theme', theme)
-    localStorage.setItem('i18nextLng', 'ru')
-  }, THEME)
+async function openAuthenticated(page, path) {
+  await page.goto(BASE + path, { waitUntil: 'domcontentloaded', timeout: 30000 })
+  const expectedOrigin = new URL(BASE).origin
+  const deadline = Date.now() + 30000
+  while (Date.now() < deadline) {
+    if (await page.getByLabel('Email').isVisible().catch(() => false)) {
+      if (!LOGIN_EMAIL || !LOGIN_PASSWORD) {
+        throw new Error('Central Auth login requires E2E_LOGIN_EMAIL and E2E_LOGIN_PASSWORD')
+      }
+      await page.getByLabel('Email').fill(LOGIN_EMAIL)
+      await page.getByLabel('Пароль').fill(LOGIN_PASSWORD)
+      await page.getByRole('button', { name: 'Войти', exact: true }).click()
+    }
+    const current = new URL(page.url())
+    if (
+      current.origin === expectedOrigin &&
+      current.pathname !== '/login' &&
+      current.pathname !== '/sso/callback'
+    ) {
+      return
+    }
+    await page.waitForTimeout(200)
+  }
+  throw new Error(`Authentication did not complete for ${path}; current URL: ${page.url()}`)
+}
+
+async function shoot(page, shot, outputDir) {
   try {
-    await page.goto(BASE + shot.path, { waitUntil: 'networkidle', timeout: 30000 })
+    await openAuthenticated(page, shot.path)
     await page.addStyleTag({
       content: `
         *, *::before, *::after {
@@ -134,6 +189,8 @@ async function shoot(shot) {
         }
       `,
     })
+    await page.locator('main').waitFor({ state: 'visible', timeout: 10000 })
+    await page.waitForTimeout(1000)
     if (shot.wait) await page.waitForTimeout(shot.wait)
     if (shot.click) {
       await page.locator(shot.click).first().click({ timeout: 10000 })
@@ -144,15 +201,35 @@ async function shoot(shot) {
       await page.waitForTimeout(shot.settle ?? 800)
     }
     await normalizeVolatileText(page)
-    await page.screenshot({ path: join(OUT, shot.name), fullPage: true })
+    await page.screenshot({ path: join(outputDir, shot.name), fullPage: true })
     console.log('shot', shot.name)
   } catch (err) {
     if (shot.optional) { console.log('skip', shot.name, err.message.slice(0, 80)); return }
     throw err
+  }
+}
+
+async function captureSet(viewport, outputDir, captureShots) {
+  mkdirSync(outputDir, { recursive: true })
+  const ctx = await browser.newContext({
+    viewport,
+    deviceScaleFactor: 1,
+    locale: 'ru-RU',
+  })
+  const page = await ctx.newPage()
+  await page.addInitScript((theme) => {
+    localStorage.setItem('theme', theme)
+    localStorage.setItem('forge.theme', theme)
+    localStorage.setItem('i18nextLng', 'ru')
+  }, THEME)
+  try {
+    for (const shot of captureShots) await shoot(page, shot, outputDir)
   } finally {
     await ctx.close()
   }
 }
-for (const shot of shots) await shoot(shot)
+
+await captureSet({ width: 1920, height: 1080 }, OUT, desktopShots)
+await captureSet({ width: 375, height: 812 }, join(OUT, '375x812'), responsiveShots)
 await browser.close()
-console.log('done:', shots.length)
+console.log('done:', desktopShots.length + responsiveShots.length)

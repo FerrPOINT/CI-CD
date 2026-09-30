@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { NavLink, Outlet } from 'react-router'
+import { NavLink, Outlet, useLocation } from 'react-router'
 import {
   CircleUserRound,
   Cpu,
@@ -20,6 +20,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  PageFrame,
   PlatformMark,
   ServiceSwitcher,
   ThemeToggle,
@@ -72,13 +73,21 @@ function NavigationList({ onNavigate, responsiveLabels = false }: NavigationList
 export function AppShell() {
   const { session, logout } = useAuth()
   const { t } = useTranslation()
+  const location = useLocation()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const username = session?.username ?? t('navigation.profileFallback')
+  const pageLayout =
+    location.pathname === '/settings'
+      ? 'reading'
+      : /^\/pipelines\/[^/]+$/.test(location.pathname) ||
+          /^\/repositories\/[^/]+\/pulls\/[^/]+$/.test(location.pathname)
+        ? 'detail-with-aside'
+        : 'wide'
 
   return (
     <div className="min-h-screen bg-background text-text-primary">
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[72px] flex-col border-r border-border bg-surface md:flex xl:w-[264px]">
-        <div className="flex h-[60px] shrink-0 items-center justify-center border-b border-border px-3 xl:justify-start xl:px-5">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[var(--shell-sidebar-compact)] flex-col border-r border-border bg-surface md:flex xl:w-[var(--shell-sidebar-expanded)]">
+        <div className="flex h-[var(--shell-header-height)] shrink-0 items-center justify-center border-b border-border px-3 xl:justify-start xl:px-5">
           <div className="flex min-w-0 items-center gap-3" role="img" aria-label={t('app.name')}>
             <PlatformMark size="sm" withName={false} />
             <div className="hidden min-w-0 xl:block">
@@ -92,8 +101,8 @@ export function AppShell() {
         </div>
       </aside>
 
-      <div className="min-h-screen md:pl-[72px] xl:pl-[264px]">
-        <header className="sticky top-0 z-30 flex h-[60px] items-center justify-between border-b border-border bg-surface px-3 md:px-4">
+      <div className="min-h-screen md:pl-[var(--shell-sidebar-compact)] xl:pl-[var(--shell-sidebar-expanded)]">
+        <header className="sticky top-0 z-30 flex h-[var(--shell-header-height)] items-center justify-between border-b border-border bg-surface px-3 md:px-4">
           <div className="flex min-w-0 items-center gap-2">
             <Dialog open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
               <DialogTrigger asChild>
@@ -110,7 +119,7 @@ export function AppShell() {
                 aria-describedby={undefined}
                 className="!left-0 !top-0 !flex !h-dvh !max-h-dvh !w-[min(320px,calc(100%-2rem))] !max-w-none !translate-x-0 !translate-y-0 !flex-col !gap-0 !rounded-none !border-y-0 !border-l-0 !p-0 [&>button]:h-10 [&>button]:w-10"
               >
-                <DialogHeader className="flex h-[60px] shrink-0 justify-center border-b border-border px-4 pr-14 text-left">
+                <DialogHeader className="flex h-[var(--shell-header-height)] shrink-0 justify-center border-b border-border px-4 pr-14 text-left">
                   <DialogTitle className="text-base">
                     <span className="sr-only">{t('navigation.toggleMenu')}</span>
                     <span className="flex items-center gap-3" aria-hidden>
@@ -166,8 +175,10 @@ export function AppShell() {
           </div>
         </header>
 
-        <main className="min-w-0 p-4 md:p-6">
-          <Outlet />
+        <main className="shell-main min-h-[calc(100dvh-var(--shell-header-height))]">
+          <PageFrame mode={pageLayout}>
+            <Outlet />
+          </PageFrame>
         </main>
       </div>
     </div>

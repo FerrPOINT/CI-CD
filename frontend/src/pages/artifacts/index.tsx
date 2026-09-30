@@ -59,7 +59,7 @@ export function ArtifactsPage() {
   }
 
   return (
-    <div className="min-w-0 max-w-5xl space-y-5">
+    <div className="min-w-0 space-y-5">
       <header className="flex items-center gap-2">
         <Package className="h-5 w-5 text-accent" aria-hidden />
         <h1 className="text-xl font-bold sm:text-2xl">{t('artifacts.title')}</h1>

@@ -25,6 +25,58 @@ async function expectNoSeriousAxeViolations(page: Page): Promise<void> {
 }
 
 test.describe('accessibility smoke', () => {
+  test('[NFR-UX-02] uses the shared work-area geometry across semantic page modes', async ({
+    page,
+    request,
+  }, testInfo) => {
+    test.setTimeout(150_000)
+    const evidence = await waitForEvidence(request)
+
+    for (const viewport of [
+      { width: 375, height: 812 },
+      { width: 1440, height: 900 },
+      { width: 2560, height: 1440 },
+    ]) {
+      await page.setViewportSize(viewport)
+
+      for (const [path, mode, ready] of [
+        ['/', 'wide', evidence.project.name],
+        ['/settings', 'reading', 'CICD_RUNNER_REGISTRATION_TOKEN'],
+        [`/pipelines/${evidence.pipeline.id}`, 'detail-with-aside', evidence.job.name],
+      ] as const) {
+        await page.goto(path)
+        await expect(page.getByText(ready).first()).toBeVisible()
+        const layout = page.locator('[data-page-layout]')
+        await expect(layout).toHaveAttribute('data-page-layout', mode)
+
+        const geometry = await layout.evaluate((element) => {
+          const frame = element.parentElement
+          const frameStyle = frame ? getComputedStyle(frame) : null
+          return {
+            documentFits:
+              document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+            layoutWidth: element.getBoundingClientRect().width,
+            availableWidth:
+              (frame?.getBoundingClientRect().width ?? 0) -
+              Number.parseFloat(frameStyle?.paddingLeft ?? '0') -
+              Number.parseFloat(frameStyle?.paddingRight ?? '0'),
+          }
+        })
+
+        expect(geometry.documentFits).toBe(true)
+        if (mode === 'reading') {
+          expect(geometry.layoutWidth).toBeLessThanOrEqual(761)
+        } else {
+          expect(Math.abs(geometry.layoutWidth - geometry.availableWidth)).toBeLessThanOrEqual(1)
+        }
+        await page.screenshot({
+          path: testInfo.outputPath(`shell-${viewport.width}-${mode}.png`),
+          fullPage: true,
+        })
+      }
+    }
+  })
+
   test('[NFR-UX-01] has no serious or critical axe violations on all baseline routes', async ({ page, request }) => {
     test.setTimeout(150_000)
     const evidence = await waitForEvidence(request)

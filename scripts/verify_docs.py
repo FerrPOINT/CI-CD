@@ -530,8 +530,11 @@ README_REQUIRED_ANCHORS = {
     "license",
 }
 README_SAFE_PROOF = {
+    "02-dashboard.png",
     "06-pipeline-detail.png",
+    "07-settings.png",
 }
+README_LAYOUT_LABELS = ("wide", "reading/form", "detail-with-aside")
 
 
 def check_readme_contract() -> None:
@@ -548,6 +551,8 @@ def check_readme_contract() -> None:
     image_paths = re.findall(r"!\[[^]]*\]\(([^)]+)\)", text)
     image_paths += re.findall(r"<img\b[^>]*\bsrc=[\"']([^\"']+)[\"']", text, re.IGNORECASE)
     for image in image_paths:
+        if re.search(r"(?:^|/)(?:\d+x\d+|mobile)(?:/|[-_.])", image, re.IGNORECASE) and "1920x1080" not in image:
+            fail("README gallery must not include mobile screenshots")
         if image.startswith(("http://", "https://", "data:")):
             continue
         if not (ROOT / image).exists():
@@ -560,6 +565,9 @@ def check_readme_contract() -> None:
     proof = set(re.findall(r"docs/screenshots/([^\"')]+\.png)", text))
     for name in sorted(README_SAFE_PROOF - proof):
         fail(f"README lacks required safe visual proof: {name}")
+    for layout in README_LAYOUT_LABELS:
+        if not re.search(rf"^### .+\(`{re.escape(layout)}`\)$", text, re.MULTILINE):
+            fail(f"README lacks a desktop example for layout mode: {layout}")
 
 
 def check_screenshots() -> None:

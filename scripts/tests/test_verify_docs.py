@@ -52,6 +52,19 @@ class CapabilityStatusRegressionTests(unittest.TestCase):
         finally:
             readme.write_text(original, encoding="utf-8")
 
+    def test_readme_contract_rejects_mobile_gallery_images(self) -> None:
+        readme = verify_docs.ROOT / "README.md"
+        original = readme.read_text(encoding="utf-8")
+        try:
+            readme.write_text(
+                original + "\n![Mobile](docs/screenshots/375x812/wide.png)\n",
+                encoding="utf-8",
+            )
+            verify_docs.check_readme_contract()
+            self.assertTrue(any("must not include mobile screenshots" in item for item in verify_docs.problems))
+        finally:
+            readme.write_text(original, encoding="utf-8")
+
 
 if __name__ == "__main__":
     unittest.main()
