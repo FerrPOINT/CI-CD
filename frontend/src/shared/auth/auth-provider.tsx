@@ -62,8 +62,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     await apiLogout().catch(() => undefined)
-    setSession(null)
-    setStatus('anonymous')
     endSso(ssoConfig)
   }, [])
 

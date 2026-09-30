@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router'
 import { AuthProvider, useAuth } from './auth-provider'
 import { ProtectedRoute } from './protected-route'
@@ -13,10 +13,12 @@ const authMod = vi.hoisted(() => ({
 }))
 
 vi.mock('@/api/auth', () => authMod)
+const sso = vi.hoisted(() => ({ endSso: vi.fn() }))
+vi.mock('@sdlc/ui/sso', () => ({ endSso: sso.endSso }))
 
 function Probe() {
-  const { status } = useAuth()
-  return <div data-testid="probe">{status}</div>
+  const { status, logout } = useAuth()
+  return <><div data-testid="probe">{status}</div><button onClick={() => void logout()}>Logout</button></>
 }
 
 describe('AuthProvider', () => {
@@ -42,6 +44,18 @@ describe('AuthProvider', () => {
       </AuthProvider>,
     )
     await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('anonymous'))
+  })
+
+  it('redirects to central logout without rendering the local login route', async () => {
+    authMod.currentSession.mockReturnValue({ access_token: 'x', expires_at: 1 })
+    authMod.logout.mockResolvedValue(undefined)
+    render(<AuthProvider><Probe /></AuthProvider>)
+    await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('authenticated'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Logout' }))
+
+    await waitFor(() => expect(sso.endSso).toHaveBeenCalledOnce())
+    expect(screen.getByTestId('probe').textContent).toBe('authenticated')
   })
 
   it('does not enter open mode when central auth is unavailable', async () => {
