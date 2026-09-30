@@ -9,6 +9,9 @@
 
 ## [Unreleased]
 
+- Central logout больше не переводит frontend в локальный anonymous до перехода
+  браузера в Central Auth.
+
 - Umbrella frontend build закрепляет pnpm 10.28.1 до frozen-install, чтобы новая
   версия package manager не ломала сборку с актуальным общим UI.
 - Имя Docker network для job-контейнеров embedded runner теперь задаётся через
