@@ -9,7 +9,8 @@ COPY CI-CD/frontend/scripts/generate-openapi.mjs scripts/generate-openapi.mjs
 COPY services-base/frontend /services-base/frontend
 ENV CI=true
 ENV SPEC=/workspace/openapi/openapi.yaml
-RUN corepack enable && pnpm install --frozen-lockfile
+RUN corepack enable && corepack prepare pnpm@10.28.1 --activate \
+    && pnpm install --frozen-lockfile
 COPY CI-CD/frontend/ ./
 ARG VITE_PLATFORM_BRANDING_URL=""
 ENV VITE_PLATFORM_BRANDING_URL=${VITE_PLATFORM_BRANDING_URL}
