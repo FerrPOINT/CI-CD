@@ -272,6 +272,12 @@ PR, добавляющий или меняющий capability, NFR, публич
 
 Фактические версии зависимостей находятся в `backend/Cargo.toml`, `backend/Cargo.lock`, `frontend/package.json` и `frontend/pnpm-lock.yaml`. Не добавляйте crate/package без обоснования, license/security review и отдельного reviewable изменения. Выборы и разрешённые будущие crates (включая `utoipa`, auth, metrics и object storage) принадлежат `docs/TECH_CHOICES.md` и ADR: [ADR-0001](adr/0001-rust-axum-sqlx.md), [ADR-0002](adr/0002-react-vite-tailwind.md), [ADR-0004](adr/0004-postgresql-only.md), [ADR-0005](adr/0005-workspace-layered-architecture.md), [ADR-0008](adr/0008-versioned-sqlx-migrations.md) и [ADR-0009](adr/0009-canonical-registry.md). Текущая dependency policy и команды `cargo tree` / `pnpm why` описаны в `docs/LIBRARIES.md`.
 
+Umbrella backend build использует `cargo build --locked`: lockfile обязан
+соответствовать текущим sibling crates `services-base`, включая telemetry/OTLP.
+После обновления Base разрешите зависимости штатным Cargo, выполните полный
+backend/PG gate с `--locked`, обновите SBOM и сохраните новый `Cargo.lock` в PR.
+Сборка не должна незаметно исправлять отставший lockfile.
+
 ## OpenAPI и generated types
 
 OpenAPI-first artifact уже current: Rust `utoipa` annotations генерируют committed `openapi/openapi.yaml`, а committed frontend schema `frontend/src/api/schema.d.ts` регенерируется через `pnpm openapi:generate` и проверяется `pnpm openapi:check`; `pnpm openapi:compat` проверяет backward compatibility против base/default branch. Отдельный `cicd-api` crate и generated transport boundary остаются target.
