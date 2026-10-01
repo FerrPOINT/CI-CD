@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { GitMerge, RotateCcw, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
@@ -17,6 +17,7 @@ export function PullRequestActions({ repo, pullRequest, compact = false }: {
   const { t } = useTranslation()
   const action = usePullRequestAction(repo)
   const [pendingAction, setPendingAction] = useState<ConfirmedAction | null>(null)
+  const actionTrigger = useRef<HTMLButtonElement | null>(null)
 
   function runAction(nextAction: ConfirmedAction | 'reopen') {
     action.mutate({ number: pullRequest.number, action: nextAction }, {
@@ -28,7 +29,7 @@ export function PullRequestActions({ repo, pullRequest, compact = false }: {
     })
   }
 
-  const buttonClass = compact ? 'min-h-10 min-w-10 sm:min-h-10 sm:min-w-10' : 'min-h-10 justify-start'
+  const buttonClass = compact ? 'min-h-10 min-w-10 sm:min-h-10 sm:min-w-10' : 'min-h-10 sm:min-h-10 justify-start'
 
   return (
     <>
@@ -37,12 +38,18 @@ export function PullRequestActions({ repo, pullRequest, compact = false }: {
           <>
             <Button type="button" size={compact ? 'icon' : 'default'} className={buttonClass}
               disabled={action.isPending} aria-label={compact ? t('pulls.merge') : undefined}
-              title={compact ? t('pulls.merge') : undefined} onClick={() => setPendingAction('merge')}>
+              title={compact ? t('pulls.merge') : undefined} onClick={(event) => {
+                actionTrigger.current = event.currentTarget
+                setPendingAction('merge')
+              }}>
               <GitMerge className="h-4 w-4" aria-hidden />{!compact && t('pulls.merge')}
             </Button>
             <Button type="button" size={compact ? 'icon' : 'default'} variant="outline" className={buttonClass}
               disabled={action.isPending} aria-label={compact ? t('pulls.close') : undefined}
-              title={compact ? t('pulls.close') : undefined} onClick={() => setPendingAction('close')}>
+              title={compact ? t('pulls.close') : undefined} onClick={(event) => {
+                actionTrigger.current = event.currentTarget
+                setPendingAction('close')
+              }}>
               <XCircle className="h-4 w-4" aria-hidden />{!compact && t('pulls.close')}
             </Button>
           </>
@@ -56,6 +63,7 @@ export function PullRequestActions({ repo, pullRequest, compact = false }: {
         )}
       </div>
       <ConfirmDialog
+        returnFocusRef={actionTrigger}
         open={pendingAction !== null}
         title={pendingAction ? t(`pulls.confirm_${pendingAction}`) : ''}
         description={t('pulls.confirmDescription', {

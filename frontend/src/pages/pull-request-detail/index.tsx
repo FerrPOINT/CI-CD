@@ -163,7 +163,7 @@ export function PullRequestDetailPage() {
         </div>
       </div>
 
-      <div className="flex flex-col gap-4 lg:flex-row">
+      <div className="page-split items-start">
         <section className="min-w-0 flex-1 border-y border-border py-4">
           {pr.description && <p className="whitespace-pre-wrap text-sm text-text-secondary">{pr.description}</p>}
           <dl className="mt-4 grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-2 text-sm">
@@ -192,8 +192,8 @@ export function PullRequestDetailPage() {
           </dl>
         </section>
 
-        <aside className="h-fit lg:w-60">
-          <h2 className="text-sm font-semibold uppercase tracking-wide">{t('pulls.actions')}</h2>
+        <aside className="min-w-0" aria-labelledby="pull-actions-title">
+          <h2 id="pull-actions-title" className="text-sm font-semibold uppercase tracking-wide">{t('pulls.actions')}</h2>
           <div className="mt-3 flex flex-col gap-2">
             <Button asChild variant="outline" className="h-10 justify-start">
               <Link to={buildPrDiffHref(pr)}>

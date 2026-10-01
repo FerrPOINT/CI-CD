@@ -97,9 +97,11 @@ describe("ConfirmDialog", () => {
     expect(onConfirm).toHaveBeenCalledOnce();
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
   });
-  it("keeps dialog actions touch-sized", () => {
-    render(<ConfirmDialog open onConfirm={() => {}} onCancel={() => {}} title="Delete" />);
-    expect(screen.getByRole("button", { name: "common.delete" })).toHaveClass("min-h-10", "text-white");
-    expect(screen.getByRole("button", { name: "common.cancel" })).toHaveClass("min-h-10");
+  it.each(["default", "destructive"] as const)("keeps %s dialog actions touch-sized", (confirmVariant) => {
+    render(<ConfirmDialog open onConfirm={() => {}} onCancel={() => {}} title="Delete" confirmVariant={confirmVariant} />);
+    expect(screen.getByRole("button", { name: "common.delete" })).toHaveClass("min-h-10", "sm:min-h-10");
+    if (confirmVariant === "destructive")
+      expect(screen.getByRole("button", { name: "common.delete" })).toHaveClass("text-destructive-foreground");
+    expect(screen.getByRole("button", { name: "common.cancel" })).toHaveClass("min-h-10", "sm:min-h-10");
   });
 });

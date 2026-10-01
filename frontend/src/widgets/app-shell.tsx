@@ -79,8 +79,8 @@ export function AppShell() {
   const pageLayout =
     location.pathname === '/settings'
       ? 'reading'
-      : /^\/pipelines\/[^/]+$/.test(location.pathname) ||
-          /^\/repositories\/[^/]+\/pulls\/[^/]+$/.test(location.pathname)
+      : /^\/repositories\/[^/]+\/pulls\/[^/]+$/.test(location.pathname) &&
+          new URLSearchParams(location.search).get('view') !== 'diff'
         ? 'detail-with-aside'
         : 'wide'
 
