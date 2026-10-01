@@ -497,7 +497,7 @@ async fn secret_stdin_redaction_and_artifact_no_clobber() {
                 "--from-file",
                 "-",
             ],
-            Some("sensitive-value"),
+            Some("sensitive-value\n"),
         )
         .await;
     assert_eq!(failed.status.code(), Some(2));
@@ -505,7 +505,7 @@ async fn secret_stdin_redaction_and_artifact_no_clobber() {
     assert!(!String::from_utf8_lossy(&failed.stderr).contains("fixture-token"));
     assert_eq!(
         serde_json::from_slice::<Value>(&server.requests()[0].body).unwrap()["value"],
-        "sensitive-value"
+        "sensitive-value\n"
     );
     let dir = tempfile::tempdir().unwrap();
     let out = dir.path().join("artifact");
@@ -567,4 +567,49 @@ async fn parsing_errors_are_json_and_do_not_echo_credentials() {
     assert!(invalid_variable.stdout.is_empty());
     assert!(!String::from_utf8_lossy(&invalid_variable.stderr).contains("sensitive-variable"));
     assert!(server.requests().is_empty());
+}
+
+#[tokio::test]
+async fn effective_transport_token_is_redacted() {
+    for (token, expected) in [
+        (" fixture-token ", "fixture-token"),
+        (" ", "shared-fixture-token"),
+    ] {
+        let server = Server::start(vec![(
+            403,
+            json!({"error": {"code": "DENIED", "message": expected}}),
+        )])
+        .await;
+        let url = server.url.clone();
+        let output = tokio::task::spawn_blocking(move || {
+            Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
+                .args([
+                    "--api-url",
+                    &url,
+                    "--token",
+                    token,
+                    "--error-format",
+                    "json",
+                    "project",
+                    "list",
+                ])
+                .env("SDLC_API_TOKEN", "shared-fixture-token")
+                .env_remove("CICD_PROFILE")
+                .env_remove("CICD_API_TOKEN")
+                .env_remove("TASKTRACKER_TOKEN")
+                .output()
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        let error: Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(error["error"]["status"], 403);
+        assert_eq!(error["error"]["message"], "[REDACTED]");
+        assert_eq!(
+            server.requests()[0].authorization.as_deref(),
+            Some(format!("Bearer {expected}").as_str())
+        );
+    }
 }

@@ -55,8 +55,11 @@ impl std::error::Error for ApiFailure {}
 fn redact(text: &str, secrets: &[String]) -> String {
     secrets
         .iter()
-        .filter(|s| !s.is_empty())
-        .fold(text.to_owned(), |t, s| t.replace(s, "[REDACTED]"))
+        .flat_map(|value| [value.as_str(), value.trim()])
+        .filter(|value| !value.is_empty())
+        .fold(text.to_owned(), |text, value| {
+            text.replace(value, "[REDACTED]")
+        })
 }
 pub fn report(error: &anyhow::Error, format: ErrorFormat, secrets: &[String]) {
     let failure = error.downcast_ref::<ApiFailure>();
@@ -259,5 +262,6 @@ mod tests {
     #[test]
     fn credentials_are_redacted() {
         assert_eq!(redact("bad secret", &["secret".into()]), "bad [REDACTED]");
+        assert_eq!(redact("bad secret", &["secret\n".into()]), "bad [REDACTED]");
     }
 }

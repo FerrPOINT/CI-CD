@@ -654,10 +654,14 @@ struct ApiClient {
 
 impl ApiClient {
     fn new(api_url: String, token: Option<String>, timeout: Duration) -> anyhow::Result<Self> {
+        // The shared transport trims explicit tokens and can fall back from an
+        // empty token. Redact both original and effective credential forms.
         let secrets = token
             .clone()
-            .or_else(|| std::env::var("SDLC_API_TOKEN").ok())
             .into_iter()
+            .chain(std::env::var("SDLC_API_TOKEN").ok())
+            .flat_map(|value| [value.trim().to_owned(), value])
+            .filter(|value| !value.is_empty())
             .collect();
         Ok(Self {
             secrets,
