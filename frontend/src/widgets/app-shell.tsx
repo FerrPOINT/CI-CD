@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router'
 import {
   CircleUserRound,
@@ -20,9 +20,13 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
   PageFrame,
+  PlatformHeader,
   PlatformMark,
-  ServiceSwitcher,
   ThemeToggle,
 } from '@sdlc/ui/ui'
 import { useAuth } from '@/shared/auth/auth-provider'
@@ -54,16 +58,24 @@ function NavigationList({ onNavigate, responsiveLabels = false }: NavigationList
           end={to === '/'}
           onClick={onNavigate}
           title={responsiveLabels ? label : undefined}
-          className={({ isActive }) => `flex min-h-11 items-center gap-3 rounded-md px-3 text-sm transition-colors ${
-            responsiveLabels ? 'md:justify-center md:px-2 xl:justify-start xl:px-3' : ''
-          } ${
-            isActive
-              ? 'bg-surface-raised text-text-primary'
-              : 'text-text-secondary hover:bg-surface-raised hover:text-text-primary'
-          }`}
+          className={({ isActive }) =>
+            `flex min-h-11 items-center gap-3 rounded-md px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus md:min-h-10 ${
+              responsiveLabels ? 'md:justify-center md:px-2 xl:justify-start xl:px-3' : ''
+            } ${
+              isActive
+                ? 'bg-surface-raised text-text-primary'
+                : 'text-text-secondary hover:bg-surface-raised hover:text-text-primary'
+            }`
+          }
         >
           <Icon className="h-5 w-5 shrink-0" aria-hidden />
-          <span className={responsiveLabels ? 'md:sr-only xl:not-sr-only xl:break-words' : 'break-words'}>{label}</span>
+          <span
+            className={
+              responsiveLabels ? 'md:sr-only xl:not-sr-only xl:break-words' : 'break-words'
+            }
+          >
+            {label}
+          </span>
         </NavLink>
       ))}
     </nav>
@@ -75,6 +87,15 @@ export function AppShell() {
   const { t } = useTranslation()
   const location = useLocation()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  useEffect(() => {
+    if (!window.matchMedia) return
+    const media = window.matchMedia('(min-width: 768px)')
+    const closeOnDesktop = () => {
+      if (media.matches) setMobileMenuOpen(false)
+    }
+    media.addEventListener('change', closeOnDesktop)
+    return () => media.removeEventListener('change', closeOnDesktop)
+  }, [])
   const username = session?.username ?? t('navigation.profileFallback')
   const pageLayout =
     location.pathname === '/settings'
@@ -86,30 +107,17 @@ export function AppShell() {
 
   return (
     <div className="min-h-screen bg-background text-text-primary">
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[var(--shell-sidebar-compact)] flex-col border-r border-border bg-surface md:flex xl:w-[var(--shell-sidebar-expanded)]">
-        <div className="flex h-[var(--shell-header-height)] shrink-0 items-center justify-center border-b border-border px-3 xl:justify-start xl:px-5">
-          <div className="flex min-w-0 items-center gap-3" role="img" aria-label={t('app.name')}>
-            <PlatformMark size="sm" withName={false} />
-            <div className="hidden min-w-0 xl:block">
-              <div className="truncate text-sm font-semibold">{t('app.name')}</div>
-              <div className="truncate text-xs text-text-muted">{t('app.subtitle')}</div>
-            </div>
-          </div>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto p-2 xl:p-3">
-          <NavigationList responsiveLabels />
-        </div>
-      </aside>
-
-      <div className="min-h-screen md:pl-[var(--shell-sidebar-compact)] xl:pl-[var(--shell-sidebar-expanded)]">
-        <header className="sticky top-0 z-30 flex h-[var(--shell-header-height)] items-center justify-between border-b border-border bg-surface px-3 md:px-4">
-          <div className="flex min-w-0 items-center gap-2">
+      <PlatformHeader
+        currentServiceKey="ci-cd"
+        leading={
+          <>
             <Dialog open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
               <DialogTrigger asChild>
                 <Button
                   variant="ghost"
                   size="icon"
                   aria-label={t('navigation.toggleMenu')}
+                  title={t('navigation.toggleMenu')}
                   className="h-11 w-11 md:hidden"
                 >
                   <Menu className="h-5 w-5" aria-hidden />
@@ -117,7 +125,7 @@ export function AppShell() {
               </DialogTrigger>
               <DialogContent
                 aria-describedby={undefined}
-                className="!left-0 !top-0 !flex !h-dvh !max-h-dvh !w-[min(320px,calc(100%-2rem))] !max-w-none !translate-x-0 !translate-y-0 !flex-col !gap-0 !rounded-none !border-y-0 !border-l-0 !p-0 [&>button]:h-10 [&>button]:w-10"
+                className="!left-0 !top-0 !flex !h-dvh !max-h-dvh !w-[min(320px,calc(100%-2rem))] !max-w-none !translate-x-0 !translate-y-0 !flex-col !gap-0 !rounded-none !border-y-0 !border-l-0 !p-0 [&>button]:h-11 [&>button]:min-h-11 [&>button]:w-11 [&>button]:min-w-11"
               >
                 <DialogHeader className="flex h-[var(--shell-header-height)] shrink-0 justify-center border-b border-border px-4 pr-14 text-left">
                   <DialogTitle className="text-base">
@@ -134,47 +142,54 @@ export function AppShell() {
               </DialogContent>
             </Dialog>
 
-            <div
-              className="flex min-w-0 items-center gap-2 md:hidden"
-              role="img"
+            <NavLink
+              to="/"
+              className="flex items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
               aria-label={t('app.name')}
             >
               <PlatformMark size="sm" withName={false} />
-              <span className="hidden truncate text-sm font-semibold min-[420px]:inline">{t('app.name')}</span>
-            </div>
-            <span className="hidden truncate text-sm font-medium text-text-secondary md:inline">
-              {t('app.subtitle')}
-            </span>
-          </div>
-
-          <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-            <ServiceSwitcher currentKey="ci-cd" />
-            <div className="[&_button]:h-10 [&_button]:w-10">
-              <ThemeToggle />
-            </div>
+            </NavLink>
+          </>
+        }
+        actions={
+          <>
+            <ThemeToggle />
             {session && (
-              <div className="flex h-10 items-center" title={username}>
-                <CircleUserRound className="h-5 w-5 text-text-muted" aria-hidden />
-                <span className="sr-only ml-2 max-w-36 truncate text-sm text-text-secondary xl:not-sr-only">
-                  {username}
-                </span>
-              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={t('navigation.account')}
+                    title={t('navigation.account')}
+                  >
+                    <CircleUserRound className="h-5 w-5" aria-hidden />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-64 max-w-[calc(100vw-2rem)]">
+                  <div className="break-words px-2 py-2 text-sm font-medium text-text-primary">
+                    {username}
+                  </div>
+                  <DropdownMenuItem
+                    onSelect={() => void logout()}
+                    className="min-h-11 gap-2 md:min-h-10"
+                  >
+                    <LogOut className="h-4 w-4" aria-hidden />
+                    {t('navigation.logout')}
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
-            {session && (
-              <Button
-                variant="ghost"
-                size="sm"
-                aria-label={t('navigation.logout')}
-                className="h-10 min-w-10 px-2 sm:px-3"
-                onClick={() => void logout()}
-              >
-                <LogOut className="h-4 w-4" aria-hidden />
-                <span className="hidden sm:inline">{t('navigation.logout')}</span>
-              </Button>
-            )}
-          </div>
-        </header>
-
+          </>
+        }
+      />
+      <aside className="fixed bottom-0 left-0 top-[var(--shell-header-height)] z-20 hidden w-[var(--shell-sidebar-compact)] flex-col border-r border-border bg-surface md:flex xl:w-[var(--shell-sidebar-expanded)]">
+        <div className="min-h-0 flex-1 overflow-y-auto p-2 xl:p-3">
+          <NavigationList responsiveLabels />
+        </div>
+      </aside>
+      <div className="min-w-0 md:pl-[var(--shell-sidebar-compact)] xl:pl-[var(--shell-sidebar-expanded)]">
         <main className="shell-main min-h-[calc(100dvh-var(--shell-header-height))]">
           <PageFrame mode={pageLayout}>
             <Outlet />

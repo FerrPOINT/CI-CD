@@ -99,6 +99,15 @@ Configuration: [docs/ENV.md](docs/ENV.md). CLI: [docs/CLI.md](docs/CLI.md).
 
 ## Визуальные доказательства
 
+### Общий Header (2026-10-01)
+
+![Полноширинный Header CI/CD](docs/screenshots/2026-10-01-platform-header/desktop-light-1920.png)
+
+Свежая no-mock проверка общего Header: три темы, 320–2560 px, keyboard/touch,
+runtime-каталог и центральный выход. [Mobile, wide, меню и fingerprints](docs/screenshots/2026-10-01-platform-header/README.md).
+Изображения отдельных рабочих страниц ниже относятся к предыдущему UI snapshot;
+они не подменяют актуальную Header-приёмку или окончательный release gate.
+
 Представительные кадры сняты на реальных маршрутах при `1920x1080` с seeded-
 данными и default theme. Responsive QA, включая `375px`, ведётся отдельно в
 тестах и screenshot manifest.

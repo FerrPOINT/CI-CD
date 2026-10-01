@@ -9,6 +9,11 @@
 
 ## [Unreleased]
 
+- CI/CD использует полноширинный общий PlatformHeader из Base: бренд и сервисы
+  находятся слева, тема и аккаунт справа; sidebar содержит только навигацию.
+  Полная identity и центральный выход доступны в меню аккаунта. Mobile drawer
+  закрывается при переходе на desktop и не оставляет блокировку страницы.
+
 - Frontend lockfile обновлён против текущего Base: исправлены advisories
   brace-expansion в dev-tooling, синхронизированы общие UI-зависимости и
   минимальная версия react-router 8.4.0 согласно peer contract `@sdlc/ui`.
