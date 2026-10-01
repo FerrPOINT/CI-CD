@@ -310,3 +310,5 @@ cargo test -p cicd-cli
 # Только на выделенной тестовой БД; production URL не использовать.
 CICD_TEST_DATABASE_URL=postgres://... cargo test -p cicd-cli --features integration --test cli_real_api -- --test-threads=1
 ```
+
+Результаты проверок, используемые fixtures и границы подтверждения: [CLI_VALIDATION.md](CLI_VALIDATION.md).

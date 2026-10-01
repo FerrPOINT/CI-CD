@@ -9,6 +9,12 @@
 
 ## [Unreleased]
 
+- CLI поддерживает управление repositories/PR, pipeline cancel/retry/wait и variables, manual job
+  play/retry, страницы логов выбранного attempt, secret file/stdin и deployment approval/rollback.
+  Добавлены JSON errors/empty success, deadline ожидания и download без перезаписи. CLI integration
+  suite получает отдельную PostgreSQL БД; merge PR работает для repository без CI-проекта.
+  Диагностика скрывает исходные и обрезанные credentials, включая newline в secret stdin.
+
 - CI/CD использует полноширинный общий PlatformHeader из Base: бренд и сервисы
   находятся слева, тема и аккаунт справа; sidebar содержит только навигацию.
   Полная identity и центральный выход доступны в меню аккаунта. Mobile drawer

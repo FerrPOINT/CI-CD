@@ -43,6 +43,8 @@ repositories (1) ──── (N) pull_requests (по repository_name)
 | created_at | TIMESTAMPTZ | нет | `now()` | Время создания |
 
 
+Protected branch lookup при PR merge вычисляет `COALESCE(BOOL_OR(...), false)`: repository без связанного CI-проекта даёт unprotected policy вместо SQL NULL. Миграции и схема не меняются; правила protected target описаны в [API.md](API.md).
+
 ## 0.1a releases
 
 Метаданные релиза поверх существующего Git tag. Удаление release не удаляет Git tag.
