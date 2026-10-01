@@ -190,7 +190,7 @@ export function PipelineDetailPage() {
 
       {plan && <PipelinePlanCard plan={plan} />}
 
-      <div className="grid min-w-0 gap-4 lg:grid-cols-3">
+      <div className="grid min-w-0 gap-4 lg:grid-cols-3" data-pipeline-layout="stage-grid">
         {stages.map((stage) => (
           <Card key={stage.id} className="min-w-0 p-4">
             <div className="flex items-center justify-between gap-3 border-b border-border pb-3">

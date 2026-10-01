@@ -76,12 +76,19 @@ describe('AppShell navigation', () => {
     expect(screen.getByText('outlet').parentElement).toHaveAttribute('data-page-layout', 'reading')
   })
 
-  it('uses the shared detail mode for pipeline runs', () => {
-    renderShell('/pipelines/pipeline-1')
+  it.each([
+    ['/pipelines/pipeline-1', 'wide'],
+    ['/repositories/platform/pulls/1', 'detail-with-aside'],
+    ['/repositories/platform/pulls/1?view=diff', 'wide'],
+    ['/repositories/platform/pulls/1?view=summary', 'detail-with-aside'],
+    ['/repositories/platform/pulls', 'wide'],
+    ['/projects/project-1/pipelines', 'wide'],
+  ])('uses the semantic mode %s -> %s', (path, mode) => {
+    renderShell(path)
 
     expect(screen.getByText('outlet').parentElement).toHaveAttribute(
       'data-page-layout',
-      'detail-with-aside',
+      mode,
     )
   })
 

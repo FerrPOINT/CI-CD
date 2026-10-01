@@ -1,0 +1,32 @@
+{
+  "captured_at": "2026-10-01",
+  "timezone": "Europe/Moscow",
+  "mode": "isolated production image, live APIs, no mocks",
+  "source_base": "1d3e14d2c0aa39bd135120a2087e6c5c09ea66a9",
+  "image_id": "sha256:3c38b479cd9688d41c649a8bd66a89392473177c0034511830a3883ab087be5d",
+  "compose_config_hash": "741672a925dc23afebc41dee212c408c87780ac10f687a7dbe516927d3e4c6f5",
+  "browser": "Playwright 1.63.0, Chromium 153, axe-core 4.13.0",
+  "tests_passed": 2,
+  "retries": 0,
+  "duration_minutes": 2.6,
+  "detail_combinations": 108,
+  "main_route_combinations": 84,
+  "detail_widths": [375, 768, 1023, 1024, 1279, 1280, 1440, 1920, 2560],
+  "themes": ["light", "gray", "dark"],
+  "serious_or_critical_axe_violations": 0,
+  "page_overflow_errors": 0,
+  "console_or_network_errors": 0,
+  "detail_navigation_mutations": 0,
+  "safe_jobs_succeeded": 3,
+  "confirmations_checked": ["close", "merge"],
+  "source_sha256": {
+    "frontend/src/widgets/app-shell.tsx": "16012cfd6a9ccd505b69695b283ab0b83719cd8eea55b87d07793b5151ae76ce",
+    "frontend/src/pages/pull-request-detail/index.tsx": "5fb33ec2933ce715cf371d06a27214dae0d374c0c1e222da166d568b67524fae",
+    "frontend/src/pages/pipeline-detail/index.tsx": "f1cfdce9c7a9e9db4cc9e9723a71d04f8dccea8d3b55d3b1ab13147fcd95f1aa",
+    "frontend/src/pages/pull-requests/actions.tsx": "b6d51e985f62497efe0bdff3eb0ea2c66db699cb95b0eec8d525ba280de42e9a",
+    "frontend/src/shared/ui/confirm-dialog.tsx": "ce3b3dddae243175669b728e86ba811e5828aa0e59d3094c290680a40d02e781"
+  },
+  "fingerprint_format": "SHA256 of raw pre-commit working files; Git may normalize line endings",
+  "cleanup": "Own project/repository deleted by API; PR/audit history retained only in isolated QA database",
+  "limitations": ["Not OCI revision attestation", "User deployment not rolled out", "Final platform release gate still required"]
+}

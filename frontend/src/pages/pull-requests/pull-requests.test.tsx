@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'sonner'
@@ -177,10 +177,43 @@ describe('pull request workflow', () => {
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
   })
 
+  it('places PR actions in a named shared rail after the primary', () => {
+    setup([pullRequest(1)], '/repositories/platform/pulls/1')
+    const rail = screen.getByRole('complementary', { name: 'pulls.actions' })
+    const split = rail.parentElement!
+    expect(split).toHaveClass('page-split', 'items-start')
+    expect(split.lastElementChild).toBe(rail)
+    expect(within(split.firstElementChild as HTMLElement).getByText('pulls.sourceBranch')).toBeInTheDocument()
+    expect(within(rail).getByRole('button', { name: 'pulls.close' })).toBeInTheDocument()
+  })
+
+  it('keeps the inline diff a full working area without an actions rail', () => {
+    setup([pullRequest(1)], '/repositories/platform/pulls/1?view=diff')
+    expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
+    expect(document.querySelector('.page-split')).not.toBeInTheDocument()
+  })
+
+  it.each(['pulls.close', 'pulls.merge'])('returns focus after dismissing %s without mutation', async (label) => {
+    setup([pullRequest(1)], '/repositories/platform/pulls/1')
+    const trigger = screen.getByRole('button', { name: label })
+    expect(trigger).toHaveClass('min-h-10', 'sm:min-h-10')
+    trigger.focus()
+    fireEvent.click(trigger)
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    await waitFor(() => expect(trigger).toHaveFocus())
+    expect(mocks.action).not.toHaveBeenCalled()
+  })
+
   it('requires confirmation before closing from the detail page', () => {
     setup([pullRequest(1)], '/repositories/platform/pulls/1')
     fireEvent.click(screen.getByRole('button', { name: 'pulls.close' }))
     expect(mocks.action).not.toHaveBeenCalled()
+    expect(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'pulls.close' }))
+      .toHaveClass('text-destructive-foreground')
+    expect(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'pulls.close' }))
+      .not.toHaveClass('text-white')
     fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'pulls.close' }))
     expect(mocks.action).toHaveBeenCalledWith({ number: 1, action: 'close' }, expect.any(Object))
   })

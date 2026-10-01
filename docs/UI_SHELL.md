@@ -12,6 +12,37 @@
 
 `main` не задаёт локальный `max-width`: шириной содержимого управляет конкретный экран. Sidebar фиксирован, а header остаётся sticky внутри рабочей области.
 
+## Семантика Detail
+
+Pipeline detail использует `wide`: план, стадии и логи являются основной
+рабочей областью. Обзор PR использует общий `detail-with-aside`/`page-split`
+с правым rail действий 320 px от 1024 px; ниже действия идут после primary.
+Inline diff того же PR (`?view=diff`) использует `wide` без пустого rail.
+Mapping и приёмка: [план](../plans/2026-10-01-detail-layout-modes.md).
+[Live evidence](screenshots/2026-10-01-detail-layout/README.md): полный
+непрерывный прогон 2/2 на production image, без mock API.
+
+На работающем локальном стенде можно выполнить live detail-проверку:
+
+```powershell
+$env:SDLC_LIVE_QA = '1'
+$env:E2E_BASE_URL = 'http://localhost:7712'
+$env:E2E_API_URL = 'http://localhost:7711/api/v1'
+pnpm --dir frontend exec playwright test e2e/detail-layout-live.spec.ts --project chromium --workers 1 --retries 0
+```
+
+Учётка читается из соседнего `services-base/deploy/.local/qa-session.json`
+или `SDLC_QA_SESSION_FILE`; адрес Auth можно задать через `SDLC_AUTH_URL`.
+Нужен Git и включённый embedded Docker runner с доступным alpine:3.21.
+Тест создаёт собственный внутренний репозиторий/проект, выполняет три безопасные
+printf job, проверяет 108 сочетаний geometry/theme/viewport, реальные логи,
+axe и keyboard/touch confirm с Escape/focus return без закрытия/слияния PR.
+Cleanup удаляет только точные созданные проект/репозиторий. Секреты не попадают
+в URL/argv, traces/videos отключены; screenshots не содержат credentials.
+Исторические PR/audit rows не имеют отдельного DELETE API и остаются в базе
+изолированного QA-проекта до его штатного удаления; полную очистку этих строк
+тест не обещает. Не запускайте acceptance fixtures в production.
+
 ## Навигация и доступность
 
 - `NavLink` назначает `aria-current="page"` и сохраняет активность раздела на вложенных маршрутах.
