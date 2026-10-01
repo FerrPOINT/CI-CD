@@ -18,7 +18,7 @@ cargo clippy --locked -p cicd-cli --all-targets --features integration -- -D war
 cargo build --locked --release --workspace
 ```
 
-- Workspace: 157 тестов, 0 failed. CLI: 3 unit, 10 contract, 8 subprocess/HTTP workflows.
+- Workspace: 158 тестов, 0 failed. CLI: 3 unit, 10 contract, 9 subprocess/HTTP workflows.
 - Real API/PostgreSQL: 2 теста, 0 failed; auth/RBAC/PAT/redaction и полный рабочий сценарий CLI.
 - Фильтры, страницы, variables, PR description stdin, secret stdin, JSON stdout/empty success, структурированные stderr, parser credential redaction и download no-clobber проверены subprocess assertions.
 - `pipeline wait`: polling queued→success, failed/canceled с ненулевым exit code, ограниченный deadline с медленным HTTP-ответом или чрезмерным poll interval, отсутствие cancel при timeout.
@@ -41,3 +41,5 @@ UI, Docker images и runtime окружения продуктов не изме
 - Redaction проверяет фактический trimmed token, fallback общего token при пустом явном token и secret stdin с завершающим newline; отправляемое secret value сохраняет этот newline.
 - Новый CI step создаёт `forge_test_cli` в существующем временном PostgreSQL service и переопределяет URL только для CLI tests. Existing integration suite продолжает использовать `forge_test_cicd`; contract regressions закрепляют разделение и feature-enabled Clippy.
 - Changelog `[Unreleased]`, CLI/API/Data Model описывают итоговый diff; frontend и Services Base не изменены.
+
+Проверка исходной справки CLI выявила вывод значения token env variable в `--help`. В итоговой ветке `hide_env_values` скрывает значение, сохраняя имя переменной; subprocess regression выполняется с заданным fixture token и проверяет stdout/stderr. После этого изменения повторены CLI tests, Clippy и release build CLI; API/backend fixtures не меняются.

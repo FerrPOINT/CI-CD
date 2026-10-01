@@ -16,7 +16,7 @@ const LEGACY_HEARTBEAT_MESSAGE: &str =
 struct Cli {
     #[arg(long, env = "CICD_API_URL", default_value = "http://127.0.0.1:7711")]
     api_url: String,
-    #[arg(long, env = "CICD_API_TOKEN")]
+    #[arg(long, env = "CICD_API_TOKEN", hide_env_values = true)]
     token: Option<String>,
     /// K5: config profile from ~/.config/forge-cli/config.toml (flag > CICD_PROFILE > default_profile).
     #[arg(long)]

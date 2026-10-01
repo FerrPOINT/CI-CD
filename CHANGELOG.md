@@ -9,6 +9,8 @@
 
 ## [Unreleased]
 
+- Справка CLI скрывает значения token env variables, сохраняя имена переменных.
+
 - CLI поддерживает управление repositories/PR, pipeline cancel/retry/wait и variables, manual job
   play/retry, страницы логов выбранного attempt, secret file/stdin и deployment approval/rollback.
   Добавлены JSON errors/empty success, deadline ожидания и download без перезаписи. CLI integration
