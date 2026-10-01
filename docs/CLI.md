@@ -42,7 +42,7 @@ cicd-cli project create --name my-service \
   --branch main
 ```
 
-`repository-url` может указывать на Dashboard/Git proxy `:22802` или на прямой backend Git endpoint `:22801`; CLI API base по умолчанию остаётся `http://127.0.0.1:22801`.
+`repository-url` может указывать на Dashboard/Git proxy `:22802` или на прямой backend Git endpoint `:22801`; CLI API base по умолчанию остаётся `http://127.0.0.1:7711`.
 
 ### pipeline
 
@@ -235,3 +235,78 @@ cicd-cli completions fish > ~/.config/fish/completions/cicd-cli.fish
 - `backend/cli/tests/cli_real_api.rs`
 - `docs/API.md`
 - `docs/adr/0005-workspace-layered-architecture.md`
+
+
+## Ввод, вывод и ошибки рабочих команд
+
+`--output json` пишет только JSON в stdout. Успешный пустой ответ нормализуется в `{"status":"ok"}`. `--error-format text|json` выбирает stderr, по умолчанию `text`. JSON-ошибка имеет вид:
+
+```json
+{"error":{"status":403,"code":"FORBIDDEN","message":"Недостаточно прав","request_id":"req-123"}}
+```
+
+При transport error `status` и недоступные API-поля равны `null`. Токен и переданные secret values исключаются из диагностики; произвольное тело ошибочного ответа не печатается. HTTP-статус хранится в JSON, числовые exit codes сохранены. Ошибки парсинга CLI в JSON-режиме имеют code `CLI_USAGE` и не повторяют входные значения; `--help` сохраняет обычный вывод.
+
+`--from-file PATH` читает UTF-8; `--from-file -` читает stdin. Inline-текст и файл взаимоисключающие. Ввод сохраняет переводы строк. Download сначала получает успешный ответ, записывает временный файл в каталоге назначения и переносит его в итоговый путь. Существующий файл сохраняется без `--overwrite`; автоматического создания каталогов нет.
+
+Пагинация явная: команда получает одну страницу. Повторов write-запросов и автоматической загрузки всех страниц нет. Настройки transport реализованы в продуктовом CLI; Services Base не изменён.
+
+
+## Расширенные рабочие сценарии
+
+```bash
+cicd-cli pipeline run --project <project-id> --git-ref main --variable ENV=test --variable VERSION=1.2
+cicd-cli pipeline cancel --id <pipeline-id>
+cicd-cli pipeline retry --id <pipeline-id>
+cicd-cli pipeline wait --id <pipeline-id> --wait-timeout-seconds 600 --poll-interval-seconds 2
+cicd-cli job retry --id <job-id>
+cicd-cli job play --id <job-id>
+cicd-cli job logs-page --id <job-id> --attempt <attempt-id> --after 10 --limit 100 --q error
+cicd-cli repository list
+cicd-cli repository create --name service --visibility private
+cicd-cli repository refs --repo service --kind branch --limit 25 --offset 0
+cicd-cli repository tree --repo service --git-ref main --path src --limit 25 --offset 0
+cicd-cli repository blob --repo service --git-ref main --path README.md
+cicd-cli repository tags --repo service --limit 25 --offset 0
+cicd-cli repository commits --repo service --branch main --limit 25 --offset 0
+cicd-cli repository compare --repo service --from main --to feature
+cicd-cli pr list --repo service --status open --search fix --limit 25 --offset 0
+cicd-cli pr get --repo service --number 1
+cicd-cli pr create --repo service --title "Изменение" --source-branch feature --target-branch main --from-file pr.md
+cicd-cli pr close --repo service --number 1
+cicd-cli pr reopen --repo service --number 1
+cicd-cli pr merge --repo service --number 1
+cicd-cli repository delete --name service
+cicd-cli secret set --project <project-id> --key API_KEY --from-file -
+cicd-cli artifact download --id <artifact-id> --output result.zip --overwrite
+```
+
+`pipeline wait` по умолчанию опрашивает каждые 2 секунды, до 10 минут. Обе настройки — положительные целые секунды. Полное чтение HTTP-ответа ограничено оставшимся временем ожидания; deadline включает sleep. Timeout возвращает код `3` и не отправляет cancel. Статусы `failed`/`canceled` печатают последний pipeline JSON и возвращают `3`; `success` возвращает `0`. Переходящие queued/running продолжают ожидание; неизвестное состояние считается ошибкой.
+
+`job play` вызывает endpoint запуска manual job. Прежний `job start` сохраняет ручное изменение статуса на running и не заменяет play. `job logs`/`job trace` сохраняют snapshot-семантику; `logs-page` использует `/logs/page`, опциональный attempt и взаимоисключающие `--after/--before`, а также `--limit/--q`. Live streaming не добавлен.
+
+`--variable KEY=VALUE` повторяется; первое `=` разделяет имя и значение, пустое значение разрешено. При повторе имени используется последнее значение. PR description поддерживает прежний inline `--description` или `--from-file`. Secret input поддерживает прежний `--value` или `--from-file`, включая stdin; значение не выводится в ошибках.
+
+Приоритет конфигурации: явный флаг → продуктовая env → профиль → default; токен также использует существующий fallback `SDLC_API_TOKEN`. `--profile` → `CICD_PROFILE` → `default_profile`. URL default остаётся `http://127.0.0.1:7711`. Числовые exit codes: 0 success, 2 usage/прочие rejection, 3 network/server/wait failure, 4 not found, 5 unauthorized/forbidden, 6 validation. Для HTTP-различий используйте JSON `error.status`.
+
+### Реестр сценариев и проверок
+
+| Сценарий / команда | Публичный API | Параметры и проверка |
+|---|---|---|
+| pipeline run/cancel/retry/wait | POST `/pipelines/run`, `/pipelines/{id}/cancel`, `/retry`; GET `/pipelines/{id}` | variables, deadline; workflows + cli_real_api |
+| job retry/play/start | POST `/jobs/{id}/retry`, `/start`; прежний status endpoint | attempts/manual, compatibility; workflows |
+| job logs-page | GET `/jobs/{id}/logs/page`, `/jobs/{id}/attempts/{attempt}/logs/page` | after/before/limit/q; workflows |
+| repository list/create/delete | GET/POST `/repositories`; DELETE `/repositories/{name}` | name/visibility; workflows |
+| repository refs/tree/blob/tags/commits/compare | GET `/repos/{repo}/refs`, `/tree`, `/blob`, `/tags`, `/commits`, `/compare` | ref/path, filters/pages; workflows |
+| pr list/get/create/merge/close/reopen | GET `/repos/{repo}/pulls/page`, `/{number}`; POST `/pulls`, `/{number}/action` | branch/title/description/stdin; workflows |
+| environment → deployment → approve/reject → rollback | существующие `/environments`, `/deployments` и actions | protected environment, approval count/state; cli_real_api и серверные deployment tests |
+| secret set / artifact download | существующие secrets/artifacts endpoints | stdin, credential redaction, atomic/no clobber; workflows |
+
+Git clone/fetch/push выполняются обычным Git. Пакет не добавляет администрирование и не меняет runner protocol. CLI остаётся HTTP-only; серверные dependencies подключены только для test harness.
+
+```bash
+cd backend
+cargo test -p cicd-cli
+# Только на выделенной тестовой БД; production URL не использовать.
+CICD_TEST_DATABASE_URL=postgres://... cargo test -p cicd-cli --features integration --test cli_real_api -- --test-threads=1
+```
