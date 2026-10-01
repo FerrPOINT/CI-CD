@@ -1,0 +1,37 @@
+{
+  "captured_date": "2026-10-01",
+  "acceptance_stage": "premerge-candidate",
+  "base_commit": "0343ebd620eacf2e2c45ef32efa31e3c18e26ea7",
+  "services_base_commit": "f7726b150b1d04c3ba2f96dc4900e544d8b22432",
+  "app_shell_sha256": "b80a758ac437e370042ffad0dd504ef9b0b49b19bcdd06e1b6c1866dbc5620ff",
+  "pnpm_lock_sha256": "1c746d7002800d01596ab1c15ede4d5b0641675e79c4160404bc01c9a5ddc199",
+  "runtime_image": "sha256:a8a2d4dba5b4bc0fe551010bea758f0d2ea29edefb3236b65af742043ee18c17",
+  "compose_service_config_hash": "741672a925dc23afebc41dee212c408c87780ac10f687a7dbe516927d3e4c6f5",
+  "production_js": {
+    "file": "index-D2Jy2rFG.js",
+    "sha256": "64c31bd9bc9a4b7994ffc542d7dee3f4b6afffcebb65d2c004ddb8940fe801d6"
+  },
+  "production_css": {
+    "file": "index-5xEWQYjz.css",
+    "sha256": "6101994d666bdb3f698594f800c34db247465e005eca926cff0db5a4051e456d"
+  },
+  "mock_api": false,
+  "header_combinations": 99,
+  "expanded_live_gate": {
+    "passed": 15,
+    "failed": 0,
+    "skipped": 0,
+    "playwright_retries": 0,
+    "duration_minutes": 7.3,
+    "layout_combinations": 291,
+    "scope": "Header, seven core routes, PR/pipeline/jobs detail and full twelve-test six-app SSO file"
+  },
+  "playwright_retries": 0,
+  "runtime_errors": [],
+  "api_writes": [],
+  "limitations": [
+    "Candidate checkout fingerprint is not an OCI revision attestation.",
+    "Working sdlc-demo was not rolled out.",
+    "Final whole-platform release gate remains separate."
+  ]
+}

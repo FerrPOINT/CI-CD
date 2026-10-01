@@ -45,6 +45,15 @@ Human identity, браузерные сессии и личные API-токен
 
 ### Infrastructure
 
+Dashboard использует общий `PlatformHeader` из `@sdlc/ui`: он располагается
+перед sidebar-offset и занимает всю ширину viewport. Leading принадлежит
+продукту (drawer + PlatformMark), services общему UI (шесть UI из runtime),
+actions содержит тему и аккаунт с central logout. Sidebar начинается под
+Header и содержит только локальную навигацию. Полная identity не дублируется
+в sidebar и не участвует в геометрии Header. Контекстные `PageFrame` режимы
+рабочих страниц сохраняются; API-only и Pulse не становятся UI-приложениями.
+Приёмка и неизменяемые границы: [план Header](../plans/2026-10-01-platform-header.md).
+
 - PostgreSQL 17, Docker Compose.
 - Порты: API `22801`, Dashboard `22802`, PostgreSQL `22543`.
 - Env-префикс `CICD_`.

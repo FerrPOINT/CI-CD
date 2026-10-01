@@ -4,6 +4,17 @@
 
 ## Статусы
 
+### Live Header Gate
+
+`SDLC_LIVE_QA=1 SDLC_QA_SESSION_FILE=/private/qa-session.json
+E2E_BASE_URL=http://localhost:7712 pnpm e2e platform-header-live.spec.ts`
+проверяет новый общий Header на работающем umbrella QA-стенде, без подмены API.
+Секреты читаются из приватного файла, trace/video отключены. Проверка включает
+99 route/theme/width сочетаний (320–2560 px), реальный каталог, keyboard/touch,
+focus и выход через Central Auth. Full-page evidence пишется в локальный
+gitignored каталог; `SDLC_HEADER_EVIDENCE_DIR` переопределяет его путь.
+Этот gate не заменяет общий SSO, backend/PG, security и финальный release smoke.
+
 - **Current verified** -- команда, пакет или проверка существуют в текущем checkout и используются runtime/CI.
 - **Configuration only** -- сущность или экран можно настроить, но execution/delivery не реализованы.
 - **Target approved** -- требование принято ADR или контрактом, но не должно выдаваться за работающую возможность.

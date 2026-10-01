@@ -16,6 +16,7 @@
     "create": "Создать",
     "toggleMenu": "Переключить меню",
     "logout": "Выйти",
+    "account": "Аккаунт",
     "profileFallback": "Пользователь"
   },
   "projects": {

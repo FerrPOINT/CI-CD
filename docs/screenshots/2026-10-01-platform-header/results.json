@@ -1,0 +1,509 @@
+{
+  "mock_api": false,
+  "retries": 0,
+  "cases": [
+    {
+      "route": "/projects",
+      "theme": "light",
+      "width": 320
+    },
+    {
+      "route": "/projects",
+      "theme": "light",
+      "width": 375
+    },
+    {
+      "route": "/projects",
+      "theme": "light",
+      "width": 767
+    },
+    {
+      "route": "/projects",
+      "theme": "light",
+      "width": 768
+    },
+    {
+      "route": "/projects",
+      "theme": "light",
+      "width": 1023
+    },
+    {
+      "route": "/projects",
+      "theme": "light",
+      "width": 1024
+    },
+    {
+      "route": "/projects",
+      "theme": "light",
+      "width": 1279
+    },
+    {
+      "route": "/projects",
+      "theme": "light",
+      "width": 1280
+    },
+    {
+      "route": "/projects",
+      "theme": "light",
+      "width": 1440
+    },
+    {
+      "route": "/projects",
+      "theme": "light",
+      "width": 1920
+    },
+    {
+      "route": "/projects",
+      "theme": "light",
+      "width": 2560
+    },
+    {
+      "route": "/repositories",
+      "theme": "light",
+      "width": 320
+    },
+    {
+      "route": "/repositories",
+      "theme": "light",
+      "width": 375
+    },
+    {
+      "route": "/repositories",
+      "theme": "light",
+      "width": 767
+    },
+    {
+      "route": "/repositories",
+      "theme": "light",
+      "width": 768
+    },
+    {
+      "route": "/repositories",
+      "theme": "light",
+      "width": 1023
+    },
+    {
+      "route": "/repositories",
+      "theme": "light",
+      "width": 1024
+    },
+    {
+      "route": "/repositories",
+      "theme": "light",
+      "width": 1279
+    },
+    {
+      "route": "/repositories",
+      "theme": "light",
+      "width": 1280
+    },
+    {
+      "route": "/repositories",
+      "theme": "light",
+      "width": 1440
+    },
+    {
+      "route": "/repositories",
+      "theme": "light",
+      "width": 1920
+    },
+    {
+      "route": "/repositories",
+      "theme": "light",
+      "width": 2560
+    },
+    {
+      "route": "/settings",
+      "theme": "light",
+      "width": 320
+    },
+    {
+      "route": "/settings",
+      "theme": "light",
+      "width": 375
+    },
+    {
+      "route": "/settings",
+      "theme": "light",
+      "width": 767
+    },
+    {
+      "route": "/settings",
+      "theme": "light",
+      "width": 768
+    },
+    {
+      "route": "/settings",
+      "theme": "light",
+      "width": 1023
+    },
+    {
+      "route": "/settings",
+      "theme": "light",
+      "width": 1024
+    },
+    {
+      "route": "/settings",
+      "theme": "light",
+      "width": 1279
+    },
+    {
+      "route": "/settings",
+      "theme": "light",
+      "width": 1280
+    },
+    {
+      "route": "/settings",
+      "theme": "light",
+      "width": 1440
+    },
+    {
+      "route": "/settings",
+      "theme": "light",
+      "width": 1920
+    },
+    {
+      "route": "/settings",
+      "theme": "light",
+      "width": 2560
+    },
+    {
+      "route": "/projects",
+      "theme": "gray",
+      "width": 320
+    },
+    {
+      "route": "/projects",
+      "theme": "gray",
+      "width": 375
+    },
+    {
+      "route": "/projects",
+      "theme": "gray",
+      "width": 767
+    },
+    {
+      "route": "/projects",
+      "theme": "gray",
+      "width": 768
+    },
+    {
+      "route": "/projects",
+      "theme": "gray",
+      "width": 1023
+    },
+    {
+      "route": "/projects",
+      "theme": "gray",
+      "width": 1024
+    },
+    {
+      "route": "/projects",
+      "theme": "gray",
+      "width": 1279
+    },
+    {
+      "route": "/projects",
+      "theme": "gray",
+      "width": 1280
+    },
+    {
+      "route": "/projects",
+      "theme": "gray",
+      "width": 1440
+    },
+    {
+      "route": "/projects",
+      "theme": "gray",
+      "width": 1920
+    },
+    {
+      "route": "/projects",
+      "theme": "gray",
+      "width": 2560
+    },
+    {
+      "route": "/repositories",
+      "theme": "gray",
+      "width": 320
+    },
+    {
+      "route": "/repositories",
+      "theme": "gray",
+      "width": 375
+    },
+    {
+      "route": "/repositories",
+      "theme": "gray",
+      "width": 767
+    },
+    {
+      "route": "/repositories",
+      "theme": "gray",
+      "width": 768
+    },
+    {
+      "route": "/repositories",
+      "theme": "gray",
+      "width": 1023
+    },
+    {
+      "route": "/repositories",
+      "theme": "gray",
+      "width": 1024
+    },
+    {
+      "route": "/repositories",
+      "theme": "gray",
+      "width": 1279
+    },
+    {
+      "route": "/repositories",
+      "theme": "gray",
+      "width": 1280
+    },
+    {
+      "route": "/repositories",
+      "theme": "gray",
+      "width": 1440
+    },
+    {
+      "route": "/repositories",
+      "theme": "gray",
+      "width": 1920
+    },
+    {
+      "route": "/repositories",
+      "theme": "gray",
+      "width": 2560
+    },
+    {
+      "route": "/settings",
+      "theme": "gray",
+      "width": 320
+    },
+    {
+      "route": "/settings",
+      "theme": "gray",
+      "width": 375
+    },
+    {
+      "route": "/settings",
+      "theme": "gray",
+      "width": 767
+    },
+    {
+      "route": "/settings",
+      "theme": "gray",
+      "width": 768
+    },
+    {
+      "route": "/settings",
+      "theme": "gray",
+      "width": 1023
+    },
+    {
+      "route": "/settings",
+      "theme": "gray",
+      "width": 1024
+    },
+    {
+      "route": "/settings",
+      "theme": "gray",
+      "width": 1279
+    },
+    {
+      "route": "/settings",
+      "theme": "gray",
+      "width": 1280
+    },
+    {
+      "route": "/settings",
+      "theme": "gray",
+      "width": 1440
+    },
+    {
+      "route": "/settings",
+      "theme": "gray",
+      "width": 1920
+    },
+    {
+      "route": "/settings",
+      "theme": "gray",
+      "width": 2560
+    },
+    {
+      "route": "/projects",
+      "theme": "dark",
+      "width": 320
+    },
+    {
+      "route": "/projects",
+      "theme": "dark",
+      "width": 375
+    },
+    {
+      "route": "/projects",
+      "theme": "dark",
+      "width": 767
+    },
+    {
+      "route": "/projects",
+      "theme": "dark",
+      "width": 768
+    },
+    {
+      "route": "/projects",
+      "theme": "dark",
+      "width": 1023
+    },
+    {
+      "route": "/projects",
+      "theme": "dark",
+      "width": 1024
+    },
+    {
+      "route": "/projects",
+      "theme": "dark",
+      "width": 1279
+    },
+    {
+      "route": "/projects",
+      "theme": "dark",
+      "width": 1280
+    },
+    {
+      "route": "/projects",
+      "theme": "dark",
+      "width": 1440
+    },
+    {
+      "route": "/projects",
+      "theme": "dark",
+      "width": 1920
+    },
+    {
+      "route": "/projects",
+      "theme": "dark",
+      "width": 2560
+    },
+    {
+      "route": "/repositories",
+      "theme": "dark",
+      "width": 320
+    },
+    {
+      "route": "/repositories",
+      "theme": "dark",
+      "width": 375
+    },
+    {
+      "route": "/repositories",
+      "theme": "dark",
+      "width": 767
+    },
+    {
+      "route": "/repositories",
+      "theme": "dark",
+      "width": 768
+    },
+    {
+      "route": "/repositories",
+      "theme": "dark",
+      "width": 1023
+    },
+    {
+      "route": "/repositories",
+      "theme": "dark",
+      "width": 1024
+    },
+    {
+      "route": "/repositories",
+      "theme": "dark",
+      "width": 1279
+    },
+    {
+      "route": "/repositories",
+      "theme": "dark",
+      "width": 1280
+    },
+    {
+      "route": "/repositories",
+      "theme": "dark",
+      "width": 1440
+    },
+    {
+      "route": "/repositories",
+      "theme": "dark",
+      "width": 1920
+    },
+    {
+      "route": "/repositories",
+      "theme": "dark",
+      "width": 2560
+    },
+    {
+      "route": "/settings",
+      "theme": "dark",
+      "width": 320
+    },
+    {
+      "route": "/settings",
+      "theme": "dark",
+      "width": 375
+    },
+    {
+      "route": "/settings",
+      "theme": "dark",
+      "width": 767
+    },
+    {
+      "route": "/settings",
+      "theme": "dark",
+      "width": 768
+    },
+    {
+      "route": "/settings",
+      "theme": "dark",
+      "width": 1023
+    },
+    {
+      "route": "/settings",
+      "theme": "dark",
+      "width": 1024
+    },
+    {
+      "route": "/settings",
+      "theme": "dark",
+      "width": 1279
+    },
+    {
+      "route": "/settings",
+      "theme": "dark",
+      "width": 1280
+    },
+    {
+      "route": "/settings",
+      "theme": "dark",
+      "width": 1440
+    },
+    {
+      "route": "/settings",
+      "theme": "dark",
+      "width": 1920
+    },
+    {
+      "route": "/settings",
+      "theme": "dark",
+      "width": 2560
+    }
+  ],
+  "runtime_errors": [],
+  "api_writes": [],
+  "interactions": [
+    "service keyboard/touch/outside/focus",
+    "drawer navigation/Escape/desktop resize",
+    "profile keyboard/focus",
+    "central logout/re-entry"
+  ]
+}
