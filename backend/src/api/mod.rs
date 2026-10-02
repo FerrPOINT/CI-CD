@@ -27,7 +27,7 @@ pub(crate) use authz_mw::{
     project_membership_role, rate_limit_mw, request_id_mw,
 };
 #[cfg(test)]
-use axum::http::{HeaderMap, HeaderValue, Method, header};
+use axum::http::{Method, header};
 use dto::{Job, Pipeline, PipelineDetail, PipelinePlan, Stage, StageDetail};
 pub(crate) use jobs_routes::refresh_statuses;
 pub(crate) use pipelines_routes::create_pipeline_with_vars_idempotent;
@@ -407,21 +407,17 @@ impl IntoResponse for ApiError {
         let request_id = REQUEST_ID
             .try_with(|u| u.to_string())
             .unwrap_or_else(|_| uuid::Uuid::nil().to_string());
-        (
+        sdlc_shared::error::error_response(
             self.status,
-            [(
-                axum::http::header::HeaderName::from_static("x-request-id"),
-                request_id.clone(),
-            )],
-            Json(serde_json::json!({
+            serde_json::json!({
                 "error": {
                     "code": self.code(),
                     "message": self.message,
                     "request_id": request_id,
                 }
-            })),
+            }),
+            Some(&request_id),
         )
-            .into_response()
     }
 }
 
@@ -666,19 +662,14 @@ mod tests {
     }
 
     #[test]
-    fn rate_limit_client_uses_forwarded_headers() {
-        let headers = HeaderMap::new();
-        assert_eq!(rate_limit_client(&headers), "unknown");
-
-        let mut headers = HeaderMap::new();
-        headers.insert("x-real-ip", HeaderValue::from_static("198.51.100.7"));
-        assert_eq!(rate_limit_client(&headers), "198.51.100.7");
-
-        headers.insert(
-            "x-forwarded-for",
-            HeaderValue::from_static("203.0.113.9, 10.0.0.1"),
-        );
-        assert_eq!(rate_limit_client(&headers), "203.0.113.9");
+    fn rate_limit_client_uses_socket_ip_not_port() {
+        let mut extensions = axum::http::Extensions::new();
+        assert_eq!(rate_limit_client(&extensions), "unknown");
+        for port in [1234, 4321] {
+            let peer: std::net::SocketAddr = format!("198.51.100.7:{port}").parse().unwrap();
+            extensions.insert(axum::extract::ConnectInfo(peer));
+            assert_eq!(rate_limit_client(&extensions), "198.51.100.7");
+        }
     }
 
     #[test]
@@ -771,12 +762,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn login_rate_limit_returns_429_per_forwarded_client() {
+    async fn login_rate_limit_returns_429_per_socket_peer() {
         let app = app(None);
         for _ in 0..30 {
             let response = app
                 .clone()
-                .oneshot(login_request("203.0.113.10"))
+                .oneshot(login_request_from_peer("203.0.113.10", "198.51.100.1:1234"))
                 .await
                 .unwrap();
             assert_ne!(response.status(), StatusCode::TOO_MANY_REQUESTS);
@@ -784,16 +775,115 @@ mod tests {
 
         let response = app
             .clone()
-            .oneshot(login_request("203.0.113.10"))
+            .oneshot(login_request_from_peer("203.0.113.10", "198.51.100.1:4321"))
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
 
-        let response = app.oneshot(login_request("203.0.113.11")).await.unwrap();
+        let response = app
+            .oneshot(login_request_from_peer("203.0.113.10", "198.51.100.2:1234"))
+            .await
+            .unwrap();
         assert_ne!(response.status(), StatusCode::TOO_MANY_REQUESTS);
     }
 
-    fn login_request(client: &'static str) -> axum::http::Request<Body> {
+    #[tokio::test]
+    async fn spoofed_forwarding_headers_do_not_reset_login_budget() {
+        let app = app(None);
+        let peer: std::net::SocketAddr = "127.0.0.1:1234".parse().unwrap();
+        for attempt in 0..=30 {
+            let mut request = login_request(&format!("203.0.113.{}", attempt + 1));
+            request
+                .extensions_mut()
+                .insert(axum::extract::ConnectInfo(peer));
+            let response = app.clone().oneshot(request).await.unwrap();
+            if attempt == 30 {
+                assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+            } else {
+                assert_ne!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_peer_metadata_uses_a_shared_budget() {
+        let app = app(None);
+        for attempt in 0..=30 {
+            let response = app
+                .clone()
+                .oneshot(login_request(&format!("203.0.113.{}", attempt + 1)))
+                .await
+                .unwrap();
+            if attempt == 30 {
+                assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+            } else {
+                assert_ne!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn live_http_limiter_distinguishes_real_peers_not_forwarding_headers() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                app(None).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .with_graceful_shutdown(async {
+                let _ = stopped.await;
+            })
+            .await
+            .unwrap();
+        });
+        let client = |ip: &str| {
+            reqwest::Client::builder()
+                .no_proxy()
+                .local_address(ip.parse::<std::net::IpAddr>().unwrap())
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .unwrap()
+        };
+        let first = client("127.0.0.1");
+        let second = client("127.0.0.2");
+        let url = format!("http://{address}/api/v1/auth/login");
+        let credentials = serde_json::json!({"username": "nobody", "password": "bad"});
+        for attempt in 0..=30 {
+            let status = first
+                .post(&url)
+                .header("x-forwarded-for", format!("203.0.113.{}", attempt + 1))
+                .header("x-real-ip", format!("198.51.100.{}", attempt + 1))
+                .json(&credentials)
+                .send()
+                .await
+                .unwrap()
+                .status();
+            if attempt == 30 {
+                assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+            } else {
+                assert_ne!(status, StatusCode::TOO_MANY_REQUESTS);
+            }
+        }
+        let other_peer = second.post(&url).json(&credentials).send().await.unwrap();
+        assert_ne!(other_peer.status(), StatusCode::TOO_MANY_REQUESTS);
+        stop.send(()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), server)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    fn login_request_from_peer(client: &str, peer: &str) -> axum::http::Request<Body> {
+        let mut request = login_request(client);
+        request.extensions_mut().insert(axum::extract::ConnectInfo(
+            peer.parse::<std::net::SocketAddr>().unwrap(),
+        ));
+        request
+    }
+
+    fn login_request(client: &str) -> axum::http::Request<Body> {
         axum::http::Request::post("/api/v1/auth/login")
             .header("content-type", "application/json")
             .header("x-forwarded-for", client)

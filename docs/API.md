@@ -152,7 +152,7 @@ Auth enforcement включается только если задан непу�
 
 ### Rate Limits
 
-In-process fixed-window limiter выполняется до auth/handler и возвращает стандартный error envelope с code `rate_limited`. Client key берётся из первого значения `X-Forwarded-For`, затем `X-Real-IP`, затем `unknown`; вне local development forwarded headers допустимы только за trusted reverse proxy.
+In-process fixed-window limiter выполняется до auth/handler и возвращает стандартный error envelope с code `rate_limited`. Client key — IP реального TCP peer, без порта. Недоверенные `X-Forwarded-For` и `X-Real-IP` игнорируются; при отсутствии socket metadata используется общий `unknown` bucket. За reverse proxy клиенты разделяют его бюджет. Отдельная trusted-proxy policy пока не реализована: передача заголовка не включает доверие к нему.
 
 | Класс | Routes | Лимит |
 |---|---|---:|
@@ -1589,3 +1589,7 @@ Git Smart HTTP допускает unauthenticated read только для `repo
 ## CLI-пакет: merge репозитория без CI-проекта
 
 PR merge для репозитория, ещё не связанного с CI-проектом, использует unprotected policy. Пустой результат агрегирования protected branches преобразуется в `false`, исключая ошибку декодирования SQL NULL/HTTP 500. Для связанного protected target прежняя проверка успешного pipeline на source head сохраняется. Регрессионная проверка: `cli_real_api` repository/PR fixture до создания CI-проекта.
+
+## Общая база
+
+Подключение версий, границы контрактов и проверки описаны в [BASE_INTEGRATION](BASE_INTEGRATION.md).

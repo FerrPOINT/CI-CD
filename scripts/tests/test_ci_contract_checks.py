@@ -24,7 +24,7 @@ class CliIntegrationGateTests(unittest.TestCase):
             "cargo clippy --locked -p cicd-cli --all-targets --features integration -- -D warnings",
             backend,
         )
-        self.assertIn("cargo test --features integration --test integration_db -- --test-threads=1", backend)
+        self.assertIn("cargo test --locked --features integration --test integration_db -- --test-threads=1", backend)
 
     def test_docs_job_runs_cli_gate_regressions(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")

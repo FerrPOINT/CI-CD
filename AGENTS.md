@@ -37,7 +37,7 @@ docker compose down
 
 # Backend: запуск через Docker, если cargo нет на хосте.
 docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" \
-  -w /workspace rust:1.86-bookworm \
+  -w /workspace rust:1.88.0-bookworm \
   -lc '/usr/local/cargo/bin/cargo test'
 
 # Frontend.
@@ -67,3 +67,9 @@ cd frontend && pnpm build
 - `docs/API.md`
 - `docs/DATA_MODEL.md`
 - `docs/CI_CD.md`
+
+## Base и воспроизводимость
+
+См. [BASE_INTEGRATION](docs/BASE_INTEGRATION.md). Обязательны pinned Base SHA,
+locked/frozen зависимости и проверка актуальных checkout до сборки.
+Rust build toolchain 1.88.0, Node 22.20.0, pnpm 10.28.1; MSRV отдельно.

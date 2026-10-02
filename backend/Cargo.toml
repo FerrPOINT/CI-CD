@@ -57,6 +57,7 @@ path = "src/bin/forge-runner.rs"
 integration = []
 
 [dependencies]
+sdlc-shared = { path = "../../services-base/crates/sdlc-shared" }
 cicd-app = { path = "app" }
 cicd-infra = { path = "infra" }
 cicd-api = { path = "api" }

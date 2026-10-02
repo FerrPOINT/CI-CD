@@ -31,7 +31,7 @@ importers:
         version: 1.1.21(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@sdlc/ui':
         specifier: file:../../services-base/frontend
-        version: file:../../services-base/frontend(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(i18next@26.4.0(typescript@5.9.3))(react-dom@19.2.8(react@19.2.8))(react-i18next@15.7.4(i18next@26.4.0(typescript@5.9.3))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(react-router@8.4.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)(yaml@2.9.0)(zustand@5.0.15(@types/react@19.2.18)(react@19.2.8))
+        version: file:../../services-base/frontend(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(i18next@26.4.0(typescript@5.9.3))(react-dom@19.2.8(react@19.2.8))(react-i18next@15.7.4(i18next@26.4.0(typescript@5.9.3))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(react-router@8.4.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)(zustand@5.0.15(@types/react@19.2.18)(react@19.2.8))
       '@tanstack/react-query':
         specifier: ^5.74.4
         version: 5.102.2(react@19.2.8)
@@ -993,8 +993,7 @@ packages:
       react: '>=19 <20'
       react-dom: '>=19 <20'
       react-i18next: '>=15 <17'
-      react-router: ^8.4.0
-      yaml: ^2.0.0
+      react-router: '>=8.1 <9'
       zustand: ^5.0.0
 
   '@standard-schema/spec@1.1.0':
@@ -3076,7 +3075,7 @@ snapshots:
   '@rollup/rollup-win32-x64-msvc@4.62.5':
     optional: true
 
-  '@sdlc/ui@file:../../services-base/frontend(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(i18next@26.4.0(typescript@5.9.3))(react-dom@19.2.8(react@19.2.8))(react-i18next@15.7.4(i18next@26.4.0(typescript@5.9.3))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(react-router@8.4.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)(yaml@2.9.0)(zustand@5.0.15(@types/react@19.2.18)(react@19.2.8))':
+  '@sdlc/ui@file:../../services-base/frontend(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(i18next@26.4.0(typescript@5.9.3))(react-dom@19.2.8(react@19.2.8))(react-i18next@15.7.4(i18next@26.4.0(typescript@5.9.3))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(react-router@8.4.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)(zustand@5.0.15(@types/react@19.2.18)(react@19.2.8))':
     dependencies:
       '@radix-ui/react-alert-dialog': 1.1.23(@types/react-dom@19.2.5(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@radix-ui/react-compose-refs': 1.1.5(@types/react@19.2.18)(react@19.2.8)
@@ -3095,7 +3094,6 @@ snapshots:
       react-i18next: 15.7.4(i18next@26.4.0(typescript@5.9.3))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3)
       react-router: 8.4.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       tailwind-merge: 3.7.0
-      yaml: 2.9.0
       zustand: 5.0.15(@types/react@19.2.18)(react@19.2.8)
     transitivePeerDependencies:
       - '@types/react'
