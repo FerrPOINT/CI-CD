@@ -9,6 +9,8 @@
 
 ## [Unreleased]
 
+- CLI возвращает network exit code `3` и `TRANSPORT_ERROR` при обрыве или таймауте чтения artifact download; существующий файл сохраняется при неудачном скачивании.
+
 - Справка CLI скрывает значения token env variables, сохраняя имена переменных.
 
 - CLI поддерживает управление repositories/PR, pipeline cancel/retry/wait и variables, manual job

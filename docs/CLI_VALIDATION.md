@@ -43,3 +43,9 @@ UI, Docker images и runtime окружения продуктов не изме
 - Changelog `[Unreleased]`, CLI/API/Data Model описывают итоговый diff; frontend и Services Base не изменены.
 
 Проверка исходной справки CLI выявила вывод значения token env variable в `--help`. В итоговой ветке `hide_env_values` скрывает значение, сохраняя имя переменной; subprocess regression выполняется с заданным fixture token и проверяет stdout/stderr. После этого изменения повторены CLI tests, Clippy и release build CLI; API/backend fixtures не меняются.
+
+## Регрессия download после ревью (2026-10-02)
+
+Проверено с чистым опубликованным Base `69bd8ef0fe424c2018bcdc509ddd25f7fce02a7e`, Rust 1.88.0. `cargo test --locked -p cicd-cli --test download_transport -- --test-threads=1`: 2 passed. `cargo clippy --locked -p cicd-cli --all-targets -- -D warnings` проходит. До исправления regression падал: exit `2` вместо `3`.
+
+Raw HTTP fixture проверяет оборванный Content-Length и зависание тела после headers, оба error formats, redaction/request ID, отсутствие частичного файла и сохранение destination при overwrite, успешный download и no-clobber. Обновление lockfile отражает удалённую зависимость `config` из опубликованного `sdlc-shared`; версии зависимостей не обновлялись.

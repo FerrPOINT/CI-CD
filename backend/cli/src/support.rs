@@ -154,11 +154,22 @@ pub async fn json_response(request: RequestBuilder, secrets: &[String]) -> Resul
     serde_json::from_slice(&bytes).context("Сервис вернул некорректный JSON")
 }
 pub async fn bytes_response(request: RequestBuilder, secrets: &[String]) -> Result<Vec<u8>> {
-    Ok(checked_response(request, secrets)
-        .await?
+    let response = checked_response(request, secrets).await?;
+    let request_id = response
+        .headers()
+        .get("x-request-id")
+        .and_then(|value| value.to_str().ok())
+        .map(|value| redact(value, secrets));
+    Ok(response
         .bytes()
         .await
-        .context("Не удалось прочитать файл")?
+        .map_err(|_| ApiFailure {
+            status: None,
+            code: Some("TRANSPORT_ERROR".into()),
+            message: "Не удалось получить файл: соединение прервано или превышено время ожидания"
+                .into(),
+            request_id,
+        })?
         .to_vec())
 }
 pub fn read_text(path: &str) -> Result<String> {
