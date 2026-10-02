@@ -15,19 +15,23 @@ use uuid::Uuid;
 struct ApiServer {
     base_url: String,
     handle: tokio::task::JoinHandle<()>,
+    files: tempfile::TempDir,
 }
 
 impl ApiServer {
-    async fn start(pool: sqlx::PgPool) -> Self {
-        Self::start_with_auth_secret(pool, None).await
-    }
-
     async fn start_with_auth_secret(pool: sqlx::PgPool, auth_secret: Option<String>) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind disposable API port");
         let addr = listener.local_addr().expect("read disposable API addr");
-        let app = cicd::api::app_with_auth_secret(Some(pool), auth_secret);
+        let files = tempfile::tempdir().unwrap();
+        let git = cicd::git_host::GitConfig {
+            root: files.path().join("repos"),
+            ..Default::default()
+        };
+        let mut config = cicd::config::RuntimeConfig::test_default().with_auth_secret(auth_secret);
+        config.artifacts.root = files.path().join("artifacts");
+        let app = cicd::api::app_with_git_and_config(Some(pool), git, None, config).unwrap();
         let handle = tokio::spawn(async move {
             axum::serve(listener, app)
                 .await
@@ -39,6 +43,7 @@ impl ApiServer {
         Self {
             base_url: format!("http://{addr}"),
             handle,
+            files,
         }
     }
 
@@ -65,32 +70,9 @@ async fn test_pool() -> sqlx::PgPool {
     pool
 }
 
-fn cli_json_with_flags(api_url: &str, args: &[&str]) -> serde_json::Value {
+fn cli_json_from_env(api_url: &str, token: &str, args: &[&str]) -> serde_json::Value {
     let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
-        .env("CICD_API_URL", "http://127.0.0.1:1")
-        .env("CICD_OUTPUT", "table")
-        .arg("--api-url")
-        .arg(api_url)
-        .arg("--output")
-        .arg("json")
-        .arg("--timeout-seconds")
-        .arg("5")
-        .args(args)
-        .output()
-        .expect("run cicd-cli");
-    assert!(
-        output.status.success(),
-        "cicd-cli {} failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
-        args.join(" "),
-        output.status.code(),
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout).expect("CLI JSON output")
-}
-
-fn cli_json_from_env(api_url: &str, args: &[&str]) -> serde_json::Value {
-    let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
+        .env("CICD_API_TOKEN", token)
         .env("CICD_API_URL", api_url)
         .env("CICD_OUTPUT", "json")
         .env("CICD_TIMEOUT_SECONDS", "5")
@@ -137,6 +119,7 @@ fn cli_json_with_token(api_url: &str, token: &str, args: &[&str]) -> serde_json:
 
 fn cli_failure(api_url: &str, args: &[&str]) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
+        .env("SDLC_API_TOKEN", "fixture-token")
         .env("CICD_API_URL", api_url)
         .env("CICD_OUTPUT", "json")
         .env("CICD_TIMEOUT_SECONDS", "5")
@@ -230,13 +213,152 @@ async fn login_access_token(api_url: &str, username: &str, password: &str) -> St
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cli_exercises_real_http_api_and_postgres_stack() {
     let pool = test_pool().await;
-    let server = ApiServer::start(pool.clone()).await;
+    let server = ApiServer::start_with_auth_secret(
+        pool.clone(),
+        Some(format!("fixture-secret-{}", Uuid::new_v4())),
+    )
+    .await;
+    let fixture_user = format!("fixture-admin-{}", Uuid::new_v4());
+    let fixture_user_id =
+        insert_login_user(&pool, &fixture_user, "admin", "fixture-password").await;
+    let fixture_access =
+        login_access_token(&server.base_url, &fixture_user, "fixture-password").await;
     let namespace = Uuid::new_v4();
     let project_name = format!("cli-real-api-{}", namespace.simple());
     let repo_url = format!("https://example.invalid/{project_name}.git");
 
-    let project = cli_json_with_flags(
+    cli_json_with_token(
         &server.base_url,
+        &fixture_access,
+        &["repository", "create", "--name", &project_name],
+    );
+    let checkout = tempfile::tempdir().unwrap();
+    let bare = server
+        .files
+        .path()
+        .join("repos")
+        .join(format!("{project_name}.git"))
+        .to_string_lossy()
+        .into_owned();
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .current_dir(checkout.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?}: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "--initial-branch=main"]);
+    git(&["config", "user.name", "CLI Fixture"]);
+    git(&["config", "user.email", "fixture@example.invalid"]);
+    std::fs::write(checkout.path().join("README.md"), "CLI fixture").unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-m", "fixture main"]);
+    git(&["push", &bare, "main"]);
+    git(&["checkout", "-b", "feature"]);
+    std::fs::write(checkout.path().join("change.txt"), "feature").unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-m", "fixture feature"]);
+    git(&["tag", "v1"]);
+    git(&["push", &bare, "feature", "--tags"]);
+    for operation in ["refs", "tree", "tags", "commits"] {
+        cli_json_with_token(
+            &server.base_url,
+            &fixture_access,
+            &[
+                "repository",
+                operation,
+                "--repo",
+                &project_name,
+                "--limit",
+                "10",
+                "--offset",
+                "0",
+            ],
+        );
+    }
+    cli_json_with_token(
+        &server.base_url,
+        &fixture_access,
+        &[
+            "repository",
+            "blob",
+            "--repo",
+            &project_name,
+            "--git-ref",
+            "main",
+            "--path",
+            "README.md",
+        ],
+    );
+    cli_json_with_token(
+        &server.base_url,
+        &fixture_access,
+        &[
+            "repository",
+            "compare",
+            "--repo",
+            &project_name,
+            "--from",
+            "main",
+            "--to",
+            "feature",
+        ],
+    );
+    let pr = cli_json_with_token(
+        &server.base_url,
+        &fixture_access,
+        &[
+            "pr",
+            "create",
+            "--repo",
+            &project_name,
+            "--title",
+            "CLI change",
+            "--source-branch",
+            "feature",
+            "--target-branch",
+            "main",
+            "--description",
+            "fixture",
+        ],
+    );
+    let number = pr["number"].as_u64().unwrap().to_string();
+    cli_json_with_token(
+        &server.base_url,
+        &fixture_access,
+        &[
+            "pr",
+            "list",
+            "--repo",
+            &project_name,
+            "--limit",
+            "10",
+            "--offset",
+            "0",
+        ],
+    );
+    cli_json_with_token(
+        &server.base_url,
+        &fixture_access,
+        &["pr", "get", "--repo", &project_name, "--number", &number],
+    );
+    for action in ["close", "reopen", "merge"] {
+        cli_json_with_token(
+            &server.base_url,
+            &fixture_access,
+            &["pr", action, "--repo", &project_name, "--number", &number],
+        );
+    }
+
+    let project = cli_json_with_token(
+        &server.base_url,
+        &fixture_access,
         &[
             "project",
             "create",
@@ -254,6 +376,7 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
 
     let projects = cli_json_from_env(
         &server.base_url,
+        &fixture_access,
         &["project", "list", "--limit", "200", "--offset", "0"],
     );
     assert!(
@@ -266,8 +389,9 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
     );
 
     let idempotency_key = Uuid::new_v4().to_string();
-    let pipeline = cli_json_with_flags(
+    let pipeline = cli_json_with_token(
         &server.base_url,
+        &fixture_access,
         &[
             "pipeline",
             "run",
@@ -277,6 +401,8 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
             "main",
             "--idempotency-key",
             &idempotency_key,
+            "--variable",
+            "CLI_FIXTURE=value",
         ],
     );
     assert_eq!(pipeline["pipeline"]["project_id"], project_id);
@@ -292,8 +418,41 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
         .expect("first job id")
         .to_owned();
 
-    let replay = cli_json_with_flags(
+    let artifact: serde_json::Value = reqwest::Client::new()
+        .post(format!(
+            "{}/api/v1/jobs/{first_job_id}/artifacts",
+            server.base_url
+        ))
+        .bearer_auth(&fixture_access)
+        .header("X-Artifact-Name", "fixture.txt")
+        .header("Content-Type", "text/plain")
+        .body("CLI artifact fixture")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let download = checkout.path().join("download.txt");
+    cli_json_with_token(
         &server.base_url,
+        &fixture_access,
+        &[
+            "artifact",
+            "download",
+            "--id",
+            artifact["id"].as_str().unwrap(),
+            "--output",
+            download.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(std::fs::read(download).unwrap(), b"CLI artifact fixture");
+
+    let replay = cli_json_with_token(
+        &server.base_url,
+        &fixture_access,
         &[
             "pipeline",
             "run",
@@ -303,12 +462,15 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
             "main",
             "--idempotency-key",
             &idempotency_key,
+            "--variable",
+            "CLI_FIXTURE=value",
         ],
     );
     assert_eq!(replay["pipeline"]["id"], pipeline_id);
 
     let detail = cli_json_from_env(
         &server.base_url,
+        &fixture_access,
         &["pipeline", "show", "--id", &pipeline_id],
     );
     assert_eq!(detail["pipeline"]["id"], pipeline_id);
@@ -316,15 +478,45 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
 
     let attempts = cli_json_from_env(
         &server.base_url,
+        &fixture_access,
         &["job", "attempts", "--id", &first_job_id],
     );
     assert!(
-        attempts.as_array().expect("attempt list").len() >= 1,
+        !attempts.as_array().expect("attempt list").is_empty(),
         "pipeline run should create attempt history"
     );
-
-    let environment = cli_json_with_flags(
+    reqwest::Client::new()
+        .post(format!(
+            "{}/api/v1/jobs/{first_job_id}/logs",
+            server.base_url
+        ))
+        .bearer_auth(&fixture_access)
+        .json(&json!({"message":"CLI log fixture"}))
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let attempt_id = attempts[0]["id"].as_str().unwrap();
+    let logs = cli_json_with_token(
         &server.base_url,
+        &fixture_access,
+        &[
+            "job",
+            "logs-page",
+            "--id",
+            &first_job_id,
+            "--attempt",
+            attempt_id,
+            "--limit",
+            "10",
+        ],
+    );
+    assert_eq!(logs["items"][0]["message"], "CLI log fixture");
+
+    let environment = cli_json_with_token(
+        &server.base_url,
+        &fixture_access,
         &[
             "environment",
             "create",
@@ -344,8 +536,9 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
         .expect("environment id")
         .to_owned();
 
-    let deployment = cli_json_with_flags(
+    let deployment = cli_json_with_token(
         &server.base_url,
+        &fixture_access,
         &[
             "deployment",
             "create",
@@ -360,8 +553,9 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
     assert!(deployment["pipeline_id"].is_null());
     let deployment_id = deployment["id"].as_str().expect("deployment id").to_owned();
 
-    let approved = cli_json_with_flags(
+    let approved = cli_json_with_token(
         &server.base_url,
+        &fixture_access,
         &[
             "deployment",
             "approve",
@@ -379,13 +573,119 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
 
     let approvals = cli_json_from_env(
         &server.base_url,
+        &fixture_access,
         &["deployment", "approvals", "--id", &deployment_id],
     );
-    assert_eq!(approvals[0]["actor"], "cli-smoke");
+    assert_eq!(approvals[0]["actor"], fixture_user_id.to_string());
     assert_eq!(approvals[0]["decision"], "approved");
 
-    let stderr = cli_failure(
+    sqlx::query("UPDATE jobs SET manual = true WHERE id = $1")
+        .bind(Uuid::parse_str(&first_job_id).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+    cli_json_with_token(
         &server.base_url,
+        &fixture_access,
+        &["job", "play", "--id", &first_job_id],
+    );
+    cli_json_with_token(
+        &server.base_url,
+        &fixture_access,
+        &["job", "start", "--id", &first_job_id],
+    );
+    cli_json_with_token(
+        &server.base_url,
+        &fixture_access,
+        &["job", "fail", "--id", &first_job_id],
+    );
+    cli_json_with_token(
+        &server.base_url,
+        &fixture_access,
+        &["job", "retry", "--id", &first_job_id],
+    );
+    cli_json_with_token(
+        &server.base_url,
+        &fixture_access,
+        &["job", "logs-page", "--id", &first_job_id, "--limit", "10"],
+    );
+    cli_json_with_token(
+        &server.base_url,
+        &fixture_access,
+        &["pipeline", "cancel", "--id", &pipeline_id],
+    );
+    cli_json_with_token(
+        &server.base_url,
+        &fixture_access,
+        &["pipeline", "retry", "--id", &pipeline_id],
+    );
+    let rejected = cli_json_with_token(
+        &server.base_url,
+        &fixture_access,
+        &[
+            "deployment",
+            "create",
+            "--environment",
+            &environment_id,
+            "--git-ref",
+            "main",
+        ],
+    );
+    cli_json_with_token(
+        &server.base_url,
+        &fixture_access,
+        &[
+            "deployment",
+            "reject",
+            "--id",
+            rejected["id"].as_str().unwrap(),
+            "--actor",
+            "cli-smoke",
+        ],
+    );
+    sqlx::query("UPDATE deployments SET status = 'success' WHERE id = $1")
+        .bind(Uuid::parse_str(&deployment_id).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+    let rollback = cli_json_with_token(
+        &server.base_url,
+        &fixture_access,
+        &[
+            "deployment",
+            "rollback",
+            "--id",
+            &deployment_id,
+            "--git-ref",
+            "main",
+        ],
+    );
+    assert_eq!(rollback["rollback_of_id"], deployment_id);
+    assert_eq!(rollback["approval_state"], "pending");
+    sqlx::query("UPDATE pipelines SET status = 'success' WHERE id = $1")
+        .bind(Uuid::parse_str(&pipeline_id).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        cli_json_with_token(
+            &server.base_url,
+            &fixture_access,
+            &[
+                "pipeline",
+                "wait",
+                "--id",
+                &pipeline_id,
+                "--wait-timeout-seconds",
+                "2"
+            ]
+        )["pipeline"]["status"],
+        "success"
+    );
+
+    let stderr = cli_failure_with_token(
+        &server.base_url,
+        &fixture_access,
         &["pipeline", "show", "--id", &Uuid::new_v4().to_string()],
     );
     assert!(
@@ -398,6 +698,11 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
         .execute(&pool)
         .await
         .expect("cleanup project");
+    cli_json_with_token(
+        &server.base_url,
+        &fixture_access,
+        &["repository", "delete", "--name", &project_name],
+    );
     server.shutdown().await;
 }
 

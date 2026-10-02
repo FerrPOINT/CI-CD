@@ -1586,6 +1586,10 @@ Git Smart HTTP допускает unauthenticated read только для `repo
 - `backend/domain/src/lib.rs` — правила переходов статусов.
 - `docs/TESTING.md` — curl-проверки.
 
+## CLI-пакет: merge репозитория без CI-проекта
+
+PR merge для репозитория, ещё не связанного с CI-проектом, использует unprotected policy. Пустой результат агрегирования protected branches преобразуется в `false`, исключая ошибку декодирования SQL NULL/HTTP 500. Для связанного protected target прежняя проверка успешного pipeline на source head сохраняется. Регрессионная проверка: `cli_real_api` repository/PR fixture до создания CI-проекта.
+
 ## Общая база
 
 Подключение версий, границы контрактов и проверки описаны в [BASE_INTEGRATION](BASE_INTEGRATION.md).

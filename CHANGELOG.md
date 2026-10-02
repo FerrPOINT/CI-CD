@@ -9,6 +9,18 @@
 
 ## [Unreleased]
 
+- `pipeline wait` учитывает `--timeout-seconds` / `CICD_TIMEOUT_SECONDS` при опросе, включая чтение тела: HTTP timeout возвращает `TRANSPORT_ERROR`, истечение ожидания — `WAIT_TIMEOUT`; pipeline не отменяется.
+
+- CLI возвращает network exit code `3` и `TRANSPORT_ERROR` при обрыве или таймауте чтения artifact download; существующий файл сохраняется при неудачном скачивании.
+
+- Справка CLI скрывает значения token env variables, сохраняя имена переменных.
+
+- CLI поддерживает управление repositories/PR, pipeline cancel/retry/wait и variables, manual job
+  play/retry, страницы логов выбранного attempt, secret file/stdin и deployment approval/rollback.
+  Добавлены JSON errors/empty success, deadline ожидания и download без перезаписи. CLI integration
+  suite получает отдельную PostgreSQL БД; merge PR работает для repository без CI-проекта.
+  Диагностика скрывает исходные и обрезанные credentials, включая newline в secret stdin.
+
 - Rate limiter использует IP реального TCP peer вместо недоверенных forwarding
   headers: подмена `X-Forwarded-For`/`X-Real-IP` не сбрасывает бюджет запросов.
   За reverse proxy применяется общий бюджет его IP; правила доступа не менялись.

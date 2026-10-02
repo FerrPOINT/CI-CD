@@ -859,7 +859,7 @@ pub async fn pr_action(
             // P0-4 merge gate: when the target branch is protected, require a
             // success pipeline on the PR source branch head (GitLab parity).
             let protected: Option<bool> = sqlx::query_scalar(
-                "SELECT BOOL_OR($2 = ANY(p.protected_branches)) FROM projects p \
+                "SELECT COALESCE(BOOL_OR($2 = ANY(p.protected_branches)), FALSE) FROM projects p \
                  WHERE p.repository_url LIKE ('%' || $1 || '%')",
             )
             .bind(&pr.repository_name)

@@ -1,4 +1,7 @@
+mod commands;
+mod support;
 use std::{path::PathBuf, time::Duration};
+use support::ErrorFormat;
 
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use reqwest::{Method, RequestBuilder, Url, header};
@@ -13,7 +16,7 @@ const LEGACY_HEARTBEAT_MESSAGE: &str =
 struct Cli {
     #[arg(long, env = "CICD_API_URL", default_value = "http://127.0.0.1:7711")]
     api_url: String,
-    #[arg(long, env = "CICD_API_TOKEN")]
+    #[arg(long, env = "CICD_API_TOKEN", hide_env_values = true)]
     token: Option<String>,
     /// K5: config profile from ~/.config/forge-cli/config.toml (flag > CICD_PROFILE > default_profile).
     #[arg(long)]
@@ -27,6 +30,8 @@ struct Cli {
         default_value_t = OutputFormat::Json
     )]
     output: OutputFormat,
+    #[arg(long, value_enum, default_value = "text")]
+    error_format: ErrorFormat,
     #[command(subcommand)]
     command: Command,
 }
@@ -64,7 +69,11 @@ fn load_profile_toml() -> Option<(String, toml::Value)> {
         })?;
     let raw = std::fs::read_to_string(path).ok()?;
     let value: toml::Value = toml::from_str(&raw).ok()?;
-    let default = value.get("default_profile")?.as_str()?.to_string();
+    let default = value
+        .get("default_profile")
+        .and_then(toml::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
     Some((default, value))
 }
 
@@ -84,10 +93,11 @@ fn parse_output(s: &str) -> Option<OutputFormat> {
 }
 
 fn resolve_profile(flag: &Option<String>) -> Option<ProfileOverrides> {
+    let (default, config) = load_profile_toml()?;
     let name = flag
         .clone()
-        .or_else(|| std::env::var("CICD_PROFILE").ok())?;
-    let (_, config) = load_profile_toml()?;
+        .or_else(|| std::env::var("CICD_PROFILE").ok())
+        .unwrap_or(default);
     let section = config.get("profiles")?.get(&name)?;
     Some(ProfileOverrides {
         api_url: section
@@ -107,6 +117,8 @@ fn resolve_profile(flag: &Option<String>) -> Option<ProfileOverrides> {
 
 #[derive(Subcommand)]
 enum Command {
+    #[command(flatten)]
+    Work(commands::WorkCommand),
     /// K5: emit shell completions (bash/zsh/fish/powershell).
     Completions {
         #[arg(value_enum)]
@@ -202,6 +214,22 @@ enum ProjectCommand {
 
 #[derive(Subcommand)]
 enum PipelineCommand {
+    Cancel {
+        #[arg(long)]
+        id: String,
+    },
+    Retry {
+        #[arg(long)]
+        id: String,
+    },
+    Wait {
+        #[arg(long)]
+        id: String,
+        #[arg(long,default_value_t=600,value_parser=clap::value_parser!(u64).range(1..))]
+        wait_timeout_seconds: u64,
+        #[arg(long,default_value_t=2,value_parser=clap::value_parser!(u64).range(1..))]
+        poll_interval_seconds: u64,
+    },
     List {
         #[arg(long)]
         project: String,
@@ -217,6 +245,8 @@ enum PipelineCommand {
         git_ref: String,
         #[arg(long)]
         idempotency_key: Option<String>,
+        #[arg(long="variable",value_parser=commands::parse_variable)]
+        variables: Vec<(String, String)>,
     },
     Show {
         #[arg(long)]
@@ -226,6 +256,30 @@ enum PipelineCommand {
 
 #[derive(Subcommand)]
 enum JobCommand {
+    Retry {
+        #[arg(long)]
+        id: String,
+    },
+    /// Запустить ожидающую manual job через runner queue
+    Play {
+        #[arg(long)]
+        id: String,
+    },
+    LogsPage {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        attempt: Option<String>,
+        #[arg(long, conflicts_with = "before")]
+        after: Option<u32>,
+        #[arg(long, conflicts_with = "after")]
+        before: Option<u32>,
+        #[arg(long)]
+        limit: Option<u16>,
+        #[arg(long)]
+        q: Option<String>,
+    },
+    /// Ручная смена статуса на running; для manual job используйте play
     Start {
         #[arg(long)]
         id: String,
@@ -289,8 +343,14 @@ enum SecretCommand {
         project: String,
         #[arg(long)]
         key: String,
+        #[arg(
+            long,
+            required_unless_present = "from_file",
+            conflicts_with = "from_file"
+        )]
+        value: Option<String>,
         #[arg(long)]
-        value: String,
+        from_file: Option<String>,
     },
     Delete {
         #[arg(long)]
@@ -319,6 +379,8 @@ enum ArtifactCommand {
         id: String,
         #[arg(long)]
         output: PathBuf,
+        #[arg(long)]
+        overwrite: bool,
     },
 }
 
@@ -587,11 +649,24 @@ enum TokenCommand {
 
 struct ApiClient {
     transport: CoreApiClient,
+    secrets: Vec<String>,
+    request_timeout: Duration,
 }
 
 impl ApiClient {
     fn new(api_url: String, token: Option<String>, timeout: Duration) -> anyhow::Result<Self> {
+        // The shared transport trims explicit tokens and can fall back from an
+        // empty token. Redact both original and effective credential forms.
+        let secrets = token
+            .clone()
+            .into_iter()
+            .chain(std::env::var("SDLC_API_TOKEN").ok())
+            .flat_map(|value| [value.trim().to_owned(), value])
+            .filter(|value| !value.is_empty())
+            .collect();
         Ok(Self {
+            secrets,
+            request_timeout: timeout,
             transport: CoreApiClient::new(
                 &format!("{}/api/v1", api_url.trim_end_matches('/')),
                 token.as_deref(),
@@ -650,31 +725,44 @@ impl ApiClient {
     }
 
     async fn json(&self, request: RequestBuilder) -> anyhow::Result<Value> {
-        Ok(self.transport.json(request).await?)
+        support::json_response(request, &self.secrets).await
     }
 
     async fn download(&self, request: RequestBuilder) -> anyhow::Result<Vec<u8>> {
-        Ok(self.transport.download(request).await?)
+        support::bytes_response(request, &self.secrets).await
     }
 }
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
-    let mut cli = Cli::parse();
+    let matches = match Cli::command().try_get_matches() {
+        Ok(matches) => matches,
+        Err(error) => return support::parse_error(error),
+    };
+    let explicit_url =
+        matches.value_source("api_url") == Some(clap::parser::ValueSource::CommandLine);
+    let explicit_output =
+        matches.value_source("output") == Some(clap::parser::ValueSource::CommandLine);
+    let mut cli =
+        <Cli as clap::FromArgMatches>::from_arg_matches(&matches).expect("validated arguments");
     // K5: profile file fills ONLY the gaps — explicit flags/env always win.
     if let Some(over) = resolve_profile(&cli.profile) {
-        if std::env::var_os("CICD_API_URL").is_none() {
+        if !explicit_url && std::env::var_os("CICD_API_URL").is_none() {
             cli.api_url = over.api_url.unwrap_or(cli.api_url);
         }
         if std::env::var_os("CICD_API_TOKEN").is_none() {
             cli.token = cli.token.or(over.token);
         }
-        if std::env::var_os("CICD_OUTPUT").is_none() && matches!(cli.output, OutputFormat::Json) {
+        if !explicit_output && std::env::var_os("CICD_OUTPUT").is_none() {
             cli.output = over.output.unwrap_or(cli.output);
         }
     }
     if cli.timeout_seconds == 0 {
-        eprintln!("error: --timeout-seconds must be greater than 0");
+        support::report(
+            &anyhow::anyhow!("--timeout-seconds must be greater than 0"),
+            cli.error_format,
+            &[],
+        );
         return exit(exit_code::USAGE);
     }
     if let Command::Completions { shell } = &cli.command {
@@ -689,28 +777,98 @@ async fn main() -> std::process::ExitCode {
             command: RunnerCommand::Heartbeat { .. }
         }
     ) {
-        eprintln!("error: {LEGACY_HEARTBEAT_MESSAGE}");
+        support::report(
+            &anyhow::anyhow!(LEGACY_HEARTBEAT_MESSAGE),
+            cli.error_format,
+            &[],
+        );
         return exit(exit_code::USAGE);
+    }
+    let error_format = cli.error_format;
+    let is_wait = matches!(
+        &cli.command,
+        Command::Pipeline {
+            command: PipelineCommand::Wait { .. }
+        }
+    );
+    let mut sensitive = Vec::new();
+    if let Command::Pipeline {
+        command: PipelineCommand::Run { variables, .. },
+    } = &cli.command
+    {
+        sensitive.extend(variables.iter().map(|(_, value)| value.clone()));
+    }
+    if let Command::Secret {
+        command: SecretCommand::Set {
+            value, from_file, ..
+        },
+    } = &mut cli.command
+    {
+        match support::text_input(value.take(), from_file.take()) {
+            Ok(Some(text)) => {
+                sensitive.push(text.clone());
+                *value = Some(text);
+            }
+            Ok(None) => {
+                support::report(&anyhow::anyhow!("Secret обязателен"), error_format, &[]);
+                return exit(exit_code::USAGE);
+            }
+            Err(e) => {
+                support::report(&e, error_format, &[]);
+                return exit(exit_code::USAGE);
+            }
+        }
+    }
+    if let Command::Webhook {
+        command: WebhookCommand::Create {
+            secret: Some(secret),
+            ..
+        },
+    } = &cli.command
+    {
+        sensitive.push(secret.clone());
+    }
+    if let Command::User {
+        command:
+            UserCommand::Create {
+                password: Some(password),
+                ..
+            },
+    } = &cli.command
+    {
+        sensitive.push(password.clone());
     }
     let output = cli.output;
     let timeout = Duration::from_secs(cli.timeout_seconds);
-    let api = match ApiClient::new(cli.api_url, cli.token, timeout) {
+    let mut api = match ApiClient::new(cli.api_url, cli.token, timeout) {
         Ok(api) => api,
         Err(err) => {
-            eprintln!("error: {err:#}");
+            support::report(&err, error_format, &sensitive);
             return exit(exit_code::USAGE);
         }
     };
+    api.secrets.extend(sensitive);
     let value = match execute(&api, cli.command).await {
         Ok(value) => value,
         Err(err) => {
-            eprintln!("error: {err:#}");
+            support::report(&err, error_format, &api.secrets);
             return exit(classify_error(&err));
         }
     };
     if let Err(err) = print_output(&value, output) {
-        eprintln!("error: {err:#}");
+        support::report(&err, error_format, &api.secrets);
         return exit(exit_code::USAGE);
+    }
+    if is_wait
+        && matches!(
+            value
+                .get("pipeline")
+                .and_then(|p| p.get("status"))
+                .and_then(Value::as_str),
+            Some("failed" | "canceled")
+        )
+    {
+        return exit(exit_code::NETWORK_OR_SERVER);
     }
     exit(exit_code::OK)
 }
@@ -721,6 +879,15 @@ fn exit(code: u8) -> std::process::ExitCode {
 
 /// K5: map error chains to stable exit codes (network/4xx/5xx).
 fn classify_error(err: &anyhow::Error) -> u8 {
+    if let Some(error) = err.downcast_ref::<support::ApiFailure>() {
+        return match error.status {
+            Some(401 | 403) => exit_code::UNAUTHORIZED,
+            Some(404) => exit_code::NOT_FOUND,
+            Some(400 | 422) => exit_code::VALIDATION,
+            Some(500..=599) | None => exit_code::NETWORK_OR_SERVER,
+            _ => exit_code::USAGE,
+        };
+    }
     if let Some(error) = err.downcast_ref::<CliError>() {
         return match error {
             CliError::Unauthorized => exit_code::UNAUTHORIZED,
@@ -760,6 +927,7 @@ fn classify_error(err: &anyhow::Error) -> u8 {
 
 async fn execute(api: &ApiClient, command: Command) -> anyhow::Result<Value> {
     match command {
+        Command::Work(command) => commands::execute(api, command).await,
         // Completions is handled in main() before the API client exists.
         Command::Completions { .. } => Ok(Value::Null),
         Command::Project { command } => project(api, command).await,
@@ -811,6 +979,17 @@ async fn project(api: &ApiClient, command: ProjectCommand) -> anyhow::Result<Val
 
 async fn pipeline(api: &ApiClient, command: PipelineCommand) -> anyhow::Result<Value> {
     match command {
+        PipelineCommand::Cancel { id } => {
+            api.json(api.post(&format!("/pipelines/{id}/cancel"))).await
+        }
+        PipelineCommand::Retry { id } => {
+            api.json(api.post(&format!("/pipelines/{id}/retry"))).await
+        }
+        PipelineCommand::Wait {
+            id,
+            wait_timeout_seconds,
+            poll_interval_seconds,
+        } => commands::wait_pipeline(api, &id, wait_timeout_seconds, poll_interval_seconds).await,
         PipelineCommand::List {
             project,
             limit,
@@ -829,13 +1008,14 @@ async fn pipeline(api: &ApiClient, command: PipelineCommand) -> anyhow::Result<V
             project,
             git_ref,
             idempotency_key,
+            variables,
         } => {
             let idempotency_key =
                 idempotency_key.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             api.json(
                 api.post(&format!("/projects/{project}/pipelines"))
                     .header("Idempotency-Key", idempotency_key)
-                    .json(&json!({"git_ref": git_ref})),
+                    .json(&json!({"git_ref": git_ref,"variables":variables.into_iter().collect::<std::collections::BTreeMap<_,_>>()})),
             )
             .await
         }
@@ -845,6 +1025,31 @@ async fn pipeline(api: &ApiClient, command: PipelineCommand) -> anyhow::Result<V
 
 async fn job(api: &ApiClient, command: JobCommand) -> anyhow::Result<Value> {
     match command {
+        JobCommand::Play { id } => api.json(api.post(&format!("/jobs/{id}/start"))).await,
+        JobCommand::Retry { id } => api.json(api.post(&format!("/jobs/{id}/retry"))).await,
+        JobCommand::LogsPage {
+            id,
+            attempt,
+            after,
+            before,
+            limit,
+            q,
+        } => {
+            let path = match attempt {
+                Some(a) => format!("/jobs/{id}/attempts/{a}/logs/page"),
+                None => format!("/jobs/{id}/logs/page"),
+            };
+            api.json(api.get_query(
+                &path,
+                &[
+                    ("after", after.map(|v| v.to_string())),
+                    ("before", before.map(|v| v.to_string())),
+                    ("limit", limit.map(|v| v.to_string())),
+                    ("q", q),
+                ],
+            )?)
+            .await
+        }
         JobCommand::Start { id } => set_job_status(api, &id, "running").await,
         JobCommand::Pass { id } => set_job_status(api, &id, "success").await,
         JobCommand::Fail { id } => set_job_status(api, &id, "failed").await,
@@ -901,10 +1106,11 @@ async fn secret(api: &ApiClient, command: SecretCommand) -> anyhow::Result<Value
             project,
             key,
             value,
+            from_file,
         } => {
             api.json(
                 api.post(&format!("/projects/{project}/secrets"))
-                    .json(&json!({"key": key, "value": value})),
+                    .json(&json!({"key": key, "value": support::text_input(value,from_file)?.ok_or_else(||anyhow::anyhow!("Secret обязателен"))?})),
             )
             .await
         }
@@ -936,11 +1142,16 @@ async fn artifact(api: &ApiClient, command: ArtifactCommand) -> anyhow::Result<V
             )
             .await
         }
-        ArtifactCommand::Download { id, output } => {
+        ArtifactCommand::Download {
+            id,
+            output,
+            overwrite,
+        } => {
+            support::check_destination(&output, overwrite)?;
             let bytes = api
                 .download(api.get(&format!("/artifacts/{id}/download")))
                 .await?;
-            std::fs::write(&output, &bytes)?;
+            support::save_download(&output, &bytes, overwrite)?;
             Ok(json!({"saved": output.display().to_string(), "bytes": bytes.len()}))
         }
     }
