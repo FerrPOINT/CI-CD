@@ -33,6 +33,28 @@ type CanceledExternalLeaseState = (
     Option<chrono::DateTime<chrono::Utc>>,
 );
 
+type RequeuedExternalLeaseState = (
+    String,
+    String,
+    String,
+    Option<Uuid>,
+    Option<chrono::DateTime<chrono::Utc>>,
+    String,
+    Option<String>,
+);
+
+type NotificationPolicyState = (
+    Uuid,
+    String,
+    String,
+    bool,
+    i32,
+    i32,
+    i32,
+    String,
+    Vec<String>,
+);
+
 async fn test_pool() -> sqlx::PgPool {
     test_pool_in_schema(&format!("it_{}", Uuid::new_v4().simple())).await
 }
@@ -3032,7 +3054,7 @@ async fn artifact_download_rejects_storage_paths_outside_artifact_root() {
     let attempt_id = Uuid::new_v4();
     let artifact_id = Uuid::new_v4();
     let project_name = format!("it-artifact-containment-{}", project_id.simple());
-    let artifact_root = std::env::temp_dir().join(format!("forge-artifacts-{}", project_id));
+    let artifact_root = std::env::temp_dir().join(format!("forge-artifacts-{project_id}"));
     let inside_path = artifact_root.join(format!("{artifact_id}.bin"));
     let outside_path = std::env::temp_dir().join(format!("forge-outside-{artifact_id}.txt"));
 
@@ -4386,7 +4408,7 @@ async fn embedded_runner_closes_lease_when_prepare_fails() {
     let job_id = Uuid::new_v4();
     let attempt_id = Uuid::new_v4();
     let project_name = format!("it-runner-lease-{}", project_id.simple());
-    let missing_repo = std::env::temp_dir().join(format!("forge-missing-{}.git", project_id));
+    let missing_repo = std::env::temp_dir().join(format!("forge-missing-{project_id}.git"));
 
     sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
         .bind(project_id)
@@ -4756,15 +4778,7 @@ async fn unacknowledged_external_lease_is_requeued_after_ack_deadline() {
         queue_leased_at,
         lease_status,
         lease_terminal_status,
-    ): (
-        String,
-        String,
-        String,
-        Option<Uuid>,
-        Option<chrono::DateTime<chrono::Utc>>,
-        String,
-        Option<String>,
-    ) = sqlx::query_as(
+    ): RequeuedExternalLeaseState = sqlx::query_as(
         "SELECT j.status, a.status, q.state, q.lease_id, q.leased_at, l.lease_status, l.terminal_status \
          FROM jobs j \
          JOIN execution_attempts a ON a.job_id = j.id \
@@ -5642,7 +5656,7 @@ async fn parallel_delivery_claims_message_exactly_once() {
     .bind(message_id)
     .bind(event_id)
     .bind(project_id)
-    .bind(format!("notification:{}", config_id))
+    .bind(format!("notification:{config_id}"))
     .bind(serde_json::json!({
         "event": "pipeline.failed",
         "project_id": project_id,
@@ -6013,7 +6027,7 @@ async fn invalid_notification_replacement_preserves_existing_configs() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
-    let configs: Vec<(Uuid, String, String, bool, i32, i32, i32, String, Vec<String>)> =
+    let configs: Vec<NotificationPolicyState> =
         sqlx::query_as(
             "SELECT id, channel, target, enabled, aggregation_window_secs, quiet_start_min, quiet_end_min, quiet_action, quiet_bypass_statuses \
              FROM notification_configs WHERE project_id = $1",
@@ -6057,7 +6071,7 @@ async fn invalid_notification_replacement_preserves_existing_configs() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 
-    let after_insert_error: Vec<(Uuid, String, String, bool, i32, i32, i32, String, Vec<String>)> =
+    let after_insert_error: Vec<NotificationPolicyState> =
         sqlx::query_as(
             "SELECT id, channel, target, enabled, aggregation_window_secs, quiet_start_min, quiet_end_min, quiet_action, quiet_bypass_statuses \
              FROM notification_configs WHERE project_id = $1",
@@ -7031,9 +7045,8 @@ async fn artifact_upload_sessions_resume_and_complete() {
         .await
         .unwrap();
     let begun = response_json(response).await;
-    assert_eq!(
+    assert!(
         begun.get("sessionId").is_some(),
-        true,
         "begin session failed: {begun:?}"
     );
     let session_id = Uuid::parse_str(begun["sessionId"].as_str().expect("session id")).unwrap();
@@ -8098,23 +8111,14 @@ async fn tenants_crud_and_project_scoping() {
         StatusCode::CREATED,
         "admin must create tenant"
     );
-    let created: serde_json::Value = serde_json::from_str(
-        &String::from_utf8(
-            axum::body::to_bytes(create.into_body(), usize::MAX)
-                .await
-                .unwrap()
-                .to_vec(),
-        )
-        .unwrap(),
-    )
-    .unwrap();
+    let created = response_json(create).await;
     let tenant_id: Uuid = created["id"].as_str().unwrap().parse().unwrap();
 
     // Admin adds the viewer as a tenant member.
     let membership = app
         .clone()
         .oneshot(
-            Request::post(&format!("/api/v1/admin/tenants/{tenant_id}/memberships"))
+            Request::post(format!("/api/v1/admin/tenants/{tenant_id}/memberships"))
                 .header("authorization", admin_bearer.clone())
                 .header("content-type", "application/json")
                 .body(Body::from(format!(
