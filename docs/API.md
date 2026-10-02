@@ -152,7 +152,7 @@ Auth enforcement включается только если задан непу�
 
 ### Rate Limits
 
-In-process fixed-window limiter выполняется до auth/handler и возвращает стандартный error envelope с code `rate_limited`. Client key берётся из первого значения `X-Forwarded-For`, затем `X-Real-IP`, затем `unknown`; вне local development forwarded headers допустимы только за trusted reverse proxy.
+In-process fixed-window limiter выполняется до auth/handler и возвращает стандартный error envelope с code `rate_limited`. Client key — IP реального TCP peer, без порта. Недоверенные `X-Forwarded-For` и `X-Real-IP` игнорируются; при отсутствии socket metadata используется общий `unknown` bucket. За reverse proxy клиенты разделяют его бюджет. Отдельная trusted-proxy policy пока не реализована: передача заголовка не включает доверие к нему.
 
 | Класс | Routes | Лимит |
 |---|---|---:|

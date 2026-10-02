@@ -3,10 +3,12 @@
 use super::dto::Project;
 use super::{ApiError, AppState, REQUEST_ID, pool};
 use crate::platform::audit;
+use axum::extract::ConnectInfo;
 use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::http::Extensions;
 use axum::http::Method;
 use sqlx::PgPool;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -46,7 +48,7 @@ pub(crate) async fn rate_limit_mw(
 ) -> Result<axum::response::Response, ApiError> {
     if let Some(rule) = rate_limit_rule(req.method(), req.uri().path()) {
         state.rate_limiter.prune(rule.window_secs);
-        let client = rate_limit_client(req.headers());
+        let client = rate_limit_client(req.extensions());
         let key = format!("{}:{}", rule.class, client);
         if !state.rate_limiter.allow(&key, rule.limit, rule.window_secs) {
             return Err(ApiError::too_many_requests());
@@ -139,22 +141,11 @@ pub(crate) fn rate_limit_rule(method: &Method, path: &str) -> Option<RateLimitRu
     None
 }
 
-pub(crate) fn rate_limit_client(headers: &HeaderMap) -> String {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split(',').next())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            headers
-                .get("x-real-ip")
-                .and_then(|value| value.to_str().ok())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-        })
-        .unwrap_or("unknown")
-        .to_string()
+pub(crate) fn rate_limit_client(extensions: &Extensions) -> String {
+    extensions
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|peer| peer.0.ip().to_string())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 pub(crate) async fn require_auth(
