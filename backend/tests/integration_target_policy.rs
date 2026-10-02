@@ -12,9 +12,9 @@
 
 use axum::{
     body::{Body, to_bytes},
-    http::{Request, StatusCode},
+    http::{HeaderValue, Request, StatusCode},
 };
-use chrono::{Datelike, Duration, TimeZone, Timelike, Utc};
+use chrono::{Duration, TimeZone, Timelike, Utc};
 use sqlx::postgres::PgPoolOptions;
 use std::str::FromStr;
 use tower::ServiceExt;
@@ -80,6 +80,43 @@ async fn seed_project(pool: &sqlx::PgPool, prefix: &str) -> Uuid {
     project_id
 }
 
+async fn authenticated_actor(app: &axum::Router, pool: &sqlx::PgPool) -> (HeaderValue, Uuid) {
+    let user_id = Uuid::new_v4();
+    let username = format!("target-policy-{}", user_id.simple());
+    let password = Uuid::new_v4().to_string();
+    sqlx::query("INSERT INTO users (id, username, role) VALUES ($1, $2, 'admin')")
+        .bind(user_id)
+        .bind(&username)
+        .execute(pool)
+        .await
+        .expect("insert policy test user");
+    sqlx::query("INSERT INTO user_credentials (user_id, password_hash) VALUES ($1, $2)")
+        .bind(user_id)
+        .bind(cicd::auth::hash_password(&password).expect("hash policy test password"))
+        .execute(pool)
+        .await
+        .expect("insert policy test credential");
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post("/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"username": username, "password": password}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let login = response_json(response).await;
+    let token = login["access_token"].as_str().expect("policy access token");
+    (
+        HeaderValue::from_str(&format!("Bearer {token}")).expect("policy authorization header"),
+        user_id,
+    )
+}
+
 /// A misfired slot (scheduler downtime) is recovered exactly once: the fire
 /// materializes for the missed slot and the schedule moves forward without a
 /// duplicate fire on the next pass.
@@ -87,11 +124,29 @@ async fn seed_project(pool: &sqlx::PgPool, prefix: &str) -> Uuid {
 async fn scheduler_utc_cron_next_fire_is_stable_utc_wall_clock() {
     let pool = test_pool().await;
     let project_id = seed_project(&pool, "it-utc-wall-clock").await;
-    let app = cicd::api::app(Some(pool.clone()));
+    let app = cicd::api::app_with_auth_secret(
+        Some(pool.clone()),
+        Some(format!("target-policy-secret-{}", Uuid::new_v4())),
+    );
+    let (authorization, _) = authenticated_actor(&app, &pool).await;
+    let anonymous = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/projects/{project_id}/schedules"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    r#"{"cron":"30 2 * * *","git_ref":"main","enabled":true}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
     // Daily at 02:30 UTC.
     let response = app
         .oneshot(
             Request::post(format!("/api/v1/projects/{project_id}/schedules"))
+                .header("authorization", authorization)
                 .header("content-type", "application/json")
                 .body(Body::from(
                     r#"{"cron":"30 2 * * *","git_ref":"main","enabled":true}"#,
@@ -278,12 +333,19 @@ async fn outbox_attempts_ledger_single_observed_outcome_per_attempt() {
 async fn approval_policy_rejects_double_vote_and_post_decision_votes() {
     let pool = test_pool().await;
     let project_id = seed_project(&pool, "it-approval-policy").await;
-    let app = cicd::api::app(Some(pool.clone()));
+    let app = cicd::api::app_with_auth_secret(
+        Some(pool.clone()),
+        Some(format!("target-policy-secret-{}", Uuid::new_v4())),
+    );
+    let (manager, manager_id) = authenticated_actor(&app, &pool).await;
+    let (reviewer, _) = authenticated_actor(&app, &pool).await;
+    let (late_reviewer, _) = authenticated_actor(&app, &pool).await;
 
     let environment_response = app
         .clone()
         .oneshot(
             Request::post(format!("/api/v1/projects/{project_id}/environments"))
+                .header("authorization", &manager)
                 .header("content-type", "application/json")
                 .body(Body::from(
                     r#"{"name":"production","protected":true,"required_approvals":2}"#,
@@ -300,6 +362,7 @@ async fn approval_policy_rejects_double_vote_and_post_decision_votes() {
         .clone()
         .oneshot(
             Request::post(format!("/api/v1/environments/{environment_id}/deployments"))
+                .header("authorization", &manager)
                 .header("content-type", "application/json")
                 .body(Body::from(r#"{"git_ref":"main"}"#))
                 .unwrap(),
@@ -316,6 +379,7 @@ async fn approval_policy_rejects_double_vote_and_post_decision_votes() {
         .clone()
         .oneshot(
             Request::post(format!("/api/v1/deployments/{deployment_id}/approvals"))
+                .header("authorization", &manager)
                 .header("content-type", "application/json")
                 .body(Body::from(
                     r#"{"decision":"approved","actor":"release-manager"}"#,
@@ -325,12 +389,20 @@ async fn approval_policy_rejects_double_vote_and_post_decision_votes() {
         .await
         .unwrap();
     assert_eq!(first.status(), StatusCode::OK);
+    let (recorded_actor,): (String,) =
+        sqlx::query_as("SELECT actor FROM deployment_approvals WHERE deployment_id = $1")
+            .bind(Uuid::parse_str(deployment_id).unwrap())
+            .fetch_one(&pool)
+            .await
+            .expect("authenticated approval actor");
+    assert_eq!(recorded_actor, manager_id.to_string());
 
     // Same actor votes again -> 409 double vote.
     let dup = app
         .clone()
         .oneshot(
             Request::post(format!("/api/v1/deployments/{deployment_id}/approvals"))
+                .header("authorization", &manager)
                 .header("content-type", "application/json")
                 .body(Body::from(
                     r#"{"decision":"approved","actor":"release-manager"}"#,
@@ -346,6 +418,7 @@ async fn approval_policy_rejects_double_vote_and_post_decision_votes() {
         .clone()
         .oneshot(
             Request::post(format!("/api/v1/deployments/{deployment_id}/approvals"))
+                .header("authorization", &reviewer)
                 .header("content-type", "application/json")
                 .body(Body::from(
                     r#"{"decision":"rejected","actor":"sre-on-call"}"#,
@@ -365,6 +438,7 @@ async fn approval_policy_rejects_double_vote_and_post_decision_votes() {
         .clone()
         .oneshot(
             Request::post(format!("/api/v1/deployments/{deployment_id}/approvals"))
+                .header("authorization", &late_reviewer)
                 .header("content-type", "application/json")
                 .body(Body::from(r#"{"decision":"approved","actor":"qa-lead"}"#))
                 .unwrap(),
