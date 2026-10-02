@@ -47,14 +47,24 @@ describe('AuthProvider', () => {
   })
 
   it('redirects to central logout without rendering the local login route', async () => {
-    authMod.currentSession.mockReturnValue({ access_token: 'x', expires_at: 1 })
-    authMod.logout.mockResolvedValue(undefined)
+    const session = { access_token: 'x', expires_at: 1 }
+    authMod.currentSession.mockReturnValue(session)
+    authMod.logout.mockImplementation(async () => {
+      authMod.currentSession.mockReturnValue(null)
+    })
+    let sessionAtNavigation: unknown
+    sso.endSso.mockImplementationOnce(() => {
+      sessionAtNavigation = authMod.currentSession()
+    })
     render(<AuthProvider><Probe /></AuthProvider>)
     await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('authenticated'))
 
     fireEvent.click(screen.getByRole('button', { name: 'Logout' }))
 
     await waitFor(() => expect(sso.endSso).toHaveBeenCalledOnce())
+    expect(authMod.logout).not.toHaveBeenCalled()
+    expect(sessionAtNavigation).toBe(session)
+    expect(authMod.currentSession()).toBe(session)
     expect(screen.getByTestId('probe').textContent).toBe('authenticated')
   })
 

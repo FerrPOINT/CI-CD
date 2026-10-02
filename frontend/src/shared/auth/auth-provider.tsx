@@ -17,7 +17,6 @@ import { endSso, type SsoSession } from '@sdlc/ui/sso'
 import {
   acceptSso as acceptApiSso,
   currentSession,
-  logout as apiLogout,
   type Session,
 } from '@/api/auth'
 
@@ -61,7 +60,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const logout = useCallback(async () => {
-    await apiLogout().catch(() => undefined)
+    // Keep pending API requests authenticated until Central Auth owns navigation.
     endSso(ssoConfig)
   }, [])
 
