@@ -318,6 +318,7 @@ pub(crate) fn cors_layer_from_allowed_origins(raw: Option<&str>) -> Result<CorsL
     }
 
     Ok(CorsLayer::new()
+        .expose_headers([HeaderName::from_static("x-request-id")])
         .allow_origin(AllowOrigin::list(origins))
         .allow_methods([
             Method::GET,
@@ -327,6 +328,7 @@ pub(crate) fn cors_layer_from_allowed_origins(raw: Option<&str>) -> Result<CorsL
             Method::OPTIONS,
         ])
         .allow_headers([
+            HeaderName::from_static("x-request-id"),
             header::ACCEPT,
             header::AUTHORIZATION,
             header::CONTENT_TYPE,

@@ -407,21 +407,17 @@ impl IntoResponse for ApiError {
         let request_id = REQUEST_ID
             .try_with(|u| u.to_string())
             .unwrap_or_else(|_| uuid::Uuid::nil().to_string());
-        (
+        sdlc_shared::error::error_response(
             self.status,
-            [(
-                axum::http::header::HeaderName::from_static("x-request-id"),
-                request_id.clone(),
-            )],
-            Json(serde_json::json!({
+            serde_json::json!({
                 "error": {
                     "code": self.code(),
                     "message": self.message,
                     "request_id": request_id,
                 }
-            })),
+            }),
+            Some(&request_id),
         )
-            .into_response()
     }
 }
 

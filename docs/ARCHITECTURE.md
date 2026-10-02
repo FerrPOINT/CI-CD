@@ -230,3 +230,7 @@ Docker Compose: postgres + backend + frontend (nginx static + `/api`,`/git` prox
 - `docs/adr/0003-manual-job-transitions.md` — история эволюции исполнения
 - `plans/architecture-rebuild-plan.md` — поэтапный план миграции
 - `docs/DATA_MODEL.md`, `docs/API.md`, `docs/GIT_HOSTING.md`
+
+## Общая база
+
+Подключение версий, границы контрактов и проверки описаны в [BASE_INTEGRATION](BASE_INTEGRATION.md).
