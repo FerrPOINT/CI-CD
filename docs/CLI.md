@@ -316,3 +316,9 @@ CICD_TEST_DATABASE_URL=postgres://... cargo test -p cicd-cli --features integrat
 Справка показывает имена token env variables, скрывая их значения даже при установленной переменной.
 
 При обрыве соединения или timeout во время чтения artifact download CLI возвращает `3`. JSON stderr содержит `TRANSPORT_ERROR`, `status: null` и доступный request ID с redaction. Частичный файл не сохраняется; существующий файл остаётся прежним даже с `--overwrite`.
+
+## Готовые сборки
+
+Установка, platform requirements, source/checksum и ограничения локального candidate: [CLI_INSTALL.md](CLI_INSTALL.md).
+
+Текущие Linux/WSL candidates и установка: [CLI_INSTALL.md](CLI_INSTALL.md). Проверки против образов с PostgreSQL, границы fixture execution и блокеры обновления sdlc1: [CLI_VALIDATION.md](CLI_VALIDATION.md). Перед использованием с рабочим стендом требуется подтверждённая совместимость его backend и применённых миграций.
