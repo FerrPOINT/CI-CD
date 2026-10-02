@@ -1585,3 +1585,7 @@ Git Smart HTTP допускает unauthenticated read только для `repo
 - `backend/src/api.rs`, `backend/src/platform.rs`, `backend/src/runner_protocol.rs`, `backend/src/git_host.rs`, `backend/src/pulls.rs` — реализация endpoint-ов.
 - `backend/domain/src/lib.rs` — правила переходов статусов.
 - `docs/TESTING.md` — curl-проверки.
+
+## Общая база
+
+Подключение версий, границы контрактов и проверки описаны в [BASE_INTEGRATION](BASE_INTEGRATION.md).

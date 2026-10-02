@@ -18,19 +18,18 @@ pub(crate) async fn request_id_mw(
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
-    use axum::http::HeaderName;
     let id = req
         .headers()
         .get("x-request-id")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| uuid::Uuid::parse_str(v).ok())
         .unwrap_or_else(uuid::Uuid::new_v4);
-    let mut response = REQUEST_ID.scope(id, next.run(req)).await;
-    response.headers_mut().insert(
-        HeaderName::from_static("x-request-id"),
-        id.to_string().parse().unwrap(),
-    );
-    response
+    REQUEST_ID
+        .scope(
+            id,
+            sdlc_telemetry::run_with_request_id(req, next, id.to_string()),
+        )
+        .await
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

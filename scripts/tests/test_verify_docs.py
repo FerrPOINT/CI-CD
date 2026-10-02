@@ -41,7 +41,7 @@ class CapabilityStatusRegressionTests(unittest.TestCase):
 
     def test_readme_contract_rejects_missing_safe_proof(self) -> None:
         readme = verify_docs.ROOT / "README.md"
-        original = readme.read_text(encoding="utf-8")
+        original = readme.read_bytes()
         try:
             readme.write_text("# Forge\n<a name=\"overview\"></a>\n", encoding="utf-8")
             verify_docs.check_readme_contract()
@@ -50,20 +50,17 @@ class CapabilityStatusRegressionTests(unittest.TestCase):
                     for problem in verify_docs.problems)
             )
         finally:
-            readme.write_text(original, encoding="utf-8")
+            readme.write_bytes(original)
 
     def test_readme_contract_rejects_mobile_gallery_images(self) -> None:
         readme = verify_docs.ROOT / "README.md"
-        original = readme.read_text(encoding="utf-8")
+        original = readme.read_bytes()
         try:
-            readme.write_text(
-                original + "\n![Mobile](docs/screenshots/375x812/wide.png)\n",
-                encoding="utf-8",
-            )
+            readme.write_bytes(original + b"\n![Mobile](docs/screenshots/375x812/wide.png)\n")
             verify_docs.check_readme_contract()
             self.assertTrue(any("must not include mobile screenshots" in item for item in verify_docs.problems))
         finally:
-            readme.write_text(original, encoding="utf-8")
+            readme.write_bytes(original)
 
 
 if __name__ == "__main__":

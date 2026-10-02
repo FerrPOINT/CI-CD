@@ -136,7 +136,7 @@ def main() -> int:
 
     doc = build_document()
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render(doc), encoding="utf-8")
+    out.write_text(render(doc), encoding="utf-8", newline="\n")
     print(f"SBOM: {len(doc['components'])} components -> {display_path(out)}")
     return 0
 
