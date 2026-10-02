@@ -458,6 +458,7 @@ async fn wait_terminal_statuses_keep_output_and_deadline_does_not_cancel() {
 async fn wait_polls_until_success() {
     let server = Server::start(vec![
         (200, json!({"pipeline":{"status":"queued"}})),
+        (200, json!({"pipeline":{"status":"running"}})),
         (200, json!({"pipeline":{"status":"success"}})),
     ])
     .await;
@@ -478,7 +479,7 @@ async fn wait_polls_until_success() {
             )
             .await,
     );
-    assert_eq!(server.requests().len(), 2);
+    assert_eq!(server.requests().len(), 3);
 }
 #[tokio::test]
 async fn secret_stdin_redaction_and_artifact_no_clobber() {

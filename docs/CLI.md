@@ -281,7 +281,7 @@ cicd-cli secret set --project <project-id> --key API_KEY --from-file -
 cicd-cli artifact download --id <artifact-id> --output result.zip --overwrite
 ```
 
-`pipeline wait` по умолчанию опрашивает каждые 2 секунды, до 10 минут. Обе настройки — положительные целые секунды. Полное чтение HTTP-ответа ограничено оставшимся временем ожидания; deadline включает sleep. Timeout возвращает код `3` и не отправляет cancel. Статусы `failed`/`canceled` печатают последний pipeline JSON и возвращают `3`; `success` возвращает `0`. Переходящие queued/running продолжают ожидание; неизвестное состояние считается ошибкой.
+`pipeline wait` по умолчанию опрашивает каждые 2 секунды, до 10 минут. Обе настройки — положительные целые секунды. Каждый HTTP-запрос, включая чтение тела, ограничен минимумом HTTP timeout (`--timeout-seconds` / `CICD_TIMEOUT_SECONDS`, default 60 секунд) и остатка общего ожидания; deadline включает sleep. При истечении HTTP timeout возвращается `TRANSPORT_ERROR`, общего ожидания — `WAIT_TIMEOUT`; при совпадении ограничений приоритет у `WAIT_TIMEOUT`. Оба возвращают код `3`. Timeout не отправляет cancel и не вызывает автоматический повтор неуспешного запроса. Статусы `failed`/`canceled` печатают последний pipeline JSON и возвращают `3`; `success` возвращает `0`. Переходящие queued/running продолжают ожидание; неизвестное состояние считается ошибкой.
 
 `job play` вызывает endpoint запуска manual job. Прежний `job start` сохраняет ручное изменение статуса на running и не заменяет play. `job logs`/`job trace` сохраняют snapshot-семантику; `logs-page` использует `/logs/page`, опциональный attempt и взаимоисключающие `--after/--before`, а также `--limit/--q`. Live streaming не добавлен.
 

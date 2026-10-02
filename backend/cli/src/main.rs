@@ -650,6 +650,7 @@ enum TokenCommand {
 struct ApiClient {
     transport: CoreApiClient,
     secrets: Vec<String>,
+    request_timeout: Duration,
 }
 
 impl ApiClient {
@@ -665,6 +666,7 @@ impl ApiClient {
             .collect();
         Ok(Self {
             secrets,
+            request_timeout: timeout,
             transport: CoreApiClient::new(
                 &format!("{}/api/v1", api_url.trim_end_matches('/')),
                 token.as_deref(),

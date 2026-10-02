@@ -28,7 +28,12 @@ impl FaultServer {
         let recorded = requests.clone();
         let body = body.to_vec();
         let task = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut connections = tokio::task::JoinSet::new();
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let recorded = recorded.clone();
+                let body = body.clone();
+                connections.spawn(async move {
             let mut request = vec![];
             loop {
                 let mut buffer = [0; 1024];
@@ -56,6 +61,8 @@ impl FaultServer {
                 return;
             }
             tokio::time::sleep(body_delay).await;
+            });
+            }
         });
         Self {
             url,

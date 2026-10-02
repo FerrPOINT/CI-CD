@@ -199,21 +199,30 @@ pub async fn wait_pipeline(
         .checked_add(Duration::from_secs(timeout))
         .ok_or_else(|| anyhow::anyhow!("Слишком большое время ожидания"))?;
     loop {
+        let now = tokio::time::Instant::now();
+        let http_deadline = now.checked_add(api.request_timeout).unwrap_or(deadline);
+        let wait_limited = deadline <= http_deadline;
+        let request_deadline = std::cmp::min(deadline, http_deadline);
         let request = api
             .get(&format!("/pipelines/{}", enc(id)))
-            .timeout(deadline.saturating_duration_since(tokio::time::Instant::now()));
-        let result = tokio::time::timeout_at(deadline, api.json(request)).await;
+            .timeout(request_deadline.saturating_duration_since(now));
+        let result = tokio::time::timeout_at(request_deadline, api.json(request)).await;
+        if tokio::time::Instant::now() >= request_deadline {
+            return Err(pipeline_timeout(wait_limited));
+        }
         let value = match result {
-            Ok(value) => value?,
-            Err(_) => {
-                return Err(support::ApiFailure {
-                    status: None,
-                    code: Some("WAIT_TIMEOUT".into()),
-                    message: "Превышено время ожидания; pipeline не отменён".into(),
-                    request_id: None,
+            Ok(Ok(value)) => value,
+            Ok(Err(error)) => {
+                if error.chain().any(|cause| {
+                    cause
+                        .downcast_ref::<reqwest::Error>()
+                        .is_some_and(reqwest::Error::is_timeout)
+                }) {
+                    return Err(pipeline_timeout(wait_limited));
                 }
-                .into());
+                return Err(error);
             }
+            Err(_) => return Err(pipeline_timeout(wait_limited)),
         };
         match value
             .get("pipeline")
@@ -230,13 +239,29 @@ pub async fn wait_pipeline(
         ))
         .await;
         if tokio::time::Instant::now() >= deadline {
-            return Err(support::ApiFailure {
-                status: None,
-                code: Some("WAIT_TIMEOUT".into()),
-                message: "Превышено время ожидания; pipeline не отменён".into(),
-                request_id: None,
-            }
-            .into());
+            return Err(pipeline_timeout(true));
         }
     }
+}
+
+fn pipeline_timeout(wait_limited: bool) -> anyhow::Error {
+    support::ApiFailure {
+        status: None,
+        code: Some(
+            if wait_limited {
+                "WAIT_TIMEOUT"
+            } else {
+                "TRANSPORT_ERROR"
+            }
+            .into(),
+        ),
+        message: if wait_limited {
+            "Превышено время ожидания; pipeline не отменён"
+        } else {
+            "Превышено время HTTP-запроса; pipeline не отменён"
+        }
+        .into(),
+        request_id: None,
+    }
+    .into()
 }

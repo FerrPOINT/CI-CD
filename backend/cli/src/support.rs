@@ -79,11 +79,13 @@ pub fn report(error: &anyhow::Error, format: ErrorFormat, secrets: &[String]) {
 }
 
 pub async fn checked_response(request: RequestBuilder, secrets: &[String]) -> Result<Response> {
-    let response = request.send().await.map_err(|_| ApiFailure {
-        status: None,
-        code: Some("TRANSPORT_ERROR".into()),
-        message: "Сервис недоступен или превышено время ожидания".into(),
-        request_id: None,
+    let response = request.send().await.map_err(|error| {
+        anyhow::Error::new(error).context(ApiFailure {
+            status: None,
+            code: Some("TRANSPORT_ERROR".into()),
+            message: "Сервис недоступен или превышено время ожидания".into(),
+            request_id: None,
+        })
     })?;
     let status = response.status();
     if status.is_success() {
