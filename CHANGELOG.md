@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+- Rate limiter использует IP реального TCP peer вместо недоверенных forwarding
+  headers: подмена `X-Forwarded-For`/`X-Real-IP` не сбрасывает бюджет запросов.
+  За reverse proxy применяется общий бюджет его IP; правила доступа не менялись.
+
 - Central logout сохраняет in-memory API session до навигации в Central Auth:
   незавершённые запросы не теряют Bearer token между кликом и переходом.
   Отзыв браузерной сессии остаётся ответственностью Central Auth.

@@ -203,7 +203,7 @@ let cors = CorsLayer::new()
 
 ## 10. Rate Limiting
 
-- Current: in-process fixed-window middleware ограничивает auth, API read/write, Git Smart HTTP, internal Git hook и artifact upload; key берётся из `X-Forwarded-For`, `X-Real-IP` или `unknown`.
+- Current: in-process fixed-window middleware ограничивает auth, API read/write, Git Smart HTTP, internal Git hook и artifact upload; key берётся из IP реального TCP peer без порта, а без socket metadata — общий `unknown`. `X-Forwarded-For`/`X-Real-IP` не доверяются и не создают новые buckets. За reverse proxy клиенты разделяют его бюджет; trusted-proxy policy требует отдельного решения.
 - Target: trusted reverse-proxy limiter, distributed counters, per-account lockout для auth endpoints, request body/time/concurrency policy и alerting.
 
 | Endpoint | Limit |
