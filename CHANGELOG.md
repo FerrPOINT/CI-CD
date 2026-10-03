@@ -9,6 +9,8 @@
 
 ## [Unreleased]
 
+- Документирована принятая поставка трёх CLI на sdlc1: backup/restore/rollback, live-проверки, Linux/WSL установка и сохранённые ограничения.
+
 - Каталог SQLx сохраняет точную уже применённую migration 38 `platform messaging`
   с историческими CRLF/checksum. Backend принимает такой ledger без удаления
   записей; регрессия проверяет outbox, terminal event sequence и checksum mismatch.

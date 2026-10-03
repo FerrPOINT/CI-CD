@@ -1,16 +1,15 @@
 # CLI Forge CI/CD
 
+Поставка sdlc1 принята 2026-10-03: три backend обновлены после fresh backup, QA/rollback, live acceptance и наблюдения. [Установка](CLI_INSTALL.md), [проверки и ограничения](CLI_VALIDATION.md). Команды/API/exit codes сохранены; Linux x86_64/WSL, без version bumps/tags/public release.
+
 `cicd-cli` - HTTP-only утилита управления control plane. Бинарь живёт в отдельном workspace-пакете `backend/cli` (ADR-0005), общается с API через публичные routes и не линкует серверный код, SQLx, Git storage или runner implementation.
 
 ## Сборка
 
 ```bash
-# В Rust-контейнере, если cargo на хосте отсутствует:
-docker run --rm --entrypoint /bin/bash -v "$(dirname "$PWD"):/workspace" -w /workspace/CI-CD/backend \
-  -e CARGO_TARGET_DIR=/workspace/CI-CD/backend/target rust:1.88-bookworm \
-  -lc '/usr/local/cargo/bin/cargo build -p cicd-cli'
-
-./backend/target/debug/cicd-cli --help
+# Rust 1.88.0 в Linux/WSL; checkout с закреплённым sibling Services Base
+cd backend
+cargo +1.88.0 build --locked --release -p cicd-cli
 ```
 
 ## Конфигурация
