@@ -195,6 +195,7 @@ Referenced by:
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | Время создания |
 | `started_at` | TIMESTAMPTZ | NULL | — | Время начала выполнения (при `running`) |
 | `finished_at` | TIMESTAMPTZ | NULL | — | Время завершения (терминальный статус) |
+| `terminal_event_seq` | BIGINT | NOT NULL | `0` | Сохранённый исторический счётчик; CHECK `>= 0`, migration 38 |
 
 **CHECK constraint:** `status IN ('queued','running','success','failed','canceled')`.
 
@@ -205,6 +206,22 @@ Referenced by:
 **FK:** `project_id` → `projects(id)` ON DELETE CASCADE.
 
 **Referenced by:** `stages.pipeline_id` → `pipelines(id)` ON DELETE CASCADE; `pipeline_triggers.pipeline_id` → `pipelines(id)` ON DELETE CASCADE; `pipeline_plans.pipeline_id` → `pipelines(id)` ON DELETE CASCADE.
+
+### Совместимость с историческим messaging outbox
+
+Migration 38 сохраняет точные bytes уже применённого дополнения схемы:
+`pipelines.terminal_event_seq` и optional `messaging_outbox`. Существующие
+pipeline API/DTO не получают новых полей; publisher/subscriber и изменение
+Base pin в восстановление каталога не входят. Сохранённые сообщения и значения
+счётчика не переписываются и не публикуются при replay migrations.
+
+`messaging_outbox`: UUID `id`, `source`, UUID `event_id`, `subject`, BYTEA
+`payload` (до 65536 bytes), BYTEA `fingerprint` (32 bytes), неотрицательные
+`infrastructure_attempts`, `next_attempt_at`, nullable `lease_token`/`lease_until`,
+`published_at`, `stream`/`stream_sequence`, `failed_at`/`last_error_code`,
+`created_at`. UNIQUE `(source,event_id)`; partial index `messaging_outbox_due`
+по `(subject,next_attempt_at,created_at)` для непубликованных и не failed строк.
+Эта таблица сохраняет историческую схему и сама не включает доставку сообщений.
 
 ---
 
