@@ -25,6 +25,13 @@ Pending migration `0039_runner_completion_readback.sql` добавляет nulla
 Reconciler expiry его не устанавливает; исторические rows не backfill-ятся.
 Поэтому canceled-on-expiry и старый terminal state не дают cleanup ACK.
 
+Source-каталог recovery сохраняет принятые исторические migrations 36/37 и 38
+с exact SQLx checksum/line endings; новая 39 применяется после них. Regression
+проверяет fresh и upgrade с 35/37/38, неизменность исторического migration ledger,
+deployment/outbox данных и отсутствие backfill нового completion discriminator
+у прежней terminal lease. Это source upgrade gate на disposable PostgreSQL,
+не изменение установленной БД или доказательство остановки процессов.
+
 Фактическая схема задаётся committed SQLx migrations в `backend/migrations/*.sql` и применяется backend при старте через runtime `sqlx::migrate::Migrator`; тот же набор использует `cicd-migrate`. `backend/src/store.rs` остаётся историческим baseline-источником для `0001_bootstrap_v1.sql`, но новые изменения схемы должны идти только отдельными immutable migration files.
 
 ### ER-диаграмма (логическая)
