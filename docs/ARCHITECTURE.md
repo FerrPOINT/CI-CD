@@ -1,5 +1,9 @@
 # Архитектура Forge CI/CD
 
+Target интеграция автономного SDLC: [delivery receipts v1](SDLC_DELIVERY_V1.md).
+Она переиспользует текущий Forge, не ограничивает его хранением исходников и
+не объявляет candidate/workspace/acceptance protocol уже реализованным.
+
 ## 1. Контекст
 
 Self-hosted CI/CD control plane: Git-хостинг (bare-репозитории + Smart HTTP + post-receive auto-trigger), пайплайны со стадиями и джобами, embedded runner (Docker/shell), внешний `forge-runner` shell MVP поверх runner protocol, платформенные ресурсы (runners, secrets, artifacts, environments, schedules, webhooks, notifications, reports, audit, users, tokens) и React Dashboard.
