@@ -8821,7 +8821,7 @@ async fn migration_catalog_contains_exact_historical_36_and_37() {
     let catalog = cicd::migrations().await.unwrap();
     assert_eq!(
         catalog.iter().map(|m| m.version).collect::<Vec<_>>(),
-        (1..=38).collect::<Vec<_>>()
+        (1..=39).collect::<Vec<_>>()
     );
     for (version, description, sql, checksum) in HISTORICAL_DEPLOYMENT_MIGRATIONS {
         let migration = catalog
@@ -8840,7 +8840,7 @@ async fn migration_catalog_contains_exact_historical_36_and_37() {
 #[tokio::test]
 async fn migration_catalog_fresh_and_prior_35_or_37_upgrade() {
     let catalog = cicd::migrations().await.unwrap();
-    for prior_schema in [None, Some(35), Some(37)] {
+    for prior_schema in [None, Some(35), Some(37), Some(38)] {
         let (pool, admin, schema) = migration_catalog_empty_pool().await;
         if let Some(version) = prior_schema {
             migration_catalog_subset(&catalog, version)
@@ -8854,7 +8854,7 @@ async fn migration_catalog_fresh_and_prior_35_or_37_upgrade() {
                 .fetch_all(&pool)
                 .await
                 .unwrap();
-        assert_eq!(versions, (1..=38).collect::<Vec<_>>());
+        assert_eq!(versions, (1..=39).collect::<Vec<_>>());
         let history = migration_catalog_history(&pool).await;
         catalog.run(&pool).await.unwrap();
         assert_eq!(migration_catalog_history(&pool).await, history);
@@ -8969,7 +8969,7 @@ async fn migration_catalog_checksum_mismatch_does_not_change_history() {
     let (pool, admin, schema) = migration_catalog_empty_pool().await;
     catalog.run(&pool).await.unwrap();
     let history = migration_catalog_history(&pool).await;
-    let mut changed = migration_catalog_subset(&catalog, 38);
+    let mut changed = migration_catalog_subset(&catalog, 39);
     let migration = changed
         .migrations
         .to_mut()
@@ -9034,7 +9034,15 @@ async fn migration_catalog_accepts_historical_38_and_preserves_outbox() {
         .run(&pool)
         .await
         .expect("published catalog accepts applied version 38");
-    assert_eq!(migration_catalog_history(&pool).await, history);
+    let upgraded_history = migration_catalog_history(&pool).await;
+    let preserved_history: Vec<_> = upgraded_history
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["version"].as_i64().unwrap() <= 38)
+        .cloned()
+        .collect();
+    assert_eq!(serde_json::json!(preserved_history), history);
     let current: serde_json::Value = sqlx::query_scalar(snapshot_sql)
         .bind(pipeline)
         .bind(message)
@@ -9047,7 +9055,7 @@ async fn migration_catalog_accepts_historical_38_and_preserves_outbox() {
         .find(|m| m.version == 38)
         .expect("version 38");
     assert_eq!(migration.sql, historical_sql);
-    let mut changed = migration_catalog_subset(&catalog, 38);
+    let mut changed = migration_catalog_subset(&catalog, 39);
     changed
         .migrations
         .to_mut()
@@ -9059,7 +9067,7 @@ async fn migration_catalog_accepts_historical_38_and_preserves_outbox() {
         migration_catalog_failure(&changed, &pool).await,
         MigrateError::VersionMismatch(38)
     ));
-    assert_eq!(migration_catalog_history(&pool).await, history);
+    assert_eq!(migration_catalog_history(&pool).await, upgraded_history);
     let current: serde_json::Value = sqlx::query_scalar(snapshot_sql)
         .bind(pipeline)
         .bind(message)
@@ -9080,5 +9088,91 @@ async fn migration_catalog_accepts_historical_38_and_preserves_outbox() {
     let response = response_json(response).await;
     assert_eq!(response["pipeline"]["id"], pipeline.to_string());
     assert_eq!(response["pipeline"]["status"], "success");
+    migration_catalog_cleanup(pool, admin, schema).await;
+}
+
+#[tokio::test]
+async fn migration_catalog_39_does_not_backfill_historical_terminal_authority() {
+    let catalog = cicd::migrations().await.unwrap();
+    let (pool, admin, schema) = migration_catalog_empty_pool().await;
+    migration_catalog_subset(&catalog, 38)
+        .run(&pool)
+        .await
+        .unwrap();
+    let project = Uuid::new_v4();
+    let pipeline = Uuid::new_v4();
+    let stage = Uuid::new_v4();
+    let job = Uuid::new_v4();
+    let attempt = Uuid::new_v4();
+    let lease = Uuid::new_v4();
+    let runner = Uuid::new_v4();
+    sqlx::query("INSERT INTO runners(id,name,credential_hash,credential_expires_at) VALUES($1,'historical-owner',$2,now()+interval '1 hour')")
+        .bind(runner).bind(cicd::auth::hash_token("historical-owner-fixture"))
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO projects(id,name,repository_url) VALUES($1,'historical-terminal','https://example.invalid/source.git')")
+        .bind(project).execute(&pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO pipelines(id,project_id,git_ref,status) VALUES($1,$2,'main','success')",
+    )
+    .bind(pipeline)
+    .bind(project)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO stages(id,pipeline_id,name,position,status) VALUES($1,$2,'test',0,'success')",
+    )
+    .bind(stage)
+    .bind(pipeline)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO jobs(id,stage_id,name,image,command,position,status) VALUES($1,$2,'test','unused','true',0,'success')")
+        .bind(job).bind(stage).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO execution_attempts(id,job_id,attempt_no,status,trigger) VALUES($1,$2,1,'success','initial')")
+        .bind(attempt).bind(job).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO job_leases(id,job_id,attempt_id,runner_id,runner_name,generation,lease_expires_at,acknowledged_at,completed_at,lease_status,terminal_status,lease_token_hash) VALUES($1,$2,$3,$4,'historical-owner',1,now(),now(),now(),'completed','success',$5)")
+        .bind(lease).bind(job).bind(attempt).bind(runner)
+        .bind(cicd::auth::hash_token("historical-lease-fixture"))
+        .execute(&pool).await.unwrap();
+    let original: serde_json::Value =
+        sqlx::query_scalar("SELECT to_jsonb(l) FROM job_leases l WHERE id=$1")
+            .bind(lease)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    catalog.run(&pool).await.unwrap();
+    catalog.run(&pool).await.unwrap();
+    let preserved: serde_json::Value = sqlx::query_scalar(
+        "SELECT to_jsonb(l) - 'completion_received_at' FROM job_leases l WHERE id=$1",
+    )
+    .bind(lease)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(preserved, original);
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT completion_received_at IS NULL FROM job_leases WHERE id=$1"
+        )
+        .bind(lease)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    );
+    let app = cicd::api::app_with_auth_secret(Some(pool.clone()), None);
+    let response = app
+        .oneshot(
+            Request::get(format!("/api/v1/runner/leases/{lease}/receipt"))
+                .header("authorization", "Bearer historical-owner-fixture")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let receipt = response_json(response).await;
+    assert_eq!(receipt["terminalStatus"], "success");
+    assert_eq!(receipt["terminalAcknowledged"], false);
     migration_catalog_cleanup(pool, admin, schema).await;
 }
