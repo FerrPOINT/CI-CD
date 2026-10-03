@@ -1118,7 +1118,7 @@ pub(crate) async fn complete_runner_lease(
 
     sqlx::query(
         "UPDATE job_leases \
-         SET lease_status = $2, completed_at = COALESCE(completed_at, $3), \
+         SET lease_status = $2, completed_at = COALESCE(completed_at, $3), completion_received_at = now(), \
              terminal_status = $4, error_tail = COALESCE(error_tail, $5) \
          WHERE id = $1 AND lease_status = 'active'",
     )
@@ -1165,6 +1165,7 @@ pub(crate) async fn read_runner_lease_receipt(
         "SELECT 1::integer AS protocol_version, l.id AS lease_id, l.attempt_id, \
                 l.generation AS fencing_token, l.lease_status, l.terminal_status, l.completed_at, \
                 COALESCE((l.lease_status IN ('completed','canceled') AND l.completed_at IS NOT NULL \
+                 AND l.completion_received_at IS NOT NULL \
                  AND l.terminal_status IN ('success','failed','canceled') \
                  AND a.status = l.terminal_status AND a.finished_at IS NOT NULL), false) \
                 AS terminal_acknowledged \

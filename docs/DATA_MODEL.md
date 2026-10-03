@@ -18,6 +18,12 @@ Runner source хранит два create-new/sync metadata файла в owner a
 Local metadata не является trusted SDLC receipt или доказательством отсутствия
 процесса. Server readback использует существующие `job_leases` и
 `execution_attempts`; новых PostgreSQL таблиц и второго scheduler нет.
+Pending migration `0039_runner_completion_readback.sql` добавляет nullable
+`job_leases.completion_received_at`. Только authenticated accepted completion
+устанавливает этот признак в той же транзакции, что и terminal state. CHECK
+требует acknowledged terminal lease с непустым outcome и completed timestamp.
+Reconciler expiry его не устанавливает; исторические rows не backfill-ятся.
+Поэтому canceled-on-expiry и старый terminal state не дают cleanup ACK.
 
 Фактическая схема задаётся committed SQLx migrations в `backend/migrations/*.sql` и применяется backend при старте через runtime `sqlx::migrate::Migrator`; тот же набор использует `cicd-migrate`. `backend/src/store.rs` остаётся историческим baseline-источником для `0001_bootstrap_v1.sql`, но новые изменения схемы должны идти только отдельными immutable migration files.
 

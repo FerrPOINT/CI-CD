@@ -30,8 +30,11 @@ runner credential — `401`. Ответ `200`, `Cache-Control: no-store` сод�
 diagnostic, task titles или команд.
 
 `terminalAcknowledged=true` требует persisted terminal completed/canceled lease,
-совпадения terminal attempt status и времени окончания. Active/expired/mismatched
-attempt — `false`, не разрешение cleanup/retry. Новая попытка job не подменяет
+совпадения terminal attempt status и времени окончания, а также ненулевого
+`job_leases.completion_received_at`: его пишет только принятый authenticated
+completion. Cancel-on-expiry и исторические terminal rows без такого признака
+возвращают `false`, как active/expired/mismatched attempt; это не разрешение
+cleanup/retry. Новая попытка job не подменяет
 identity прежнего receipt. Это runner completion readback, **не** SDLC delivery
 receipt. POST completion остаётся прежней мутацией; unknown POST сверяется GET,
 а не повторной отправкой. Client требует exact version/lease/attempt/generation/
