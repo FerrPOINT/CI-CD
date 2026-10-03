@@ -379,6 +379,11 @@ Production monitoring добавляет защищённый metrics endpoint, 
 
 Сверить `job_leases`, `execution_attempts`, heartbeat и срок lease. После expiry прежний owner fencing-ится; reconciler останавливает stale execution, фиксирует причину и создаёт новый attempt только в соответствии с retry policy. Timeout job отменяет процесс, сохраняет diagnostic и переводит job в `failed` либо `canceled`. Manual completion/status rewrite запрещены.
 
+Это target auto-recovery, не доказанная current остановка remote процесса.
+Expiry сам по себе не подтверждает safe-stop или completion. До readback
+прекращения прежнего выполнения новый conflicting attempt не разрешается;
+unknown workspace сохраняется, cleanup требует exact owner terminal ACK.
+
 ### Потерянный runner
 
 **Current verified: диагностика и действия**
@@ -395,6 +400,11 @@ docker compose logs --tail=200 backend
 **Target approved: процедура**
 
 Runner считается unhealthy после отсутствия heartbeat более 45 секунд и offline после 120 секунд. Current queue timeout завершает только dispatch-eligible queued work, если нет compatible embedded/protocol runner path; он не создаёт retry новой attempt. Перевести runner в draining/disabled, запретить новые leases, сохранить evidence последнего heartbeat/capability и ждать lease expiry. Reconciler fencing-ит старого owner, очищает workspace/ресурсы по policy и передаёт безопасно повторяемую работу другому compatible runner. Credential rotate/revoke и повторная registration аудируются.
+
+Указанная cleanup/redispatch policy остаётся target и обязана проверять safe-stop
+и точный owner receipt. Потеря heartbeat, terminal row после expiry и отсутствие
+процесса в локальном inventory не заменяют accepted completion. Current external
+runner оставляет unknown папку и требует owner/process reconciliation.
 
 ### Outbox backlog
 
