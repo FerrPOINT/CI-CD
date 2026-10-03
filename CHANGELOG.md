@@ -9,6 +9,11 @@
 
 ## [Unreleased]
 
+- Каталог SQLx включает точные ранее применённые migrations 36/37: запуск на
+  совместимой исторической БД больше не отклоняется с `VersionMissing(36)`.
+  Deployment API, роли и runner protocol не менялись; добавлены PostgreSQL
+  регрессии fresh/upgrade/replay, immutable history и checksum mismatch.
+
 - `pipeline wait` учитывает `--timeout-seconds` / `CICD_TIMEOUT_SECONDS` при опросе, включая чтение тела: HTTP timeout возвращает `TRANSPORT_ERROR`, истечение ожидания — `WAIT_TIMEOUT`; pipeline не отменяется.
 
 - CLI возвращает network exit code `3` и `TRANSPORT_ERROR` при обрыве или таймауте чтения artifact download; существующий файл сохраняется при неудачном скачивании.

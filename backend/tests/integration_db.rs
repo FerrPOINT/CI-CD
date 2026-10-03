@@ -8346,3 +8346,239 @@ async fn bearer(response: axum::response::Response) -> String {
     let json: serde_json::Value = serde_json::from_str(&body).unwrap();
     format!("Bearer {}", json["access_token"].as_str().unwrap())
 }
+
+// Independent historical fixture: these are the already-applied 36/37 bytes,
+// not a copy loaded from the catalog whose completeness is under test.
+const HISTORICAL_DEPLOYMENT_MIGRATIONS: [(i64, &str, &str, &str); 2] = [
+    (
+        36,
+        "deployment idempotency",
+        "ALTER TABLE deployments ADD COLUMN request_key uuid;\n\nCREATE UNIQUE INDEX deployments_environment_request_key_idx\n    ON deployments (environment_id, request_key);\n",
+        "6ddb8c12a069cb39e9362fb0d471155cb64dbe1f25c5a3302f7c580ec5d12097acd61e05273820ce662fd25bb06e92c4",
+    ),
+    (
+        37,
+        "deployment plan source",
+        "ALTER TABLE pipeline_plans DROP CONSTRAINT pipeline_plans_config_source_check;\nALTER TABLE pipeline_plans ADD CONSTRAINT pipeline_plans_config_source_check\n    CHECK (config_source IN ('repository', 'legacy_template', 'deployment'));\n",
+        "e929bda9b62b3bbbf35a2dc829b2f754753531d5d8a03613f94cbd785ad7ca1c7839e217ae1c6e8a409d02e1772bf896",
+    ),
+];
+
+fn migration_catalog_subset(
+    catalog: &sqlx::migrate::Migrator,
+    maximum: i64,
+) -> sqlx::migrate::Migrator {
+    sqlx::migrate::Migrator {
+        migrations: std::borrow::Cow::Owned(
+            catalog
+                .iter()
+                .filter(|m| m.version <= maximum)
+                .cloned()
+                .collect(),
+        ),
+        ..sqlx::migrate::Migrator::DEFAULT
+    }
+}
+
+async fn migration_catalog_empty_pool() -> (sqlx::PgPool, sqlx::PgPool, String) {
+    let url = std::env::var("CICD_TEST_DATABASE_URL").expect("explicit test database URL");
+    let options = sqlx::postgres::PgConnectOptions::from_str(&url).unwrap();
+    assert!(
+        options
+            .get_database()
+            .is_some_and(|name| name.starts_with("forge_test_"))
+    );
+    let admin = PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&url)
+        .await
+        .unwrap();
+    let schema = format!("it_catalog_{}", Uuid::new_v4().simple());
+    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect_with(options.options([("search_path", schema.as_str())]))
+        .await
+        .unwrap();
+    (pool, admin, schema)
+}
+
+async fn migration_catalog_cleanup(pool: sqlx::PgPool, admin: sqlx::PgPool, schema: String) {
+    pool.close().await;
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&admin)
+        .await
+        .unwrap();
+    admin.close().await;
+}
+
+async fn migration_catalog_history(pool: &sqlx::PgPool) -> serde_json::Value {
+    sqlx::query_scalar("SELECT jsonb_agg(to_jsonb(m) ORDER BY version) FROM _sqlx_migrations m")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn migration_catalog_contains_exact_historical_36_and_37() {
+    let catalog = cicd::migrations().await.unwrap();
+    assert_eq!(
+        catalog.iter().map(|m| m.version).collect::<Vec<_>>(),
+        (1..=37).collect::<Vec<_>>()
+    );
+    for (version, description, sql, checksum) in HISTORICAL_DEPLOYMENT_MIGRATIONS {
+        let migration = catalog
+            .iter()
+            .find(|m| m.version == version)
+            .expect("historical migration in catalog");
+        assert_eq!(migration.description, description);
+        assert_eq!(migration.sql, sql);
+        assert_eq!(
+            format!("{:x}", sha2::Sha384::digest(migration.sql.as_bytes())),
+            checksum
+        );
+    }
+}
+
+#[tokio::test]
+async fn migration_catalog_fresh_and_prior_35_upgrade() {
+    let catalog = cicd::migrations().await.unwrap();
+    for prior_schema in [false, true] {
+        let (pool, admin, schema) = migration_catalog_empty_pool().await;
+        if prior_schema {
+            migration_catalog_subset(&catalog, 35)
+                .run(&pool)
+                .await
+                .unwrap();
+        }
+        catalog.run(&pool).await.unwrap();
+        let versions: Vec<i64> =
+            sqlx::query_scalar("SELECT version FROM _sqlx_migrations ORDER BY version")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(versions, (1..=37).collect::<Vec<_>>());
+        let history = migration_catalog_history(&pool).await;
+        catalog.run(&pool).await.unwrap();
+        assert_eq!(migration_catalog_history(&pool).await, history);
+        migration_catalog_cleanup(pool, admin, schema).await;
+    }
+}
+
+#[tokio::test]
+async fn migration_catalog_accepts_historical_data_and_rejects_missing_versions() {
+    use sqlx::migrate::{MigrateError, Migration, MigrationType};
+    let catalog = cicd::migrations().await.unwrap();
+    let legacy = migration_catalog_subset(&catalog, 35);
+    let mut historical = migration_catalog_subset(&catalog, 35);
+    for (version, description, sql, _) in HISTORICAL_DEPLOYMENT_MIGRATIONS {
+        historical.migrations.to_mut().push(Migration::new(
+            version,
+            description.into(),
+            MigrationType::Simple,
+            sql.into(),
+            false,
+        ));
+    }
+    let (pool, admin, schema) = migration_catalog_empty_pool().await;
+    historical.run(&pool).await.unwrap();
+    let project = Uuid::new_v4();
+    let environment = Uuid::new_v4();
+    let pipeline = Uuid::new_v4();
+    let deployment = Uuid::new_v4();
+    let request_key = Uuid::new_v4();
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, 'catalog-history', 'http://localhost/git/service-pulse.git')")
+        .bind(project).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO environments (id, project_id, name) VALUES ($1, $2, 'history')")
+        .bind(environment)
+        .bind(project)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO pipelines (id, project_id, git_ref, status) VALUES ($1, $2, 'main', 'success')")
+        .bind(pipeline).bind(project).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO deployments (id, environment_id, pipeline_id, git_ref, status, request_key) VALUES ($1, $2, $3, 'main', 'success', $4)")
+        .bind(deployment).bind(environment).bind(pipeline).bind(request_key).execute(&pool).await.unwrap();
+    let config_hash = "a".repeat(64);
+    let plan_hash = "b".repeat(64);
+    sqlx::query("INSERT INTO pipeline_plans (pipeline_id, config_source, parser_version, git_ref, config_sha256, plan_sha256, raw_config, plan) VALUES ($1, 'deployment', 'fixture/1', 'main', $2, $3, 'immutable fixture', '{\"stages\":[]}'::jsonb)")
+        .bind(pipeline).bind(&config_hash).bind(&plan_hash).execute(&pool).await.unwrap();
+    let history = migration_catalog_history(&pool).await;
+    assert!(matches!(
+        legacy.run(&pool).await,
+        Err(MigrateError::VersionMissing(36))
+    ));
+    assert_eq!(migration_catalog_history(&pool).await, history);
+    catalog
+        .run(&pool)
+        .await
+        .expect("published catalog accepts historical 36/37");
+    assert_eq!(migration_catalog_history(&pool).await, history);
+    let preserved: (Uuid, String, String, String) = sqlx::query_as(
+        "SELECT d.request_key, pp.config_source, pp.config_sha256, pp.plan_sha256 FROM deployments d JOIN pipeline_plans pp ON pp.pipeline_id = d.pipeline_id WHERE d.id = $1",
+    ).bind(deployment).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        preserved,
+        (
+            request_key,
+            "deployment".into(),
+            config_hash.clone(),
+            plan_hash.clone()
+        )
+    );
+    let app = authenticated_app(pool.clone()).await;
+    let plan = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/pipelines/{pipeline}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(plan.status(), StatusCode::OK);
+    let plan = response_json(plan).await;
+    assert_eq!(plan["plan"]["config_source"], "deployment");
+    assert_eq!(plan["plan"]["config_sha256"], config_hash);
+    assert_eq!(plan["plan"]["plan_sha256"], plan_hash);
+    let deployments = app
+        .oneshot(
+            Request::get(format!("/api/v1/environments/{environment}/deployments"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(deployments.status(), StatusCode::OK);
+    assert_eq!(
+        response_json(deployments).await[0]["id"],
+        deployment.to_string()
+    );
+    migration_catalog_cleanup(pool, admin, schema).await;
+}
+
+#[tokio::test]
+async fn migration_catalog_checksum_mismatch_does_not_change_history() {
+    use sqlx::migrate::MigrateError;
+    let catalog = cicd::migrations().await.unwrap();
+    let (pool, admin, schema) = migration_catalog_empty_pool().await;
+    catalog.run(&pool).await.unwrap();
+    let history = migration_catalog_history(&pool).await;
+    let mut changed = migration_catalog_subset(&catalog, 37);
+    let migration = changed
+        .migrations
+        .to_mut()
+        .iter_mut()
+        .find(|m| m.version == 36)
+        .expect("version 36");
+    migration.checksum = std::borrow::Cow::Owned(vec![0; 48]);
+    assert!(matches!(
+        changed.run(&pool).await,
+        Err(MigrateError::VersionMismatch(36))
+    ));
+    assert_eq!(migration_catalog_history(&pool).await, history);
+    migration_catalog_cleanup(pool, admin, schema).await;
+}
