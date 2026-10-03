@@ -880,7 +880,8 @@ async fn run_job_inner(
     };
     let attempt_id = lease.attempt_id;
 
-    let workspace = prepare_workspace(&pool, &job, config).await?;
+    let owned_workspace = prepare_workspace(&pool, &job, &lease, config).await?;
+    let workspace = owned_workspace.checkout().to_path_buf();
 
     // REQ-SEC-002: inject only job-declared project secrets as env vars.
     let secrets = crate::platform::project_secret_pairs_for_names_with_config(
@@ -973,9 +974,7 @@ async fn run_job_inner(
     envs.extend(secrets.iter().cloned());
 
     let mut child = if config.mode == RunnerMode::Docker {
-        // prepare_workspace returns <root>/forge-runner-<job>/workspace; the
-        // bind source must be the per-job directory (one level up from the
-        // clone checkout).
+        // Bind only this fresh attempt wrapper, never a reusable job directory.
         let workspace_subdir = workspace
             .parent()
             .and_then(|parent| parent.file_name())
@@ -1076,7 +1075,7 @@ async fn run_job_inner(
                 .await?;
                 refresh_stage(pool.clone(), job.id).await?;
                 if !config.keep_workspace {
-                    remove_workspace(&workspace).await;
+                    remove_acknowledged_workspace(&pool, &lease, owned_workspace).await;
                 }
                 return Ok(());
             }
@@ -1084,7 +1083,7 @@ async fn run_job_inner(
             complete_embedded_job_lease(&pool, lease.id, "failed", Some(&message)).await?;
             refresh_stage(pool.clone(), job.id).await?;
             if !config.keep_workspace {
-                remove_workspace(&workspace).await;
+                remove_acknowledged_workspace(&pool, &lease, owned_workspace).await;
             }
             return Ok(());
         }
@@ -1136,11 +1135,6 @@ async fn run_job_inner(
         }
     }
 
-    // Cleanup workspace unless CICD_RUNNER_KEEP_WORKSPACE is enabled.
-    if !config.keep_workspace {
-        remove_workspace(&workspace).await;
-    }
-
     let updated = sqlx::query(
         "UPDATE jobs SET status = $2, finished_at = now() \
          WHERE id = $1 AND status NOT IN ('canceled')",
@@ -1164,7 +1158,10 @@ async fn run_job_inner(
             Some("runner: job canceled before process result"),
         )
         .await?;
-        refresh_stage(pool, job.id).await?;
+        refresh_stage(pool.clone(), job.id).await?;
+        if !config.keep_workspace {
+            remove_acknowledged_workspace(&pool, &lease, owned_workspace).await;
+        }
         return Ok(());
     }
     sqlx::query(
@@ -1180,22 +1177,37 @@ async fn run_job_inner(
     .await
     .map_err(ApiError::internal)?;
     complete_embedded_job_lease(&pool, lease.id, final_status, error_tail.as_deref()).await?;
-    refresh_stage(pool, job.id).await?;
+    refresh_stage(pool.clone(), job.id).await?;
+    if !config.keep_workspace {
+        remove_acknowledged_workspace(&pool, &lease, owned_workspace).await;
+    }
     Ok(())
 }
 
-fn cleanup_root(workspace: &Path) -> &Path {
-    if workspace
-        .file_name()
-        .is_some_and(|name| name == "workspace")
-    {
-        return workspace.parent().unwrap_or(workspace);
+async fn remove_acknowledged_workspace(
+    pool: &PgPool,
+    lease: &EmbeddedJobLease,
+    workspace: crate::runner_workspace::OwnedWorkspace,
+) {
+    // A zero-row completion or a failed readback cannot authorize deletion.
+    let acknowledged = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (SELECT 1 FROM job_leases WHERE id = $1 AND attempt_id = $2 \
+         AND generation = $3 AND completed_at IS NOT NULL \
+         AND terminal_status IN ('success', 'failed', 'canceled') \
+         AND lease_status IN ('completed', 'canceled'))",
+    )
+    .bind(lease.id)
+    .bind(lease.attempt_id)
+    .bind(lease.generation)
+    .fetch_one(pool)
+    .await;
+    if matches!(acknowledged, Ok(true)) {
+        if let Err(error) = workspace.cleanup_after_ack().await {
+            tracing::warn!(attempt_id = %lease.attempt_id, %error, "acknowledged workspace retained");
+        }
+    } else {
+        tracing::warn!(attempt_id = %lease.attempt_id, "workspace retained: terminal lease acknowledgement missing");
     }
-    workspace
-}
-
-async fn remove_workspace(workspace: &Path) {
-    let _ = tokio::fs::remove_dir_all(cleanup_root(workspace)).await;
 }
 
 async fn mark_attempt_failed(
@@ -1391,12 +1403,13 @@ struct JobRow {
     project_name: String,
 }
 
-/// Clones the project repository (bare) into /tmp/forge-runner/<job> at git_ref.
+/// Creates a fresh lease-owned checkout and verifies a supplied commit pin.
 async fn prepare_workspace(
     pool: &PgPool,
     job: &JobRow,
+    lease: &EmbeddedJobLease,
     config: &RuntimeRunnerConfig,
-) -> Result<std::path::PathBuf, ApiError> {
+) -> Result<crate::runner_workspace::OwnedWorkspace, ApiError> {
     let repo_url: String = sqlx::query_scalar("SELECT repository_url FROM projects WHERE id = $1")
         .bind(job.project_id)
         .fetch_one(pool)
@@ -1409,18 +1422,15 @@ async fn prepare_workspace(
         .await
         .map_err(ApiError::internal)?;
 
-    let workspace = workspace_root(config).join(format!("forge-runner-{}", job.id));
-    let _ = tokio::fs::remove_dir_all(&workspace).await;
-    tokio::fs::create_dir_all(&workspace)
-        .await
-        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
-
-    append_log(
-        pool,
-        job.id,
-        &format!("runner: cloning {repo_url} at {git_ref}"),
+    let workspace = crate::runner_workspace::OwnedWorkspace::create(
+        &workspace_root(config),
+        lease.attempt_id,
+        lease.id,
+        lease.generation,
     )
-    .await?;
+    .map_err(|_| ApiError::bad_request("Cannot allocate a guarded attempt workspace"))?;
+
+    append_log(pool, job.id, "runner: preparing a fresh attempt checkout").await?;
 
     // Reject SSH URLs early: the embedded runner container does not ship an
     // SSH client, so `git clone git@…` dies with "cannot run ssh: No such file
@@ -1429,13 +1439,9 @@ async fn prepare_workspace(
         append_log(
             pool,
             job.id,
-            &format!(
-                "runner: SSH clone URLs are not supported by the embedded runner; \
-                 configure an HTTP URL or use an external runner with SSH access: {repo_url}"
-            ),
+            "runner: SSH clone URLs are not supported by the embedded runner; use HTTP or an external runner",
         )
         .await?;
-        let _ = tokio::fs::remove_dir_all(&workspace).await;
         return Err(ApiError::bad_request(
             "SSH clone URLs are not supported by the embedded runner; \
              use an HTTP URL or an external runner with SSH access",
@@ -1444,89 +1450,24 @@ async fn prepare_workspace(
 
     // Prefer local bare repo: avoid HTTP round-trips that can deadlock if the
     // repository_url points back at the same backend serving this runner.
-    let cloned = clone_from_local_bare(&repo_url, &git_ref, &workspace, &config.git_root).await;
-    if !cloned {
-        if let Err(error) = clone_via_http(&repo_url, &git_ref, &workspace, pool, job.id).await {
-            let _ = tokio::fs::remove_dir_all(&workspace).await;
-            return Err(error);
-        }
-    }
-    Ok(workspace.join("workspace"))
-}
-
-/// Attempts `git clone` from a local bare repo under `CICD_GIT_ROOT`.
-async fn clone_from_local_bare(
-    repo_url: &str,
-    git_ref: &str,
-    workspace: &std::path::Path,
-    git_root: &Path,
-) -> bool {
-    let Some(name) = extract_repo_name_from_url(repo_url) else {
-        return false;
-    };
-    let bare_path = git_root.join(format!("{name}.git"));
-    if !bare_path.is_dir() {
-        return false;
-    }
-    let output = tokio::process::Command::new("git")
-        .arg("clone")
-        .arg("--quiet")
-        .arg("--depth")
-        .arg("50")
-        .arg("--branch")
-        .arg(git_ref)
-        .arg(&bare_path)
-        .arg("workspace")
-        .current_dir(workspace)
-        .output()
-        .await;
-    match output {
-        Ok(out) if out.status.success() => true,
-        Ok(out) => {
-            tracing::warn!(
-                "local bare clone failed for {repo_url}: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            );
-            false
-        }
-        Err(err) => {
-            tracing::warn!("local bare clone spawn failed for {repo_url}: {err}");
-            false
-        }
-    }
-}
-
-async fn clone_via_http(
-    repo_url: &str,
-    git_ref: &str,
-    workspace: &std::path::Path,
-    pool: &PgPool,
-    job_id: Uuid,
-) -> Result<(), ApiError> {
-    let clone = tokio::process::Command::new("git")
-        .arg("clone")
-        .arg("--quiet")
-        .arg("--depth")
-        .arg("50")
-        .arg("--branch")
-        .arg(git_ref)
-        .arg(repo_url)
-        .arg("workspace")
-        .current_dir(workspace)
-        .output()
+    let local_bare = extract_repo_name_from_url(&repo_url)
+        .filter(|name| {
+            !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\'])
+        })
+        .map(|name| config.git_root.join(format!("{name}.git")))
+        .filter(|path| path.is_dir());
+    let repository = local_bare
+        .as_ref()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or(repo_url);
+    // Once a clone is attempted, an uncertain failure is not retried via another source.
+    workspace
+        .clone_checkout(&repository, job.commit_sha.as_deref(), &git_ref)
         .await
-        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
-    if !clone.status.success() {
-        let stderr = String::from_utf8_lossy(&clone.stderr);
-        append_log(
-            pool,
-            job_id,
-            &format!("runner: clone failed: {}", stderr.trim()),
-        )
-        .await?;
-        return Err(ApiError::bad_request(stderr.to_string()));
-    }
-    Ok(())
+        .map_err(|_| {
+            ApiError::bad_request("Checkout verification failed; attempt workspace retained")
+        })?;
+    Ok(workspace)
 }
 
 fn extract_repo_name_from_url(url: &str) -> Option<String> {
@@ -1906,8 +1847,6 @@ fn docker_run_args(
         "--workdir".into(),
         "/workspace/workspace".into(),
         "--mount".into(),
-        format!("type=volume,src={volume_name},dst=/workspaces"),
-        "--mount".into(),
         // Bind sources resolve on the docker HOST, not inside this container:
         // point at the local-driver volume mountpoint so the per-job
         // workspace (shared through the same volume) is visible host-side.
@@ -2000,13 +1939,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cleanup_root_removes_the_job_directory_not_only_checkout() {
-        let root = Path::new("/workspaces/forge-runner-123");
-        assert_eq!(cleanup_root(root), root);
-        assert_eq!(cleanup_root(&root.join("workspace")), root);
-    }
-
-    #[test]
     fn docker_execution_uses_the_declared_image_and_isolated_workspace_volume() {
         let args = docker_run_args(
             "forge-job-123",
@@ -2047,16 +1979,15 @@ mod tests {
                 .any(|pair| pair == ["sh", "-c", "cargo test"])
         );
         assert!(!args.iter().any(|arg| arg == "cargo"));
-        // A duplicated --volume/--mount pair for the same destination used to
-        // make every docker execution fail with "Duplicate mount point".
+        // A job must not see any other attempt through the complete workspace volume.
         let workspace_mounts = args
             .windows(2)
             .filter(|pair| pair[0] == "--mount" || pair[0] == "--volume")
             .filter(|pair| pair[1].ends_with(":/workspaces") || pair[1].contains("dst=/workspaces"))
             .count();
         assert_eq!(
-            workspace_mounts, 1,
-            "exactly one /workspaces mount expected"
+            workspace_mounts, 0,
+            "the shared workspace root must not be mounted into a job"
         );
     }
 

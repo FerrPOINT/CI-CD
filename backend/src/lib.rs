@@ -36,6 +36,7 @@ pub mod platform;
 pub mod pulls;
 pub mod runner;
 pub mod runner_protocol;
+pub mod runner_workspace;
 pub mod store;
 
 pub use cicd_domain as domain_types;

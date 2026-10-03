@@ -175,6 +175,14 @@ struct ExecutionResult {
     diagnostic: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CompletionAck {
+    protocol_version: i32,
+    accepted: bool,
+    terminal_status: String,
+}
+
 #[derive(Debug)]
 enum CommandOutcome {
     Exited(std::process::ExitStatus),
@@ -428,10 +436,18 @@ async fn run_offer(
         masks,
     };
     let result = execute_attempt(cli, &offer, Some(log_context), &secret_env).await;
-    stop_lease_background_tasks(&stop_tx, renew_task, heartbeat_task).await;
-
     let completion_result = match result {
-        Ok(result) => complete_lease(client, base, credential, &offer, result).await,
+        Ok(executed) => {
+            complete_executed_attempt(
+                client,
+                base,
+                credential,
+                &offer,
+                executed,
+                cli.keep_workspace,
+            )
+            .await
+        }
         Err(error) => {
             complete_lease(
                 client,
@@ -447,6 +463,7 @@ async fn run_offer(
             .await
         }
     };
+    stop_lease_background_tasks(&stop_tx, renew_task, heartbeat_task).await;
     heartbeat(client, base, credential, cli, 0, &[]).await?;
     completion_result
 }
@@ -632,7 +649,31 @@ async fn complete_lease(
         .send()
         .await
         .context("complete request failed")?;
-    ensure_success(response).await.context("complete failed")
+    let ack: CompletionAck = response_json(response).await.context("complete failed")?;
+    if ack.protocol_version != PROTOCOL_VERSION
+        || !ack.accepted
+        || ack.terminal_status != result.outcome
+    {
+        bail!("terminal completion acknowledgement does not match this result");
+    }
+    Ok(())
+}
+
+async fn complete_executed_attempt(
+    client: &reqwest::Client,
+    base: &str,
+    credential: &str,
+    offer: &LeaseOffer,
+    (result, workspace): (ExecutionResult, cicd::runner_workspace::OwnedWorkspace),
+    keep_workspace: bool,
+) -> anyhow::Result<()> {
+    let completion = complete_lease(client, base, credential, offer, result).await;
+    if completion.is_ok() && !keep_workspace {
+        if let Err(error) = workspace.cleanup_after_ack().await {
+            eprintln!("acknowledged workspace retained: {error:#}");
+        }
+    }
+    completion
 }
 
 async fn execute_attempt(
@@ -640,9 +681,9 @@ async fn execute_attempt(
     offer: &LeaseOffer,
     log_context: Option<LogContext>,
     secret_env: &[(String, String)],
-) -> anyhow::Result<ExecutionResult> {
-    let workspace = prepare_workspace(cli, offer).await?;
-    let cleanup_path = workspace.clone();
+) -> anyhow::Result<(ExecutionResult, cicd::runner_workspace::OwnedWorkspace)> {
+    let owned_workspace = prepare_workspace(cli, offer).await?;
+    let workspace = owned_workspace.checkout();
     let mut last_exit_code = None;
     let mut result = ExecutionResult {
         outcome: "success",
@@ -653,7 +694,7 @@ async fn execute_attempt(
     for command in &offer.attempt.commands {
         let command_outcome = match run_shell_command(
             command,
-            &workspace,
+            workspace,
             offer.attempt.timeout_seconds,
             log_context.as_ref(),
             secret_env,
@@ -702,7 +743,7 @@ async fn execute_attempt(
         None
     } else {
         match log_context.as_ref() {
-            Some(context) => upload_declared_artifacts(context, offer, &workspace)
+            Some(context) => upload_declared_artifacts(context, offer, workspace)
                 .await
                 .err(),
             None if offer.attempt.artifacts.is_empty() => None,
@@ -723,27 +764,30 @@ async fn execute_attempt(
         }
     }
 
-    if !cli.keep_workspace {
-        cleanup_workspace(&cleanup_path, cli.work_dir.as_deref())?;
-    }
     if result.outcome == "success" {
         result.exit_code = last_exit_code.or(Some(0));
     }
-    Ok(result)
+    Ok((result, owned_workspace))
 }
 
-async fn prepare_workspace(cli: &Cli, offer: &LeaseOffer) -> anyhow::Result<PathBuf> {
+async fn prepare_workspace(
+    cli: &Cli,
+    offer: &LeaseOffer,
+) -> anyhow::Result<cicd::runner_workspace::OwnedWorkspace> {
     let root = cli
         .work_dir
         .clone()
         .unwrap_or_else(|| std::env::temp_dir().join("forge-runner"));
-    std::fs::create_dir_all(&root)
-        .with_context(|| format!("create runner work root {}", root.display()))?;
-    let workspace = root.join(format!(
-        "attempt-{}-{}",
+    let workspace = cicd::runner_workspace::OwnedWorkspace::create(
+        &root,
         offer.attempt.id,
-        Uuid::new_v4().simple()
-    ));
+        offer.lease_id,
+        offer.fencing_token,
+    )?;
+    if offer.attempt.commit_sha.is_some() && (!offer.attempt.workspace.checkout || cli.no_checkout)
+    {
+        bail!("pinned attempt requires checkout; no-checkout cannot bypass verification");
+    }
 
     if offer.attempt.workspace.checkout && !cli.no_checkout {
         let url = offer
@@ -754,45 +798,17 @@ async fn prepare_workspace(cli: &Cli, offer: &LeaseOffer) -> anyhow::Result<Path
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .context("lease requires checkout but checkoutUrl is missing")?;
-        let workspace_arg = workspace.to_string_lossy().into_owned();
-        if let Err(error) = run_git(["clone", "--quiet", url, workspace_arg.as_str()], &root).await
-        {
-            cleanup_workspace(&workspace, Some(&root))?;
-            return Err(error).with_context(|| format!("clone {url}"));
-        }
-        let checkout_target = offer
-            .attempt
-            .commit_sha
-            .as_deref()
-            .filter(|value| !value.is_empty())
-            .unwrap_or(&offer.attempt.git_ref);
-        if !checkout_target.trim().is_empty() {
-            if let Err(error) = run_git(["checkout", "--quiet", checkout_target], &workspace).await
-            {
-                cleanup_workspace(&workspace, Some(&root))?;
-                return Err(error).with_context(|| format!("checkout {checkout_target}"));
-            }
-        }
+        workspace
+            .clone_checkout(
+                url,
+                offer.attempt.commit_sha.as_deref(),
+                &offer.attempt.git_ref,
+            )
+            .await?;
     } else {
-        std::fs::create_dir_all(&workspace)
-            .with_context(|| format!("create attempt workspace {}", workspace.display()))?;
+        workspace.create_empty_checkout()?;
     }
     Ok(workspace)
-}
-
-async fn run_git<const N: usize>(args: [&str; N], cwd: &Path) -> anyhow::Result<()> {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .stdin(Stdio::null())
-        .status()
-        .await
-        .context("spawn git")?;
-    if status.success() {
-        Ok(())
-    } else {
-        bail!("git exited with {status}");
-    }
 }
 
 async fn run_shell_command(
@@ -1119,19 +1135,6 @@ fn shell(command: &str) -> Command {
     }
 }
 
-fn cleanup_workspace(path: &Path, configured_root: Option<&Path>) -> anyhow::Result<()> {
-    let root = configured_root
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| std::env::temp_dir().join("forge-runner"));
-    let root = root.canonicalize().unwrap_or(root);
-    let candidate = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    if candidate.starts_with(&root) && candidate != root && candidate.exists() {
-        std::fs::remove_dir_all(&candidate)
-            .with_context(|| format!("cleanup workspace {}", candidate.display()))?;
-    }
-    Ok(())
-}
-
 async fn response_json<T: for<'de> Deserialize<'de>>(
     response: reqwest::Response,
 ) -> anyhow::Result<T> {
@@ -1204,6 +1207,96 @@ mod tests {
                 },
             },
         }
+    }
+
+    #[tokio::test]
+    async fn completion_ack_controls_workspace_cleanup() {
+        for (body, acknowledged) in [
+            (
+                json!({"protocolVersion": 1, "accepted": true, "terminalStatus": "success"}),
+                true,
+            ),
+            (
+                json!({"protocolVersion": 1, "accepted": false, "terminalStatus": "success"}),
+                false,
+            ),
+            (
+                json!({"protocolVersion": 1, "accepted": true, "terminalStatus": "failed"}),
+                false,
+            ),
+            (
+                json!({"protocolVersion": 2, "accepted": true, "terminalStatus": "success"}),
+                false,
+            ),
+            (json!({}), false),
+        ] {
+            let work_dir = std::env::temp_dir().join(format!("forge-ack-test-{}", Uuid::new_v4()));
+            let cli = test_cli(work_dir.clone());
+            let offer = test_offer("exit 0", 5);
+            let executed = execute_attempt(&cli, &offer, None, &[]).await.unwrap();
+            let checkout = executed.1.checkout().to_path_buf();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            let app = axum::Router::new().route(
+                "/{*path}",
+                axum::routing::post(move || async move { axum::Json(body) }),
+            );
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let completion = complete_executed_attempt(
+                &reqwest::Client::new(),
+                &base,
+                "test-credential",
+                &offer,
+                executed,
+                false,
+            )
+            .await;
+            assert_eq!(completion.is_ok(), acknowledged);
+            assert_eq!(checkout.exists(), !acknowledged);
+            server.abort();
+            let _ = server.await;
+            std::fs::remove_dir_all(work_dir).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn pinned_attempt_cannot_skip_checkout() {
+        let work_dir = std::env::temp_dir().join(format!("forge-pin-test-{}", Uuid::new_v4()));
+        let cli = test_cli(work_dir.clone());
+        let mut offer = test_offer("exit 0", 5);
+        offer.attempt.commit_sha = Some("a".repeat(40));
+        assert!(execute_attempt(&cli, &offer, None, &[]).await.is_err());
+        std::fs::remove_dir_all(work_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn lost_completion_response_retains_workspace() {
+        use tokio::io::AsyncReadExt;
+        let work_dir = std::env::temp_dir().join(format!("forge-lost-ack-test-{}", Uuid::new_v4()));
+        let cli = test_cli(work_dir.clone());
+        let offer = test_offer("exit 0", 5);
+        let executed = execute_attempt(&cli, &offer, None, &[]).await.unwrap();
+        let checkout = executed.1.checkout().to_path_buf();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = [0_u8; 4096];
+            assert!(socket.read(&mut buffer).await.unwrap() > 0);
+            // Request may have been accepted; connection loss is not a terminal ACK.
+        });
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        assert!(
+            complete_executed_attempt(&client, &base, "test-credential", &offer, executed, false)
+                .await
+                .is_err()
+        );
+        server.await.unwrap();
+        assert!(checkout.exists());
+        std::fs::remove_dir_all(work_dir).unwrap();
     }
 
     #[test]
@@ -1311,10 +1404,15 @@ mod tests {
         let cli = test_cli(work_dir.clone());
         let offer = test_offer("exit 7", 5);
 
-        let result = execute_attempt(&cli, &offer, None, &[]).await.unwrap();
+        let (result, workspace) = execute_attempt(&cli, &offer, None, &[]).await.unwrap();
 
         assert_eq!(result.outcome, "failed");
         assert_eq!(result.exit_code, Some(7));
+        assert!(
+            workspace.checkout().exists(),
+            "no owner acknowledgement yet"
+        );
+        workspace.cleanup_after_ack().await.unwrap();
         let _ = std::fs::remove_dir_all(work_dir);
     }
 
@@ -1331,7 +1429,7 @@ mod tests {
         let mut offer = test_offer(command, 5);
         offer.attempt.secrets = vec!["DEPLOY_TOKEN".to_string()];
 
-        let result = execute_attempt(
+        let (result, workspace) = execute_attempt(
             &cli,
             &offer,
             None,
@@ -1341,6 +1439,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.outcome, "success");
+        assert!(
+            workspace.checkout().exists(),
+            "no owner acknowledgement yet"
+        );
+        workspace.cleanup_after_ack().await.unwrap();
         let _ = std::fs::remove_dir_all(work_dir);
     }
 
@@ -1356,10 +1459,15 @@ mod tests {
         };
         let offer = test_offer(command, 1);
 
-        let result = execute_attempt(&cli, &offer, None, &[]).await.unwrap();
+        let (result, workspace) = execute_attempt(&cli, &offer, None, &[]).await.unwrap();
 
         assert_eq!(result.outcome, "failed");
         assert_eq!(result.exit_code, None);
+        assert!(
+            workspace.checkout().exists(),
+            "no owner acknowledgement yet"
+        );
+        workspace.cleanup_after_ack().await.unwrap();
         assert!(
             result
                 .diagnostic
