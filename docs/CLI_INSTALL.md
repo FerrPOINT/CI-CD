@@ -48,3 +48,7 @@ cicd-cli project list --limit 1
 Source `ae43dcc134209530f8d9604fd24c14d987b76ec4`; Base `9408802dfa978cba2f67162a49adca6f65851b01`, Rust 1.88.0, locked release workspace build, package version `0.1.0` без изменения. Архив `cicd-cli-0.1.0-ae43dcc-x86_64-linux-gnu.tar.gz`; SHA-256 `92f686e3e06a763c6664d34abaadd5d06fecc97df460905b80639a789702a2b1`. Требования: glibc >= 2.34; OpenSSL shared libraries не требуются. Установка с SHA256SUMS в отдельный prefix и запуск --help проверены в Ubuntu 24.04 WSL и Debian 12. Прежние binaries сохранены; shell profiles не менялись.
 
 Результаты QA и blockers сохранены в [CLI_VALIDATION.md](CLI_VALIDATION.md). Это candidate: рабочий sdlc1 не обновлён, совместимость CI/CD с применёнными миграциями 36/37 и прежний image rollback не подтверждены. Архивы не содержат configuration, keys, credentials или данные.
+
+Каталог backend дополнен точными историческими migrations 36/37. Установка
+CLI не применяет migrations и не восстанавливает рабочее окружение. До принятия
+свежей копии данных и отката на прежние images архивы сохраняют candidate status.
