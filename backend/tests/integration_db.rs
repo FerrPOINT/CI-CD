@@ -2031,8 +2031,10 @@ async fn runner_terminal_receipt_is_owned_durable_and_does_not_acknowledge_expir
         .bind(job).bind(stage).execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO execution_attempts(id,job_id,attempt_no,status,trigger) VALUES($1,$2,1,'running','initial')")
         .bind(attempt).bind(job).execute(&pool).await.unwrap();
-    sqlx::query("INSERT INTO job_leases(id,job_id,attempt_id,runner_id,runner_name,generation,lease_expires_at) VALUES($1,$2,$3,$4,'receipt-owner',1,now()+interval '1 minute')")
-        .bind(lease).bind(job).bind(attempt).bind(runner).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO job_leases(id,job_id,attempt_id,runner_id,runner_name,generation,lease_expires_at,acknowledged_at,lease_token_hash) VALUES($1,$2,$3,$4,'receipt-owner',1,now()+interval '1 minute',now(),$5)")
+        .bind(lease).bind(job).bind(attempt).bind(runner)
+        .bind(cicd::auth::hash_token("receipt-lease-fixture"))
+        .execute(&pool).await.unwrap();
     let app = cicd::api::app_with_auth_secret(Some(pool.clone()), None);
     let url = format!("/api/v1/runner/leases/{lease}/receipt");
     for (credential, expected) in [
@@ -2063,12 +2065,42 @@ async fn runner_terminal_receipt_is_owned_durable_and_does_not_acknowledge_expir
     let receipt = response_json(response).await;
     assert_eq!(receipt["terminalAcknowledged"], false);
     assert_eq!(receipt["completedAt"], serde_json::Value::Null);
-    sqlx::query("UPDATE execution_attempts SET status='success',finished_at=now() WHERE id=$1")
-        .bind(attempt)
-        .execute(&pool)
+    // A terminal row alone is not an accepted runner completion.
+    assert!(
+        sqlx::query("UPDATE job_leases SET completion_received_at=now() WHERE id=$1")
+            .bind(lease)
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    let completed = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/runner/leases/{lease}/complete"))
+                .header("authorization", "Bearer receipt-owner-fixture")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "protocolVersion": 1, "leaseToken": "receipt-lease-fixture",
+                        "fencingToken": 1, "attemptId": attempt, "outcome": "success",
+                        "finishedAt": Utc::now()
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
         .await
         .unwrap();
-    sqlx::query("UPDATE job_leases SET lease_status='completed',terminal_status='success',completed_at=now() WHERE id=$1").bind(lease).execute(&pool).await.unwrap();
+    assert_eq!(completed.status(), StatusCode::OK);
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT completion_received_at IS NOT NULL FROM job_leases WHERE id=$1"
+        )
+        .bind(lease)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    );
     let receipt = response_json(app.clone().oneshot(request()).await.unwrap()).await;
     assert_eq!(receipt["leaseId"], lease.to_string());
     assert_eq!(receipt["attemptId"], attempt.to_string());
@@ -2108,18 +2140,14 @@ async fn runner_terminal_receipt_is_owned_durable_and_does_not_acknowledge_expir
         response_json(app.clone().oneshot(request()).await.unwrap()).await,
         receipt
     );
-    sqlx::query("UPDATE job_leases SET lease_status='expired' WHERE id=$1")
-        .bind(lease)
-        .execute(&pool)
-        .await
-        .unwrap();
-    let expired = response_json(app.clone().oneshot(request()).await.unwrap()).await;
-    assert_eq!(expired["terminalAcknowledged"], false);
-    sqlx::query("UPDATE job_leases SET lease_status='completed' WHERE id=$1")
-        .bind(lease)
-        .execute(&pool)
-        .await
-        .unwrap();
+    // Exercise mismatch while the authenticated completion discriminator is present.
+    assert!(
+        sqlx::query("UPDATE job_leases SET terminal_status=NULL WHERE id=$1")
+            .bind(lease)
+            .execute(&pool)
+            .await
+            .is_err()
+    );
     sqlx::query("UPDATE execution_attempts SET status='failed' WHERE id=$1")
         .bind(attempt)
         .execute(&pool)
@@ -2128,6 +2156,56 @@ async fn runner_terminal_receipt_is_owned_durable_and_does_not_acknowledge_expir
     assert_eq!(
         response_json(app.clone().oneshot(request()).await.unwrap()).await["terminalAcknowledged"],
         false
+    );
+    sqlx::query("UPDATE execution_attempts SET status='success' WHERE id=$1")
+        .bind(attempt)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        response_json(app.clone().oneshot(request()).await.unwrap()).await,
+        receipt
+    );
+    sqlx::query(
+        "UPDATE job_leases SET lease_status='expired',completion_received_at=NULL WHERE id=$1",
+    )
+    .bind(lease)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let expired = response_json(app.clone().oneshot(request()).await.unwrap()).await;
+    assert_eq!(expired["terminalAcknowledged"], false);
+    // Cancellation followed by actual expiry reconciliation has terminal metadata,
+    // but does not prove that the runner stopped and submitted completion.
+    sqlx::query("UPDATE jobs SET status='running',finished_at=NULL WHERE id=$1")
+        .bind(job)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE execution_attempts SET status='running',finished_at=NULL WHERE id=$1")
+        .bind(attempt)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE job_leases SET lease_status='active',terminal_status=NULL,completed_at=NULL,cancel_requested_at=now(),lease_expires_at=now()-interval '1 second' WHERE id=$1")
+        .bind(lease).execute(&pool).await.unwrap();
+    assert_eq!(
+        cicd::runner::reconcile_expired_leases(&pool).await.unwrap(),
+        1
+    );
+    let cancelled = response_json(app.clone().oneshot(request()).await.unwrap()).await;
+    assert_eq!(cancelled["leaseStatus"], "canceled");
+    assert_eq!(cancelled["terminalStatus"], "canceled");
+    assert!(!cancelled["completedAt"].is_null());
+    assert_eq!(cancelled["terminalAcknowledged"], false);
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT completion_received_at IS NULL FROM job_leases WHERE id=$1"
+        )
+        .bind(lease)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
     );
     sqlx::query("UPDATE runners SET disabled_at=now() WHERE id=$1")
         .bind(runner)

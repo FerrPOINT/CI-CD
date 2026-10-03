@@ -34,6 +34,10 @@ runner-owned GET terminal readback и explicit offline inspect/reconcile CLI.
 External startup не получает новую работу при unresolved папках; readback после
 unknown completion не повторяет POST. Local records не подписывают runtime truth;
 cleanup при restart требует fresh exact server receipt. Expiry/mismatch не ACK.
+Pending migration 0039 добавляет `completion_received_at` без backfill:
+cancel-on-expiry не является принятым completion. При неподтверждённом child wait
+outer handler не отправляет failed completion, не объявляет свободный слот и
+выходит из polling; marker остаётся для owner/process reconciliation.
 No SDLC task/assignment identity или новый scheduler этим не вводятся.
 
 Retention после crash требует disk monitoring и явной owner reconciliation; нельзя

@@ -23,6 +23,13 @@ Expiry, другой attempt/fence и подмена marker не подтвер�
 tests/ограничения — [runner recovery gate](DEVELOPMENT_GUIDE.md#scoped-runner-recovery-source-gate).
 Installed runtime и B-SDLC-04 task/assignment delivery receipts этим не закрыты.
 
+Independent review follow-up: неподтверждённый child wait больше не превращается
+outer handler в failed completion или idle capacity/poll. Pending migration 0039
+отделяет принятый external completion от expiry cancellation; historical rows
+не backfill-ятся. 32 scoped tests PASS, включая actual completion POST и actual
+cancel-on-expiry GETfalse; status mismatch проверен при присутствующем признаке
+completion. Component failure injection не является OS process-tree stop proof.
+
 | Capability | Статус | Границы |
 |---|---|---|
 | Проекты CRUD | ✅ | name/repository_url/default_branch; удаление CASCADE |

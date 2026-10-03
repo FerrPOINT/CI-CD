@@ -468,6 +468,13 @@ Production release добавляет migration test job, clean/prior-schema upg
 сохраняют папку независимо от keep setting. Не запускать команды повторно из неё
 и не удалять её общим volume prune/`git clean`.
 
+Если остановка дочернего процесса не подтверждена, внешний runner не отправляет
+`failed` completion, не объявляет idle capacity и прекращает polling. Папка
+сохраняется без terminal intent. Требуется проверка прежнего процесса оператором;
+истечение lease само по себе не подтверждает остановку. GET receipt разрешает
+cleanup только после принятого completion (`completion_received_at`); отмена,
+закрытая expiry reconciler, этого признака не получает.
+
 До явной owner cleanup проверить attempt ID, lease ID/generation, terminal state
 и прекращение прежнего процесса. Marker должен совпасть с ожидаемой identity;
 path не должен проходить symlink/junction. При утрате ACK сверять серверный ledger,

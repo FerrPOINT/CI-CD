@@ -603,24 +603,41 @@ async fn run_offer(
         masks,
     };
     let result = execute_attempt(cli, &offer, Some(log_context), &secret_env).await;
-    let completion_result = match result {
+    let completion_result =
+        complete_attempt_result(client, base, credential, cli, &offer, result).await;
+    stop_lease_background_tasks(&stop_tx, renew_task, heartbeat_task).await;
+    completion_result?;
+    heartbeat(client, base, credential, cli, 0, &[]).await?;
+    Ok(())
+}
+
+async fn complete_attempt_result(
+    client: &reqwest::Client,
+    base: &str,
+    credential: &str,
+    cli: &Cli,
+    offer: &LeaseOffer,
+    result: anyhow::Result<(ExecutionResult, cicd::runner_workspace::OwnedWorkspace)>,
+) -> anyhow::Result<()> {
+    match result {
         Ok(executed) => {
             complete_executed_attempt(
                 client,
                 base,
                 credential,
-                &offer,
+                offer,
                 executed,
                 cli.keep_workspace,
             )
             .await
         }
+        Err(error) if error.is::<UnconfirmedExecution>() => Err(error),
         Err(error) => {
             complete_lease(
                 client,
                 base,
                 credential,
-                &offer,
+                offer,
                 ExecutionResult {
                     outcome: "failed",
                     exit_code: None,
@@ -629,10 +646,7 @@ async fn run_offer(
             )
             .await
         }
-    };
-    stop_lease_background_tasks(&stop_tx, renew_task, heartbeat_task).await;
-    heartbeat(client, base, credential, cli, 0, &[]).await?;
-    completion_result
+    }
 }
 
 async fn ack_lease(
@@ -1358,6 +1372,7 @@ fn truncate_diagnostic(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cicd::runner_workspace::OwnedWorkspace;
 
     fn test_cli(work_dir: PathBuf) -> Cli {
         Cli {
@@ -1397,6 +1412,50 @@ mod tests {
                 },
             },
         }
+    }
+
+    #[tokio::test]
+    async fn unconfirmed_execution_never_submits_terminal_completion() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let requests = Arc::new(AtomicUsize::new(0));
+        let count = requests.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = axum::Router::new().fallback(move || {
+            count.fetch_add(1, Ordering::SeqCst);
+            async { axum::http::StatusCode::OK }
+        });
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let root = std::env::temp_dir().join(format!("forge-unconfirmed-{}", Uuid::new_v4()));
+        let offer = test_offer("exit 0", 5);
+        let workspace =
+            OwnedWorkspace::create(&root, offer.attempt.id, offer.lease_id, offer.fencing_token)
+                .unwrap();
+        drop(workspace);
+        let cli = test_cli(root.clone());
+        let error = complete_attempt_result(
+            &reqwest::Client::new(),
+            &base,
+            "fixture",
+            &cli,
+            &offer,
+            Err(anyhow::Error::new(UnconfirmedExecution).context("child wait failed")),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.is::<UnconfirmedExecution>());
+        assert_eq!(requests.load(Ordering::SeqCst), 0);
+        let inventory = OwnedWorkspace::inventory(&root).unwrap();
+        assert_eq!(inventory.len(), 1);
+        assert!(inventory[0].terminal_status.is_none());
+        assert!(!inventory[0].acknowledged);
+        assert!(ensure_no_unresolved_workspaces(&root).is_err());
+        server.abort();
+        let _ = server.await;
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]
