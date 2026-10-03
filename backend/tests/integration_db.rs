@@ -1991,6 +1991,156 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
 }
 
 #[tokio::test]
+async fn runner_terminal_receipt_is_owned_durable_and_does_not_acknowledge_expiry() {
+    let pool = test_pool().await;
+    let project = Uuid::new_v4();
+    let pipeline = Uuid::new_v4();
+    let stage = Uuid::new_v4();
+    let job = Uuid::new_v4();
+    let attempt = Uuid::new_v4();
+    let lease = Uuid::new_v4();
+    let runner = Uuid::new_v4();
+    let foreign_runner = Uuid::new_v4();
+    for (id, credential) in [
+        (runner, "receipt-owner-fixture"),
+        (foreign_runner, "receipt-foreign-fixture"),
+    ] {
+        sqlx::query("INSERT INTO runners(id,name,credential_hash,credential_expires_at) VALUES($1,$2,$3,now()+interval '1 hour')")
+            .bind(id).bind(format!("receipt-{id}"))
+            .bind(cicd::auth::hash_token(credential)).execute(&pool).await.unwrap();
+    }
+    sqlx::query("INSERT INTO projects(id,name,repository_url) VALUES($1,$2,'https://example.invalid/source.git')")
+        .bind(project).bind(format!("receipt-{project}")).execute(&pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO pipelines(id,project_id,git_ref,status) VALUES($1,$2,'main','running')",
+    )
+    .bind(pipeline)
+    .bind(project)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO stages(id,pipeline_id,name,position,status) VALUES($1,$2,'test',0,'running')",
+    )
+    .bind(stage)
+    .bind(pipeline)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO jobs(id,stage_id,name,image,command,position,status) VALUES($1,$2,'test','unused','true',0,'running')")
+        .bind(job).bind(stage).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO execution_attempts(id,job_id,attempt_no,status,trigger) VALUES($1,$2,1,'running','initial')")
+        .bind(attempt).bind(job).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO job_leases(id,job_id,attempt_id,runner_id,runner_name,generation,lease_expires_at) VALUES($1,$2,$3,$4,'receipt-owner',1,now()+interval '1 minute')")
+        .bind(lease).bind(job).bind(attempt).bind(runner).execute(&pool).await.unwrap();
+    let app = cicd::api::app_with_auth_secret(Some(pool.clone()), None);
+    let url = format!("/api/v1/runner/leases/{lease}/receipt");
+    for (credential, expected) in [
+        ("invalid-fixture", StatusCode::UNAUTHORIZED),
+        ("receipt-foreign-fixture", StatusCode::NOT_FOUND),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(&url)
+                    .header("authorization", format!("Bearer {credential}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+    }
+    let request = || {
+        Request::get(&url)
+            .header("authorization", "Bearer receipt-owner-fixture")
+            .body(Body::empty())
+            .unwrap()
+    };
+    let response = app.clone().oneshot(request()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let receipt = response_json(response).await;
+    assert_eq!(receipt["terminalAcknowledged"], false);
+    assert_eq!(receipt["completedAt"], serde_json::Value::Null);
+    sqlx::query("UPDATE execution_attempts SET status='success',finished_at=now() WHERE id=$1")
+        .bind(attempt)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE job_leases SET lease_status='completed',terminal_status='success',completed_at=now() WHERE id=$1").bind(lease).execute(&pool).await.unwrap();
+    let receipt = response_json(app.clone().oneshot(request()).await.unwrap()).await;
+    assert_eq!(receipt["leaseId"], lease.to_string());
+    assert_eq!(receipt["attemptId"], attempt.to_string());
+    assert_eq!(receipt["fencingToken"], 1);
+    assert_eq!(receipt["terminalAcknowledged"], true);
+    assert_eq!(receipt.as_object().unwrap().len(), 8);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let served = app.clone();
+    let server = tokio::spawn(async move { axum::serve(listener, served).await.unwrap() });
+    let curl = tokio::process::Command::new("curl")
+        .args([
+            "-fsS",
+            "--max-time",
+            "5",
+            "-H",
+            "Authorization: Bearer receipt-owner-fixture",
+            &format!("http://{address}{url}"),
+        ])
+        .output()
+        .await
+        .unwrap();
+    assert!(curl.status.success());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&curl.stdout).unwrap(),
+        receipt
+    );
+    server.abort();
+    let _ = server.await;
+    // A subsequent job attempt does not replace the original lease receipt.
+    sqlx::query("UPDATE jobs SET status='queued' WHERE id=$1")
+        .bind(job)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        response_json(app.clone().oneshot(request()).await.unwrap()).await,
+        receipt
+    );
+    sqlx::query("UPDATE job_leases SET lease_status='expired' WHERE id=$1")
+        .bind(lease)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let expired = response_json(app.clone().oneshot(request()).await.unwrap()).await;
+    assert_eq!(expired["terminalAcknowledged"], false);
+    sqlx::query("UPDATE job_leases SET lease_status='completed' WHERE id=$1")
+        .bind(lease)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE execution_attempts SET status='failed' WHERE id=$1")
+        .bind(attempt)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        response_json(app.clone().oneshot(request()).await.unwrap()).await["terminalAcknowledged"],
+        false
+    );
+    sqlx::query("UPDATE runners SET disabled_at=now() WHERE id=$1")
+        .bind(runner)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        app.oneshot(request()).await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
 async fn external_runner_long_poll_wakes_when_work_is_enqueued() {
     let pool = test_pool().await;
     let namespace = Uuid::new_v4();

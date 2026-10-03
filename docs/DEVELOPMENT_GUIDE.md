@@ -4,6 +4,20 @@
 
 ## Статусы
 
+### Scoped Runner Recovery Source Gate
+
+`cargo test --locked -p cicd-server --lib runner_workspace`, binary unit tests
+`--bin forge-runner`, `--test runner_binary_contract` и PostgreSQL integration
+`runner_terminal_receipt_is_owned_durable_and_does_not_acknowledge_expiry`
+проверяют journal/reopen/conflicts, retained unknown execution, offline CLI,
+restart readback, отсутствие duplicate POST, чужую/revoked credential, expired
+lease и old attempt identity после retry. DB-тест также выполняет curl к
+настоящему ephemeral Axum HTTP listener. Embedded pin/prepare-failure regressions
+проверяют прежний cleanup и сохранение foreign папки. Это source/component
+evidence, не автономный installed SDLC или подтверждение process-tree sandbox.
+Fault injection OS `wait()` failure и полная crash/power-loss приёмка остаются
+отдельными gates; source не превращает неизвестное завершение в ACK.
+
 ### Live Header Gate
 
 `SDLC_LIVE_QA=1 SDLC_QA_SESSION_FILE=/private/qa-session.json

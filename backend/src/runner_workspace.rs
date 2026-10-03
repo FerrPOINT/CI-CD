@@ -1,5 +1,5 @@
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
@@ -9,14 +9,36 @@ use tokio::process::Command;
 use uuid::Uuid;
 
 const MARKER: &str = ".forge-attempt.json";
+const COMPLETION: &str = ".forge-completion.json";
+const ACK: &str = ".forge-completion-ack.json";
+const MAX_INVENTORY_ENTRIES: usize = 4096;
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Owner {
     schema: String,
     attempt_id: Uuid,
     lease_id: Uuid,
     generation: i64,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Completion {
+    schema: String,
+    owner: Owner,
+    terminal_status: String,
+}
+
+/// Local recovery metadata only; a fresh server readback authorizes cleanup.
+#[derive(Debug, Serialize)]
+pub struct RetainedWorkspace {
+    pub workspace_id: String,
+    pub attempt_id: Uuid,
+    pub lease_id: Uuid,
+    pub generation: i64,
+    pub terminal_status: Option<String>,
+    pub acknowledged: bool,
 }
 
 /// A physical attempt directory, not an SDLC workspace receipt or a sandbox.
@@ -35,6 +57,10 @@ impl OwnedWorkspace {
         generation: i64,
     ) -> anyhow::Result<Self> {
         ensure!(generation > 0, "invalid workspace lease generation");
+        ensure!(
+            !attempt_id.is_nil() && !lease_id.is_nil(),
+            "invalid workspace lease identity"
+        );
         let root = if root.is_absolute() {
             root.to_path_buf()
         } else {
@@ -61,6 +87,11 @@ impl OwnedWorkspace {
             .open(directory.join(MARKER))?;
         marker.write_all(&serde_json::to_vec(&owner)?)?;
         marker.sync_all()?;
+        #[cfg(unix)]
+        {
+            fs::File::open(&directory)?.sync_all()?;
+            fs::File::open(&root)?.sync_all()?;
+        }
         let checkout = directory.join("workspace");
         Ok(Self {
             root,
@@ -72,6 +103,174 @@ impl OwnedWorkspace {
 
     pub fn checkout(&self) -> &Path {
         &self.checkout
+    }
+
+    pub fn verify_identity(
+        &self,
+        attempt_id: Uuid,
+        lease_id: Uuid,
+        generation: i64,
+    ) -> anyhow::Result<()> {
+        ensure!(
+            self.owner.attempt_id == attempt_id
+                && self.owner.lease_id == lease_id
+                && self.owner.generation == generation,
+            "workspace readback identity changed"
+        );
+        self.verify_owner()
+    }
+
+    pub fn record_completion(&self, terminal_status: &str) -> anyhow::Result<()> {
+        ensure!(
+            matches!(terminal_status, "success" | "failed" | "canceled"),
+            "invalid workspace completion outcome"
+        );
+        self.verify_owner()?;
+        self.write_record(
+            COMPLETION,
+            &Completion {
+                schema: "forge/attempt-completion/v1".to_owned(),
+                owner: self.owner.clone(),
+                terminal_status: terminal_status.to_owned(),
+            },
+        )
+    }
+
+    /// Call only after an exact terminal ACK or authenticated owner readback.
+    pub fn acknowledge_completion(&self, terminal_status: &str) -> anyhow::Result<()> {
+        self.verify_owner()?;
+        let completion = self.read_record(COMPLETION)?;
+        ensure!(
+            completion.terminal_status == terminal_status,
+            "workspace terminal acknowledgement mismatch"
+        );
+        self.write_record(ACK, &completion)
+    }
+
+    fn read_record(&self, name: &str) -> anyhow::Result<Completion> {
+        let completion: Completion = read_guarded_json(&self.directory.join(name))?;
+        ensure!(
+            completion.schema == "forge/attempt-completion/v1"
+                && completion.owner == self.owner
+                && matches!(
+                    completion.terminal_status.as_str(),
+                    "success" | "failed" | "canceled"
+                ),
+            "invalid workspace completion record"
+        );
+        Ok(completion)
+    }
+
+    fn write_record(&self, name: &str, record: &Completion) -> anyhow::Result<()> {
+        let path = self.directory.join(name);
+        match OpenOptions::new().create_new(true).write(true).open(&path) {
+            Ok(mut file) => {
+                file.write_all(&serde_json::to_vec(record)?)?;
+                file.sync_all()?;
+                #[cfg(unix)]
+                fs::File::open(&self.directory)?.sync_all()?;
+                Ok(())
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                ensure!(
+                    self.read_record(name)? == *record,
+                    "workspace completion conflict"
+                );
+                Ok(())
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub fn reopen(root: &Path, workspace_id: &str) -> anyhow::Result<Self> {
+        ensure!(
+            workspace_id.starts_with("attempt-")
+                && !workspace_id.contains(['/', '\\'])
+                && workspace_id.len() <= 128,
+            "invalid workspace identity"
+        );
+        check_ancestors(root)?;
+        let root = root.canonicalize()?;
+        let directory = root.join(workspace_id);
+        check_ancestors(&directory)?;
+        let owner: Owner = read_guarded_json(&directory.join(MARKER))?;
+        let prefix = format!("attempt-{}-{}-", owner.attempt_id, owner.generation);
+        let suffix = workspace_id
+            .strip_prefix(&prefix)
+            .context("workspace identity mismatch")?;
+        let nonce = Uuid::parse_str(suffix).context("invalid workspace nonce")?;
+        ensure!(
+            owner.schema == "forge/attempt-workspace/v1"
+                && !owner.attempt_id.is_nil()
+                && !owner.lease_id.is_nil()
+                && owner.generation > 0
+                && nonce.simple().to_string() == suffix,
+            "invalid workspace ownership"
+        );
+        let checkout = directory.join("workspace");
+        let workspace = Self {
+            root,
+            directory,
+            checkout,
+            owner,
+        };
+        workspace.verify_owner()?;
+        Ok(workspace)
+    }
+
+    pub fn inventory(root: &Path) -> anyhow::Result<Vec<RetainedWorkspace>> {
+        let root = if root.is_absolute() {
+            root.to_path_buf()
+        } else {
+            std::env::current_dir()?.join(root)
+        };
+        check_ancestors(&root)?;
+        if !root.exists() {
+            return Ok(Vec::new());
+        }
+        let mut inventory = Vec::new();
+        for (index, entry) in fs::read_dir(&root)?.enumerate() {
+            ensure!(
+                index < MAX_INVENTORY_ENTRIES,
+                "workspace inventory exceeds safety limit"
+            );
+            let entry = entry?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                bail!("invalid workspace directory name");
+            };
+            if !name.starts_with("attempt-") {
+                continue;
+            }
+            let workspace = Self::reopen(&root, name)?;
+            let terminal_status = match fs::symlink_metadata(workspace.directory.join(COMPLETION)) {
+                Ok(_) => Some(workspace.read_record(COMPLETION)?.terminal_status),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error.into()),
+            };
+            let acknowledged = match fs::symlink_metadata(workspace.directory.join(ACK)) {
+                Ok(_) => {
+                    let ack = workspace.read_record(ACK)?;
+                    ensure!(
+                        Some(&ack.terminal_status) == terminal_status.as_ref(),
+                        "orphan workspace acknowledgement"
+                    );
+                    true
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                Err(error) => return Err(error.into()),
+            };
+            inventory.push(RetainedWorkspace {
+                workspace_id: name.to_owned(),
+                attempt_id: workspace.owner.attempt_id,
+                lease_id: workspace.owner.lease_id,
+                generation: workspace.owner.generation,
+                terminal_status,
+                acknowledged,
+            });
+        }
+        inventory.sort_by(|a, b| a.workspace_id.cmp(&b.workspace_id));
+        Ok(inventory)
     }
 
     pub fn create_empty_checkout(&self) -> anyhow::Result<()> {
@@ -133,6 +332,10 @@ impl OwnedWorkspace {
     pub async fn cleanup_after_ack(self) -> anyhow::Result<()> {
         tokio::task::spawn_blocking(move || {
             self.verify_owner()?;
+            ensure!(
+                self.read_record(COMPLETION)? == self.read_record(ACK)?,
+                "workspace terminal acknowledgement missing"
+            );
             fs::remove_dir_all(&self.directory).context("remove acknowledged attempt workspace")
         })
         .await
@@ -188,6 +391,21 @@ impl OwnedWorkspace {
     }
 }
 
+fn read_guarded_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
+    let metadata = fs::symlink_metadata(path)?;
+    ensure!(
+        metadata.is_file() && !is_link(&metadata) && metadata.len() <= 4096,
+        "invalid workspace metadata file"
+    );
+    let mut bytes = Vec::new();
+    fs::File::open(path)?.take(4097).read_to_end(&mut bytes)?;
+    ensure!(
+        bytes.len() <= 4096,
+        "workspace metadata exceeds safety limit"
+    );
+    serde_json::from_slice(&bytes).map_err(|_| anyhow::anyhow!("invalid workspace metadata"))
+}
+
 async fn run_git(mut command: Command, diagnostic: &str) -> anyhow::Result<Vec<u8>> {
     // Never include transport output: URLs and helpers may contain credentials.
     command.stderr(Stdio::null());
@@ -239,6 +457,11 @@ mod tests {
         std::env::temp_dir().join(format!("forge-owned-workspace-test-{}", Uuid::new_v4()))
     }
 
+    fn acknowledge_fixture(workspace: &OwnedWorkspace) {
+        workspace.record_completion("success").unwrap();
+        workspace.acknowledge_completion("success").unwrap();
+    }
+
     #[tokio::test]
     async fn fresh_attempts_do_not_reuse_or_delete_existing_directories() {
         let root = root();
@@ -249,8 +472,10 @@ mod tests {
         second.create_empty_checkout().unwrap();
         assert_ne!(first.checkout(), second.checkout());
         assert!(!second.checkout().join("old.txt").exists());
+        acknowledge_fixture(&second);
         second.cleanup_after_ack().await.unwrap();
         assert!(first.checkout().join("old.txt").exists());
+        acknowledge_fixture(&first);
         first.cleanup_after_ack().await.unwrap();
         fs::remove_dir(root).unwrap();
     }
@@ -316,6 +541,7 @@ mod tests {
             fs::read_to_string(owned.checkout().join("tracked.txt")).unwrap(),
             "first"
         );
+        acknowledge_fixture(&owned);
         owned.cleanup_after_ack().await.unwrap();
         let invalid = workspace(&root);
         assert!(
@@ -333,6 +559,85 @@ mod tests {
                 .is_err()
         );
         assert!(missing.directory.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn completion_journal_survives_reopen_and_never_overwrites_conflicts() {
+        let root = root();
+        let owned = workspace(&root);
+        owned.create_empty_checkout().unwrap();
+        let inventory = OwnedWorkspace::inventory(&root).unwrap();
+        assert_eq!(inventory.len(), 1);
+        assert_eq!(inventory[0].terminal_status, None);
+        assert!(!inventory[0].acknowledged);
+        owned.record_completion("failed").unwrap();
+        owned.record_completion("failed").unwrap();
+        assert!(owned.record_completion("success").is_err());
+        assert!(owned.acknowledge_completion("success").is_err());
+        let record = OwnedWorkspace::inventory(&root).unwrap().pop().unwrap();
+        assert_eq!(record.terminal_status.as_deref(), Some("failed"));
+        let reopened = OwnedWorkspace::reopen(&root, &record.workspace_id).unwrap();
+        assert!(reopened.cleanup_after_ack().await.is_err());
+        let reopened = OwnedWorkspace::reopen(&root, &record.workspace_id).unwrap();
+        reopened.acknowledge_completion("failed").unwrap();
+        assert!(OwnedWorkspace::inventory(&root).unwrap()[0].acknowledged);
+        reopened.cleanup_after_ack().await.unwrap();
+        assert!(OwnedWorkspace::inventory(&root).unwrap().is_empty());
+        fs::remove_dir(root).unwrap();
+    }
+
+    #[test]
+    fn inventory_denies_torn_or_foreign_records_and_path_substitution() {
+        let root = root();
+        let owned = workspace(&root);
+        owned.record_completion("success").unwrap();
+        let path = owned.directory.join(COMPLETION);
+        let original = fs::read(&path).unwrap();
+        fs::write(&path, b"{").unwrap();
+        assert!(OwnedWorkspace::inventory(&root).is_err());
+        assert!(owned.record_completion("success").is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"{");
+        fs::write(&path, original).unwrap();
+        assert!(OwnedWorkspace::reopen(&root, "../outside").is_err());
+        fs::rename(&owned.directory, root.join("attempt-forged-name")).unwrap();
+        assert!(OwnedWorkspace::inventory(&root).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn reopened_workspace_must_still_match_the_receipt_identity() {
+        let root = root();
+        let owned = workspace(&root);
+        let record = OwnedWorkspace::inventory(&root).unwrap().pop().unwrap();
+        let mut changed = owned.owner.clone();
+        changed.lease_id = Uuid::new_v4();
+        fs::write(
+            owned.directory.join(MARKER),
+            serde_json::to_vec(&changed).unwrap(),
+        )
+        .unwrap();
+        let reopened = OwnedWorkspace::reopen(&root, &record.workspace_id).unwrap();
+        assert!(
+            reopened
+                .verify_identity(record.attempt_id, record.lease_id, record.generation)
+                .is_err()
+        );
+        assert!(owned.directory.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn completion_metadata_links_are_not_read_or_overwritten() {
+        let root = root();
+        let owned = workspace(&root);
+        let outside = root.join("foreign.json");
+        fs::write(&outside, "secret fixture").unwrap();
+        std::os::unix::fs::symlink(&outside, owned.directory.join(COMPLETION)).unwrap();
+        assert!(owned.record_completion("failed").is_err());
+        assert!(OwnedWorkspace::inventory(&root).is_err());
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "secret fixture");
         fs::remove_dir_all(root).unwrap();
     }
 }

@@ -15,6 +15,29 @@ REST API первой версии Forge CI/CD. Контрольная плос�
 - Сериализация: `serde_json`, `snake_case` для enum-значений статусов.
 - Ошибки: `{"error":{"code":"...","message":"...","request_id":"..."}}` с соответствующим HTTP статусом и header `x-request-id`.
 
+## Runner Terminal Readback
+
+`GET /api/v1/runner/leases/{lease_id}/receipt` требует актуальную runner credential,
+даже в trusted-network режиме. Human/admin PAT или credential другого runner её
+не заменяет; чужой/несуществующий lease — одинаковый `404`, revoked/expired
+runner credential — `401`. Ответ `200`, `Cache-Control: no-store` содержит:
+`protocolVersion`, `leaseId`, `attemptId`, `fencingToken`, `leaseStatus`,
+`terminalStatus`, `completedAt`, `terminalAcknowledged`. Нет lease token,
+diagnostic, task titles или команд.
+
+`terminalAcknowledged=true` требует persisted terminal completed/canceled lease,
+совпадения terminal attempt status и времени окончания. Active/expired/mismatched
+attempt — `false`, не разрешение cleanup/retry. Новая попытка job не подменяет
+identity прежнего receipt. Это runner completion readback, **не** SDLC delivery
+receipt. POST completion остаётся прежней мутацией; unknown POST сверяется GET,
+а не повторной отправкой. Client требует exact version/lease/attempt/generation/
+outcome и terminal lease status; bounded body, без redirect/automatic retry.
+
+```bash
+curl -fsS -H "Authorization: Bearer $CICD_RUNNER_CREDENTIAL" \
+  "$CICD_API_URL/api/v1/runner/leases/$LEASE_ID/receipt"
+```
+
 ## Коды ответов
 
 | Код | Назначение |
