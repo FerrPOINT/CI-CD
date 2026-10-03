@@ -2,6 +2,13 @@
 
 ## 0. Фактическая схема реализованных таблиц
 
+Source delta 2026-10-03 не добавляет таблиц: физическая runner-папка использует
+существующие `execution_attempts.id`, `job_leases.id/generation` и marker
+`forge/attempt-workspace/v1`. Это не самостоятельный queue/lease ledger и не
+SDLC workspace receipt. Cleanup сверяет terminal owner acknowledgement и marker;
+unknown outcome сохраняет папку. Target task/root/assignment receipts остаются в
+[SDLC_DELIVERY_V1](SDLC_DELIVERY_V1.md), а не выводятся из marker JSON.
+
 Фактическая схема задаётся committed SQLx migrations в `backend/migrations/*.sql` и применяется backend при старте через runtime `sqlx::migrate::Migrator`; тот же набор использует `cicd-migrate`. `backend/src/store.rs` остаётся историческим baseline-источником для `0001_bootstrap_v1.sql`, но новые изменения схемы должны идти только отдельными immutable migration files.
 
 ### ER-диаграмма (логическая)

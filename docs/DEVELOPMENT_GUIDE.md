@@ -124,6 +124,30 @@ Current `forge-runner` регистрируется или использует 
 
 ## Карта workspace и пакетов
 
+### Scoped workspace checks, source slice 2026-10-03
+
+```bash
+cargo test --locked -p cicd-server --lib runner_workspace -- --test-threads=1
+cargo test --locked -p cicd-server --lib docker_execution_uses_the_declared_image -- --test-threads=1
+cargo test --locked -p cicd-server --bin forge-runner -- --test-threads=1
+cargo test --locked -p cicd-server --features integration --test integration_db embedded_workspace_uses_pin -- --test-threads=1
+cargo test --locked -p cicd-server --features integration --test integration_db embedded_runner_closes_lease_when_prepare_fails -- --test-threads=1
+cargo clippy --locked -p cicd-server --lib --bin forge-runner -- -D warnings
+```
+
+Integration tests используют собственную PostgreSQL test database и схемы, никогда
+принятые runtime volumes. Git fixture с двумя commits проверяет checkout старого pin
+при новом branch HEAD. Также проверяются сохранение чужой старой папки, failed retry
+с новой generation, marker/link denial, запрет no-checkout bypass и потеря completion
+response. HTTP ACK fixture не доказывает live owner integration. Эти быстрые source
+checks не заменяют общий release gate или автономную SDLC acceptance.
+
+Результат 2026-10-03: 21 scoped тест PASS (4 physical IO, 1 Docker arguments,
+14 external runner, 2 PostgreSQL17.6 integration), scoped clippy для lib/bin и
+изменённого integration target PASS, fmt и docs links/anchors/canonical/orphans PASS.
+Secret scan: 440 text files PASS. Ни deployment, ни live seven-agent scenario,
+ни общий release build этим evidence не подтверждены.
+
 | Путь / package | Ответственность | Статус |
 |---|---|---|
 | `backend/Cargo.toml` | Cargo workspace root, общие Rust dependencies; members `.` / `domain` / `cli` | Current verified |

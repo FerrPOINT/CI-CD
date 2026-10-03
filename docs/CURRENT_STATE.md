@@ -5,6 +5,16 @@
 
 ## Что работает сейчас (Current verified)
 
+### Source delta 2026-10-03, не installation evidence
+
+Runner workspace foundation реализован в source: fresh attempt/lease/generation
+directory, owner marker/path checks, full SHA + clean detached HEAD перед командами,
+cleanup после проверенного terminal acknowledgement. Docker-job больше не видит
+общий root всех попыток. Негативный или неизвестный completion/checkout сохраняет
+папку. Scoped source tests перечислены в [DEVELOPMENT_GUIDE](DEVELOPMENT_GUIDE.md); полный интегрированный
+gate и live acceptance ещё не выполнены. Это не закрывает весь B-SDLC-04:
+см. [границы SDLC receipts](SDLC_DELIVERY_V1.md).
+
 | Capability | Статус | Границы |
 |---|---|---|
 | Проекты CRUD | ✅ | name/repository_url/default_branch; удаление CASCADE |

@@ -417,6 +417,21 @@ git push origin v<version>
 
 Production release добавляет migration test job, clean/prior-schema upgrade evidence, pre-deploy backup ID, signed immutable image digests, approved deployment window, canary/controlled rollout, readiness and domain smoke, мониторинг после релиза и formal release decision. Любая destructive/contract migration требует expand/backfill/compatibility периода и tested forward/restore runbook. Release notes указывают breaking changes, migration requirement, rollback/restore boundary, image digest и known limitations.
 
+## Runner attempt recovery: source contract
+
+Новая попытка получает fresh directory, old job/attempt directory не очищается
+перед запуском. `CICD_RUNNER_KEEP_WORKSPACE` и external `--keep-workspace` сохраняют
+папки даже после ACK. Ошибка checkout, unknown completion или drift marker также
+сохраняют папку независимо от keep setting. Не запускать команды повторно из неё
+и не удалять её общим volume prune/`git clean`.
+
+До явной owner cleanup проверить attempt ID, lease ID/generation, terminal state
+и прекращение прежнего процесса. Marker должен совпасть с ожидаемой identity;
+path не должен проходить symlink/junction. При утрате ACK сверять серверный ledger,
+а не повторять неизвестный effect. Automatic recovery/формальный quarantine API
+и trusted SDLC receipt ещё не реализованы; физическая retention не объявляет их.
+Shell/embedded runner не становятся sandbox этим механизмом (ADR-0007).
+
 ## Связанные документы
 
 - [CURRENT_STATE.md](CURRENT_STATE.md) -- единственный снимок фактически реализованных возможностей.

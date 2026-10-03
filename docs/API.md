@@ -1439,6 +1439,14 @@ Runner protocol обслуживается на `/api/v1/runner/*` и не ис�
 
 `LeaseOffer.attempt.workspace.checkoutUrl` содержит `projects.repository_url`, чтобы внешний `forge-runner` мог выполнить checkout без доступа к БД. `LeaseOffer.attempt.artifacts` содержит только declared relative file paths. Current `forge-runner` — отдельный shell-runner process: он умеет register/heartbeat/poll/ack/scoped secrets resolve/renew/control/artifact upload/logs/complete, checkout по `checkoutUrl`, запуск команд в workspace, передачу declared secrets в env, active-lease heartbeat во время выполнения, polling cancel signal во время команды, отправку stdout/stderr в `job_logs` с best-effort masking, загрузку declared artifact files и terminal completion.
 
+Source delta 2026-10-03: переданный `commitSha` проверяется как full SHA и
+сверяется с detached HEAD до команд. `--no-checkout` не обходит pin; invalid/missing
+object блокирует попытку без fallback на ref. Completion HTTP status сам по себе
+не разрешает cleanup: runner проверяет `{protocolVersion:1,accepted:true,terminalStatus}`
+на соответствие отправленному результату. Rejected/unknown/malformed ACK сохраняет
+attempt directory. Wire API не меняется, новый SDLC receipt endpoint не добавлен.
+Границы source среза описаны в [SDLC delivery](SDLC_DELIVERY_V1.md).
+
 Ограничения MVP: long-poll wakeup уже работает как process-local fast path + PostgreSQL `LISTEN/NOTIFY` для нескольких API-процессов, но это не broker/fairness policy; idempotent chunked log upload, pool/protected-tag policy, advanced capability matching, Kubernetes isolation, full secret rotation/redaction policy и production runner-zone boundary остаются target. Durable `job_queue`, bounded long-poll, ack-timeout requeue, basic tag + current `shell` executor matching, lease-scoped secret delivery, resumable artifact sessions (begin/chunk/complete/abort), active runner heartbeat, project dispatch cap и stale-runner offline reconciliation уже есть как базовый dispatch ledger/execution boundary; Docker job execution ограничен seccomp/resource-class policy. Целевая production runner policy описана в `docs/RUNNER_ARCHITECTURE.md` и `docs/contracts/RUNNER_PROTOCOL.md`.
 
 ### Secrets и artifacts

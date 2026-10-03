@@ -4534,6 +4534,160 @@ async fn embedded_runner_closes_lease_when_prepare_fails() {
 }
 
 #[tokio::test]
+async fn embedded_workspace_uses_pin_and_retains_failed_attempt_without_deleting_old_files() {
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let stage_id = Uuid::new_v4();
+    let job_id = Uuid::new_v4();
+    let attempt_id = Uuid::new_v4();
+    let root = std::env::temp_dir().join(format!("forge-workspace-db-{project_id}"));
+    let repository = root.join("repository");
+    std::fs::create_dir_all(&repository).unwrap();
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&repository)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "Git fixture command failed");
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    git(&["init", "--initial-branch=main"]);
+    git(&["config", "user.name", "Workspace fixture"]);
+    git(&["config", "user.email", "workspace@example.invalid"]);
+    std::fs::write(repository.join("tracked.txt"), "old").unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-m", "old"]);
+    let pin = git(&["rev-parse", "HEAD"]);
+    std::fs::write(repository.join("tracked.txt"), "new").unwrap();
+    git(&["commit", "-am", "new"]);
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(format!("it-owned-workspace-{project_id}"))
+        .bind(repository.to_string_lossy().as_ref())
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO pipelines (id, project_id, git_ref, commit_sha, status) VALUES ($1, $2, 'main', $3, 'queued')")
+        .bind(pipeline_id).bind(project_id).bind(&pin).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO stages (id, pipeline_id, name, position, status) VALUES ($1, $2, 'test', 0, 'queued')")
+        .bind(stage_id).bind(pipeline_id).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO jobs (id, stage_id, name, image, command, position, status, timeout_seconds) VALUES ($1, $2, 'pinned-check', 'unused-shell-image', $3, 0, 'queued', 5)")
+        .bind(job_id).bind(stage_id)
+        .bind("test \"$(cat tracked.txt)\" = old && echo verified-pinned-old && printf dirty > untracked.txt")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) VALUES ($1, $2, 1, 'queued', 'initial')")
+        .bind(attempt_id).bind(job_id).execute(&pool).await.unwrap();
+    let old_directory = std::env::temp_dir().join(format!("forge-runner-{job_id}"));
+    std::fs::create_dir(&old_directory).unwrap();
+    std::fs::write(
+        old_directory.join("do-not-delete"),
+        "foreign previous workspace",
+    )
+    .unwrap();
+    let mut config = cicd::runner::RuntimeRunnerConfig::from_config(
+        &cicd::config::RuntimeConfig::test_default(),
+    );
+    config.mode = cicd::config::RunnerMode::HostShell;
+    config.keep_workspace = false;
+    config.git_root = root.join("bare-repositories");
+    config.artifacts.root = root.join("artifacts");
+    let attempts = |id: Uuid| -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(std::env::temp_dir())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(&format!("attempt-{id}-"))
+            })
+            .map(|entry| entry.path())
+            .collect()
+    };
+    cicd::runner::run_job_with_config(
+        pool.clone(),
+        job_id,
+        cicd::runner::RunningJobs::default(),
+        config.clone(),
+    )
+    .await;
+    let (status, terminal, generation): (String, String, i64) = sqlx::query_as(
+        "SELECT a.status, l.terminal_status, l.generation FROM execution_attempts a JOIN job_leases l ON l.attempt_id = a.id WHERE a.id = $1")
+        .bind(attempt_id).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        (status.as_str(), terminal.as_str(), generation),
+        ("success", "success", 1)
+    );
+    assert!(
+        attempts(attempt_id).is_empty(),
+        "cleanup follows persisted completion"
+    );
+    assert_eq!(
+        std::fs::read_to_string(old_directory.join("do-not-delete")).unwrap(),
+        "foreign previous workspace"
+    );
+    let logs: String = sqlx::query_scalar(
+        "SELECT string_agg(message, E'\\n' ORDER BY sequence) FROM job_logs WHERE attempt_id = $1",
+    )
+    .bind(attempt_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(logs.contains("verified-pinned-old"));
+
+    let retry_id = Uuid::new_v4();
+    sqlx::query(
+        "UPDATE pipelines SET status = 'queued', finished_at = NULL, commit_sha = $2 WHERE id = $1",
+    )
+    .bind(pipeline_id)
+    .bind("f".repeat(40))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE stages SET status = 'queued' WHERE id = $1")
+        .bind(stage_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE jobs SET status = 'queued', finished_at = NULL WHERE id = $1")
+        .bind(job_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) VALUES ($1, $2, 2, 'queued', 'job_retry')")
+        .bind(retry_id).bind(job_id).execute(&pool).await.unwrap();
+    cicd::runner::run_job_with_config(
+        pool.clone(),
+        job_id,
+        cicd::runner::RunningJobs::default(),
+        config,
+    )
+    .await;
+    let (status, terminal, generation): (String, String, i64) = sqlx::query_as(
+        "SELECT a.status, l.terminal_status, l.generation FROM execution_attempts a JOIN job_leases l ON l.attempt_id = a.id WHERE a.id = $1")
+        .bind(retry_id).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        (status.as_str(), terminal.as_str(), generation),
+        ("failed", "failed", 2)
+    );
+    let retained = attempts(retry_id);
+    assert_eq!(retained.len(), 1);
+    let marker: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(retained[0].join(".forge-attempt.json")).unwrap())
+            .unwrap();
+    assert_eq!(marker["attempt_id"], retry_id.to_string());
+    assert_eq!(marker["generation"], 2);
+    assert!(old_directory.join("do-not-delete").exists());
+    std::fs::remove_dir_all(&retained[0]).unwrap();
+    std::fs::remove_dir_all(old_directory).unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+    pool.close().await;
+}
+
+#[tokio::test]
 async fn expired_job_lease_is_reconciled_to_failed_attempt() {
     let pool = test_pool().await;
     let project_id = Uuid::new_v4();
