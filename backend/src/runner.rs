@@ -1074,17 +1074,13 @@ async fn run_job_inner(
                 )
                 .await?;
                 refresh_stage(pool.clone(), job.id).await?;
-                if !config.keep_workspace {
-                    remove_acknowledged_workspace(&pool, &lease, owned_workspace).await;
-                }
+                finish_workspace_retention(&pool, &lease, owned_workspace, config.keep_workspace).await;
                 return Ok(());
             }
             mark_attempt_failed(&pool, attempt_id, &message).await?;
             complete_embedded_job_lease(&pool, lease.id, "failed", Some(&message)).await?;
             refresh_stage(pool.clone(), job.id).await?;
-            if !config.keep_workspace {
-                remove_acknowledged_workspace(&pool, &lease, owned_workspace).await;
-            }
+            finish_workspace_retention(&pool, &lease, owned_workspace, config.keep_workspace).await;
             return Ok(());
         }
     };
@@ -1159,9 +1155,7 @@ async fn run_job_inner(
         )
         .await?;
         refresh_stage(pool.clone(), job.id).await?;
-        if !config.keep_workspace {
-            remove_acknowledged_workspace(&pool, &lease, owned_workspace).await;
-        }
+        finish_workspace_retention(&pool, &lease, owned_workspace, config.keep_workspace).await;
         return Ok(());
     }
     sqlx::query(
@@ -1178,31 +1172,39 @@ async fn run_job_inner(
     .map_err(ApiError::internal)?;
     complete_embedded_job_lease(&pool, lease.id, final_status, error_tail.as_deref()).await?;
     refresh_stage(pool.clone(), job.id).await?;
-    if !config.keep_workspace {
-        remove_acknowledged_workspace(&pool, &lease, owned_workspace).await;
-    }
+    finish_workspace_retention(&pool, &lease, owned_workspace, config.keep_workspace).await;
     Ok(())
 }
 
-async fn remove_acknowledged_workspace(
+async fn finish_workspace_retention(
     pool: &PgPool,
     lease: &EmbeddedJobLease,
     workspace: crate::runner_workspace::OwnedWorkspace,
+    keep_workspace: bool,
 ) {
     // A zero-row completion or a failed readback cannot authorize deletion.
-    let acknowledged = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS (SELECT 1 FROM job_leases WHERE id = $1 AND attempt_id = $2 \
-         AND generation = $3 AND completed_at IS NOT NULL \
-         AND terminal_status IN ('success', 'failed', 'canceled') \
-         AND lease_status IN ('completed', 'canceled'))",
+    let acknowledged = sqlx::query_scalar::<_, String>(
+        "SELECT l.terminal_status FROM job_leases l JOIN execution_attempts a ON a.id = l.attempt_id \
+         WHERE l.id = $1 AND l.attempt_id = $2 AND l.generation = $3 AND l.completed_at IS NOT NULL \
+         AND l.terminal_status IN ('success', 'failed', 'canceled') \
+         AND l.lease_status IN ('completed', 'canceled') \
+         AND a.status = l.terminal_status AND a.finished_at IS NOT NULL",
     )
     .bind(lease.id)
     .bind(lease.attempt_id)
     .bind(lease.generation)
-    .fetch_one(pool)
+    .fetch_optional(pool)
     .await;
-    if matches!(acknowledged, Ok(true)) {
-        if let Err(error) = workspace.cleanup_after_ack().await {
+    if let Ok(Some(outcome)) = acknowledged {
+        if workspace
+            .record_completion(&outcome)
+            .and_then(|()| workspace.acknowledge_completion(&outcome))
+            .is_err()
+        {
+            tracing::warn!(attempt_id = %lease.attempt_id, "workspace completion journal unavailable; files retained");
+            return;
+        }
+        if !keep_workspace && let Err(error) = workspace.cleanup_after_ack().await {
             tracing::warn!(attempt_id = %lease.attempt_id, %error, "acknowledged workspace retained");
         }
     } else {

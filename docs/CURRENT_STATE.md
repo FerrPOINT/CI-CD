@@ -15,6 +15,14 @@ cleanup после проверенного terminal acknowledgement. Docker-job
 gate и live acceptance ещё не выполнены. Это не закрывает весь B-SDLC-04:
 см. [границы SDLC receipts](SDLC_DELIVERY_V1.md).
 
+Source follow-up: runner-owned completion GET, durable local outcome/ACK journal,
+offline inventory и explicit restart reconciliation. Unknown completion сверяется
+без повторного POST; unresolved workspace не разрешает новое external polling.
+Local ACK не является server proof: restart/cleanup повторно читает owner.
+Expiry, другой attempt/fence и подмена marker не подтверждают результат. Source
+tests/ограничения — [runner recovery gate](DEVELOPMENT_GUIDE.md#scoped-runner-recovery-source-gate).
+Installed runtime и B-SDLC-04 task/assignment delivery receipts этим не закрыты.
+
 | Capability | Статус | Границы |
 |---|---|---|
 | Проекты CRUD | ✅ | name/repository_url/default_branch; удаление CASCADE |

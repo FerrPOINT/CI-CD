@@ -9,6 +9,16 @@ SDLC workspace receipt. Cleanup сверяет terminal owner acknowledgement и
 unknown outcome сохраняет папку. Target task/root/assignment receipts остаются в
 [SDLC_DELIVERY_V1](SDLC_DELIVERY_V1.md), а не выводятся из marker JSON.
 
+Runner source хранит два create-new/sync metadata файла в owner attempt directory:
+`.forge-completion.json` — immutable local terminal intent перед completion POST;
+`.forge-completion-ack.json` — тот же intent после exact ACK/readback. Schema
+`forge/attempt-completion/v1`, вложенный прежний owner и `terminal_status`
+(`success | failed | canceled`). Diagnostic, команды, URL, credentials и secrets
+не сохраняются. Повтор равного intent допустим; conflict/torn/link не перезаписывается.
+Local metadata не является trusted SDLC receipt или доказательством отсутствия
+процесса. Server readback использует существующие `job_leases` и
+`execution_attempts`; новых PostgreSQL таблиц и второго scheduler нет.
+
 Фактическая схема задаётся committed SQLx migrations в `backend/migrations/*.sql` и применяется backend при старте через runtime `sqlx::migrate::Migrator`; тот же набор использует `cicd-migrate`. `backend/src/store.rs` остаётся историческим baseline-источником для `0001_bootstrap_v1.sql`, но новые изменения схемы должны идти только отдельными immutable migration files.
 
 ### ER-диаграмма (логическая)

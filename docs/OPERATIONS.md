@@ -12,6 +12,49 @@
 
 Доступ к Docker daemon, хостовой файловой системе, `.env`, bare Git-томам и backup-файлам считается привилегированным. Не передавайте реальные секреты через командную строку, Git, логи или скриншоты.
 
+## Runner Workspace Recovery
+
+Source capability, не подтверждённая installed runtime приёмка. `forge-runner`
+не удаляет workspace до exact terminal ACK. Перед POST записывает и sync-ит
+immutable outcome с attempt/lease/generation; после потерянного ответа выполняет
+owner GET readback, без повторного POST/команд. Равный durable результат разрешает
+ack record и cleanup. Unknown/different/expired остаётся сохранённым.
+
+После restart наличие неacknowledged attempt-папки прекращает startup **до**
+регистрации, heartbeat/poll и новых команд. Сначала inspect, затем reconcile
+с прежней runner credential, а не с новой registration identity:
+
+```bash
+forge-runner --work-dir "$CICD_RUNNER_WORK_DIR" --inspect-workspaces
+forge-runner --work-dir "$CICD_RUNNER_WORK_DIR" --reconcile-workspaces
+```
+
+Credential задаётся защищённым `CICD_RUNNER_CREDENTIAL`; в metadata/CLI args
+её нет. Inspect не делает HTTP, не исполняет Git/команды и не меняет файлы.
+Reconcile читает authenticated receipt каждого законченного attempt и повторно
+проверяет marker/root перед ACK/cleanup. `--keep-workspace` сохраняет confirmed
+папки; их presence допускает startup только после fresh owner readback. Для
+повторного cleanup также нужен fresh owner GET, не доверие local ACK JSON.
+Несовпадение или недоступность owner
+оставляет папку и возвращает nonzero; успешно подтверждённые независимые папки
+могут быть очищены в том же проходе, это partial progress, не atomic batch.
+
+Inventory ограничен 4096 root entries и 4096 bytes/file; не обходит checkout
+рекурсивно, не следует symlink/junction и не чинит чужие/повреждённые records.
+После readback повторно сверяются исходные attempt/lease/generation, включая
+замену marker между inventory и reopen. Ошибка ожидания/подтверждения остановки
+команды не записывает known completion intent; cleanup и restart остаются blocked.
+Output — owner IDs, generation, terminal outcome и local acknowledged flag;
+это локальная privileged диагностика, не публичный каталог, sandbox или signed
+receipt. Old marker без intent, torn write, неизвестное выполнение или foreign
+ownership требуют отдельной owner/process reconciliation. Expiry/EOF и удаление
+папки вручную не доказывают safe stop. Автоматического purge/force-resume нет.
+
+Embedded runner сохраняет тот же journal после проверки terminal lease/attempt
+в своей БД, включая `keep_workspace`. External runner не reconciles embedded
+directories чужой credential. Общий task/assignment quarantine и подтверждённое
+прекращение process tree остаются target [SDLC delivery](SDLC_DELIVERY_V1.md).
+
 ## Локальное развёртывание MVP
 
 ### Предварительные условия

@@ -28,11 +28,18 @@ owner terminal ACK/readback и повторного path/marker guard. Docker-jo
 
 ## Consequences
 
-Есть scoped Git/HTTP/runner tests, без нового API, таблицы, зависимости или очереди.
+Есть scoped Git/HTTP/runner tests, без новой таблицы, зависимости или очереди.
+Source follow-up: create-new/sync completion intent + acknowledgement journal,
+runner-owned GET terminal readback и explicit offline inspect/reconcile CLI.
+External startup не получает новую работу при unresolved папках; readback после
+unknown completion не повторяет POST. Local records не подписывают runtime truth;
+cleanup при restart требует fresh exact server receipt. Expiry/mismatch не ACK.
+No SDLC task/assignment identity или новый scheduler этим не вводятся.
+
 Retention после crash требует disk monitoring и явной owner reconciliation; нельзя
 объявлять cleanup успешным по отсутствию процесса или EOF. Shared cache, shell
 process и embedded Docker/control-plane границы ещё не production sandbox.
-Task/root/assignment permissions, formal quarantine/lookup и trusted versioned receipts
+Task/root/assignment permissions, SDLC quarantine/lookup и trusted versioned receipts
 остаются отдельным B-SDLC-04. Private role/skill content не требуется этому срезу.
 
 ## Related
