@@ -1,5 +1,44 @@
 # Проверка CLI CI/CD
 
+## Каталог исторических миграций — 2026-10-03
+
+Baseline опубликованного main: `6fc5c6677ceeca86b7a7a35138844c3423fa18eb`;
+чистый Base pin `9408802dfa978cba2f67162a49adca6f65851b01`, Rust 1.88.0.
+PostgreSQL 17.6 прочитал защищённый исторический backup от 2026-10-01:
+все 37 checksums совпали с исходниками с учётом неизменных `.gitattributes`
+(часть ранее применённых SQL-файлов сохраняет CRLF). Migration 36/37 взяты
+байт-в-байт из существующего коммита, без переноса Pulse deployment/runner API.
+Подтверждены request_key UUID, unique index и historical config_source.
+Найдены 12 deployment plans; активных Pulse deployments, jobs, queue entries
+или leases в этой копии нет. Это не инвентаризация текущего sdlc1.
+
+Четыре новые PostgreSQL regression tests сначала упали на каталоге 1–35,
+включая `VersionMissing(36)`; после добавления 36/37 — 4/4 PASS. Проверены
+fresh schema, upgrade с 35, повтор без изменения history, неверный checksum,
+сохранность request keys и hashes и чтение исторических plan/deployment через
+существующие API. Тесты входят в обычный `integration_db` workflow gate.
+
+Повторены fmt, minimum Rust, workspace/all-target Clippy, integration Clippy
+для server/CLI и locked release workspace build — PASS. Workspace 164,
+PostgreSQL integration_db 62, target policy 4, CLI real API 2 — PASS.
+OpenAPI dump совпал с опубликованным контрактом. Frontend tree не менялся:
+Node 22.20.0 / pnpm 10.28.1, frozen install, contracts/compat, 196 tests,
+lint/build, generated-file check, packed Base consumer и themes — PASS.
+Docs regression tests 6, docs validator и secret scan — PASS.
+
+На отдельной восстановленной БД native API-only startup с каталогом 1–35
+воспроизводит `VersionMissing(36)`, с 1–37 — readiness 200. После старта
+и остановки все 44 таблицы, sequences, schema, owners/grants неизменны.
+Runner, SMTP и внешние deploy targets отключены. Это не проверка прежних
+runtime image IDs и не рабочий rollout.
+
+CLI/API/roles и generic deployment сценарии сохранены. Pulse остаётся
+тестовым репозиторием/pipeline внутри CI/CD; отдельный постоянный Pulse-стенд
+и специальный deploy runner не создавались. Rollout по-прежнему требует
+восстановленного sdlc1, свежего backup и проверенного previous-image rollback.
+
+## Исходная CLI-приёмка — 2026-10-02
+
 Проверено 2026-10-02 в изолированном task checkout `feat/cli-workflows`.
 
 ## Среда и обязательные gates

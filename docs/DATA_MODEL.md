@@ -218,7 +218,7 @@ Referenced by:
 | Колонка | Тип | Nullable | Default | Описание |
 |---|---|---|---|---|
 | `pipeline_id` | UUID | NOT NULL | — | Primary key и FK → `pipelines.id`, CASCADE |
-| `config_source` | TEXT | NOT NULL | — | `repository` или `legacy_template` |
+| `config_source` | TEXT | NOT NULL | — | `repository`, `legacy_template`; `deployment` сохраняется для исторических snapshots |
 | `parser_version` | TEXT | NOT NULL | — | Current `forge-legacy-linear/1` или `forge-dsl/1.0.0` |
 | `git_ref` | TEXT | NOT NULL | — | Исходный ref trigger-а |
 | `resolved_commit_sha` | TEXT | NULL | — | Best-effort immutable commit SHA, если ref удалось разрешить |
@@ -228,7 +228,7 @@ Referenced by:
 | `plan` | JSONB | NOT NULL | — | Normalised plan: stages, jobs, node keys, `needs` и dependency edges |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | Время фиксации snapshot |
 
-**CHECK constraints:** `config_source IN ('repository','legacy_template')`, `parser_version` длиной `1..64`, hash-поля соответствуют `^[0-9a-f]{64}$`.
+**CHECK constraints:** `config_source IN ('repository','legacy_template','deployment')`, `parser_version` длиной `1..64`, hash-поля соответствуют `^[0-9a-f]{64}$`. Migration 37 восстанавливает ранее применённый каталог; обычный API продолжает создавать прежние repository/template планы, специальный Pulse runner не добавляется.
 
 **Индексы:**
 - `pipeline_plans_pkey` — PRIMARY KEY (`pipeline_id`)
@@ -659,9 +659,15 @@ Runtime maintenance переводит `status='online'` в `offline`, когд�
 | `environment_id` | UUID | NOT NULL | — | FK → `environments(id)` CASCADE |
 | `pipeline_id` | UUID | NULL | — | FK → `pipelines(id)` SET NULL |
 | `rollback_of_id` | UUID | NULL | — | FK → `deployments(id)` SET NULL; исходная delivery-запись для rollback |
+| `request_key` | UUID | NULL | — | Историческое поле migration 36; текущий deployment API его не принимает |
 | `git_ref` | TEXT | NOT NULL | — | Деплойимый Git-реф |
 | `status` | TEXT | NOT NULL | `'pending'` | CHECK: `pending`, `running`, `success`, `failed` |
 | `created_at` | TIMESTAMPTZ | NOT NULL | `now()` | — |
+
+Migration 36 задаёт unique index `deployments_environment_request_key_idx` на
+`(environment_id, request_key)`. Несколько NULL сохраняют прежний create workflow;
+исторические непустые ключи и записи остаются неизменными. Публикация 36/37 не
+добавляет endpoint отмены deployment и не меняет права approval/rollback.
 
 ### 9.5.1 deployment_approvals
 

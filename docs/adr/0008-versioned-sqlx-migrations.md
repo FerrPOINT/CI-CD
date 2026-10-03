@@ -22,6 +22,12 @@ Accepted (partially implemented: committed migrations + `cicd-migrate` + current
 
 ## Related
 
+Уточнение 2026-10-03: каталог дополнен точными ранее применёнными migrations
+36/37 после проверки исторического SQLx ledger. Существующие migration bytes
+и правила `.gitattributes` сохранены; `ignore_missing`, ручное исправление ledger
+и перенос специального Pulse deployment/runner не используются. Публикация
+каталога не заменяет свежий backup и проверку отката рабочего runtime.
+
 - `docs/STORAGE_ARCHITECTURE.md`
 - `docs/MIGRATIONS.md`
 - `docs/DATA_MODEL.md`
