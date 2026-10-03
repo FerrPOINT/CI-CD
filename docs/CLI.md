@@ -324,6 +324,8 @@ CICD_TEST_DATABASE_URL=postgres://... cargo test -p cicd-cli --features integrat
 Текущие Linux/WSL candidates и установка: [CLI_INSTALL.md](CLI_INSTALL.md). Проверки против образов с PostgreSQL, границы fixture execution и блокеры обновления sdlc1: [CLI_VALIDATION.md](CLI_VALIDATION.md). Перед использованием с рабочим стендом требуется подтверждённая совместимость его backend и применённых миграций.
 
 Каталог backend включает ранее применённые migrations 36/37 для чтения
-исторических deployment records. CLI-команды, API и роли не менялись. Pulse
+исторических deployment records и точную migration 38 для совместимости с
+сохранённой схемой pipelines/messaging_outbox. Исторический checksum migration
+38 зависит от CRLF; файл нельзя нормализовать в LF. CLI-команды, API и роли не менялись. Pulse
 остаётся тестовым Git/pipeline приложением внутри CI/CD; специальный deploy
 runner и отдельный постоянный Pulse-стенд этим пакетом не создаются.

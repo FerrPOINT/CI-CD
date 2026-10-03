@@ -15,3 +15,5 @@ backend/migrations/0030_tenants.sql text eol=crlf
 backend/migrations/0031_outbox_email_channel.sql text eol=crlf
 backend/migrations/0032_notification_rules_templates.sql text eol=crlf
 backend/migrations/0033_aggregation_quiet_hours.sql text eol=crlf
+backend/migrations/0038_platform_messaging.sql text eol=crlf
+backend/tests/fixtures/historical_platform_messaging.sql text eol=crlf

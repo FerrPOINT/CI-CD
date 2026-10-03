@@ -22,6 +22,13 @@ Accepted (partially implemented: committed migrations + `cicd-migrate` + current
 
 ## Related
 
+Дополнение для чистой установки sdlc1: ранее использованный image применил
+version 38 `platform messaging`. Каталог сохраняет точные bytes этой версии;
+добавлена адресная CRLF-политика для SQL и независимой historical fixture.
+Это совместимость ledger, а не включение messaging publisher/subscriber:
+Base pin, API и runner protocol не меняются. Replay сохраняет history,
+outbox rows и terminal event sequence; неверный checksum остаётся отказом.
+
 Уточнение 2026-10-03: каталог дополнен точными ранее применёнными migrations
 36/37 после проверки исторического SQLx ledger. Существующие migration bytes
 и правила `.gitattributes` сохранены; `ignore_missing`, ручное исправление ledger

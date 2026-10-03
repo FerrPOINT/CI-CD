@@ -2,6 +2,10 @@
 
 ## Overview
 
+Каталог backend включает ранее применённые версии 1–38. Migration 38 сохраняет
+историческую outbox-схему, но не меняет API, DTO, роли и runner protocol.
+CLI не применяет migrations; несовместимый ledger/checksum остаётся ошибкой.
+
 REST API первой версии Forge CI/CD. Контрольная плоскость использует JSON; Git Smart HTTP, artifact download, SSE logs и `/metrics` имеют собственные content types. Основные группы: проекты, запуск пайплайнов, переходы статусов задач, append-only логи, platform resources, auth и Git hosting.
 
 > **Source of truth:** актуальная реализация и OpenAPI-аннотации в `backend/src/api.rs`, `backend/src/platform.rs`, `backend/src/runner_protocol.rs`, `backend/src/git_host.rs`, `backend/src/pulls.rs`; committed contract — `openapi/openapi.yaml`.
@@ -72,8 +76,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 37,
-    "latest_required_version": 37,
+    "latest_applied_version": 38,
+    "latest_required_version": 38,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],

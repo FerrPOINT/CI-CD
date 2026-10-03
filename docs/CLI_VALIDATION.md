@@ -114,3 +114,45 @@ Scoped restore исторического backup от 2026-10-01: три БД (T
 Исторические Wiki idempotency records не переписывались. Новый multipart hash подтверждён для записей после обновления; replay старых records с прежним raw multipart hash не сертифицирован, автоматической замены ключа нет. Wiki QA документы/space архивированы через API; до удаления временной QA-копии attachments/evidence/audit/replay retention rows оставались в ней. После проверки удалены только собственные QA ресурсы: 8 контейнеров, 7 volumes и 2 сети. Исходный protected backup и candidate images сохранены; исходные retention records не переписывались. Production pins, signing keys и volumes не изменялись.
 
 **Статус:** исходники и три CLI-кандидата проверены; обновление sdlc1, прежние image rollback, живая приёмка обновлённого стенда и 15-минутное наблюдение не выполнены. QA CI/CD на пустой БД не заменяет приёмку сохранённых данных. Native Windows/macOS/musl, version bumps, tags и публичный release не входят в поставку.
+
+## Совместимость с каталогом 38 — 2026-10-03
+
+Отдельная задача восстановления предоставила чистый sdlc1 вместо удалённого
+старого Docker. Его CI/CD image
+`sha256:173e2ec9c9df40b5a72a020508fff8423a284bc79cf38fb48cc8aa9c5eaac8a2`
+содержит применённые migrations 1–38. Защищённая свежая согласованная копия
+трёх БД и пяти файловых volumes проверена restore в собственные пустые QA
+volumes: rows, sequences, columns, indexes, constraints, owners/grants и
+файловые hashes/права совпадают. Незначительная разница скобок в одном CHECK
+после pg_dump/restore отдельно проверена на эквивалентность выражений.
+
+Кандидат из опубликованного main `a3c54fd36cf4f253fe51934ecf65b236a6d49cd6`
+воспроизводит VersionMissing(38) на этой копии без изменения данных. Добавлена
+точная существующая migration 38 из baseline image: 1057 bytes, CRLF, SHA-384
+`875f127c9f0c51477f61cee89816edea0168d5cf842f3bdbfce5d683df033af224f5619035439f84359f671aee2981ce`.
+Ledger и исторические данные не переписываются. Публикуется только каталог
+схемы; messaging SDK, publisher/subscriber, новые API и изменения Base не входят.
+
+Регрессия сначала воспроизвела VersionMissing(38) на каталоге 1–37. На
+PostgreSQL 17.6-alpine новый каталог проверен для свежей БД, upgrade с 35 и 37,
+replay ранее применённых 36/37/38, отказа при неверном checksum и сохранности
+исторических deployment plans и outbox/pipeline records. Pipeline читается
+через прежний API после replay. Тестовые БД forge_test_cicd и forge_test_cli
+изолированы; временный Compose-проект не подключён к рабочим данным.
+
+Rust 1.88.0, locked dependencies, чистый опубликованный Base
+`9408802dfa978cba2f67162a49adca6f65851b01`: fmt, minimum Rust, workspace Clippy,
+workspace tests, PostgreSQL integration_db (63), integration_target_policy (4),
+CLI real API (2), server/CLI Clippy с feature integration, release workspace
+build и OpenAPI drift — PASS. Эти результаты относятся к каталоговой поправке,
+а не к полной приёмке нового runtime.
+
+Node 22.20.0 / pnpm 10.28.1 на неизменённом frontend tree: frozen install,
+OpenAPI check/compat, 196 tests, lint/build, generated contract/lockfile check,
+packed Base consumer и effective themes — PASS. Documentation regression tests
+(6), штатный documentation validator, secret scan и git diff --check — PASS.
+
+Baseline pins пока не изменены. Полная QA новых образов, репетиция отката на
+точные images нового baseline, live acceptance и 15-минутное наблюдение остаются
+обязательными этапами. Исторические доказательства предыдущих прогонов выше
+сохраняются отдельно и не подменяют эту проверку.

@@ -9,6 +9,11 @@
 
 ## [Unreleased]
 
+- Каталог SQLx сохраняет точную уже применённую migration 38 `platform messaging`
+  с историческими CRLF/checksum. Backend принимает такой ledger без удаления
+  записей; регрессия проверяет outbox, terminal event sequence и checksum mismatch.
+  API, Base pin и код messaging publisher/subscribers не менялись.
+
 - Каталог SQLx включает точные ранее применённые migrations 36/37: запуск на
   совместимой исторической БД больше не отклоняется с `VersionMissing(36)`.
   Deployment API, роли и runner protocol не менялись; добавлены PostgreSQL
