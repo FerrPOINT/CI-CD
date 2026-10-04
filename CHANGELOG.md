@@ -30,6 +30,7 @@
   cleanup требует terminal acknowledgement и сохранённый owner marker. Docker-job
   больше не получает общий volume с workspace других попыток. Это source foundation,
   не закрытая автономная SDLC/live acceptance.
+- Документирована принятая поставка трёх CLI на sdlc1: backup/restore/rollback, live-проверки, Linux/WSL установка и сохранённые ограничения.
 
 - Каталог SQLx сохраняет точную уже применённую migration 38 `platform messaging`
   с историческими CRLF/checksum. Backend принимает такой ledger без удаления

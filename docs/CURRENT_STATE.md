@@ -11,13 +11,32 @@ Dedicated project-bound machine API регистрирует strict task/assignm
 lease request и owner-issued immutable blocked operation receipt. Original-key
 replay/readback, concurrency/payload conflict, local lease/generation/source и
 readonly permission guards реализованы. Optional OwnedWorkspace observation
-сверяет exact local origin, detached SHA и clean tree; ничего не создаёт/запускает.
+сверяет exact local origin, detached SHA и реальные raw blob bytes/types/modes
+с pinned tree, независимо от Git index flags/stat cache; ничего не создаёт/запускает.
 Tracker admitted execution и authoritative workspace binding отсутствуют:
 `dispatchAllowed=false`, оба blockers обязательны. Native-ready, task workspace
 prepared receipt, scoped branch/credentials и полный B-SDLC-04 packet не закрыты.
 [Контракт и ограничения](SDLC_DELIVERY_V1.md#source-slice-task-bound-workspace-operation-2026-10-04).
 
 ### Source delta 2026-10-03, не installation evidence
+
+Merge с `origin/main f51c225378d18a2c383adfc71c93a56193b2dfe5` сохраняет
+принятую CLI-поставку и исторические SQL bytes 1–38, не откатывая local 39/40.
+Linux/Rust1.88/PostgreSQL17.6 gate на merged source: 32 filesystem/worker,
+8 workspace PG/HTTP, 6 migration catalog upgrade/replay/compatibility,
+18 forge-runner и 2 binary contract tests — всего 66 distinct cases PASS.
+Workspace all-target check, scoped server/runner/integration Clippy и fmt PASS;
+documentation checker и heuristic secret scan (500 text files) PASS.
+Clippy fix убирает только лишнее заимствование в integration fixture.
+
+Evidence: `.local/preparation-qa/sdlc-qa-forge-preparation-79451585.log`, SHA256
+`ff796ed84983e23a294109298ddecdf0cd6d7ea4e2d61cd38a454b8ba312c2b5`.
+Exact finally удалил project `sdlc-qa-forge-preparation-79451585` с сохранением
+external caches; cleanup log SHA256
+`9d4874b45c3674c98304766f5a18ea4fde6f92652d69629d7bb8738bc477300c`.
+Это scoped source evidence, не полный release/CI gate или live acceptance.
+Task source binding, admitted candidate writes, exact pipeline/deployment/
+health/acceptance receipts и rollout остаются открытыми.
 
 Runner workspace foundation реализован в source: fresh attempt/lease/generation
 directory, owner marker/path checks, full SHA + clean detached HEAD перед командами,

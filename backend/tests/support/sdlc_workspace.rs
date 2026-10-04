@@ -678,7 +678,7 @@ async fn sdlc_workspace_physical_pin_marker_clean_and_role_are_not_admission() {
     next.operation_key = "physical-new-key".into();
     git(owned.checkout(), &["checkout", "-b", "mutable-source"]);
     assert_eq!(f.post(&next).await.0, StatusCode::CONFLICT);
-    git(owned.checkout(), &["checkout", "--detach", &pin]);
+    git(owned.checkout(), &["checkout", "--detach", pin]);
     std::fs::write(owned.checkout().join("artifact.txt"), "dirty\n").unwrap();
     assert_eq!(f.post(&next).await.0, StatusCode::CONFLICT);
     // Original replay never observes/changes a physical resource again.
