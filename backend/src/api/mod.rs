@@ -17,6 +17,7 @@ pub(crate) mod pipelines_routes;
 pub(crate) mod projects_routes;
 pub(crate) mod readiness;
 pub(crate) mod router;
+pub(crate) mod sdlc_workspace;
 #[cfg(test)]
 use authz_mw::{
     ProjectScopeRef, RateLimitRule, api_token_scope_allows, project_scope_ref, rate_limit_client,
@@ -88,6 +89,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         )
     ),
     paths(
+        sdlc_workspace::prepare_workspace_operation, sdlc_workspace::get_workspace_operation,
         crate::api::readiness::health, crate::api::readiness::readiness, metrics, serve_openapi_json,
         crate::api::auth_routes::auth_login, crate::api::auth_routes::auth_refresh,
         crate::api::auth_routes::auth_logout,
@@ -172,6 +174,15 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::api::pipelines_routes::get_test_report, crate::api::pipelines_routes::upload_test_report,
     ),
     components(schemas(
+        crate::domain::sdlc_workspace::WorkspaceOperationRequest,
+        crate::domain::sdlc_workspace::WorkspaceTaskBinding,
+        crate::domain::sdlc_workspace::WorkspaceOperationReceipt,
+        crate::domain::sdlc_workspace::WorkspaceOperationReadback,
+        crate::domain::sdlc_workspace::WorkspaceOperationLookup,
+        crate::domain::sdlc_workspace::WorkspaceRole,
+        crate::domain::sdlc_workspace::WorkspaceAccess,
+        crate::domain::sdlc_workspace::WorkspaceOperationStatus,
+        crate::domain::sdlc_workspace::WorkspaceOperationBlocker,
         crate::auth::LoginRequest, crate::auth::LogoutRequest, crate::auth::LogoutResponse, crate::auth::RefreshRequest, crate::auth::TokenPair,
         dto::Project, dto::CreateProject, projects_routes::UpdateProject, dto::ProjectMembership, dto::ProjectMembershipInput,
         crate::api::readiness::Readiness,

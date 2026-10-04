@@ -141,6 +141,7 @@ pub(crate) fn build_router_with_cors(
         )
         .merge(crate::platform::routes())
         .merge(crate::runner_protocol::routes())
+        .merge(super::sdlc_workspace::routes())
         .route("/api/v1/projects", get(list_projects).post(create_project))
         .route(
             "/api/v1/projects/{project_id}",

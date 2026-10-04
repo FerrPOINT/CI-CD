@@ -388,9 +388,11 @@ dependencies = [
 name = "cicd-domain"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "serde",
  "thiserror",
  "utoipa",
+ "uuid",
 ]
 
 [[package]]
@@ -398,6 +400,8 @@ name = "cicd-infra"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "cicd-domain",
+ "serde_json",
  "sqlx",
  "uuid",
 ]

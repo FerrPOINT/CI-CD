@@ -22,6 +22,9 @@ use std::str::FromStr;
 use tower::ServiceExt;
 use uuid::Uuid;
 
+#[path = "support/sdlc_workspace.rs"]
+mod sdlc_workspace;
+
 type CanceledExternalLeaseState = (
     String,
     String,
@@ -8821,7 +8824,7 @@ async fn migration_catalog_contains_exact_historical_36_and_37() {
     let catalog = cicd::migrations().await.unwrap();
     assert_eq!(
         catalog.iter().map(|m| m.version).collect::<Vec<_>>(),
-        (1..=39).collect::<Vec<_>>()
+        (1..=40).collect::<Vec<_>>()
     );
     for (version, description, sql, checksum) in HISTORICAL_DEPLOYMENT_MIGRATIONS {
         let migration = catalog
@@ -8840,7 +8843,7 @@ async fn migration_catalog_contains_exact_historical_36_and_37() {
 #[tokio::test]
 async fn migration_catalog_fresh_and_prior_35_or_37_upgrade() {
     let catalog = cicd::migrations().await.unwrap();
-    for prior_schema in [None, Some(35), Some(37), Some(38)] {
+    for prior_schema in [None, Some(35), Some(37), Some(38), Some(39)] {
         let (pool, admin, schema) = migration_catalog_empty_pool().await;
         if let Some(version) = prior_schema {
             migration_catalog_subset(&catalog, version)
@@ -8854,7 +8857,7 @@ async fn migration_catalog_fresh_and_prior_35_or_37_upgrade() {
                 .fetch_all(&pool)
                 .await
                 .unwrap();
-        assert_eq!(versions, (1..=39).collect::<Vec<_>>());
+        assert_eq!(versions, (1..=40).collect::<Vec<_>>());
         let history = migration_catalog_history(&pool).await;
         catalog.run(&pool).await.unwrap();
         assert_eq!(migration_catalog_history(&pool).await, history);
@@ -8969,7 +8972,7 @@ async fn migration_catalog_checksum_mismatch_does_not_change_history() {
     let (pool, admin, schema) = migration_catalog_empty_pool().await;
     catalog.run(&pool).await.unwrap();
     let history = migration_catalog_history(&pool).await;
-    let mut changed = migration_catalog_subset(&catalog, 39);
+    let mut changed = migration_catalog_subset(&catalog, 40);
     let migration = changed
         .migrations
         .to_mut()
@@ -9055,7 +9058,7 @@ async fn migration_catalog_accepts_historical_38_and_preserves_outbox() {
         .find(|m| m.version == 38)
         .expect("version 38");
     assert_eq!(migration.sql, historical_sql);
-    let mut changed = migration_catalog_subset(&catalog, 39);
+    let mut changed = migration_catalog_subset(&catalog, 40);
     changed
         .migrations
         .to_mut()

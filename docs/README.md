@@ -13,6 +13,8 @@
 
 ## Архитектура и контракты
 
+- [SDLC_DELIVERY_V1](SDLC_DELIVERY_V1.md) — target delivery packet и actual blocked workspace operation owner API; [ADR-0018](adr/0018-blocked-workspace-operation-ledger.md) — граница authority.
+
 - [ARCHITECTURE](ARCHITECTURE.md), [FUNCTIONAL_ARCHITECTURE](FUNCTIONAL_ARCHITECTURE.md), [DOMAIN_MODEL](DOMAIN_MODEL.md), [DATA_MODEL](DATA_MODEL.md) — narrative и модель данных.
 - [contracts/](contracts/) — нормативные target-контракты API, authz, runner protocol, pipeline DSL, events, lifecycle, migrations и UI/API.
 - [ADR](ADR.md) и [adr/](adr/) — принятые решения; следующий свободный номер ведётся в ADR-0009.

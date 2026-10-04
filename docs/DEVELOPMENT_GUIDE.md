@@ -330,6 +330,38 @@ backend/PG gate с `--locked`, обновите SBOM и сохраните но�
 
 ## OpenAPI и generated types
 
+### Scoped SDLC workspace operation source gate
+
+Rust 1.88 / disposable PostgreSQL 17.6, отдельный реальный temporary Compose
+project `sdlc-qa-forge-workspace-<unique>` с `sdlc.task`/`sdlc.purpose`, tmpfs DB,
+без host ports/runtime volumes. External dependency/target caches сохраняются.
+Только project-owned cleanup в finally: exact compose `down --remove-orphans`.
+Ни `docker run`, ни accepted/shared DB, ни полный release build не используются.
+
+Внутри такого isolated runner выполняются scoped команды:
+
+```bash
+cargo test --locked --offline -p cicd-domain sdlc_workspace
+cargo test --locked --offline -p cicd-server --features integration --test integration_db sdlc_workspace -- --test-threads=1
+cargo test --locked --offline -p cicd-server --features integration --test integration_db migration_catalog -- --test-threads=1
+cargo test --locked --offline -p cicd-server --lib runner_workspace -- --test-threads=1
+cargo test --locked --offline -p cicd-server --lib authz_route -- --test-threads=1
+cargo test --locked --offline -p cicd-server --lib config::tests -- --test-threads=1
+cargo clippy --locked --offline -p cicd-server --lib -- -D warnings
+cargo clippy --locked --offline -p cicd-server --features integration --test integration_db -- -D warnings
+cargo fmt --all --check
+cargo run --locked --offline -p cicd-server --bin openapi-dump -- ../openapi/openapi.yaml
+```
+
+`CICD_TEST_DATABASE_URL` должен указывать disposable DB с именем `forge_test_*`.
+Optional `FORGE_WORKSPACE_FIXTURE_PATH` сохраняет generated actual PG/HTTP typed
+request/blocked receipt/readback без credentials; fixture не installation proof.
+Frontend generator/check/compat и scoped generated schema typecheck проверяют
+экспорт без полного UI build. Read-only dependency cache может переиспользоваться;
+Base source для Rust/shared tools соответствует `.base-revision`, mirrors не
+редактируются. Native/assignment counterpart gate ещё не выполнен; зелёные checks
+не делают API admitted workspace receipt или runtime-ready capability.
+
 OpenAPI-first artifact уже current: Rust `utoipa` annotations генерируют committed `openapi/openapi.yaml`, а committed frontend schema `frontend/src/api/schema.d.ts` регенерируется через `pnpm openapi:generate` и проверяется `pnpm openapi:check`; `pnpm openapi:compat` проверяет backward compatibility против base/default branch. Отдельный `cicd-api` crate и generated transport boundary остаются target.
 
 Текущий порядок при изменении API:

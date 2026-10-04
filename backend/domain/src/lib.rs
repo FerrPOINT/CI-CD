@@ -5,6 +5,7 @@
 //! infrastructure supplies adapters for persistent and external resources.
 
 use serde::{Deserialize, Serialize};
+pub mod sdlc_workspace;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]

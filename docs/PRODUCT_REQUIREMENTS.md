@@ -2,6 +2,12 @@
 
 ## 1. Назначение
 
+Bounded source requirement `REQ-SDLC-001`: machine-only immutable task/assignment-
+bound workspace operation и original-key readback. Реализован только blocked
+owner preflight/ledger; authoritative Tracker admission/workspace binding,
+prepared resource receipt и полный delivery packet остаются target. Контракт:
+[SDLC_DELIVERY_V1](SDLC_DELIVERY_V1.md), [ADR-0018](adr/0018-blocked-workspace-operation-ledger.md).
+
 Forge CI/CD -- self-hosted control plane для доставки исходного кода: от Git-репозитория и определения pipeline до выполнения задач, сохранения доказательств выполнения, развёртывания и автоматизации интеграций. Продукт предназначен для команд, которым нужен контролируемый локальный или собственный CI/CD-контур без передачи исходного кода и данных исполнения внешнему SaaS-провайдеру.
 
 Forge связывает жизненный цикл `Git push -> pipeline -> execution -> logs/artifacts -> deployment` и предоставляет Dashboard, CLI и программный API как равноправные способы работы с ним.

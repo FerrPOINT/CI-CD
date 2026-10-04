@@ -19,6 +19,46 @@ REST API первой версии Forge CI/CD. Контрольная плос�
 - Сериализация: `serde_json`, `snake_case` для enum-значений статусов.
 - Ошибки: `{"error":{"code":"...","message":"...","request_id":"..."}}` с соответствующим HTTP статусом и header `x-request-id`.
 
+## SDLC Workspace Operation
+
+Source-срез: [delivery contract](SDLC_DELIVERY_V1.md#source-slice-task-bound-workspace-operation-2026-10-04),
+[ADR-0018](adr/0018-blocked-workspace-operation-ledger.md). DTO и пути экспортируются
+Rust exporter в `openapi/openapi.yaml`; request использует camelCase.
+
+- POST `/api/v1/projects/{project_id}/sdlc/workspace-operations`: strict
+  `WorkspaceOperationRequest`, максимум 16 KiB. Dedicated project-bound Forge
+  service account, `api:write`. 200 — immutable **blocked operation receipt**,
+  не workspace preparation/admission.
+- GET `/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}`:
+  тот же subject, `api:read`; обязательные query `requestHash`, `taskId`,
+  `rootTaskId`, `assignmentId`, `executionId`, `fencingToken` должны совпасть
+  с original receipt. Ответ содержит original receipt и fresh lease observation.
+
+Configured auth и `CICD_SDLC_WORKSPACE_SUBJECT` (non-nil service-account UUID)
+обязательны. Human/admin, Central PAT и runner credentials не имеют prepare/lookup
+rights. Не настроенный subject — 503; чужие project/subject/scopes — 403;
+revoked token — 401; нет owned original key — 404; changed payload/key, stale
+binding/hash, wrong lease/attempt/generation/repository/SHA — 409. Неизвестные
+request fields, включая receipt/readiness/stopped, отклоняются (422);
+oversized body — 413; invalid typed values/readonly-write request — 400.
+
+`operationKey` — 1–128 ASCII букв/цифр/`_.:-`; SHA-256 — 64 lowercase hex,
+source SHA — 40 lowercase hex. `workspaceId` — existing inventory ID
+`attempt-{attempt UUID}-{generation}-{nonce UUID simple}`, не путь/URL.
+`workspaceGeneration` и Tracker `binding.fencingToken` независимы.
+`binding.trackerInstanceId` — exact строковый namespace (не UUID), 1–256 bytes,
+без control/краевого whitespace; Tracker revision/fence — `1..9007199254740991`,
+как actual owner reservation DTO. Поля только declared, не admitted authority.
+PM отсутствует; write request допускается только для Developer, но не выдаёт
+write capability, branch или credentials.
+
+Receipt `schema=forge/workspace-operation-receipt/v1`, `status=blocked`,
+`dispatchAllowed=false` содержит owner-issued UUID, время, hash и exact original
+request. Admission/workspace authority blockers обязательны. Optional owner-local
+physical pin/clean checks не заменяют Tracker authority. POST replay не сверяет
+заново resource и не renew-ит head; fresh expiry/reconciliation доступны отдельным
+GET. Expiry и terminal без accepted completion не дают stop/cleanup proof.
+
 ## Runner Terminal Readback
 
 `GET /api/v1/runner/leases/{lease_id}/receipt` требует актуальную runner credential,

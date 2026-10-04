@@ -4,6 +4,12 @@ Target интеграция автономного SDLC: [delivery receipts v1](
 Она переиспользует текущий Forge, не ограничивает его хранением исходников и
 не объявляет candidate/workspace/acceptance protocol уже реализованным.
 
+Bounded source workspace operation ledger: [ADR-0018](adr/0018-blocked-workspace-operation-ledger.md).
+Typed domain request/immutable blocked receipt → owner API с dedicated machine
+authorization → infra transaction и existing lease/source/OwnedWorkspace readback.
+Caller binding не authoritative: pending Tracker admission/workspace binding
+оставляют effect закрытым. Нового scheduler, claim или writable resource нет.
+
 ## 1. Контекст
 
 Self-hosted CI/CD control plane: Git-хостинг (bare-репозитории + Smart HTTP + post-receive auto-trigger), пайплайны со стадиями и джобами, embedded runner (Docker/shell), внешний `forge-runner` shell MVP поверх runner protocol, платформенные ресурсы (runners, secrets, artifacts, environments, schedules, webhooks, notifications, reports, audit, users, tokens) и React Dashboard.

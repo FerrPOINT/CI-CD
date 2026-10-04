@@ -5,6 +5,18 @@
 
 ## Что работает сейчас (Current verified)
 
+### Source delta 2026-10-04: blocked workspace operation, не admission
+
+Dedicated project-bound machine API регистрирует strict task/assignment/source/
+lease request и owner-issued immutable blocked operation receipt. Original-key
+replay/readback, concurrency/payload conflict, local lease/generation/source и
+readonly permission guards реализованы. Optional OwnedWorkspace observation
+сверяет exact local origin, detached SHA и clean tree; ничего не создаёт/запускает.
+Tracker admitted execution и authoritative workspace binding отсутствуют:
+`dispatchAllowed=false`, оба blockers обязательны. Native-ready, task workspace
+prepared receipt, scoped branch/credentials и полный B-SDLC-04 packet не закрыты.
+[Контракт и ограничения](SDLC_DELIVERY_V1.md#source-slice-task-bound-workspace-operation-2026-10-04).
+
 ### Source delta 2026-10-03, не installation evidence
 
 Runner workspace foundation реализован в source: fresh attempt/lease/generation

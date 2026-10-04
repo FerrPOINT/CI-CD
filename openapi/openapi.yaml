@@ -1948,6 +1948,119 @@ paths:
                 $ref: '#/components/schemas/Schedule'
         '400':
           description: ''
+  /api/v1/projects/{project_id}/sdlc/workspace-operations:
+    post:
+      tags:
+      - SDLC workspace
+      operationId: prepare_workspace_operation
+      parameters:
+      - name: project_id
+        in: path
+        description: Forge project UUID
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkspaceOperationRequest'
+        required: true
+      responses:
+        '200':
+          description: Immutable blocked operation receipt; no workspace admission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceOperationReceipt'
+        '400':
+          description: Malformed binding or access
+        '401':
+          description: Missing, expired or revoked credential
+        '403':
+          description: Machine/project/scope denied
+        '404':
+          description: Owner project missing
+        '409':
+          description: Changed original key or stale local source/lease
+        '413':
+          description: Request exceeds 16 KiB
+        '422':
+          description: Unknown, null or malformed typed fields
+        '503':
+          description: Owner configuration unavailable
+  /api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}:
+    get:
+      tags:
+      - SDLC workspace
+      operationId: get_workspace_operation
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: operation_key
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: requestHash
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: taskId
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: rootTaskId
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: assignmentId
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: executionId
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: fencingToken
+        in: query
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        '200':
+          description: Original receipt plus fresh lease observation; never renewal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceOperationReadback'
+        '400':
+          description: Missing or malformed original lookup identity
+        '401':
+          description: Missing, expired or revoked credential
+        '403':
+          description: Machine/project/read scope denied
+        '404':
+          description: No receipt owned by this subject
+        '409':
+          description: Original binding/hash mismatch
+        '503':
+          description: Owner configuration unavailable
   /api/v1/projects/{project_id}/secrets:
     get:
       tags:
@@ -6233,6 +6346,224 @@ components:
           format: uuid
         url:
           type: string
+    WorkspaceAccess:
+      type: string
+      enum:
+      - read_only
+      - read_write
+    WorkspaceOperationBlocker:
+      type: string
+      enum:
+      - tracker_admission_unavailable
+      - tracker_workspace_binding_unavailable
+      - physical_workspace_observation_unavailable
+    WorkspaceOperationLookup:
+      type: object
+      required:
+      - requestHash
+      - taskId
+      - rootTaskId
+      - assignmentId
+      - executionId
+      - fencingToken
+      properties:
+        assignmentId:
+          type: string
+          format: uuid
+        executionId:
+          type: string
+          format: uuid
+        fencingToken:
+          type: integer
+          format: int64
+        requestHash:
+          type: string
+        rootTaskId:
+          type: string
+          format: uuid
+        taskId:
+          type: string
+          format: uuid
+      additionalProperties: false
+    WorkspaceOperationReadback:
+      type: object
+      required:
+      - receipt
+      - expired
+      - reconciliationNeeded
+      properties:
+        currentGeneration:
+          type:
+          - integer
+          - 'null'
+          format: int64
+        expired:
+          type: boolean
+        leaseExpiresAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        leaseStatus:
+          type:
+          - string
+          - 'null'
+        receipt:
+          $ref: '#/components/schemas/WorkspaceOperationReceipt'
+        reconciliationNeeded:
+          type: boolean
+      additionalProperties: false
+    WorkspaceOperationReceipt:
+      type: object
+      description: Owner-issued operation receipt. Not base-sdlc/workspace-receipt/v1.
+      required:
+      - schema
+      - operationId
+      - projectId
+      - requestHash
+      - request
+      - recordedAt
+      - status
+      - blockers
+      - physicalSourceObserved
+      - dispatchAllowed
+      properties:
+        blockers:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkspaceOperationBlocker'
+        dispatchAllowed:
+          type: boolean
+        operationId:
+          type: string
+          format: uuid
+        physicalSourceObserved:
+          type: boolean
+        projectId:
+          type: string
+          format: uuid
+        recordedAt:
+          type: string
+          format: date-time
+        request:
+          $ref: '#/components/schemas/WorkspaceOperationRequest'
+        requestHash:
+          type: string
+        schema:
+          type: string
+        status:
+          $ref: '#/components/schemas/WorkspaceOperationStatus'
+      additionalProperties: false
+    WorkspaceOperationRequest:
+      type: object
+      description: A request is declared input, never admission evidence or a caller-issued receipt.
+      required:
+      - contractVersion
+      - operationKey
+      - binding
+      - repositoryId
+      - sourceCommit
+      - leaseId
+      - attemptId
+      - workspaceGeneration
+      - workspaceId
+      - role
+      - access
+      properties:
+        access:
+          $ref: '#/components/schemas/WorkspaceAccess'
+        attemptId:
+          type: string
+          format: uuid
+        binding:
+          $ref: '#/components/schemas/WorkspaceTaskBinding'
+        contractVersion:
+          type: integer
+          format: int32
+          minimum: 0
+        leaseId:
+          type: string
+          format: uuid
+        operationKey:
+          type: string
+        repositoryId:
+          type: string
+          format: uuid
+        role:
+          $ref: '#/components/schemas/WorkspaceRole'
+        sourceCommit:
+          type: string
+        workspaceGeneration:
+          type: integer
+          format: int64
+        workspaceId:
+          type: string
+      additionalProperties: false
+    WorkspaceOperationStatus:
+      type: string
+      enum:
+      - blocked
+    WorkspaceRole:
+      type: string
+      enum:
+      - analyst
+      - architect
+      - developer
+      - reviewer
+      - tester
+      - devops
+    WorkspaceTaskBinding:
+      type: object
+      required:
+      - trackerInstanceId
+      - trackerProjectId
+      - taskId
+      - rootTaskId
+      - assignmentId
+      - executionId
+      - routingSnapshotId
+      - requirementRevision
+      - fencingToken
+      - assignmentHash
+      - workflowTaskRef
+      properties:
+        assignmentHash:
+          type: string
+        assignmentId:
+          type: string
+          format: uuid
+        executionId:
+          type: string
+          format: uuid
+        fencingToken:
+          type: integer
+          format: int64
+          maximum: 9007199254740991
+          minimum: 1
+        requirementRevision:
+          type: integer
+          format: int64
+          maximum: 9007199254740991
+          minimum: 1
+        rootTaskId:
+          type: string
+          format: uuid
+        routingSnapshotId:
+          type: string
+          format: uuid
+        taskId:
+          type: string
+          format: uuid
+        trackerInstanceId:
+          type: string
+          maxLength: 256
+          minLength: 1
+        trackerProjectId:
+          type: string
+          format: uuid
+        workflowTaskRef:
+          type: string
+      additionalProperties: false
 tags:
 - name: health
   description: Liveness/readiness

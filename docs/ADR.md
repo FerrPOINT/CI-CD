@@ -131,5 +131,6 @@ Proposed / Accepted / Deprecated / Superseded by ADR-NNNN
 - `docs/adr/0008-versioned-sqlx-migrations.md` — versioned migrations.
 - `docs/adr/0009-canonical-registry.md` — канонический реестр имён и authority matrix.
 - `docs/adr/0016-serializable-runner-claim.md` — сериализуемая проверка проектной квоты при выдаче runner work.
+- [ADR-0018](adr/0018-blocked-workspace-operation-ledger.md) — immutable blocked workspace operation/readback без admission или второго scheduler.
 - `docs/ROADMAP.md` — план разработки.
 - `docs/CODE_STYLE.md` — конвенции кода.

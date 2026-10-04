@@ -1,6 +1,7 @@
 # Forge SDLC delivery receipts v1
 
-Статус: Target approved, 2026-10-02; документ не вводит runtime API/миграции.
+Статус: Target approved, 2026-10-02; bounded source-срез operation ledger добавлен
+2026-10-04. Native admission, dispatch и полный delivery packet не реализованы.
 Forge владеет Git, pipelines, technical workspaces, candidate, builds,
 deployment/acceptance receipts. Task/queue/assignment — Tracker; dispatch — Fleet;
 phases/terminal workflow receipt — Project Workflow. Базы и права изолированы,
@@ -46,11 +47,69 @@ attempt с owner и выполняет cleanup только при exact match. 
 Подробности и ограничения — [Operations](OPERATIONS.md#runner-workspace-recovery).
 
 Это foundation текущего runner, **не** `base-sdlc/workspace-receipt/v1`: task/root/
-assignment binding, scoped Git credentials, SDLC owner operation lookup,
+authoritative assignment binding, scoped Git credentials,
 assignment quarantine registry, checkpoint, candidate/verification/deployment/acceptance receipts ещё target.
 Marker не является cryptographic receipt или OS sandbox; shell runner и embedded
 control-plane boundary сохраняют ограничения ADR-0007. Installation/live acceptance
 этим source срезом не подтверждены.
+
+### Source slice: task-bound workspace operation, 2026-10-04
+
+Реальные owner API и append-only ledger описаны в [API](API.md#sdlc-workspace-operation)
+и [ADR-0018](adr/0018-blocked-workspace-operation-ledger.md). POST на
+`/api/v1/projects/{project_id}/sdlc/workspace-operations` принимает strict typed
+request, но не caller receipt. Forge создаёт immutable
+`forge/workspace-operation-receipt/v1`, `status: blocked`,
+`dispatchAllowed: false`. Это результат регистрации и preflight запроса,
+**не** `base-sdlc/workspace-receipt/v1` и не создание TaskWorkspace.
+
+Binding содержит exact строковый Tracker instance namespace и project/task/root/
+assignment/execution/routing snapshot UUID, requirement revision, assignment hash, Tracker fence и
+backend-issued `workflowTaskRef` (`SDLC-<ordinal>`). Это заявленные входные поля,
+не доказанная admission authority. Forge lease/attempt UUID и
+`workspaceGeneration` не заменяют Tracker fence. Repository UUID и полный
+lowercase source SHA сверяются с project repository и persisted pipeline pin.
+Новая операция требует acknowledged active unexpired exact current lease.
+Readonly роли не могут запрашивать write; PM отсутствует в enum. Даже Developer
+запрос не выдаёт Git credentials, writable branch или capability.
+
+`CICD_SDLC_WORKSPACE_SUBJECT` — deployment-owned UUID существующего Forge service
+account. Требуется project-bound `forge_sat_` с `api:write` для POST, `api:read`
+для GET; write не подразумевает read. Human/admin, runner credentials и Central
+PAT не обходят границу. Нет subject — API закрыт (503). Token/account/scope
+проверяются и блокируются внутри транзакции. Новый issuer, compound Base grant
+и auth fallback не вводятся.
+
+Опциональный `CICD_SDLC_WORKSPACE_OBSERVATION_ROOT` задаёт owner-local mount
+существующих OwnedWorkspace. Read-only preflight проверяет marker/canonical paths
+без links, attempt/lease/generation, exact local origin, `HEAD^{commit}` и clean
+tree. Git readback ограничен временем/размером; не создаёт, не очищает и не
+запускает workspace. Без mount добавляется blocker
+`physical_workspace_observation_unavailable`. `physicalSourceObserved` относится
+только к моменту записи, не к свежему admission или native attestation.
+
+Обязательные blockers `tracker_admission_unavailable` и
+`tracker_workspace_binding_unavailable` остаются даже при успешном physical
+preflight. Actual Tracker prepared Analysis reservation имеет
+`awaiting_admission / dispatch_allowed=false`, но не admitted execution и не
+authoritative Forge repository/workspace binding. Caller packet или filesystem
+marker не разблокируют effect; такой counterpart остаётся prerequisite, а не
+выдуманным HTTP протоколом или caller boolean.
+
+Original key уникален внутри Forge project. SHA-256 typed request вычисляет
+backend; одинаковый key/payload возвращает исходный receipt, другой — 409.
+Replay после expiry также возвращает только исходный receipt. GET исходного key
+требует exact hash/task/root/assignment/execution/fence и тот же machine subject;
+возвращает receipt плюс fresh `expired`, `leaseExpiresAt`, `currentGeneration`,
+`reconciliationNeeded`. Он не продлевает lease, не меняет receipt и не
+подтверждает stop. Foreign lookup запрещён; stale binding/hash — 409.
+Blocked receipt не переписывается при появлении counterpart: будущий admitted
+effect потребует отдельного согласованного контракта.
+
+Migration 0040 additive после preserved historical 1–38 и собственного 0039;
+UPDATE/DELETE receipts запрещены trigger, FK RESTRICT удерживают owner history.
+Новых queue/assignment/claim/release действий, scheduler, model-authored proof,
+SDLC success или автоматического enrollment legacy jobs нет.
 
 Логический TaskWorkspace root находится в Tracker. Конкретный Forge attempt
 workspace принадлежит Forge, имеет lease/generation, root/task/assignment/run,
