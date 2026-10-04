@@ -50,6 +50,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl git git-lf
   | tar -xz --strip-components=1 -C /usr/local/bin docker/docker \
  && useradd --create-home --uid 10001 cicd
 
+ARG DOCKER_CLI_VERSION=29.5.0
+RUN curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_CLI_VERSION}.tgz \
+ | tar -xz --strip-components=1 -C /usr/local/bin docker/docker
+# Official Compose v5.5.1 release checksums (not downloaded mutable checksums).
+ARG TARGETARCH
+RUN case "${TARGETARCH:-amd64}" in \
+      amd64) compose_arch=x86_64; compose_sha=db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576 ;; \
+      arm64) compose_arch=aarch64; compose_sha=732e3a84c1a0f67256ce80bc2598a24546b10ca05f9faa97efceb1171ece2ef7 ;; \
+      *) exit 1 ;; esac \
+ && mkdir -p /usr/local/lib/docker/cli-plugins \
+ && curl -fsSL "https://github.com/docker/compose/releases/download/v5.5.1/docker-compose-linux-${compose_arch}" -o /tmp/docker-compose \
+ && echo "${compose_sha}  /tmp/docker-compose" | sha256sum -c - \
+ && install -m 0755 /tmp/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose \
+ && rm /tmp/docker-compose \
+ && docker compose version
+
 WORKDIR /app
 COPY --from=build /app/target/release/cicd-server /usr/local/bin/cicd-server
 COPY --from=build /app/target/release/forge-runner /usr/local/bin/forge-runner

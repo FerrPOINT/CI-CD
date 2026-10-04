@@ -35,6 +35,7 @@ pub mod git_host;
 pub mod platform;
 pub mod pulls;
 pub mod runner;
+pub(crate) mod runner_docker;
 pub mod runner_protocol;
 pub mod store;
 
