@@ -6,10 +6,7 @@ WORKDIR /app
 # backend/Cargo.toml: sdlc-auth-core = { path = "../../../services-base/..." }
 # /app/../../services-base == /services-base (WORKDIR is repo backend/).
 COPY services-base/Cargo.toml /services-base/Cargo.toml
-COPY services-base/crates/sdlc-shared /services-base/crates/sdlc-shared
-COPY services-base/crates/sdlc-auth-core /services-base/crates/sdlc-auth-core
-COPY services-base/crates/sdlc-cli-core /services-base/crates/sdlc-cli-core
-COPY services-base/crates/sdlc-telemetry /services-base/crates/sdlc-telemetry
+COPY services-base/crates /services-base/crates
 COPY CI-CD/backend/Cargo.toml CI-CD/backend/Cargo.lock* ./
 COPY CI-CD/backend/domain/Cargo.toml domain/Cargo.toml
 COPY CI-CD/backend/app/Cargo.toml app/Cargo.toml
@@ -50,9 +47,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl git git-lf
   | tar -xz --strip-components=1 -C /usr/local/bin docker/docker \
  && useradd --create-home --uid 10001 cicd
 
-ARG DOCKER_CLI_VERSION=29.5.0
-RUN curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_CLI_VERSION}.tgz \
- | tar -xz --strip-components=1 -C /usr/local/bin docker/docker
 # Official Compose v5.5.1 release checksums (not downloaded mutable checksums).
 ARG TARGETARCH
 RUN case "${TARGETARCH:-amd64}" in \

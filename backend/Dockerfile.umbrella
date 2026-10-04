@@ -6,10 +6,7 @@ WORKDIR /app
 # backend/Cargo.toml: sdlc-auth-core = { path = "../../../services-base/..." }
 # /app/../../services-base == /services-base (WORKDIR is repo backend/).
 COPY services-base/Cargo.toml /services-base/Cargo.toml
-COPY services-base/crates/sdlc-shared /services-base/crates/sdlc-shared
-COPY services-base/crates/sdlc-auth-core /services-base/crates/sdlc-auth-core
-COPY services-base/crates/sdlc-cli-core /services-base/crates/sdlc-cli-core
-COPY services-base/crates/sdlc-telemetry /services-base/crates/sdlc-telemetry
+COPY services-base/crates /services-base/crates
 COPY CI-CD/backend/Cargo.toml CI-CD/backend/Cargo.lock* ./
 COPY CI-CD/backend/domain/Cargo.toml domain/Cargo.toml
 COPY CI-CD/backend/app/Cargo.toml app/Cargo.toml
