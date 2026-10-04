@@ -42,11 +42,11 @@ function setup(count: number) {
     error: null,
     refetch: mocks.refetch,
   });
-  renderPage();
+  return renderPage();
 }
 
 function renderPage() {
-  render(
+  return render(
     <MemoryRouter>
       <ProjectsPage />
     </MemoryRouter>,
@@ -80,25 +80,28 @@ describe("ProjectsPage", () => {
     },
   );
 
-  it("focuses create after successful deletion removes the project actions", async () => {
-    setup(1);
+  it("keeps focus on create while a successful deletion refreshes the project list", async () => {
+    const view = setup(1);
     fireEvent.keyDown(
       screen.getByRole("button", { name: "projects.actionsFor Project 01" }),
       { key: "Enter" },
     );
     fireEvent.click(screen.getByRole("menuitem", { name: "common.delete" }));
     fireEvent.click(screen.getByRole("button", { name: "common.delete" }));
+    act(() => mocks.remove.mock.calls[0][1].onSuccess());
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "projects.create" })).toHaveFocus();
+    });
     mocks.useProjects.mockReturnValue({
       data: [],
       isLoading: false,
       error: null,
       refetch: mocks.refetch,
     });
-    act(() => mocks.remove.mock.calls[0][1].onSuccess());
-    await waitFor(() => {
-      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "projects.create" })).toHaveFocus();
-    });
+    view.rerender(<MemoryRouter><ProjectsPage /></MemoryRouter>);
+    expect(screen.queryByRole("button", { name: "projects.actionsFor Project 01" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "projects.create" })).toHaveFocus();
   });
 
   it("keeps pipelines direct and exposes secondary destinations in an accessible menu", () => {

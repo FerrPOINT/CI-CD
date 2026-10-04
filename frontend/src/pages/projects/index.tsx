@@ -522,6 +522,7 @@ export function ProjectsPage() {
           if (pendingDelete) {
             deleteProject.mutate(pendingDelete.id, {
               onSuccess: () => {
+                deleteReturnFocusRef.current = null;
                 setPendingDelete(null);
                 toast.success(t("projects.deleted"));
               },
