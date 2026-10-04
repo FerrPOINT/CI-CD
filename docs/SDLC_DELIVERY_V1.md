@@ -68,6 +68,25 @@ Create-new/fsync `.forge-preparation.json` фиксирует полный reque
 ambient config, templates, hooks, credentials и remote transports; local Git
 config имеет закрытый allowlist, filters/helpers/includes/upload hooks запрещены. Checkout
 detached/clean и exact origin проверяются перед `.forge-prepared.json`.
+Для этого primitive clean означает независимое сравнение физического дерева с
+pinned `ls-tree`: каждый regular file читается заново и сверяется по Git blob hash,
+проверяются тип, Git executable mode (owner-execute bit) и байты symlink target
+без перехода по ссылке.
+Index сверяется с pinned manifest, но его stat cache не является доказательством.
+`assume-unchanged`, `skip-worktree`, unmerged/staged drift отклоняются даже при
+неизменённых байтах. `status`, refresh/очистка flags и запись index не выполняются.
+Лишние файлы, включая ignored, и лишние пустые directories также отклоняются.
+
+Границы inventory: 32 MiB stdout отдельно для tree и index, 100 000 entries
+(в physical/tree inventory включая directories), глубина до 64 компонентов,
+128 MiB на файл и 2 GiB суммарно читаемых blob bytes. Короткие metadata commands
+и journals по-прежнему ограничены 4 KiB; этот лимит не применяется к inventory.
+Чтение blob потоковое; Git command имеет timeout 30 секунд. Submodules/gitlinks,
+checkout transformations (например, LFS/smudge или преобразование EOL) и non-Unix
+mode verification не поддерживаются и отклоняются, а не ремонтируются.
+Это observation на owner-local idle checkout, не атомарный filesystem snapshot
+и не защита от конкурентного привилегированного writer; agent execution здесь нет.
+
 Оба local journals bounded/immutable при штатном использовании; torn/link/conflict
 не перезаписываются. `.forge-preparation-active.json` создаётся до Git effect и
 удаляется только invocation, успешно дождавшейся собственных Git children/readback.

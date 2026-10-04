@@ -27,6 +27,12 @@ Intent/active/final journals create-new/fsync сохраняют identity до G
 Local Git config имеет закрытый allowlist; commands модели, credentials, remote
 transport и sandbox admission не добавляются. Unknown active effect остаётся
 retained; idle complete checkout допускает только readback finalization.
+Clean readback не доверяет index stat cache или `git status`: physical blob bytes,
+Unix executable modes, types и symlink targets сверяются с owner-pinned tree.
+Скрывающие изменения index flags и staged drift запрещены; index не обновляется.
+Inventory имеет отдельные repo-sized bounds, а не 4 KiB metadata bound; gitlinks и
+checkout transformations fail-closed. Это idle observation, не атомарный snapshot
+против конкурентного writer или native attestation.
 
 ## Consequences
 

@@ -9,6 +9,11 @@
 
 ## [Unreleased]
 
+- Readback локальной preparation сверяет физические blob bytes/types/modes с
+  pinned tree независимо от Git stat cache. `assume-unchanged`/`skip-worktree`
+  отклоняются без изменения index или autorepair, включая replay/recovery;
+  inventory получил отдельные явные bounds для обычных репозиториев. API не включён.
+
 - Внутренний filesystem preparation helper создаёт pinned task-bound checkout
   по заранее сохранённому ID; local intent/active/final journals защищают replay
   и unknown recovery без повторного clone. HTTP API остаётся blocked: Tracker

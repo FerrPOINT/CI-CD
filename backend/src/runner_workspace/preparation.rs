@@ -18,6 +18,8 @@ const INTENT: &str = ".forge-preparation.json";
 const PREPARED: &str = ".forge-prepared.json";
 const ACTIVE: &str = ".forge-preparation-active.json";
 
+mod physical;
+
 /// Must come from the future owner-authorized source binding, never a request URL/path.
 pub struct PreparationSource {
     pub project_id: Uuid,
@@ -265,15 +267,12 @@ async fn observe(owned: &OwnedWorkspace, intent: &Intent) -> anyhow::Result<()> 
         git(owned.checkout(), &["rev-parse", "--abbrev-ref", "HEAD"]).await? == b"HEAD\n",
         "checkout must be detached"
     );
-    ensure!(
-        git(
-            owned.checkout(),
-            &["status", "--porcelain=v1", "--untracked-files=all"]
-        )
-        .await?
-        .is_empty(),
-        "dirty checkout; reconciliation required"
-    );
+    physical::verify(
+        owned.checkout(),
+        &intent.repository,
+        &intent.request.source_commit,
+    )
+    .await?;
     owned.verify_owner()?;
     Ok(())
 }
@@ -346,6 +345,10 @@ fn write_new(directory: &Path, name: &str, intent: &Intent) -> anyhow::Result<()
 }
 
 async fn git(cwd: &Path, args: &[&str]) -> anyhow::Result<Vec<u8>> {
+    git_bounded(cwd, args, 4096).await
+}
+
+async fn git_bounded(cwd: &Path, args: &[&str], bound: usize) -> anyhow::Result<Vec<u8>> {
     let mut command = Command::new("git");
     // No ambient Git configuration, credentials, hooks, templates, filters or remote transports.
     command
@@ -360,6 +363,7 @@ async fn git(cwd: &Path, args: &[&str]) -> anyhow::Result<Vec<u8>> {
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", null)
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .env("LC_ALL", "C")
         .args([
             "--no-replace-objects",
@@ -389,10 +393,10 @@ async fn git(cwd: &Path, args: &[&str]) -> anyhow::Result<Vec<u8>> {
             .stdout
             .take()
             .context("missing Git stdout")?
-            .take(4097)
+            .take(bound as u64 + 1)
             .read_to_end(&mut bytes)
             .await?;
-        ensure!(bytes.len() <= 4096, "Git readback exceeds bound");
+        ensure!(bytes.len() <= bound, "Git readback exceeds bound");
         ensure!(
             child.wait().await?.success(),
             "Git preparation/readback failed; reconciliation required"

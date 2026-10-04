@@ -12,6 +12,12 @@ task/assignment/lease/source conflict, non-bare/non-commit rejection, partial/di
 checkout, torn/link journals и retained unknown active effect. Recovery journal
 finalization не делает повторного clone; readback не пишет файлы. Existing scoped
 PG/HTTP `sdlc_workspace` проверяет неизменный blocked API, ACL и migrations.
+Physical verification regressions покрывают dirty bytes, скрытые `assume-unchanged`
+или `skip-worktree`, same-size/restored-mtime с подделанным index stat cache,
+mode/type/symlink drift, ignored files и лишние directories. Replay/readback и
+lost-final-journal recovery не очищают flags, не обновляют index и не ремонтируют
+checkout. Положительный nested fixture с 1000 файлами проверяет inventory больше
+4 KiB; отдельные честные bounds описаны в [SDLC delivery](SDLC_DELIVERY_V1.md).
 Linux Rust 1.88/PG 17.6 проверяются только во временном owner-labelled Compose,
 с finally cleanup; никакая accepted/shared DB не используется. Windows junction,
 power-loss и native/source-authorized adapter остаются отдельными gates.

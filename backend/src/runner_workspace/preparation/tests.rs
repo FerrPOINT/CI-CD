@@ -72,6 +72,22 @@ impl Fixture {
     fn checkout(&self) -> PathBuf {
         self.directory().join("workspace")
     }
+
+    fn pin_current_source(&mut self) {
+        let repo = self.root.join("source");
+        fixture_git(&repo, &["add", "."]);
+        fixture_git(&repo, &["commit", "-m", "physical fixture"]);
+        fixture_git(
+            &repo,
+            &[
+                "push",
+                self.source.repository.to_str().unwrap(),
+                "HEAD:main",
+            ],
+        );
+        self.request.source_commit = fixture_git(&repo, &["rev-parse", "HEAD"]);
+        self.source.source_commit = self.request.source_commit.clone();
+    }
 }
 
 impl Drop for Fixture {
@@ -429,4 +445,255 @@ async fn local_git_filters_helpers_includes_and_upload_hooks_are_rejected() {
         fixture_git(&f.checkout(), &["config", "--unset", key]);
     }
     assert!(readback(&f.workspaces, &f.source, &f.request).await.is_ok());
+}
+
+async fn assert_physical_rejection_without_repair(f: &Fixture) {
+    let index_path = f.checkout().join(".git/index");
+    let index = fs::read(&index_path).unwrap();
+    let intent = fs::read(f.directory().join(INTENT)).unwrap();
+    let final_journal = fs::read(f.directory().join(PREPARED)).unwrap();
+    let dirty = fs::read(f.checkout().join("tracked.txt")).unwrap();
+    assert!(prepare(&f.workspaces, &f.source, &f.request).await.is_err());
+    assert!(
+        readback(&f.workspaces, &f.source, &f.request)
+            .await
+            .is_err()
+    );
+    assert_eq!(fs::read(&index_path).unwrap(), index);
+    assert_eq!(
+        fs::read(f.directory().join(PREPARED)).unwrap(),
+        final_journal
+    );
+    fs::remove_file(f.directory().join(PREPARED)).unwrap();
+    assert!(prepare(&f.workspaces, &f.source, &f.request).await.is_err());
+    assert!(!f.directory().join(PREPARED).exists());
+    assert!(!f.directory().join(ACTIVE).exists());
+    assert_eq!(fs::read(&index_path).unwrap(), index);
+    assert_eq!(fs::read(f.directory().join(INTENT)).unwrap(), intent);
+    assert_eq!(fs::read(f.checkout().join("tracked.txt")).unwrap(), dirty);
+}
+
+#[tokio::test]
+async fn assume_unchanged_dirty_replay_readback_and_lost_journal_fail_without_index_repair() {
+    let f = Fixture::new();
+    prepare(&f.workspaces, &f.source, &f.request).await.unwrap();
+    fixture_git(
+        &f.checkout(),
+        &["update-index", "--assume-unchanged", "tracked.txt"],
+    );
+    fs::write(f.checkout().join("tracked.txt"), "forged").unwrap();
+    assert_eq!(fixture_git(&f.checkout(), &["status", "--porcelain"]), "");
+    assert_physical_rejection_without_repair(&f).await;
+    assert!(fixture_git(&f.checkout(), &["ls-files", "-v"]).starts_with("h "));
+}
+
+#[tokio::test]
+async fn skip_worktree_dirty_replay_readback_and_lost_journal_fail_without_index_repair() {
+    let f = Fixture::new();
+    prepare(&f.workspaces, &f.source, &f.request).await.unwrap();
+    fixture_git(
+        &f.checkout(),
+        &["update-index", "--skip-worktree", "tracked.txt"],
+    );
+    fs::write(f.checkout().join("tracked.txt"), "forged").unwrap();
+    assert_eq!(fixture_git(&f.checkout(), &["status", "--porcelain"]), "");
+    assert_physical_rejection_without_repair(&f).await;
+    assert!(fixture_git(&f.checkout(), &["ls-files", "-v"]).starts_with("S "));
+}
+
+#[tokio::test]
+async fn unsupported_index_flags_are_rejected_even_with_unchanged_physical_bytes() {
+    for flag in ["--assume-unchanged", "--skip-worktree"] {
+        let f = Fixture::new();
+        prepare(&f.workspaces, &f.source, &f.request).await.unwrap();
+        fixture_git(&f.checkout(), &["update-index", flag, "tracked.txt"]);
+        assert_physical_rejection_without_repair(&f).await;
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn same_size_restored_mtime_and_spoofed_stat_cache_cannot_hide_physical_bytes() {
+    use sha1::{Digest, Sha1};
+    use std::os::unix::fs::MetadataExt;
+    let f = Fixture::new();
+    prepare(&f.workspaces, &f.source, &f.request).await.unwrap();
+    fixture_git(&f.checkout(), &["update-index", "--index-version=2"]);
+    let file_path = f.checkout().join("tracked.txt");
+    let before = fs::metadata(&file_path).unwrap();
+    fs::write(&file_path, "forged").unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&file_path)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(before.modified().unwrap()))
+        .unwrap();
+    let meta = fs::metadata(&file_path).unwrap();
+    assert_eq!(meta.len(), before.len());
+    assert_eq!(meta.modified().unwrap(), before.modified().unwrap());
+    // An adversarial index can claim current stat fields while retaining the pinned blob OID.
+    let index_path = f.checkout().join(".git/index");
+    let mut index = fs::read(&index_path).unwrap();
+    assert_eq!(&index[..12], b"DIRC\0\0\0\x02\0\0\0\x01");
+    let stats = [
+        meta.ctime() as u32,
+        meta.ctime_nsec() as u32,
+        meta.mtime() as u32,
+        meta.mtime_nsec() as u32,
+        meta.dev() as u32,
+        meta.ino() as u32,
+        meta.mode(),
+        meta.uid(),
+        meta.gid(),
+        meta.len() as u32,
+    ];
+    for (slot, value) in index[12..52].chunks_exact_mut(4).zip(stats) {
+        slot.copy_from_slice(&value.to_be_bytes());
+    }
+    let end = index.len() - 20;
+    let checksum = Sha1::digest(&index[..end]);
+    index[end..].copy_from_slice(&checksum);
+    fs::write(&index_path, index).unwrap();
+    // Avoid Git's racy-stat fallback without slowing this fixture with a sleep.
+    fs::File::options()
+        .write(true)
+        .open(&index_path)
+        .unwrap()
+        .set_times(
+            fs::FileTimes::new().set_modified(before.modified().unwrap() + Duration::from_secs(10)),
+        )
+        .unwrap();
+    assert_eq!(fixture_git(&f.checkout(), &["status", "--porcelain"]), "");
+    assert!(
+        readback(&f.workspaces, &f.source, &f.request)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("physical checkout differs from pinned tree")
+    );
+    assert_physical_rejection_without_repair(&f).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn physical_executable_mode_is_checked_even_when_git_filemode_is_disabled() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut f = Fixture::new();
+    let source_file = f.root.join("source/tracked.txt");
+    fs::set_permissions(source_file, fs::Permissions::from_mode(0o755)).unwrap();
+    f.pin_current_source();
+    prepare(&f.workspaces, &f.source, &f.request).await.unwrap();
+    fixture_git(&f.checkout(), &["config", "core.filemode", "false"]);
+    fs::set_permissions(
+        f.checkout().join("tracked.txt"),
+        fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+    assert_eq!(fixture_git(&f.checkout(), &["status", "--porcelain"]), "");
+    assert_physical_rejection_without_repair(&f).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn group_execute_cannot_substitute_git_owner_execute_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut f = Fixture::new();
+    fs::set_permissions(
+        f.root.join("source/tracked.txt"),
+        fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    f.pin_current_source();
+    prepare(&f.workspaces, &f.source, &f.request).await.unwrap();
+    fixture_git(&f.checkout(), &["config", "core.filemode", "false"]);
+    fs::set_permissions(
+        f.checkout().join("tracked.txt"),
+        fs::Permissions::from_mode(0o654),
+    )
+    .unwrap();
+    assert_eq!(fixture_git(&f.checkout(), &["status", "--porcelain"]), "");
+    assert_physical_rejection_without_repair(&f).await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn physical_symlink_target_and_type_are_verified_without_following_target() {
+    let mut f = Fixture::new();
+    let source_link = f.root.join("source/link");
+    std::os::unix::fs::symlink("tracked.txt", &source_link).unwrap();
+    f.pin_current_source();
+    let original = prepare(&f.workspaces, &f.source, &f.request).await.unwrap();
+    assert_eq!(
+        readback(&f.workspaces, &f.source, &f.request)
+            .await
+            .unwrap(),
+        original
+    );
+    let link = f.checkout().join("link");
+    fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink("foreign.txt", &link).unwrap();
+    assert!(prepare(&f.workspaces, &f.source, &f.request).await.is_err());
+    assert!(
+        readback(&f.workspaces, &f.source, &f.request)
+            .await
+            .is_err()
+    );
+    assert_eq!(fs::read_link(&link).unwrap(), PathBuf::from("foreign.txt"));
+    fs::remove_file(&link).unwrap();
+    fs::write(&link, "tracked.txt").unwrap();
+    assert_physical_rejection_without_repair(&f).await;
+}
+
+#[tokio::test]
+async fn ignored_files_and_empty_untracked_directories_are_not_pinned_contents() {
+    let mut f = Fixture::new();
+    fs::write(f.root.join("source/.gitignore"), "hidden\n").unwrap();
+    f.pin_current_source();
+    prepare(&f.workspaces, &f.source, &f.request).await.unwrap();
+    fs::write(f.checkout().join("hidden"), "unexpected").unwrap();
+    assert_eq!(fixture_git(&f.checkout(), &["status", "--porcelain"]), "");
+    assert!(
+        readback(&f.workspaces, &f.source, &f.request)
+            .await
+            .is_err()
+    );
+    fs::remove_file(f.checkout().join("hidden")).unwrap();
+    fs::create_dir(f.checkout().join("empty-extra")).unwrap();
+    assert_physical_rejection_without_repair(&f).await;
+    assert!(f.checkout().join("empty-extra").is_dir());
+}
+
+#[tokio::test]
+async fn moderate_nested_repository_inventory_and_clean_recovery_do_not_use_metadata_4k_cap() {
+    let mut f = Fixture::new();
+    let nested = f.root.join("source/nested/files");
+    fs::create_dir_all(&nested).unwrap();
+    for n in 0..1000 {
+        fs::write(
+            nested.join(format!("tracked-file-{n:04}.txt")),
+            format!("blob {n}\n"),
+        )
+        .unwrap();
+    }
+    f.pin_current_source();
+    let first = prepare(&f.workspaces, &f.source, &f.request).await.unwrap();
+    assert!(fixture_git(&f.checkout(), &["ls-files", "--stage", "-v"]).len() > 4096);
+    let index_path = f.checkout().join(".git/index");
+    let index = fs::read(&index_path).unwrap();
+    assert_eq!(
+        prepare(&f.workspaces, &f.source, &f.request).await.unwrap(),
+        first
+    );
+    assert_eq!(
+        readback(&f.workspaces, &f.source, &f.request)
+            .await
+            .unwrap(),
+        first
+    );
+    fs::remove_file(f.directory().join(PREPARED)).unwrap();
+    assert_eq!(
+        prepare(&f.workspaces, &f.source, &f.request).await.unwrap(),
+        first
+    );
+    assert_eq!(fs::read(index_path).unwrap(), index);
 }
