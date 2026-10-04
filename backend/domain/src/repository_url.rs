@@ -40,7 +40,10 @@ pub fn validate_repository_url(input: &str) -> Result<(), &'static str> {
         }
         url::Url::parse(&format!("ssh://{user}@{host}/{path}")).map_err(|_| INVALID_URL)?
     };
-    if parsed.host_str().is_none_or(str::is_empty)
+    // SSH uses opaque URL hosts: reparse with the network-host rules and reject
+    // option-like names that Git/OpenSSH refuse before connecting.
+    let host = url::Host::parse(parsed.host_str().ok_or(INVALID_URL)?).map_err(|_| INVALID_URL)?;
+    if matches!(&host, url::Host::Domain(name) if name.is_empty() || name.starts_with('-'))
         || parsed.path().trim_matches('/').is_empty()
         || parsed.password().is_some()
         || parsed.query().is_some()
@@ -102,6 +105,33 @@ mod tests {
             "host:repo.git",
         ] {
             assert!(validate_repository_url(url).is_err(), "{url}");
+        }
+    }
+
+    #[test]
+    fn repository_url_rejects_git_invalid_hosts() {
+        for url in [
+            "ssh://-bad/team/repo.git",
+            "git@-bad:team/repo.git",
+            "ssh://bad%host/team/repo.git",
+            "git@bad%host:team/repo.git",
+            "ssh://%2Dbad/team/repo.git",
+            "git@%2Dbad:team/repo.git",
+        ] {
+            assert!(validate_repository_url(url).is_err(), "{url}");
+        }
+    }
+
+    #[test]
+    fn repository_url_preserves_local_and_alias_hosts() {
+        for url in [
+            "ssh://git@localhost/team/repo.git",
+            "git@backend:team/repo.git",
+            "git@build_server:team/repo.git",
+            "ssh://git@[2001:db8::1]:2222/team/repo.git",
+            "git@[2001:db8::1]:team/repo.git",
+        ] {
+            assert!(validate_repository_url(url).is_ok(), "{url}");
         }
     }
 }

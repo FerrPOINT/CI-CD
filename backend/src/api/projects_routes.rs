@@ -370,6 +370,8 @@ mod tests {
             "file:///tmp/repo.git",
             "https://",
             "git@example.test:",
+            "ssh://-bad/team/repo.git",
+            "git@-bad:team/repo.git",
         ] {
             for method in ["POST", "PATCH"] {
                 let path = if method == "POST" {
