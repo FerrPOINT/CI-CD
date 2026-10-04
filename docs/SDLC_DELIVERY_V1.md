@@ -53,6 +53,43 @@ Marker не является cryptographic receipt или OS sandbox; shell runn
 control-plane boundary сохраняют ограничения ADR-0007. Installation/live acceptance
 этим source срезом не подтверждены.
 
+### Source slice: filesystem preparation primitive, 2026-10-04
+
+Внутренний `runner_workspace::preparation::{prepare, readback}` реально создаёт
+owner-local bare-repository checkout по полному lowercase SHA. Caller заранее
+выделяет и сохраняет exact `workspaceId`; helper не выбирает новый ID при replay.
+Вход использует существующий typed request и отдельный owner source context:
+Forge project/repository UUID, canonical local bare path и exact source SHA.
+Request binding остаётся заявленными данными, не Tracker authority. Отдельного
+workspace manager в source нет; helper переиспользует OwnedWorkspace guards.
+
+Create-new/fsync `.forge-preparation.json` фиксирует полный request/source context
+перед clone. Marker сохраняет прежние attempt/lease/generation. Git работает без
+ambient config, templates, hooks, credentials и remote transports; local Git
+config имеет закрытый allowlist, filters/helpers/includes/upload hooks запрещены. Checkout
+detached/clean и exact origin проверяются перед `.forge-prepared.json`.
+Оба local journals bounded/immutable при штатном использовании; torn/link/conflict
+не перезаписываются. `.forge-preparation-active.json` создаётся до Git effect и
+удаляется только invocation, успешно дождавшейся собственных Git children/readback.
+Crash/error/unknown сохраняют его; restart/expiry/caller flags не освобождают hold.
+
+Duplicate наблюдает ту же папку. При idle exact clean checkout и потерянном final
+journal `prepare` может восстановить journal только readback, без clone/checkout.
+Missing/partial checkout, active marker, чужая identity или completion требуют
+reconciliation; auto-retry/delete/repair нет. `readback` не пишет metadata.
+Конкурирующий caller может получить conflict/unknown и затем выполнить readback.
+
+Это filesystem primitive и local observation, **не** trusted SDLC receipt,
+DB lease admission, OS-enforced readonly или logical TaskWorkspace. Helper
+принимает только `read_only`, но не выдаёт права агенту и не создаёт sandbox.
+Live lease/Tracker fence/source preparation authorization обязан проверять будущий
+owner adapter до effect и перед receipt; helper не может проверить их по filesystem.
+Existing blocked ledger/API не вызывают primitive и не меняют своё поведение.
+Нет новой migration, runner execution, scheduler, model commands или credentials.
+Tracker source binding counterpart всё ещё отсутствует: включать HTTP preparation
+по caller payload запрещено. Полный native admission нужен перед agent dispatch,
+не для этой изолированной owner-local подготовки после будущего source authorization.
+
 ### Source slice: task-bound workspace operation, 2026-10-04
 
 Реальные owner API и append-only ledger описаны в [API](API.md#sdlc-workspace-operation)

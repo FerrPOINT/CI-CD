@@ -54,6 +54,7 @@ Proposed / Accepted / Deprecated / Superseded by ADR-NNNN
 | ADR-0008 | Версионные SQLx migrations | Accepted | 2026-08-26 |
 | ADR-0009 | Канонический реестр имён и приоритет источников | Accepted | 2026-08-27 |
 | ADR-0017 | Fresh lease-owned runner checkout и cleanup после ACK | Proposed (source implemented) | 2026-10-03 |
+| ADR-0019 | [Локальная подготовка workspace без producer authority](adr/0019-local-pinned-workspace-preparation.md) | Proposed (source primitive) | 2026-10-04 |
 
 ---
 

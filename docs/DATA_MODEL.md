@@ -2,6 +2,15 @@
 
 ## 0. Фактическая схема реализованных таблиц
 
+Filesystem preparation primitive не меняет PostgreSQL или historical migrations.
+Create-new/fsync journals `.forge-preparation.json` и `.forge-prepared.json`
+содержат exact typed request, Forge project и canonical local repository path.
+Local schema `forge/local-workspace-preparation/v1` не является trusted receipt.
+Отдельный `.forge-preparation-active.json` удерживает unknown/crashed Git effect;
+expiry/restart его не удаляют. Caller обязан заранее durable сохранить allocated
+workspace ID; helper не создаёт assignment/lease или producer authorization.
+[Recovery и ограничения](SDLC_DELIVERY_V1.md#source-slice-filesystem-preparation-primitive-2026-10-04).
+
 Source delta 2026-10-04: `0040_sdlc_workspace_operations.sql` добавляет append-only
 ledger blocked workspace operations, не TaskWorkspace/assignment scheduler.
 UUID owner operation, Forge project/service-account, original key/hash,

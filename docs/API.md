@@ -21,6 +21,11 @@ REST API первой версии Forge CI/CD. Контрольная плос�
 
 ## SDLC Workspace Operation
 
+Filesystem preparation helper существует только как внутренний Rust primitive.
+HTTP routes ниже его не вызывают: producer source binding отсутствует, ответы
+остаются blocked. Public DTO/OpenAPI не менялись. Local preparation journals не
+принимаются как authority или trusted receipt.
+
 Source-срез: [delivery contract](SDLC_DELIVERY_V1.md#source-slice-task-bound-workspace-operation-2026-10-04),
 [ADR-0018](adr/0018-blocked-workspace-operation-ledger.md). DTO и пути экспортируются
 Rust exporter в `openapi/openapi.yaml`; request использует camelCase.

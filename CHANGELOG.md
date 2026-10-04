@@ -9,6 +9,11 @@
 
 ## [Unreleased]
 
+- Внутренний filesystem preparation helper создаёт pinned task-bound checkout
+  по заранее сохранённому ID; local intent/active/final journals защищают replay
+  и unknown recovery без повторного clone. HTTP API остаётся blocked: Tracker
+  source binding и native admission не выдумываются. Runtime/миграции не менялись.
+
 - Runner создаёт fresh attempt/lease-owned workspace и проверяет full pinned SHA
   с clean detached HEAD до команд. Old workspace не удаляется при повторной попытке;
   cleanup требует terminal acknowledgement и сохранённый owner marker. Docker-job

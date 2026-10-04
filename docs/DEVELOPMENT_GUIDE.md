@@ -4,6 +4,18 @@
 
 ## Статусы
 
+### Scoped Filesystem Preparation Gate
+
+`cargo test --locked -p cicd-server --lib runner_workspace` включает preparation
+primitive: exact allocated identity/old full commit, restart/replay/concurrency,
+task/assignment/lease/source conflict, non-bare/non-commit rejection, partial/dirty
+checkout, torn/link journals и retained unknown active effect. Recovery journal
+finalization не делает повторного clone; readback не пишет файлы. Existing scoped
+PG/HTTP `sdlc_workspace` проверяет неизменный blocked API, ACL и migrations.
+Linux Rust 1.88/PG 17.6 проверяются только во временном owner-labelled Compose,
+с finally cleanup; никакая accepted/shared DB не используется. Windows junction,
+power-loss и native/source-authorized adapter остаются отдельными gates.
+
 ### Scoped Runner Recovery Source Gate
 
 `cargo test --locked -p cicd-server --lib runner_workspace`, binary unit tests

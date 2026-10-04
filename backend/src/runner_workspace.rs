@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 use uuid::Uuid;
 
+pub mod preparation;
+
 const MARKER: &str = ".forge-attempt.json";
 const COMPLETION: &str = ".forge-completion.json";
 const ACK: &str = ".forge-completion-ack.json";
@@ -56,6 +58,20 @@ impl OwnedWorkspace {
         lease_id: Uuid,
         generation: i64,
     ) -> anyhow::Result<Self> {
+        let workspace_id = format!(
+            "attempt-{attempt_id}-{generation}-{}",
+            Uuid::new_v4().simple()
+        );
+        Self::create_identified(root, &workspace_id, attempt_id, lease_id, generation)
+    }
+
+    fn create_identified(
+        root: &Path,
+        workspace_id: &str,
+        attempt_id: Uuid,
+        lease_id: Uuid,
+        generation: i64,
+    ) -> anyhow::Result<Self> {
         ensure!(generation > 0, "invalid workspace lease generation");
         ensure!(
             !attempt_id.is_nil() && !lease_id.is_nil(),
@@ -70,10 +86,13 @@ impl OwnedWorkspace {
         fs::create_dir_all(&root).context("create runner workspace root")?;
         check_ancestors(&root)?;
         let root = root.canonicalize()?;
-        let directory = root.join(format!(
-            "attempt-{attempt_id}-{generation}-{}",
-            Uuid::new_v4().simple()
-        ));
+        let prefix = format!("attempt-{attempt_id}-{generation}-");
+        let nonce = workspace_id.strip_prefix(&prefix).unwrap_or("");
+        ensure!(
+            Uuid::parse_str(nonce).is_ok_and(|id| !id.is_nil() && id.simple().to_string() == nonce),
+            "workspace identity must match attempt and generation"
+        );
+        let directory = root.join(workspace_id);
         fs::create_dir(&directory).context("create fresh attempt directory")?;
         let owner = Owner {
             schema: "forge/attempt-workspace/v1".to_owned(),
