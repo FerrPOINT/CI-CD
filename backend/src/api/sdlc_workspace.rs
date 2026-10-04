@@ -169,8 +169,12 @@ pub async fn prepare_workspace_operation(
         .map_err(|_| {
             ApiError::service_unavailable("bounded physical source observation timed out")
         })?
-        .map_err(|_| {
-            ApiError::conflict("physical repository/source pin or clean state mismatch")
+        .map_err(|error| {
+            if error.is::<crate::runner_workspace::SourceObservationTimeout>() {
+                ApiError::service_unavailable("bounded physical source observation timed out")
+            } else {
+                ApiError::conflict("physical repository/source pin or clean state mismatch")
+            }
         })?;
         observed = true;
     } else {

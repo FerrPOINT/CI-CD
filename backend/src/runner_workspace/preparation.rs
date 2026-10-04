@@ -9,7 +9,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
     process::Stdio,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{io::AsyncReadExt, process::Command};
 use uuid::Uuid;
@@ -188,15 +188,27 @@ fn validate(
 }
 
 async fn verify_source(intent: &Intent) -> anyhow::Result<()> {
-    verify_git_config(&intent.repository, &intent.repository.join("config")).await?;
+    verify_repository(&intent.repository, &intent.request.source_commit).await
+}
+
+async fn verify_repository(repository: &Path, sha: &str) -> anyhow::Result<()> {
     ensure!(
-        git(&intent.repository, &["rev-parse", "--is-bare-repository"]).await? == b"true\n",
+        sha.len() == 40
+            && sha
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+        "source must be full lowercase SHA"
+    );
+    check_ancestors(repository)?;
+    verify_git_config(repository, &repository.join("config")).await?;
+    ensure!(
+        git(repository, &["rev-parse", "--is-bare-repository"]).await? == b"true\n",
         "owner source must be bare"
     );
-    let commit = format!("{}^{{commit}}", intent.request.source_commit);
-    let actual = git(&intent.repository, &["rev-parse", "--verify", &commit]).await?;
+    let commit = format!("{sha}^{{commit}}");
+    let actual = git(repository, &["rev-parse", "--verify", &commit]).await?;
     ensure!(
-        actual == format!("{}\n", intent.request.source_commit).as_bytes(),
+        actual == format!("{sha}\n").as_bytes(),
         "source pin must identify an exact commit"
     );
     Ok(())
@@ -237,44 +249,50 @@ fn require_idle(owned: &OwnedWorkspace) -> anyhow::Result<()> {
 async fn observe(owned: &OwnedWorkspace, intent: &Intent) -> anyhow::Result<()> {
     owned.verify_owner()?;
     require_intent(owned, intent)?;
-    let dotgit = owned.checkout().join(".git");
+    observe_checkout(
+        owned.checkout(),
+        &intent.repository,
+        &intent.request.source_commit,
+        Instant::now() + Duration::from_secs(30),
+    )
+    .await?;
+    owned.verify_owner()?;
+    Ok(())
+}
+
+pub(super) async fn observe_checkout(
+    checkout: &Path,
+    repository: &Path,
+    sha: &str,
+    deadline: Instant,
+) -> anyhow::Result<()> {
+    verify_repository(repository, sha).await?;
+    let dotgit = checkout.join(".git");
     check_ancestors(&dotgit)?;
     ensure!(dotgit.is_dir(), "partial checkout; reconciliation required");
-    verify_git_config(owned.checkout(), &dotgit.join("config")).await?;
-    let origin = git(owned.checkout(), &["config", "--get", "remote.origin.url"]).await?;
+    verify_git_config(checkout, &dotgit.join("config")).await?;
+    let origin = git(checkout, &["config", "--get", "remote.origin.url"]).await?;
     ensure!(
         origin
             == format!(
                 "{}\n",
-                intent
-                    .repository
+                repository
                     .to_str()
                     .context("repository path is not UTF-8")?
             )
             .as_bytes(),
         "checkout origin mismatch"
     );
-    let head = git(
-        owned.checkout(),
-        &["rev-parse", "--verify", "HEAD^{commit}"],
-    )
-    .await?;
+    let head = git(checkout, &["rev-parse", "--verify", "HEAD^{commit}"]).await?;
     ensure!(
-        head == format!("{}\n", intent.request.source_commit).as_bytes(),
+        head == format!("{sha}\n").as_bytes(),
         "checkout source mismatch"
     );
     ensure!(
-        git(owned.checkout(), &["rev-parse", "--abbrev-ref", "HEAD"]).await? == b"HEAD\n",
+        git(checkout, &["rev-parse", "--abbrev-ref", "HEAD"]).await? == b"HEAD\n",
         "checkout must be detached"
     );
-    physical::verify(
-        owned.checkout(),
-        &intent.repository,
-        &intent.request.source_commit,
-    )
-    .await?;
-    owned.verify_owner()?;
-    Ok(())
+    physical::verify(checkout, repository, sha, deadline).await
 }
 
 fn observation(intent: &Intent) -> anyhow::Result<PreparationObservation> {

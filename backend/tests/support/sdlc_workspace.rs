@@ -532,98 +532,137 @@ async fn sdlc_workspace_migration_40_preserves_default_38_and_local_39_history()
     }
 }
 
+struct PhysicalFixture {
+    f: Fixture,
+    temp: std::path::PathBuf,
+    source: std::path::PathBuf,
+    bare: std::path::PathBuf,
+    pin: String,
+    owned: cicd::runner_workspace::OwnedWorkspace,
+}
+
+fn physical_git(cwd: &std::path::Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(cwd)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "test Git command failed");
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+impl Drop for PhysicalFixture {
+    fn drop(&mut self) {
+        assert!(self.temp.starts_with(std::env::temp_dir()));
+        std::fs::remove_dir_all(&self.temp).unwrap();
+    }
+}
+
+impl PhysicalFixture {
+    async fn new() -> Self {
+        let mut f = Fixture::new().await;
+        let temp = std::env::temp_dir().join(format!("forge-workspace-qa-{}", Uuid::new_v4()));
+        let source = temp.join("source");
+        let git_root = temp.join("git");
+        let workspaces = temp.join("workspaces");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&git_root).unwrap();
+        std::fs::create_dir_all(&workspaces).unwrap();
+        let git = physical_git;
+        git(&source, &["init", "--initial-branch=main"]);
+        std::fs::write(source.join("artifact.txt"), "pinned source\n").unwrap();
+        git(&source, &["add", "."]);
+        git(
+            &source,
+            &[
+                "-c",
+                "user.name=QA",
+                "-c",
+                "user.email=qa@example.invalid",
+                "commit",
+                "-m",
+                "pin",
+            ],
+        );
+        let pin = git(&source, &["rev-parse", "HEAD"]);
+        let name: String = sqlx::query_scalar("SELECT name FROM repositories WHERE id=$1")
+            .bind(f.request.repository_id)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+        let bare = git_root.join(format!("{name}.git"));
+        git(
+            &temp,
+            &[
+                "clone",
+                "--bare",
+                source.to_str().unwrap(),
+                bare.to_str().unwrap(),
+            ],
+        );
+        sqlx::query("UPDATE pipelines SET commit_sha=$1 WHERE project_id=$2")
+            .bind(&pin)
+            .bind(f.project)
+            .execute(&f.pool)
+            .await
+            .unwrap();
+        f.request.source_commit = pin.clone();
+        let owned = cicd::runner_workspace::OwnedWorkspace::create(
+            &workspaces,
+            f.request.attempt_id,
+            f.request.lease_id,
+            2,
+        )
+        .unwrap();
+        owned
+            .clone_checkout(bare.to_str().unwrap(), Some(&pin), "main")
+            .await
+            .unwrap();
+        f.request.workspace_id = owned
+            .checkout()
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .into();
+        let mut config = cicd::config::RuntimeConfig::test_default()
+            .with_auth_secret(Some("workspace-test-secret".into()));
+        config.sdlc_workspace.operation_subject = Some(f.subject);
+        config.sdlc_workspace.observation_root = Some(workspaces.clone());
+        f.app = cicd::api::app_with_git_and_config(
+            Some(f.pool.clone()),
+            cicd::git_host::GitConfig {
+                root: git_root,
+                token: None,
+                internal_token: None,
+            },
+            None,
+            config,
+        )
+        .unwrap();
+        Self {
+            f,
+            temp,
+            source,
+            bare,
+            pin,
+            owned,
+        }
+    }
+}
+
 #[tokio::test]
 async fn sdlc_workspace_physical_pin_marker_clean_and_role_are_not_admission() {
-    let mut f = Fixture::new().await;
-    let temp = std::env::temp_dir().join(format!("forge-workspace-qa-{}", Uuid::new_v4()));
-    let source = temp.join("source");
-    let git_root = temp.join("git");
-    let workspaces = temp.join("workspaces");
-    std::fs::create_dir_all(&source).unwrap();
-    std::fs::create_dir_all(&git_root).unwrap();
-    std::fs::create_dir_all(&workspaces).unwrap();
-    let git = |cwd: &std::path::Path, args: &[&str]| {
-        let output = std::process::Command::new("git")
-            .args(args)
-            .current_dir(cwd)
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "test Git command failed");
-        String::from_utf8(output.stdout).unwrap().trim().to_owned()
-    };
-    git(&source, &["init", "--initial-branch=main"]);
-    std::fs::write(source.join("artifact.txt"), "pinned source\n").unwrap();
-    git(&source, &["add", "."]);
-    git(
-        &source,
-        &[
-            "-c",
-            "user.name=QA",
-            "-c",
-            "user.email=qa@example.invalid",
-            "commit",
-            "-m",
-            "pin",
-        ],
-    );
-    let pin = git(&source, &["rev-parse", "HEAD"]);
-    let name: String = sqlx::query_scalar("SELECT name FROM repositories WHERE id=$1")
-        .bind(f.request.repository_id)
-        .fetch_one(&f.pool)
-        .await
-        .unwrap();
-    let bare = git_root.join(format!("{name}.git"));
-    git(
-        &temp,
-        &[
-            "clone",
-            "--bare",
-            source.to_str().unwrap(),
-            bare.to_str().unwrap(),
-        ],
-    );
-    sqlx::query("UPDATE pipelines SET commit_sha=$1 WHERE project_id=$2")
-        .bind(&pin)
-        .bind(f.project)
-        .execute(&f.pool)
-        .await
-        .unwrap();
-    f.request.source_commit = pin.clone();
-    let owned = cicd::runner_workspace::OwnedWorkspace::create(
-        &workspaces,
-        f.request.attempt_id,
-        f.request.lease_id,
-        2,
-    )
-    .unwrap();
-    owned
-        .clone_checkout(bare.to_str().unwrap(), Some(&pin), "main")
-        .await
-        .unwrap();
-    f.request.workspace_id = owned
-        .checkout()
-        .parent()
-        .unwrap()
-        .file_name()
-        .unwrap()
-        .to_str()
-        .unwrap()
-        .into();
-    let mut config = cicd::config::RuntimeConfig::test_default()
-        .with_auth_secret(Some("workspace-test-secret".into()));
-    config.sdlc_workspace.operation_subject = Some(f.subject);
-    config.sdlc_workspace.observation_root = Some(workspaces.clone());
-    f.app = cicd::api::app_with_git_and_config(
-        Some(f.pool.clone()),
-        cicd::git_host::GitConfig {
-            root: git_root,
-            token: None,
-            internal_token: None,
-        },
-        None,
-        config,
-    )
-    .unwrap();
+    let p = PhysicalFixture::new().await;
+    let f = &p.f;
+    let owned = &p.owned;
+    let source = &p.source;
+    let bare = &p.bare;
+    let pin = &p.pin;
+    let workspaces = p.temp.join("workspaces");
+    let git = physical_git;
     let (status, receipt) = f.post(&f.request).await;
     assert_eq!(status, StatusCode::OK, "{receipt}");
     assert_eq!(receipt["physicalSourceObserved"], true);
@@ -715,8 +754,191 @@ async fn sdlc_workspace_physical_pin_marker_clean_and_role_are_not_admission() {
     );
     assert!(owned.checkout().exists());
     assert!(foreign.checkout().parent().unwrap().exists());
-    assert!(temp.starts_with(std::env::temp_dir()));
-    std::fs::remove_dir_all(temp).unwrap();
+}
+
+struct HttpServer(tokio::task::JoinHandle<()>);
+impl Drop for HttpServer {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+async fn socket_post(
+    client: &reqwest::Client,
+    url: &str,
+    f: &Fixture,
+    request: &WorkspaceOperationRequest,
+) -> (reqwest::StatusCode, serde_json::Value) {
+    let response = client
+        .post(url)
+        .bearer_auth(&f.token)
+        .json(request)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = response.bytes().await.unwrap();
+    assert!(body.len() <= 32 * 1024);
+    (status, serde_json::from_slice(&body).unwrap())
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sdlc_workspace_http_hidden_bytes_and_config_never_append_false_physical_observation() {
+    use sha1::{Digest, Sha1};
+    use std::{fs, os::unix::fs::MetadataExt, time::Duration};
+    let p = PhysicalFixture::new().await;
+    let f = &p.f;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = f.app.clone();
+    let _server = HttpServer(tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    }));
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let origin = format!("http://{address}");
+    let url = format!(
+        "{origin}/api/v1/projects/{}/sdlc/workspace-operations",
+        f.project
+    );
+    let checkout = p.owned.checkout();
+    let index_path = checkout.join(".git/index");
+    let file_path = checkout.join("artifact.txt");
+    let (status, receipt) = socket_post(&client, &url, f, &f.request).await;
+    assert_eq!(status, reqwest::StatusCode::OK, "{receipt}");
+    assert_eq!(receipt["physicalSourceObserved"], true);
+    assert_eq!(receipt["status"], "blocked");
+    assert_eq!(receipt["dispatchAllowed"], false);
+    assert_eq!(receipt["blockers"].as_array().unwrap().len(), 2);
+    let mut next = f.request.clone();
+    for flag in ["--assume-unchanged", "--skip-worktree"] {
+        next.operation_key = format!("hidden-{flag}");
+        physical_git(checkout, &["update-index", flag, "artifact.txt"]);
+        fs::write(&file_path, "forged source\n").unwrap();
+        assert_eq!(physical_git(checkout, &["status", "--porcelain"]), "");
+        let index = fs::read(&index_path).unwrap();
+        let (status, rejection) = socket_post(&client, &url, f, &next).await;
+        assert_eq!(status, reqwest::StatusCode::CONFLICT, "{rejection}");
+        assert!(rejection.get("physicalSourceObserved").is_none());
+        assert_eq!(fs::read(&index_path).unwrap(), index);
+        assert_eq!(fs::read_to_string(&file_path).unwrap(), "forged source\n");
+        let (status, replay) = socket_post(&client, &url, f, &f.request).await;
+        assert_eq!(status, reqwest::StatusCode::OK);
+        assert_eq!(replay, receipt);
+        // Fixture-only restoration; production observation performs neither of these mutations.
+        fs::write(&file_path, "pinned source\n").unwrap();
+        let undo = if flag == "--assume-unchanged" {
+            "--no-assume-unchanged"
+        } else {
+            "--no-skip-worktree"
+        };
+        physical_git(checkout, &["update-index", undo, "artifact.txt"]);
+    }
+    physical_git(checkout, &["update-index", "--index-version=2"]);
+    let before = fs::metadata(&file_path).unwrap();
+    fs::write(&file_path, "forged source\n").unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&file_path)
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(before.modified().unwrap()))
+        .unwrap();
+    let meta = fs::metadata(&file_path).unwrap();
+    assert_eq!(meta.len(), before.len());
+    let mut index = fs::read(&index_path).unwrap();
+    assert_eq!(&index[..12], b"DIRC\0\0\0\x02\0\0\0\x01");
+    for (slot, value) in index[12..52].chunks_exact_mut(4).zip([
+        meta.ctime() as u32,
+        meta.ctime_nsec() as u32,
+        meta.mtime() as u32,
+        meta.mtime_nsec() as u32,
+        meta.dev() as u32,
+        meta.ino() as u32,
+        meta.mode(),
+        meta.uid(),
+        meta.gid(),
+        meta.len() as u32,
+    ]) {
+        slot.copy_from_slice(&value.to_be_bytes());
+    }
+    let end = index.len() - 20;
+    let checksum = Sha1::digest(&index[..end]);
+    index[end..].copy_from_slice(&checksum);
+    fs::write(&index_path, &index).unwrap();
+    fs::File::options()
+        .write(true)
+        .open(&index_path)
+        .unwrap()
+        .set_times(
+            fs::FileTimes::new().set_modified(before.modified().unwrap() + Duration::from_secs(10)),
+        )
+        .unwrap();
+    assert_eq!(physical_git(checkout, &["status", "--porcelain"]), "");
+    next.operation_key = "spoofed-stat-cache".into();
+    assert_eq!(
+        socket_post(&client, &url, f, &next).await.0,
+        reqwest::StatusCode::CONFLICT
+    );
+    assert_eq!(fs::read(&index_path).unwrap(), index);
+    assert_eq!(fs::read_to_string(&file_path).unwrap(), "forged source\n");
+    let read = client
+        .get(format!("{origin}{}", f.lookup_url(&receipt)))
+        .bearer_auth(&f.read_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(read.status(), reqwest::StatusCode::OK);
+    assert_eq!(
+        read.json::<serde_json::Value>().await.unwrap()["receipt"],
+        receipt
+    );
+    fs::write(&file_path, "pinned source\n").unwrap();
+    for (config_path, key) in [
+        (checkout.to_path_buf(), "filter.unsafe.clean"),
+        (p.bare.clone(), "include.path"),
+    ] {
+        physical_git(&config_path, &["config", key, "unsupported-test-fixture"]);
+        next.operation_key = format!("unsupported-{key}");
+        assert_eq!(
+            socket_post(&client, &url, f, &next).await.0,
+            reqwest::StatusCode::CONFLICT
+        );
+        physical_git(&config_path, &["config", "--unset", key]);
+    }
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM sdlc_workspace_operations")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        1
+    );
+    next.operation_key = "clean-after-fixture-restoration".into();
+    assert_eq!(
+        socket_post(&client, &url, f, &next).await.1["physicalSourceObserved"],
+        true
+    );
+    next.operation_key = "wrong-row-lease-generation".into();
+    next.workspace_generation += 1;
+    next.workspace_id = format!(
+        "attempt-{}-{}-{}",
+        next.attempt_id,
+        next.workspace_generation,
+        Uuid::new_v4().simple()
+    );
+    assert_eq!(
+        socket_post(&client, &url, f, &next).await.0,
+        reqwest::StatusCode::CONFLICT
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM sdlc_workspace_operations")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap(),
+        2
+    );
 }
 
 #[tokio::test]

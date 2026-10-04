@@ -1,5 +1,6 @@
 //! Compare bytes/types/modes with the owner-pinned tree, never index stat-cache truth.
 use super::git_bounded;
+use crate::runner_workspace::SourceObservationTimeout;
 use anyhow::{Context, ensure};
 use sha1::{Digest, Sha1};
 use std::{
@@ -7,13 +8,70 @@ use std::{
     fs,
     io::Read,
     path::{Path, PathBuf},
+    sync::{
+        Arc, LazyLock,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Instant,
 };
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 const MAX_MANIFEST_BYTES: usize = 32 * 1024 * 1024;
 const MAX_ENTRIES: usize = 100_000;
 const MAX_FILE_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_TOTAL_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_DEPTH: usize = 64;
+static SCAN_WORKERS: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(2)));
+
+struct ScanControl {
+    deadline: Instant,
+    canceled: AtomicBool,
+}
+
+impl ScanControl {
+    fn check(&self) -> anyhow::Result<()> {
+        if self.canceled.load(Ordering::Acquire) || Instant::now() >= self.deadline {
+            return Err(SourceObservationTimeout.into());
+        }
+        Ok(())
+    }
+}
+
+struct CancelOnDrop(Arc<ScanControl>);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.canceled.store(true, Ordering::Release);
+    }
+}
+
+async fn acquire_slot(
+    workers: Arc<Semaphore>,
+    deadline: Instant,
+) -> anyhow::Result<OwnedSemaphorePermit> {
+    tokio::time::timeout_at(deadline.into(), workers.acquire_owned())
+        .await
+        .map_err(|_| SourceObservationTimeout)?
+        .context("physical scan worker pool closed")
+}
+
+async fn run_worker<T: Send + 'static>(
+    control: Arc<ScanControl>,
+    permit: OwnedSemaphorePermit,
+    operation: impl FnOnce(&ScanControl) -> anyhow::Result<T> + Send + 'static,
+) -> anyhow::Result<T> {
+    let _cancel = CancelOnDrop(control.clone());
+    tokio::task::spawn_blocking(move || {
+        // A canceled request must not free capacity while its actual IO worker still exists.
+        let _permit = permit;
+        control.check()?;
+        let result = operation(&control);
+        control.check()?;
+        result
+    })
+    .await
+    .context("join physical checkout verification")?
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Entry {
@@ -21,8 +79,19 @@ struct Entry {
     oid: String,
 }
 
-pub(super) async fn verify(checkout: &Path, repository: &Path, commit: &str) -> anyhow::Result<()> {
+pub(super) async fn verify(
+    checkout: &Path,
+    repository: &Path,
+    commit: &str,
+    deadline: Instant,
+) -> anyhow::Result<()> {
     ensure!(cfg!(unix), "physical mode verification requires Unix");
+    let permit = acquire_slot(SCAN_WORKERS.clone(), deadline).await?;
+    let control = Arc::new(ScanControl {
+        deadline,
+        canceled: AtomicBool::new(false),
+    });
+    control.check()?;
     let manifest = git_bounded(
         repository,
         &["ls-tree", "-r", "-t", "-z", "--full-tree", commit],
@@ -30,6 +99,7 @@ pub(super) async fn verify(checkout: &Path, repository: &Path, commit: &str) -> 
     )
     .await?;
     let expected = tree(&manifest)?;
+    control.check()?;
     let index = git_bounded(
         checkout,
         &["ls-files", "--stage", "-v", "-z"],
@@ -37,11 +107,12 @@ pub(super) async fn verify(checkout: &Path, repository: &Path, commit: &str) -> 
     )
     .await?;
     verify_index(&index, &expected)?;
+    control.check()?;
     let root = checkout.to_path_buf();
-    tokio::task::spawn_blocking(move || {
+    run_worker(control, permit, move |control| {
         let mut actual = BTreeMap::new();
         let mut total = 0;
-        walk(&root, &root, 0, &mut actual, &mut total)?;
+        walk(&root, &root, 0, &mut actual, &mut total, control)?;
         ensure!(
             actual == expected,
             "physical checkout differs from pinned tree; reconciliation required"
@@ -49,7 +120,6 @@ pub(super) async fn verify(checkout: &Path, repository: &Path, commit: &str) -> 
         Ok(())
     })
     .await
-    .context("join physical checkout verification")?
 }
 
 fn records(bytes: &[u8]) -> anyhow::Result<impl Iterator<Item = &[u8]>> {
@@ -169,9 +239,12 @@ fn walk(
     depth: usize,
     actual: &mut BTreeMap<PathBuf, Entry>,
     total: &mut u64,
+    control: &ScanControl,
 ) -> anyhow::Result<()> {
+    control.check()?;
     ensure!(depth <= MAX_DEPTH, "physical inventory exceeds depth bound");
     for child in fs::read_dir(directory)? {
+        control.check()?;
         let child = child?;
         if directory == root && child.file_name() == ".git" {
             continue;
@@ -195,7 +268,7 @@ fn walk(
                     oid: String::new(),
                 },
             );
-            walk(root, &full, depth + 1, actual, total)?;
+            walk(root, &full, depth + 1, actual, total, control)?;
         } else {
             let e = if meta.file_type().is_symlink() {
                 let target = fs::read_link(&full)?;
@@ -213,7 +286,7 @@ fn walk(
                     "unsupported physical file type"
                 );
                 budget(meta.len(), total)?;
-                file_blob(&full, &meta)?
+                file_blob(&full, &meta, control)?
             };
             actual.insert(relative, e);
         }
@@ -262,7 +335,7 @@ fn same_metadata(_: &fs::Metadata, _: &fs::Metadata) -> bool {
 }
 
 #[cfg(unix)]
-fn file_blob(path: &Path, before: &fs::Metadata) -> anyhow::Result<Entry> {
+fn file_blob(path: &Path, before: &fs::Metadata, control: &ScanControl) -> anyhow::Result<Entry> {
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     // Do not follow a substituted link or block on a substituted special file.
     let mut file = fs::OpenOptions::new()
@@ -277,7 +350,9 @@ fn file_blob(path: &Path, before: &fs::Metadata) -> anyhow::Result<Entry> {
     let mut buffer = [0; 64 * 1024];
     let mut length = 0u64;
     loop {
+        control.check()?;
         let count = file.read(&mut buffer)?;
+        control.check()?;
         if count == 0 {
             break;
         }
@@ -301,6 +376,106 @@ fn file_blob(path: &Path, before: &fs::Metadata) -> anyhow::Result<Entry> {
 }
 
 #[cfg(not(unix))]
-fn file_blob(_: &Path, _: &fs::Metadata) -> anyhow::Result<Entry> {
+fn file_blob(_: &Path, _: &fs::Metadata, _: &ScanControl) -> anyhow::Result<Entry> {
     anyhow::bail!("physical mode verification requires Unix")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn canceled_worker_keeps_capacity_until_actual_exit_and_waiter_times_out() {
+        let workers = Arc::new(Semaphore::new(1));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let permit = acquire_slot(workers.clone(), deadline).await.unwrap();
+        let control = Arc::new(ScanControl {
+            deadline,
+            canceled: AtomicBool::new(false),
+        });
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (release, held) = std::sync::mpsc::channel();
+        let (finished, exited) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(run_worker(control.clone(), permit, move |control| {
+            started.send(()).unwrap();
+            held.recv_timeout(Duration::from_secs(5)).unwrap();
+            let result = control.check();
+            finished.send(result.is_err()).unwrap();
+            result
+        }));
+        ready.await.unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(control.canceled.load(Ordering::Acquire));
+        assert_eq!(workers.available_permits(), 0);
+        let error = acquire_slot(workers.clone(), Instant::now() + Duration::from_millis(20))
+            .await
+            .unwrap_err();
+        assert!(error.is::<SourceObservationTimeout>());
+        release.send(()).unwrap();
+        assert!(exited.await.unwrap());
+        let _permit = acquire_slot(workers.clone(), Instant::now() + Duration::from_secs(2))
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn deadline_or_cancellation_prevents_queued_worker_from_starting_scan() {
+        for canceled in [false, true] {
+            let workers = Arc::new(Semaphore::new(1));
+            let permit = workers.clone().acquire_owned().await.unwrap();
+            let control = Arc::new(ScanControl {
+                deadline: if canceled {
+                    Instant::now() + Duration::from_secs(2)
+                } else {
+                    Instant::now()
+                },
+                canceled: AtomicBool::new(canceled),
+            });
+            let entered = Arc::new(AtomicBool::new(false));
+            let seen = entered.clone();
+            let error = run_worker(control, permit, move |_| {
+                seen.store(true, Ordering::Release);
+                Ok(())
+            })
+            .await
+            .unwrap_err();
+            assert!(error.is::<SourceObservationTimeout>());
+            assert!(!entered.load(Ordering::Acquire));
+            assert_eq!(workers.available_permits(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn running_scan_checks_cancellation_and_stops_after_request_drop() {
+        let workers = Arc::new(Semaphore::new(1));
+        let permit = workers.clone().acquire_owned().await.unwrap();
+        let control = Arc::new(ScanControl {
+            deadline: Instant::now() + Duration::from_secs(5),
+            canceled: AtomicBool::new(false),
+        });
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (finished, exited) = tokio::sync::oneshot::channel();
+        let task = tokio::spawn(run_worker::<()>(control, permit, move |control| {
+            started.send(()).unwrap();
+            loop {
+                if let Err(error) = control.check() {
+                    finished.send(()).unwrap();
+                    return Err(error);
+                }
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }));
+        ready.await.unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        tokio::time::timeout(Duration::from_secs(2), exited)
+            .await
+            .unwrap()
+            .unwrap();
+        let _permit = acquire_slot(workers, Instant::now() + Duration::from_secs(2))
+            .await
+            .unwrap();
+    }
 }

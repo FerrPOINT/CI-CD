@@ -10,6 +10,10 @@ use uuid::Uuid;
 
 pub mod preparation;
 
+#[derive(Debug, thiserror::Error)]
+#[error("physical source observation deadline exceeded")]
+pub struct SourceObservationTimeout;
+
 const MARKER: &str = ".forge-attempt.json";
 const COMPLETION: &str = ".forge-completion.json";
 const ACK: &str = ".forge-completion-ack.json";
@@ -350,67 +354,17 @@ impl OwnedWorkspace {
     /// Read-only physical observation, never an SDLC admission or resource receipt.
     pub async fn observe_pinned_source(&self, repository: &Path, sha: &str) -> anyhow::Result<()> {
         self.verify_owner()?;
-        check_ancestors(&self.checkout.join(".git"))?;
         check_ancestors(repository)?;
         let expected = repository.canonicalize()?;
-        let origin = self
-            .bounded_git_read(&["config", "--get", "remote.origin.url"])
-            .await?;
-        let origin = String::from_utf8(origin)?;
-        ensure!(
-            Path::new(origin.trim()).is_absolute(),
-            "origin must be owner-local"
-        );
-        check_ancestors(Path::new(origin.trim()))?;
-        ensure!(
-            Path::new(origin.trim()).canonicalize()? == expected,
-            "repository pin mismatch"
-        );
-        let head = self
-            .bounded_git_read(&["rev-parse", "--verify", "HEAD^{commit}"])
-            .await?;
-        ensure!(
-            String::from_utf8(head)?.trim() == sha,
-            "source pin mismatch"
-        );
-        let reference = self
-            .bounded_git_read(&["rev-parse", "--abbrev-ref", "HEAD"])
-            .await?;
-        ensure!(
-            String::from_utf8(reference)?.trim() == "HEAD",
-            "source must remain detached"
-        );
-        ensure!(
-            self.bounded_git_read(&["status", "--porcelain=v1", "--untracked-files=all"])
-                .await?
-                .is_empty(),
-            "workspace is not clean"
-        );
+        preparation::observe_checkout(
+            &self.checkout,
+            &expected,
+            sha,
+            std::time::Instant::now() + std::time::Duration::from_secs(3),
+        )
+        .await?;
         self.verify_owner()?;
         Ok(())
-    }
-
-    async fn bounded_git_read(&self, args: &[&str]) -> anyhow::Result<Vec<u8>> {
-        use tokio::io::AsyncReadExt;
-        let mut command = self.git(&self.checkout);
-        let mut child = command
-            .args(args)
-            .env("GIT_OPTIONAL_LOCKS", "0")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()?;
-        let mut bytes = Vec::new();
-        child
-            .stdout
-            .take()
-            .context("missing git stdout")?
-            .take(4097)
-            .read_to_end(&mut bytes)
-            .await?;
-        ensure!(bytes.len() <= 4096, "git observation exceeds bound");
-        ensure!(child.wait().await?.success(), "git observation failed");
-        Ok(bytes)
     }
 
     /// Caller must first obtain a durable terminal acknowledgement from the owner.

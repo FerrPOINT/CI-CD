@@ -23,7 +23,8 @@ REST API первой версии Forge CI/CD. Контрольная плос�
 
 Filesystem preparation helper существует только как внутренний Rust primitive.
 HTTP routes ниже его не вызывают: producer source binding отсутствует, ответы
-остаются blocked. Public DTO/OpenAPI не менялись. Local preparation journals не
+остаются blocked. Они переиспользуют только общий read-only verifier, не `prepare`
+или создание workspace. Public DTO/OpenAPI не менялись. Local preparation journals не
 принимаются как authority или trusted receipt.
 
 Source-срез: [delivery contract](SDLC_DELIVERY_V1.md#source-slice-task-bound-workspace-operation-2026-10-04),
@@ -63,6 +64,21 @@ request. Admission/workspace authority blockers обязательны. Optional
 physical pin/clean checks не заменяют Tracker authority. POST replay не сверяет
 заново resource и не renew-ит head; fresh expiry/reconciliation доступны отдельным
 GET. Expiry и terminal без accepted completion не дают stop/cleanup proof.
+
+При заданном observation root новый POST использует общий read-only verifier:
+owner-local bare config и checkout config проходят закрытый allowlist;
+detached HEAD/origin, index manifest/flags и реальные blob bytes/types/Git modes
+сверяются с pinned tree. `git status` и stat cache не дают
+`physicalSourceObserved=true`. Dirty/unsupported state — 409 без новой ledger row;
+timeout/истёкший scan budget — 503, также без receipt. Общий deadline HTTP preflight
+остаётся 3 секунды, включая ожидание scan slot. Максимум два physical worker-а на
+процесс; cancellation/deadline проверяются между entries и 64 KiB chunks. Slot
+ограничивает только filesystem IO, не Tracker business capacity или assignments.
+Он удерживается самим worker-ом до выхода, даже если request уже отменён. Блокирующий
+OS IO нельзя принудительно остановить cooperative flag; после возвращения IO scan
+не продолжается, slot не освобождается преждевременно. Это не OS sandbox.
+`physicalSourceObserved` в original receipt исторический; GET/replay не обновляют
+его и не выполняют новый physical scan. Fresh GET относится только к lease state.
 
 ## Runner Terminal Readback
 

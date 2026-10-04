@@ -18,6 +18,11 @@ mode/type/symlink drift, ignored files и лишние directories. Replay/readb
 lost-final-journal recovery не очищают flags, не обновляют index и не ремонтируют
 checkout. Положительный nested fixture с 1000 файлами проверяет inventory больше
 4 KiB; отдельные честные bounds описаны в [SDLC delivery](SDLC_DELIVERY_V1.md).
+Actual ephemeral HTTP listener с disposable PG проверяет clean positive и hidden
+dirty bytes (оба index flags и stat-cache spoof), config rejection, отсутствие
+нового receipt при 409, неизменность original replay/GET и row lease mismatch.
+Worker tests проверяют cancellation, deadline перед queued scan и удержание slot
+до выхода фактического worker-а; HTTP budget остаётся 3 секунды.
 Linux Rust 1.88/PG 17.6 проверяются только во временном owner-labelled Compose,
 с finally cleanup; никакая accepted/shared DB не используется. Windows junction,
 power-loss и native/source-authorized adapter остаются отдельными gates.

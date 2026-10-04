@@ -9,6 +9,12 @@
 
 ## [Unreleased]
 
+- Optional HTTP workspace preflight теперь использует общий pinned physical
+  verifier и config allowlist: hidden dirty bytes не дают ложный
+  `physicalSourceObserved`. Scans ограничены двумя worker-ами с cooperative
+  cancellation/deadline; timeout не выдаёт receipt. Existing blocked API,
+  immutable replay, leases и legacy clone/checkout не включают admission/dispatch.
+
 - Readback локальной preparation сверяет физические blob bytes/types/modes с
   pinned tree независимо от Git stat cache. `assume-unchanged`/`skip-worktree`
   отклоняются без изменения index или autorepair, включая replay/recovery;

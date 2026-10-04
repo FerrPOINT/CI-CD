@@ -139,10 +139,20 @@ PAT не обходят границу. Нет subject — API закрыт (503
 Опциональный `CICD_SDLC_WORKSPACE_OBSERVATION_ROOT` задаёт owner-local mount
 существующих OwnedWorkspace. Read-only preflight проверяет marker/canonical paths
 без links, attempt/lease/generation, exact local origin, `HEAD^{commit}` и clean
-tree. Git readback ограничен временем/размером; не создаёт, не очищает и не
+tree. HTTP observer использует тот же hardened pinned-tree verifier и закрытый
+config allowlist, что preparation readback; скрывающие index flags/stat cache не
+могут подтвердить реальные bytes. Лимиты inventory приведены выше. HTTP preflight
+имеет общий budget 3 секунды; максимум два physical worker-а на процесс,
+cooperative cancellation/deadline проверяются между entries/chunks. Worker держит
+slot до фактического выхода; timeout не создаёт receipt или неограниченную очередь
+фоновых scans. Принудительная остановка зависшего OS IO и атомарный snapshot
+не заявлены. Git readback ограничен временем/размером; не создаёт, не очищает и не
 запускает workspace. Без mount добавляется blocker
 `physical_workspace_observation_unavailable`. `physicalSourceObserved` относится
 только к моменту записи, не к свежему admission или native attestation.
+Original-key GET/replay возвращают прежний physical observation; fresh readback
+обновляет только lease state, не physical proof. Ошибка нового preflight не
+создаёт новую ledger row, уже записанная история не переписывается.
 
 Обязательные blockers `tracker_admission_unavailable` и
 `tracker_workspace_binding_unavailable` остаются даже при успешном physical
