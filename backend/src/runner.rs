@@ -191,6 +191,13 @@ async fn claim_embedded_job_lease(
     crate::store::enqueue_missing_ready_jobs(pool)
         .await
         .map_err(ApiError::internal)?;
+    // Match remote leasing: the cap read and lease insertion must serialize.
+    // A conflict reserves no execution; the queued job can be claimed next tick.
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
     let row = sqlx::query_as::<_, (Uuid, Uuid, i64)>(
         r#"
         WITH queue_row AS (
@@ -205,6 +212,7 @@ async fn claim_embedded_job_lease(
             JOIN execution_attempts a ON a.id = q.attempt_id
             JOIN stages s ON s.id = j.stage_id
             JOIN pipelines p ON p.id = s.pipeline_id
+            JOIN projects pr ON pr.id = p.project_id
             WHERE j.id = $1
               AND q.state = 'queued'
               AND q.not_before <= now()
@@ -213,6 +221,12 @@ async fn claim_embedded_job_lease(
               AND a.status = 'queued'
               AND NOT j.manual
               AND p.status IN ('queued','running')
+              AND (pr.max_running_jobs IS NULL OR
+                  (SELECT count(*) FROM job_leases cl
+                   JOIN jobs cj ON cj.id=cl.job_id
+                   JOIN stages cs ON cs.id=cj.stage_id
+                   JOIN pipelines cp ON cp.id=cs.pipeline_id
+                   WHERE cl.lease_status='active' AND cp.project_id=pr.id) < pr.max_running_jobs)
               AND NOT EXISTS (
                   SELECT 1
                   FROM job_leases l
@@ -284,9 +298,24 @@ async fn claim_embedded_job_lease(
     )
     .bind(job_id)
     .bind(Uuid::new_v4())
-    .fetch_optional(pool)
-    .await
-    .map_err(ApiError::internal)?;
+    .fetch_optional(&mut *tx)
+    .await;
+    let row = match row {
+        Ok(row) => row,
+        Err(error)
+            if error.as_database_error().and_then(|e| e.code()).as_deref() == Some("40001") =>
+        {
+            let _ = tx.rollback().await;
+            return Ok(None);
+        }
+        Err(error) => return Err(ApiError::internal(error)),
+    };
+    if let Err(error) = tx.commit().await {
+        if error.as_database_error().and_then(|e| e.code()).as_deref() == Some("40001") {
+            return Ok(None);
+        }
+        return Err(ApiError::internal(error));
+    }
 
     Ok(row.map(|(id, attempt_id, generation)| EmbeddedJobLease {
         id,

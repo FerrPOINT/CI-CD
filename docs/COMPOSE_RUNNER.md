@@ -41,3 +41,7 @@ webServer. Sources Base экспортируются из точного commit 
 `SDLC_PROJECT`, сохранённый `SDLC_SIGNING_KEY` и защищённый output archive;
 использует полный workspace profile и согласованную остановку писателей.
 Retention или удаление старых данных wrapper не выполняет.
+
+Лимит проекта проверяется до резервирования lease в SERIALIZABLE transaction.
+Встроенный и внешний runner учитывают активные leases, включая подготовку.
+Serialization conflict оставляет job queued без запуска; лимит Pulse равен одному.
