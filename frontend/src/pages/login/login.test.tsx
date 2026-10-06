@@ -20,9 +20,9 @@ function renderLogin(path = '/login') {
 describe('ci-cd login recovery', () => {
   it('presents one platform login without product branding or legacy warnings', async () => {
     renderLogin('/login?logged_out=1')
-    expect(await screen.findByRole('heading', { name: 'Вход в платформу', exact: true })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Вход в платформу' })).toBeInTheDocument()
     expect(screen.queryByText(/Base|SDLC|Task Tracker|Fleet Control|Wiki|CI[/]CD|Admin Panel|второй фактор|защита входа/i)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Войти через SSO', exact: true })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Войти через SSO' })).toBeInTheDocument()
   })
 
   beforeEach(() => {
