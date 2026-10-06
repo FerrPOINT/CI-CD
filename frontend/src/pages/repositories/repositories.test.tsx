@@ -54,6 +54,7 @@ function setup(count: number, initialEntry = '/repositories') {
 
 afterEach(() => {
   vi.clearAllMocks()
+  vi.unstubAllEnvs()
   Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
 })
 
@@ -120,12 +121,13 @@ describe('RepositoriesPage', () => {
   })
 
   it('reports clipboard failure and keeps delete confirmation open on an API error', async () => {
+    vi.stubEnv('BASE_URL', '/forge/')
     setup(1)
     const writeText = vi.fn().mockRejectedValue(new Error('Denied'))
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } })
     fireEvent.click(screen.getByRole('button', { name: 'repositories.copyUrlFor repo-01' }))
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('repositories.copyError'))
-    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('/git/repo-01.git'))
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining('/forge/git/repo-01.git'))
 
     fireEvent.click(screen.getByRole('button', { name: 'repositories.deleteRepository repo-01' }))
     fireEvent.click(screen.getByRole('button', { name: 'common.delete' }))

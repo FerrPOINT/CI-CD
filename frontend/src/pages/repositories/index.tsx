@@ -12,7 +12,7 @@ import { QueryState } from '@/shared/ui/query-state'
 const pageSize = 20
 
 function buildCloneUrl(name: string): string {
-  return `${window.location.origin}/git/${name}.git`
+  return `${window.location.origin}${import.meta.env.BASE_URL}git/${name}.git`
 }
 
 function projectNameForRepository(name: string, projects: Project[]): string | null {

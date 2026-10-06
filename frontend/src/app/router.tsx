@@ -70,4 +70,4 @@ export const appRoutes = [
   { path: '*', element: <Navigate to="/" replace /> },
 ]
 
-export const router = createBrowserRouter(appRoutes)
+export const router = createBrowserRouter(appRoutes, { basename: import.meta.env.BASE_URL })
