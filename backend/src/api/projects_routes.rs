@@ -372,6 +372,10 @@ mod tests {
             "git@example.test:",
             "ssh://-bad/team/repo.git",
             "git@-bad:team/repo.git",
+            "ssh://-bad@example.test/team/repo.git",
+            "-bad@example.test:team/repo.git",
+            "ssh://%2Dbad@example.test/team/repo.git",
+            "ssh://%2dbad@example.test/team/repo.git",
         ] {
             for method in ["POST", "PATCH"] {
                 let path = if method == "POST" {

@@ -247,6 +247,8 @@ curl -sS 'http://127.0.0.1:22801/api/v1/projects?limit=50&offset=0'
 непустые host и repository path; SCP-форма поддерживает `user@host:path`,
 включая bracketed IPv6. Host проходит network-host parsing; SSH/SCP host с
 некорректным percent encoding или ведущим дефисом отклоняется до записи.
+SSH/SCP username с ведущим дефисом, включая SSH `%2D`/`%2d`, также отклоняется;
+для HTTP(S) это ограничение username не применяется.
 Local/file paths, passwords, query и fragment
 не принимаются. Расширение `.git` необязательно. Проверка синтаксическая:
 она не обращается к сети и не обещает доступность репозитория или SSH runner.

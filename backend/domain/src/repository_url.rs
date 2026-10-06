@@ -43,7 +43,13 @@ pub fn validate_repository_url(input: &str) -> Result<(), &'static str> {
     // SSH uses opaque URL hosts: reparse with the network-host rules and reject
     // option-like names that Git/OpenSSH refuse before connecting.
     let host = url::Host::parse(parsed.host_str().ok_or(INVALID_URL)?).map_err(|_| INVALID_URL)?;
+    // Git decodes SSH usernames before rejecting option-like user@host arguments.
+    let username = parsed.username();
     if matches!(&host, url::Host::Domain(name) if name.is_empty() || name.starts_with('-'))
+        || (parsed.scheme() == "ssh"
+            && (username.starts_with('-')
+                || username.starts_with("%2D")
+                || username.starts_with("%2d")))
         || parsed.path().trim_matches('/').is_empty()
         || parsed.password().is_some()
         || parsed.query().is_some()
@@ -130,6 +136,28 @@ mod tests {
             "git@build_server:team/repo.git",
             "ssh://git@[2001:db8::1]:2222/team/repo.git",
             "git@[2001:db8::1]:team/repo.git",
+        ] {
+            assert!(validate_repository_url(url).is_ok(), "{url}");
+        }
+    }
+
+    #[test]
+    fn repository_url_rejects_option_like_ssh_usernames() {
+        for url in [
+            "ssh://-bad@example.test/team/repo.git",
+            "-bad@example.test:team/repo.git",
+            "ssh://%2Dbad@example.test/team/repo.git",
+            "ssh://%2dbad@example.test/team/repo.git",
+            "ssh://-@example.test/team/repo.git",
+            "-@example.test:team/repo.git",
+        ] {
+            assert!(validate_repository_url(url).is_err(), "{url}");
+        }
+        for url in [
+            "ssh://build-user@example.test/team/repo.git",
+            "build-user@example.test:team/repo.git",
+            "https://-user@example.test/team/repo.git",
+            "http://%2Duser@example.test/team/repo.git",
         ] {
             assert!(validate_repository_url(url).is_ok(), "{url}");
         }
