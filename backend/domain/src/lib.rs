@@ -6,6 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod repository_url;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum JobStatus {
