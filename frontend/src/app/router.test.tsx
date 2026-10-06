@@ -107,7 +107,7 @@ const routeCases = [
   { entry: `/projects/${projectId}/reports`, marker: '75' },
   { entry: '/audit-log', marker: 'project.created' },
   { entry: '/users', marker: 'Открыть пользователей' },
-  { entry: '/login', marker: 'Войти через SDLC' },
+  { entry: '/login', marker: 'Войти через SSO' },
 ] as const
 
 afterEach(() => {

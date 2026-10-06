@@ -27,7 +27,7 @@ export function LoginPage() {
         void beginSso(ssoConfig, returnTo, { interactive: true }).catch((error: unknown) =>
           setError(isSsoNavigationInterruption(error) ? null : 'Central Auth временно недоступен.'),
         )
-      }}>Войти через SDLC</Button>
+      }}>Войти через SSO</Button>
     </div>
   </main>
 }
