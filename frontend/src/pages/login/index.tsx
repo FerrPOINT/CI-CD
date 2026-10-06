@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Navigate, useLocation } from 'react-router'
 import { beginSso, isSsoNavigationInterruption } from '@sdlc/ui/sso'
-import { Button, PlatformMark } from '@sdlc/ui/ui'
+import { Button } from '@sdlc/ui/ui'
 import { ssoConfig, useAuth } from '@/shared/auth/auth-provider'
 
 export function LoginPage() {
@@ -19,8 +19,7 @@ export function LoginPage() {
   if (status === 'authenticated') return <Navigate to={returnTo} replace />
   return <main className="grid min-h-screen place-items-center bg-background p-4">
     <div className="w-full max-w-sm space-y-5 text-center">
-      <PlatformMark withName />
-      <h1 className="text-xl font-semibold">Вход в CI/CD</h1>
+      <h1 className="text-xl font-semibold">Вход в платформу</h1>
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
       <Button className="min-h-10 w-full sm:min-h-10" onClick={() => {
         setError(null)

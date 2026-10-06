@@ -8,10 +8,6 @@ const beginSso = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<void>>(a
 vi.mock('@sdlc/ui/sso', async (importOriginal) => ({
   ...await importOriginal<typeof import('@sdlc/ui/sso')>(), beginSso,
 }))
-vi.mock('@sdlc/ui/ui', async (importOriginal) => ({
-  ...await importOriginal<typeof import('@sdlc/ui/ui')>(),
-  PlatformMark: () => <span>SDLC</span>,
-}))
 vi.mock('@/shared/auth/auth-provider', () => ({
   ssoConfig: { issuer: 'http://localhost:7701', clientId: 'ci-cd' },
   useAuth: () => ({ status: 'anonymous' }),
@@ -22,6 +18,13 @@ function renderLogin(path = '/login') {
 }
 
 describe('ci-cd login recovery', () => {
+  it('presents one platform login without product branding or legacy warnings', async () => {
+    renderLogin('/login?logged_out=1')
+    expect(await screen.findByRole('heading', { name: 'Вход в платформу', exact: true })).toBeInTheDocument()
+    expect(screen.queryByText(/Base|SDLC|Task Tracker|Fleet Control|Wiki|CI[/]CD|Admin Panel|второй фактор|защита входа/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Войти через SSO', exact: true })).toBeInTheDocument()
+  })
+
   beforeEach(() => {
     beginSso.mockReset().mockResolvedValue(undefined)
   })
