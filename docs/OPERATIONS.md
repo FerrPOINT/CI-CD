@@ -14,6 +14,33 @@
 
 ## Owner-local manifest delivery
 
+Контейнерный срез: тот же CLI с `--oci`, отдельными `CICD_LOCAL_OCI_ROOT/POLICY`
+и existing project machine token. Typed data preflight rejection выдаёт stdout
+`forge/local-oci-rejection/v1`, status blocked и фиксированный reason, exit1.
+Остальные ошибки возвращают `unknown_or_rejected`: effect мог начаться, поэтому
+проверять original operation key через readback, не создавать новый retry key.
+Поддержан preloaded immutable local image и immutable read-only data snapshot:
+`readonly_snapshot_v1`, exact source/image/data identity, пустой migrations list.
+Mutable DB, down migrations, unknown/incompatible data и drift блокируются;
+automatic restore/backfill/repair отсутствуют. Rollback не пишет snapshot.
+
+Policy фиксирует temporary `sdlc-qa-forge-oci-<unique>`, daemon ID и совпадающие
+owner QA network/volume. Caller не передаёт Compose/commands/mounts. Linux
+parent-death signal ограничивает standalone Compose client; durable child
+identity/exit проверяются перед recovery. Actual container ID/image/mount/network
+и version/compatibility/application acceptance сверяются до и после. Replay и
+recovery не вызывают Compose up. Unknown holds не удалять для retry.
+
+OCI QA: tools image строится из `deploy/qa/oci-tools.Dockerfile`; verify script
+использует `-Gate oci`, explicit socket mount только своего controller и internal
+network. Feature `oci-integration` включает actual daemon/runner/image tests;
+обычный hosted suite не выдаётся за них. Exact own child Compose cleanup — test
+Drop и wrapper finally; parent disposable volume удаляется только после проверки
+отсутствия child containers. Реальные execution specs сохраняются в host-visible
+`composeRoot`; Windows wrapper создаёт temporary owned junction для того же файла
+и удаляет только junction в finally, сохраняя evidence directory. Docker audit
+должен проходить и при работающем child. [ADR-0021](adr/0021-owner-local-oci-readonly-data.md).
+
 Это ограниченная privileged техническая capability для одного static artifact
 и отдельного Unix target. Она не установлена на постоянные стенды и не открывает
 SDLC dispatch. Перед effect owner задаёт absolute isolated root, policy JSON
@@ -52,9 +79,10 @@ Artifact/config/plan/source identity и application checks проверяютс�
 exit2 — unavailable/failed/unknown receipt, exit1 — rejected/unavailable command.
 Файлы hold не удалять для продолжения polling: требуется owner reconciliation.
 
-Эти checks не доказывают полный business acceptance, database compatibility,
-orchestrator stop или native attestation. OCI/migrations/data rollback и реальный
-admission интегрируются отдельным опубликованным protocol.
+Эти checks не доказывают полный business acceptance, mutable database compatibility,
+production orchestrator stop или native attestation. Owner-local OCI slice выше
+проверяет только read-only snapshot protocol; migration/data restore и реальный
+admission требуют отдельного опубликованного protocol.
 
 Воспроизводимый QA из корня CI-CD: PowerShell7 script
 `scripts/verify-task-delivery.ps1 -BaseRoot <readonly-pinned-Base-checkout>

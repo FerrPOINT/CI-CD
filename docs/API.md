@@ -52,6 +52,11 @@ REST API первой версии Forge CI/CD. Контрольная плос�
 
 ## SDLC Workspace Operation
 
+OCI continuation реализуется только privileged local CLI `forge-delivery --oci`.
+Existing HTTP delivery POST остаётся503; HTTP GET ниже читает static history,
+не OCI target. OCI readback/reconcile — CLI flags и отдельный owner root/policy;
+mutable data/migrations заблокированы. [ADR-0021](adr/0021-owner-local-oci-readonly-data.md).
+
 Filesystem preparation helper существует только как внутренний Rust primitive.
 HTTP routes ниже его не вызывают: producer source binding отсутствует, ответы
 остаются blocked. Они переиспользуют только общий read-only verifier, не `prepare`

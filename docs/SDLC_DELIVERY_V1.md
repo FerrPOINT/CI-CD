@@ -19,6 +19,19 @@ served runtime identity или business acceptance.
 
 ## Target resource protocol
 
+### Source slice: OCI/read-only data, 2026-10-08
+
+Privileged `forge-delivery --oci` переиспользует sealed actual candidate observer.
+Retained descriptor связывает immutable local image ID и exact source commit;
+actual Docker image revision, running container/config/mount/network проверяются.
+Поддержан только `readonly_snapshot_v1`: exact bytes/schema до/после, separate
+application compatibility и acceptance, пустой migration list. Rollback берёт
+last-confirmed image/manifest и не пишет данные. Mutable DB/migrations/restore,
+registry/native attestation и full business requirements отдельно. Temporary
+Compose owner/purpose/resource binding, unknown child/engine holds и
+observation-only recovery: [ADR-0021](adr/0021-owner-local-oci-readonly-data.md).
+Этот local receipt не выдаёт SDLC admission; HTTP POST остаётся503 и flags false.
+
 ### Source slice: owner-local manifest delivery, 2026-10-08
 
 `forge-delivery` реализует bounded static-artifact deployment в отдельный Unix

@@ -58,6 +58,7 @@ path = "src/bin/forge-delivery.rs"
 
 
 [features]
+oci-integration = ["integration"]
 integration = []
 
 [dependencies]

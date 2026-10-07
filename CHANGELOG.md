@@ -9,6 +9,11 @@
 
 ## [Unreleased]
 
+- Добавлен owner-local OCI CLI для immutable local image/read-only data snapshot:
+  actual container/commit/data/compatibility/acceptance, last-confirmed image
+  rollback и unknown recovery. Mutable DB/migration/restore блокируются; runtime
+  не устанавливается и SDLC admission не открывается.
+
 - Добавлена privileged owner-local manifest delivery одного verified static
   artifact с served identity/bytes, health/acceptance probes, last-confirmed
   rollback, immutable replay и crash reconciliation. HTTP SDLC dispatch остаётся

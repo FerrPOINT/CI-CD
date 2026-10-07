@@ -2,6 +2,17 @@
 
 ## Owner-local static delivery
 
+OCI CLI требует дополнительно `CICD_LOCAL_OCI_ROOT` и `CICD_LOCAL_OCI_POLICY`.
+Policy JSON: unique temporary `projectName`, `networkName`/`volumeName` того же QA
+owner, `daemonId`, absolute trusted `dockerBin`/standalone `composeBin`, host-visible
+`composeRoot` для immutable actual execution specs, local
+`volumeRoot`, `dataFile`, exact `dataSha256` и `checks` того же формата, что ниже.
+Read-only snapshot содержит actual `schemaVersion`; mutable DB/migrations не
+поддерживаются. Origin для probes выводится из actual container IP/internal network;
+application contract: port8000, `/.forge/version`, `/compatibility`, configured
+health/acceptance. Данные/manifest mounted read-only в `/forge/`; secrets не
+передаются. [ADR-0021](adr/0021-owner-local-oci-readonly-data.md).
+
 По умолчанию disabled; настройки не включаются в permanent Compose.
 
 | Переменная | Граница |

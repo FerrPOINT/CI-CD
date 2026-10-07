@@ -1,5 +1,10 @@
 # Архитектура Forge CI/CD
 
+Owner-local OCI CLI поддерживает preloaded immutable image и read-only data
+snapshot без migrations/restore. Actual container/mount/network, served manifest,
+schema/bytes compatibility и application acceptance отделены от desired Compose
+state. [ADR-0021](adr/0021-owner-local-oci-readonly-data.md); HTTP dispatch закрыт.
+
 Target интеграция автономного SDLC: [delivery receipts v1](SDLC_DELIVERY_V1.md).
 Она переиспользует текущий Forge, не ограничивает его хранением исходников и
 не объявляет candidate/workspace/acceptance protocol уже реализованным.

@@ -56,12 +56,13 @@ Proposed / Accepted / Deprecated / Superseded by ADR-NNNN
 | ADR-0017 | Fresh lease-owned runner checkout и cleanup после ACK | Proposed (source implemented) | 2026-10-03 |
 | ADR-0019 | [Локальная подготовка workspace без producer authority](adr/0019-local-pinned-workspace-preparation.md) | Proposed (source primitive) | 2026-10-04 |
 | ADR-0020 | [Owner-local manifest delivery и rollback](adr/0020-owner-local-manifest-delivery.md) | Proposed (source implemented) | 2026-10-08 |
+| ADR-0021 | [Owner-local OCI и read-only data](adr/0021-owner-local-oci-readonly-data.md) | Proposed (source implementation) | 2026-10-08 |
 
 ---
 
 ## 4. Creating New ADRs
 
-1. Взять следующий свободный номер (после существующих0018–0020:0021); проверить имена файлов в `docs/adr/`.
+1. Взять следующий свободный номер (после существующих0018–0021:0022); проверить имена файлов в `docs/adr/`.
 2. Создать `docs/adr/NNNN-title.md` (шаблон имени) по формату из раздела 2.
 3. Обновить индекс в этом файле (раздел 3) — добавить строку с номером, названием, статусом и датой.
 4. Открыть PR с описанием решения и ссылкой на связанную issue/task.

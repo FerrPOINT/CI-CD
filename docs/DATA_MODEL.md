@@ -1,5 +1,11 @@
 # Дата-модель Forge CI/CD
 
+OCI continuation добавляет isolated filesystem manifest/journal для
+`readonly_snapshot_v1`: actual data schema/SHA, retained descriptor artifact,
+immutable image/commit и container/check evidence. PostgreSQL schema/migration40
+не меняются; mutable schema/backfill/restore не поддержаны. Rollback не пишет
+snapshot. [ADR-0021](adr/0021-owner-local-oci-readonly-data.md).
+
 Owner-local delivery не добавляет SQL migration: PR88 по-прежнему владеет только
 0040. `sdlc_workspace_operations` хранит первоначальный blocked request и не
 меняется при delivery. Отдельный filesystem-owned target хранит immutable

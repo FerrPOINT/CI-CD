@@ -6,6 +6,17 @@
 
 ## 1. Методология и допущения
 
+OCI local verification (ADR-0021) добавляет privileged Docker socket boundary.
+Daemon/network/volume/project owner и existing container inventory проверяются;
+arbitrary Compose/commands/volumes/tags не являются API input. Actual retained
+runner descriptor связывает image ID/commit label; label не signed/native
+provenance. Read-only root/data, non-root/cap-drop и internal QA network ограничивают
+snapshot contract, но не заменяют production runner-zone/tenant isolation.
+Durable intent и Linux parent-death/child-exit держат unknown; recovery только
+наблюдает desired container. Actual mounts/network/container/image/HTTP/data SHA
+сверяются до/после. Mutable DB/migration/restore и full business coverage отдельно;
+неподдерживаемые операции блокируются до effect.
+
 Owner-local delivery (ADR-0020) вводит privileged filesystem/HTTP boundary:
 configured isolated root, credential-free owner origin и fixed probe paths/body
 digests. Caller не задаёт URLs, shell, готовые receipts или rollback artifact.

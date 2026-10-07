@@ -5,7 +5,7 @@ param(
     [Parameter(Mandatory)][string]$TargetCache,
     [Parameter(Mandatory)][string]$CargoCache,
     [Parameter(Mandatory)][string]$RustupCache,
-    [ValidateSet('full', 'delivery')][string]$Gate = 'full',
+    [ValidateSet('full', 'delivery', 'oci')][string]$Gate = 'full',
     [string]$DockerContext = 'desktop-linux'
 )
 $ErrorActionPreference = 'Stop'
@@ -13,8 +13,13 @@ $repo = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 $sdk = (Resolve-Path -LiteralPath $BaseRoot).Path
 $project = 'sdlc-qa-forge-delivery-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
 $compose = Join-Path $repo 'deploy/qa/task-delivery.compose.yml'
+$composeArgs = @('-f', $compose)
+if ($Gate -eq 'oci') { $composeArgs += @('-f', (Join-Path $repo 'deploy/qa/task-delivery-oci.compose.yml')) }
 $output = Join-Path $repo ('.local/task-delivery-qa/' + $project)
 [void](New-Item -ItemType Directory -Path $output -Force)
+$composeHost = Join-Path $output 'oci-compose'
+$composeLocal = $composeHost.Replace('\','/')
+$junction = $null
 python -B "$sdk/scripts/verify_base_revision.py" --base $sdk --revision "$repo/.base-revision"
 if ($LASTEXITCODE -ne 0) { throw 'Pinned Base validation failed' }
 foreach ($image in @($RustImage, $PostgresImage)) {
@@ -38,6 +43,10 @@ $variables = @{
     CICD_QA_RUST_IMAGE=$RustImage; CICD_QA_POSTGRES_IMAGE=$PostgresImage;
     CICD_QA_TARGET_CACHE=$TargetCache; CICD_QA_CARGO_CACHE=$CargoCache;
     CICD_QA_RUSTUP_CACHE=$RustupCache; CICD_QA_GATE=$Gate
+    CICD_QA_OCI_PROJECT=('sdlc-qa-forge-oci-' + $project.Substring($project.Length - 12))
+    CICD_QA_OCI_NETWORK=($project + '_qa'); CICD_QA_OCI_VOLUME=($project + '_delivery-qa')
+    CICD_QA_OCI_COMPOSE_HOST=$composeHost
+    CICD_QA_OCI_COMPOSE_LOCAL=$(if ($Gate -eq 'oci' -and $IsWindows) { '/' + $project + '-compose' } else { $composeLocal })
 }
 $previous = @{}
 foreach ($key in $variables.Keys) {
@@ -48,15 +57,32 @@ $result = 1
 Write-Output "QA_PROJECT=$project"
 Write-Output "QA_EVIDENCE=$output"
 try {
-    docker --context $DockerContext compose -p $project -f $compose config -q
+    if ($Gate -eq 'oci') {
+        [void](New-Item -ItemType Directory -Path $composeHost)
+        if ($IsWindows) {
+            $junction = Join-Path ([IO.Path]::GetPathRoot($repo)) ($project + '-compose')
+            if (Test-Path -LiteralPath $junction) { throw 'Unique QA path alias already exists' }
+            [void](New-Item -ItemType Junction -Path $junction -Target $composeHost)
+        }
+    }
+    docker --context $DockerContext compose -p $project @composeArgs config -q
     if ($LASTEXITCODE -ne 0) { throw 'QA Compose config invalid' }
-    docker --context $DockerContext compose -p $project -f $compose build
+    docker --context $DockerContext compose -p $project @composeArgs build
     if ($LASTEXITCODE -ne 0) { throw 'QA Compose build failed' }
-    docker --context $DockerContext compose -p $project -f $compose up --pull never --abort-on-container-exit --exit-code-from qa 2>&1 | Tee-Object -FilePath (Join-Path $output 'compose.log')
+    docker --context $DockerContext compose -p $project @composeArgs up --pull never --abort-on-container-exit --exit-code-from qa 2>&1 | Tee-Object -FilePath (Join-Path $output 'compose.log')
     $result = $LASTEXITCODE
 } finally {
     try {
-        docker --context $DockerContext compose -p $project -f $compose down --remove-orphans 2>&1 | Tee-Object -FilePath (Join-Path $output 'cleanup.log')
+        if ($Gate -eq 'oci') {
+            $childCompose = Join-Path $output 'oci-compose.json'
+            if (Test-Path -LiteralPath $childCompose) {
+                docker --context $DockerContext compose -p $variables.CICD_QA_OCI_PROJECT -f $childCompose down --remove-orphans
+                if ($LASTEXITCODE -ne 0) { throw 'Owned OCI child cleanup failed' }
+            }
+            $childRemaining = docker --context $DockerContext ps -aq --filter "label=com.docker.compose.project=$($variables.CICD_QA_OCI_PROJECT)"
+            if ($LASTEXITCODE -ne 0 -or $childRemaining) { throw 'Owned OCI containers remain; preserve QA volume' }
+        }
+        docker --context $DockerContext compose -p $project @composeArgs down --remove-orphans 2>&1 | Tee-Object -FilePath (Join-Path $output 'cleanup.log')
         if ($LASTEXITCODE -ne 0) { throw 'Owned Compose cleanup failed' }
         $remaining = docker --context $DockerContext ps -aq --filter "label=com.docker.compose.project=$project"
         if ($LASTEXITCODE -ne 0 -or $remaining) { throw 'Owned containers remain or inventory failed' }
@@ -77,6 +103,11 @@ try {
         Write-Output "SOURCE_HASHES_UNCHANGED=$($before.Count)"
     } finally {
         foreach ($key in $previous.Keys) { [Environment]::SetEnvironmentVariable($key, $previous[$key], 'Process') }
+        if ($junction -and (Test-Path -LiteralPath $junction)) {
+            $link = Get-Item -LiteralPath $junction -Force
+            if ($link.LinkType -ne 'Junction' -or [IO.Path]::GetFullPath($link.Target) -ne [IO.Path]::GetFullPath($composeHost)) { throw 'Owned QA alias changed; preserve it' }
+            Remove-Item -LiteralPath $junction -Force
+        }
     }
 }
 if ($result -ne 0) { throw "Task delivery QA failed: $result ($output)" }

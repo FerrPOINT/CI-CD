@@ -91,3 +91,25 @@ Provenance, failed runs и producer gaps:
 [TASK_DELIVERY_VERIFICATION](../docs/TASK_DELIVERY_VERIFICATION.md).
 Hosted exact-head checks фиксируются при публикации отдельного task PR.
 Постоянные стенды, чужие ветки и Base pins не меняются.
+
+## OCI/read-only data continuation, 2026-10-08
+
+Тот же PR88/branch, после source9f530ab. Поддержать privileged local container
+manifest с exact retained image/commit/config/plan/artifact identity и отдельным
+application compatibility/acceptance. Ограничить data contract immutable snapshot;
+mutable DB/migration/restore и unsafe rollback блокировать до effect. Last-confirmed
+image rollback должен проверять actual container/served state и неизменные данные.
+Unknown/SIGKILL recovery наблюдает уже deployed process без recreate.
+
+Реализация: `forge-delivery --oci`, isolated owner journal/policy, actual daemon
+readback и временный Compose application. Обязательные проверки: real runner-built
+A/B/C/D images, health503/acceptance422, exact-image rollback, wrong image commit,
+schema/migrations/data drift rejection, replay и unknown hold/reconciliation.
+Evidence: [OCI verification](../docs/TASK_DELIVERY_VERIFICATION.md#oci-продолжение-2026-10-08),
+ADR0021, `verify-task-delivery.ps1 -Gate oci` и full regression gate.
+
+Final OCI source run4317be425055 PASS с247 неизменными inputs; live Docker audit
+exit0 и exact own cleanup. До этого исправлены compile helper, actual health-entry
+synchronization и Windows host-visible real Compose spec; failed gates сохранены.
+HTTP dispatch/admission остаются закрытыми; новый SQL migration не добавляется.
+После final gates — additive commit/push в существующий Draft PR88, exact-head CI.

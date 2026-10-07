@@ -182,11 +182,21 @@ impl ActualDelivery {
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b"=\n-".contains(&b))
         );
+        let script = format!("printf '{}' > product.txt", payload.replace('\n', "\\n"));
+        let result = self.build_script(version, &script).await;
+        assert_eq!(result.1["sha256"], hash(payload.as_bytes()));
+        (result.0, result.2)
+    }
+
+    async fn build_script(
+        &mut self,
+        version: &str,
+        script: &str,
+    ) -> (DeliveryCommand, serde_json::Value, serde_json::Value) {
         let barrier = self.temp.join(format!("release-{version}"));
         let command = format!(
-            "while test ! -f '{}'; do sleep 0.1; done; printf '{}' > product.txt",
-            barrier.display(),
-            payload.replace('\n', "\\n")
+            "while test ! -f '{}'; do sleep 0.1; done; {script}",
+            barrier.display()
         );
         let yaml=serde_yaml::to_string(&serde_json::json!({"version":1,"jobs":{"build":{"tags":[self.tag],"commands":[command],"artifacts":{"paths":["product.txt"]}}}})).unwrap();
         std::fs::write(self.source.join(".forge-ci.yml"), yaml).unwrap();
@@ -281,7 +291,6 @@ impl ActualDelivery {
         assert_eq!(status, StatusCode::OK, "{evidence}");
         assert_eq!(evidence["candidateObserved"], true, "{evidence}");
         assert_eq!(evidence["dispatchAllowed"], false);
-        assert_eq!(evidence["artifacts"][0]["sha256"], hash(payload.as_bytes()));
         let b = &self.f.request.binding;
         (
             DeliveryCommand {
@@ -301,6 +310,7 @@ impl ActualDelivery {
                 ),
                 expected_manifest_sha256: None,
             },
+            evidence["artifacts"][0].clone(),
             original,
         )
     }
@@ -435,6 +445,10 @@ impl ActualDelivery {
         result
     }
 }
+
+#[cfg(feature = "oci-integration")]
+#[path = "oci_delivery.rs"]
+mod oci_delivery;
 
 fn latest(readback: &serde_json::Value) -> &serde_json::Value {
     if readback["reconciledReceipt"].is_object() {
