@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router";
 import {
@@ -55,6 +55,8 @@ export function ProjectsPage() {
   const deleteProject = useDeleteProject();
   const [showForm, setShowForm] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Project | null>(null);
+  const deleteReturnFocusRef = useRef<HTMLButtonElement | null>(null);
+  const createButtonRef = useRef<HTMLButtonElement | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [editing, setEditing] = useState<Project | null>(null);
   const [search, setSearch] = useState("");
@@ -112,6 +114,7 @@ export function ProjectsPage() {
       <header className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">{t("projects.title")}</h1>
         <Button
+          ref={createButtonRef}
           size="sm"
           className="min-h-10 sm:min-h-10"
           aria-expanded={showForm}
@@ -295,6 +298,11 @@ export function ProjectsPage() {
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <button
+                            ref={(element) => {
+                              if (element && pendingDelete?.id === project.id) {
+                                deleteReturnFocusRef.current = element;
+                              }
+                            }}
                             type="button"
                             aria-label={t("projects.actionsFor", {
                               name: project.name,
@@ -500,6 +508,8 @@ export function ProjectsPage() {
       </QueryState>
       <ConfirmDialog
         open={pendingDelete !== null}
+        returnFocusRef={deleteReturnFocusRef}
+        fallbackFocusRef={createButtonRef}
         title={
           pendingDelete
             ? `${t("projects.deleteConfirm")} "${pendingDelete.name}"?`
@@ -512,6 +522,7 @@ export function ProjectsPage() {
           if (pendingDelete) {
             deleteProject.mutate(pendingDelete.id, {
               onSuccess: () => {
+                deleteReturnFocusRef.current = null;
                 setPendingDelete(null);
                 toast.success(t("projects.deleted"));
               },
