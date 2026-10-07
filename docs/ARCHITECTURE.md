@@ -20,6 +20,15 @@ source binding/live lease проверка остаются prerequisite буд�
 
 ## 1. Контекст
 
+Owner-local manifest delivery переиспользует existing candidate observer и
+project machine ACL. `domain::task_delivery` задаёт strict commands/evidence;
+server IO primitive `task_delivery` содержит isolated filesystem publication и
+bounded HTTP probes. Privileged CLI — единственный effect adapter; HTTP SDLC POST
+закрыт, GET читает history без effects. Existing platform deployments/approvals
+не становятся admission и не переименовываются в verified deployment.
+Процессный lock и durable filesystem journal не являются общей транзакцией с
+DB или протоколом orchestration stop. [ADR-0020](adr/0020-owner-local-manifest-delivery.md).
+
 Self-hosted CI/CD control plane: Git-хостинг (bare-репозитории + Smart HTTP + post-receive auto-trigger), пайплайны со стадиями и джобами, embedded runner (Docker/shell), внешний `forge-runner` shell MVP поверх runner protocol, платформенные ресурсы (runners, secrets, artifacts, environments, schedules, webhooks, notifications, reports, audit, users, tokens) и React Dashboard.
 
 Human identity, браузерные сессии и личные API-токены принадлежат Central Auth

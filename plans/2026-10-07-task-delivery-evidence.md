@@ -45,7 +45,43 @@ payload. Deployment metadata/API success не доказывают served artifa
 health, requirement coverage, acceptance или rollback. Эти gaps запрещают
 утверждать trusted `base-sdlc/*` receipts до существующего совместимого producer.
 
+## Продолжение 2026-10-08: manifest delivery
+
+PR88/head42dda11 и зависимость PR87/fc3e107 подтверждены заново, оба OPEN.
+Работа продолжается в прежней ветке; одна собственная migration0040 сохраняется.
+Новые DB migrations не требуются: owner-local delivery использует durable
+filesystem intents/results, isolated target, OS lock и atomic manifest pointer.
+
+1. Выделить sealed verified candidate из existing owner readback: DB original
+   binding, repository config/plan, terminal ACK и retained artifact bytes.
+2. Реализовать privileged owner-local static-artifact manifest executor, без
+   caller commands/URLs/receipts. CLI использует configured target/probe policy,
+   existing project machine credential и original identity. Этот local verification
+   path не открывает SDLC dispatch и не изменяет default Git branch.
+3. Сохранять immutable original operation intent, manifest и result; command replay
+   не повторяет effect. После crash активный intent держит target; reconciliation
+   только наблюдает exact published manifest/served bytes, не повторяет publish.
+4. Проверять HTTP served identity + actual bytes + configured health/acceptance.
+   Различать unavailable/failed/unknown; last-confirmed manifest обновлять только
+   после всех checks. Explicit rollback восстанавливает именно его, с CAS current.
+5. Проверить actual runner artifacts, Compose served target, health failure,
+   acceptance failure, version restoration и SIGKILL/recovery. Собственные gates,
+   OpenAPI/docs/operations/evidence и exact-head PR88 CI/reviews.
+
+Граница: этот bounded executor доставляет один static artifact в отдельный
+owner-local target. OCI/orchestrator/database migration rollout и полная business
+acceptance не заявляются. HTTP SDLC command fail-closed при отсутствующем Tracker
+admission; manifest checks — локальное техническое evidence, не producer grant.
+
 ## Evidence
+
+Продолжение08: scoped `aff4e88982fb` и full `4dc5be54f923` PASS на final source,
+215 workspace/80 PostgreSQL/2 CLI/201 frontend tests, release/contract/docs gates.
+Actual runner A/B/C/D и отдельный Compose target проверяют failed checks/rollback,
+SIGKILL/network unknown и observation-only reconciliation.242 inputs неизменны,
+exact own cleanup выполнен; dependencies и failed runs сохранены в verification doc.
+
+### Исходный срез 2026-10-07
 
 Local source gates PASS:215 workspace/78 PostgreSQL/2 real API CLI tests,
 strict integration clippy, release, exporter equality; frontend201 tests,

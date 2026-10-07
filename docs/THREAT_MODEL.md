@@ -6,6 +6,20 @@
 
 ## 1. Методология и допущения
 
+Owner-local delivery (ADR-0020) вводит privileged filesystem/HTTP boundary:
+configured isolated root, credential-free owner origin и fixed probe paths/body
+digests. Caller не задаёт URLs, shell, готовые receipts или rollback artifact.
+Существующий machine/project credential проверяется и блокируется в DB на время
+effect; candidate создаётся из actual owner Git/runner/artifact readback. SHA256,
+CAS и immutable journal предотвращают подмену identity и replay publication;
+Unix process-lifetime lock, bounded no-proxy/no-redirect HTTP probes и unknown
+hold ограничивают неопределённый результат. Reconciliation наблюдает published
+manifest, не повторяя effect. Root, origin и filesystem доверены владельцу:
+privileged directory replacement, malicious serving endpoint и power-loss вне
+storage guarantees не покрываются native attestation. Health/acceptance policy
+не доказывает полную business coverage; OCI rollout/data migrations и SDLC
+admission не реализованы. HTTP delivery POST fail-closed независимо от local env.
+
 Source workspace operation ledger (ADR-0018) имеет отдельную machine boundary:
 configured dedicated Forge service-account UUID, project-bound `api:read/write`,
 fresh credential checks/locks; human/admin/Central PAT не substitutable. Caller

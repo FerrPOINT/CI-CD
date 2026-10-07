@@ -1,5 +1,36 @@
 # API v1 Specification — Forge CI/CD
 
+## Owner-local manifest delivery
+
+`POST /api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations`
+принимает strict `DeliveryCommand`: `operationKey`, `workspaceOperationKey`,
+`original` lookup (original requestHash/task/root/assignment/execution/fence),
+`action: deploy|rollback`, `artifactId`, nullable `expectedManifestSha256`.
+Deploy требует exact artifact UUID; rollback запрещает artifact selector и требует
+exact current SHA256. Null current означает пустой target, не wildcard.
+Dedicated machine/project `api:write`, original owner binding/hash проверяются;
+валидный запрос получает503: authoritative Tracker admission/source binding
+недоступны, **deployment effect отсутствует**. Caller receipts/accepted/status/
+URLs/commands и неизвестные поля отклоняются422; malformed command400,
+credential401/403, owner operation404, changed binding409.
+
+`GET /api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations/{delivery_key}`
+с прежним exact lookup и project machine `api:read` читает durable local operation
+history. Ответ `DeliveryReadback`: immutable `receipt`, опциональный отдельный
+`reconciledReceipt`, `currentManifestSha256`, `confirmedManifestSha256`,
+`reconciliationNeeded`. Не создаёт directory/journal, не вызывает probes,
+publication, renewal или reconciliation. Нет configured target/policy503,
+нет operation404, inconsistent/torn/changed original journal409. `no-store`.
+
+Effect доступен только privileged owner CLI `forge-delivery` с отдельным explicit
+local-verification mode, existing machine token и owner root/policy. Receipt scope
+`owner_local_verification`, statuses `unavailable|failed|unknown|verified`; version,
+servedArtifact, health и acceptance содержат HTTP status/body SHA256/time.
+Original workspace receipt остаётся blocked; `dispatchAllowed=false` и
+`sdlcAcceptanceVerified=false`. Verified означает эти конкретные owner checks,
+не trusted SDLC admission или полную requirements acceptance.
+Команды, replay и recovery — [Operations](OPERATIONS.md#owner-local-manifest-delivery).
+
 ## Overview
 
 Каталог backend включает ранее применённые версии 1–38. Migration 38 сохраняет

@@ -1,6 +1,7 @@
-# Forge task workspace и candidate evidence
+# Forge task workspace, candidate и owner-local delivery evidence
 
-**Статус 2026-10-07:** bounded source implementation; полного SDLC acceptance нет.
+**Статус 2026-10-08:** bounded source implementation и local component verification;
+полного SDLC acceptance нет.
 
 ## Реализованный срез
 
@@ -32,7 +33,8 @@ PostgreSQL + ephemeral Axum + настоящий `forge-runner --once` + Git bar
 завершает lease через completion endpoint. Curl получает readback с проверенным
 SHA256, exact pipeline/attempt и original receipt. Ни pipeline/ACK/artifact metadata,
 ни artifact file для положительного результата тест не подставляет fixtures.
-Task binding здесь declared test input: admission/scheduler/delivery не включены.
+Task binding — declared test input. В исходном candidate-срезе07
+admission/scheduler/delivery не включены; local executor08 описан ниже.
 
 Негативные cases: до completion, bytes tamper, missing accepted ACK, changed
 original hash, superseded local generation, missing plan/SHA/artifacts, machine
@@ -85,7 +87,85 @@ existing authenticated admin helper; authorization fallback не добавля�
 Scoped `95c67e095640`:12 workspace/candidate cases и6 migration regressions PASS.
 Провалы не выдаются за PASS.
 
-## Открытые dependencies и release order
+## Owner-local delivery source, 2026-10-08
+
+`forge-delivery` публикует один реально построенный retained static artifact в
+изолированный target. Manifest содержит полный original receipt и actual
+pipeline/artifact/attempt/config/plan/policy digests. CLI использует existing
+project machine credential, sealed owner candidate observer и explicit
+`local-verification` mode. Null expected-current означает только пустой target;
+rollback берёт единственный сохранённый last-confirmed manifest. Journal и Unix
+lock сохраняют unknown outcome; original-key replay/readback не публикуют снова.
+Reconciliation читает уже served manifest и HTTP bytes/checks, сохраняет отдельный
+terminal receipt и исходный unknown receipt.
+
+QA приложение обслуживает manifest и реальные artifact bytes через отдельный
+Compose service. Health и acceptance зависят от actual payload. A подтверждается;
+B health503 и C acceptance422 не меняют last-confirmed A; explicit rollback
+возвращает manifest/served bytes A. D публикуется, затем CLI получает SIGKILL во
+время probe; новая операция блокируется, reconciliation подтверждает D без
+изменения current-pointer mtime. Недоступный version endpoint даёт unknown, а
+повторное наблюдение после восстановления — отдельный verified receipt.
+Каждая A/B/C/D версия создаётся real pipeline trigger + runner + artifact upload
++ completion; положительные pipeline/ACK/artifact records не seeded fixtures.
+
+Негативные cases: unavailable artifact, fabricated empty-target CAS, changed
+original fence/artifact, no local mode, read-only/revoked machine credential и
+forged durable dispatch flag. Curl проверяет пять workspace/candidate/delivery
+routes; SDLC POST остаётся503 даже при configured local target. Readback —
+историческая technical evidence, не fresh continuous service-health guarantee.
+
+Scoped final-source gate `sdlc-qa-forge-delivery-aff4e88982fb` PASS: Rust1.88
+locked/offline fmt, workspace/all-target integration check/strict Clippy, оба
+actual delivery PG tests и exporter equality. До/после совпадают242 CI-CD/Base
+source hashes. Finally удаляет exact project containers/network и единственный
+own disposable volume; external caches сохраняются. Evidence folder
+`.local/task-delivery-qa/sdlc-qa-forge-delivery-aff4e88982fb/`:
+
+| File | SHA256 |
+| --- | --- |
+| `compose.log` | `8a92ce2ff52eb7dec4749036058387ce4517be72800582b1782bf8409805b4b5` |
+| `sources.json` | `68f5b99828b9d5905ac2f3b6e7d5b9f5737b3e0ab212cc120b92ab52e2668dde` |
+| `cleanup.log` | `54b25e0b2561b4694d120df2acbf6bc948353aee85b24c176714b3795d5ae32b` |
+
+Полный final-source gate `sdlc-qa-forge-delivery-4dc5be54f923` PASS:215 workspace
+tests +80 PostgreSQL tests +2 real-API CLI tests,0 failed/ignored; strict
+workspace/integration/CLI Clippy, fmt, release workspace build и exact exporter
+equality. Активные graphs `rsa`/`sqlx-mysql` пусты. Те же242 inputs неизменны.
+Evidence folder `.local/task-delivery-qa/sdlc-qa-forge-delivery-4dc5be54f923/`:
+
+| File | SHA256 |
+| --- | --- |
+| `compose.log` | `0540b0d80898472e25ba02c71355b079f557123a08667020f1e9f663ff5925c3` |
+| `sources.json` | `68f5b99828b9d5905ac2f3b6e7d5b9f5737b3e0ab212cc120b92ab52e2668dde` |
+| `cleanup.log` | `82cee1cc6602bcee8480f9eadabd34b6e93e9924168286d954dc5576fb965657` |
+
+Finally exact down подтвердил0 own containers/networks и удалил только own
+disposable volume; PostgreSQL tmpfs после QA exit0 получил stop-timeout137
+во время shutdown, это не restore/runtime/data acceptance. Post-cleanup Docker
+audit complete=true: Desktop37, оба rootless runners0, violations=[], exit0.
+Чужие valid Compose resources, permanent pins/snapshots/secrets/volumes сохранены.
+
+Fresh frontend frozen/offline install, codegen/check/compat(main), lint,
+201 tests, build и audit PASS (0 advisories); Vite сообщает существующий
+chunk-size warning. `.local/frontend-manifest-20261008.log` SHA256:
+`70e8a74a3f70e0e7970768c904bc39c351d6ef03082899a6816bf3fd29e084dc`.
+Docs verifier,6 hosted docs regression cases, SBOM drift и tracked-export
+secret scan475 text files/0 findings PASS; scanner heuristic, не DLP guarantee.
+
+Предшествующие portable runs `d8e63b5d41d4` и `82e5785401dd` завершились25s
+test deadline на runner/CLI; их причина не подтверждена и timeout не увеличен.
+Добавлена bounded PG wait diagnostic. `93d5a0ae1486` остановился на Clippy type
+complexity в этой diagnostic (исправлен type alias), `5df321b4cc35` на fmt drift
+(исправлен fmt). Это не успешные gates. Old scoped `44e301a66fe6` PASS принадлежит
+предыдущему source до final auth/receipt/curl guards; final-source gate выше.
+
+Новый SQL migration отсутствует: единственный task-owned0040 сохранён. HTTP
+dispatch и SDLC acceptance flags остаются false. Trusted root/origin/Unix storage,
+один static artifact и technical application policy — явные ограничения; OCI,
+migration/data compatibility и полная requirements coverage не заявляются.
+
+## Открытые dependencies и release order, 2026-10-08
 
 Текущий Tracker main `5a38fd5fada0c79b1d4fb2ea6a3f48cd8949d759` описывает SDLC
 как target, не предоставляет authoritative Forge source/workspace admission.
@@ -94,8 +174,10 @@ endpoint, обходить `dispatch_allowed=false` или принимать ca
 
 Сначала PR87/migration39, затем этот task-owned migration40/source cut. Отдельные
 upstream gates: trusted Tracker source/access/fence readback; Fleet/Workflow admission;
-scoped candidate branch/write capability; immutable candidate packet; deployment
-executor с exact served artifact/config identity; health/data compatibility и
-scenario/requirements acceptance; last-confirmed rollback identity и actual rollback.
+scoped candidate branch/write capability; authoritative immutable candidate packet;
+production executor с OCI/config identity и migration/data compatibility;
+полное scenario/requirements acceptance. Local static manifest identity, actual
+application checks и last-confirmed rollback проверяются отдельным компонентом
+выше и не заменяют эти upstream/runtime gates.
 Generic deployment status/rollback pipeline record не закрывают эти gates.
 Ни production release, ни installation на постоянные стенды здесь не выполняются.

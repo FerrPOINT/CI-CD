@@ -3,6 +3,9 @@ use cicd::domain::sdlc_workspace::*;
 
 #[path = "candidate_evidence.rs"]
 mod candidate_evidence;
+#[cfg(unix)]
+#[path = "task_delivery.rs"]
+mod task_delivery;
 
 struct Fixture {
     pool: sqlx::PgPool,

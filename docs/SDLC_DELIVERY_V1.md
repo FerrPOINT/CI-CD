@@ -19,6 +19,24 @@ served runtime identity или business acceptance.
 
 ## Target resource protocol
 
+### Source slice: owner-local manifest delivery, 2026-10-08
+
+`forge-delivery` реализует bounded static-artifact deployment в отдельный Unix
+target: exact owner-verified candidate → immutable manifest/bytes → CAS atomic
+current pointer → HTTP served identity/bytes + owner-configured health/acceptance.
+Last-confirmed manifest меняется после всех checks; explicit rollback публикует
+именно его и повторяет checks. Original key/hash/task/execution/attempt/fence
+сохранены в immutable local operation history. Unknown effect держит target;
+replay/reconciliation не повторяют publication. [ADR-0020](adr/0020-owner-local-manifest-delivery.md).
+
+Это privileged operator-local verification capability, не HTTP dispatch adapter
+или admitted Task deployment. HTTP POST delivery остаётся503 до authoritative
+Tracker admission/source binding; GET только читает owner-local evidence.
+`dispatchAllowed=false`, `sdlcAcceptanceVerified=false`, первоначальный blocked
+receipt сохраняется. Проверяются заданные application checks, не полная business
+requirements coverage. OCI rollout, migrations/data rollback, admission и full
+SDLC E2E остаются dependencies. Permanent runtime здесь не обновляется.
+
 ### Source slice: физический workspace runner, 2026-10-03
 
 Оба существующих runners используют `OwnedWorkspace`: новая папка на конкретные

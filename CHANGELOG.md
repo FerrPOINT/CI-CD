@@ -9,6 +9,11 @@
 
 ## [Unreleased]
 
+- Добавлена privileged owner-local manifest delivery одного verified static
+  artifact с served identity/bytes, health/acceptance probes, last-confirmed
+  rollback, immutable replay и crash reconciliation. HTTP SDLC dispatch остаётся
+  закрыт без Tracker admission; permanent runtime не обновляется.
+
 - Добавлены immutable blocked task workspace operations с original-key readback,
   owner-local pinned preparation и bounded candidate evidence из actual Git,
   pipeline completion и artifact bytes. Admission/write/deployment/acceptance
