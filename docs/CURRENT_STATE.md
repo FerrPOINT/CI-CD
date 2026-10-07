@@ -24,10 +24,22 @@ Frontend с тем же SDK и Node22.20.0/pnpm10.28.1 проходит frozen/o
 typecheck/lint,201 tests/build, OpenAPI check и compatibility с main. Generated
 client отдельно совпадает с committed schema. Docs verifier и heuristic scan
 tracked export (450 text files) проходят. Нового UI layout нет; новые screenshots
-этим candidate не заявляются. Полная integration/CLI matrix и remote CI, отдельный
-curl smoke и installation остаются release gates. Это не full SDLC acceptance:
+этим candidate не заявляются. DB-тест receipt включает реальный curl к ephemeral
+Axum HTTP listener; это не smoke установленного runtime. На исходном head ed69fb0
+все четыре CI jobs (docs/backend/frontend/minimum-rust) проходят, включая полную
+integration/CLI matrix. Для последующих commits нужны их собственные checks.
+Installation остаётся отдельным gate. Это не full SDLC acceptance:
 task admission, candidate/deployment/acceptance/rollback receipts не реализованы
 этим PR и не выдаются из workspace marker или EOF.
+
+Recovery-проверка расширена настоящим `forge-runner` против PostgreSQL/Axum:
+отдельные процессы читают принятый completion, сохраняют workspace по флагу и
+удаляют его только после нового readback. При expiry или revoked credential
+локальный ACK не разрешает ни cleanup, ни polling. Семь наблюдённых GET, ноль
+повторных completion POST и work poll. Fresh Composec94310c35af2 проходит весь
+локальный Rust/PG gate выше;202 input hashes неизменны, own containers/network
+удалены. Это recovery accepted completion, не повторное исполнение pipeline,
+не доказательство безопасной остановки всего process tree и не deployment receipt.
 
 ### Source delta 2026-10-03, не installation evidence
 

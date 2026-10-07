@@ -2109,7 +2109,33 @@ async fn runner_terminal_receipt_is_owned_durable_and_does_not_acknowledge_expir
     assert_eq!(receipt.as_object().unwrap().len(), 8);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    let served = app.clone();
+    let requests = std::sync::Arc::new([
+        std::sync::atomic::AtomicUsize::new(0),
+        std::sync::atomic::AtomicUsize::new(0),
+        std::sync::atomic::AtomicUsize::new(0),
+    ]);
+    let observed_requests = requests.clone();
+    let served = app.clone().layer(axum::middleware::from_fn(
+        move |request: Request<Body>, next: axum::middleware::Next| {
+            let requests = observed_requests.clone();
+            async move {
+                let path = request.uri().path();
+                let index = if path.ends_with("/receipt") {
+                    Some(0)
+                } else if path.ends_with("/complete") {
+                    Some(1)
+                } else if path.ends_with("/work:poll") {
+                    Some(2)
+                } else {
+                    None
+                };
+                if let Some(index) = index {
+                    requests[index].fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                }
+                next.run(request).await
+            }
+        },
+    ));
     let server = tokio::spawn(async move { axum::serve(listener, served).await.unwrap() });
     let curl = tokio::process::Command::new("curl")
         .args([
@@ -2128,8 +2154,49 @@ async fn runner_terminal_receipt_is_owned_durable_and_does_not_acknowledge_expir
         serde_json::from_slice::<serde_json::Value>(&curl.stdout).unwrap(),
         receipt
     );
-    server.abort();
-    let _ = server.await;
+    // The restarted binary must resolve a retained completion through the real API.
+    let root = std::env::temp_dir().join(format!("forge-receipt-restart-{}", Uuid::new_v4()));
+    let workspace =
+        cicd::runner_workspace::OwnedWorkspace::create(&root, attempt, lease, 1).unwrap();
+    workspace.create_empty_checkout().unwrap();
+    workspace.record_completion("success").unwrap();
+    let run_binary = |mode: &str, keep: bool| {
+        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_forge-runner"));
+        command
+            .kill_on_drop(true)
+            .args(["--api-url", &format!("http://{address}"), "--work-dir"])
+            .arg(&root)
+            .arg(mode)
+            .env("CICD_RUNNER_CREDENTIAL", "receipt-owner-fixture")
+            .env_remove("CICD_RUNNER_REGISTRATION_TOKEN")
+            .env_remove("CICD_RUNNER_KEEP_WORKSPACE")
+            .env_remove("CICD_RUNNER_ONCE");
+        if keep {
+            command.arg("--keep-workspace");
+        }
+        async move {
+            tokio::time::timeout(std::time::Duration::from_secs(10), command.output())
+                .await
+                .expect("bounded runner restart")
+                .expect("run actual forge-runner")
+        }
+    };
+    let recovered = run_binary("--reconcile-workspaces", true).await;
+    assert!(recovered.status.success());
+    assert!(workspace.checkout().exists());
+    assert!(cicd::runner_workspace::OwnedWorkspace::inventory(&root).unwrap()[0].acknowledged);
+    assert!(
+        run_binary("--reconcile-workspaces", false)
+            .await
+            .status
+            .success()
+    );
+    assert!(
+        cicd::runner_workspace::OwnedWorkspace::inventory(&root)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(requests[0].load(std::sync::atomic::Ordering::SeqCst), 3);
     // A subsequent job attempt does not replace the original lease receipt.
     sqlx::query("UPDATE jobs SET status='queued' WHERE id=$1")
         .bind(job)
@@ -2207,6 +2274,16 @@ async fn runner_terminal_receipt_is_owned_durable_and_does_not_acknowledge_expir
         .await
         .unwrap()
     );
+    let retained =
+        cicd::runner_workspace::OwnedWorkspace::create(&root, attempt, lease, 1).unwrap();
+    retained.create_empty_checkout().unwrap();
+    retained.record_completion("success").unwrap();
+    retained.acknowledge_completion("success").unwrap();
+    // A stale local ACK must not authorize cleanup or polling after server expiry.
+    for mode in ["--once", "--reconcile-workspaces"] {
+        assert!(!run_binary(mode, false).await.status.success());
+        assert!(retained.checkout().exists());
+    }
     sqlx::query("UPDATE runners SET disabled_at=now() WHERE id=$1")
         .bind(runner)
         .execute(&pool)
@@ -2216,6 +2293,16 @@ async fn runner_terminal_receipt_is_owned_durable_and_does_not_acknowledge_expir
         app.oneshot(request()).await.unwrap().status(),
         StatusCode::UNAUTHORIZED
     );
+    for mode in ["--once", "--reconcile-workspaces"] {
+        assert!(!run_binary(mode, false).await.status.success());
+        assert!(retained.checkout().exists());
+    }
+    assert_eq!(requests[0].load(std::sync::atomic::Ordering::SeqCst), 7);
+    assert_eq!(requests[1].load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(requests[2].load(std::sync::atomic::Ordering::SeqCst), 0);
+    server.abort();
+    let _ = server.await;
+    std::fs::remove_dir_all(&root).unwrap();
 }
 
 #[tokio::test]

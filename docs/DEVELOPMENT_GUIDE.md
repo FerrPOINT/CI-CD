@@ -12,7 +12,12 @@
 проверяют journal/reopen/conflicts, retained unknown execution, offline CLI,
 restart readback, отсутствие duplicate POST, чужую/revoked credential, expired
 lease и old attempt identity после retry. DB-тест также выполняет curl к
-настоящему ephemeral Axum HTTP listener. Embedded pin/prepare-failure regressions
+настоящему ephemeral Axum HTTP listener. Тот же DB/API-тест запускает настоящий
+`forge-runner` в отдельных процессах: readback с сохранением workspace, повторный
+readback перед cleanup, затем отказ cleanup/poll при server expiry и revoked
+credential даже с сохранённым локальным ACK. Счётчики HTTP подтверждают только
+семь GET и ни одного completion POST или нового work poll в этой recovery-фазе.
+Embedded pin/prepare-failure regressions
 проверяют прежний cleanup и сохранение foreign папки. Это source/component
 evidence, не автономный installed SDLC или подтверждение process-tree sandbox.
 Fault injection OS `wait()` failure и полная crash/power-loss приёмка остаются
@@ -37,7 +42,7 @@ gitignored каталог; `SDLC_HEADER_EVIDENCE_DIR` переопределяе
 
 ### Требования
 
-Для полного Docker-цикла достаточно Docker Engine с Compose plugin, `curl` и (опционально) `just`. Локальный режим дополнительно требует Rust 1.88+ и Node.js 22 с pnpm 11. Версии runtime и образов зафиксированы в `docker-compose.yml` и `.github/workflows/ci.yml`.
+Для полного Docker-цикла достаточно Docker Engine с Compose plugin, `curl` и (опционально) `just`. Локальный режим дополнительно требует Rust 1.88, Node.js 22.20.0 и pnpm 10.28.1. Версии runtime и образов зафиксированы в `docker-compose.yml` и `.github/workflows/ci.yml`.
 
 Перед первым запуском создайте только локальный файл конфигурации:
 
