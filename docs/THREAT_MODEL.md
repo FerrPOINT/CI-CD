@@ -6,6 +6,18 @@
 
 ## 1. Методология и допущения
 
+Source workspace operation ledger (ADR-0018) имеет отдельную machine boundary:
+configured dedicated Forge service-account UUID, project-bound `api:read/write`,
+fresh credential checks/locks; human/admin/Central PAT не substitutable. Caller
+task/assignment refs не authoritative admission. Strict request/body limits,
+owner-local paths без links, bounded Git readback, original key/hash и immutable
+blocked receipt предотвращают caller-proof substitution и повтор effects.
+Все missing Tracker prerequisites остаются blockers; физическая metadata не
+native attestation, workspace marker не sandbox. Shell/job с доступом к своему
+checkout остаётся недоверенным; этот API не запускает команды и не выдаёт
+capabilities/credentials. Ledger history удерживается FK RESTRICT; authorized
+retention и cross-owner admission ещё требуют отдельного протокола.
+
 Модель применяет STRIDE к каждому переходу между зонами доверия:
 
 | Категория | Вопрос для Forge |

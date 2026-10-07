@@ -5,6 +5,15 @@
 
 ## Что работает сейчас (Current verified)
 
+### Task workspace и candidate evidence source, 2026-10-07
+
+Отдельный source cut поверх PR87 добавляет blocked task operation ledger40,
+physical preparation и readback candidate Git/pipeline/artifact evidence.
+Readback не разблокирует dispatch, scoped Git write, deployment, acceptance или
+rollback; authoritative Tracker counterpart отсутствует. Evidence и границы:
+[task verification](TASK_DELIVERY_VERIFICATION.md). Исторический runner release
+ниже принадлежит PR87; его SQL39 и source сохраняются без изменений.
+
 ### Release candidate 2026-10-07: runner workspace recovery
 
 Из общей опубликованной ветки отдельно выделен `feat/runner-workspace-recovery-20261007`

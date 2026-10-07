@@ -54,6 +54,7 @@ Proposed / Accepted / Deprecated / Superseded by ADR-NNNN
 | ADR-0008 | Версионные SQLx migrations | Accepted | 2026-08-26 |
 | ADR-0009 | Канонический реестр имён и приоритет источников | Accepted | 2026-08-27 |
 | ADR-0017 | Fresh lease-owned runner checkout и cleanup после ACK | Proposed (source implemented) | 2026-10-03 |
+| ADR-0019 | [Локальная подготовка workspace без producer authority](adr/0019-local-pinned-workspace-preparation.md) | Proposed (source primitive) | 2026-10-04 |
 
 ---
 
@@ -131,5 +132,6 @@ Proposed / Accepted / Deprecated / Superseded by ADR-NNNN
 - `docs/adr/0008-versioned-sqlx-migrations.md` — versioned migrations.
 - `docs/adr/0009-canonical-registry.md` — канонический реестр имён и authority matrix.
 - `docs/adr/0016-serializable-runner-claim.md` — сериализуемая проверка проектной квоты при выдаче runner work.
+- [ADR-0018](adr/0018-blocked-workspace-operation-ledger.md) — immutable blocked workspace operation/readback без admission или второго scheduler.
 - `docs/ROADMAP.md` — план разработки.
 - `docs/CODE_STYLE.md` — конвенции кода.

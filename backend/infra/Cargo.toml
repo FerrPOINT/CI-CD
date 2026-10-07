@@ -10,3 +10,5 @@ repository.workspace = true
 chrono.workspace = true
 sqlx.workspace = true
 uuid.workspace = true
+cicd-domain = { path = "../domain" }
+serde_json.workspace = true

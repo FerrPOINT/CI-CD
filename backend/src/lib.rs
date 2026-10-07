@@ -30,6 +30,7 @@ pub async fn migrations_from_path(
 ) -> Result<sqlx::migrate::Migrator, sqlx::migrate::MigrateError> {
     sqlx::migrate::Migrator::new(path).await
 }
+pub(crate) mod candidate_evidence;
 pub mod domain;
 pub mod git_host;
 pub mod platform;

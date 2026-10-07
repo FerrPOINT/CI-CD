@@ -1,5 +1,8 @@
 # Forge: task delivery evidence
 
+**Статус 2026-10-07:** bounded source implemented and locally verified;
+non-normative working plan. Full SDLC blocked by upstream producer dependencies.
+
 ## Baseline и границы
 
 Изолированная ветка `feat/task-delivery-evidence-20261007`, checkout CI-CD.
@@ -44,5 +47,11 @@ health, requirement coverage, acceptance или rollback. Эти gaps запре
 
 ## Evidence
 
-Заполняется после actual execution; fixtures и historical CI отдельно от новых
-local/remote gates. Постоянные стенды, чужие ветки и Base pins не меняются.
+Local source gates PASS:215 workspace/78 PostgreSQL/2 real API CLI tests,
+strict integration clippy, release, exporter equality; frontend201 tests,
+contract/typecheck/lint/build/audit; docs/SBOM/secret scan. Actual runner creates
+and uploads artifact/completion; original binding остаётся declared input.
+Provenance, failed runs и producer gaps:
+[TASK_DELIVERY_VERIFICATION](../docs/TASK_DELIVERY_VERIFICATION.md).
+Hosted exact-head checks фиксируются при публикации отдельного task PR.
+Постоянные стенды, чужие ветки и Base pins не меняются.

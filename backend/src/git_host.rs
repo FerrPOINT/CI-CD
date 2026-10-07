@@ -218,7 +218,7 @@ pub async fn delete_repository_core(
             .bind(&name)
             .fetch_optional(pool)
             .await
-            .map_err(ApiError::internal)?
+            .map_err(ApiError::resource_delete)?
             .ok_or_else(ApiError::not_found)?;
     let _ = deleted;
     let path = repo_path(&config.root, &name);
@@ -843,6 +843,7 @@ pub async fn list_repositories(
     responses(
         (status = 200, body = DeletedRepository),
         (status = 404),
+        (status = 409, description = "Resource retained by immutable SDLC workspace history"),
         (status = 503),
     ),
 )]

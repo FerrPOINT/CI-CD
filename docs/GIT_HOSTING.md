@@ -1,5 +1,11 @@
 # Git Hosting — Forge CI/CD
 
+Удаление repository с immutable SDLC workspace operation history возвращает409;
+owner FK RESTRICT сохраняет DB identity, bare repository и workspace. Проверка
+выполняется атомарным DELETE; filesystem cleanup начинается только после успешного
+DB удаления. Удаление project с такой history также возвращает409. Это retention
+boundary, не разрешение удалять evidence или обходить original operation key.
+
 ## 1. Назначение
 
 Forge CI/CD включает минимальный self-hosted Git-сервер. Он хранит bare-репозитории, реализует Git Smart HTTP, проверяет read/write доступ к private/write операциям и создаёт CI/CD-пайплайн после каждого push.

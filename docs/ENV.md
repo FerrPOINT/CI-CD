@@ -22,6 +22,8 @@
 | `CICD_TLS_HOST` | — | Имя internal TLS origin для профиля `docker-compose.tls.yml`; обязательна непустая DNS-safe host label, например `forge.localhost` |
 | `CICD_TLS_HTTPS_PORT` | `22443` | Loopback host/container порт Caddy TLS profile; frontend/API direct ports в этом профиле удалены |
 | `CICD_SECRETS_KEY` | — | Base64 32-byte ключ AES-256-GCM (обязателен для secrets) |
+| `CICD_SDLC_WORKSPACE_SUBJECT` | — | Non-nil UUID выделенного existing Forge service account; project-bound `api:write/read` только для blocked workspace operation POST/GET; без настройки API закрыт |
+| `CICD_SDLC_WORKSPACE_OBSERVATION_ROOT` | — | Опциональный absolute owner-local mount existing OwnedWorkspace для bounded read-only origin/SHA/clean preflight; не prepare/admission/dispatch |
 | `CICD_ARTIFACTS_DIR` | `/var/lib/forge/artifacts` | Локальное хранилище артефактов |
 | `CICD_ARTIFACT_RETENTION_DAYS` | `30` | TTL новых артефактов в днях (`1..3650`); backend retention worker удаляет expired local files и помечает metadata `purged_at` |
 | `CICD_EMBEDDED_RUNNER_ENABLED` | `true` | Включает embedded runner внутри backend; при `false` работу забирает внешний `forge-runner`, а backend оставляет maintenance loop для ack-timeout requeue, lease expiry и stale-runner offline reconciliation |

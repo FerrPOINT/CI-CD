@@ -9,6 +9,11 @@
 
 ## [Unreleased]
 
+- Добавлены immutable blocked task workspace operations с original-key readback,
+  owner-local pinned preparation и bounded candidate evidence из actual Git,
+  pipeline completion и artifact bytes. Admission/write/deployment/acceptance
+  остаются закрытыми до совместимых producer contracts; migration40 следует PR87.
+
 - После отмены удаления проекта focus возвращается к его меню действий; после успешного удаления — к кнопке создания проекта.
 
 - Документирована принятая поставка трёх CLI на sdlc1: backup/restore/rollback, live-проверки, Linux/WSL установка и сохранённые ограничения.
