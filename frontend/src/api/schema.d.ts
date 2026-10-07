@@ -957,6 +957,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/sdlc/workspace-operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["prepare_workspace_operation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_workspace_operation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/candidate-evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_candidate_evidence"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/secrets": {
         parameters: {
             query?: never;
@@ -1787,6 +1835,35 @@ export interface components {
         CanceledPipelineResult: {
             /** Format: uuid */
             canceled: string;
+        };
+        CandidateArtifactEvidence: {
+            /** Format: uuid */
+            artifactId: string;
+            /** Format: uuid */
+            attemptId: string;
+            /** Format: uuid */
+            jobId: string;
+            sha256: string;
+            /** Format: int64 */
+            sizeBytes: number;
+        };
+        /** @description Fresh local observation tied to an immutable blocked operation, never a delivery receipt. */
+        CandidateEvidenceReadback: {
+            acceptanceVerified: boolean;
+            artifacts: components["schemas"]["CandidateArtifactEvidence"][];
+            blockers: string[];
+            candidateObserved: boolean;
+            configSha256?: string | null;
+            deploymentVerified: boolean;
+            dispatchAllowed: boolean;
+            /** Format: date-time */
+            observedAt: string;
+            operationReceipt: components["schemas"]["WorkspaceOperationReceipt"];
+            /** Format: uuid */
+            pipelineId: string;
+            planSha256?: string | null;
+            schema: string;
+            sourceCommit: string;
         };
         ChangeStatus: {
             status: components["schemas"]["JobStatus"];
@@ -2805,6 +2882,93 @@ export interface components {
             /** Format: uuid */
             project_id: string;
             url: string;
+        };
+        /** @enum {string} */
+        WorkspaceAccess: "read_only" | "read_write";
+        /** @enum {string} */
+        WorkspaceOperationBlocker: "tracker_admission_unavailable" | "tracker_workspace_binding_unavailable" | "physical_workspace_observation_unavailable";
+        WorkspaceOperationLookup: {
+            /** Format: uuid */
+            assignmentId: string;
+            /** Format: uuid */
+            executionId: string;
+            /** Format: int64 */
+            fencingToken: number;
+            requestHash: string;
+            /** Format: uuid */
+            rootTaskId: string;
+            /** Format: uuid */
+            taskId: string;
+        };
+        WorkspaceOperationReadback: {
+            /** Format: int64 */
+            currentGeneration?: number | null;
+            expired: boolean;
+            /** Format: date-time */
+            leaseExpiresAt?: string | null;
+            leaseStatus?: string | null;
+            receipt: components["schemas"]["WorkspaceOperationReceipt"];
+            reconciliationNeeded: boolean;
+        };
+        /** @description Owner-issued operation receipt. Not base-sdlc/workspace-receipt/v1. */
+        WorkspaceOperationReceipt: {
+            blockers: components["schemas"]["WorkspaceOperationBlocker"][];
+            dispatchAllowed: boolean;
+            /** Format: uuid */
+            operationId: string;
+            physicalSourceObserved: boolean;
+            /** Format: uuid */
+            projectId: string;
+            /** Format: date-time */
+            recordedAt: string;
+            request: components["schemas"]["WorkspaceOperationRequest"];
+            requestHash: string;
+            schema: string;
+            status: components["schemas"]["WorkspaceOperationStatus"];
+        };
+        /** @description A request is declared input, never admission evidence or a caller-issued receipt. */
+        WorkspaceOperationRequest: {
+            access: components["schemas"]["WorkspaceAccess"];
+            /** Format: uuid */
+            attemptId: string;
+            binding: components["schemas"]["WorkspaceTaskBinding"];
+            /** Format: int32 */
+            contractVersion: number;
+            /** Format: uuid */
+            leaseId: string;
+            operationKey: string;
+            /** Format: uuid */
+            repositoryId: string;
+            role: components["schemas"]["WorkspaceRole"];
+            sourceCommit: string;
+            /** Format: int64 */
+            workspaceGeneration: number;
+            workspaceId: string;
+        };
+        /** @enum {string} */
+        WorkspaceOperationStatus: "blocked";
+        /** @enum {string} */
+        WorkspaceRole: "analyst" | "architect" | "developer" | "reviewer" | "tester" | "devops";
+        WorkspaceTaskBinding: {
+            assignmentHash: string;
+            /** Format: uuid */
+            assignmentId: string;
+            /** Format: uuid */
+            executionId: string;
+            /** Format: int64 */
+            fencingToken: number;
+            /** Format: int64 */
+            requirementRevision: number;
+            /** Format: uuid */
+            rootTaskId: string;
+            /** Format: uuid */
+            routingSnapshotId: string;
+            /** Format: uuid */
+            taskId: string;
+            trackerInstanceId: string;
+            /** Format: uuid */
+            trackerProjectId: string;
+            workflowTaskRef: string;
         };
     };
     responses: never;
@@ -4346,6 +4510,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Resource retained by immutable SDLC workspace history */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     update_project: {
@@ -5011,6 +5182,227 @@ export interface operations {
                 };
             };
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    prepare_workspace_operation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Forge project UUID */
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceOperationRequest"];
+            };
+        };
+        responses: {
+            /** @description Immutable blocked operation receipt; no workspace admission */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceOperationReceipt"];
+                };
+            };
+            /** @description Malformed binding or access */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing, expired or revoked credential */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Machine/project/scope denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Owner project missing */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Changed original key or stale local source/lease */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Request exceeds 16 KiB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unknown, null or malformed typed fields */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Owner configuration unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_workspace_operation: {
+        parameters: {
+            query: {
+                requestHash: string;
+                taskId: string;
+                rootTaskId: string;
+                assignmentId: string;
+                executionId: string;
+                fencingToken: number;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+                operation_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Original receipt plus fresh lease observation; never renewal */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceOperationReadback"];
+                };
+            };
+            /** @description Missing or malformed original lookup identity */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing, expired or revoked credential */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Machine/project/read scope denied */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description No receipt owned by this subject */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Original binding/hash mismatch */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Owner configuration unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_candidate_evidence: {
+        parameters: {
+            query: {
+                requestHash: string;
+                taskId: string;
+                rootTaskId: string;
+                assignmentId: string;
+                executionId: string;
+                fencingToken: number;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+                operation_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Fresh bounded owner evidence; task delivery remains blocked */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CandidateEvidenceReadback"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -5685,6 +6077,13 @@ export interface operations {
                 };
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Resource retained by immutable SDLC workspace history */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

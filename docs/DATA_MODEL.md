@@ -2,6 +2,36 @@
 
 ## 0. Фактическая схема реализованных таблиц
 
+Candidate evidence readback добавляет только bounded SELECT существующих
+pipeline plan/jobs/latest attempts/leases/artifacts. Task binding/revisions остаются
+в immutable migration40 receipt; observation не дописывает success к blocked row.
+Repository bytes и artifact bytes читаются заново; никаких health/acceptance/
+rollback ledger rows из metadata deployment success не создаётся.
+
+Filesystem preparation primitive не меняет PostgreSQL или historical migrations.
+Create-new/fsync journals `.forge-preparation.json` и `.forge-prepared.json`
+содержат exact typed request, Forge project и canonical local repository path.
+Local schema `forge/local-workspace-preparation/v1` не является trusted receipt.
+Отдельный `.forge-preparation-active.json` удерживает unknown/crashed Git effect;
+expiry/restart его не удаляют. Caller обязан заранее durable сохранить allocated
+workspace ID; helper не создаёт assignment/lease или producer authorization.
+[Recovery и ограничения](SDLC_DELIVERY_V1.md#source-slice-filesystem-preparation-primitive-2026-10-04).
+
+Source delta 2026-10-04: `0040_sdlc_workspace_operations.sql` добавляет append-only
+ledger blocked workspace operations, не TaskWorkspace/assignment scheduler.
+UUID owner operation, Forge project/service-account, original key/hash,
+task/root/assignment/execution/Tracker fence, Forge lease/attempt/generation,
+repository/full source SHA, owner receipt JSONB и timestamp сохраняются в одной
+транзакции. UNIQUE(project_id, operation_key) исключает двойную регистрацию;
+индексы binding/lease поддерживают readback. JSONB containment guards не пропускают
+missing/null identity/status вместо exact typed metadata. UPDATE/DELETE запрещены
+trigger; FK RESTRICT сохраняют receipt и связанный owner history при generic
+resource delete. Retention/правомерное удаление evidence — отдельный будущий протокол.
+Статус только blocked, dispatch false, оба authority blockers обязательны.
+Нет automatic enrollment или backfill legacy jobs. Migration 0040 применяется
+после own 0039, historical 1–38 сохраняют прежние SQLx checksums. GET/replay не
+меняют operation/lease и не освобождают неизвестный процесс.
+
 Source delta 2026-10-03 не добавляет таблиц: физическая runner-папка использует
 существующие `execution_attempts.id`, `job_leases.id/generation` и marker
 `forge/attempt-workspace/v1`. Это не самостоятельный queue/lease ledger и не
