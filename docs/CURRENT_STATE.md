@@ -5,6 +5,42 @@
 
 ## Что работает сейчас (Current verified)
 
+### Source verification 2026-10-07: синхронизация с main, не rollout
+
+Рабочая ветка `feat/pdlc-forge-workspaces` обычным merge926c52f включает
+`main c606886` без переписывания истории. Сохранены собственные0039/0040,
+исторические SQL checksums и новые main URL/focus изменения. Base SDK теперь
+точно соответствует pin `875cac2edf1a18c3a8a59e2f67256d02a8fc04e4`;
+отдельный чистый checkout проверен перед сборкой.
+
+Compose `sdlc-qa-forge-merge-2de278622784`: Rust1.88 fmt, locked/offline
+workspace/all-target check и strict Clippy с integration, release workspace build,
+Rust-exported OpenAPI equality и82 scoped tests PASS без skips. Включены14 domain,
+32 filesystem/worker,8 workspace PG/HTTP,6 migrations,2 реальных terminal
+receipt/embedded pinned-run сценария,18 runner и2 binary contract cases.
+Все198 backend/SDK inputs неизменны; exact owned containers/networks удалены,
+external caches сохранены. Log SHA256:
+`3306199cea12f81ebb8d2c381e286a046d29be4db8c2fe56caa1ce8eea282ce7`.
+Manifest SHA256:
+`4b457194ceb2723290ee6dbfaee23ff65cf11053c1c981656b307d5480e4ac1a`.
+
+Отдельная frontend-копия использует тот же SDK, Node22.20.0/pnpm10.28.1:
+frozen/offline install, typecheck, lint, OpenAPI check,201 tests и build PASS.
+Сгенерированная schema отдельно совпадает с исходным committed client, а не
+только с собственной postinstall-копией. Frontend log SHA256:
+`6557833d21402bfc75d1a026794a52d9d91be23614ab312945a7fc3fded4feed`.
+Docs verifier PASS; heuristic secret scan чистого tracked export PASS460 files.
+Полный recursive scan отдельно сообщил findings в локальном SDK, не входящем
+в tracked дерево Forge; он не объявляется успешным scan всего workspace.
+Первые QA attempts с неверным test DB
+prefix и неполной frontend-копией не считаются успешными; safety guards не сняты.
+
+Это source/release-build evidence, не полный live SDLC или установленный runtime.
+Publication feature branch не является main merge. Две новые migrations должны
+выпускаться по отдельным task PR; blocked receipt не означает prepared workspace.
+Tracker authority, scoped candidate writes, pipeline/deployment/health/acceptance
+и rollback receipts, browser acceptance и полный rollout остаются обязательными.
+
 ### Source delta 2026-10-04: blocked workspace operation, не admission
 
 Dedicated project-bound machine API регистрирует strict task/assignment/source/
