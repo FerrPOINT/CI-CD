@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectsPage } from "./index";
+import { toast } from "sonner";
 
 const mocks = vi.hoisted(() => ({
   useProjects: vi.fn(),
@@ -102,6 +103,36 @@ describe("ProjectsPage", () => {
     view.rerender(<MemoryRouter><ProjectsPage /></MemoryRouter>);
     expect(screen.queryByRole("button", { name: "projects.actionsFor Project 01" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "projects.create" })).toHaveFocus();
+  });
+
+  it("keeps the create form and entered URL after backend validation rejects it", () => {
+    setup(0);
+    fireEvent.click(screen.getByRole("button", { name: "projects.create" }));
+    const form = screen.getByRole("form", { name: "projects.create" });
+    fireEvent.change(screen.getByLabelText("projects.name"), { target: { value: "Test" } });
+    fireEvent.change(screen.getByLabelText("projects.repositoryUrl"), { target: { value: "not-a-repository-url" } });
+    fireEvent.submit(form);
+    const error = new Error("repository_url must be an HTTP(S), SSH or Git URL");
+    act(() => mocks.create.mock.calls[0][1].onError(error));
+    expect(toast.error).toHaveBeenCalledWith(error.message);
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(form).toBeVisible();
+    expect(screen.getByLabelText("projects.repositoryUrl")).toHaveValue("not-a-repository-url");
+  });
+
+  it("keeps the edit form after a repository URL validation error", () => {
+    setup(1);
+    fireEvent.keyDown(screen.getByRole("button", { name: "projects.actionsFor Project 01" }), { key: "Enter" });
+    fireEvent.click(screen.getByRole("menuitem", { name: "projects.edit" }));
+    const form = screen.getByRole("form", { name: "projects.editProject Project 01" });
+    fireEvent.change(screen.getByLabelText("projects.repositoryUrl"), { target: { value: "not-a-repository-url" } });
+    fireEvent.submit(form);
+    const error = new Error("repository_url must be an HTTP(S), SSH or Git URL");
+    act(() => mocks.update.mock.calls[0][1].onError(error));
+    expect(toast.error).toHaveBeenCalledWith(error.message);
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(form).toBeVisible();
+    expect(screen.getByLabelText("projects.repositoryUrl")).toHaveValue("not-a-repository-url");
   });
 
   it("keeps pipelines direct and exposes secondary destinations in an accessible menu", () => {
