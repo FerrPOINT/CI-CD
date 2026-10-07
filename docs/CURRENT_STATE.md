@@ -5,6 +5,30 @@
 
 ## Что работает сейчас (Current verified)
 
+### Release candidate 2026-10-07: runner workspace recovery
+
+Из общей опубликованной ветки отдельно выделен `feat/runner-workspace-recovery-20261007`
+от `main c606886`. Он содержит только runner-owned workspace/recovery и одну
+новую migration0039; task-bound operation ledger0040 и preparation не включены.
+Base pin остаётся принятым `875cac2edf1a18c3a8a59e2f67256d02a8fc04e4`.
+
+На exact source355885f Compose `sdlc-qa-forge-merge-ff054300108e` проходит
+Rust1.88 locked/offline fmt, workspace/all-target check/strict Clippy с integration,
+весь `cargo test --workspace`, release workspace build, Rust OpenAPI equality
+и8 целевых PostgreSQL-тестов migration/owned terminal receipt/embedded pinned run.
+Все202 backend/deploy/OpenAPI/SDK inputs неизменны; containers/networks удалены,
+external caches сохранены. Первый packet7d031f4a7da1 не прошёл из-за отсутствия
+read-only mount seccomp profile в QA; тест не отключён и production profile не менялся.
+
+Frontend с тем же SDK и Node22.20.0/pnpm10.28.1 проходит frozen/offline install,
+typecheck/lint,201 tests/build, OpenAPI check и compatibility с main. Generated
+client отдельно совпадает с committed schema. Docs verifier и heuristic scan
+tracked export (450 text files) проходят. Нового UI layout нет; новые screenshots
+этим candidate не заявляются. Полная integration/CLI matrix и remote CI, отдельный
+curl smoke и installation остаются release gates. Это не full SDLC acceptance:
+task admission, candidate/deployment/acceptance/rollback receipts не реализованы
+этим PR и не выдаются из workspace marker или EOF.
+
 ### Source delta 2026-10-03, не installation evidence
 
 Runner workspace foundation реализован в source: fresh attempt/lease/generation
