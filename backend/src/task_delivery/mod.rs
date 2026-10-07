@@ -1,5 +1,6 @@
 //! Privileged, bounded static-artifact delivery. No SDLC dispatch, Git merge or shell executor.
 mod files;
+pub mod oci;
 mod probes;
 use crate::{
     api::{AppState, sdlc_workspace},

@@ -16,6 +16,19 @@ Forge связывает жизненный цикл `Git push -> pipeline -> ex
 4. Обеспечить автоматизацию доставки через Git-события, расписания, webhooks и уведомления без потери зафиксированных событий.
 5. Сохранить возможность постепенного перехода от встроенного локального исполнения к изолированным внешним runner-ам.
 
+### Owner-local OCI компонент
+
+REQ-SDLC-003 продолжает локальную manifest delivery: owner запускает только sealed
+candidate с exact image/source/config/plan/artifact identity в отдельном временном
+Compose target. Actual image/container/served identity, неизменные snapshot bytes
+и schema должны совпадать; health, application acceptance и compatibility имеют
+отдельное evidence. Last-confirmed rollback проверяет восстановленное приложение
+и не изменяет snapshot. Replay/recovery не повторяют rollout; unknown holds target.
+Для этого среза mutable DB/migrations/restore и incompatible/unknown data блокируются.
+Полная business coverage, authoritative SDLC admission и production rollout
+остаются target: [ADR-0021](adr/0021-owner-local-oci-readonly-data.md),
+[проверки и границы](TASK_DELIVERY_VERIFICATION.md#oci-продолжение-2026-10-08).
+
 ## 3. Персоны и ключевые сценарии
 
 ### Разработчик

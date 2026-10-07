@@ -19,6 +19,8 @@ struct Args {
     reconcile: bool,
     #[arg(long)]
     readback: bool,
+    #[arg(long)]
+    oci: bool,
 }
 
 async fn run(args: Args) -> anyhow::Result<bool> {
@@ -51,6 +53,29 @@ async fn run(args: Args) -> anyhow::Result<bool> {
         running_jobs: None,
         rate_limiter: Arc::new(cicd::rate_limit::RateLimiter::default()),
     });
+    if args.oci {
+        let result = match cicd::task_delivery::oci::local_command(
+            state,
+            args.project_id,
+            &token,
+            command,
+            args.reconcile,
+            args.readback,
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                println!(
+                    "{}",
+                    serde_json::json!({"schema":"forge/local-oci-rejection/v1","status":cicd::task_delivery::oci::rejection_status(&error),"reason":cicd::task_delivery::oci::rejection_code(&error),"dispatchAllowed":false,"sdlcAcceptanceVerified":false})
+                );
+                return Err(error);
+            }
+        };
+        println!("{}", serde_json::to_string(&result)?);
+        return Ok(result.latest_status() == DeliveryStatus::Verified);
+    }
     let result = cicd::task_delivery::local_command(
         state,
         args.project_id,

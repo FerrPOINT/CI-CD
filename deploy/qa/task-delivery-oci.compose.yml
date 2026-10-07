@@ -1,0 +1,14 @@
+services:
+  qa:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${CICD_QA_OCI_COMPOSE_HOST:?Durable owned Compose directory required}:${CICD_QA_OCI_COMPOSE_LOCAL:?Host-visible local path required}
+    environment:
+      CICD_TEST_OCI_PROJECT: ${CICD_QA_OCI_PROJECT:?Unique OCI child project required}
+      CICD_TEST_OCI_NETWORK: ${CICD_QA_OCI_NETWORK:?Owned isolated network required}
+      CICD_TEST_OCI_VOLUME: ${CICD_QA_OCI_VOLUME:?Owned disposable volume required}
+      CICD_TEST_OCI_COMPOSE_ROOT: ${CICD_QA_OCI_COMPOSE_LOCAL}
+networks:
+  qa:
+    internal: true
+    labels: {sdlc.task: forge-task-delivery, sdlc.purpose: disposable-oci-check-network}

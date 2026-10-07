@@ -5,6 +5,14 @@
 
 ## Что работает сейчас (Current verified)
 
+### OCI/read-only data source continuation, 2026-10-08
+
+`forge-delivery --oci` добавляет bounded temporary Compose deployment preloaded
+image и read-only data snapshot, actual image/commit/container/served identity,
+application compatibility/acceptance и rollback без изменения snapshot. Mutable
+DB/migration/restore и authoritative SDLC admission закрыты. Source/gates и пределы:
+[task verification](TASK_DELIVERY_VERIFICATION.md), [ADR-0021](adr/0021-owner-local-oci-readonly-data.md).
+
 ### Owner-local manifest delivery source, 2026-10-08
 
 `forge-delivery` добавляет bounded static-artifact publication в отдельный Unix

@@ -162,7 +162,7 @@ complexity в этой diagnostic (исправлен type alias), `5df321b4cc35
 
 Новый SQL migration отсутствует: единственный task-owned0040 сохранён. HTTP
 dispatch и SDLC acceptance flags остаются false. Trusted root/origin/Unix storage,
-один static artifact и technical application policy — явные ограничения; OCI,
+один static artifact и technical application policy — ограничения этого среза; OCI,
 migration/data compatibility и полная requirements coverage не заявляются.
 
 ## Открытые dependencies и release order, 2026-10-08
@@ -175,9 +175,108 @@ endpoint, обходить `dispatch_allowed=false` или принимать ca
 Сначала PR87/migration39, затем этот task-owned migration40/source cut. Отдельные
 upstream gates: trusted Tracker source/access/fence readback; Fleet/Workflow admission;
 scoped candidate branch/write capability; authoritative immutable candidate packet;
-production executor с OCI/config identity и migration/data compatibility;
+production executor с OCI/config identity и mutable migration/data compatibility;
 полное scenario/requirements acceptance. Local static manifest identity, actual
 application checks и last-confirmed rollback проверяются отдельным компонентом
-выше и не заменяют эти upstream/runtime gates.
+выше и в owner-local OCI продолжении ниже не заменяют эти upstream/runtime gates.
 Generic deployment status/rollback pipeline record не закрывают эти gates.
 Ни production release, ни installation на постоянные стенды здесь не выполняются.
+
+## OCI продолжение, 2026-10-08
+
+Продолжение того же PR88 после static source `9f530ab`; migration0040, PR87,
+Base pin и accepted runtime не меняются. Linux-only `forge-delivery --oci`
+поддерживает один preloaded immutable local image и `readonly_snapshot_v1`.
+Actual retained runner artifact содержит descriptor image ID/source commit;
+Git/config/plan/ACK/artifact observer остаётся тем же sealed owner component.
+Actual Docker revision label проверяет соответствие producer output, не signed
+provenance. Effect не build/pull, не принимает caller Compose или shell.
+
+Owner policy фиксирует exact daemon, unique temporary Compose project, принадлежащие
+QA network/volume, trusted binaries, isolated root, host-visible execution specs,
+snapshot SHA и application checks. Application получает два read-only mounts,
+non-root UID, read-only rootfs, dropped capabilities, resource limits и internal
+network. Docker socket controller — privileged boundary, не полноценный sandbox.
+
+Verified требует actual image/container/config/mount/network, served manifest
+до/после checks, health, отдельный application acceptance и compatibility readback
+exact snapshot bytes. Actual schema/SHA проверяются до/после. Failed checks не
+меняют last-confirmed; explicit rollback берёт его image/manifest и повторяет
+все checks без записи snapshot. Unknown client/engine/version outcome удерживает
+target. Durable child PID/start/exit + Linux parent-death signal ограничивают
+Compose writer; missing identity после crash требует owner investigation.
+Reconcile наблюдает уже запущенный container, не вызывает Compose up.
+
+Final-source OCI gate `sdlc-qa-forge-delivery-4317be425055` PASS: Rust1.88
+locked/offline fmt/check/strict Clippy с `integration` и `oci-integration`, один
+actual daemon integration scenario (80 остальных отфильтрованы), exporter equality.
+Сценарий выполняет настоящие runner Git checkout/build/upload/completion и A/B/C/D
+container processes. A verified; B health503 и C acceptance422 дают failed evidence
+и actual rollback к exact A image; schema2, migrations list и wrong image revision
+отклонены до effect. SIGKILL во время observed health delay оставляет Unknown и
+блокирует другой key; reconciliation получает verified для того же container ID
+с неизменным current pointer mtime и исходным Unknown receipt. Snapshot неизменен.
+Actual owner-side schema/data drift блокирует rollback; данные восстанавливает
+только test fixture, executor не делает repair. Это technical fixture acceptance,
+не acceptance реального продукта/полная requirements coverage.
+
+Все247 CI-CD/pinned Base inputs совпадают до/после. Exact child Compose down
+в Drop и wrapper finally, parent containers/network/disposable volume удалены;
+temporary Windows junction удалён, реальные specs/evidence и external caches
+сохранены. При работающем OCI child root Docker audit: complete=true, все три
+daemon checked, violations=[], exit0 (Desktop42, runners0+0). Evidence folder
+`.local/task-delivery-qa/sdlc-qa-forge-delivery-4317be425055/`:
+
+| File | SHA256 |
+| --- | --- |
+| `compose.log` | `04bd49cbf806beabc8b3a1a34ce1f7cadb234d6c0db8bf8b618d47c389a2997c` |
+| `sources.json` | `6200bf29bc5ae9fecbe77ae3bae4a787f793b2115f75b5adcc12b719a2827eea` |
+| `cleanup.log` | `326ada899b07f5e8947933ee058bf8f70ac5f91bd67eb5114424fdbb578a09ef` |
+
+Full final-source gate `sdlc-qa-forge-delivery-eff9c0038fb6` PASS:215 workspace
++80 PostgreSQL +2 real-API CLI tests,0 failed/ignored; strict integration/CLI
+Clippy, fmt/check, release workspace build и exporter equality. Active `rsa` и
+`sqlx-mysql` graphs пусты. Те же247 inputs неизменны. Evidence folder
+`.local/task-delivery-qa/sdlc-qa-forge-delivery-eff9c0038fb6/`:
+
+| File | SHA256 |
+| --- | --- |
+| `compose.log` | `4aa939b50f8ee29821e653ad6d4d689e2a556b27c70bb5afba06a78bde25a46d` |
+| `sources.json` | `6200bf29bc5ae9fecbe77ae3bae4a787f793b2115f75b5adcc12b719a2827eea` |
+| `cleanup.log` | `d91fc4823cc6de88be9e59305739328870d7a4d3da9574c861e0379f5703c93b` |
+
+OCI controller image ID `sha256:b6cd7f996a5ff7a23ec9667c1f6077a64698268d3ae1fbbb6e81a0a3c1cb8a43`
+с Rust1.88/standalone Compose; full Rust ID
+`sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0`,
+PG ID `sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24`.
+Script проверил actual immutable IDs. Parent PostgreSQL после tests получил exit0;
+shutdown не служит production database/restore evidence. После обоих gates:
+0 own containers/networks/volumes; junction отсутствует; root audit complete=true,
+Desktop37/runners0+0, violations=[], exit0. Accepted resources сохранены.
+
+Fresh frontend frozen/offline install, OpenAPI check/compat(main), typecheck/lint,
+201 tests, build и audit0 advisories PASS; existing Vite chunk warning сохраняется.
+`.local/frontend-oci-20261008.log` SHA256
+`48871015ee963d9e0a3c59673fb6f0fefd1e264a4889a45491d9521c9a0f9eb3`.
+Docs verifier/6 regression tests, SBOM drift, tracked-export secret scan481 text
+files/0 findings PASS. UI не менялся; Playwright/axe/screenshots и full release
+cargo-audit/Trivy pack не выполнялись. Hosted normal CI не запускает opt-in actual
+OCI daemon test; exact-head result указывается в PR после push.
+
+Предшествующий OCI run `0a54cb13df11` остановился на compile error helper return
+(исправлен). `61b4d7fdba1f` обнаружил recovery unavailable: SIGKILL был до входа
+actual application в health check, test synchronization исправлена по observed
+application log, timeout не повышен. `29219e6cc270` actual OCI scenario прошёл,
+но live host Docker audit exit1: реальный Linux Compose spec не был доступен
+Windows auditor. Execution spec теперь хранится в host-visible bind directory с
+temporary owned junction; final live audit выше прошёл. Эти runs не подменяют
+final-source gate; все их own QA resources очищены.
+
+Typed preflight `forge/local-oci-rejection/v1` даёт blocked reasons для unsupported
+mutable data/migration, incompatible schema и snapshot drift. Generic errors дают
+`unknown_or_rejected`, exit1: проверить original-key readback, effect мог начаться.
+CLI readback exit0 — verified, exit2 — failed/unavailable/unknown; history не fresh
+continuous health. HTTP POST остаётся503, static HTTP GET не читает OCI root,
+`dispatchAllowed`/`sdlcAcceptanceVerified` false. Mutable PostgreSQL compatibility,
+migrations/backfill/restore, multi-service/registry/native attestation, authoritative
+Tracker/Fleet/Workflow admission и production/full business acceptance открыты.

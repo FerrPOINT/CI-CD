@@ -15,6 +15,7 @@
 
 - [SDLC_DELIVERY_V1](SDLC_DELIVERY_V1.md) — target delivery packet и actual blocked workspace operation owner API; [ADR-0018](adr/0018-blocked-workspace-operation-ledger.md) — граница authority.
 - [TASK_DELIVERY_VERIFICATION](TASK_DELIVERY_VERIFICATION.md) — actual runner/artifact и owner-local manifest delivery evidence; [ADR-0020](adr/0020-owner-local-manifest-delivery.md) — local checks, rollback и unknown recovery.
+- [ADR-0021](adr/0021-owner-local-oci-readonly-data.md) — bounded OCI/read-only data compatibility и rollback без migrations.
 - [Filesystem preparation primitive](SDLC_DELIVERY_V1.md#source-slice-filesystem-preparation-primitive-2026-10-04) — actual pinned checkout/recovery без HTTP enrollment, admission или dispatch.
 
 - [ARCHITECTURE](ARCHITECTURE.md), [FUNCTIONAL_ARCHITECTURE](FUNCTIONAL_ARCHITECTURE.md), [DOMAIN_MODEL](DOMAIN_MODEL.md), [DATA_MODEL](DATA_MODEL.md) — narrative и модель данных.
