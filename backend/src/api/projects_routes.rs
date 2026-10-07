@@ -6,6 +6,7 @@ use super::{ApiError, ApiResult, AppState, PageParams, list_projects_for_claims,
 use crate::platform::audit;
 use axum::Json;
 use axum::extract::{Path, State};
+use cicd_domain::repository_url::validate_repository_url;
 use serde::{Deserialize, Deserializer};
 use sqlx::PgPool;
 use std::sync::Arc;
@@ -22,6 +23,7 @@ pub(crate) async fn create_project(
             "name and repository_url are required",
         ));
     }
+    validate_repository_url(&input.repository_url).map_err(ApiError::bad_request)?;
     let db = pool(&state)?;
     // Validate the tenant exists when the project targets one (AUTHORIZATION).
     if let Some(tenant_id) = input.tenant_id {
@@ -302,6 +304,9 @@ pub(crate) async fn update_project(
             return Err(ApiError::bad_request("fields cannot be empty"));
         }
     }
+    if let Some(url) = &input.repository_url {
+        validate_repository_url(url).map_err(ApiError::bad_request)?;
+    }
     let project = sqlx::query_as::<_, Project>(
         "UPDATE projects SET name = COALESCE($2, name), repository_url = COALESCE($3, repository_url), default_branch = COALESCE($4, default_branch), max_running_jobs = CASE WHEN $5 THEN $6 ELSE max_running_jobs END WHERE id = $1 RETURNING id, name, repository_url, default_branch, max_running_jobs, created_at",
     )
@@ -330,4 +335,102 @@ pub(crate) async fn delete_project(
         .map_err(ApiError::internal)?
         .ok_or_else(ApiError::not_found)?;
     Ok(Json(serde_json::json!({"deleted": deleted})))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        Router,
+        body::Body,
+        http::{Request, StatusCode},
+        routing::{patch, post},
+    };
+    use tower::ServiceExt;
+
+    fn project_router() -> Router {
+        let config = crate::config::RuntimeConfig::from_env_source(|_| None, false).unwrap();
+        Router::new()
+            .route("/projects", post(create_project))
+            .route("/projects/{project_id}", patch(update_project))
+            .with_state(Arc::new(AppState {
+                pool: None,
+                auth_secret: None,
+                git: config.git.to_git_config(),
+                config,
+                running_jobs: None,
+                rate_limiter: Arc::new(crate::rate_limit::RateLimiter::default()),
+            }))
+    }
+
+    #[tokio::test]
+    async fn repository_url_invalid_create_and_patch_are_rejected_before_persistence() {
+        for url in [
+            "not-a-repository-url",
+            "file:///tmp/repo.git",
+            "https://",
+            "git@example.test:",
+            "ssh://-bad/team/repo.git",
+            "git@-bad:team/repo.git",
+            "ssh://-bad@example.test/team/repo.git",
+            "-bad@example.test:team/repo.git",
+            "ssh://%2Dbad@example.test/team/repo.git",
+            "ssh://%2dbad@example.test/team/repo.git",
+        ] {
+            for method in ["POST", "PATCH"] {
+                let path = if method == "POST" {
+                    "/projects"
+                } else {
+                    "/projects/00000000-0000-0000-0000-000000000001"
+                };
+                let response = project_router()
+                    .oneshot(
+                        Request::builder()
+                            .method(method)
+                            .uri(path)
+                            .header("content-type", "application/json")
+                            .body(Body::from(
+                                serde_json::json!({"name": "Test", "repository_url": url})
+                                    .to_string(),
+                            ))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{method} {url}");
+            }
+        }
+    }
+    #[tokio::test]
+    async fn repository_url_valid_create_patch_and_omitted_patch_reach_persistence() {
+        for (method, body) in [
+            (
+                "POST",
+                serde_json::json!({"name": "Test", "repository_url": "https://example.test/team/repo.git"}),
+            ),
+            (
+                "PATCH",
+                serde_json::json!({"repository_url": "git@example.test:team/repo.git"}),
+            ),
+            ("PATCH", serde_json::json!({"name": "Renamed"})),
+        ] {
+            let path = if method == "POST" {
+                "/projects"
+            } else {
+                "/projects/00000000-0000-0000-0000-000000000001"
+            };
+            let response = project_router()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .header("content-type", "application/json")
+                        .body(Body::from(body.to_string()))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        }
+    }
 }

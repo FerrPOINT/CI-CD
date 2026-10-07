@@ -30,6 +30,8 @@
   cleanup требует terminal acknowledgement и сохранённый owner marker. Docker-job
   больше не получает общий volume с workspace других попыток. Это source foundation,
   не закрытая автономная SDLC/live acceptance.
+- После отмены удаления проекта focus возвращается к его меню действий; после успешного удаления — к кнопке создания проекта.
+
 - Документирована принятая поставка трёх CLI на sdlc1: backup/restore/rollback, live-проверки, Linux/WSL установка и сохранённые ограничения.
 
 - Каталог SQLx сохраняет точную уже применённую migration 38 `platform messaging`

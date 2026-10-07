@@ -1,7 +1,8 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectsPage } from "./index";
+import { toast } from "sonner";
 
 const mocks = vi.hoisted(() => ({
   useProjects: vi.fn(),
@@ -42,11 +43,11 @@ function setup(count: number) {
     error: null,
     refetch: mocks.refetch,
   });
-  renderPage();
+  return renderPage();
 }
 
 function renderPage() {
-  render(
+  return render(
     <MemoryRouter>
       <ProjectsPage />
     </MemoryRouter>,
@@ -56,6 +57,84 @@ function renderPage() {
 afterEach(() => vi.clearAllMocks());
 
 describe("ProjectsPage", () => {
+  it.each(["escape", "cancel"])(
+    "returns focus to the project actions after %s closes delete confirmation",
+    async (method) => {
+      setup(1);
+      const trigger = screen.getByRole("button", {
+        name: "projects.actionsFor Project 01",
+      });
+      trigger.focus();
+      fireEvent.keyDown(trigger, { key: "Enter" });
+      fireEvent.click(screen.getByRole("menuitem", { name: "common.delete" }));
+      const cancel = screen.getByRole("button", { name: "common.cancel" });
+      await waitFor(() => expect(cancel).toHaveFocus());
+      if (method === "escape") {
+        fireEvent.keyDown(cancel, { key: "Escape" });
+      } else {
+        fireEvent.click(cancel);
+      }
+      await waitFor(() => {
+        expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+        expect(trigger).toHaveFocus();
+      });
+    },
+  );
+
+  it("keeps focus on create while a successful deletion refreshes the project list", async () => {
+    const view = setup(1);
+    fireEvent.keyDown(
+      screen.getByRole("button", { name: "projects.actionsFor Project 01" }),
+      { key: "Enter" },
+    );
+    fireEvent.click(screen.getByRole("menuitem", { name: "common.delete" }));
+    fireEvent.click(screen.getByRole("button", { name: "common.delete" }));
+    act(() => mocks.remove.mock.calls[0][1].onSuccess());
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "projects.create" })).toHaveFocus();
+    });
+    mocks.useProjects.mockReturnValue({
+      data: [],
+      isLoading: false,
+      error: null,
+      refetch: mocks.refetch,
+    });
+    view.rerender(<MemoryRouter><ProjectsPage /></MemoryRouter>);
+    expect(screen.queryByRole("button", { name: "projects.actionsFor Project 01" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "projects.create" })).toHaveFocus();
+  });
+
+  it("keeps the create form and entered URL after backend validation rejects it", () => {
+    setup(0);
+    fireEvent.click(screen.getByRole("button", { name: "projects.create" }));
+    const form = screen.getByRole("form", { name: "projects.create" });
+    fireEvent.change(screen.getByLabelText("projects.name"), { target: { value: "Test" } });
+    fireEvent.change(screen.getByLabelText("projects.repositoryUrl"), { target: { value: "not-a-repository-url" } });
+    fireEvent.submit(form);
+    const error = new Error("repository_url must be an HTTP(S), SSH or Git URL");
+    act(() => mocks.create.mock.calls[0][1].onError(error));
+    expect(toast.error).toHaveBeenCalledWith(error.message);
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(form).toBeVisible();
+    expect(screen.getByLabelText("projects.repositoryUrl")).toHaveValue("not-a-repository-url");
+  });
+
+  it("keeps the edit form after a repository URL validation error", () => {
+    setup(1);
+    fireEvent.keyDown(screen.getByRole("button", { name: "projects.actionsFor Project 01" }), { key: "Enter" });
+    fireEvent.click(screen.getByRole("menuitem", { name: "projects.edit" }));
+    const form = screen.getByRole("form", { name: "projects.editProject Project 01" });
+    fireEvent.change(screen.getByLabelText("projects.repositoryUrl"), { target: { value: "not-a-repository-url" } });
+    fireEvent.submit(form);
+    const error = new Error("repository_url must be an HTTP(S), SSH or Git URL");
+    act(() => mocks.update.mock.calls[0][1].onError(error));
+    expect(toast.error).toHaveBeenCalledWith(error.message);
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(form).toBeVisible();
+    expect(screen.getByLabelText("projects.repositoryUrl")).toHaveValue("not-a-repository-url");
+  });
+
   it("keeps pipelines direct and exposes secondary destinations in an accessible menu", () => {
     setup(2);
 

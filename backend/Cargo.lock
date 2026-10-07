@@ -391,6 +391,7 @@ dependencies = [
  "chrono",
  "serde",
  "thiserror",
+ "url",
  "utoipa",
  "uuid",
 ]

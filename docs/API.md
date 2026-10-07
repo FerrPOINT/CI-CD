@@ -325,8 +325,20 @@ curl -sS 'http://127.0.0.1:22801/api/v1/projects?limit=50&offset=0'
 | Поле | Тип | Required | Описание |
 |---|---|---|---|
 | `name` | string | yes | Уникальное имя проекта (non-empty) |
-| `repository_url` | string | yes | URL Git-репозитория (non-empty) |
+| `repository_url` | string | yes | HTTP(S), SSH, Git URL с host и путём репозитория либо SSH `user@host:path` |
 | `default_branch` | string | no | Ветка по умолчанию, default `"main"` |
+
+Одна доменная проверка `repository_url` применяется к POST и PATCH до записи
+в БД. Внешние пробелы удаляются; внутри адреса whitespace/control-символы и
+обратный слэш запрещены. URL должен явно содержать разрешённую схему,
+непустые host и repository path; SCP-форма поддерживает `user@host:path`,
+включая bracketed IPv6. Host проходит network-host parsing; SSH/SCP host с
+некорректным percent encoding или ведущим дефисом отклоняется до записи.
+SSH/SCP username с ведущим дефисом, включая SSH `%2D`/`%2d`, также отклоняется;
+для HTTP(S) это ограничение username не применяется.
+Local/file paths, passwords, query и fragment
+не принимаются. Расширение `.git` необязательно. Проверка синтаксическая:
+она не обращается к сети и не обещает доступность репозитория или SSH runner.
 
 **Response 200:**
 ```json
@@ -340,7 +352,7 @@ curl -sS 'http://127.0.0.1:22801/api/v1/projects?limit=50&offset=0'
 ```
 
 **Errors:**
-- `400` — `name` или `repository_url` пустые.
+- `400` — `name` или `repository_url` пустые либо формат URL репозитория непригоден.
 - `500` — duplicate name (unique constraint violation) или ошибка БД.
 
 **curl:**
@@ -377,14 +389,14 @@ curl -sS http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID
 | Поле | Тип | Required | Описание |
 |---|---|---|---|
 | `name` | string | no | Новое имя (non-empty при передаче) |
-| `repository_url` | string | no | Новый URL репозитория |
+| `repository_url` | string | no | Новый URL репозитория; проверяется по тем же правилам, что при создании |
 | `default_branch` | string | no | Новая ветка по умолчанию |
 | `max_running_jobs` | integer or null | no | Максимум одновременно active lease для проекта: `1..4096`; `null` снимает cap, отсутствие поля сохраняет текущее значение |
 
 **Response 200:** обновлённый объект проекта.
 
 **Errors:**
-- `400` — тело пустое (`{}`) или переданное поле пустое.
+- `400` — тело пустое (`{}`), переданное поле пустое либо формат URL репозитория непригоден.
 - `404` — проект не найден.
 - `500` — duplicate name.
 
