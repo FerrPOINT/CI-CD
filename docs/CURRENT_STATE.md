@@ -12,6 +12,20 @@
 новую migration0039; task-bound operation ledger0040 и preparation не включены.
 Base pin остаётся принятым `875cac2edf1a18c3a8a59e2f67256d02a8fc04e4`.
 
+Дополнительный release audit 7 октября обнаружил два frontend advisory:
+GHSA-68fv-2mgg-jv7q и GHSA-xvq9-wjp8-hwqf. Неиспользуемый HTTP translation
+backend удалён, `source-map-js` закреплён на исправленной1.2.2. Frozen install,
+201 tests, lint/typecheck/build и `pnpm audit --json` проходят:0 advisories.
+SBOM пересоздан из lockfiles (394 компонента); CI теперь проверяет его drift и
+frontend advisories. Свежий Linux/PostgreSQL gate e3ee650c0465 проходит все
+runner/migration/recovery проверки, release build и OpenAPI equality. Он также
+подтверждает отсутствие `rsa` и `sqlx-mysql` в активном graph для всех target.
+Поэтому уже документированное исключение RUSTSEC-2023-0071 остаётся применимым
+только к optional lockfile path; необработанный `cargo audit` всё ещё сообщает
+этот advisory, с указанным исключением остальные findings отсутствуют.
+Hosted CI нового commit проверяется отдельно; эти результаты не означают
+установку candidate или готовность всего SDLC.
+
 На exact source355885f Compose `sdlc-qa-forge-merge-ff054300108e` проходит
 Rust1.88 locked/offline fmt, workspace/all-target check/strict Clippy с integration,
 весь `cargo test --workspace`, release workspace build, Rust OpenAPI equality
