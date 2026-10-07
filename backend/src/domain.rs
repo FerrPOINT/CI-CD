@@ -5,4 +5,5 @@
 //! during the migration to the layered workspace architecture.
 
 pub use cicd_domain::sdlc_workspace;
+pub use cicd_domain::task_delivery;
 pub use cicd_domain::{JobStatus, PipelineStatus, TransitionError, aggregate_status};

@@ -1005,6 +1005,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** HTTP delivery remains fail-closed. No caller flag or configured local target enables dispatch. */
+        post: operations["reject_sdlc_delivery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations/{delivery_key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_local_delivery"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/secrets": {
         parameters: {
             query?: never;
@@ -1963,6 +1996,70 @@ export interface components {
         DeletedRepository: {
             deleted: string;
         };
+        /** @enum {string} */
+        DeliveryAction: "deploy" | "rollback";
+        DeliveryCommand: {
+            action: components["schemas"]["DeliveryAction"];
+            /** Format: uuid */
+            artifactId?: string | null;
+            /** @description CAS against the published manifest; null means an empty target, never wildcard. */
+            expectedManifestSha256?: string | null;
+            operationKey: string;
+            original: components["schemas"]["WorkspaceOperationLookup"];
+            workspaceOperationKey: string;
+        };
+        DeliveryManifest: {
+            /** Format: uuid */
+            artifactAttemptId: string;
+            /** Format: uuid */
+            artifactId: string;
+            artifactSha256: string;
+            /** Format: int64 */
+            artifactSizeBytes: number;
+            configSha256: string;
+            operationReceipt: components["schemas"]["WorkspaceOperationReceipt"];
+            /** Format: uuid */
+            pipelineId: string;
+            planSha256: string;
+            schema: string;
+            targetPolicySha256: string;
+        };
+        DeliveryProbe: {
+            bodySha256?: string | null;
+            /** Format: int32 */
+            httpStatus?: number | null;
+            /** Format: date-time */
+            observedAt: string;
+            status: components["schemas"]["DeliveryStatus"];
+        };
+        DeliveryReadback: {
+            confirmedManifestSha256?: string | null;
+            currentManifestSha256?: string | null;
+            receipt: components["schemas"]["DeliveryReceipt"];
+            reconciledReceipt?: null | components["schemas"]["DeliveryReceipt"];
+            reconciliationNeeded: boolean;
+        };
+        DeliveryReceipt: {
+            acceptance?: null | components["schemas"]["DeliveryProbe"];
+            command: components["schemas"]["DeliveryCommand"];
+            commandSha256: string;
+            dispatchAllowed: boolean;
+            health?: null | components["schemas"]["DeliveryProbe"];
+            manifestSha256?: string | null;
+            originalOperation: components["schemas"]["WorkspaceOperationReceipt"];
+            previousManifestSha256?: string | null;
+            reason: string;
+            /** Format: date-time */
+            recordedAt: string;
+            schema: string;
+            scope: string;
+            sdlcAcceptanceVerified: boolean;
+            servedArtifact?: null | components["schemas"]["DeliveryProbe"];
+            status: components["schemas"]["DeliveryStatus"];
+            version?: null | components["schemas"]["DeliveryProbe"];
+        };
+        /** @enum {string} */
+        DeliveryStatus: "unavailable" | "failed" | "unknown" | "verified";
         Deployment: {
             /** Format: int64 */
             approval_count: number;
@@ -5370,6 +5467,127 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CandidateEvidenceReadback"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    reject_sdlc_delivery: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                operation_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeliveryCommand"];
+            };
+        };
+        responses: {
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Tracker admission/source binding unavailable; no deployment effect */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_local_delivery: {
+        parameters: {
+            query: {
+                requestHash: string;
+                taskId: string;
+                rootTaskId: string;
+                assignmentId: string;
+                executionId: string;
+                fencingToken: number;
+            };
+            header?: never;
+            path: {
+                project_id: string;
+                operation_key: string;
+                delivery_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryReadback"];
                 };
             };
             400: {

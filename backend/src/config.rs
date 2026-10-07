@@ -79,6 +79,8 @@ pub struct SdlcWorkspaceConfig {
     pub operation_subject: Option<uuid::Uuid>,
     /// A deployment-owned local mount. No caller-authored path or URL.
     pub observation_root: Option<PathBuf>,
+    pub local_delivery_root: Option<PathBuf>,
+    pub local_delivery_policy: Option<PathBuf>,
 }
 
 /// Egress allowlist for outbound webhook deliveries (Stage 5 item 2).
@@ -319,6 +321,10 @@ impl RuntimeConfig {
             secrets,
             smtp,
             sdlc_workspace: SdlcWorkspaceConfig {
+                local_delivery_root: optional_trimmed(get("CICD_LOCAL_DELIVERY_ROOT"))
+                    .map(PathBuf::from),
+                local_delivery_policy: optional_trimmed(get("CICD_LOCAL_DELIVERY_POLICY"))
+                    .map(PathBuf::from),
                 operation_subject: optional_trimmed(get("CICD_SDLC_WORKSPACE_SUBJECT"))
                     .map(|value| {
                         value

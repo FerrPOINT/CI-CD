@@ -39,5 +39,6 @@ pub mod runner;
 pub mod runner_protocol;
 pub mod runner_workspace;
 pub mod store;
+pub mod task_delivery;
 
 pub use cicd_domain as domain_types;

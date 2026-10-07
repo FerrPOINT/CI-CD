@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 pub mod sdlc_workspace;
+pub mod task_delivery;
 
 pub mod repository_url;
 

@@ -5,6 +5,16 @@
 
 ## Что работает сейчас (Current verified)
 
+### Owner-local manifest delivery source, 2026-10-08
+
+`forge-delivery` добавляет bounded static-artifact publication в отдельный Unix
+target: immutable intent, original-key replay, actual served manifest/bytes,
+health/acceptance checks, last-confirmed rollback и crash reconciliation без
+повторной publication. Это privileged local verification, не production install
+или SDLC admission. HTTP SDLC POST остаётся503; machine-authenticated GET читает
+history. Evidence и ограничения: [task verification](TASK_DELIVERY_VERIFICATION.md),
+[ADR-0020](adr/0020-owner-local-manifest-delivery.md). Новый SQL migration не нужен.
+
 ### Task workspace и candidate evidence source, 2026-10-07
 
 Отдельный source cut поверх PR87 добавляет blocked task operation ledger40,

@@ -12,6 +12,62 @@
 
 Доступ к Docker daemon, хостовой файловой системе, `.env`, bare Git-томам и backup-файлам считается привилегированным. Не передавайте реальные секреты через командную строку, Git, логи или скриншоты.
 
+## Owner-local manifest delivery
+
+Это ограниченная privileged техническая capability для одного static artifact
+и отдельного Unix target. Она не установлена на постоянные стенды и не открывает
+SDLC dispatch. Перед effect owner задаёт absolute isolated root, policy JSON
+и existing project machine credential через env (см. [ENV](ENV.md#owner-local-static-delivery)).
+Не используйте Git/artifact/runtime snapshot directories как target.
+
+Command JSON содержит original workspace key/lookup, новый immutable operationKey,
+`action`, exact artifact UUID для deploy и expected-current manifest SHA256.
+Null expected-current разрешён только для действительно пустого target. CLI:
+
+```bash
+forge-delivery --project-id "$PROJECT_ID" --command-file command.json
+forge-delivery --project-id "$PROJECT_ID" --command-file command.json --readback
+forge-delivery --project-id "$PROJECT_ID" --command-file command.json --reconcile
+```
+
+Root хранит `owner.json`, process-lifetime `.lock`, immutable `operations/<key-hash>/`
+intent/active/result и отдельный reconciled result, `manifests/<SHA256>.json`,
+`objects/<SHA256>`, atomic `current.json`/`confirmed.json`. Key replay читает прежний
+результат, не исполняет promotion повторно. Changed command/hash/binding/policy
+закрыты. Token/account/scope fresh проверяются и удерживаются DB locks на время
+операции; credential не хранится в command/manifest/receipt.
+
+Unknown/torn/active operation удерживает target. Expiry/restart не освобождают hold.
+Reconcile получает OS lock (предыдущий local writer уже завершился), сверяет
+current manifest/bytes и новые HTTP checks. Publication не повторяется. Если
+current не соответствует intent, state остаётся unknown; auto-repair/delete нет.
+Исторический unknown сохраняется, terminal readback получает отдельный receipt.
+Readback сам не выполняет probes и показывает latest known history, не fresh health.
+
+Health/acceptance failure сохраняет failed evidence и не двигает last-confirmed.
+Rollback — новый explicit command с `action: rollback`, `artifactId: null` и exact
+current CAS. Target берётся только из last-confirmed manifest, не caller version.
+Artifact/config/plan/source identity и application checks проверяются после
+восстановления. Ошибка rollback не выдаётся за success. CLI exit0 — latest verified,
+exit2 — unavailable/failed/unknown receipt, exit1 — rejected/unavailable command.
+Файлы hold не удалять для продолжения polling: требуется owner reconciliation.
+
+Эти checks не доказывают полный business acceptance, database compatibility,
+orchestrator stop или native attestation. OCI/migrations/data rollback и реальный
+admission интегрируются отдельным опубликованным protocol.
+
+Воспроизводимый QA из корня CI-CD: PowerShell7 script
+`scripts/verify-task-delivery.ps1 -BaseRoot <readonly-pinned-Base-checkout>
+-RustImage <cached-sha256-image-ID> -PostgresImage <cached-sha256-image-ID>
+-TargetCache <existing-cache-volume> -CargoCache <existing-cache-volume>
+-RustupCache <existing-cache-volume> -Gate full`. Image IDs и source hashes
+проверяются; `-Gate delivery` выполняет только focused component suite.
+`deploy/qa/task-delivery.compose.yml` требует unique explicit project, owner/purpose
+labels и отдельный disposable volume/network. Script выполняет config/build,
+finally exact Compose down и удаляет только собственный disposable volume;
+cached images/volumes сохраняются. Evidence находится в `.local/task-delivery-qa/`.
+Никаких постоянных services, runtime pins или публичных портов этот QA не создаёт.
+
 ## Runner Workspace Recovery
 
 Source capability, не подтверждённая installed runtime приёмка. `forge-runner`

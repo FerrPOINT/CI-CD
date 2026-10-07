@@ -2134,6 +2134,119 @@ paths:
           description: ''
         '503':
           description: ''
+  /api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations:
+    post:
+      tags:
+      - SDLC workspace
+      summary: HTTP delivery remains fail-closed. No caller flag or configured local target enables dispatch.
+      operationId: reject_sdlc_delivery
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: operation_key
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeliveryCommand'
+        required: true
+      responses:
+        '400':
+          description: ''
+        '401':
+          description: ''
+        '403':
+          description: ''
+        '404':
+          description: ''
+        '409':
+          description: ''
+        '503':
+          description: Tracker admission/source binding unavailable; no deployment effect
+  /api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations/{delivery_key}:
+    get:
+      tags:
+      - SDLC workspace
+      operationId: get_local_delivery
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: operation_key
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: delivery_key
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: requestHash
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: taskId
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: rootTaskId
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: assignmentId
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: executionId
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: fencingToken
+        in: query
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryReadback'
+        '400':
+          description: ''
+        '401':
+          description: ''
+        '403':
+          description: ''
+        '404':
+          description: ''
+        '409':
+          description: ''
+        '503':
+          description: ''
   /api/v1/projects/{project_id}/secrets:
     get:
       tags:
@@ -4286,6 +4399,189 @@ components:
       properties:
         deleted:
           type: string
+    DeliveryAction:
+      type: string
+      enum:
+      - deploy
+      - rollback
+    DeliveryCommand:
+      type: object
+      required:
+      - operationKey
+      - workspaceOperationKey
+      - original
+      - action
+      properties:
+        action:
+          $ref: '#/components/schemas/DeliveryAction'
+        artifactId:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        expectedManifestSha256:
+          type:
+          - string
+          - 'null'
+          description: CAS against the published manifest; null means an empty target, never wildcard.
+        operationKey:
+          type: string
+        original:
+          $ref: '#/components/schemas/WorkspaceOperationLookup'
+        workspaceOperationKey:
+          type: string
+      additionalProperties: false
+    DeliveryManifest:
+      type: object
+      required:
+      - schema
+      - operationReceipt
+      - pipelineId
+      - artifactId
+      - artifactAttemptId
+      - artifactSha256
+      - artifactSizeBytes
+      - configSha256
+      - planSha256
+      - targetPolicySha256
+      properties:
+        artifactAttemptId:
+          type: string
+          format: uuid
+        artifactId:
+          type: string
+          format: uuid
+        artifactSha256:
+          type: string
+        artifactSizeBytes:
+          type: integer
+          format: int64
+        configSha256:
+          type: string
+        operationReceipt:
+          $ref: '#/components/schemas/WorkspaceOperationReceipt'
+        pipelineId:
+          type: string
+          format: uuid
+        planSha256:
+          type: string
+        schema:
+          type: string
+        targetPolicySha256:
+          type: string
+      additionalProperties: false
+    DeliveryProbe:
+      type: object
+      required:
+      - status
+      - observedAt
+      properties:
+        bodySha256:
+          type:
+          - string
+          - 'null'
+        httpStatus:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          minimum: 0
+        observedAt:
+          type: string
+          format: date-time
+        status:
+          $ref: '#/components/schemas/DeliveryStatus'
+      additionalProperties: false
+    DeliveryReadback:
+      type: object
+      required:
+      - receipt
+      - reconciliationNeeded
+      properties:
+        confirmedManifestSha256:
+          type:
+          - string
+          - 'null'
+        currentManifestSha256:
+          type:
+          - string
+          - 'null'
+        receipt:
+          $ref: '#/components/schemas/DeliveryReceipt'
+        reconciledReceipt:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/DeliveryReceipt'
+        reconciliationNeeded:
+          type: boolean
+      additionalProperties: false
+    DeliveryReceipt:
+      type: object
+      required:
+      - schema
+      - scope
+      - command
+      - commandSha256
+      - originalOperation
+      - status
+      - reason
+      - recordedAt
+      - dispatchAllowed
+      - sdlcAcceptanceVerified
+      properties:
+        acceptance:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/DeliveryProbe'
+        command:
+          $ref: '#/components/schemas/DeliveryCommand'
+        commandSha256:
+          type: string
+        dispatchAllowed:
+          type: boolean
+        health:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/DeliveryProbe'
+        manifestSha256:
+          type:
+          - string
+          - 'null'
+        originalOperation:
+          $ref: '#/components/schemas/WorkspaceOperationReceipt'
+        previousManifestSha256:
+          type:
+          - string
+          - 'null'
+        reason:
+          type: string
+        recordedAt:
+          type: string
+          format: date-time
+        schema:
+          type: string
+        scope:
+          type: string
+        sdlcAcceptanceVerified:
+          type: boolean
+        servedArtifact:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/DeliveryProbe'
+        status:
+          $ref: '#/components/schemas/DeliveryStatus'
+        version:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/DeliveryProbe'
+      additionalProperties: false
+    DeliveryStatus:
+      type: string
+      enum:
+      - unavailable
+      - failed
+      - unknown
+      - verified
     Deployment:
       type: object
       required:

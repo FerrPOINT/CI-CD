@@ -55,12 +55,13 @@ Proposed / Accepted / Deprecated / Superseded by ADR-NNNN
 | ADR-0009 | Канонический реестр имён и приоритет источников | Accepted | 2026-08-27 |
 | ADR-0017 | Fresh lease-owned runner checkout и cleanup после ACK | Proposed (source implemented) | 2026-10-03 |
 | ADR-0019 | [Локальная подготовка workspace без producer authority](adr/0019-local-pinned-workspace-preparation.md) | Proposed (source primitive) | 2026-10-04 |
+| ADR-0020 | [Owner-local manifest delivery и rollback](adr/0020-owner-local-manifest-delivery.md) | Proposed (source implemented) | 2026-10-08 |
 
 ---
 
 ## 4. Creating New ADRs
 
-1. Взять следующий свободный номер (после существующих 0010/0016/0017: 0018); проверить имена файлов в `docs/adr/`.
+1. Взять следующий свободный номер (после существующих0018–0020:0021); проверить имена файлов в `docs/adr/`.
 2. Создать `docs/adr/NNNN-title.md` (шаблон имени) по формату из раздела 2.
 3. Обновить индекс в этом файле (раздел 3) — добавить строку с номером, названием, статусом и датой.
 4. Открыть PR с описанием решения и ссылкой на связанную issue/task.
@@ -133,5 +134,6 @@ Proposed / Accepted / Deprecated / Superseded by ADR-NNNN
 - `docs/adr/0009-canonical-registry.md` — канонический реестр имён и authority matrix.
 - `docs/adr/0016-serializable-runner-claim.md` — сериализуемая проверка проектной квоты при выдаче runner work.
 - [ADR-0018](adr/0018-blocked-workspace-operation-ledger.md) — immutable blocked workspace operation/readback без admission или второго scheduler.
+- [ADR-0020](adr/0020-owner-local-manifest-delivery.md) — privileged owner-local static manifest delivery, фактические HTTP checks и last-confirmed rollback; SDLC dispatch закрыт.
 - `docs/ROADMAP.md` — план разработки.
 - `docs/CODE_STYLE.md` — конвенции кода.

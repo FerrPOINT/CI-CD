@@ -24,6 +24,8 @@ pub fn routes() -> Router<Arc<AppState>> {
             "/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/candidate-evidence",
             get(get_candidate_evidence),
         )
+        .route("/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations", post(crate::task_delivery::reject_sdlc_delivery))
+        .route("/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations/{delivery_key}", get(crate::task_delivery::get_local_delivery))
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(axum::middleware::map_response(|mut response: axum::response::Response| async move {
             response.headers_mut().insert("cache-control", axum::http::HeaderValue::from_static("no-store"));
@@ -31,7 +33,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         }))
 }
 
-pub(super) async fn authorize(
+pub(crate) async fn authorize(
     conn: &mut sqlx::PgConnection,
     state: &AppState,
     claims: &AccessClaims,
@@ -63,7 +65,7 @@ pub(super) async fn authorize(
     Ok(())
 }
 
-fn verify_lookup(
+pub(crate) fn verify_lookup(
     receipt: &WorkspaceOperationReceipt,
     expected: &WorkspaceOperationLookup,
 ) -> Result<(), ApiError> {

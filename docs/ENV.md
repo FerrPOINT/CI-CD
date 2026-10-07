@@ -1,5 +1,23 @@
 # Переменные окружения (префикс CICD_)
 
+## Owner-local static delivery
+
+По умолчанию disabled; настройки не включаются в permanent Compose.
+
+| Переменная | Граница |
+| --- | --- |
+| `CICD_LOCAL_DELIVERY_ROOT` | Absolute normalized isolated owner target, без symlink/reparse и overlap с Git/artifacts; target привязан к одному project/policy |
+| `CICD_LOCAL_DELIVERY_POLICY` | Owner-controlled JSON file: fixed credential-free origin, distinct health/acceptance paths и exact response-body SHA256 |
+| `CICD_LOCAL_DELIVERY_MODE` | Только CLI effect; требуется exact `local-verification`. Не включает HTTP/SDLC dispatch |
+| `CICD_LOCAL_DELIVERY_TOKEN` | Existing project-bound `forge_sat_`, передаётся только environment; readback требует `api:read`, effect/reconcile также `api:write` |
+
+CLI также использует typed runtime database/Git/artifacts/auth config и
+`CICD_SDLC_WORKSPACE_SUBJECT`. Policy не передаётся caller-ом через API или artifact.
+HTTP redirects/proxy/credentials закрыты, request timeout3s, artifact32MiB,
+version/journals128KiB, health/acceptance64KiB. Origin принадлежит оператору;
+это не публичный URL-fetcher. Root должен обслуживаться отдельным owner application,
+реально возвращающим published manifest и artifact. [ADR-0020](adr/0020-owner-local-manifest-delivery.md).
+
 > **Source of truth:** код приложения (`backend/src/*`) и `docker-compose.yml`. Этот файл — справочник для локального запуска и деплоя. Backend server читает runtime-настройки через `backend/src/config.rs::RuntimeConfig`; невалидные bool, `CICD_RUNNER_MODE`, CORS allowlist, artifact TTL, queue timeout и `CICD_SECRETS_KEY` падают при старте. `cicd-cli` и отдельный `forge-runner` читают свои process-boundary настройки через `clap`/env.
 
 ## Основные (задаются в docker-compose)

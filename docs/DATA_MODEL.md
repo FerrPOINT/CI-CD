@@ -1,5 +1,14 @@
 # Дата-модель Forge CI/CD
 
+Owner-local delivery не добавляет SQL migration: PR88 по-прежнему владеет только
+0040. `sdlc_workspace_operations` хранит первоначальный blocked request и не
+меняется при delivery. Отдельный filesystem-owned target хранит immutable
+operation intents/results, content-addressed manifest/artifact bytes и atomic
+current/last-confirmed pointers. Manifest включает оригинальный owner receipt,
+pipeline/artifact/attempt и source/config/plan/policy SHA256. DB/FS snapshot общей
+транзакцией не является; effect crash удерживает target для owner reconciliation.
+[Контракт](SDLC_DELIVERY_V1.md#source-slice-owner-local-manifest-delivery-2026-10-08).
+
 ## 0. Фактическая схема реализованных таблиц
 
 Candidate evidence readback добавляет только bounded SELECT существующих
