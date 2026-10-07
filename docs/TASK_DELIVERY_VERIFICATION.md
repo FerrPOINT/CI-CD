@@ -51,7 +51,7 @@ CLI integration clippy, OpenAPI exporter equality и release workspace build.
 совпадают до/после gate. Это source evidence; hosted checks проверяются отдельно
 на опубликованном exact head и не заимствуются из PR87.
 
-Локальные evidence files сохраняются в ignored `.local/qa/` (не runtime backups):
+Локальные evidence files сохраняются в untracked `.local/qa/` (не runtime backups):
 
 | File | SHA256 |
 | --- | --- |
@@ -69,6 +69,9 @@ Source UI не меняется; browser screenshots/live UI acceptance не з�
 Docs verifier/SBOM drift и6 regression cases PASS; tracked-export secret scan:
 464 text files,0 findings (heuristic, не DLP certification). Docker-group audit:
 complete=true, Desktop37/оба rootless runners0, violations=[], exit0.
+Повторный audit после окончательного cleanup: Desktop35, оба rootless runners0,
+complete=true, violations=[], exit0. Tracked worktree после commit чист;
+untracked `.local/` не включается в PR.
 Каждый собственный QA project использует labels task/purpose, isolated network,
 tmpfs PostgreSQL, read-only source mounts и finally Compose down; caches сохраняются.
 
