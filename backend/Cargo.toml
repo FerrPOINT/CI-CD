@@ -56,9 +56,14 @@ path = "src/bin/forge-runner.rs"
 name = "forge-delivery"
 path = "src/bin/forge-delivery.rs"
 
+[[bin]]
+name = "forge-pg-migrate"
+path = "src/bin/forge-pg-migrate.rs"
+
 
 [features]
 oci-integration = ["integration"]
+postgres-integration = ["integration"]
 integration = []
 
 [dependencies]

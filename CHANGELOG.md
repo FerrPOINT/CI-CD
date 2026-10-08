@@ -9,6 +9,13 @@
 
 ## [Unreleased]
 
+- Добавлен отдельный privileged owner-local PostgreSQL shadow executor: immutable
+  source/target catalog, bounded drain/fence/lease, dump с реальным restore drill,
+  forward migration в fresh DB и отдельные image/database/health/acceptance checks.
+  Pre-release failure допускает проверенный backup + previous image restore;
+  post-release snapshot restore запрещён, partial Unknown удерживает target.
+  Production/SDLC admission остаётся закрыт; OCI read-only путь сохранён.
+
 - Добавлен owner-local OCI CLI для immutable local image/read-only data snapshot:
   actual container/commit/data/compatibility/acceptance, last-confirmed image
   rollback и unknown recovery. Mutable DB/migration/restore блокируются; runtime

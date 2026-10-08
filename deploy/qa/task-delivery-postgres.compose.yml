@@ -1,0 +1,15 @@
+services:
+  qa:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${CICD_QA_OCI_COMPOSE_HOST:?Durable owned Compose directory required}:${CICD_QA_OCI_COMPOSE_LOCAL:?Host-visible local path required}
+    environment:
+      CICD_TEST_PG_PROJECT: ${CICD_QA_PG_PROJECT:?Unique PostgreSQL child project required}
+      CICD_TEST_PG_NETWORK: ${CICD_QA_OCI_NETWORK:?Owned internal network required}
+      CICD_TEST_PG_VOLUME: ${CICD_QA_OCI_VOLUME:?Owned publication volume required}
+      CICD_TEST_PG_COMPOSE_ROOT: ${CICD_QA_OCI_COMPOSE_LOCAL}
+      CICD_TEST_PG_IMAGE: ${CICD_QA_POSTGRES_IMAGE:?Immutable database image required}
+networks:
+  qa:
+    internal: true
+    labels: {sdlc.task: forge-task-delivery, sdlc.purpose: disposable-postgres-delivery-network}

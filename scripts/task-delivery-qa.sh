@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
-case "${CICD_QA_GATE:-full}" in full|delivery|oci) ;; *) echo 'Unknown QA gate' >&2; exit 1;; esac
+case "${CICD_QA_GATE:-full}" in full|delivery|oci|postgres) ;; *) echo 'Unknown QA gate' >&2; exit 1;; esac
 cargo fmt --all --check
 rustfmt --edition 2024 --check tests/helpers/manifest_target.rs
 rustc --edition=2024 tests/helpers/manifest_target.rs -o /delivery-qa/manifest-target
 touch /delivery-qa/ready
 cargo check --locked --offline --workspace --all-targets --features integration
 cargo clippy --locked --offline --workspace --all-targets --features integration -- -D warnings
-if [ "${CICD_QA_GATE:-full}" = oci ]; then
+if [ "${CICD_QA_GATE:-full}" = postgres ]; then
+  export DOCKER_HOST=unix:///var/run/docker.sock
+  python3 -B -c "from pathlib import Path; compile(Path('/work/CI-CD/scripts/postgres-delivery.py').read_text(), 'postgres-delivery.py', 'exec')"
+  cargo clippy --locked --offline --workspace --all-targets --features postgres-integration -- -D warnings
+  cargo build --locked --offline --bins --example postgres_target
+  cargo test --locked --offline -p cicd-server --features postgres-integration --test integration_db sdlc_pg_delivery -- --test-threads=1 --nocapture
+elif [ "${CICD_QA_GATE:-full}" = oci ]; then
   export DOCKER_HOST=unix:///var/run/docker.sock
   cargo clippy --locked --offline --workspace --all-targets --features oci-integration -- -D warnings
   cargo test --locked --offline -p cicd-server --features oci-integration --test integration_db sdlc_oci_delivery -- --test-threads=1 --nocapture

@@ -1,5 +1,25 @@
 # Переменные окружения (префикс CICD_)
 
+## Owner-local PostgreSQL delivery
+
+`forge-delivery --postgres` требует `CICD_LOCAL_PG_ROOT`,
+`CICD_LOCAL_PG_POLICY`, `CICD_LOCAL_PG_GUARD_URL` (owner administrator, database
+`postgres`) и protected `CICD_LOCAL_PG_RUNTIME_PASSWORD` для application roles.
+Тот же explicit `CICD_LOCAL_DELIVERY_MODE=local-verification` и owner machine token
+обязательны. Secrets не сохраняются в labels/logs/tracked Compose; runtime connection
+file находится в private owner root, mounted read-only только в application.
+
+Policy `forge/isolated-postgres-policy/v1` связывает temporary project/daemon/system
+identifier, controller IP/HBA, immutable PostgreSQL image/owned volume/network,
+host-visible Compose paths, initial source DB, exact pinned Base/executor/migration
+helper paths, lease5..300s и distinct configured checks. Application protocol:
+port8000, `/.forge/version`, `/identity` (actual database/schemaVersion),
+health/acceptance. Limits: DB16MiB, 16 tables/512 rows per table, complete catalog16
+entries/SQL16KiB each; routines/triggers/shared DB не поддерживаются.
+`--readback` читает immutable history; `--reconcile` только наблюдает completed
+release. Partial Unknown удерживает target. [ADR-0022](adr/0022-owner-local-postgres-shadow-delivery.md),
+[contract](contracts/MUTABLE_POSTGRES_DELIVERY.md). Production admission отсутствует.
+
 ## Owner-local static delivery
 
 OCI CLI требует дополнительно `CICD_LOCAL_OCI_ROOT` и `CICD_LOCAL_OCI_POLICY`.

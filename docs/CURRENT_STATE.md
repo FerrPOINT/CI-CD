@@ -5,6 +5,21 @@
 
 ## Что работает сейчас (Current verified)
 
+### PostgreSQL shadow delivery source continuation, 2026-10-08
+
+`forge-delivery --postgres` добавляет отдельный privileged isolated protocol:
+exact artifact/image/schema/catalog, enforced writer drain/fence, verified backup
+restore drill, fresh shadow migration и отдельные application checks перед release.
+Known pre-release failure допускает verified snapshot + previous image restore в
+fresh DB с сохранением rows/sequences. После release old snapshot restore запрещён.
+Original-key replay не повторяет commands; partial Unknown удерживает target,
+completed-release reconcile сохраняет post-release writes и container identity.
+Real PG suite3/3 и OCI regression1/1 PASS; evidence и пределы:
+[task verification](TASK_DELIVERY_VERIFICATION.md), [ADR-0022](adr/0022-owner-local-postgres-shadow-delivery.md).
+RPO=0 только для acknowledged pre-drain writes. Production/native SDLC admission
+и full business acceptance недоступны; HTTP dispatch503/оба SDLC flags false.
+Новый Forge SQL migration не добавлен,0039/0040 и Base pin сохранены.
+
 ### OCI/read-only data source continuation, 2026-10-08
 
 `forge-delivery --oci` добавляет bounded temporary Compose deployment preloaded
