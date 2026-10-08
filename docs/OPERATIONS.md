@@ -12,6 +12,49 @@
 
 Доступ к Docker daemon, хостовой файловой системе, `.env`, bare Git-томам и backup-файлам считается привилегированным. Не передавайте реальные секреты через командную строку, Git, логи или скриншоты.
 
+## Runner Workspace Recovery
+
+Source capability, не подтверждённая installed runtime приёмка. `forge-runner`
+не удаляет workspace до exact terminal ACK. Перед POST записывает и sync-ит
+immutable outcome с attempt/lease/generation; после потерянного ответа выполняет
+owner GET readback, без повторного POST/команд. Равный durable результат разрешает
+ack record и cleanup. Unknown/different/expired остаётся сохранённым.
+
+После restart наличие неacknowledged attempt-папки прекращает startup **до**
+регистрации, heartbeat/poll и новых команд. Сначала inspect, затем reconcile
+с прежней runner credential, а не с новой registration identity:
+
+```bash
+forge-runner --work-dir "$CICD_RUNNER_WORK_DIR" --inspect-workspaces
+forge-runner --work-dir "$CICD_RUNNER_WORK_DIR" --reconcile-workspaces
+```
+
+Credential задаётся защищённым `CICD_RUNNER_CREDENTIAL`; в metadata/CLI args
+её нет. Inspect не делает HTTP, не исполняет Git/команды и не меняет файлы.
+Reconcile читает authenticated receipt каждого законченного attempt и повторно
+проверяет marker/root перед ACK/cleanup. `--keep-workspace` сохраняет confirmed
+папки; их presence допускает startup только после fresh owner readback. Для
+повторного cleanup также нужен fresh owner GET, не доверие local ACK JSON.
+Несовпадение или недоступность owner
+оставляет папку и возвращает nonzero; успешно подтверждённые независимые папки
+могут быть очищены в том же проходе, это partial progress, не atomic batch.
+
+Inventory ограничен 4096 root entries и 4096 bytes/file; не обходит checkout
+рекурсивно, не следует symlink/junction и не чинит чужие/повреждённые records.
+После readback повторно сверяются исходные attempt/lease/generation, включая
+замену marker между inventory и reopen. Ошибка ожидания/подтверждения остановки
+команды не записывает known completion intent; cleanup и restart остаются blocked.
+Output — owner IDs, generation, terminal outcome и local acknowledged flag;
+это локальная privileged диагностика, не публичный каталог, sandbox или signed
+receipt. Old marker без intent, torn write, неизвестное выполнение или foreign
+ownership требуют отдельной owner/process reconciliation. Expiry/EOF и удаление
+папки вручную не доказывают safe stop. Автоматического purge/force-resume нет.
+
+Embedded runner сохраняет тот же journal после проверки terminal lease/attempt
+в своей БД, включая `keep_workspace`. External runner не reconciles embedded
+directories чужой credential. Общий task/assignment quarantine и подтверждённое
+прекращение process tree остаются target [SDLC delivery](SDLC_DELIVERY_V1.md).
+
 ## Локальное развёртывание MVP
 
 ### Предварительные условия
@@ -336,6 +379,11 @@ Production monitoring добавляет защищённый metrics endpoint, 
 
 Сверить `job_leases`, `execution_attempts`, heartbeat и срок lease. После expiry прежний owner fencing-ится; reconciler останавливает stale execution, фиксирует причину и создаёт новый attempt только в соответствии с retry policy. Timeout job отменяет процесс, сохраняет diagnostic и переводит job в `failed` либо `canceled`. Manual completion/status rewrite запрещены.
 
+Это target auto-recovery, не доказанная current остановка remote процесса.
+Expiry сам по себе не подтверждает safe-stop или completion. До readback
+прекращения прежнего выполнения новый conflicting attempt не разрешается;
+unknown workspace сохраняется, cleanup требует exact owner terminal ACK.
+
 ### Потерянный runner
 
 **Current verified: диагностика и действия**
@@ -352,6 +400,11 @@ docker compose logs --tail=200 backend
 **Target approved: процедура**
 
 Runner считается unhealthy после отсутствия heartbeat более 45 секунд и offline после 120 секунд. Current queue timeout завершает только dispatch-eligible queued work, если нет compatible embedded/protocol runner path; он не создаёт retry новой attempt. Перевести runner в draining/disabled, запретить новые leases, сохранить evidence последнего heartbeat/capability и ждать lease expiry. Reconciler fencing-ит старого owner, очищает workspace/ресурсы по policy и передаёт безопасно повторяемую работу другому compatible runner. Credential rotate/revoke и повторная registration аудируются.
+
+Указанная cleanup/redispatch policy остаётся target и обязана проверять safe-stop
+и точный owner receipt. Потеря heartbeat, terminal row после expiry и отсутствие
+процесса в локальном inventory не заменяют accepted completion. Current external
+runner оставляет unknown папку и требует owner/process reconciliation.
 
 ### Outbox backlog
 
@@ -416,6 +469,28 @@ git push origin v<version>
 ### Target approved: production release
 
 Production release добавляет migration test job, clean/prior-schema upgrade evidence, pre-deploy backup ID, signed immutable image digests, approved deployment window, canary/controlled rollout, readiness and domain smoke, мониторинг после релиза и formal release decision. Любая destructive/contract migration требует expand/backfill/compatibility периода и tested forward/restore runbook. Release notes указывают breaking changes, migration requirement, rollback/restore boundary, image digest и known limitations.
+
+## Runner attempt recovery: source contract
+
+Новая попытка получает fresh directory, old job/attempt directory не очищается
+перед запуском. `CICD_RUNNER_KEEP_WORKSPACE` и external `--keep-workspace` сохраняют
+папки даже после ACK. Ошибка checkout, unknown completion или drift marker также
+сохраняют папку независимо от keep setting. Не запускать команды повторно из неё
+и не удалять её общим volume prune/`git clean`.
+
+Если остановка дочернего процесса не подтверждена, внешний runner не отправляет
+`failed` completion, не объявляет idle capacity и прекращает polling. Папка
+сохраняется без terminal intent. Требуется проверка прежнего процесса оператором;
+истечение lease само по себе не подтверждает остановку. GET receipt разрешает
+cleanup только после принятого completion (`completion_received_at`); отмена,
+закрытая expiry reconciler, этого признака не получает.
+
+До явной owner cleanup проверить attempt ID, lease ID/generation, terminal state
+и прекращение прежнего процесса. Marker должен совпасть с ожидаемой identity;
+path не должен проходить symlink/junction. При утрате ACK сверять серверный ledger,
+а не повторять неизвестный effect. Automatic recovery/формальный quarantine API
+и trusted SDLC receipt ещё не реализованы; физическая retention не объявляет их.
+Shell/embedded runner не становятся sandbox этим механизмом (ADR-0007).
 
 ## Связанные документы
 

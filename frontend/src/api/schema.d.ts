@@ -1389,6 +1389,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/runner/leases/{lease_id}/receipt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["read_runner_lease_receipt"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runner/leases/{lease_id}/renew": {
         parameters: {
             query?: never;
@@ -2525,6 +2541,21 @@ export interface components {
             planSha256?: string | null;
             /** Format: int32 */
             protocolVersion: number;
+        };
+        RunnerLeaseReceipt: {
+            /** Format: uuid */
+            attemptId: string;
+            /** Format: date-time */
+            completedAt?: string | null;
+            /** Format: int64 */
+            fencingToken: number;
+            /** Format: uuid */
+            leaseId: string;
+            leaseStatus: string;
+            /** Format: int32 */
+            protocolVersion: number;
+            terminalAcknowledged: boolean;
+            terminalStatus?: string | null;
         };
         RunnerLogAppendRequest: {
             /** Format: uuid */
@@ -6179,6 +6210,45 @@ export interface operations {
             };
             /** @description log append body exceeds 1 MiB */
             413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    read_runner_lease_receipt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lease_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunnerLeaseReceipt"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
