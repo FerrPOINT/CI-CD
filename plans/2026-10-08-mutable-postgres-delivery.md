@@ -1,9 +1,28 @@
 # Task packet: mutable PostgreSQL delivery, 2026-10-08
 
-**Статус 2026-10-08:** owner-local source реализован; PostgreSQL/OCI suites verified.
-Общий local quality gate PASS; публикация в существующий Draft PR88.
-Local component готов к review; full SDLC admission blocked.
+**Статус 2026-10-08:** owner-local source реализован; предыдущие PostgreSQL/OCI
+и normal gates подтверждали опубликованный56f1217, не последующий hardening.
+Текущий source закрывает reader/history privilege и historical-proof findings;
+полный новый native/normal/release gate ещё не принят. PR88 остаётся Draft;
+full SDLC admission blocked. Текущие evidence и ограничения:
+[verification ledger](../docs/TASK_DELIVERY_VERIFICATION.md#hardening-reader-fence-и-oci-recovery-2026-10-08).
 План/контракт сохранены до первого изменения кода.
+
+## Оставшиеся Gates После Packet0f560
+
+1. Сохранить actual PostgreSQL3/3,24 negatives и пять SIGKILL checkpoints как
+   scoped evidence exact frozen source, не whole packet PASS.
+2. Диагностировать first OCI runner completion timeout; проверить offline
+   preloaded pinned image path без registry dependency. Не расширять25s
+   completion, не менять runtime deadlines, не пропускать image/data/rollback
+   или historical-proof assertions. Correlated DNS/session errors не считать
+   доказанной единственной причиной без отдельной проверки.
+3. Выполнить fresh OCI и required full normal/workspace/CLI/OpenAPI/release
+   gates с проверкой current/frozen hashes и exact Compose cleanup. Changed
+   inputs требуют нового source epoch; старые failed receipts не переписывать.
+4. Закрыть prerequisite PR87 release order и trusted producer admission,
+   затем exact main-head CI/review и полную business acceptance. Owner-local
+   verification не выдавать за разрешение автономного SDLC или installed release.
 
 ## Исходный scope и публикация
 
@@ -16,6 +35,22 @@ application migration packet относится к отдельной target DB,
 Срез публикуется отдельным коммитом; сохранён отдельный plan/contract.
 Рабочий scope — только этот CI-CD checkout; Base/Fleet/Tracker/Workflow read-only.
 Permanent runtime, accepted pins/snapshots/secrets/volumes не менять.
+
+## Release gate: одна новая миграция
+
+Fresh main-target readback 8 октября: PR87 остаётся OPEN/non-Draft/main на
+`fc3e107fd12f2d922f0c5c308df528782d5c7ba1`, четыре CI SUCCESS.
+PR88 OPEN/Draft/main на `56f1217cfbd7264c219f8d6bee184c9252520785`.
+Его текущий diff к freshly fetched `origin/main` включает0039 и0040:
+ownership0040 не означает, что prerequisite0039 уже отсутствует в diff.
+
+До снятия Draft требуется merge отдельного PR87, fresh fetch и обычное
+согласование истории без force push, затем повторная проверка diff: ровно одна
+новая Forge migration0040, без изменения исторических bytes. Не удалять0039
+из candidate и не переносить её в другой номер ради обхода gate. Нужны проверки
+чистой установки и populated upgrade на итоговом source, exact-head CI и
+проверка review threads. Не merge PR87 автоматически и не менять его branch/body.
+Source/native acceptance до этого остаётся проверкой кандидата, не release.
 
 ## План
 

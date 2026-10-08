@@ -3,6 +3,246 @@
 **Статус 2026-10-08:** bounded source implementation и local component verification;
 полного SDLC acceptance нет.
 
+## Latest Frozen Native Packet: 8 Октября
+
+Epoch `20261008T172750Z-0f560932eb2b` завершился FAILED/unknown в OCI,
+несмотря на PostgreSQL3/3 PASS. Python37/37, actual lossless row/SQL safety smoke,
+locked all-target check и strict Clippy прошли. PostgreSQL suite:3 PASS,0 FAIL,
+0 ignored,2920.07s; проверены24 negative cases, H/C/M/B и все пять SIGKILL
+checkpoints, включая release-intent/writes-released. Это новый отдельный packet,
+не объяснение причины исторического отказа8f596.
+
+OCI suite:0 PASS,1 FAIL,0 ignored,27.21s. Отказ в исходном runner completion
+wait `tests/support/task_delivery.rs:287`, после начала первого настоящего
+Docker build. Это не terminal deployment receipt и не timeout ожидания artifact
+API. Полная image/data/rollback и SIGKILL OCI приёмка не достигнуты;
+normal/workspace/CLI/OpenAPI/release follow-ups не запускались. Исходные25s
+completion и runtime command deadlines не увеличены.
+
+На terminal повторно совпали все259 frozen/current inputs; cleanup complete,
+собственные containers/networks/volumes трёх exact Compose projects отсутствуют,
+pre-existing volumes/cache сохранены. Independent host readback подтвердил
+отсутствие PID471224 и пустой task-labelled Engine inventory.
+
+| 0f560 evidence | SHA256 |
+| --- | --- |
+| `postgres.log` | `1b7ef59858472972e08098cae75ebc4b99a8d6014af6e608aa440c4472f36276` |
+| `oci.log` | `1bf76925e570a40a16071853d9668a9fdfdf134b687b0bafe8047373ce5c1d0e` |
+| `native-packet.json` | `4db819760af1f449591d8baadd13b358b8c079925384560eed41ac1ff9c68e36` |
+| `native-packet-cleanup.json` | `26d351b669248ac91b0c6b66a3d0b2d3262e09c54e0170b7168f52d52995319f` |
+
+Catalogue SHA256: Forge
+`1b7d83ccd6e553622d4048e058f735744d423e116c01c9ea48eaecb7fcd9d104`,
+Base `d823584da8d75dda10142222dd97ff9595982fd80b65f8eacaa7e5927f3a2fc6`.
+PR88/head56f1217 CI не подтверждает subsequent dirty source; Draft сохраняется.
+Эта документация может быть опубликована раньше hardening-кода: source changes
+не включены в documentation-only commit. Published runtime code остаётся56f1217;
+новый documentation head/CI не является native acceptance локальных изменений.
+
+Дополнительный read-only `journalctl --user -u docker.service` за
+`2026-10-08 18:36:00..18:38:15 UTC` показывает DNS failure при запросе
+anonymous auth Docker Hub для pinned Python reference и BuildKit session
+healthcheck `only one connection allowed`, затем cancelled solve. Pinned image
+присутствует в local Engine. Это наблюдения в том же временном окне, не доказанная
+единственная причина completion timeout. Следующий шаг: доказать offline
+preloaded-image path и fresh native OCI acceptance, без ослабления таймеров,
+assertions, изоляции или замены настоящего build fixture-артефактом.
+
+### Previous Failed Packet: 8f596
+
+Epoch `20261008T150543Z-8f596c025d25` завершился FAILED/unknown, не PASS:
+Python/row-smoke/SQL-smoke/locked all-target check/strict Clippy прошли;
+PostgreSQL suite:2 PASS,1 FAIL,0 ignored,2810.81s. OCI не запускался после
+ошибки PG. На завершении frozen/current259 source inputs совпадали; последующие
+diagnostic changes требуют отдельного нового epoch.
+
+Прошли actual migration/restore/access-boundary и unknown-schema/stale-lease
+сценарии. В SIGKILL suite checkpoints backup-verified/migration-intent/
+restore-intent пройдены, но child завершился exit2 до release-intent.
+Сохранённый diagnostic локализует отказ в backup rehearsal DB creation:
+`execute -> backup -> create_database -> sql -> run`, reason
+`owner_command_failed_or_unknown`. До этого child не был убит тестом;
+release-intent/writes-released этим прогоном не приняты. Причина ненулевого
+owner subprocess exit пока неизвестна: raw stderr/SQL/credentials не сохранены.
+Это не доказательство прежнего PID1 orphan или timeout; assertions/deadlines
+не расширяются, unknown side effect не повторяется.
+
+Exact Compose finally-cleanup завершён: собственные containers/networks/volumes
+в трёх QA projects отсутствуют, pre-existing volumes и cache сохранены.
+Independent process readback подтвердил отсутствие PID3789829 после terminal;
+parent Engine readback подтвердил пустой outer container/network inventory.
+
+| 8f596 evidence | SHA256 |
+| --- | --- |
+| `postgres.log` | `d97f3d4cb1c966c8fdf3e716f36fa6f68f62a4001a0f5a884c839450a439f8d6` |
+| `native-packet.json` | `aa63821aa2579ac13f04ce9f8d2acc15530520a99ee6d5f8cad81dbfe82e7bbe` |
+| `native-packet-cleanup.json` | `b68789f01a4b59b40f68dd5f2e40781edb54078a3c94e5ee0d269a55bbb3b879` |
+
+Catalogue SHA256: Forge
+`65916d3eae16f68cefeb1ee8b1f9dfbe3546834ae48fe9c1c54c1ad891b6b324`,
+Base `d823584da8d75dda10142222dd97ff9595982fd80b65f8eacaa7e5927f3a2fc6`.
+Published PR88 head56f1217 and earlier native packets do not certify this
+hardening source; PR remains Draft, main release and full SDLC remain blocked.
+
+После этого failed packet добавлена failure-only диагностика owner subprocess:
+returncode/elapsed и строго допустимый code-only SQLSTATE; raw stderr, SQL,
+argv/env/URLs не выводятся.37 pure tests PASS на Windows (0.402s) и WSL/Linux
+(0.051s), включая11 redaction/no-retry/unknown-receipt regressions. Новый
+diagnostic source не меняет deadlines или recovery semantics и не объясняет
+исторический отказ. Новый0f560 packet выше подтверждает PostgreSQL этого source,
+но не OCI/full follow-up acceptance; старый frozen packet не заменяется.
+
+## Hardening reader fence и OCI recovery, 2026-10-08
+
+После опубликованного56f1217 выявлены reader DML через views/column grants,
+sequence mutation, SQL wildcard в `pg_%`, отсутствующий large-object inventory
+и OCI crash-window между successful checks и final receipt. Предыдущие3/3 PG,
+1/1 OCI и4 CI SUCCESS не доказывают устранение этих дефектов.
+
+Current source проверяет grants table/view/column/sequence/MAINTAIN, schema и
+database CREATE/TEMP; literal prefix не скрывает `pgx`. Unsupported non-public,
+materialized/foreign и large-object inventory удерживает snapshot. Drain закрывает
+LOGIN/source CONNECT обоих application-role, завершает обе группы sessions и
+проверяет source quiescence до/после dump; reader снова входит только в candidate.
+Large-object mutation EXECUTE закрыт; writer column grants на SQLx history
+проверяются. Drain отзывает CONNECT обеих ролей ко всем DB, а release/reconcile
+проверяют единственный выбранный target, включая failed candidate после rollback.
+OCI reconciliation удерживает исходный intent-bound historical proof и требует
+новую observation; receipt timestamps не перезаписывают immutable файл.
+
+Первый reader-fence packet прошёл10 pure Python regressions на Windows и WSL/Linux,
+aggregate docs/tests16/16. Последующее независимое review выявило writer history
+mutation через views, непрочитанный historical PG proof и rejection допустимого
+released writer pool. Current source выдаёт DML только ordinary/partitioned tables,
+не views/history; effective view/column DML и custom rewrite rules блокируются.
+Readback проверяет historical proof против intent/manifest/generation/image/history/
+точных probe hashes; reconciliation не переписывает этот файл и разрешает writer
+sessions только подтверждённой released DB после fresh connection-scope проверки.
+Original proof fingerprint точно равен immutable manifest; новые post-release rows
+допустимы только в fresh reconciliation, не при подмене historical hashes.
+Финальное review выявило ещё путь через пустой `INHERITS` от SQLx history:
+исключение одного имени не защищает descendant от writer grants и parent SELECT.
+Counter-review подтвердило и обратный путь: writer DML на ancestor меняет history.
+Current source запрещает inheritance edges в обоих направлениях от history до
+grants/evidence; отсутствие incident edges исключает и транзитивные пути.
+Новые native negatives создают пустые child/grandchild и history-as-child.
+Отдельный FK path обходил пустой non-internal trigger inventory: CASCADE/SET NULL/
+SET DEFAULT на history выполняются внутренними RI triggers с owner правами.
+Current source проверяет history `conrelid` и обе referential actions до Base
+evidence/grants; native cases отдельно покрывают DELETE/UPDATE CASCADE. Финальное
+независимое counter-review закрывает эти findings, без заявления live PASS.
+Current Windows pure regressions22/22, aggregate docs/tests28/28 PASS. Новые native
+tests удерживают writer connection при recovery, подменяют proof и проверяют отказ
+при history-view/column/rule grants. Это source/control-flow evidence; acceptance
+требует нового immutable source epoch и реального PG rerun.
+Review-fixes epoch `20261008T090335Z-4e95ebcac21f` прошёл19 Linux pure tests и
+locked/offline workspace/all-targets check/strict Clippy с integration,
+postgres-integration, oci-integration; frozen/current hashes совпали на этих этапах.
+Native PG gate этого epoch завершился FAILED:2 passed/1 failed,0 ignored,
+2246.14s. Все19 negative permission/catalog cases и пять SIGKILL checkpoints,
+включая foreign-proof/current-writer-pool recovery, прошли; это не общий PASS.
+Провал — реальный M-case `Unknown` до DB fence: сохранённая diagnostic содержит
+`TimeoutExpired` из `drain`/`run` при Compose stop. Source задаёт explicit5s stop
+grace внутри прежнего20s command deadline; NOLOGIN/CONNECT/session quiescence
+остаются обязательными. Unknown operation не повторяется. Эта последующая правка
+двух Python inputs и последующий inheritance fix в трёх inputs требуют нового
+frozen epoch; предыдущий gate не current PASS. Текущая native negative matrix
+содержит24 cases, но FAILED epoch выше проверял19 и не доказывает новые пять.
+Свежий epoch `20261008T100801Z-d92019b98cb3` фиксирует все три изменённых inputs.
+На current frozen source прошли22 Linux pure cases, locked/offline all-target
+check/strict Clippy с integration/postgres-integration/oci-integration и настоящий
+PG17.11 SQL smoke. Он доказывает empty child/grandchild, history-as-child,
+DELETE/UPDATE CASCADE/SET NULL/SET DEFAULT, passive-action contrast, restore ACL
+seal и обе role drain/candidate-only connections. Это отдельные SQL component
+cases, не полный delivery suite. Smoke log SHA256:
+`7a957998bbbe80748dde927080eab600c3b0647b7a0d46523b55fade21a5c557`.
+Forge source catalogue:
+`e5bb756330f0eb78b61d5e1ed6e4130f4963897dfa854f0f5741304171ccb43a`;
+Base catalogue остаётся `d823584da8d75dda10142222dd97ff9595982fd80b65f8eacaa7e5927f3a2fc6`.
+Parent независимо сверил259 current input hashes/sizes:0 mismatches. Native gate
+этого epoch завершился PG3/3 PASS2795.37s и OCI1/1 PASS90.73s;24 negative cases,
+H/C/M/B, все пять SIGKILL checkpoints, foreign-proof rejection и released writer
+pool recovery подтверждены. Workspace follow-up FAILED137/1 на
+`same_size_restored_mtime_and_spoofed_stat_cache_cannot_hide_physical_bytes`:
+ожидаемая physical-mismatch diagnostic не совпала, фактическая причина ещё
+диагностируется. Failure не выдаётся за flaky/PASS; normal/CLI/export/release
+не приняты. Frozen/current source parity true на завершённых этапах.
+
+| d920 evidence | SHA256 |
+| --- | --- |
+| `postgres.log` | `e16643f8a1853e85dc1a4867c66af6cbf6639cf0ccc4909e6fecb3ccaf1557f9` |
+| `oci.log` | `1d7eee0955f132c511090f01c3869e11b1bfcab91e855b52737f2eeb6cfa39f4` |
+| `workspace.log` | `19101ceb8cea76c5bfff7dacbb52d547b34484a0a037ff0cbe5339d623e86c1f` |
+| `workspace-cleanup.json` | `2f3177c1f5361f945a0c6cf047c5ac0a5cebe09361b7c6405c641048531933f8` |
+
+После native gate parent counter-review обнаружил дополнительный дефект:
+`Owner.fingerprint` давал одинаковый data SHA двух разных numeric значений
+`1.0000000000000000000000000001` и `1.0000000000000000000000000002`.
+Dataset разрешал существующие numeric/raw-json, несмотря на ограничение типов
+новой column migration. Pure exact-production reproduction сначала FAILED
+с digest `dcbed99148040793f7880ebdfd233b4d1f3902f03c1045b41846b1139f775408`.
+Current fix сериализует record text в array строк с фиксированными PostgreSQL
+settings и domain hash; проверяет тип/512-row bound, NULL/empty и duplicates.
+Только два Python inputs изменены после законченного epoch; Rust не менялся.
+RED repro теперь GREEN,26 pure/aggregate32 PASS. Новый real SQL smoke и full
+native/normal/release нужны отдельно; d920 proof не переназначается этому source.
+Historical receipts/manifest hashes не переписываются и не implicit-upgrade.
+Исторический failed epoch очищен exact Compose: собственных containers/networks/
+volumes нет,20 pre-existing volumes сохранены. Fresh Windows global Docker audit
+видит Desktop35 и sdlc2-runner0 без violations, но sdlc1-runner registry endpoint
+недоступен: complete=false/exit1. Отдельный native rootless owned audit complete;
+это не полный глобальный PASS и не основание менять защищённые endpoints.
+Свежий WSL/rootless Rust1.88 gate
+`sdlc-qa-forge-hardening-20261008t073407z-93ec451b8e2b` PASS: fmt, locked fetch,
+offline workspace/all-targets/all-features check, strict Clippy и219 workspace tests
+(0 failed/ignored), включая4 OCI recovery unit tests. Native integration targets
+скомпилированы check/Clippy, но PG17/OCI runtime suites и release build этим gate
+не выполнялись. Все259 scoped source inputs и frozen copies неизменны; parent
+повторно сверил259 hashes с файлами на тот момент,0 mismatches. Exact Compose cleanup
+complete, собственных containers/networks/volumes нет; shared resources сохранены.
+
+Source catalogues: Forge
+`82de9b19b9a79987c0f1c041a437bc1f270b6b2865c96c2a0ff8251300427709`, Base
+`d823584da8d75dda10142222dd97ff9595982fd80b65f8eacaa7e5927f3a2fc6`.
+Retained report `.local/rootless-hardening/runs/20261008T073407Z-93ec451b8e2b/report.md`
+SHA256 `51b6c83afab47897a9a5d10f060fb211332e6bbe7160b150ce58bc5b1ee10354`;
+summary SHA256 `a07972ec3394beb0a341e76fb7e9a2d68712cc0508a4c709f4921b92c3b4601e`.
+Предыдущие preflight/прерванные rootless попытки сохранены как failed/nonacceptance;
+они не заменены PASS. Desktop Engine не использовался, существующие services/volumes
+не менялись. PG17/OCI native gate и hosted exact-head CI остаются отдельной приёмкой.
+Последующая настоящая PG17 SQL smoke выявила evaluation-order ошибку:
+`has_sequence_privilege` вызывался на toast relation до фильтра `relkind`.
+Reader privilege queries исправлены явным CASE, обновлён Python regression.
+Rust source не изменился, но2 Python inputs после Rust gate изменились;
+его catalogue нельзя выдавать за полный current source. Failed SQL smoke сохранён;
+Новый source epoch `20261008T080321Z-71e23dcb02ec` прошёл настоящий PG17 SQL
+smoke: проверены large-object ACL, сохранение seal после dump/restore, drain обеих
+ролей и candidate-only reader access. Это SQL component evidence, не full delivery
+suite. Первый full native PG rerun0/3 отклонён до запуска Python: QA image содержал
+symlink `python3`, который production trusted-path guard запрещает. Не меняя guard,
+QA tools пересобраны с обычным executable; failed log и snapshot сохранены.
+Текущий full native rerun и release gate ещё не приняты.
+Свежий frontend gate Node22.20.0/pnpm10.28.1: OpenAPI check/compat(main), lint,
+201 tests, typecheck/build и audit0 advisories PASS. Existing Vite chunk warning
+сохраняется. Frontend и API schema bytes не менялись; новый browser/screenshots
+gate для этих backend-only fixes не выполнялся. Docs verifier, SBOM drift и
+scoped secret scans backend/scripts/docs/.github0 findings PASS.
+PR88 остаётся Draft, production/SDLC admission закрыт. Новый SQL migration,
+Base pin, dependency PR87 и frontend не изменяются.
+
+Fresh release preflight 8 октября подтверждает OPEN/non-Draft/main PR87
+`fc3e107` с четырьмя CI SUCCESS и OPEN/Draft/main PR88 `56f1217`.
+После fresh fetch текущий migration diff PR88 содержит0039 и0040: prerequisite
+ещё не принят в main. Перед ready повторно проверить final diff после merge87
+и обычного history reconciliation: только одна новая migration0040, неизменные
+исторические bytes и новый exact-head gate. PR87 и accepted runtime не менялись.
+QA инструкции AGENTS теперь исключают direct Docker/bare permanent Compose и
+требуют точный временный проект, owner/purpose и finally cleanup. Повторно прошли
+28 docs/Python tests, docs verifier и SBOM drift; scoped secret scans проверили
+backend130/scripts24/docs172/.github6 text files,0 findings. Parent повторно сверил
+259 current native inputs по SHA256/size,0 mismatches; doc-only правки не входят
+в этот executable catalogue. Это не завершение ещё выполняющегося native gate.
+
 ## Реализованный срез
 
 Immutable blocked workspace operation связывает original key/hash, exact Tracker
