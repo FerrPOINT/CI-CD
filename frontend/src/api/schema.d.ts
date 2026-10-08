@@ -5977,6 +5977,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Namespace resource is read-only */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     list_secrets: {
@@ -7519,6 +7526,13 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Namespace resource is read-only */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
     update_schedule: {
@@ -7551,6 +7565,13 @@ export interface operations {
                 content?: never;
             };
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Namespace resource is read-only */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };
