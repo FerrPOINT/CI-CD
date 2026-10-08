@@ -54,6 +54,11 @@
 
 ## Responsive modes
 
+Namespace candidate добавляет `/namespace`, `/catalog/repositories/:id` и
+`/catalog/repositories/:id/pulls/:number`. Визуальная приёмка этих маршрутов
+в целевом `pdlc1` через Codex IAB на 375/1920/2560 ещё не выполнена;
+исторические screenshots выше не подтверждают эти новые экраны.
+
 | Файл | Маршрут | Режим | Viewport | Размер PNG |
 |---|---|---|---|---|
 | [wide.png](../../screenshots/375x812/wide.png) | `/` | `wide` | 375×812 | 375×1306 |

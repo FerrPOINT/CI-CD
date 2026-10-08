@@ -102,8 +102,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 39,
-    "latest_required_version": 39,
+    "latest_applied_version": 90,
+    "latest_required_version": 90,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],

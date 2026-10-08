@@ -184,6 +184,6 @@ bash scripts/scan_container_images.sh forge-cicd-backend:ci forge-cicd-frontend:
 python3 scripts/verify_docs.py --canonical --links --current-state
 ```
 
-## Frontend: 23 маршрута / 21 рабочая страница + /login + /sso/callback
+## Frontend: 26 маршрутов / 24 рабочие страницы + /login + /sso/callback
 
 Полный список базовых страниц — `docs/architecture/frontend-boundaries.md`; визуальный реестр — `docs/assets/screens/manifest.md`. Исполняемый route smoke — `frontend/src/app/router.test.tsx`: production `appRoutes` поднимаются в memory router, а рабочие Dashboard-страницы, `/login` и технический `/sso/callback` проверяются на первый рендер с mocked API DTO. `scripts/verify_docs.py --all` дополнительно сверяет, что visual manifest покрывает каждый production route. Real-browser baseline — `frontend/e2e/critical-flows.spec.ts` и all-route `frontend/e2e/accessibility.spec.ts` против собранного Compose stack с deterministic seed.
