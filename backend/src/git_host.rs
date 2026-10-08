@@ -363,6 +363,13 @@ async fn check_repo_access(
     if !crate::api::bearer_token_has_scope(&claims, required_scope) {
         return Err(ApiError::forbidden());
     }
+    if claims.role != "service_account"
+        && global_role >= min_role
+        && crate::repository_catalog::shared_human_repository(pool, &name, claims.token_project_id)
+            .await?
+    {
+        return Ok(());
+    }
     if global_role == crate::authz::Role::Admin {
         return match claims.token_project_id {
             Some(project_id) => git_repository_linked_to_project(pool, &name, project_id).await,

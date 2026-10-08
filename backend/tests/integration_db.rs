@@ -2945,6 +2945,17 @@ async fn git_smart_http_uses_project_membership_when_auth_enabled() {
         .execute(&pool)
         .await
         .expect("cleanup git projects");
+    for statement in [
+        "DELETE FROM repository_aliases WHERE repository_id IN (SELECT id FROM repository_catalog WHERE storage_name=ANY($1))",
+        "DELETE FROM repository_pr_counters WHERE repository_id IN (SELECT id FROM repository_catalog WHERE storage_name=ANY($1))",
+        "DELETE FROM repository_catalog WHERE storage_name=ANY($1)",
+    ] {
+        sqlx::query(statement)
+            .bind(&[private_repo.clone(), public_repo.clone()])
+            .execute(&pool)
+            .await
+            .expect("cleanup standalone Git identity fixtures");
+    }
     sqlx::query("DELETE FROM repositories WHERE name = ANY($1)")
         .bind(&[private_repo, public_repo])
         .execute(&pool)
@@ -9277,4 +9288,233 @@ async fn migration_catalog_39_does_not_backfill_historical_terminal_authority() 
     assert_eq!(receipt["terminalStatus"], "success");
     assert_eq!(receipt["terminalAcknowledged"], false);
     migration_catalog_cleanup(pool, admin, schema).await;
+}
+
+#[tokio::test]
+async fn namespace_git_shares_human_access_without_project_memberships() {
+    use sdlc_shared::resource_context::{NamespaceRef, OwnerCommand, ResourceKind, ResourceRef};
+    let pool = test_pool().await;
+    let group = Uuid::new_v4();
+    let repository = Uuid::new_v4();
+    let project = Uuid::new_v4();
+    let foreign = Uuid::new_v4();
+    let name = format!("shared_{}", repository.simple());
+    let root = std::env::temp_dir().join(format!("forge-namespace-human-{repository}"));
+    tokio::fs::create_dir_all(&root).await.unwrap();
+    run_git(
+        &["init", "--bare", "--quiet"],
+        Some(&root.join(format!("{name}.git"))),
+    )
+    .await;
+    let command = OwnerCommand {
+        schema_version: 1,
+        namespace: NamespaceRef {
+            registry_instance_id: std::env::var("CICD_NAMESPACE__REGISTRY_INSTANCE_ID")
+                .expect("explicit namespace test registry")
+                .parse()
+                .unwrap(),
+            namespace_id: Uuid::new_v4(),
+        },
+        resource: ResourceRef {
+            kind: ResourceKind::GitGroup,
+            instance_id: std::env::var("CICD_NAMESPACE__INSTANCE_ID")
+                .expect("explicit namespace test instance")
+                .parse()
+                .unwrap(),
+            resource_id: group,
+        },
+        operation_id: Uuid::new_v4(),
+        generation: 1,
+        state: "active".into(),
+        create_spec: None,
+    };
+    sqlx::query("INSERT INTO git_groups(id,slug,name) VALUES($1,$2,'Shared')")
+        .bind(group)
+        .bind(format!("shared-{}", group.simple()))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO forge_namespace_bindings(resource_id,registry_instance_id,namespace_id,generation,state,command) VALUES($1,$2,$3,1,'active',$4)")
+        .bind(group).bind(command.namespace.registry_instance_id).bind(command.namespace.namespace_id).bind(serde_json::to_value(&command).unwrap()).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO repositories(id,name,visibility) VALUES($1,$2,'private')")
+        .bind(repository)
+        .bind(&name)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE repository_catalog SET group_id=$2 WHERE id=$1")
+        .bind(repository)
+        .bind(group)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO projects(id,name,repository_url,repository_id) VALUES($1,'Shared delivery','https://example.invalid/unrelated-tail.git',$2)")
+        .bind(project).bind(repository).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO projects(id,name,repository_url) VALUES($1,'Foreign','https://example.invalid/foreign.git')")
+        .bind(foreign).execute(&pool).await.unwrap();
+    let developer = Uuid::new_v4();
+    let viewer = Uuid::new_v4();
+    for (id, role) in [(developer, "developer"), (viewer, "viewer")] {
+        sqlx::query("INSERT INTO users(id,username,role) VALUES($1,$2,$3)")
+            .bind(id)
+            .bind(format!("shared-{}", id.simple()))
+            .bind(role)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO user_credentials(user_id,password_hash) VALUES($1,$2)")
+            .bind(id)
+            .bind(cicd::auth::hash_password("SharedPass1!").unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM project_memberships WHERE project_id=$1"
+        )
+        .bind(project)
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+    let app = cicd::api::app_with_git_and_auth_secret(
+        Some(pool.clone()),
+        cicd::git_host::GitConfig {
+            root: root.clone(),
+            token: None,
+            internal_token: None,
+        },
+        Some(format!("shared-secret-{repository}")),
+    );
+    let developer_access = login_access_token(
+        app.clone(),
+        &format!("shared-{}", developer.simple()),
+        "SharedPass1!",
+    )
+    .await;
+    let viewer_access = login_access_token(
+        app.clone(),
+        &format!("shared-{}", viewer.simple()),
+        "SharedPass1!",
+    )
+    .await;
+    for (access, service, status) in [
+        (&developer_access, "git-upload-pack", StatusCode::OK),
+        (&viewer_access, "git-upload-pack", StatusCode::OK),
+        (&developer_access, "git-receive-pack", StatusCode::OK),
+        (&viewer_access, "git-receive-pack", StatusCode::FORBIDDEN),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/git/{name}.git/info/refs?service={service}"))
+                    .header("authorization", format!("Bearer {access}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            status,
+            "human role must apply without a team ACL"
+        );
+    }
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/projects/{project}"))
+                .header("authorization", format!("Bearer {viewer_access}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/projects")
+                .header("authorization", format!("Bearer {viewer_access}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response_json(response)
+            .await
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["id"] == project.to_string())
+    );
+    for (scope, scoped_project) in [
+        (vec!["git:read"], None),
+        (vec!["git:read", "git:write"], Some(foreign)),
+    ] {
+        let token = format!(
+            "cicd_{}{}",
+            Uuid::new_v4().simple(),
+            Uuid::new_v4().simple()
+        );
+        sqlx::query("INSERT INTO api_tokens(id,name,token_hash,token_hint,user_id,project_id,scopes,expires_at) VALUES($1,'shared-test',$2,'test',$3,$4,$5,now()+interval '1 day')")
+            .bind(Uuid::new_v4()).bind(cicd::auth::hash_token(&token)).bind(developer).bind(scoped_project).bind(scope).execute(&pool).await.unwrap();
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "/git/{name}.git/info/refs?service=git-receive-pack"
+                ))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "read-only and foreign-scoped credentials remain fenced"
+        );
+    }
+    let archived = OwnerCommand {
+        generation: 2,
+        operation_id: Uuid::new_v4(),
+        state: "archived".into(),
+        ..command
+    };
+    sqlx::query("UPDATE forge_namespace_bindings SET generation=2,state='archived',command=$2 WHERE resource_id=$1")
+        .bind(group).bind(serde_json::to_value(archived).unwrap()).execute(&pool).await.unwrap();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/git/{name}.git/info/refs?service=git-receive-pack"
+            ))
+            .header("authorization", format!("Bearer {developer_access}"))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let response = app
+        .oneshot(
+            Request::get(format!("/git/{name}.git/info/refs?service=git-upload-pack"))
+                .header("authorization", format!("Bearer {viewer_access}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "archive retains history reads"
+    );
+    tokio::fs::remove_dir_all(root).await.unwrap();
 }

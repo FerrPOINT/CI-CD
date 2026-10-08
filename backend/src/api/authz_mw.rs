@@ -294,6 +294,26 @@ async fn project_scope_allows(
         return Ok(true);
     }
     let (_, min_role) = crate::authz::required_role(method, path);
+    let storage: Option<String> = sqlx::query_scalar(
+        "SELECT r.storage_name FROM projects p JOIN repository_catalog r ON r.id=p.repository_id WHERE p.id=$1",
+    )
+    .bind(project_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?
+    .flatten();
+    if let Some(storage) = storage {
+        if global_role >= min_role
+            && crate::repository_catalog::shared_human_repository(
+                pool,
+                &storage,
+                claims.token_project_id,
+            )
+            .await?
+        {
+            return Ok(true);
+        }
+    }
     let Some(project_role) = project_membership_role(pool, claims.sub, project_id).await? else {
         return Ok(false);
     };
@@ -360,7 +380,12 @@ async fn repository_scope_allows(
     min_role: crate::authz::Role,
     token_project_id: Option<Uuid>,
 ) -> Result<bool, ApiError> {
-    let name = crate::git_host::validate_repo_name(repo).map_err(ApiError::bad_request)?;
+    let name = crate::repository_catalog::resolve_storage(pool, repo).await?;
+    if global_role >= min_role
+        && crate::repository_catalog::shared_human_repository(pool, &name, token_project_id).await?
+    {
+        return Ok(true);
+    }
     if global_role == crate::authz::Role::Admin {
         return match token_project_id {
             Some(project_id) => repository_linked_to_project(pool, &name, project_id).await,
@@ -442,8 +467,8 @@ pub(crate) async fn list_projects_for_claims(
         (_, Some(project_id)) => sqlx::query_as::<_, Project>(
             "SELECT p.id, p.name, p.repository_url, p.default_branch, p.max_running_jobs, p.created_at \
                  FROM projects p \
-                 JOIN project_memberships m ON m.project_id = p.id \
-                 WHERE m.user_id = $3 AND p.id = $4 \
+                 LEFT JOIN project_memberships m ON m.project_id = p.id AND m.user_id = $3 \
+                 WHERE p.id = $4 AND (m.user_id = $3 OR EXISTS(SELECT 1 FROM repository_catalog r JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE r.id=p.repository_id)) \
                  ORDER BY p.created_at DESC LIMIT $1 OFFSET $2",
         )
         .bind(limit)
@@ -464,6 +489,7 @@ pub(crate) async fn list_projects_for_claims(
                  LEFT JOIN tenants t ON t.id = p.tenant_id \
                  WHERE m.user_id = $3 \
                     OR (p.tenant_id IS NOT NULL AND tm.user_id = $3 AND t.status = 'active') \
+                    OR EXISTS(SELECT 1 FROM repository_catalog r JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE r.id=p.repository_id) \
                  ORDER BY p.created_at DESC LIMIT $1 OFFSET $2",
         )
         .bind(limit)

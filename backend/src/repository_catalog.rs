@@ -169,6 +169,37 @@ pub async fn resolve_storage(pool: &PgPool, raw: &str) -> Result<String, ApiErro
     row.try_get("storage_name").map_err(ApiError::internal)
 }
 
+/// Namespace membership is context, not a human ACL. Callers must already have
+/// checked human identity, service scopes and the required global role.
+pub async fn shared_human_repository(
+    pool: &PgPool,
+    storage: &str,
+    project_token: Option<Uuid>,
+) -> Result<bool, ApiError> {
+    let group: Option<Uuid> =
+        sqlx::query_scalar("SELECT group_id FROM repository_catalog WHERE storage_name=$1")
+            .bind(storage)
+            .fetch_optional(pool)
+            .await
+            .map_err(catalog_database_error)?
+            .flatten();
+    let Some(group) = group else { return Ok(false) };
+    if crate::namespace::binding(pool, group).await?.is_none() {
+        return Ok(false);
+    }
+    if let Some(project) = project_token {
+        return sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM projects WHERE id=$1 AND repository_id=(SELECT id FROM repository_catalog WHERE storage_name=$2))",
+        )
+        .bind(project)
+        .bind(storage)
+        .fetch_one(pool)
+        .await
+        .map_err(catalog_database_error);
+    }
+    Ok(true)
+}
+
 /// Held for the complete Git/merge operation. Archive takes the exclusive group lock.
 pub async fn write_lease<'a>(
     state: &'a AppState,
