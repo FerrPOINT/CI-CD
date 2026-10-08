@@ -28,7 +28,7 @@ const DEFAULT_RUNNER_QUEUE_TIMEOUT_SECONDS: i64 =
 const MAX_RUNNER_QUEUE_TIMEOUT_SECONDS: i64 = crate::config::MAX_RUNNER_QUEUE_TIMEOUT_SECONDS;
 
 /// Job processes currently executed by the embedded runner.
-/// Maps job_id -> child process id so that cancel can kill it.
+/// Maps job_id -> child process id; zero reserves preparation/cleanup.
 pub type RunningJobs = Arc<Mutex<HashMap<Uuid, u32>>>;
 
 #[derive(Debug)]
@@ -112,14 +112,25 @@ pub async fn run_job_with_config(
     running: RunningJobs,
     config: RuntimeRunnerConfig,
 ) {
+    {
+        let mut guard = running.lock().await;
+        if guard.contains_key(&job_id) {
+            return;
+        }
+        guard.insert(job_id, 0);
+    }
     if let Err(error) = run_job_inner(pool.clone(), job_id, running.clone(), &config).await {
         tracing::error!(%job_id, error = ?error, "runner job failed");
-        running.lock().await.remove(&job_id);
         finish_job_after_runner_error(&pool, job_id, &error).await;
     }
+    running.lock().await.remove(&job_id);
 }
 
 async fn finish_job_after_runner_error(pool: &PgPool, job_id: Uuid, error: &ApiError) {
+    // A canceled/superseded attempt must not fail a newly queued retry.
+    if !matches!(active_embedded_job_lease(pool, job_id).await, Ok(Some(_))) {
+        return;
+    }
     let message = truncate_error_tail(format!("runner: internal failure: {}", error.message));
     let status = match sqlx::query_scalar::<_, String>("SELECT status FROM jobs WHERE id = $1")
         .bind(job_id)
@@ -180,6 +191,13 @@ async fn claim_embedded_job_lease(
     crate::store::enqueue_missing_ready_jobs(pool)
         .await
         .map_err(ApiError::internal)?;
+    // Match remote leasing: the cap read and lease insertion must serialize.
+    // A conflict reserves no execution; the queued job can be claimed next tick.
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
     let row = sqlx::query_as::<_, (Uuid, Uuid, i64)>(
         r#"
         WITH queue_row AS (
@@ -194,6 +212,7 @@ async fn claim_embedded_job_lease(
             JOIN execution_attempts a ON a.id = q.attempt_id
             JOIN stages s ON s.id = j.stage_id
             JOIN pipelines p ON p.id = s.pipeline_id
+            JOIN projects pr ON pr.id = p.project_id
             WHERE j.id = $1
               AND q.state = 'queued'
               AND q.not_before <= now()
@@ -202,6 +221,12 @@ async fn claim_embedded_job_lease(
               AND a.status = 'queued'
               AND NOT j.manual
               AND p.status IN ('queued','running')
+              AND (pr.max_running_jobs IS NULL OR
+                  (SELECT count(*) FROM job_leases cl
+                   JOIN jobs cj ON cj.id=cl.job_id
+                   JOIN stages cs ON cs.id=cj.stage_id
+                   JOIN pipelines cp ON cp.id=cs.pipeline_id
+                   WHERE cl.lease_status='active' AND cp.project_id=pr.id) < pr.max_running_jobs)
               AND NOT EXISTS (
                   SELECT 1
                   FROM job_leases l
@@ -273,9 +298,24 @@ async fn claim_embedded_job_lease(
     )
     .bind(job_id)
     .bind(Uuid::new_v4())
-    .fetch_optional(pool)
-    .await
-    .map_err(ApiError::internal)?;
+    .fetch_optional(&mut *tx)
+    .await;
+    let row = match row {
+        Ok(row) => row,
+        Err(error)
+            if error.as_database_error().and_then(|e| e.code()).as_deref() == Some("40001") =>
+        {
+            let _ = tx.rollback().await;
+            return Ok(None);
+        }
+        Err(error) => return Err(ApiError::internal(error)),
+    };
+    if let Err(error) = tx.commit().await {
+        if error.as_database_error().and_then(|e| e.code()).as_deref() == Some("40001") {
+            return Ok(None);
+        }
+        return Err(ApiError::internal(error));
+    }
 
     Ok(row.map(|(id, attempt_id, generation)| EmbeddedJobLease {
         id,
@@ -973,6 +1013,34 @@ async fn run_job_inner(
     }
     envs.extend(secrets.iter().cloned());
 
+    let mut remote_job = if config.mode == RunnerMode::Docker {
+        Some(
+            crate::runner_docker::RemoteJob::prepare(job_id, attempt_id, &workspace)
+                .await
+                .map_err(|error| {
+                    ApiError::bad_request(mask_secrets(
+                        &format!("runner: isolated Docker preparation failed: {error}"),
+                        &masks,
+                    ))
+                })?,
+        )
+    } else {
+        None
+    };
+    if let Some(remote) = &remote_job {
+        remote
+            .stage_artifacts(&pipeline_artifacts)
+            .await
+            .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
+        for (key, value) in &mut envs {
+            if key == "CICD_ARTIFACTS_DIR" {
+                *value = "/workspace/artifacts".into();
+            }
+            if key == "CICD_PIPELINE_ARTIFACTS_DIR" {
+                *value = "/workspace/pipeline-artifacts".into();
+            }
+        }
+    }
     let mut child = if config.mode == RunnerMode::Docker {
         // Bind only this fresh attempt wrapper, never a reusable job directory.
         let workspace_subdir = workspace
@@ -980,8 +1048,7 @@ async fn run_job_inner(
             .and_then(|parent| parent.file_name())
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(|| format!("forge-runner-{job_id}"));
-        let mut cmd = tokio::process::Command::new("docker");
-        cmd.args(docker_run_args(
+        let args = docker_run_args(
             &format!("forge-job-{job_id}"),
             &job.image,
             &command_shell,
@@ -989,10 +1056,13 @@ async fn run_job_inner(
             &config.docker_network,
             config.shared_sources_volume.as_deref(),
             &workspace_subdir,
-        ));
-        for (k, v) in &envs {
-            cmd.env(k, v);
-        }
+        );
+        let mut cmd = remote_job
+            .as_mut()
+            .expect("Docker preparation required")
+            .job_command(&args, &envs)
+            .await
+            .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
         cmd.current_dir(&workspace)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1012,13 +1082,36 @@ async fn run_job_inner(
         cmd
     };
 
+    let mut guard = running.lock().await;
+    let active: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM execution_attempts a JOIN job_leases l ON l.attempt_id=a.id \
+         JOIN jobs j ON j.id=a.job_id WHERE a.id=$1 AND l.id=$2 \
+         AND a.status='running' AND j.status='running' AND l.lease_status='active' \
+         AND l.cancel_requested_at IS NULL)",
+    )
+    .bind(attempt_id)
+    .bind(lease.id)
+    .fetch_one(&pool)
+    .await
+    .map_err(ApiError::internal)?;
+    if !active {
+        drop(guard);
+        if let Some(remote) = &mut remote_job {
+            remote.cleanup().await;
+        }
+        if !config.keep_workspace {
+            remove_workspace(&workspace).await;
+        }
+        return Ok(());
+    }
     let mut child = child
         .spawn()
         .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
 
     if let Some(pid) = child.id() {
-        running.lock().await.insert(job_id, pid);
+        guard.insert(job_id, pid);
     }
+    drop(guard);
 
     let mut stdout_task = child.stdout.take().map(|stdout| {
         let pool = pool.clone();
@@ -1044,18 +1137,22 @@ async fn run_job_inner(
             append_attempt_log(&pool, job_id, attempt_id, &message).await?;
             let _ = child.start_kill();
             let _ = child.wait().await;
+            if let Some(remote) = &mut remote_job {
+                remote.cleanup().await;
+            }
             if let Some(task) = stdout_task.take() {
                 await_stdout_task(task).await?;
             }
             if let Some(task) = stderr_task.take() {
                 let _ = await_stdout_task(task).await;
             }
-            running.lock().await.remove(&job_id);
             let updated = sqlx::query(
                 "UPDATE jobs SET status = 'failed', finished_at = now() \
-                 WHERE id = $1 AND status NOT IN ('canceled')",
+                 WHERE id = $1 AND status='running' \
+                 AND EXISTS(SELECT 1 FROM execution_attempts WHERE id=$2 AND status='running')",
             )
                 .bind(job_id)
+                .bind(attempt_id)
                 .execute(&pool)
                 .await
                 .map_err(ApiError::internal)?;
@@ -1085,8 +1182,6 @@ async fn run_job_inner(
         }
     };
 
-    running.lock().await.remove(&job_id);
-
     if let Some(task) = stdout_task {
         await_stdout_task(task).await?;
     }
@@ -1110,6 +1205,20 @@ async fn run_job_inner(
     let mut final_status = final_status;
     let mut exit_code = exit_code;
     let mut error_tail = error_tail;
+    if let Some(remote) = &mut remote_job {
+        if let Err(error) = remote.copy_back(&workspace).await {
+            final_status = "failed";
+            error_tail = Some(format!("runner: remote artifact transfer failed: {error}"));
+        }
+        if let Err(error) = remote
+            .return_artifacts(&job_artifacts, &pipeline_artifacts)
+            .await
+        {
+            final_status = "failed";
+            error_tail = Some(format!("runner: remote artifact transfer failed: {error}"));
+        }
+        remote.cleanup().await;
+    }
     let artifact_error = collect_declared_artifacts(
         &pool,
         &config.artifacts,
@@ -1133,10 +1242,12 @@ async fn run_job_inner(
 
     let updated = sqlx::query(
         "UPDATE jobs SET status = $2, finished_at = now() \
-         WHERE id = $1 AND status NOT IN ('canceled')",
+         WHERE id = $1 AND status='running' \
+         AND EXISTS(SELECT 1 FROM execution_attempts WHERE id=$3 AND status='running')",
     )
     .bind(job_id)
     .bind(final_status)
+    .bind(attempt_id)
     .execute(&pool)
     .await
     .map_err(ApiError::internal)?;
@@ -1628,6 +1739,9 @@ async fn reconcile_runtime_state_with_config(
     pool: &PgPool,
     config: &RuntimeRunnerConfig,
 ) -> Result<(), sqlx::Error> {
+    if config.mode == RunnerMode::Docker {
+        crate::runner_docker::reconcile(pool).await?;
+    }
     let unacknowledged = reconcile_unacknowledged_leases(pool).await?;
     if unacknowledged > 0 {
         tracing::warn!(

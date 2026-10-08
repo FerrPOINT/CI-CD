@@ -228,6 +228,9 @@ CI-CD/
 
 ## Документы
 
+Штатная регистрация, изоляция и восстановление локальных jobs описаны в
+[Compose runner](docs/COMPOSE_RUNNER.md).
+
 | Аудитория | Документы |
 |---|---|
 | Overview | [docs/README.md](docs/README.md), [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md), [docs/ROADMAP.md](docs/ROADMAP.md) |
