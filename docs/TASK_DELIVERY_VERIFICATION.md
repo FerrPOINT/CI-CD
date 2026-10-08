@@ -48,6 +48,106 @@ healthcheck `only one connection allowed`, затем cancelled solve. Pinned im
 preloaded-image path и fresh native OCI acceptance, без ослабления таймеров,
 assertions, изоляции или замены настоящего build fixture-артефактом.
 
+### Offline OCI Fixture Diagnostic: 4a94b411e888
+
+Source candidate в `oci_delivery.rs` экспортирует только уже закреплённую базу
+в private local OCI layout. Guard проверяет root/platform/blob hashes, daemon,
+image и сохранение original references; Docker aliases не создаются и не
+удаляются. Настоящие Git/pipeline/build/artifact/deployment/rollback assertions
+и исходные25/50s таймеры сохранены.11 новых pure regressions и parent aggregate
+51 Python/doc cases PASS. Это source evidence, не offline native PASS.
+
+Свежий отдельный diagnostic epoch `20261008T190853Z-4a94b411e888` замораживает
+260 inputs: изменён только OCI fixture, добавлен его unit file. Locked all-target
+check и strict Clippy с integration/postgres-integration/oci-integration PASS.
+OCI test0 PASS/1 FAIL/0 ignored,30.80s: `OCI_OFFLINE_BASE_GUARD_FAILED` при
+preparation, до первого actual build. Причина внутри preparation не локализована;
+elapsed time не доказывает timeout image export. Не увеличивать таймеры и не
+объявлять проблему registry устранённой на основании этого failed probe.
+
+Packet имеет явный scope `oci_fixture_diagnostic_only`, обе SDLC/full-native
+acceptance flags false. PostgreSQL здесь не выполнялся:0f560 PG3/3 остаётся
+историческим exact-source evidence, не результатом нового packet. Full follow-up
+gates также не запускались. Terminal failed/unknown, current/frozen260 parity
+true, exact-project cleanup complete, caches/pre-existing volumes сохранены.
+Parent подтвердил отсутствие PID1463173 и task-labelled containers.
+
+| 4a94 diagnostic evidence | SHA256 |
+| --- | --- |
+| Forge source catalogue | `d33648490f37a32809887e38cf1401fdfe0e3230d5eff1ee667804449f350b01` |
+| `oci.log` | `877ae025545c19b1f9bfd92ca32ee7c12143fea1038131f08549e71b577c7e2a` |
+| `probe.json` | `d8c560799e59092a5e59c59b622de4d1375b990c698c58a110246280496a55d2` |
+
+Published documentation-only head `d51c260` имеет четыре CI SUCCESS в
+run37828888927; локальный OCI guard и остальные pending hardening source edits
+не входят в этот head. Следующий шаг: bounded redacted preparation diagnostic
+на новом disposable packet, затем actual OCI/full gates. Ни publication, ни
+этот probe не меняют accepted runtime, SDK pin, migrations или PR87.
+
+### Offline OCI Runner Diagnostic: e6e304554e4d
+
+Fresh260-input epoch `20261008T191848Z-e6e304554e4d` сохраняет исходные
+25/50s deadlines. Preparation с closed stage/reason error code завершилась;
+actual runner accepted offer получен. Locked all-target check и strict Clippy
+PASS, OCI0 PASS/1 FAIL/0 ignored,105.64s total: исходный runner completion
+timeout `tests/support/task_delivery.rs:287`. Это не successful image/artifact
+или deployment/rollback receipt. Причина внутри pipeline ещё не доказана;
+успешная preparation не объясняет предшествующий4a94 failure.
+
+Terminal failed/unknown; own runner PID1472251 отсутствует при parent readback.
+Все260 current/frozen inputs совпали; exact-project containers/networks/volumes
+пусты, cache и pre-existing volumes сохранены. PostgreSQL/full follow-ups здесь
+не выполнялись;0f560 PG3/3 остаётся отдельной исторической приёмкой.
+Обе `full_native_acceptance`/`sdlc_acceptance` flags false. Closed error-code
+regression добавляет12-й pure OCI case; parent aggregate52 PASS до этого probe.
+
+| e6e diagnostic evidence | SHA256 |
+| --- | --- |
+| `oci.log` | `35fbbfb72308466ad7892a36ffe942fa6e4a29705527cb871bf920e44f7de69c` |
+| `probe.json` | `580134441955fd7d9837b5a8a34d22b6a44237a7afecd3f136de79a50d78e065` |
+| `cleanup.json` | `a71cce7931296a710408df474be84d2531fc25cda1f2b7a309b8a0b81442d223` |
+
+Next: bounded closed-stage build progress and runner completion diagnostics,
+then a new actual OCI and full native gate. No timer relaxation, old-command
+replay, installed-runtime update or claim of readiness is authorized by this result.
+
+### Offline OCI Actual Acceptance: a7c3dc379a3c
+
+Fresh epoch `20261008T193535Z-a7c3dc379a3c` passes locked all-target check,
+strict Clippy and the actual OCI test:1 PASS/0 FAIL/0 ignored,237.88s total.
+Original25/50/35s deadlines and acceptance assertions remain unchanged.
+The local OCI base guard validates pinned manifest/platform/blob content and
+preserves original image references; the real runner builds repository code and
+uploads `product.txt`. Verified cases include exact image/commit, readonly data
+readback, health503/acceptance422 rejection, exact-image rollback, incompatible
+schema/migration/data-drift rejection, actual SIGKILL recovery without recreate,
+and immutable verified-checks proof preservation after a second SIGKILL.
+
+This is current-source owner-local OCI evidence, not full-native or SDLC
+acceptance. PostgreSQL/normal/workspace/CLI/OpenAPI/release follow-ups were not
+run in this diagnostic. Historical0f560 PG3/3 is separate; the new success does
+not establish a unique cause for failed4a94/e6e epochs or cold-cache reliability.
+The eight new progress/permissions/redaction regressions bring pure OCI coverage
+to20 PASS on Windows/Linux. `completed` diagnostic phase does not imply pipeline
+or business acceptance.
+
+All260 current/frozen inputs match; Forge catalogue
+`85f3732d615801f3dced6580faa72ec9b9d82ce35276d788fe58d3dafe6abe32`,
+Base catalogue remains `d823584da8d75dda10142222dd97ff9595982fd80b65f8eacaa7e5927f3a2fc6`.
+Terminal `passed_oci_diagnostic_only`, both acceptance flags false; exact-project
+containers/networks/volumes empty, cache/pre-existing volumes preserved. Parent
+readback confirms missing PID1482732 and empty owned-task container inventory.
+
+| a7c3 actual OCI evidence | SHA256 |
+| --- | --- |
+| `oci.log` | `0c1dff4e9441990aed9d5a9cde67565e58b5703ba20a2c2a794b551232d24978` |
+| `probe.json` | `79d1a31509e80f7f6818affb8eccf31498034059709e8fd088afe765fccf83fa` |
+| `cleanup.json` | `98ebda5ef64e2e5825050002bcf557384eccd0681d3c81ea8ec8730e48cf122c` |
+
+Next run the complete current-source native/follow-up gates before source
+publication and readiness. PR88 stays Draft; no migration, admission authority,
+SDK pin or installed runtime changes follow from this scoped pass.
+
 ### Previous Failed Packet: 8f596
 
 Epoch `20261008T150543Z-8f596c025d25` завершился FAILED/unknown, не PASS:
