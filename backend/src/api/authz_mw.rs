@@ -160,6 +160,8 @@ pub(crate) async fn require_auth(
             crate::authz::RouteAccess::Public
             | crate::authz::RouteAccess::Runner
             | crate::authz::RouteAccess::System
+            | crate::authz::RouteAccess::NamespaceOwner
+            | crate::authz::RouteAccess::NamespaceReader
             | crate::authz::RouteAccess::Git { .. },
         ) => return Ok(next.run(req).await),
         Some(crate::authz::RouteAccess::User { .. }) => {}

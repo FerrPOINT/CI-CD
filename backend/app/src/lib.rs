@@ -64,6 +64,8 @@ pub enum RouteAccess {
     User { action: Action, min_role: Role },
     Runner,
     System,
+    NamespaceOwner,
+    NamespaceReader,
     Git { action: Action, min_role: Role },
 }
 
@@ -127,6 +129,67 @@ const fn user(
 
 /// Exhaustive policy registry for the current OpenAPI/router surface.
 pub const ROUTE_POLICIES: &[RoutePolicy] = &[
+    RoutePolicy {
+        methods: GET,
+        path: "/api/v1/namespace-resources/git_group/{id}",
+        access: RouteAccess::NamespaceOwner,
+    },
+    RoutePolicy {
+        methods: PUT,
+        path: "/api/v1/namespace-resources/git_group/{id}",
+        access: RouteAccess::NamespaceOwner,
+    },
+    RoutePolicy {
+        methods: GET,
+        path: "/api/v1/namespace-repositories",
+        access: RouteAccess::NamespaceReader,
+    },
+    RoutePolicy {
+        methods: GET,
+        path: "/api/v1/namespace-repositories/{id}",
+        access: RouteAccess::NamespaceReader,
+    },
+    RoutePolicy {
+        methods: GET,
+        path: "/api/v1/namespace-task-evidence/{tracker}/{task}",
+        access: RouteAccess::NamespaceReader,
+    },
+    user(
+        GET,
+        "/api/v1/namespace-available-resources",
+        Action::Read,
+        Role::Viewer,
+    ),
+    user(
+        GET,
+        "/api/v1/namespace-stats/{registry}/{namespace}",
+        Action::Read,
+        Role::Viewer,
+    ),
+    user(
+        GET,
+        "/api/v1/catalog/available-repositories",
+        Action::Read,
+        Role::Viewer,
+    ),
+    user(
+        PUT,
+        "/api/v1/catalog/repositories/{id}/group",
+        Action::Write,
+        Role::Developer,
+    ),
+    user(
+        GET,
+        "/api/v1/catalog/repositories/{id}/pulls/{number}/tasks",
+        Action::Read,
+        Role::Viewer,
+    ),
+    user(
+        POST,
+        "/api/v1/catalog/repositories/{id}/pulls/{number}/tasks",
+        Action::Write,
+        Role::Developer,
+    ),
     user(
         GET,
         "/api/v1/namespace-contexts",
