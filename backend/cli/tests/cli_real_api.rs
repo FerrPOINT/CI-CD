@@ -698,10 +698,37 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
         .execute(&pool)
         .await
         .expect("cleanup project");
-    cli_json_with_token(
+    let refused = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
+        .env("CICD_API_URL", &server.base_url)
+        .env("CICD_API_TOKEN", &fixture_access)
+        .args(["repository", "delete", "--name", &project_name])
+        .output()
+        .unwrap();
+    assert!(!refused.status.success());
+    let denial = String::from_utf8_lossy(&refused.stderr);
+    assert!(denial.contains("409") && denial.contains("repository_history_must_be_preserved"));
+    assert!(!denial.contains(&fixture_access));
+    let retained_pr = cli_json_with_token(
         &server.base_url,
         &fixture_access,
-        &["repository", "delete", "--name", &project_name],
+        &["pr", "get", "--repo", &project_name, "--number", &number],
+    );
+    assert_eq!(retained_pr["id"], pr["id"]);
+    assert_eq!(retained_pr["number"], pr["number"]);
+    let retained: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM pull_requests WHERE repository_name=$1")
+            .bind(&project_name)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(retained > 0);
+    assert!(
+        server
+            .files
+            .path()
+            .join("repos")
+            .join(format!("{project_name}.git"))
+            .is_dir()
     );
     server.shutdown().await;
 }

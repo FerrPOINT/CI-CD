@@ -34,7 +34,9 @@ display key и snapshot исходного SHA. Saved read не вызывает
 Archive закрывает receive-pack, PR mutations и все новые pipeline starts,
 включая schedules, hooks и legacy/manual API. Активные jobs допускают terminal
 drain без force-stop. Потерянная projection закрывает writes. Restore сохраняет
-IDs. Подробное решение: [ADR 0023](adr/0023-namespace-repository-identity.md).
+IDs. Legacy `repository delete` отказывает с 409 для managed repository либо
+репозитория с PR/configuration history; CLI сохраняет ненулевой exit и данные.
+Подробное решение: [ADR 0023](adr/0023-namespace-repository-identity.md).
 
 ## Конфигурация
 
