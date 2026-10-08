@@ -1036,3 +1036,8 @@ idx_outbox_delivery_attempts_message ON outbox_delivery_attempts(message_id, att
 - `backend/migrations/*.sql` — исходный код схемы БД.
 - `backend/domain/src/lib.rs` — доменные правила переходов статусов.
 - `docs/ROADMAP.md` — план разработки.
+
+
+## Сквозной Namespace
+
+Версионированные API, данные, ownership и совместимость описаны в [Namespace](NAMESPACE.md).

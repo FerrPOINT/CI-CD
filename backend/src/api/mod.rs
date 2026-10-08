@@ -39,6 +39,9 @@ use router::{build_router_with_cors, cors_layer_from_allowed_origins};
 
 pub struct AppState {
     pub pool: Option<PgPool>,
+    /// Two bounded admission connections keep Git/hooks from exhausting the
+    /// primary pool while an archive fence is held across filesystem writes.
+    pub namespace_admission_pool: Option<PgPool>,
     pub auth_secret: Option<String>,
     pub git: crate::git_host::GitConfig,
     pub config: crate::config::RuntimeConfig,
@@ -88,6 +91,27 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         )
     ),
     paths(
+        crate::namespace::apply,
+        crate::task_links::link,
+        crate::task_links::list,
+        crate::task_links::evidence,
+        crate::namespace::available_resources,
+        crate::namespace::stats,
+        crate::namespace::contexts,
+        crate::namespace::context,
+        crate::namespace::readback,
+        crate::repository_catalog::verified_repository,
+        crate::repository_catalog::verified_repositories,
+        crate::repository_catalog::list,
+        crate::repository_catalog::create,
+        crate::repository_catalog::connect_delivery,
+        crate::repository_catalog::get,
+        crate::repository_catalog::available,
+        crate::repository_catalog::attach,
+        crate::repository_catalog::pulls,
+        crate::repository_catalog::pull,
+        crate::repository_catalog::create_pull,
+        crate::repository_catalog::pull_action,
         crate::api::readiness::health, crate::api::readiness::readiness, metrics, serve_openapi_json,
         crate::api::auth_routes::auth_login, crate::api::auth_routes::auth_refresh,
         crate::api::auth_routes::auth_logout,

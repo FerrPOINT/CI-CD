@@ -32,12 +32,15 @@ pub async fn migrations_from_path(
 }
 pub mod domain;
 pub mod git_host;
+pub mod namespace;
 pub mod platform;
 pub mod pulls;
+pub mod repository_catalog;
 pub mod runner;
 pub(crate) mod runner_docker;
 pub mod runner_protocol;
 pub mod runner_workspace;
 pub mod store;
+pub mod task_links;
 
 pub use cicd_domain as domain_types;

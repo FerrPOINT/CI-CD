@@ -1,5 +1,7 @@
 import { FormEvent, useEffect, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router'
+import { NamespaceLink as Link } from '@sdlc/ui/ui'
+import { useNamespaceNavigate as useNavigate } from '@sdlc/ui/ui'
+import { useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { ChevronRight, Clock, Play } from 'lucide-react'
 import { toast } from 'sonner'

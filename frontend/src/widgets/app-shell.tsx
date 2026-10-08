@@ -1,3 +1,4 @@
+import { NamespaceShellContext } from './namespace-context'
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router'
 import {
@@ -109,6 +110,9 @@ export function AppShell() {
     <div className="min-h-screen bg-background text-text-primary">
       <PlatformHeader
         currentServiceKey="ci-cd"
+        context={
+          import.meta.env.VITE_NAMESPACE_ENABLED === 'true' ? <NamespaceShellContext /> : undefined
+        }
         leading={
           <>
             <Dialog open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>

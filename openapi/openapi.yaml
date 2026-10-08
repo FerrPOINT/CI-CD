@@ -396,6 +396,276 @@ paths:
                 $ref: '#/components/schemas/TokenPair'
         '401':
           description: ''
+  /api/v1/catalog/available-repositories:
+    get:
+      tags:
+      - namespaces
+      operationId: forge_unbound_repository_catalog
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogPage'
+  /api/v1/catalog/repositories/{id}:
+    get:
+      tags:
+      - namespaces
+      operationId: forge_repository_catalog_get
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogRepository'
+  /api/v1/catalog/repositories/{id}/delivery-configs/{project_id}:
+    put:
+      tags:
+      - namespaces
+      operationId: forge_repository_catalog_connect_delivery
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: Explicit stable repository/config mapping
+  /api/v1/catalog/repositories/{id}/group:
+    put:
+      tags:
+      - namespaces
+      operationId: forge_attach_repository
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AttachRepository'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttachReadback'
+        '409':
+          description: Already attached or conflicting original operation
+  /api/v1/catalog/repositories/{id}/pulls:
+    get:
+      tags:
+      - pulls
+      operationId: forge_repository_catalog_pulls
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PullRequest'
+    post:
+      tags:
+      - pulls
+      operationId: forge_repository_catalog_create_pull
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePull'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullRequest'
+  /api/v1/catalog/repositories/{id}/pulls/{number}:
+    get:
+      tags:
+      - pulls
+      operationId: forge_repository_catalog_pull
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: number
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int32
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullRequest'
+  /api/v1/catalog/repositories/{id}/pulls/{number}/action:
+    post:
+      tags:
+      - pulls
+      operationId: forge_repository_catalog_pull_action
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: number
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int32
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrAction'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PullRequest'
+  /api/v1/catalog/repositories/{id}/pulls/{number}/tasks:
+    get:
+      tags:
+      - namespaces
+      operationId: forge_pull_task_links
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: number
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int32
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PullTaskLink'
+    post:
+      tags:
+      - namespaces
+      operationId: forge_link_task_pull
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: number
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int32
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskRef'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskRef'
   /api/v1/deployments/{deployment_id}/approvals:
     get:
       tags:
@@ -591,6 +861,63 @@ paths:
                 $ref: '#/components/schemas/Deployment'
         '400':
           description: ''
+  /api/v1/git-groups/{id}/repositories:
+    get:
+      tags:
+      - namespaces
+      operationId: forge_repository_catalog_list
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogPage'
+    post:
+      tags:
+      - namespaces
+      operationId: forge_repository_catalog_create
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRepository'
+        required: true
+      responses:
+        '200':
+          description: Original ID replay or created catalog repository
+        '409':
+          description: Payload or namespace conflict
   /api/v1/health:
     get:
       tags:
@@ -1049,6 +1376,293 @@ paths:
                   $ref: '#/components/schemas/TestReport'
         '413':
           description: test report body exceeds 10 MiB
+  /api/v1/namespace-available-resources:
+    get:
+      tags:
+      - namespaces
+      operationId: forge_namespace_available_resources
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ResourceCatalogItem'
+  /api/v1/namespace-contexts:
+    get:
+      tags:
+      - namespaces
+      operationId: forge_namespace_contexts
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ResourceContextSummary'
+  /api/v1/namespace-contexts/{registry}/{namespace}:
+    get:
+      tags:
+      - namespaces
+      operationId: forge_namespace_context
+      parameters:
+      - name: registry
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: namespace
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceContextSummary'
+        '404':
+          description: No confirmed local binding
+  /api/v1/namespace-repositories:
+    get:
+      tags:
+      - namespaces
+      operationId: forge_namespace_repository_catalog
+      parameters:
+      - name: registry_instance_id
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: namespace_id
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          minimum: 0
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/VerifiedRepository'
+  /api/v1/namespace-repositories/{id}:
+    get:
+      tags:
+      - namespaces
+      operationId: forge_verify_repository_ref
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: registry_instance_id
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: namespace_id
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          minimum: 0
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifiedRepository'
+        '403':
+          description: Foreign namespace
+  /api/v1/namespace-resources/git_group/{id}:
+    get:
+      tags:
+      - namespaces
+      operationId: forge_namespace_readback
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnerReadback'
+        '404':
+          description: Binding not found
+    put:
+      tags:
+      - namespaces
+      operationId: forge_namespace_apply
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OwnerCommand'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OwnerReadback'
+        '409':
+          description: Binding/fence conflict
+  /api/v1/namespace-stats/{registry}/{namespace}:
+    get:
+      tags:
+      - namespaces
+      operationId: forge_namespace_stats
+      parameters:
+      - name: registry
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: namespace
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResourceStats'
+  /api/v1/namespace-task-evidence/{tracker}/{task}:
+    get:
+      tags:
+      - namespaces
+      operationId: forge_task_pull_evidence
+      parameters:
+      - name: tracker
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: task
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: registry_instance_id
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: namespace_id
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int32
+          minimum: 0
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TaskPullEvidence'
   /api/v1/openapi.json:
     get:
       tags:
@@ -3702,6 +4316,41 @@ components:
           format: uuid
         status:
           type: string
+    AttachReadback:
+      type: object
+      required:
+      - operation_id
+      - repository_id
+      - group_id
+      - slug
+      properties:
+        group_id:
+          type: string
+          format: uuid
+        operation_id:
+          type: string
+          format: uuid
+        repository_id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+    AttachRepository:
+      type: object
+      required:
+      - operation_id
+      - group_id
+      - slug
+      properties:
+        group_id:
+          type: string
+          format: uuid
+        operation_id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+      additionalProperties: false
     AuditEvent:
       type: object
       required:
@@ -3790,6 +4439,69 @@ components:
         canceled:
           type: string
           format: uuid
+    CatalogPage:
+      type: object
+      required:
+      - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CatalogRepository'
+    CatalogRepository:
+      type: object
+      required:
+      - id
+      - slug
+      - kind
+      - ready
+      - provider_refs
+      - public_name
+      - visibility
+      properties:
+        availability:
+          type:
+          - string
+          - 'null'
+        clone_url:
+          type:
+          - string
+          - 'null'
+        external_url:
+          type:
+          - string
+          - 'null'
+        group_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+        namespace:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/NamespaceRef'
+        provider_refs: {}
+        public_name:
+          type: string
+        ready:
+          type: boolean
+        slug:
+          type: string
+        state:
+          type:
+          - string
+          - 'null'
+        storage_name:
+          type:
+          - string
+          - 'null'
+        visibility:
+          type: string
     ChangeStatus:
       type: object
       required:
@@ -3875,6 +4587,24 @@ components:
           - 'null'
           format: uuid
           description: 'Target-model tenancy (AUTHORIZATION): optional during backfill.'
+    CreatePull:
+      type: object
+      required:
+      - title
+      - source_branch
+      - target_branch
+      properties:
+        description:
+          type:
+          - string
+          - 'null'
+        source_branch:
+          type: string
+        target_branch:
+          type: string
+        title:
+          type: string
+      additionalProperties: false
     CreatePullRequest:
       type: object
       required:
@@ -3914,6 +4644,29 @@ components:
           type: boolean
         tag_name:
           type: string
+    CreateRepository:
+      type: object
+      required:
+      - id
+      - slug
+      - kind
+      - visibility
+      properties:
+        external_url:
+          type:
+          - string
+          - 'null'
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+        provider_refs: {}
+        slug:
+          type: string
+        visibility:
+          type: string
+      additionalProperties: false
     CreateRepositoryBody:
       type: object
       required:
@@ -4223,6 +4976,11 @@ components:
           type: string
         repository:
           type: string
+        repository_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
     IssueServiceAccountToken:
       type: object
       required:
@@ -4502,6 +5260,19 @@ components:
           items:
             type: integer
             format: int64
+    NamespaceRef:
+      type: object
+      required:
+      - registry_instance_id
+      - namespace_id
+      properties:
+        namespace_id:
+          type: string
+          format: uuid
+        registry_instance_id:
+          type: string
+          format: uuid
+      additionalProperties: false
     Notification:
       type: object
       required:
@@ -4960,6 +5731,64 @@ components:
         total:
           type: integer
           format: int64
+    OwnerCommand:
+      type: object
+      required:
+      - schema_version
+      - namespace
+      - resource
+      - operation_id
+      - generation
+      - state
+      properties:
+        create_spec: {}
+        generation:
+          type: integer
+          format: int64
+        namespace:
+          $ref: '#/components/schemas/NamespaceRef'
+        operation_id:
+          type: string
+          format: uuid
+        resource:
+          $ref: '#/components/schemas/ResourceRef'
+        schema_version:
+          type: integer
+          format: int32
+          minimum: 0
+        state:
+          type: string
+      additionalProperties: false
+    OwnerReadback:
+      type: object
+      required:
+      - schema_version
+      - namespace
+      - resource
+      - operation_id
+      - generation
+      - state
+      - drained
+      properties:
+        drained:
+          type: boolean
+        generation:
+          type: integer
+          format: int64
+        namespace:
+          $ref: '#/components/schemas/NamespaceRef'
+        operation_id:
+          type: string
+          format: uuid
+        resource:
+          $ref: '#/components/schemas/ResourceRef'
+        schema_version:
+          type: integer
+          format: int32
+          minimum: 0
+        state:
+          type: string
+      additionalProperties: false
     Pipeline:
       type: object
       required:
@@ -5155,6 +5984,11 @@ components:
         number:
           type: integer
           format: int32
+        repository_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
         repository_name:
           type: string
         source_branch:
@@ -5192,6 +6026,22 @@ components:
         total:
           type: integer
           format: int64
+    PullTaskLink:
+      type: object
+      required:
+      - namespace
+      - task
+      - task_key
+      - source_commit_sha
+      properties:
+        namespace:
+          $ref: '#/components/schemas/NamespaceRef'
+        source_commit_sha:
+          type: string
+        task:
+          $ref: '#/components/schemas/TaskRef'
+        task_key:
+          type: string
     Readiness:
       type: object
       required:
@@ -5331,6 +6181,33 @@ components:
           type: string
         visibility:
           type: string
+    RepositoryCheckRef:
+      type: object
+      required:
+      - pipeline_id
+      - commit_sha
+      - status
+      properties:
+        commit_sha:
+          type: string
+        pipeline_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+    RepositoryRef:
+      type: object
+      required:
+      - forge_instance_id
+      - repository_id
+      properties:
+        forge_instance_id:
+          type: string
+          format: uuid
+        repository_id:
+          type: string
+          format: uuid
+      additionalProperties: false
     RequeuedOutboxDelivery:
       type: object
       required:
@@ -5343,6 +6220,70 @@ components:
         replay_of_id:
           type: string
           format: uuid
+    ResourceCatalogItem:
+      type: object
+      required:
+      - resource
+      - label
+      - resource_key
+      properties:
+        label:
+          type: string
+        resource:
+          $ref: '#/components/schemas/ResourceRef'
+        resource_key:
+          type: string
+    ResourceContextSummary:
+      type: object
+      description: Owner-local navigation metadata. Labels and keys are never used as identities.
+      required:
+      - binding
+      - label
+      - resource_key
+      properties:
+        binding:
+          $ref: '#/components/schemas/OwnerReadback'
+        label:
+          type: string
+        resource_key:
+          type: string
+    ResourceKind:
+      type: string
+      enum:
+      - tracker_project
+      - wiki_space
+      - git_group
+    ResourceRef:
+      type: object
+      required:
+      - kind
+      - instance_id
+      - resource_id
+      properties:
+        instance_id:
+          type: string
+          format: uuid
+        kind:
+          $ref: '#/components/schemas/ResourceKind'
+        resource_id:
+          type: string
+          format: uuid
+      additionalProperties: false
+    ResourceStats:
+      type: object
+      required:
+      - binding
+      - counters
+      properties:
+        binding:
+          $ref: '#/components/schemas/OwnerReadback'
+        counters:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+          propertyNames:
+            type: string
     RetriedPipelineResult:
       type: object
       required:
@@ -5980,6 +6921,53 @@ components:
           type: string
         sha:
           type: string
+    TaskPullEvidence:
+      type: object
+      required:
+      - namespace
+      - repository
+      - pull_request_id
+      - number
+      - title
+      - status
+      - commits
+      - checks
+      properties:
+        checks:
+          type: array
+          items:
+            $ref: '#/components/schemas/RepositoryCheckRef'
+        commits:
+          type: array
+          items:
+            type: string
+        namespace:
+          $ref: '#/components/schemas/NamespaceRef'
+        number:
+          type: integer
+          format: int32
+        pull_request_id:
+          type: string
+          format: uuid
+        repository:
+          $ref: '#/components/schemas/RepositoryRef'
+        status:
+          type: string
+        title:
+          type: string
+    TaskRef:
+      type: object
+      required:
+      - tracker_instance_id
+      - task_id
+      properties:
+        task_id:
+          type: string
+          format: uuid
+        tracker_instance_id:
+          type: string
+          format: uuid
+      additionalProperties: false
     Tenant:
       type: object
       required:
@@ -6206,6 +7194,27 @@ components:
           type: string
         username:
           type: string
+    VerifiedRepository:
+      type: object
+      required:
+      - namespace
+      - forge_instance_id
+      - repository_id
+      - public_name
+      - kind
+      properties:
+        forge_instance_id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+        namespace:
+          $ref: '#/components/schemas/NamespaceRef'
+        public_name:
+          type: string
+        repository_id:
+          type: string
+          format: uuid
     Webhook:
       type: object
       required:

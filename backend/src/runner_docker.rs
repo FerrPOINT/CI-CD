@@ -18,6 +18,16 @@ fn invalid(message: &str) -> io::Error {
     io::Error::other(message)
 }
 
+fn source_provenance_matches(volume: &Value, revision: &str, workspace: &str) -> bool {
+    revision.len() == 40
+        && revision
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        && matches!(workspace, "sdlc1" | "sdlc2" | "pdlc1")
+        && volume[0]["Labels"]["sdlc.base-revision"] == revision
+        && volume[0]["Labels"]["sdlc.workspace"] == workspace
+}
+
 impl Client {
     fn from_env() -> io::Result<Self> {
         let host = std::env::var("DOCKER_HOST").unwrap_or_default();
@@ -308,11 +318,7 @@ impl RemoteJob {
             serde_json::from_str(&self.client.run(&["volume", "inspect", &source]).await?)?;
         let revision = std::env::var("CICD_RUNNER_BASE_REVISION").unwrap_or_default();
         let workspace = std::env::var("CICD_RUNNER_WORKSPACE_PROJECT").unwrap_or_default();
-        if revision.len() != 40
-            || !matches!(workspace.as_str(), "sdlc1" | "sdlc2")
-            || volume[0]["Labels"]["sdlc.base-revision"] != revision
-            || volume[0]["Labels"]["sdlc.workspace"] != workspace
-        {
+        if !source_provenance_matches(&volume, &revision, &workspace) {
             return Err(invalid(
                 "source volume provenance differs from registered Base revision/workspace",
             ));
@@ -640,6 +646,28 @@ fn compose_job(args: &[String], envs: &[(String, String)]) -> io::Result<Value> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn runner_sources_accept_registered_installations_and_reject_foreign_provenance() {
+        let revision = "875cac2edf1a18c3a8a59e2f67256d02a8fc04e4";
+        for workspace in ["sdlc1", "sdlc2", "pdlc1"] {
+            let volume =
+                json!([{"Labels":{"sdlc.base-revision":revision,"sdlc.workspace":workspace}}]);
+            assert!(source_provenance_matches(&volume, revision, workspace));
+            assert!(!source_provenance_matches(&volume, revision, "foreign"));
+            assert!(!source_provenance_matches(
+                &volume,
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                workspace
+            ));
+            assert!(!source_provenance_matches(&volume, revision, "pdlc-common"));
+        }
+        let volume = json!([{"Labels":{"sdlc.base-revision":revision,"sdlc.workspace":"sdlc1"}}]);
+        assert!(!source_provenance_matches(&volume, revision, "pdlc1"));
+        assert!(!source_provenance_matches(&json!([]), revision, "pdlc1"));
+        let malformed = "z".repeat(40);
+        let volume = json!([{"Labels":{"sdlc.base-revision":malformed,"sdlc.workspace":"pdlc1"}}]);
+        assert!(!source_provenance_matches(&volume, &malformed, "pdlc1"));
+    }
     #[test]
     fn recovery_distinguishes_dead_process_and_current_owner() {
         #[cfg(target_os = "linux")]

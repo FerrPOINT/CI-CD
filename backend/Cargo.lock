@@ -2217,6 +2217,7 @@ dependencies = [
  "thiserror",
  "tower-http 0.7.1",
  "tracing",
+ "utoipa",
  "uuid",
 ]
 

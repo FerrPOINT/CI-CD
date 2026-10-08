@@ -66,6 +66,51 @@ fn repo_path(root: &Path, name: &str) -> PathBuf {
     root.join(format!("{name}.git"))
 }
 
+/// Only the catalog's opaque identity may initialize/reconcile this path.
+pub(crate) async fn ensure_owned_bare_repository(
+    config: &GitConfig,
+    storage: &str,
+    id: Uuid,
+) -> Result<(), ApiError> {
+    let storage = validate_repo_name(storage).map_err(ApiError::bad_request)?;
+    let path = repo_path(&config.root, &storage);
+    if tokio::fs::try_exists(&path)
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?
+    {
+        let output = Command::new("git")
+            .arg(format!("--git-dir={}", path.display()))
+            .args(["rev-parse", "--is-bare-repository"])
+            .output()
+            .await
+            .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+        if !output.status.success() || String::from_utf8_lossy(&output.stdout).trim() != "true" {
+            return Err(ApiError::conflict("owned_repository_storage_invalid"));
+        }
+    } else {
+        tokio::fs::create_dir_all(&config.root)
+            .await
+            .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+        init_bare_repository(&path).await?;
+    }
+    let hook = post_receive_hook(&storage, config.internal_token.as_deref()).replace(
+        "\\\"repository\\\":",
+        &format!("\\\"repository_id\\\":\\\"{id}\\\",\\\"repository\\\":"),
+    );
+    let hook_path = path.join("hooks/post-receive");
+    tokio::fs::write(&hook_path, hook)
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(&hook_path, std::fs::Permissions::from_mode(0o755))
+            .await
+            .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    }
+    Ok(())
+}
+
 async fn init_bare_repository(path: &Path) -> Result<(), ApiError> {
     let status = Command::new("git")
         .args(["init", "--bare", "--quiet", "--initial-branch=main"])
@@ -117,7 +162,7 @@ done
 /// template fixes reach existing installations after upgrades (hooks are only
 /// generated at repository creation otherwise).
 pub async fn ensure_post_receive_hooks(pool: &PgPool, config: &GitConfig) {
-    let names: Vec<String> = match sqlx::query_scalar("SELECT name FROM repositories ORDER BY name")
+    let names: Vec<(String,Uuid)> = match sqlx::query_as("SELECT storage_name,id FROM repository_catalog WHERE kind='hosted' AND ready ORDER BY storage_name")
         .fetch_all(pool)
         .await
     {
@@ -127,7 +172,7 @@ pub async fn ensure_post_receive_hooks(pool: &PgPool, config: &GitConfig) {
             return;
         }
     };
-    for name in names {
+    for (name, id) in names {
         let path = repo_path(&config.root, &name);
         if !path.join("HEAD").exists() {
             continue;
@@ -135,7 +180,10 @@ pub async fn ensure_post_receive_hooks(pool: &PgPool, config: &GitConfig) {
         let hook_path = path.join("hooks").join("post-receive");
         if let Err(error) = tokio::fs::write(
             &hook_path,
-            post_receive_hook(&name, config.internal_token.as_deref()),
+            post_receive_hook(&name, config.internal_token.as_deref()).replace(
+                "\\\"repository\\\":",
+                &format!("\\\"repository_id\\\":\\\"{id}\\\",\\\"repository\\\":"),
+            ),
         )
         .await
         {
@@ -212,15 +260,46 @@ pub async fn delete_repository_core(
     config: &GitConfig,
     raw_name: &str,
 ) -> Result<(), ApiError> {
-    let name = validate_repo_name(raw_name).map_err(ApiError::bad_request)?;
-    let deleted =
-        sqlx::query_scalar::<_, Uuid>("DELETE FROM repositories WHERE name = $1 RETURNING id")
-            .bind(&name)
-            .fetch_optional(pool)
-            .await
-            .map_err(ApiError::internal)?
-            .ok_or_else(ApiError::not_found)?;
-    let _ = deleted;
+    let name = crate::repository_catalog::resolve_storage(pool, raw_name).await?;
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+    let row: Option<(Uuid, Option<Uuid>)> = sqlx::query_as(
+        "SELECT id,group_id FROM repository_catalog WHERE storage_name=$1 FOR UPDATE",
+    )
+    .bind(&name)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
+    let (id, group) = row.ok_or_else(ApiError::not_found)?;
+    if group.is_some() {
+        return Err(ApiError::conflict(
+            "managed_repository_requires_namespace_lifecycle",
+        ));
+    }
+    let referenced: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pull_requests WHERE repository_id=$1 UNION ALL SELECT 1 FROM projects WHERE repository_id=$1)").bind(id).fetch_one(&mut *tx).await.map_err(ApiError::internal)?;
+    if referenced {
+        return Err(ApiError::conflict("repository_history_must_be_preserved"));
+    }
+    sqlx::query("DELETE FROM repository_aliases WHERE repository_id=$1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    sqlx::query("DELETE FROM repository_pr_counters WHERE repository_id=$1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    sqlx::query("DELETE FROM repository_catalog WHERE id=$1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    sqlx::query("DELETE FROM repositories WHERE id=$1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    tx.commit().await.map_err(ApiError::internal)?;
     let path = repo_path(&config.root, &name);
     let _ = tokio::fs::remove_dir_all(path).await;
     Ok(())
@@ -238,7 +317,10 @@ async fn check_repo_access(
     operation: GitOperation,
 ) -> Result<(), ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
-    let name = validate_repo_name(repo).map_err(ApiError::bad_request)?;
+    let name = crate::repository_catalog::resolve_storage(pool, repo).await?;
+    if operation == GitOperation::Write {
+        let _lease = crate::repository_catalog::write_lease(state, &name).await?;
+    }
     let visibility =
         sqlx::query_scalar::<_, String>("SELECT visibility FROM repositories WHERE name = $1")
             .bind(&name)
@@ -364,19 +446,10 @@ async fn git_project_access_allows(
     min_role: crate::authz::Role,
     token_project_id: Option<Uuid>,
 ) -> Result<bool, ApiError> {
-    let patterns = repository_url_like_patterns(repo);
     let roles = sqlx::query_scalar::<_, String>(
-        "SELECT m.role FROM projects p \
-         JOIN project_memberships m ON m.project_id = p.id \
-         WHERE (p.repository_url ILIKE $1 ESCAPE '\\' \
-             OR p.repository_url ILIKE $2 ESCAPE '\\' \
-             OR p.repository_url ILIKE $3 ESCAPE '\\') \
-           AND m.user_id = $4 \
-           AND ($5::uuid IS NULL OR p.id = $5)",
+        "SELECT m.role FROM projects p JOIN project_memberships m ON m.project_id=p.id JOIN repository_catalog r ON r.id=p.repository_id WHERE r.storage_name=$1 AND m.user_id=$2 AND ($3::uuid IS NULL OR p.id=$3)",
     )
-    .bind(&patterns.path)
-    .bind(&patterns.scp)
-    .bind(&patterns.exact)
+    .bind(repo)
     .bind(user_id)
     .bind(token_project_id)
     .fetch_all(pool)
@@ -388,38 +461,16 @@ async fn git_project_access_allows(
         .any(|role| role >= min_role))
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct RepositoryUrlPatterns {
-    pub(crate) path: String,
-    pub(crate) scp: String,
-    pub(crate) exact: String,
-}
-
-pub(crate) fn repository_url_like_patterns(repo: &str) -> RepositoryUrlPatterns {
-    let escaped = escape_like_pattern(repo);
-    RepositoryUrlPatterns {
-        path: format!("%/{escaped}.git"),
-        scp: format!("%:{escaped}.git"),
-        exact: format!("{escaped}.git"),
-    }
-}
-
 async fn git_repository_linked_to_project(
     pool: &PgPool,
     repo: &str,
     project_id: Uuid,
 ) -> Result<(), ApiError> {
-    let patterns = repository_url_like_patterns(repo);
     let linked = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM projects \
-         WHERE id = $1 AND (repository_url ILIKE $2 ESCAPE '\\' \
-             OR repository_url ILIKE $3 ESCAPE '\\' \
-             OR repository_url ILIKE $4 ESCAPE '\\'))",
+        "SELECT EXISTS(SELECT 1 FROM projects p JOIN repository_catalog r ON r.id=p.repository_id WHERE p.id=$1 AND r.storage_name=$2)",
     )
     .bind(project_id)
-    .bind(&patterns.path)
-    .bind(&patterns.scp)
-    .bind(&patterns.exact)
+    .bind(repo)
     .fetch_one(pool)
     .await
     .map_err(ApiError::internal)?;
@@ -428,17 +479,6 @@ async fn git_repository_linked_to_project(
     } else {
         Err(ApiError::forbidden())
     }
-}
-
-fn escape_like_pattern(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for ch in value.chars() {
-        if matches!(ch, '%' | '_' | '\\') {
-            escaped.push('\\');
-        }
-        escaped.push(ch);
-    }
-    escaped
 }
 
 fn pkt_line(payload: &str) -> Vec<u8> {
@@ -621,6 +661,18 @@ pub async fn git_service_endpoint(
         Ok(path) => path,
         Err(e) => return e.into_response(),
     };
+    let _namespace_lease = if operation == GitOperation::Write {
+        let storage = match crate::repository_catalog::resolve_storage(pool, &repo).await {
+            Ok(name) => name,
+            Err(error) => return error.into_response(),
+        };
+        match crate::repository_catalog::write_lease(&state, &storage).await {
+            Ok(lease) => Some(lease),
+            Err(error) => return error.into_response(),
+        }
+    } else {
+        None
+    };
     let body = match maybe_gunzip(&headers, body) {
         Ok(body) => body,
         Err(e) => return e.into_response(),
@@ -661,7 +713,7 @@ async fn resolve_repo_path(
     config: &GitConfig,
     raw: &str,
 ) -> Result<PathBuf, ApiError> {
-    let name = validate_repo_name(raw).map_err(ApiError::bad_request)?;
+    let name = crate::repository_catalog::resolve_storage(pool, raw).await?;
     let exists =
         sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM repositories WHERE name = $1)")
             .bind(&name)
@@ -676,12 +728,43 @@ async fn resolve_repo_path(
 
 #[derive(Deserialize, utoipa::ToSchema)]
 pub struct GitPushEvent {
+    #[serde(default)]
+    pub repository_id: Option<Uuid>,
     pub repository: String,
     pub ref_name: String,
     #[serde(default)]
     pub old_rev: Option<String>,
     #[serde(default)]
     pub new_rev: Option<String>,
+}
+
+pub async fn canonical_info_refs(
+    State(state): State<std::sync::Arc<AppState>>,
+    AxumPath((group, repo)): AxumPath<(String, String)>,
+    params: Query<InfoRefsParams>,
+    headers: HeaderMap,
+) -> Response {
+    git_info_refs(
+        State(state),
+        AxumPath(format!("{group}/{repo}")),
+        params,
+        headers,
+    )
+    .await
+}
+pub async fn canonical_service(
+    State(state): State<std::sync::Arc<AppState>>,
+    AxumPath((group, repo)): AxumPath<(String, String)>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    git_service_endpoint(
+        State(state),
+        AxumPath(format!("{group}/{repo}")),
+        headers,
+        body,
+    )
+    .await
 }
 
 /// Internal endpoint called by the generated `post-receive` hook.
@@ -712,7 +795,20 @@ pub async fn internal_git_push(
         }
     }
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
-    let name = validate_repo_name(&event.repository).map_err(ApiError::bad_request)?;
+    let name = crate::repository_catalog::resolve_storage(pool, &event.repository).await?;
+    let repository_id: Uuid =
+        sqlx::query_scalar("SELECT id FROM repository_catalog WHERE storage_name=$1")
+            .bind(&name)
+            .fetch_one(pool)
+            .await
+            .map_err(ApiError::internal)?;
+    // receive-pack may hold a shared admission lease while invoking this hook.
+    // Re-acquiring it can deadlock behind a waiting archive. Pipeline INSERT owns
+    // the transactional lifecycle guard; standalone legacy hooks get the same check.
+    crate::repository_catalog::require_storage_writable(pool, &name).await?;
+    if event.repository_id.is_some_and(|id| id != repository_id) {
+        return Err(ApiError::conflict("hook_repository_identity_mismatch"));
+    }
     let short_ref = event
         .ref_name
         .strip_prefix("refs/heads/")
@@ -731,20 +827,18 @@ pub async fn internal_git_push(
         .as_deref()
         .filter(|rev| is_probable_object_id(rev))
         .map(|rev| git_push_idempotency_key(&name, &event.ref_name, rev));
-    let patterns = repository_url_like_patterns(&name);
-    let project_id: Option<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM projects \
-             WHERE repository_url ILIKE $1 ESCAPE '\\' \
-                OR repository_url ILIKE $2 ESCAPE '\\' \
-                OR repository_url ILIKE $3 ESCAPE '\\' \
-             LIMIT 1",
-    )
-    .bind(&patterns.path)
-    .bind(&patterns.scp)
-    .bind(&patterns.exact)
-    .fetch_optional(pool)
-    .await
-    .map_err(ApiError::internal)?;
+    let project_ids: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM projects WHERE repository_id=$1 ORDER BY id")
+            .bind(repository_id)
+            .fetch_all(pool)
+            .await
+            .map_err(ApiError::internal)?;
+    if project_ids.len() > 1 {
+        return Err(ApiError::conflict(
+            "multiple_delivery_configs_require_explicit_trigger",
+        ));
+    }
+    let project_id = project_ids.into_iter().next();
     match project_id {
         Some(project_id) => {
             let outcome = crate::api::create_pipeline_with_vars_idempotent(
@@ -879,19 +973,6 @@ mod tests {
         let line = pkt_line("# service=git-upload-pack\n");
         assert_eq!(&line[..4], b"001e");
         assert!(line.ends_with(b"# service=git-upload-pack\n"));
-    }
-
-    #[test]
-    fn escapes_like_wildcards_in_repository_binding() {
-        assert_eq!(escape_like_pattern("service_api"), "service\\_api");
-        assert_eq!(
-            repository_url_like_patterns("service_api"),
-            RepositoryUrlPatterns {
-                path: "%/service\\_api.git".to_string(),
-                scp: "%:service\\_api.git".to_string(),
-                exact: "service\\_api.git".to_string(),
-            }
-        );
     }
 
     #[tokio::test]

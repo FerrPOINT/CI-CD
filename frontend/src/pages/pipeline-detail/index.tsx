@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useParams, Link } from 'react-router'
+import { NamespaceLink as Link } from '@sdlc/ui/ui'
+import { useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { ApiError } from '@/api/client'
 import { ForbiddenPage } from '@/pages/forbidden'
@@ -784,7 +785,10 @@ function JobLogPanel({
               if (!logMessage.trim() || appendLog.isPending) return
               appendLog.mutate(
                 { jobId, message: logMessage.trim() },
-                { onSuccess: () => setLogMessage(''), onError: (err) => toast.error(err.message) },
+                {
+                  onSuccess: () => setLogMessage(''),
+                  onError: (err) => toast.error(err.message),
+                },
               )
             }}
           >
@@ -829,7 +833,12 @@ function JobTestReportPanel({ jobId }: { jobId: string }) {
       </div>
     )
   if (reports.length === 0) return null
-  const total = reports.reduce<{ total: number; passed: number; failed: number; skipped: number }>(
+  const total = reports.reduce<{
+    total: number
+    passed: number
+    failed: number
+    skipped: number
+  }>(
     (acc, r) => ({
       total: acc.total + r.tests_total,
       passed: acc.passed + r.tests_passed,

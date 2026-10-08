@@ -63,7 +63,11 @@ jobs:
       - name: Read pinned Base revision
         id: base
         working-directory: CI-CD
-        run: echo "sha=$(cat .base-revision)" >> "$GITHUB_OUTPUT"
+        run: |
+          pin=.base-revision
+          if [ -f .namespace-base-revision ]; then pin=.namespace-base-revision; fi
+          echo "sha=$(cat "$pin")" >> "$GITHUB_OUTPUT"
+          echo "pin=$pin" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v4
         with:
           repository: FerrPOINT/services-base
@@ -72,7 +76,7 @@ jobs:
           ref: ${{ steps.base.outputs.sha }}
       - name: Verify pinned Base checkout
         working-directory: CI-CD
-        run: python3 ../services-base/scripts/verify_base_revision.py --revision .base-revision --base ../services-base
+        run: python3 ../services-base/scripts/verify_base_revision.py --revision "${{ steps.base.outputs.pin }}" --base ../services-base
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.88.0"
@@ -116,7 +120,11 @@ jobs:
       - name: Read pinned Base revision
         id: base
         working-directory: CI-CD
-        run: echo "sha=$(cat .base-revision)" >> "$GITHUB_OUTPUT"
+        run: |
+          pin=.base-revision
+          if [ -f .namespace-base-revision ]; then pin=.namespace-base-revision; fi
+          echo "sha=$(cat "$pin")" >> "$GITHUB_OUTPUT"
+          echo "pin=$pin" >> "$GITHUB_OUTPUT"
       - name: Check out services-base sibling (@sdlc/ui file dep)
         uses: actions/checkout@v4
         with:
@@ -126,7 +134,7 @@ jobs:
           ref: ${{ steps.base.outputs.sha }}
       - name: Verify pinned Base checkout
         working-directory: CI-CD
-        run: python3 ../services-base/scripts/verify_base_revision.py --revision .base-revision --base ../services-base
+        run: python3 ../services-base/scripts/verify_base_revision.py --revision "${{ steps.base.outputs.pin }}" --base ../services-base
       - uses: pnpm/action-setup@v4
         with:
           version: 10.28.1
@@ -168,7 +176,11 @@ jobs:
       - name: Read pinned Base revision
         id: base
         working-directory: CI-CD
-        run: echo "sha=$(cat .base-revision)" >> "$GITHUB_OUTPUT"
+        run: |
+          pin=.base-revision
+          if [ -f .namespace-base-revision ]; then pin=.namespace-base-revision; fi
+          echo "sha=$(cat "$pin")" >> "$GITHUB_OUTPUT"
+          echo "pin=$pin" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@v7
         with:
           repository: FerrPOINT/services-base
@@ -177,7 +189,7 @@ jobs:
           token: ${{ secrets.SERVICES_BASE_TOKEN }}
       - name: Verify pinned Base checkout
         working-directory: CI-CD
-        run: python3 ../services-base/scripts/verify_base_revision.py --revision .base-revision --base ../services-base
+        run: python3 ../services-base/scripts/verify_base_revision.py --revision "${{ steps.base.outputs.pin }}" --base ../services-base
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: "1.88.0"

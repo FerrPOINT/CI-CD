@@ -355,6 +355,7 @@ mod tests {
             .route("/projects/{project_id}", patch(update_project))
             .with_state(Arc::new(AppState {
                 pool: None,
+                namespace_admission_pool: None,
                 auth_secret: None,
                 git: config.git.to_git_config(),
                 config,

@@ -9,6 +9,9 @@ daemon ID, immutable source volume, Base SHA и имя workspace. Перемен
 `DOCKER_HOST`, `DOCKER_TLS_VERIFY=1`, `DOCKER_CERT_PATH`,
 `CICD_RUNNER_DOCKER_DAEMON_ID`, `CICD_RUNNER_SHARED_SOURCES_VOLUME`,
 `CICD_RUNNER_BASE_REVISION`, `CICD_RUNNER_WORKSPACE_PROJECT`.
+Поддерживаются зарегистрированные installations `sdlc1`, `sdlc2`, `pdlc1`.
+Workspace и полный lowercase Base SHA должны точно совпадать с labels sources;
+старый volume без provenance не присваивается автоматически новой установке.
 Несовпадение daemon ID, отсутствие plugin или source provenance блокирует job.
 Fallback на другой Docker context запрещён.
 

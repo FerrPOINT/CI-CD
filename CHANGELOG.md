@@ -13,6 +13,8 @@
   по профилю и отклоняет лишние аргументы. POSIX-регрессии проверяют обязательные
   переменные и отказ до вызова Base при неполной конфигурации.
 
+- Namespace cohort: стабильные refs, локальные binding projections и lifecycle guards; аддитивные migrations, совместимый rollback и отдельные execution v2 gates. Runtime-приёмка ещё не завершена.
+
 - После отмены удаления проекта focus возвращается к его меню действий; после успешного удаления — к кнопке создания проекта.
 
 - Документирована принятая поставка трёх CLI на sdlc1: backup/restore/rollback, live-проверки, Linux/WSL установка и сохранённые ограничения.
@@ -174,11 +176,17 @@
 
 ## [Unreleased]
 
+- Namespace cohort: стабильные refs, локальные binding projections и lifecycle guards; аддитивные migrations, совместимый rollback и отдельные execution v2 gates. Runtime-приёмка ещё не завершена.
+
+
 ### Added
 - Notification rules / preferences / template catalog (stage 4 item 1): миграция 0032, fan-out фильтрация, per-user mute/verbosity, `{{var}}`-шаблоны с воспроизводимым рендерингом.
 - Aggregation + quiet hours + destination alerts (stage 4 items 3+5): миграция 0033 — collapse повторов со счётчиком, quiet окна hold/drop с bypass-статусами, авто-алерты на dead-letter с acknowledge/авто-resolve.
 
 ## [Unreleased]
+
+- Namespace cohort: стабильные refs, локальные binding projections и lifecycle guards; аддитивные migrations, совместимый rollback и отдельные execution v2 gates. Runtime-приёмка ещё не завершена.
+
 
 ### Added
 - Email-канал уведомлений (AUTOMATION_ARCHITECTURE §9 этап 4): SMTP-доставка через outbox (lettre, `CICD_SMTP_*`), при disabled SMTP — локальная пометка delivered; миграция 0031 расширяет CHECK канала `email`; fail-closed валидация адреса.

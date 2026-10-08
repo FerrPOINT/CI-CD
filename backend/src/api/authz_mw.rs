@@ -194,6 +194,13 @@ pub(crate) async fn require_auth(
     // developer class; token scopes still constrain every route.
     let role = crate::authz::Role::parse(&claims.role).ok_or_else(ApiError::unauthorized)?;
     let path = req.uri().path().to_string();
+    if claims.role == "service_account"
+        && (path.starts_with("/api/v1/git-groups/")
+            || path.starts_with("/api/v1/catalog/repositories/")
+            || path.starts_with("/api/v1/namespace-contexts"))
+    {
+        return Err(ApiError::forbidden());
+    }
     let (mut parts, body) = req.into_parts();
     parts.extensions.insert(claims.clone());
     let req = axum::extract::Request::from_parts(parts, body);
@@ -358,19 +365,10 @@ async fn repository_scope_allows(
             None => Ok(true),
         };
     }
-    let patterns = crate::git_host::repository_url_like_patterns(&name);
     let roles = sqlx::query_scalar::<_, String>(
-        "SELECT m.role FROM projects p \
-         JOIN project_memberships m ON m.project_id = p.id \
-         WHERE (p.repository_url ILIKE $1 ESCAPE '\\' \
-             OR p.repository_url ILIKE $2 ESCAPE '\\' \
-             OR p.repository_url ILIKE $3 ESCAPE '\\') \
-           AND m.user_id = $4 \
-           AND ($5::uuid IS NULL OR p.id = $5)",
+        "SELECT m.role FROM projects p JOIN project_memberships m ON m.project_id=p.id JOIN repository_catalog r ON r.id=p.repository_id WHERE r.storage_name=$1 AND m.user_id=$2 AND ($3::uuid IS NULL OR p.id=$3)",
     )
-    .bind(&patterns.path)
-    .bind(&patterns.scp)
-    .bind(&patterns.exact)
+    .bind(&name)
     .bind(user_id)
     .bind(token_project_id)
     .fetch_all(pool)
@@ -387,17 +385,11 @@ async fn repository_linked_to_project(
     repo: &str,
     project_id: Uuid,
 ) -> Result<bool, ApiError> {
-    let patterns = crate::git_host::repository_url_like_patterns(repo);
     sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM projects \
-         WHERE id = $1 AND (repository_url ILIKE $2 ESCAPE '\\' \
-             OR repository_url ILIKE $3 ESCAPE '\\' \
-             OR repository_url ILIKE $4 ESCAPE '\\'))",
+        "SELECT EXISTS(SELECT 1 FROM projects p JOIN repository_catalog r ON r.id=p.repository_id WHERE p.id=$1 AND r.storage_name=$2)",
     )
     .bind(project_id)
-    .bind(&patterns.path)
-    .bind(&patterns.scp)
-    .bind(&patterns.exact)
+    .bind(repo)
     .fetch_one(pool)
     .await
     .map_err(ApiError::internal)
@@ -613,6 +605,11 @@ pub(crate) async fn identity_for_bearer_token(
     // Central fleet auth-server first (ES256 via JWKS); legacy session JWTs
     // and cicd_ PATs remain valid during the migration window.
     if let Some(central) = crate::central_auth::try_central(token).await? {
+        if crate::namespace::registered_machine(&central.user_id)
+            || central.role.as_deref() == Some("service_account")
+        {
+            return Err(ApiError::forbidden());
+        }
         return crate::central_auth::link_central_user(pool, &central).await;
     }
     if token.starts_with("forge_sat_") {

@@ -1099,9 +1099,7 @@ async fn run_job_inner(
         if let Some(remote) = &mut remote_job {
             remote.cleanup().await;
         }
-        if !config.keep_workspace {
-            remove_workspace(&workspace).await;
-        }
+        finish_workspace_retention(&pool, &lease, owned_workspace, config.keep_workspace).await;
         return Ok(());
     }
     let mut child = child
@@ -1523,11 +1521,8 @@ async fn prepare_workspace(
     lease: &EmbeddedJobLease,
     config: &RuntimeRunnerConfig,
 ) -> Result<crate::runner_workspace::OwnedWorkspace, ApiError> {
-    let repo_url: String = sqlx::query_scalar("SELECT repository_url FROM projects WHERE id = $1")
-        .bind(job.project_id)
-        .fetch_one(pool)
-        .await
-        .map_err(ApiError::internal)?;
+    let repo_url =
+        crate::repository_catalog::checkout_url_for_project(pool, job.project_id).await?;
 
     let git_ref: String = sqlx::query_scalar("SELECT git_ref FROM pipelines WHERE id = $1")
         .bind(job.pipeline_id)
@@ -1563,16 +1558,18 @@ async fn prepare_workspace(
 
     // Prefer local bare repo: avoid HTTP round-trips that can deadlock if the
     // repository_url points back at the same backend serving this runner.
-    let local_bare = extract_repo_name_from_url(&repo_url)
-        .filter(|name| {
-            !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\'])
-        })
-        .map(|name| config.git_root.join(format!("{name}.git")))
-        .filter(|path| path.is_dir());
-    let repository = local_bare
-        .as_ref()
-        .map(|path| path.to_string_lossy().into_owned())
-        .unwrap_or(repo_url);
+    let storage_name =
+        crate::repository_catalog::local_storage_for_project(pool, job.project_id).await?;
+    let repository = if let Some(storage) = storage_name {
+        let name = crate::git_host::validate_repo_name(&storage).map_err(ApiError::conflict)?;
+        let path = config.git_root.join(format!("{name}.git"));
+        if !path.is_dir() {
+            return Err(ApiError::conflict("hosted_repository_storage_unavailable"));
+        }
+        path.to_string_lossy().into_owned()
+    } else {
+        repo_url
+    };
     // Once a clone is attempted, an uncertain failure is not retried via another source.
     workspace
         .clone_checkout(&repository, job.commit_sha.as_deref(), &git_ref)
@@ -1581,12 +1578,6 @@ async fn prepare_workspace(
             ApiError::bad_request("Checkout verification failed; attempt workspace retained")
         })?;
     Ok(workspace)
-}
-
-fn extract_repo_name_from_url(url: &str) -> Option<String> {
-    let path = url.split('/').next_back()?;
-    let name = path.strip_suffix(".git").unwrap_or(path);
-    Some(name.to_string())
 }
 
 async fn refresh_stage(pool: PgPool, job_id: Uuid) -> Result<(), ApiError> {

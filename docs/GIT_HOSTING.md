@@ -171,3 +171,8 @@ curl -fsS -X DELETE http://127.0.0.1:22801/api/v1/repositories/smoke-repo
 - [Webhooks](contracts/EVENT_CONTRACT.md)
 - [Security](SECURITY.md)
 - [Storage](contracts/DATA_LIFECYCLE.md)
+
+
+## Git в Namespace
+
+Git Group, стабильный repository UUID, aliases и archive admission описаны в [Namespace](NAMESPACE.md) и [ADR 0023](adr/0023-namespace-repository-identity.md). Старые bare paths и clone URLs сохраняются; отсутствующее storage требует восстановления исходных данных.

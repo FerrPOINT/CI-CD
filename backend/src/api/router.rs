@@ -120,6 +120,13 @@ pub(crate) fn build_router_with_cors(
 ) -> Router {
     let state = Arc::new(AppState {
         pool: pool.clone(),
+        namespace_admission_pool: pool.as_ref().map(|pool| {
+            pool.options()
+                .clone()
+                .max_connections(2)
+                .min_connections(0)
+                .connect_lazy_with((*pool.connect_options()).clone())
+        }),
         auth_secret: config.auth.secret.clone(),
         git,
         config,
@@ -142,6 +149,58 @@ pub(crate) fn build_router_with_cors(
         .merge(crate::platform::routes())
         .merge(crate::runner_protocol::routes())
         .route("/api/v1/projects", get(list_projects).post(create_project))
+        .route(
+            "/api/v1/git-groups/{id}/repositories",
+            get(crate::repository_catalog::list).post(crate::repository_catalog::create),
+        )
+        .route(
+            "/api/v1/namespace-contexts",
+            get(crate::namespace::contexts),
+        )
+        .route(
+            "/api/v1/namespace-available-resources",
+            get(crate::namespace::available_resources),
+        )
+        .route(
+            "/api/v1/namespace-stats/{registry}/{namespace}",
+            get(crate::namespace::stats),
+        )
+        .route(
+            "/api/v1/namespace-contexts/{registry}/{namespace}",
+            get(crate::namespace::context),
+        )
+        .route(
+            "/api/v1/catalog/repositories/{id}/delivery-configs/{project_id}",
+            axum::routing::put(crate::repository_catalog::connect_delivery),
+        )
+        .route(
+            "/api/v1/catalog/repositories/{id}",
+            get(crate::repository_catalog::get),
+        )
+        .route(
+            "/api/v1/catalog/available-repositories",
+            get(crate::repository_catalog::available),
+        )
+        .route(
+            "/api/v1/catalog/repositories/{id}/group",
+            axum::routing::put(crate::repository_catalog::attach),
+        )
+        .route(
+            "/api/v1/catalog/repositories/{id}/pulls",
+            get(crate::repository_catalog::pulls).post(crate::repository_catalog::create_pull),
+        )
+        .route(
+            "/api/v1/catalog/repositories/{id}/pulls/{number}",
+            get(crate::repository_catalog::pull),
+        )
+        .route(
+            "/api/v1/catalog/repositories/{id}/pulls/{number}/action",
+            post(crate::repository_catalog::pull_action),
+        )
+        .route(
+            "/api/v1/catalog/repositories/{id}/pulls/{number}/tasks",
+            get(crate::task_links::list).post(crate::task_links::link),
+        )
         .route(
             "/api/v1/projects/{project_id}",
             get(get_project)
@@ -198,6 +257,22 @@ pub(crate) fn build_router_with_cors(
             axum::routing::delete(delete_repository),
         )
         .route("/git/{repo}/info/refs", get(git_info_refs))
+        .route(
+            "/git/{group}/{repo}/info/refs",
+            get(crate::git_host::canonical_info_refs),
+        )
+        .route(
+            "/git/{group}/{repo}/git-upload-pack",
+            post(crate::git_host::canonical_service).layer(DefaultBodyLimit::max(
+                crate::body_limits::GIT_SMART_HTTP_RPC_BYTES,
+            )),
+        )
+        .route(
+            "/git/{group}/{repo}/git-receive-pack",
+            post(crate::git_host::canonical_service).layer(DefaultBodyLimit::max(
+                crate::body_limits::GIT_SMART_HTTP_RPC_BYTES,
+            )),
+        )
         .route(
             "/git/{repo}/git-upload-pack",
             post(git_service_endpoint).layer(DefaultBodyLimit::max(
@@ -260,6 +335,7 @@ pub(crate) fn build_router_with_cors(
             state.clone(),
             require_auth,
         ))
+        .merge(crate::namespace::routes())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             rate_limit_mw,

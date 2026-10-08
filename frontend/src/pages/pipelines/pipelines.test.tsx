@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import { Link, MemoryRouter, Route, Routes } from 'react-router'
+import { NamespaceLink as Link } from '@sdlc/ui/ui'
+import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PipelinesPage } from './index'
 
@@ -16,7 +17,9 @@ vi.mock('react-i18next', () => ({
   }),
 }))
 vi.mock('@/api/hooks', () => ({
-  useProjects: () => ({ data: [{ id: 'project-1', name: 'Project 01', default_branch: 'main' }] }),
+  useProjects: () => ({
+    data: [{ id: 'project-1', name: 'Project 01', default_branch: 'main' }],
+  }),
   usePipelines: mocks.usePipelines,
   useTriggerPipeline: () => ({ mutate: mocks.trigger, isPending: false }),
 }))
