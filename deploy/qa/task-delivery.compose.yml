@@ -4,7 +4,8 @@ services:
     image: ${CICD_QA_POSTGRES_IMAGE:?Pinned PostgreSQL image required}
     labels: {sdlc.task: forge-task-delivery, sdlc.purpose: disposable-migration-and-delivery-tests}
     cpus: 1
-    mem_limit: 512m
+    # Integration migrations need headroom beyond the bounded tmpfs and shared buffers.
+    mem_limit: 1g
     tmpfs: ["/var/lib/postgresql/data:rw,size=512m"]
     environment:
       POSTGRES_USER: forge_qa

@@ -16,6 +16,19 @@ Forge связывает жизненный цикл `Git push -> pipeline -> ex
 4. Обеспечить автоматизацию доставки через Git-события, расписания, webhooks и уведомления без потери зафиксированных событий.
 5. Сохранить возможность постепенного перехода от встроенного локального исполнения к изолированным внешним runner-ам.
 
+### Owner-local PostgreSQL компонент
+
+REQ-SDLC-004: dedicated isolated target должен связывать exact artifact/image и
+actual source/target schema, проверить immutable forward catalog, bounded writer
+drain/fence/lease и реальный backup restore drill. Candidate мигрирует fresh shadow
+DB; release writes разрешён только после отдельного health/acceptance и serving
+identity. Known failure до release допускает verified snapshot + previous image
+restore в fresh DB с сохранением rows/sequences. После release старый snapshot
+restore запрещён. Unknown не разрешает повтор dangerous command или новый key.
+RPO=0 относится только к acknowledged pre-drain writes. Production admission и
+full business coverage остаются target. [Contract](contracts/MUTABLE_POSTGRES_DELIVERY.md),
+[план/verification](../plans/2026-10-08-mutable-postgres-delivery.md); local component verified.
+
 ### Owner-local OCI компонент
 
 REQ-SDLC-003 продолжает локальную manifest delivery: owner запускает только sealed

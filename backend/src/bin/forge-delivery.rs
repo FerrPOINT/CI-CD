@@ -19,8 +19,10 @@ struct Args {
     reconcile: bool,
     #[arg(long)]
     readback: bool,
-    #[arg(long)]
+    #[arg(long, conflicts_with = "postgres")]
     oci: bool,
+    #[arg(long)]
+    postgres: bool,
 }
 
 async fn run(args: Args) -> anyhow::Result<bool> {
@@ -53,6 +55,27 @@ async fn run(args: Args) -> anyhow::Result<bool> {
         running_jobs: None,
         rate_limiter: Arc::new(cicd::rate_limit::RateLimiter::default()),
     });
+    if args.postgres {
+        let result = cicd::task_delivery::postgres::local_command(
+            state,
+            args.project_id,
+            &token,
+            command,
+            args.reconcile,
+            args.readback,
+        )
+        .await?;
+        println!("{}", serde_json::to_string(&result)?);
+        if result["schema"] == "forge/local-postgres-rejection/v1" {
+            anyhow::bail!("isolated PostgreSQL command rejected");
+        }
+        let receipt = if result["reconciledReceipt"].is_object() {
+            &result["reconciledReceipt"]
+        } else {
+            &result["receipt"]
+        };
+        return Ok(receipt["status"] == "verified");
+    }
     if args.oci {
         let result = match cicd::task_delivery::oci::local_command(
             state,

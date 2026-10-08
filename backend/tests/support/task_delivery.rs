@@ -193,6 +193,16 @@ impl ActualDelivery {
         version: &str,
         script: &str,
     ) -> (DeliveryCommand, serde_json::Value, serde_json::Value) {
+        self.build_script_with_timeout(version, script, Duration::from_secs(25))
+            .await
+    }
+
+    async fn build_script_with_timeout(
+        &mut self,
+        version: &str,
+        script: &str,
+        completion_timeout: Duration,
+    ) -> (DeliveryCommand, serde_json::Value, serde_json::Value) {
         let barrier = self.temp.join(format!("release-{version}"));
         let command = format!(
             "while test ! -f '{}'; do sleep 0.1; done; {script}",
@@ -272,7 +282,7 @@ impl ActualDelivery {
         let (status, original) = self.f.post(&self.f.request).await;
         assert_eq!(status, StatusCode::OK, "{original}");
         std::fs::write(barrier, b"release").unwrap();
-        let output = tokio::time::timeout(Duration::from_secs(25), child.wait_with_output())
+        let output = tokio::time::timeout(completion_timeout, child.wait_with_output())
             .await
             .unwrap()
             .unwrap();
@@ -449,6 +459,10 @@ impl ActualDelivery {
 #[cfg(feature = "oci-integration")]
 #[path = "oci_delivery.rs"]
 mod oci_delivery;
+
+#[cfg(feature = "postgres-integration")]
+#[path = "postgres_delivery.rs"]
+mod postgres_delivery;
 
 fn latest(readback: &serde_json::Value) -> &serde_json::Value {
     if readback["reconciledReceipt"].is_object() {

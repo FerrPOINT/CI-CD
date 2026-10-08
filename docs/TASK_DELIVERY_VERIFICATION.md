@@ -280,3 +280,59 @@ continuous health. HTTP POST остаётся503, static HTTP GET не чита�
 `dispatchAllowed`/`sdlcAcceptanceVerified` false. Mutable PostgreSQL compatibility,
 migrations/backfill/restore, multi-service/registry/native attestation, authoritative
 Tracker/Fleet/Workflow admission и production/full business acceptance открыты.
+
+## PostgreSQL source packet, 2026-10-08
+
+`forge-delivery --postgres` добавляет отдельный isolated shadow protocol; OCI
+read-only запреты выше сохраняются. Exact sealed artifact/image/source/schema,
+complete immutable SQLx catalog, target lease/advisory guard, physical HBA/role
+fence и actual session drain предшествуют backup/migration. Dump проходит real
+fresh restore drill и schema/rows/sequences fingerprint. Candidate migrates fresh
+DB, получает distinct identity/health/acceptance checks и отдельный writer release.
+
+Known pre-release failure допускает explicit verified snapshot + last-confirmed
+image restore в ещё одну fresh DB. Post-release old snapshot restore запрещён,
+так как новые user writes могли быть приняты. Original-key replay не повторяет
+dangerous effects; partial Unknown удерживает target. Reconcile может наблюдать
+только фактически завершённый release. RPO=0 относится к acknowledged pre-drain
+writes в supported local fence window; это не production PITR/DR/admission.
+
+Final-source PostgreSQL gate `sdlc-qa-forge-delivery-ec6da7adab7c`:3/3 PASS.
+Real A/replay/POST rows→B schema2/new write5; migration failure, health503 и
+acceptance422; restore exact A image/rows1..4/next ID5. Corrupt backup, unknown
+role/session/object owner/schema/history checksum, PUBLIC admission, reader write
+privilege, data drift/stale lease reject. Пять SIGKILL checkpoints: backup-verified,
+migration-intent, restore-intent, release-intent, writes-released. Original receipt
+и checkpoint bytes/mtime сохраняются, новый key не обходит Unknown hold; completed
+release reconcile сохраняет user write5/container ID и допускает new write6.
+Old snapshot restore после release запрещён. Exact own cleanup завершён;
+258 source hashes unchanged, live/final all3-endpoint audit violations0.
+
+OCI regression `sdlc-qa-forge-delivery-6817d8d05dda`:1/1 PASS, actual image/data/
+health/acceptance/rollback и SIGKILL/no-recreate recovery. Exact cleanup и258
+inputs unchanged. Общий source manifest SHA256 обоих gates:
+`2c18d685e07a0f4a549dab436603d14fabdd2ec36ff3da1ebd43b41a8b1b1c50`.
+Normal backend gate `sdlc-qa-forge-delivery-9d4070b6c316`:297 tests
+(workspace215/PG80/CLI2), fmt/check/strict Clippy/release/exporter PASS.
+258 inputs unchanged; source manifest SHA256:
+`e9ab43b279772dad9fd6446b1ef84f3ca0339c65c5dd3bb1c7f946262a95b565`.
+Единственное отличие от PG/OCI manifests — QA Compose memory512MiB→1GiB
+после подтверждённого cgroup OOM в normal run `e79657111588`; protocol/backend/
+test/SDK bytes совпадают. Actual full QA использовал560MiB, tmpfs остаётся512MiB.
+Failed/interrupted runs и cleanup перечислены в ledger.
+
+Frontend Node22.20.0/pnpm10.28.1: frozen/offline install, OpenAPI check/compat(main),
+tsc/lint,201 tests/build/audit0 PASS. Docs verifier/16 Python regressions, SBOM
+drift и tracked-export secret scan492 text files/0 findings PASS. UI/lockfile/
+generated OpenAPI не меняются. Screenshots/Playwright/axe/full cargo-audit/Trivy
+не выполнялись; общий release security pack не заявляется. Hosted normal CI
+проверяется на exact published head в PR; opt-in PG/OCI daemon suites в него не входят.
+[Отдельный plan/ledger](../plans/2026-10-08-mutable-postgres-delivery.md),
+[contract](contracts/MUTABLE_POSTGRES_DELIVERY.md), [ADR-0022](adr/0022-owner-local-postgres-shadow-delivery.md).
+Нет нового Forge SQL migration; source0039/0040 bytes и PR87 сохраняются.
+
+Production writer inventory/fence/drain ACK/LSN, traffic switch/incident decisions,
+Tracker/Fleet/Workflow producers, native signed attestation, multi-service rollout,
+arbitrary backfill/DDL и полная business acceptance остаются открытыми.
+HTTP dispatch503 и оба SDLC flags false. Privileged owner/daemon/local filesystem
+и binaries остаются trust boundary. Technical fixtures не выдаются за producer grant.

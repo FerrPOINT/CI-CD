@@ -12,6 +12,42 @@
 
 Доступ к Docker daemon, хостовой файловой системе, `.env`, bare Git-томам и backup-файлам считается привилегированным. Не передавайте реальные секреты через командную строку, Git, логи или скриншоты.
 
+## Owner-local PostgreSQL delivery
+
+Source packet: `forge-delivery --postgres`, отдельные protected PG root/policy/
+guard URL/runtime password из [ENV](ENV.md#owner-local-postgresql-delivery).
+Запускается только против выделенного temporary PostgreSQL target с actual enforced
+HBA/role topology. Permanent runtimes и их базы этот путь не принимает. Policy
+operator-controlled; owner/daemon и administrator остаются privileged trust boundary.
+
+Complete retained catalog и exact source/target schema должны пройти preflight.
+После application stop/login fence/session drain создаётся dump; fresh restore drill
+сверяет rows/sequences/schema. Migration меняет только новую shadow DB. Application
+получает отдельные reader/writer credentials; writer release следует после всех
+image/database/health/acceptance checks. Snapshot source остаётся fenced.
+
+Для известной failure до writer release explicit rollback связывает current CAS
+с verified backup и last-confirmed image, восстанавливает в ещё одну fresh DB и
+проверяет все checks. Source/failed DB drift, corrupt backup, unknown sessions или
+history блокируют восстановление. После release старый snapshot restore запрещён.
+RPO=0 только для acknowledged pre-drain writes. Post-release writes требуют нового
+snapshot/forward compatibility либо отдельного authoritative incident decision.
+
+После SIGKILL требуется original-key `--readback`. `--reconcile` наблюдает лишь
+фактически завершённый release при совпадающей serving pair; никаких command retries
+или automatic down migrations. Partial Unknown удерживает target для privileged
+расследования. Не удалять journals и не менять operation key для обхода hold.
+
+QA: tools `deploy/qa/postgres-tools.Dockerfile` добавляет pinned Python/Compose plugin
+к OCI tools; `scripts/verify-task-delivery.ps1 -Gate postgres` использует реальные
+runner/Git/artifact/images/PG application. Тот же явный набор immutable image IDs и
+external cache names, что для общего gate. Generated execution Compose сохраняется
+host-visible; child `sdlc-qa-forge-pg-*` и parent удаляются exact finally down, только
+own disposable PG/publication volumes. Root live/final Docker audit обязателен.
+[ADR-0022](adr/0022-owner-local-postgres-shadow-delivery.md),
+[plan/evidence](../plans/2026-10-08-mutable-postgres-delivery.md). Scoped PostgreSQL suite verified;
+full quality/publication evidence — [task verification](TASK_DELIVERY_VERIFICATION.md).
+
 ## Owner-local manifest delivery
 
 Контейнерный срез: тот же CLI с `--oci`, отдельными `CICD_LOCAL_OCI_ROOT/POLICY`

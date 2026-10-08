@@ -5,7 +5,7 @@ param(
     [Parameter(Mandatory)][string]$TargetCache,
     [Parameter(Mandatory)][string]$CargoCache,
     [Parameter(Mandatory)][string]$RustupCache,
-    [ValidateSet('full', 'delivery', 'oci')][string]$Gate = 'full',
+    [ValidateSet('full', 'delivery', 'oci', 'postgres')][string]$Gate = 'full',
     [string]$DockerContext = 'desktop-linux'
 )
 $ErrorActionPreference = 'Stop'
@@ -15,6 +15,7 @@ $project = 'sdlc-qa-forge-delivery-' + [guid]::NewGuid().ToString('N').Substring
 $compose = Join-Path $repo 'deploy/qa/task-delivery.compose.yml'
 $composeArgs = @('-f', $compose)
 if ($Gate -eq 'oci') { $composeArgs += @('-f', (Join-Path $repo 'deploy/qa/task-delivery-oci.compose.yml')) }
+if ($Gate -eq 'postgres') { $composeArgs += @('-f', (Join-Path $repo 'deploy/qa/task-delivery-postgres.compose.yml')) }
 $output = Join-Path $repo ('.local/task-delivery-qa/' + $project)
 [void](New-Item -ItemType Directory -Path $output -Force)
 $composeHost = Join-Path $output 'oci-compose'
@@ -29,7 +30,7 @@ foreach ($image in @($RustImage, $PostgresImage)) {
 function SourceHashes {
     $hashes = [ordered]@{}
     foreach ($entry in @(@{root=$repo; name='CI-CD'; paths=@('backend','deploy','scripts','openapi','.base-revision')},
-                        @{root=$sdk; name='services-base'; paths=@('crates','Cargo.toml','Cargo.lock','LICENSE')})) {
+                        @{root=$sdk; name='services-base'; paths=@('crates','Cargo.toml','Cargo.lock','LICENSE','scripts/platform_backup.py','scripts/platform_postgres.py','scripts/compose_helpers.py')})) {
         $paths = git -C $entry.root ls-files -- $entry.paths
         if ($LASTEXITCODE -ne 0) { throw 'Source inventory failed' }
         foreach ($path in $paths) { $hashes[$entry.name + '/' + $path] = (Get-FileHash -LiteralPath (Join-Path $entry.root $path) -Algorithm SHA256).Hash }
@@ -44,9 +45,10 @@ $variables = @{
     CICD_QA_TARGET_CACHE=$TargetCache; CICD_QA_CARGO_CACHE=$CargoCache;
     CICD_QA_RUSTUP_CACHE=$RustupCache; CICD_QA_GATE=$Gate
     CICD_QA_OCI_PROJECT=('sdlc-qa-forge-oci-' + $project.Substring($project.Length - 12))
+    CICD_QA_PG_PROJECT=('sdlc-qa-forge-pg-' + $project.Substring($project.Length - 12))
     CICD_QA_OCI_NETWORK=($project + '_qa'); CICD_QA_OCI_VOLUME=($project + '_delivery-qa')
     CICD_QA_OCI_COMPOSE_HOST=$composeHost
-    CICD_QA_OCI_COMPOSE_LOCAL=$(if ($Gate -eq 'oci' -and $IsWindows) { '/' + $project + '-compose' } else { $composeLocal })
+    CICD_QA_OCI_COMPOSE_LOCAL=$(if ($Gate -in @('oci','postgres') -and $IsWindows) { '/' + $project + '-compose' } else { $composeLocal })
 }
 $previous = @{}
 foreach ($key in $variables.Keys) {
@@ -57,7 +59,7 @@ $result = 1
 Write-Output "QA_PROJECT=$project"
 Write-Output "QA_EVIDENCE=$output"
 try {
-    if ($Gate -eq 'oci') {
+    if ($Gate -in @('oci','postgres')) {
         [void](New-Item -ItemType Directory -Path $composeHost)
         if ($IsWindows) {
             $junction = Join-Path ([IO.Path]::GetPathRoot($repo)) ($project + '-compose')
@@ -73,6 +75,24 @@ try {
     $result = $LASTEXITCODE
 } finally {
     try {
+        if ($Gate -eq 'postgres') {
+            $childCompose = Join-Path $output 'pg-compose.json'
+            if (Test-Path -LiteralPath $childCompose) {
+                docker --context $DockerContext compose -p $variables.CICD_QA_PG_PROJECT -f $childCompose down --remove-orphans
+                if ($LASTEXITCODE -ne 0) { throw 'Owned PostgreSQL child cleanup failed' }
+            }
+            $childRemaining = docker --context $DockerContext ps -aq --filter "label=com.docker.compose.project=$($variables.CICD_QA_PG_PROJECT)"
+            if ($LASTEXITCODE -ne 0 -or $childRemaining) { throw 'Owned PostgreSQL containers remain; preserve QA volumes' }
+            $pgVolume = $variables.CICD_QA_PG_PROJECT + '_postgres-data'
+            $ownedPg = docker --context $DockerContext volume ls -q --filter "name=^${pgVolume}$"
+            if ($LASTEXITCODE -ne 0) { throw 'Disposable PostgreSQL volume inventory failed' }
+            if ($ownedPg) {
+                $owner = docker --context $DockerContext volume inspect $pgVolume --format '{{index .Labels "com.docker.compose.project"}}'
+                if ($LASTEXITCODE -ne 0 -or $owner -ne $variables.CICD_QA_PG_PROJECT) { throw 'Disposable PostgreSQL ownership mismatch' }
+                docker --context $DockerContext volume rm $pgVolume
+                if ($LASTEXITCODE -ne 0) { throw 'Owned PostgreSQL volume cleanup failed' }
+            }
+        }
         if ($Gate -eq 'oci') {
             $childCompose = Join-Path $output 'oci-compose.json'
             if (Test-Path -LiteralPath $childCompose) {

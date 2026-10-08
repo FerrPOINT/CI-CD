@@ -1,5 +1,18 @@
 # Дата-модель Forge CI/CD
 
+PostgreSQL shadow source packet хранит отдельный filesystem journal:
+`forge/isolated-postgres-manifest/v1` связывает sealed candidate, exact image,
+system identifier/database, schema/history/rows/sequences fingerprint,
+backup directory и monotonic generation. `forge/isolated-pg-backup/v1` содержит
+dump SHA/source snapshot/previous manifest/RPO boundary; separate verified proof
+подтверждает actual fresh restore drill. Immutable intent предшествует dangerous
+commands; current/confirmed/generation pointers обновляются durable rename.
+Private runtime connection files не входят в exported evidence и mounted read-only.
+Это отдельная target DB schema, не изменение Forge tables или migration0039/0040.
+[ADR-0022](adr/0022-owner-local-postgres-shadow-delivery.md),
+[contract](contracts/MUTABLE_POSTGRES_DELIVERY.md). Scoped real PostgreSQL suite verified;
+quality evidence — [task verification](TASK_DELIVERY_VERIFICATION.md).
+
 OCI continuation добавляет isolated filesystem manifest/journal для
 `readonly_snapshot_v1`: actual data schema/SHA, retained descriptor artifact,
 immutable image/commit и container/check evidence. PostgreSQL schema/migration40

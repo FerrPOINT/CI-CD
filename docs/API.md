@@ -1,5 +1,27 @@
 # API v1 Specification — Forge CI/CD
 
+## Owner-local PostgreSQL CLI
+
+`forge-delivery --postgres` — отдельный privileged isolated executor, не новый
+HTTP endpoint. Он использует тот же strict `DeliveryCommand`/original lookup,
+machine ACL и sealed retained artifact. Policy/credentials/SQL/backup не принимаются
+через API. HTTP delivery POST сохраняет503, а GET static history не читает PostgreSQL
+или OCI history. OpenAPI не меняется.
+
+CLI stdout: `forge/local-postgres-readback/v1` с immutable original `receipt`,
+отдельным optional `reconciledReceipt`, current/confirmed manifest SHA и
+reconciliationNeeded. Receipt `forge/local-postgres-operation/v1`, scope
+`owner_local_isolated_verification`, содержит generation, database fingerprint,
+actual image/container и отдельные probes version/database/health/acceptance/endVersion.
+`dispatchAllowed`/`sdlcAcceptanceVerified` false. Typed pre-effect rejection:
+`forge/local-postgres-rejection/v1`, status blocked, fixed reason, exit1. Verified
+latest receipt exit0, остальные outcomes exit2. Ошибки privileged configuration/auth
+не являются proof отсутствия effect; required original-key readback сохраняется.
+
+Validation rejection до accepted intent не создаёт operation. После intent replay
+не повторяет dangerous commands. Partial Unknown не разрешает новый key.
+[Contract](contracts/MUTABLE_POSTGRES_DELIVERY.md), [операции](OPERATIONS.md#owner-local-postgresql-delivery).
+
 ## Owner-local manifest delivery
 
 `POST /api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations`
