@@ -1,9 +1,44 @@
 # CURRENT STATE — Forge CI/CD
 
-> **Производный снимок текущего состояния.** Сгенерирован из кода; authority — код и коммит, не этот файл. Обновлять при каждом изменении capability.
-> Снято: `2026-09-22`, ветка `main`; visual evidence перечислено в `docs/assets/screens/manifest.md`.
+> **Производный снимок текущего состояния.** Сверяется с кодом и evidence; authority — код и коммит, не этот файл. Обновлять при каждом изменении capability.
+> Снято: `2026-10-08`, candidate `feat/task-delivery-evidence-20261007`, не установленный runtime; visual evidence перечислено в `docs/assets/screens/manifest.md`.
 
 ## Что работает сейчас (Current verified)
+
+### Непринятое hardening reader fence и OCI recovery, 2026-10-08
+
+Последний завершённый frozen packet `0f560932eb2b`: PG3 PASS/0 FAIL
+(все пять SIGKILL checkpoints), OCI0 PASS/1 FAIL на исходном runner completion
+timeout.37 Python cases, row/SQL safety smoke, locked check и strict Clippy прошли;
+259-input source parity и exact own cleanup подтверждены. Full follow-ups не
+запускались. DNS/BuildKit session ошибки в том же окне требуют проверки offline
+preloaded-image path, не увеличения таймаутов. Старый failed8f596 packet сохранён:
+его backup rehearsal subprocess cause остаётся неизвестным. Подробности и hashes:
+[latest packet](TASK_DELIVERY_VERIFICATION.md#latest-frozen-native-packet-8-октября).
+
+После56f1217 найдены gaps PostgreSQL reader grants/snapshot inventory и OCI
+reconciliation после immutable checks. Source исправления и новые regressions
+описаны в [verification](TASK_DELIVERY_VERIFICATION.md#hardening-reader-fence-и-oci-recovery-2026-10-08).
+Первый packet прошёл10 Windows/WSL pure Python cases; свежий WSL/rootless Rust1.88 gate
+прошёл fmt/all-targets/all-features check/Clippy и219 workspace tests, включая4
+OCI recovery units. Scoped259 source hashes повторно сверены, cleanup complete.
+Последующее review исправляет writer history-view/rewrite/inheritance/FK routes,
+проверку historical PG proof и допустимые released writer sessions. Historical
+Windows26 pure cases и aggregate32 docs/tests PASS; native tests расширены.
+Свежий immutable epoch d92019b98cb3 проходит22 Linux pure cases, actual PG17.11
+SQL smoke и locked/offline feature check/strict Clippy; parent сверил259 hashes,
+0 mismatches. Исторический epoch4e95ebcac21f завершился PG2/3 FAILED на Compose
+stop timeout, а не успешным drain; explicit5s stop grace не увеличивает20s deadline
+и не повторяет Unknown. Отдельный d920 epoch завершился PG3/3 PASS2795.37s и OCI1/1
+PASS90.73s, но workspace FAILED137/1 на stat-cache regression; error route ещё
+не диагностирован. Exact own cleanup complete,20 baseline volumes сохранены.
+Последующий counter-review доказал numeric row hash collision. Current source
+использует lossless PostgreSQL record-text/strings, а не jsonb/float normalization;
+чистый production fingerprint RED repro стал GREEN. Новый native/normal/release
+gate для этого source ещё не принят. Прежние runtime PASS ниже не подтверждают
+lossless fix. PR88 Draft и full SDLC blocked.
+Documentation-only publication не включает локальные hardening source edits;
+новый docs head не заменяет code/native acceptance.
 
 ### PostgreSQL shadow delivery source continuation, 2026-10-08
 
@@ -14,11 +49,16 @@ Known pre-release failure допускает verified snapshot + previous image 
 fresh DB с сохранением rows/sequences. После release old snapshot restore запрещён.
 Original-key replay не повторяет commands; partial Unknown удерживает target,
 completed-release reconcile сохраняет post-release writes и container identity.
-Real PG suite3/3 и OCI regression1/1 PASS; evidence и пределы:
+Исторические source gates опубликованного56f1217: PG suite3/3 и OCI1/1 PASS;
+они не подтверждают последующий hardening. Evidence и пределы:
 [task verification](TASK_DELIVERY_VERIFICATION.md), [ADR-0022](adr/0022-owner-local-postgres-shadow-delivery.md).
 RPO=0 только для acknowledged pre-drain writes. Production/native SDLC admission
 и full business acceptance недоступны; HTTP dispatch503/оба SDLC flags false.
 Новый Forge SQL migration не добавлен,0039/0040 и Base pin сохранены.
+PR87 ещё OPEN: текущий PR88 diff к main включает prerequisite0039 и own0040.
+До release-ready нужен merge PR87 и повторный final diff/gate, где единственная
+новая Forge migration —0040. Удаление prerequisite или force push не допускаются;
+owner-local verification и исторические CI не закрывают этот release gate.
 
 ### OCI/read-only data source continuation, 2026-10-08
 
