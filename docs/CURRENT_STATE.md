@@ -39,6 +39,23 @@ gate для этого source ещё не принят. Прежние runtime P
 lossless fix. PR88 Draft и full SDLC blocked.
 Documentation-only publication не включает локальные hardening source edits;
 новый docs head не заменяет code/native acceptance.
+Последующий local OCI fixture guard проходит11 pure cases и fresh locked
+check/Clippy на260 inputs, но separate diagnostic4a94b411e888 падает на
+preparation до build (0/1). Его причина ещё неизвестна, cleanup/parity complete;
+PostgreSQL/full gates в нём не выполнялись. Guard остаётся unpublished,
+documentation headd51c260 имеет четыре CI SUCCESS, не native guard acceptance.
+Свежий diagnostic e6e304554e4d проходит offline preparation, locked check и
+strict Clippy, но actual OCI0/1 снова падает на исходном runner completion
+timeout. Current/frozen260 parity и exact own cleanup подтверждены; PG/full
+gates в нём не выполнялись. Причина pipeline ещё не доказана;
+[отдельная запись](TASK_DELIVERY_VERIFICATION.md#offline-oci-runner-diagnostic-e6e304554e4d).
+Следующий exact-source diagnostic a7c3dc379a3c проходит actual OCI1/1,
+включая real runner/artifact/image/data/rollback и оба SIGKILL recovery cases,
+при неизменных deadlines.260-input parity и exact cleanup подтверждены.
+Это scoped owner-local acceptance, не полный native/SDLC gate; PG и full
+follow-ups в нём не выполнялись.20 pure OCI tests PASS Windows/Linux.
+[Текущая OCI-приёмка](TASK_DELIVERY_VERIFICATION.md#offline-oci-actual-acceptance-a7c3dc379a3c)
+не объясняет однозначно исторические failed packets и не разрешает source rollout.
 
 ### PostgreSQL shadow delivery source continuation, 2026-10-08
 
