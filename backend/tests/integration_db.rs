@@ -2625,11 +2625,12 @@ async fn git_smart_http_uses_project_membership_when_auth_enabled() {
         assert!(status.success());
     }
 
+    let private_repository_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO repositories (id, name, visibility) VALUES \
          ($1, $2, 'private'), ($3, $4, 'public')",
     )
-    .bind(Uuid::new_v4())
+    .bind(private_repository_id)
     .bind(&private_repo)
     .bind(Uuid::new_v4())
     .bind(&public_repo)
@@ -2637,13 +2638,16 @@ async fn git_smart_http_uses_project_membership_when_auth_enabled() {
     .await
     .expect("insert repositories");
     let project_id = Uuid::new_v4();
-    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
-        .bind(project_id)
-        .bind(format!("it-git-project-{}", namespace.simple()))
-        .bind(format!("http://127.0.0.1:22802/git/{private_repo}.git"))
-        .execute(&pool)
-        .await
-        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO projects (id, name, repository_url, repository_id) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(project_id)
+    .bind(format!("it-git-project-{}", namespace.simple()))
+    .bind(format!("http://127.0.0.1:22802/git/{private_repo}.git"))
+    .bind(private_repository_id)
+    .execute(&pool)
+    .await
+    .expect("insert project");
     let lookalike_project_id = Uuid::new_v4();
     sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
         .bind(lookalike_project_id)
@@ -3202,14 +3206,25 @@ jobs:
     )
     .await;
 
-    let project_id = Uuid::new_v4();
-    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
-        .bind(project_id)
-        .bind(format!("it-v1-dag-{}", namespace.simple()))
-        .bind(format!("http://127.0.0.1/git/{repo_name}.git"))
+    let repository_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO repositories (id, name) VALUES ($1, $2)")
+        .bind(repository_id)
+        .bind(&repo_name)
         .execute(&pool)
         .await
-        .expect("insert project");
+        .expect("register existing bare repository identity");
+
+    let project_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO projects (id, name, repository_url, repository_id) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(project_id)
+    .bind(format!("it-v1-dag-{}", namespace.simple()))
+    .bind(format!("http://127.0.0.1/git/{repo_name}.git"))
+    .bind(repository_id)
+    .execute(&pool)
+    .await
+    .expect("insert project");
 
     let app = authenticated_app_with_git(
         pool.clone(),
@@ -8908,7 +8923,7 @@ async fn migration_catalog_contains_exact_historical_36_and_37() {
     let catalog = cicd::migrations().await.unwrap();
     assert_eq!(
         catalog.iter().map(|m| m.version).collect::<Vec<_>>(),
-        (1..=39).collect::<Vec<_>>()
+        (1..=39).chain([90]).collect::<Vec<_>>()
     );
     for (version, description, sql, checksum) in HISTORICAL_DEPLOYMENT_MIGRATIONS {
         let migration = catalog
@@ -8941,7 +8956,7 @@ async fn migration_catalog_fresh_and_prior_35_or_37_upgrade() {
                 .fetch_all(&pool)
                 .await
                 .unwrap();
-        assert_eq!(versions, (1..=39).collect::<Vec<_>>());
+        assert_eq!(versions, (1..=39).chain([90]).collect::<Vec<_>>());
         let history = migration_catalog_history(&pool).await;
         catalog.run(&pool).await.unwrap();
         assert_eq!(migration_catalog_history(&pool).await, history);
@@ -9056,7 +9071,7 @@ async fn migration_catalog_checksum_mismatch_does_not_change_history() {
     let (pool, admin, schema) = migration_catalog_empty_pool().await;
     catalog.run(&pool).await.unwrap();
     let history = migration_catalog_history(&pool).await;
-    let mut changed = migration_catalog_subset(&catalog, 39);
+    let mut changed = migration_catalog_subset(&catalog, 90);
     let migration = changed
         .migrations
         .to_mut()
@@ -9142,7 +9157,7 @@ async fn migration_catalog_accepts_historical_38_and_preserves_outbox() {
         .find(|m| m.version == 38)
         .expect("version 38");
     assert_eq!(migration.sql, historical_sql);
-    let mut changed = migration_catalog_subset(&catalog, 39);
+    let mut changed = migration_catalog_subset(&catalog, 90);
     changed
         .migrations
         .to_mut()
