@@ -1090,6 +1090,28 @@ async fn scoped_api_tokens_limit_project_routes_and_soft_revoke() {
     .await
     .expect("insert scoped token projects");
 
+    // Historical URL tails no longer establish repository ownership. Register
+    // exact catalog identities so this remains a foreign-project PAT test.
+    let repository_a = Uuid::new_v4();
+    let repository_b = Uuid::new_v4();
+    for (project, repository, name) in [
+        (project_a, repository_a, &repo_a),
+        (project_b, repository_b, &repo_b),
+    ] {
+        sqlx::query("INSERT INTO repositories(id,name) VALUES($1,$2)")
+            .bind(repository)
+            .bind(name)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE projects SET repository_id=$2 WHERE id=$1")
+            .bind(project)
+            .bind(repository)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
     let app = cicd::api::app_with_auth_secret(
         Some(pool.clone()),
         Some(format!("scoped-token-secret-{namespace}")),
@@ -1228,6 +1250,25 @@ async fn scoped_api_tokens_limit_project_routes_and_soft_revoke() {
         .execute(&pool)
         .await
         .expect("cleanup scoped token projects");
+    for table in ["repository_aliases", "repository_pr_counters"] {
+        sqlx::query(&format!(
+            "DELETE FROM {table} WHERE repository_id = ANY($1)"
+        ))
+        .bind([repository_a, repository_b])
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query("DELETE FROM repository_catalog WHERE id = ANY($1)")
+        .bind([repository_a, repository_b])
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM repositories WHERE id = ANY($1)")
+        .bind([repository_a, repository_b])
+        .execute(&pool)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
