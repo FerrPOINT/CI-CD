@@ -1264,12 +1264,13 @@ async fn list_schedules(
 ) -> ApiResult<Vec<Schedule>> {
     Ok(Json(sqlx::query_as("SELECT id, project_id, cron, git_ref, enabled, next_fire_at, last_fired_at, last_fire_error, created_at FROM schedules WHERE project_id = $1 ORDER BY created_at DESC").bind(project_id).fetch_all(pool(&state)?).await.map_err(ApiError::internal)?))
 }
-#[utoipa::path(post, path = "/api/v1/projects/{project_id}/schedules", tag = "schedules", request_body = ScheduleInput, params(("project_id" = Uuid, Path)), responses((status = 200, body = Schedule), (status = 400)))]
+#[utoipa::path(post, path = "/api/v1/projects/{project_id}/schedules", tag = "schedules", request_body = ScheduleInput, params(("project_id" = Uuid, Path)), responses((status = 200, body = Schedule), (status = 400), (status = 409, description = "Namespace resource is read-only")))]
 async fn create_schedule(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
     Json(input): Json<ScheduleInput>,
 ) -> ApiResult<Schedule> {
+    crate::repository_catalog::require_project_writable(pool(&state)?, project_id).await?;
     let cron = input.cron.trim();
     let git_ref = input.git_ref.trim();
     let enabled = input.enabled.unwrap_or(true);
@@ -1279,12 +1280,19 @@ async fn create_schedule(
     let next_fire_at = schedule_next_fire_at(cron, enabled)?;
     Ok(Json(sqlx::query_as("INSERT INTO schedules (id, project_id, cron, git_ref, enabled, next_fire_at) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, project_id, cron, git_ref, enabled, next_fire_at, last_fired_at, last_fire_error, created_at").bind(Uuid::new_v4()).bind(project_id).bind(cron).bind(git_ref).bind(enabled).bind(next_fire_at).fetch_one(pool(&state)?).await.map_err(ApiError::internal)?))
 }
-#[utoipa::path(patch, path = "/api/v1/schedules/{schedule_id}", tag = "schedules", request_body = ScheduleInput, params(("schedule_id" = Uuid, Path)), responses((status = 200, body = Schedule), (status = 400), (status = 404)))]
+#[utoipa::path(patch, path = "/api/v1/schedules/{schedule_id}", tag = "schedules", request_body = ScheduleInput, params(("schedule_id" = Uuid, Path)), responses((status = 200, body = Schedule), (status = 400), (status = 404), (status = 409, description = "Namespace resource is read-only")))]
 async fn update_schedule(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     Json(input): Json<ScheduleInput>,
 ) -> ApiResult<Schedule> {
+    let project_id: Uuid = sqlx::query_scalar("SELECT project_id FROM schedules WHERE id=$1")
+        .bind(id)
+        .fetch_optional(pool(&state)?)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(ApiError::not_found)?;
+    crate::repository_catalog::require_project_writable(pool(&state)?, project_id).await?;
     let cron = input.cron.trim();
     let git_ref = input.git_ref.trim();
     let enabled = input.enabled.unwrap_or(true);
@@ -1294,11 +1302,18 @@ async fn update_schedule(
     let next_fire_at = schedule_next_fire_at(cron, enabled)?;
     Ok(Json(sqlx::query_as("UPDATE schedules SET cron = $2, git_ref = $3, enabled = $4, next_fire_at = $5, last_fire_error = NULL WHERE id = $1 RETURNING id, project_id, cron, git_ref, enabled, next_fire_at, last_fired_at, last_fire_error, created_at").bind(id).bind(cron).bind(git_ref).bind(enabled).bind(next_fire_at).fetch_optional(pool(&state)?).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?))
 }
-#[utoipa::path(delete, path = "/api/v1/schedules/{schedule_id}", tag = "schedules", params(("schedule_id" = Uuid, Path)), responses((status = 200), (status = 404)))]
+#[utoipa::path(delete, path = "/api/v1/schedules/{schedule_id}", tag = "schedules", params(("schedule_id" = Uuid, Path)), responses((status = 200), (status = 404), (status = 409, description = "Namespace resource is read-only")))]
 async fn delete_schedule(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
 ) -> ApiResult<serde_json::Value> {
+    let project_id: Uuid = sqlx::query_scalar("SELECT project_id FROM schedules WHERE id=$1")
+        .bind(id)
+        .fetch_optional(pool(&state)?)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(ApiError::not_found)?;
+    crate::repository_catalog::require_project_writable(pool(&state)?, project_id).await?;
     let id: Uuid = sqlx::query_scalar("DELETE FROM schedules WHERE id = $1 RETURNING id")
         .bind(id)
         .fetch_optional(pool(&state)?)

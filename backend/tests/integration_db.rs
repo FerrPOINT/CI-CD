@@ -9522,6 +9522,25 @@ async fn namespace_git_shares_human_access_without_project_memberships() {
             "read-only and foreign-scoped credentials remain fenced"
         );
     }
+    let schedule_input = serde_json::json!({"cron":"0 0 * * *","git_ref":"main","enabled":false});
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/projects/{project}/schedules"))
+                .header("authorization", format!("Bearer {developer_access}"))
+                .header("content-type", "application/json")
+                .body(Body::from(schedule_input.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "active namespace schedule remains writable"
+    );
+    let schedule = response_json(response).await;
+    let schedule_id = schedule["id"].as_str().unwrap();
     let archived = OwnerCommand {
         generation: 2,
         operation_id: Uuid::new_v4(),
@@ -9530,6 +9549,40 @@ async fn namespace_git_shares_human_access_without_project_memberships() {
     };
     sqlx::query("UPDATE forge_namespace_bindings SET generation=2,state='archived',command=$2 WHERE resource_id=$1")
         .bind(group).bind(serde_json::to_value(archived).unwrap()).execute(&pool).await.unwrap();
+    for (method, path) in [
+        ("POST", format!("/api/v1/projects/{project}/schedules")),
+        ("PATCH", format!("/api/v1/schedules/{schedule_id}")),
+        ("DELETE", format!("/api/v1/schedules/{schedule_id}")),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .header("authorization", format!("Bearer {developer_access}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(schedule_input.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::CONFLICT,
+            "archived schedule use case: {method}"
+        );
+    }
+    let row: (bool, String) = sqlx::query_as("SELECT enabled,git_ref FROM schedules WHERE id=$1")
+        .bind(schedule_id.parse::<Uuid>().unwrap())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        row,
+        (false, "main".into()),
+        "archived schedule row is preserved"
+    );
     let response = app
         .clone()
         .oneshot(

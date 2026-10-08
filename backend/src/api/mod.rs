@@ -400,6 +400,12 @@ impl ApiError {
         }
     }
     pub(crate) fn internal(error: sqlx::Error) -> Self {
+        if let Some(database) = error.as_database_error()
+            && database.code().as_deref() == Some("42501")
+            && database.message() == "namespace_resource_read_only"
+        {
+            return Self::conflict("namespace_resource_read_only");
+        }
         tracing::error!(%error, "internal API error");
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,

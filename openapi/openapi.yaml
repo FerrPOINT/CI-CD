@@ -2562,6 +2562,8 @@ paths:
                 $ref: '#/components/schemas/Schedule'
         '400':
           description: ''
+        '409':
+          description: Namespace resource is read-only
   /api/v1/projects/{project_id}/secrets:
     get:
       tags:
@@ -3877,6 +3879,8 @@ paths:
           description: ''
         '404':
           description: ''
+        '409':
+          description: Namespace resource is read-only
     patch:
       tags:
       - schedules
@@ -3905,6 +3909,8 @@ paths:
           description: ''
         '404':
           description: ''
+        '409':
+          description: Namespace resource is read-only
   /api/v1/secrets/{secret_id}:
     delete:
       tags:
