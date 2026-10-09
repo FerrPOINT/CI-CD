@@ -1041,9 +1041,11 @@ async fn run_job_inner(
         status = child.wait() => status,
         _ = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs as u64)) => {
             let message = format!("runner: job timed out after {timeout_secs}s, killing");
-            append_attempt_log(&pool, job_id, attempt_id, &message).await?;
             let _ = child.start_kill();
-            let _ = child.wait().await;
+            if confirmed_process_exit(child.wait().await, job_id, attempt_id).is_none() {
+                return Ok(());
+            }
+            append_attempt_log(&pool, job_id, attempt_id, &message).await?;
             if let Some(task) = stdout_task.take() {
                 await_stdout_task(task).await?;
             }
@@ -1085,6 +1087,10 @@ async fn run_job_inner(
         }
     };
 
+    let Some(exit_status) = confirmed_process_exit(exit_status, job_id, attempt_id) else {
+        return Ok(());
+    };
+
     running.lock().await.remove(&job_id);
 
     if let Some(task) = stdout_task {
@@ -1095,16 +1101,11 @@ async fn run_job_inner(
     }
 
     let (final_status, exit_code, error_tail) = match exit_status {
-        Ok(status) if status.success() => ("success", status.code(), None),
-        Ok(status) => (
+        status if status.success() => ("success", status.code(), None),
+        status => (
             "failed",
             status.code(),
             Some(format!("runner: process exited with status {status}")),
-        ),
-        Err(error) => (
-            "failed",
-            None,
-            Some(format!("runner: failed to wait for process: {error}")),
         ),
     };
     let mut final_status = final_status;
@@ -1174,6 +1175,21 @@ async fn run_job_inner(
     refresh_stage(pool.clone(), job.id).await?;
     finish_workspace_retention(&pool, &lease, owned_workspace, config.keep_workspace).await;
     Ok(())
+}
+
+fn confirmed_process_exit(
+    result: std::io::Result<std::process::ExitStatus>,
+    job_id: Uuid,
+    attempt_id: Uuid,
+) -> Option<std::process::ExitStatus> {
+    match result {
+        Ok(status) => Some(status),
+        Err(error) => {
+            tracing::error!(%job_id, %attempt_id, %error,
+                "process termination unconfirmed; lease, process identity and workspace retained for reconciliation");
+            None
+        }
+    }
 }
 
 async fn finish_workspace_retention(
@@ -1939,6 +1955,37 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn embedded_wait_error_is_not_a_confirmed_terminal_exit() {
+        for kind in [
+            std::io::ErrorKind::Other,
+            std::io::ErrorKind::PermissionDenied,
+        ] {
+            assert!(
+                confirmed_process_exit(
+                    Err(std::io::Error::new(kind, "process wait fixture")),
+                    Uuid::new_v4(),
+                    Uuid::new_v4(),
+                )
+                .is_none()
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn confirmed_embedded_exit_preserves_success_and_failure_status() {
+        for code in [0, 7] {
+            let status = tokio::process::Command::new("sh")
+                .args(["-c", &format!("exit {code}")])
+                .status()
+                .await;
+            let confirmed = confirmed_process_exit(status, Uuid::new_v4(), Uuid::new_v4())
+                .expect("a successful wait confirms termination even when the command failed");
+            assert_eq!(confirmed.code(), Some(code));
+        }
+    }
 
     #[test]
     fn docker_execution_uses_the_declared_image_and_isolated_workspace_volume() {
