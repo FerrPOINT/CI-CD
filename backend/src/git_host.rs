@@ -775,7 +775,7 @@ pub async fn canonical_service(
 }
 
 /// Internal endpoint called by the generated `post-receive` hook.
-/// Finds a project whose repository_url points at this repo and triggers a pipeline.
+/// Resolves repository identity and executes its saved push configuration decision.
 #[utoipa::path(
     post,
     path = "/api/v1/internal/git-push",
@@ -834,18 +834,9 @@ pub async fn internal_git_push(
         .as_deref()
         .filter(|rev| is_probable_object_id(rev))
         .map(|rev| git_push_idempotency_key(&name, &event.ref_name, rev));
-    let project_ids: Vec<Uuid> =
-        sqlx::query_scalar("SELECT id FROM projects WHERE repository_id=$1 ORDER BY id")
-            .bind(repository_id)
-            .fetch_all(pool)
-            .await
-            .map_err(ApiError::internal)?;
-    if project_ids.len() > 1 {
-        return Err(ApiError::conflict(
-            "multiple_delivery_configs_require_explicit_trigger",
-        ));
-    }
-    let project_id = project_ids.into_iter().next();
+    let project_id =
+        crate::delivery_configs::push_decision(pool, repository_id, idempotency_key.as_deref())
+            .await?;
     match project_id {
         Some(project_id) => {
             let outcome = crate::api::create_pipeline_with_vars_idempotent(

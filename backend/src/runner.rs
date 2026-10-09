@@ -126,7 +126,9 @@ pub async fn run_job_with_config(
     }
     let mut guard = running.lock().await;
     // Clear an unstarted reservation; an unconfirmed physical process keeps its PID.
-    if guard.get(&job_id) == Some(&0) { guard.remove(&job_id); }
+    if guard.get(&job_id) == Some(&0) {
+        guard.remove(&job_id);
+    }
 }
 
 async fn finish_job_after_runner_error(pool: &PgPool, job_id: Uuid, error: &ApiError) {

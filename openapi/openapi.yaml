@@ -418,6 +418,65 @@ paths:
           - integer
           - 'null'
           format: int64
+      - name: search
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: group_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogPage'
+  /api/v1/catalog/repositories:
+    get:
+      tags:
+      - namespaces
+      operationId: forge_repository_catalog_all
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: search
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: group_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
       responses:
         '200':
           description: ''
@@ -444,6 +503,124 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CatalogRepository'
+  /api/v1/catalog/repositories/{id}/delivery-config-operations/{operation}:
+    get:
+      tags:
+      - delivery-configurations
+      operationId: forge_delivery_readback
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: operation
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryConfig'
+        '404':
+          description: Original operation not found
+  /api/v1/catalog/repositories/{id}/delivery-configs:
+    get:
+      tags:
+      - delivery-configurations
+      operationId: forge_delivery_list
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: search
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: unbound
+        in: query
+        required: false
+        schema:
+          type:
+          - boolean
+          - 'null'
+      - name: registry_instance_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: namespace_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigPage'
+    post:
+      tags:
+      - delivery-configurations
+      operationId: forge_delivery_create
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateConfig'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryConfig'
+        '409':
+          description: Original operation conflict
   /api/v1/catalog/repositories/{id}/delivery-configs/{project_id}:
     put:
       tags:
@@ -465,6 +642,94 @@ paths:
       responses:
         '200':
           description: Explicit stable repository/config mapping
+  /api/v1/catalog/repositories/{id}/deployments:
+    get:
+      tags:
+      - workspace-projects
+      operationId: forge_workspace_repository_deployments
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: search
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: repository_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: configuration_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: status
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: git_ref
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: since
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: date-time
+      - name: until
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: date-time
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionPage'
   /api/v1/catalog/repositories/{id}/group:
     put:
       tags:
@@ -492,6 +757,94 @@ paths:
                 $ref: '#/components/schemas/AttachReadback'
         '409':
           description: Already attached or conflicting original operation
+  /api/v1/catalog/repositories/{id}/pipelines:
+    get:
+      tags:
+      - workspace-projects
+      operationId: forge_workspace_repository_pipelines
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: search
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: repository_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: configuration_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: status
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: git_ref
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: since
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: date-time
+      - name: until
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: date-time
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionPage'
   /api/v1/catalog/repositories/{id}/pulls:
     get:
       tags:
@@ -627,6 +980,21 @@ paths:
           - integer
           - 'null'
           format: int64
+      - name: search
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: group_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
       responses:
         '200':
           description: ''
@@ -666,6 +1034,127 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TaskRef'
+  /api/v1/catalog/repositories/{id}/push-config:
+    get:
+      tags:
+      - delivery-configurations
+      operationId: forge_delivery_push_get
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PushConfig'
+    put:
+      tags:
+      - delivery-configurations
+      operationId: forge_delivery_push_put
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PushConfig'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PushConfig'
+  /api/v1/delivery-configurations:
+    get:
+      tags:
+      - delivery-configurations
+      operationId: forge_delivery_unbound
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: search
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: unbound
+        in: query
+        required: false
+        schema:
+          type:
+          - boolean
+          - 'null'
+      - name: registry_instance_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: namespace_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigPage'
+  /api/v1/delivery-configurations/{id}:
+    get:
+      tags:
+      - delivery-configurations
+      operationId: forge_delivery_get
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryConfig'
   /api/v1/deployments/{deployment_id}/approvals:
     get:
       tags:
@@ -889,6 +1378,21 @@ paths:
           - integer
           - 'null'
           format: int64
+      - name: search
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: group_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
       responses:
         '200':
           description: ''
@@ -932,7 +1436,7 @@ paths:
       - git
       summary: |-
         Internal endpoint called by the generated `post-receive` hook.
-        Finds a project whose repository_url points at this repo and triggers a pipeline.
+        Resolves repository identity and executes its saved push configuration decision.
       operationId: internal_git_push
       requestBody:
         content:
@@ -4007,6 +4511,422 @@ paths:
           description: ''
         '404':
           description: ''
+  /api/v1/workspace-pipelines:
+    get:
+      tags:
+      - workspace-projects
+      operationId: forge_workspace_all_pipelines
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: search
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: repository_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: configuration_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: status
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: git_ref
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: since
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: date-time
+      - name: until
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: date-time
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionPage'
+  /api/v1/workspace-projects:
+    get:
+      tags:
+      - workspace-projects
+      operationId: forge_workspace_list
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: search
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: repository_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: configuration_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: status
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: git_ref
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: since
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: date-time
+      - name: until
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: date-time
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspacePage'
+        '503':
+          description: Tracker project catalog unavailable
+  /api/v1/workspace-projects/{registry}/{namespace}:
+    get:
+      tags:
+      - workspace-projects
+      operationId: forge_workspace_get
+      parameters:
+      - name: registry
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: namespace
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceProject'
+  /api/v1/workspace-projects/{registry}/{namespace}/deployments:
+    get:
+      tags:
+      - workspace-projects
+      operationId: forge_workspace_deployments
+      parameters:
+      - name: registry
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: namespace
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: search
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: repository_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: configuration_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: status
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: git_ref
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: since
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: date-time
+      - name: until
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: date-time
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionPage'
+  /api/v1/workspace-projects/{registry}/{namespace}/pipelines:
+    get:
+      tags:
+      - workspace-projects
+      operationId: forge_workspace_pipelines
+      parameters:
+      - name: registry
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: namespace
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: search
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: repository_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: configuration_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: status
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: git_ref
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: since
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: date-time
+      - name: until
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: date-time
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecutionPage'
+  /api/v1/workspace-projects/{registry}/{namespace}/summary:
+    get:
+      tags:
+      - workspace-projects
+      operationId: forge_workspace_summary
+      parameters:
+      - name: registry
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: namespace
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceSummary'
+  /api/v1/workspace-summary:
+    get:
+      tags:
+      - workspace-projects
+      operationId: forge_workspace_all_summary
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkspaceSummary'
   /git/{repo}/git-receive-pack:
     post:
       tags:
@@ -4537,6 +5457,34 @@ components:
           type: string
         short_sha:
           type: string
+    ConfigPage:
+      type: object
+      required:
+      - items
+      - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeliveryConfig'
+        total:
+          type: integer
+          format: int64
+    CreateConfig:
+      type: object
+      required:
+      - operation_id
+      - name
+      - default_branch
+      properties:
+        default_branch:
+          type: string
+        name:
+          type: string
+        operation_id:
+          type: string
+          format: uuid
+      additionalProperties: false
     CreateDeployment:
       type: object
       required:
@@ -4780,6 +5728,37 @@ components:
       properties:
         deleted:
           type: string
+    DeliveryConfig:
+      type: object
+      required:
+      - id
+      - name
+      - repository_url
+      - default_branch
+      - created_at
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        default_branch:
+          type: string
+        id:
+          type: string
+          format: uuid
+        max_running_jobs:
+          type:
+          - integer
+          - 'null'
+          format: int32
+        name:
+          type: string
+        repository_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        repository_url:
+          type: string
     Deployment:
       type: object
       required:
@@ -4964,6 +5943,76 @@ components:
           type:
           - string
           - 'null'
+    ExecutionPage:
+      type: object
+      required:
+      - items
+      - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExecutionRow'
+        total:
+          type: integer
+          format: int64
+    ExecutionRow:
+      type: object
+      required:
+      - namespace
+      - id
+      - repository_id
+      - repository_name
+      - configuration_id
+      - configuration_name
+      - status
+      - git_ref
+      - created_at
+      properties:
+        approval_state:
+          type:
+          - string
+          - 'null'
+        commit_sha:
+          type:
+          - string
+          - 'null'
+        configuration_id:
+          type: string
+          format: uuid
+        configuration_name:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        environment_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        environment_name:
+          type:
+          - string
+          - 'null'
+        git_ref:
+          type: string
+        id:
+          type: string
+          format: uuid
+        namespace:
+          $ref: '#/components/schemas/NamespaceRef'
+        pipeline_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        repository_id:
+          type: string
+          format: uuid
+        repository_name:
+          type: string
+        status:
+          type: string
     GitPushEvent:
       type: object
       required:
@@ -6048,6 +7097,15 @@ components:
           $ref: '#/components/schemas/TaskRef'
         task_key:
           type: string
+    PushConfig:
+      type: object
+      properties:
+        configuration_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      additionalProperties: false
     Readiness:
       type: object
       required:
@@ -7248,6 +8306,108 @@ components:
           format: uuid
         url:
           type: string
+    WorkspacePage:
+      type: object
+      required:
+      - items
+      - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/WorkspaceProject'
+        total:
+          type: integer
+          format: int64
+    WorkspaceProject:
+      type: object
+      required:
+      - registry_instance_id
+      - namespace_id
+      - tracker_instance_id
+      - tracker_project_id
+      - generation
+      - name
+      - project_key
+      - state
+      - observed_at
+      - stale
+      - repositories
+      properties:
+        generation:
+          type: integer
+          format: int64
+        git_state:
+          type:
+          - string
+          - 'null'
+        group_id:
+          type:
+          - string
+          - 'null'
+          format: uuid
+        group_slug:
+          type:
+          - string
+          - 'null'
+        latest_status:
+          type:
+          - string
+          - 'null'
+        name:
+          type: string
+        namespace_id:
+          type: string
+          format: uuid
+        observed_at:
+          type: string
+          format: date-time
+        project_key:
+          type: string
+        registry_instance_id:
+          type: string
+          format: uuid
+        repositories:
+          type: integer
+          format: int64
+        stale:
+          type: boolean
+        state:
+          type: string
+        tracker_instance_id:
+          type: string
+          format: uuid
+        tracker_project_id:
+          type: string
+          format: uuid
+    WorkspaceSummary:
+      type: object
+      required:
+      - projects
+      - repositories
+      - configurations
+      - queued
+      - running
+      - failed
+      properties:
+        configurations:
+          type: integer
+          format: int64
+        failed:
+          type: integer
+          format: int64
+        projects:
+          type: integer
+          format: int64
+        queued:
+          type: integer
+          format: int64
+        repositories:
+          type: integer
+          format: int64
+        running:
+          type: integer
+          format: int64
 tags:
 - name: health
   description: Liveness/readiness

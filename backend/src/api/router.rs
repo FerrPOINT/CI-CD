@@ -148,6 +148,66 @@ pub(crate) fn build_router_with_cors(
         )
         .merge(crate::platform::routes())
         .merge(crate::runner_protocol::routes())
+        .route(
+            "/api/v1/workspace-projects",
+            get(crate::workspace_projects::list),
+        )
+        .route(
+            "/api/v1/workspace-projects/{registry}/{namespace}",
+            get(crate::workspace_projects::get),
+        )
+        .route(
+            "/api/v1/workspace-projects/{registry}/{namespace}/summary",
+            get(crate::workspace_projects::summary),
+        )
+        .route(
+            "/api/v1/workspace-projects/{registry}/{namespace}/pipelines",
+            get(crate::workspace_projects::pipelines),
+        )
+        .route(
+            "/api/v1/workspace-projects/{registry}/{namespace}/deployments",
+            get(crate::workspace_projects::deployments),
+        )
+        .route(
+            "/api/v1/catalog/repositories/{id}/pipelines",
+            get(crate::workspace_projects::repository_pipelines),
+        )
+        .route(
+            "/api/v1/catalog/repositories/{id}/deployments",
+            get(crate::workspace_projects::repository_deployments),
+        )
+        .route(
+            "/api/v1/delivery-configurations",
+            get(crate::delivery_configs::unbound),
+        )
+        .route(
+            "/api/v1/delivery-configurations/{id}",
+            get(crate::delivery_configs::get),
+        )
+        .route(
+            "/api/v1/catalog/repositories/{id}/delivery-configs",
+            get(crate::delivery_configs::list).post(crate::delivery_configs::create),
+        )
+        .route(
+            "/api/v1/catalog/repositories/{id}/push-config",
+            get(crate::delivery_configs::push_get).put(crate::delivery_configs::push_put),
+        )
+        .route(
+            "/api/v1/workspace-pipelines",
+            get(crate::workspace_projects::all_pipelines),
+        )
+        .route(
+            "/api/v1/workspace-summary",
+            get(crate::workspace_projects::all_summary),
+        )
+        .route(
+            "/api/v1/catalog/repositories",
+            get(crate::repository_catalog::all),
+        )
+        .route(
+            "/api/v1/catalog/repositories/{id}/delivery-config-operations/{operation}",
+            get(crate::delivery_configs::readback),
+        )
         .route("/api/v1/projects", get(list_projects).post(create_project))
         .route(
             "/api/v1/git-groups/{id}/repositories",

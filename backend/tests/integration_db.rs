@@ -9612,3 +9612,468 @@ async fn namespace_git_shares_human_access_without_project_memberships() {
     );
     tokio::fs::remove_dir_all(root).await.unwrap();
 }
+
+async fn workspace_fixture(
+    pool: &sqlx::PgPool,
+    namespace: Uuid,
+    slug: &str,
+) -> (Uuid, Uuid, sdlc_shared::resource_context::OwnerCommand) {
+    use sdlc_shared::resource_context::{NamespaceRef, OwnerCommand, ResourceKind, ResourceRef};
+    let group = Uuid::new_v4();
+    let repository = Uuid::new_v4();
+    let registry: Uuid = std::env::var("CICD_NAMESPACE__REGISTRY_INSTANCE_ID")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let instance: Uuid = std::env::var("CICD_NAMESPACE__INSTANCE_ID")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let command = OwnerCommand {
+        schema_version: 1,
+        namespace: NamespaceRef {
+            registry_instance_id: registry,
+            namespace_id: namespace,
+        },
+        resource: ResourceRef {
+            instance_id: instance,
+            kind: ResourceKind::GitGroup,
+            resource_id: group,
+        },
+        operation_id: Uuid::new_v4(),
+        generation: 1,
+        state: "active".into(),
+        create_spec: None,
+    };
+    sqlx::query("INSERT INTO git_groups(id,slug,name) VALUES($1,$2,'Same project')")
+        .bind(group)
+        .bind(slug)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO forge_namespace_bindings(resource_id,registry_instance_id,namespace_id,generation,state,command) VALUES($1,$2,$3,1,'active',$4)").bind(group).bind(registry).bind(namespace).bind(serde_json::to_value(&command).unwrap()).execute(pool).await.unwrap();
+    sqlx::query("UPDATE git_groups SET namespace_managed=true WHERE id=$1")
+        .bind(group)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO repositories(id,name,visibility) VALUES($1,$2,'private')")
+        .bind(repository)
+        .bind(format!("external_{}", repository.simple()))
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE repository_catalog SET group_id=$2,slug='api',kind='external',storage_name=NULL,ready=true,external_url='https://example.test/api.git' WHERE id=$1").bind(repository).bind(group).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO forge_workspace_projects(registry_instance_id,namespace_id,tracker_instance_id,tracker_project_id,generation,name,project_key,state,observed_at) VALUES($1,$2,$3,$4,1,'Same project','SAME','active',now())").bind(registry).bind(namespace).bind(Uuid::new_v4()).bind(Uuid::new_v4()).execute(pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO forge_workspace_catalog_sync VALUES(true,now()) ON CONFLICT DO NOTHING",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    (group, repository, command)
+}
+
+#[tokio::test]
+async fn workspace_catalog_and_execution_pages_use_identities_beyond_first_page() {
+    let pool = test_pool().await;
+    let first = Uuid::new_v4();
+    let second = Uuid::new_v4();
+    let (_, repo_a, command) = workspace_fixture(&pool, first, "group-a").await;
+    let (_, repo_b, _) = workspace_fixture(&pool, second, "group-b").await;
+    let config_a = Uuid::new_v4();
+    let config_b = Uuid::new_v4();
+    for (configuration, repository) in [(config_a, repo_a), (config_b, repo_b)] {
+        sqlx::query("INSERT INTO projects(id,name,repository_id,repository_url) VALUES($1,'Build',$2,'https://example.test/api.git')").bind(configuration).bind(repository).execute(&pool).await.unwrap();
+    }
+    for index in 0..55 {
+        sqlx::query(
+            "INSERT INTO pipelines(id,project_id,git_ref,status) VALUES($1,$2,'release', $3)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(config_a)
+        .bind(if index % 2 == 0 { "success" } else { "failed" })
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO pipelines(id,project_id,git_ref,status) VALUES($1,$2,'foreign','success')",
+    )
+    .bind(Uuid::new_v4())
+    .bind(config_b)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let environment = Uuid::new_v4();
+    sqlx::query("INSERT INTO environments(id,project_id,name,url) VALUES($1,$2,'Production','https://example.test')")
+        .bind(environment).bind(config_a).execute(&pool).await.unwrap();
+    for _ in 0..55 {
+        sqlx::query("INSERT INTO deployments(id,environment_id,git_ref,status) VALUES($1,$2,'release','success')")
+            .bind(Uuid::new_v4()).bind(environment).execute(&pool).await.unwrap();
+    }
+    let app = authenticated_app(pool.clone()).await;
+    let request = |path: String| Request::get(path).body(Body::empty()).unwrap();
+    let page = app
+        .clone()
+        .oneshot(request(
+            "/api/v1/workspace-projects?limit=1&offset=1".into(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(page.status(), StatusCode::OK);
+    let page = response_json(page).await;
+    assert_eq!(page["total"], 2);
+    assert_eq!(page["items"].as_array().unwrap().len(), 1);
+    let base = format!(
+        "/api/v1/workspace-projects/{}/{}",
+        command.namespace.registry_instance_id, first
+    );
+    let page = app
+        .clone()
+        .oneshot(request(format!("{base}/pipelines?limit=50&offset=50")))
+        .await
+        .unwrap();
+    assert_eq!(page.status(), StatusCode::OK);
+    let page = response_json(page).await;
+    assert_eq!(page["total"], 55);
+    assert_eq!(page["items"].as_array().unwrap().len(), 5);
+    assert!(
+        page["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["repository_id"] == repo_a.to_string()
+                && row["configuration_id"] == config_a.to_string())
+    );
+    let page = app
+        .clone()
+        .oneshot(request(format!(
+            "{base}/pipelines?status=success&git_ref=release"
+        )))
+        .await
+        .unwrap();
+    assert_eq!(response_json(page).await["total"], 28);
+    let summary = app
+        .clone()
+        .oneshot(request(format!("{base}/summary")))
+        .await
+        .unwrap();
+    let summary = response_json(summary).await;
+    assert_eq!(summary["repositories"], 1);
+    assert_eq!(summary["configurations"], 1);
+    assert_eq!(summary["failed"], 27);
+    let deployments = app
+        .clone()
+        .oneshot(request(format!(
+            "{base}/deployments?limit=50&offset=50&status=success&git_ref=release"
+        )))
+        .await
+        .unwrap();
+    assert_eq!(deployments.status(), StatusCode::OK);
+    let deployments = response_json(deployments).await;
+    assert_eq!(deployments["total"], 55);
+    assert_eq!(deployments["items"].as_array().unwrap().len(), 5);
+    assert!(
+        deployments["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["repository_id"] == repo_a.to_string()
+                && row["environment_id"] == environment.to_string())
+    );
+    for path in [
+        format!("{base}/pipelines?repository_id={repo_b}"),
+        format!("{base}/pipelines?configuration_id={config_b}"),
+        format!("/api/v1/catalog/repositories/{repo_a}/pipelines?repository_id={repo_b}"),
+    ] {
+        assert_eq!(
+            app.clone().oneshot(request(path)).await.unwrap().status(),
+            StatusCode::CONFLICT
+        );
+    }
+    sqlx::query("UPDATE forge_workspace_projects SET observed_at=now()-interval '1 hour',name='Renamed' WHERE namespace_id=$1").bind(first).execute(&pool).await.unwrap();
+    let renamed = response_json(app.oneshot(request(base)).await.unwrap()).await;
+    assert_eq!(renamed["name"], "Renamed");
+    assert_eq!(renamed["stale"], true);
+    assert_eq!(
+        renamed["group_id"],
+        command.resource.resource_id.to_string()
+    );
+}
+
+#[tokio::test]
+async fn delivery_configurations_replay_and_archive_preserve_identity_and_history() {
+    let pool = test_pool().await;
+    let namespace = Uuid::new_v4();
+    let (group, repository, mut command) =
+        workspace_fixture(&pool, namespace, "delivery-group").await;
+    let app = authenticated_app(pool.clone()).await;
+    let operation = Uuid::new_v4();
+    let input =
+        serde_json::json!({"operation_id":operation,"name":"Build","default_branch":"main"});
+    let create = || {
+        Request::post(format!(
+            "/api/v1/catalog/repositories/{repository}/delivery-configs"
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(input.to_string()))
+        .unwrap()
+    };
+    let (a, b) = tokio::join!(app.clone().oneshot(create()), app.clone().oneshot(create()));
+    let a = a.unwrap();
+    let b = b.unwrap();
+    assert_eq!(a.status(), StatusCode::OK);
+    assert_eq!(b.status(), StatusCode::OK);
+    let a = response_json(a).await;
+    assert_eq!(a, response_json(b).await);
+    let id = a["id"].as_str().unwrap();
+    let get = |path: String| Request::get(path).body(Body::empty()).unwrap();
+    let push = response_json(
+        app.clone()
+            .oneshot(get(format!(
+                "/api/v1/catalog/repositories/{repository}/push-config"
+            )))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        push["configuration_id"].is_null(),
+        "new repositories never select a first configuration"
+    );
+    let select = Request::put(format!(
+        "/api/v1/catalog/repositories/{repository}/push-config"
+    ))
+    .header("content-type", "application/json")
+    .body(Body::from(
+        serde_json::json!({"configuration_id":id}).to_string(),
+    ))
+    .unwrap();
+    assert_eq!(
+        app.clone().oneshot(select).await.unwrap().status(),
+        StatusCode::OK
+    );
+    let update = Request::patch(format!("/api/v1/projects/{id}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            r#"{"repository_url":"https://example.test/foreign.git"}"#,
+        ))
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(update).await.unwrap().status(),
+        StatusCode::CONFLICT
+    );
+    sqlx::query(
+        "INSERT INTO pipelines(id,project_id,git_ref,status) VALUES($1,$2,'main','success')",
+    )
+    .bind(Uuid::new_v4())
+    .bind(id.parse::<Uuid>().unwrap())
+    .execute(&pool)
+    .await
+    .unwrap();
+    let delete = Request::delete(format!("/api/v1/projects/{id}"))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(delete).await.unwrap().status(),
+        StatusCode::CONFLICT
+    );
+    command.generation = 2;
+    command.operation_id = Uuid::new_v4();
+    command.state = "archived".into();
+    sqlx::query("UPDATE forge_namespace_bindings SET state='archived',generation=2,command=$2 WHERE resource_id=$1").bind(group).bind(serde_json::to_value(&command).unwrap()).execute(&pool).await.unwrap();
+    assert_eq!(
+        response_json(app.clone().oneshot(create()).await.unwrap()).await,
+        a,
+        "original replay remains readable after archive"
+    );
+    let fresh =
+        serde_json::json!({"operation_id":Uuid::new_v4(),"name":"Second","default_branch":"main"});
+    let request = Request::post(format!(
+        "/api/v1/catalog/repositories/{repository}/delivery-configs"
+    ))
+    .header("content-type", "application/json")
+    .body(Body::from(fresh.to_string()))
+    .unwrap();
+    assert_eq!(
+        app.clone().oneshot(request).await.unwrap().status(),
+        StatusCode::CONFLICT
+    );
+    let replay = response_json(
+        app.oneshot(get(format!(
+            "/api/v1/catalog/repositories/{repository}/delivery-config-operations/{operation}"
+        )))
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(replay, a);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM pipelines WHERE project_id=$1")
+            .bind(id.parse::<Uuid>().unwrap())
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn workspace_push_decision_survives_policy_changes_and_disabled_replays() {
+    let pool = test_pool().await;
+    let (_, repository, _) = workspace_fixture(&pool, Uuid::new_v4(), "push-choice").await;
+    let first = Uuid::new_v4();
+    let second = Uuid::new_v4();
+    for (id, name) in [(first, "First"), (second, "Second")] {
+        sqlx::query("INSERT INTO projects(id,name,repository_id,repository_url) VALUES($1,$2,$3,'https://example.test/api.git')").bind(id).bind(name).bind(repository).execute(&pool).await.unwrap();
+    }
+    assert_eq!(
+        cicd::delivery_configs::push_decision(&pool, repository, Some("disabled-event"))
+            .await
+            .unwrap(),
+        None
+    );
+    sqlx::query(
+        "INSERT INTO repository_push_configs(repository_id,configuration_id) VALUES($1,$2)",
+    )
+    .bind(repository)
+    .bind(first)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (a, b) = tokio::join!(
+        cicd::delivery_configs::push_decision(&pool, repository, Some("first-event")),
+        cicd::delivery_configs::push_decision(&pool, repository, Some("first-event"))
+    );
+    assert_eq!(a.unwrap(), Some(first));
+    assert_eq!(b.unwrap(), Some(first));
+    sqlx::query("UPDATE repository_push_configs SET configuration_id=$2 WHERE repository_id=$1")
+        .bind(repository)
+        .bind(second)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        cicd::delivery_configs::push_decision(&pool, repository, Some("first-event"))
+            .await
+            .unwrap(),
+        Some(first)
+    );
+    assert_eq!(
+        cicd::delivery_configs::push_decision(&pool, repository, Some("disabled-event"))
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        cicd::delivery_configs::push_decision(&pool, repository, Some("second-event"))
+            .await
+            .unwrap(),
+        Some(second)
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM repository_push_operations WHERE repository_id=$1"
+        )
+        .bind(repository)
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        3
+    );
+}
+
+#[tokio::test]
+async fn workspace_corrupted_binding_rejects_catalog_and_repository_writes() {
+    let pool = test_pool().await;
+    let (group, repository, command) =
+        workspace_fixture(&pool, Uuid::new_v4(), "corrupt-binding").await;
+    let app = authenticated_app(pool.clone()).await;
+    let mut corrupt = serde_json::to_value(&command).unwrap();
+    corrupt["resource"]["instance_id"] = serde_json::json!(Uuid::new_v4());
+    sqlx::query("UPDATE forge_namespace_bindings SET command=$2 WHERE resource_id=$1")
+        .bind(group)
+        .bind(corrupt)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/workspace-projects")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let create = Request::post(format!(
+        "/api/v1/catalog/repositories/{repository}/delivery-configs"
+    ))
+    .header("content-type", "application/json")
+    .body(Body::from(
+        serde_json::json!({"operation_id":Uuid::new_v4(),"name":"Build","default_branch":"main"})
+            .to_string(),
+    ))
+    .unwrap();
+    assert_eq!(
+        app.clone().oneshot(create).await.unwrap().status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    sqlx::query("UPDATE forge_namespace_bindings SET command=$2 WHERE resource_id=$1")
+        .bind(group)
+        .bind(serde_json::to_value(&command).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        app.oneshot(
+            Request::get("/api/v1/workspace-projects")
+                .body(Body::empty())
+                .unwrap()
+        )
+        .await
+        .unwrap()
+        .status(),
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn workspace_first_refresh_unavailable_is_distinct_from_verified_empty_catalog() {
+    let pool = test_pool().await;
+    let app = authenticated_app(pool.clone()).await;
+    for path in [
+        "/api/v1/workspace-projects",
+        "/api/v1/workspace-summary",
+        "/api/v1/workspace-pipelines",
+    ] {
+        assert_eq!(
+            app.clone()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+    sqlx::query("INSERT INTO forge_workspace_catalog_sync(id,observed_at) VALUES(true,now())")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for path in [
+        "/api/v1/workspace-projects",
+        "/api/v1/workspace-summary",
+        "/api/v1/workspace-pipelines",
+    ] {
+        assert_eq!(
+            app.clone()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+    }
+}
