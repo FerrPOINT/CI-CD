@@ -989,7 +989,7 @@ async fn ensure_deployment_exists(db: &PgPool, deployment_id: Uuid) -> Result<()
     }
 }
 
-fn deployment_select(where_clause: &str, tail_clause: &str) -> String {
+pub(crate) fn deployment_select(where_clause: &str, tail_clause: &str) -> String {
     format!(
         "SELECT d.id, d.environment_id, d.pipeline_id, d.rollback_of_id, d.git_ref, d.status, d.created_at, \
                 (e.protected AND e.required_approvals > 0) AS approval_required, \

@@ -8824,7 +8824,7 @@ async fn migration_catalog_contains_exact_historical_36_and_37() {
     let catalog = cicd::migrations().await.unwrap();
     assert_eq!(
         catalog.iter().map(|m| m.version).collect::<Vec<_>>(),
-        (1..=39).chain([90]).collect::<Vec<_>>()
+        (1..=39).chain([90, 91]).collect::<Vec<_>>()
     );
     for (version, description, sql, checksum) in HISTORICAL_DEPLOYMENT_MIGRATIONS {
         let migration = catalog
@@ -8857,7 +8857,7 @@ async fn migration_catalog_fresh_and_prior_35_or_37_upgrade() {
                 .fetch_all(&pool)
                 .await
                 .unwrap();
-        assert_eq!(versions, (1..=39).chain([90]).collect::<Vec<_>>());
+        assert_eq!(versions, (1..=39).chain([90, 91]).collect::<Vec<_>>());
         let history = migration_catalog_history(&pool).await;
         catalog.run(&pool).await.unwrap();
         assert_eq!(migration_catalog_history(&pool).await, history);
@@ -8972,7 +8972,7 @@ async fn migration_catalog_checksum_mismatch_does_not_change_history() {
     let (pool, admin, schema) = migration_catalog_empty_pool().await;
     catalog.run(&pool).await.unwrap();
     let history = migration_catalog_history(&pool).await;
-    let mut changed = migration_catalog_subset(&catalog, 90);
+    let mut changed = catalog;
     let migration = changed
         .migrations
         .to_mut()
@@ -9058,7 +9058,7 @@ async fn migration_catalog_accepts_historical_38_and_preserves_outbox() {
         .find(|m| m.version == 38)
         .expect("version 38");
     assert_eq!(migration.sql, historical_sql);
-    let mut changed = migration_catalog_subset(&catalog, 90);
+    let mut changed = catalog;
     changed
         .migrations
         .to_mut()
@@ -9649,6 +9649,94 @@ async fn workspace_catalog_and_execution_pages_use_identities_beyond_first_page(
         renamed["group_id"],
         command.resource.resource_id.to_string()
     );
+}
+
+#[tokio::test]
+async fn workspace_deployment_approval_states_match_environment_history() {
+    let pool = test_pool().await;
+    let namespace = Uuid::new_v4();
+    let (_, repository, command) = workspace_fixture(&pool, namespace, "approval-states").await;
+    let configuration = Uuid::new_v4();
+    sqlx::query("INSERT INTO projects(id,name,repository_id,repository_url) VALUES($1,'Deploy',$2,'https://example.test/api.git')")
+        .bind(configuration).bind(repository).execute(&pool).await.unwrap();
+    let unprotected = Uuid::new_v4();
+    let protected = Uuid::new_v4();
+    for (id, name, guarded, required) in [
+        (unprotected, "Development", false, 0_i32),
+        (protected, "Production", true, 2_i32),
+    ] {
+        sqlx::query("INSERT INTO environments(id,project_id,name,protected,required_approvals) VALUES($1,$2,$3,$4,$5)")
+            .bind(id).bind(configuration).bind(name).bind(guarded).bind(required)
+            .execute(&pool).await.unwrap();
+    }
+    let cases: [(Uuid, &str, &[&str]); 4] = [
+        (unprotected, "not_required", &[]),
+        (protected, "pending", &[]),
+        (protected, "approved", &["approved", "approved"]),
+        (protected, "rejected", &["approved", "approved", "rejected"]),
+    ];
+    let mut expected = std::collections::BTreeMap::new();
+    for (environment, state, decisions) in cases {
+        let id = Uuid::new_v4();
+        sqlx::query("INSERT INTO deployments(id,environment_id,git_ref,status) VALUES($1,$2,'main','success')")
+            .bind(id).bind(environment).execute(&pool).await.unwrap();
+        for (index, decision) in decisions.iter().enumerate() {
+            sqlx::query("INSERT INTO deployment_approvals(id,deployment_id,decision,actor) VALUES($1,$2,$3,$4)")
+                .bind(Uuid::new_v4()).bind(id).bind(*decision).bind(format!("reviewer-{index}"))
+                .execute(&pool).await.unwrap();
+        }
+        expected.insert(id.to_string(), state.to_owned());
+    }
+    let app = authenticated_app(pool).await;
+    let mut canonical = std::collections::BTreeMap::new();
+    for environment in [unprotected, protected] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/environments/{environment}/deployments"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let rows = response_json(response).await;
+        for row in rows.as_array().unwrap() {
+            canonical.insert(
+                row["id"].as_str().unwrap().to_owned(),
+                row["approval_state"].as_str().unwrap().to_owned(),
+            );
+        }
+    }
+    assert_eq!(canonical, expected);
+    for path in [
+        format!(
+            "/api/v1/workspace-projects/{}/{namespace}/deployments?limit=100",
+            command.namespace.registry_instance_id
+        ),
+        format!("/api/v1/catalog/repositories/{repository}/deployments?limit=100"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let page = response_json(response).await;
+        assert_eq!(page["total"], 4);
+        let actual: std::collections::BTreeMap<_, _> = page["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| {
+                (
+                    row["id"].as_str().unwrap().to_owned(),
+                    row["approval_state"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect();
+        assert_eq!(actual, canonical);
+    }
 }
 
 #[tokio::test]

@@ -341,12 +341,15 @@ async fn executions(
     let (from, extra) = if deployment {
         (
             "deployments x JOIN environments e ON e.id=x.environment_id JOIN projects p ON p.id=e.project_id",
-            "'environment_id',e.id,'environment_name',e.name,'approval_state',x.approval_state,'pipeline_id',x.pipeline_id",
+            format!(
+                "'environment_id',e.id,'environment_name',e.name,'approval_state',(SELECT approval_state FROM ({}) approval),'pipeline_id',x.pipeline_id",
+                crate::platform::deployment_select("d.id=x.id", "")
+            ),
         )
     } else {
         (
             "pipelines x JOIN projects p ON p.id=x.project_id",
-            "'commit_sha',x.commit_sha,'pipeline_id',x.id",
+            "'commit_sha',x.commit_sha,'pipeline_id',x.id".to_owned(),
         )
     };
     let filter = " JOIN repository_catalog r ON r.id=p.repository_id JOIN git_groups g ON g.id=r.group_id JOIN forge_namespace_bindings b ON b.resource_id=g.id JOIN forge_workspace_projects w ON w.registry_instance_id=b.registry_instance_id AND w.namespace_id=b.namespace_id WHERE ($1::uuid IS NULL OR r.group_id=$1) AND ($2::uuid IS NULL OR r.id=$2) AND ($3::uuid IS NULL OR p.id=$3) AND ($4::text IS NULL OR x.status=$4) AND ($5::text IS NULL OR x.git_ref=$5) AND ($6::timestamptz IS NULL OR x.created_at >= $6) AND ($7::timestamptz IS NULL OR x.created_at <= $7)";
