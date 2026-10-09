@@ -35,10 +35,9 @@ docker compose ps
 docker compose logs -f
 docker compose down
 
-# Backend: запуск через Docker, если cargo нет на хосте.
-docker run --rm --entrypoint /bin/bash -v "$PWD/backend:/workspace" \
-  -w /workspace rust:1.88.0-bookworm \
-  -lc '/usr/local/cargo/bin/cargo test'
+# Backend: cargo test в закреплённой среде Rust 1.88.0.
+# Контейнерный запуск разрешён только через временный Compose-проект
+# с owner/purpose и cleanup по правилам Base deploy/LOCAL_GROUPS.md.
 
 # Frontend.
 cd frontend && pnpm test
@@ -73,3 +72,12 @@ cd frontend && pnpm build
 См. [BASE_INTEGRATION](docs/BASE_INTEGRATION.md). Обязательны pinned Base SHA,
 locked/frozen зависимости и проверка актуальных checkout до сборки.
 Rust build toolchain 1.88.0, Node 22.20.0, pnpm 10.28.1; MSRV отдельно.
+
+## Локальные Docker jobs и helpers
+
+Любой контейнер запускается настоящим Compose. Постоянные проекты только
+sdlc1, sdlc2 и sdlc-common; временные sdlc-qa-/sdlc-build- имеют owner/purpose,
+явный endpoint и scoped cleanup в finally. Прямые docker run/create, поддельные
+labels и общий prune запрещены. Rootless runner проверяет TLS и daemon ID без
+Desktop fallback. Pulse — приватный Git/pipeline только в CI/CD sdlc1.
+Подробности: [Compose runner](docs/COMPOSE_RUNNER.md).

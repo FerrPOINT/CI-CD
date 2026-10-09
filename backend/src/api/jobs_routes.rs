@@ -97,21 +97,19 @@ pub(crate) async fn cancel_pipeline(
     if pipeline != "queued" && pipeline != "running" {
         return Err(ApiError::conflict("pipeline is not active"));
     }
-    if let Some(running) = state.running_jobs.as_ref() {
-        let job_ids: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT j.id FROM jobs j JOIN stages s ON s.id = j.stage_id WHERE s.pipeline_id = $1",
-        )
-        .bind(pipeline_id)
-        .fetch_all(pool)
-        .await
-        .map_err(ApiError::internal)?;
-        let mut guard = running.lock().await;
-        for job_id in job_ids {
-            if let Some(pid) = guard.remove(&job_id) {
-                kill_running_job(job_id, pid).await;
-            }
-        }
-    }
+    let job_ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT j.id FROM jobs j JOIN stages s ON s.id = j.stage_id WHERE s.pipeline_id = $1",
+    )
+    .bind(pipeline_id)
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    // Serialize cancellation with the final pre-spawn check; keep the job
+    // reserved until its worker has completed cleanup, including preparation.
+    let guard = match state.running_jobs.as_ref() {
+        Some(running) => Some(running.lock().await),
+        None => None,
+    };
     sqlx::query("UPDATE pipelines SET status = 'canceled', finished_at = now() WHERE id = $1")
         .bind(pipeline_id)
         .execute(pool)
@@ -153,6 +151,13 @@ pub(crate) async fn cancel_pipeline(
     .execute(pool)
     .await
     .map_err(ApiError::internal)?;
+    if let Some(guard) = guard.as_ref() {
+        for job_id in job_ids {
+            if let Some(pid) = guard.get(&job_id).copied().filter(|pid| *pid != 0) {
+                kill_running_job(job_id, pid).await;
+            }
+        }
+    }
     Ok(Json(CanceledPipelineResult {
         canceled: pipeline_id,
     }))
@@ -161,17 +166,17 @@ pub(crate) async fn cancel_pipeline(
 /// Kill a running job process: try Docker container stop by name, then
 /// SIGTERM and SIGKILL the child PID as fallback.
 pub(crate) async fn kill_running_job(job_id: Uuid, pid: u32) {
-    let container_name = format!("forge-job-{job_id}");
-    let _ = tokio::process::Command::new("docker")
-        .args(["stop", "-t", "2", &container_name])
-        .status()
-        .await;
+    let _ = tokio::time::timeout(
+        Duration::from_secs(15),
+        crate::runner_docker::stop_job(job_id),
+    )
+    .await;
     let _ = tokio::process::Command::new("kill")
         .arg("-TERM")
         .arg(pid.to_string())
         .status()
         .await;
-    let _ = tokio::time::timeout(Duration::from_secs(2), async {}).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
     let _ = tokio::process::Command::new("kill")
         .arg("-KILL")
         .arg(pid.to_string())
