@@ -30,6 +30,7 @@ pub async fn migrations_from_path(
 ) -> Result<sqlx::migrate::Migrator, sqlx::migrate::MigrateError> {
     sqlx::migrate::Migrator::new(path).await
 }
+pub(crate) mod candidate_evidence;
 pub mod domain;
 pub mod git_host;
 pub mod namespace;
@@ -41,6 +42,7 @@ pub(crate) mod runner_docker;
 pub mod runner_protocol;
 pub mod runner_workspace;
 pub mod store;
+pub mod task_delivery;
 pub mod task_links;
 
 pub use cicd_domain as domain_types;

@@ -71,6 +71,16 @@ pub struct RuntimeConfig {
     pub auth: AuthConfig,
     pub secrets: SecretsConfig,
     pub smtp: SmtpConfig,
+    pub sdlc_workspace: SdlcWorkspaceConfig,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SdlcWorkspaceConfig {
+    pub operation_subject: Option<uuid::Uuid>,
+    /// A deployment-owned local mount. No caller-authored path or URL.
+    pub observation_root: Option<PathBuf>,
+    pub local_delivery_root: Option<PathBuf>,
+    pub local_delivery_policy: Option<PathBuf>,
 }
 
 /// Egress allowlist for outbound webhook deliveries (Stage 5 item 2).
@@ -310,6 +320,38 @@ impl RuntimeConfig {
             auth,
             secrets,
             smtp,
+            sdlc_workspace: SdlcWorkspaceConfig {
+                local_delivery_root: optional_trimmed(get("CICD_LOCAL_DELIVERY_ROOT"))
+                    .map(PathBuf::from),
+                local_delivery_policy: optional_trimmed(get("CICD_LOCAL_DELIVERY_POLICY"))
+                    .map(PathBuf::from),
+                operation_subject: optional_trimmed(get("CICD_SDLC_WORKSPACE_SUBJECT"))
+                    .map(|value| {
+                        value
+                            .parse::<uuid::Uuid>()
+                            .ok()
+                            .filter(|id| !id.is_nil())
+                            .ok_or_else(|| {
+                                ConfigError::invalid(
+                                    "CICD_SDLC_WORKSPACE_SUBJECT",
+                                    "expected non-nil UUID",
+                                )
+                            })
+                    })
+                    .transpose()?,
+                observation_root: optional_trimmed(get("CICD_SDLC_WORKSPACE_OBSERVATION_ROOT"))
+                    .map(|value| {
+                        let path = PathBuf::from(value);
+                        if !path.is_absolute() {
+                            return Err(ConfigError::invalid(
+                                "CICD_SDLC_WORKSPACE_OBSERVATION_ROOT",
+                                "expected absolute owner-local path",
+                            ));
+                        }
+                        Ok(path)
+                    })
+                    .transpose()?,
+            },
         })
     }
 
@@ -346,6 +388,7 @@ impl RuntimeConfig {
             auth: AuthConfig { secret: None },
             secrets: SecretsConfig { key: None },
             smtp: SmtpConfig::default(),
+            sdlc_workspace: SdlcWorkspaceConfig::default(),
         }
     }
 
@@ -663,6 +706,19 @@ mod tests {
 
     #[test]
     fn runtime_config_rejects_dangerous_or_invalid_values() {
+        for (name, value) in [
+            ("CICD_SDLC_WORKSPACE_SUBJECT", "not-uuid"),
+            (
+                "CICD_SDLC_WORKSPACE_SUBJECT",
+                "00000000-0000-0000-0000-000000000000",
+            ),
+            ("CICD_SDLC_WORKSPACE_OBSERVATION_ROOT", "relative/path"),
+        ] {
+            assert!(
+                RuntimeConfig::from_env_source(|key| (key == name).then(|| value.into()), false)
+                    .is_err()
+            );
+        }
         assert!(
             RuntimeConfig::from_env_source(
                 |name| (name == "CICD_GIT_INTERNAL_TOKEN")

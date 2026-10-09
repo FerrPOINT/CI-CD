@@ -298,7 +298,7 @@ pub async fn delete_repository_core(
         .bind(id)
         .execute(&mut *tx)
         .await
-        .map_err(ApiError::internal)?;
+        .map_err(ApiError::resource_delete)?;
     tx.commit().await.map_err(ApiError::internal)?;
     let path = repo_path(&config.root, &name);
     let _ = tokio::fs::remove_dir_all(path).await;
@@ -944,6 +944,7 @@ pub async fn list_repositories(
     responses(
         (status = 200, body = DeletedRepository),
         (status = 404),
+        (status = 409, description = "Resource retained by immutable SDLC workspace history"),
         (status = 503),
     ),
 )]

@@ -1,5 +1,58 @@
 # API v1 Specification — Forge CI/CD
 
+## Owner-local PostgreSQL CLI
+
+`forge-delivery --postgres` — отдельный privileged isolated executor, не новый
+HTTP endpoint. Он использует тот же strict `DeliveryCommand`/original lookup,
+machine ACL и sealed retained artifact. Policy/credentials/SQL/backup не принимаются
+через API. HTTP delivery POST сохраняет503, а GET static history не читает PostgreSQL
+или OCI history. OpenAPI не меняется.
+
+CLI stdout: `forge/local-postgres-readback/v1` с immutable original `receipt`,
+отдельным optional `reconciledReceipt`, current/confirmed manifest SHA и
+reconciliationNeeded. Receipt `forge/local-postgres-operation/v1`, scope
+`owner_local_isolated_verification`, содержит generation, database fingerprint,
+actual image/container и отдельные probes version/database/health/acceptance/endVersion.
+`dispatchAllowed`/`sdlcAcceptanceVerified` false. Typed pre-effect rejection:
+`forge/local-postgres-rejection/v1`, status blocked, fixed reason, exit1. Verified
+latest receipt exit0, остальные outcomes exit2. Ошибки privileged configuration/auth
+не являются proof отсутствия effect; required original-key readback сохраняется.
+
+Validation rejection до accepted intent не создаёт operation. После intent replay
+не повторяет dangerous commands. Partial Unknown не разрешает новый key.
+[Contract](contracts/MUTABLE_POSTGRES_DELIVERY.md), [операции](OPERATIONS.md#owner-local-postgresql-delivery).
+
+## Owner-local manifest delivery
+
+`POST /api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations`
+принимает strict `DeliveryCommand`: `operationKey`, `workspaceOperationKey`,
+`original` lookup (original requestHash/task/root/assignment/execution/fence),
+`action: deploy|rollback`, `artifactId`, nullable `expectedManifestSha256`.
+Deploy требует exact artifact UUID; rollback запрещает artifact selector и требует
+exact current SHA256. Null current означает пустой target, не wildcard.
+Dedicated machine/project `api:write`, original owner binding/hash проверяются;
+валидный запрос получает503: authoritative Tracker admission/source binding
+недоступны, **deployment effect отсутствует**. Caller receipts/accepted/status/
+URLs/commands и неизвестные поля отклоняются422; malformed command400,
+credential401/403, owner operation404, changed binding409.
+
+`GET /api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations/{delivery_key}`
+с прежним exact lookup и project machine `api:read` читает durable local operation
+history. Ответ `DeliveryReadback`: immutable `receipt`, опциональный отдельный
+`reconciledReceipt`, `currentManifestSha256`, `confirmedManifestSha256`,
+`reconciliationNeeded`. Не создаёт directory/journal, не вызывает probes,
+publication, renewal или reconciliation. Нет configured target/policy503,
+нет operation404, inconsistent/torn/changed original journal409. `no-store`.
+
+Effect доступен только privileged owner CLI `forge-delivery` с отдельным explicit
+local-verification mode, existing machine token и owner root/policy. Receipt scope
+`owner_local_verification`, statuses `unavailable|failed|unknown|verified`; version,
+servedArtifact, health и acceptance содержат HTTP status/body SHA256/time.
+Original workspace receipt остаётся blocked; `dispatchAllowed=false` и
+`sdlcAcceptanceVerified=false`. Verified означает эти конкретные owner checks,
+не trusted SDLC admission или полную requirements acceptance.
+Команды, replay и recovery — [Operations](OPERATIONS.md#owner-local-manifest-delivery).
+
 ## Overview
 
 Каталог backend включает ранее применённые версии 1–38. Migration 38 сохраняет
@@ -18,6 +71,116 @@ REST API первой версии Forge CI/CD. Контрольная плос�
 - Версионирование: path-based `/api/v1`.
 - Сериализация: `serde_json`, `snake_case` для enum-значений статусов.
 - Ошибки: `{"error":{"code":"...","message":"...","request_id":"..."}}` с соответствующим HTTP статусом и header `x-request-id`.
+
+## SDLC Workspace Operation
+
+OCI continuation реализуется только privileged local CLI `forge-delivery --oci`.
+Existing HTTP delivery POST остаётся503; HTTP GET ниже читает static history,
+не OCI target. OCI readback/reconcile — CLI flags и отдельный owner root/policy;
+mutable data/migrations заблокированы. [ADR-0021](adr/0021-owner-local-oci-readonly-data.md).
+
+Filesystem preparation helper существует только как внутренний Rust primitive.
+HTTP routes ниже его не вызывают: producer source binding отсутствует, ответы
+остаются blocked. Они переиспользуют только общий read-only verifier, не `prepare`
+или создание workspace. DTO/OpenAPI соответствуют source-срезу. Local preparation journals не
+принимаются как authority или trusted receipt.
+
+Source-срез: [delivery contract](SDLC_DELIVERY_V1.md#source-slice-task-bound-workspace-operation-2026-10-04),
+[ADR-0018](adr/0018-blocked-workspace-operation-ledger.md). DTO и пути экспортируются
+Rust exporter в `openapi/openapi.yaml`; request использует camelCase.
+
+- POST `/api/v1/projects/{project_id}/sdlc/workspace-operations`: strict
+  `WorkspaceOperationRequest`, максимум 16 KiB. Dedicated project-bound Forge
+  service account, `api:write`. 200 — immutable **blocked operation receipt**,
+  не workspace preparation/admission.
+- GET `/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}`:
+  тот же subject, `api:read`; обязательные query `requestHash`, `taskId`,
+  `rootTaskId`, `assignmentId`, `executionId`, `fencingToken` должны совпасть
+  с original receipt. Ответ содержит original receipt и fresh lease observation.
+
+Configured auth и `CICD_SDLC_WORKSPACE_SUBJECT` (non-nil service-account UUID)
+обязательны. Human/admin, Central PAT и runner credentials не имеют prepare/lookup
+rights. Не настроенный subject — 503; чужие project/subject/scopes — 403;
+revoked token — 401; нет owned original key — 404; changed payload/key, stale
+binding/hash, wrong lease/attempt/generation/repository/SHA — 409. Неизвестные
+request fields, включая receipt/readiness/stopped, отклоняются (422);
+oversized body — 413; invalid typed values/readonly-write request — 400.
+
+`operationKey` — 1–128 ASCII букв/цифр/`_.:-`; SHA-256 — 64 lowercase hex,
+source SHA — 40 lowercase hex. `workspaceId` — existing inventory ID
+`attempt-{attempt UUID}-{generation}-{nonce UUID simple}`, не путь/URL.
+`workspaceGeneration` и Tracker `binding.fencingToken` независимы.
+`binding.trackerInstanceId` — exact строковый namespace (не UUID), 1–256 bytes,
+без control/краевого whitespace; Tracker revision/fence — `1..9007199254740991`,
+как actual owner reservation DTO. Поля только declared, не admitted authority.
+PM отсутствует; write request допускается только для Developer, но не выдаёт
+write capability, branch или credentials.
+
+Новая операция требует явного repository UUID в delivery configuration: совпадение
+хвоста clone URL не подтверждает связь. Несвязанный или чужой repository даёт 409
+без ledger row; original-key replay сохраняет прежний immutable receipt.
+
+Receipt `schema=forge/workspace-operation-receipt/v1`, `status=blocked`,
+`dispatchAllowed=false` содержит owner-issued UUID, время, hash и exact original
+request. Admission/workspace authority blockers обязательны. Optional owner-local
+physical pin/clean checks не заменяют Tracker authority. POST replay не сверяет
+заново resource и не renew-ит head; fresh expiry/reconciliation доступны отдельным
+GET. Expiry и terminal без accepted completion не дают stop/cleanup proof.
+
+При заданном observation root новый POST использует общий read-only verifier:
+owner-local bare config и checkout config проходят закрытый allowlist;
+detached HEAD/origin, index manifest/flags и реальные blob bytes/types/Git modes
+сверяются с pinned tree. `git status` и stat cache не дают
+`physicalSourceObserved=true`. Dirty/unsupported state — 409 без новой ledger row;
+timeout/истёкший scan budget — 503, также без receipt. Общий deadline HTTP preflight
+остаётся 3 секунды, включая ожидание scan slot. Максимум два physical worker-а на
+процесс; cancellation/deadline проверяются между entries и 64 KiB chunks. Slot
+ограничивает только filesystem IO, не Tracker business capacity или assignments.
+Он удерживается самим worker-ом до выхода, даже если request уже отменён. Блокирующий
+OS IO нельзя принудительно остановить cooperative flag; после возвращения IO scan
+не продолжается, slot не освобождается преждевременно. Это не OS sandbox.
+`physicalSourceObserved` в original receipt исторический; GET/replay не обновляют
+его и не выполняют новый physical scan. Fresh GET относится только к lease state.
+
+## Candidate evidence readback
+
+GET `/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/candidate-evidence`
+использует тот же dedicated subject, `api:read` и original lookup query, что
+workspace operation GET. Нет caller-selected pipeline: он выводится из original
+lease. Чужой key/subject не раскрывается; changed hash/binding или superseded
+attempt/generation/source возвращают409. Ответ200/no-store содержит immutable
+`operationReceipt` и отдельное текущее `forge/candidate-evidence-readback/v1`.
+Этот readback не записывает новый receipt, не запускает job/clone/push/deployment
+и не повторяет effect после unknown outcome.
+
+`candidateObserved=true` требует exact repository `.forge-ci.yml` bytes из
+bare Git/full source SHA, совпадения persisted pipeline pin, config/plan SHA256,
+успешного законченного pipeline и всех его jobs/latest attempts. Каждый latest
+runner lease обязан иметь accepted terminal completion discriminator migration39;
+expiry/manual success не заменяют ACK. Required artifact paths должны быть
+загружены тем же attempt; metadata SHA/size дополнительно сверяются с реальными
+retained regular file bytes внутри owner artifact root. Symlinks/reparse points,
+неподходящий attempt, missing/expired/purged/tampered artifact закрывают gate.
+Raw config, команды, storage paths, credentials и task titles не возвращаются.
+
+Лимиты:1000 jobs,32 artifacts,32MiB на artifact,128MiB суммарно; Git output
+256KiB/3s, общий IO observation budget5s. Artifact hashing потоковое, максимум
+два blocking workers на процесс с cooperative deadline и slot до actual exit.
+Это bounded owner-local observation по DB snapshot, не атомарный filesystem
+snapshot, не OS sandbox и не отдельная бизнес-очередь.
+
+Даже при verified local candidate остаются обязательные blockers: Tracker
+admission/source binding, candidate write authority, served deployment identity,
+health, acceptance и confirmed rollback version. `dispatchAllowed`,
+`deploymentVerified`, `acceptanceVerified` всегда false. Legacy template,
+unresolved SHA, process health или metadata deployment success не проходят SDLC.
+Authoritative producer counterpart пока отсутствует; этот API не выдаёт trusted
+`base-sdlc/candidate-receipt/v1` и не разрешает mutation в других сервисах.
+
+```bash
+curl -fsS -H "Authorization: Bearer $CICD_SDLC_TOKEN" \
+  "$CICD_API_URL/api/v1/projects/$PROJECT_ID/sdlc/workspace-operations/$OPERATION_KEY/candidate-evidence?requestHash=$REQUEST_HASH&taskId=$TASK_ID&rootTaskId=$ROOT_TASK_ID&assignmentId=$ASSIGNMENT_ID&executionId=$EXECUTION_ID&fencingToken=$FENCING_TOKEN"
+```
 
 ## Runner Terminal Readback
 

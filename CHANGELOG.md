@@ -14,6 +14,27 @@
   переменные и отказ до вызова Base при неполной конфигурации.
 
 - Namespace cohort: стабильные refs, локальные binding projections и lifecycle guards; аддитивные migrations, совместимый rollback и отдельные execution v2 gates. Runtime-приёмка ещё не завершена.
+- Добавлен отдельный privileged owner-local PostgreSQL shadow executor: immutable
+  source/target catalog, bounded drain/fence/lease, dump с реальным restore drill,
+  forward migration в fresh DB и отдельные image/database/health/acceptance checks.
+  Pre-release failure допускает проверенный backup + previous image restore;
+  post-release snapshot restore запрещён, partial Unknown удерживает target.
+  Production/SDLC admission остаётся закрыт; OCI read-only путь сохранён.
+
+- Добавлен owner-local OCI CLI для immutable local image/read-only data snapshot:
+  actual container/commit/data/compatibility/acceptance, last-confirmed image
+  rollback и unknown recovery. Mutable DB/migration/restore блокируются; runtime
+  не устанавливается и SDLC admission не открывается.
+
+- Добавлена privileged owner-local manifest delivery одного verified static
+  artifact с served identity/bytes, health/acceptance probes, last-confirmed
+  rollback, immutable replay и crash reconciliation. HTTP SDLC dispatch остаётся
+  закрыт без Tracker admission; permanent runtime не обновляется.
+
+- Добавлены immutable blocked task workspace operations с original-key readback,
+  owner-local pinned preparation и bounded candidate evidence из actual Git,
+  pipeline completion и artifact bytes. Admission/write/deployment/acceptance
+  остаются закрытыми до совместимых producer contracts; migration40 следует PR87.
 
 - После отмены удаления проекта focus возвращается к его меню действий; после успешного удаления — к кнопке создания проекта.
 

@@ -45,6 +45,10 @@ webServer. Sources Base экспортируются из точного commit 
 использует полный workspace profile и согласованную остановку писателей.
 Retention или удаление старых данных wrapper не выполняет.
 
+Backend gate и Trivy scanner используют отдельную временную сеть для загрузки
+Rust-компонентов, зависимостей и базы уязвимостей. Сеть принадлежит QA-проекту
+и удаляется при cleanup; к постоянным сетям workspace helpers не подключаются.
+
 Лимит проекта проверяется до резервирования lease в SERIALIZABLE transaction.
 Встроенный и внешний runner учитывают активные leases, включая подготовку.
 Serialization conflict оставляет job queued без запуска; лимит Pulse равен одному.

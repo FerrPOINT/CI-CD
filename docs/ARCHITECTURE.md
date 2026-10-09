@@ -1,10 +1,38 @@
 # Архитектура Forge CI/CD
 
+Owner-local OCI CLI поддерживает preloaded immutable image и read-only data
+snapshot без migrations/restore. Actual container/mount/network, served manifest,
+schema/bytes compatibility и application acceptance отделены от desired Compose
+state. [ADR-0021](adr/0021-owner-local-oci-readonly-data.md); HTTP dispatch закрыт.
+
 Target интеграция автономного SDLC: [delivery receipts v1](SDLC_DELIVERY_V1.md).
 Она переиспользует текущий Forge, не ограничивает его хранением исходников и
 не объявляет candidate/workspace/acceptance protocol уже реализованным.
 
+Bounded source workspace operation ledger: [ADR-0018](adr/0018-blocked-workspace-operation-ledger.md).
+Typed domain request/immutable blocked receipt → owner API с dedicated machine
+authorization → infra transaction и existing lease/source/OwnedWorkspace readback.
+Caller binding не authoritative: pending Tracker admission/workspace binding
+оставляют effect закрытым. Нового scheduler, claim или writable resource нет.
+
+Filesystem-only `runner_workspace::preparation` отдельно переиспользует
+OwnedWorkspace: caller-persisted ID, local intent/active/final journals и exact
+owner-local pinned checkout. Recovery не повторяет unknown Git effect. Это не
+HTTP adapter или producer authority: blocked API не подключён, trusted Tracker
+source binding/live lease проверка остаются prerequisite будущего adapter.
+[Граница primitive](SDLC_DELIVERY_V1.md#source-slice-filesystem-preparation-primitive-2026-10-04),
+[ADR-0019](adr/0019-local-pinned-workspace-preparation.md).
+
 ## 1. Контекст
+
+Owner-local manifest delivery переиспользует existing candidate observer и
+project machine ACL. `domain::task_delivery` задаёт strict commands/evidence;
+server IO primitive `task_delivery` содержит isolated filesystem publication и
+bounded HTTP probes. Privileged CLI — единственный effect adapter; HTTP SDLC POST
+закрыт, GET читает history без effects. Existing platform deployments/approvals
+не становятся admission и не переименовываются в verified deployment.
+Процессный lock и durable filesystem journal не являются общей транзакцией с
+DB или протоколом orchestration stop. [ADR-0020](adr/0020-owner-local-manifest-delivery.md).
 
 Self-hosted CI/CD control plane: Git-хостинг (bare-репозитории + Smart HTTP + post-receive auto-trigger), пайплайны со стадиями и джобами, embedded runner (Docker/shell), внешний `forge-runner` shell MVP поверх runner protocol, платформенные ресурсы (runners, secrets, artifacts, environments, schedules, webhooks, notifications, reports, audit, users, tokens) и React Dashboard.
 
@@ -78,6 +106,8 @@ CI-CD/
 │   │   ├── pulls.rs          # refs/commits/compare/pull requests
 │   │   ├── runner.rs         # embedded runner: Docker/shell, supervisor
 │   │   ├── runner_protocol.rs # external runner protocol MVP
+│   │   ├── runner_workspace.rs # fresh checkout и guarded terminal retention
+│   │   ├── runner_docker.rs   # Compose attempts, immutable sources и cleanup journal
 │   │   ├── store.rs          # shared DB helpers + next_log_sequence
 │   │   └── domain.rs         # re-export shim → cicd-domain
 │   ├── tests/                # integration: api_contract, domain, real-DB
@@ -157,7 +187,7 @@ Composition root: чтение конфига, создание `PgPool`, реп
 | `CICD_RUNNER_NAME` / `CICD_RUNNER_TAGS` / `CICD_RUNNER_TOTAL_SLOTS` | identity/capacity внешнего `forge-runner` |
 | `CICD_RUNNER_POLL_INTERVAL_SECONDS` / `CICD_RUNNER_NO_CHECKOUT` | empty-poll cadence с server `waitSeconds` cap 30s и dev/debug режим без Git checkout для внешнего `forge-runner` |
 | `CICD_RUNNER_WORK_DIR` | workspace root внешнего `forge-runner` |
-| `CICD_RUNNER_KEEP_WORKSPACE` | `false` по умолчанию; `true`/`1` оставляет exact `forge-runner-<job-id>` workspace только для краткой отладки. После terminal job stand не хранит workspace; logs и declared artifacts остаются в своих managed stores. |
+| `CICD_RUNNER_KEEP_WORKSPACE` | `false` по умолчанию; `true`/`1` сохраняет fresh attempt/lease/generation workspace после подтверждённого completion. Без terminal ACK/readback workspace сохраняется независимо от флага; неизвестное завершение требует owner/process reconciliation. Logs и declared artifacts остаются в managed stores. |
 
 Текущий server composition root читает `backend/src/config.rs::RuntimeConfig` один раз при старте и передаёт typed-группы Database/Http/Git/Artifacts/Runner/Auth/Secrets в HTTP state, Git-trigger config lookup, scheduler/outbox, artifact/secret handlers, runner protocol и embedded runner. Невалидные bool, runner mode, artifact TTL, queue timeout, legacy internal Git token и base64 secrets key падают в parser-е config; CORS wildcard/empty allowlist валидируется при router construction до binding API. `cicd-cli` и отдельный `forge-runner` остаются process-boundary tools на `clap`/env.
 
@@ -173,11 +203,11 @@ Bare-репозитории в `CICD_GIT_ROOT`, Smart HTTP (`/git/<name>.git`), 
 
 ### 6.3 Embedded runner
 
-Supervisor-полл queued-джобов, атомарный lease-aware claim (`queued → running`) с active `execution_attempt` и `job_leases`, клонирование репо в workspace, выполнение в Docker (имя контейнера `forge-job-<id>`, volume workspace) или host shell, построчный стриминг stdout в attempt-owned `job_logs`, сбор declared artifact files из `jobs.artifact_paths`, bounded page/search API для длинных логов, kill-on-cancel через PID-map, закрытие lease на terminal result/cancel и reconciliation expired/missing lease, cleanup workspace (кроме `CICD_RUNNER_KEEP_WORKSPACE=true/1`).
+Supervisor проверяет queued jobs и атомарно закрепляет active `execution_attempt`/`job_leases`. Fresh checkout принадлежит exact attempt/lease/generation; full commit pin и clean detached HEAD проверяются до команд. Docker attempt выполняется настоящим Compose-проектом `sdlc-build-job-<attempt UUID>` с immutable sources, собственными volumes/network и recovery journal; host shell остаётся отдельным режимом. Preparation leases учитываются в project cap. Перед spawn повторно проверяется active ownership под PID-map guard. Logs и declared artifacts сохраняются в managed stores. Terminal lease/attempt readback и повторный filesystem owner guard разрешают workspace cleanup; unknown result сохраняет файлы независимо от `CICD_RUNNER_KEEP_WORKSPACE`. Recovery Compose-ресурсов не повторяет неизвестную job. Контракт и ограничения — [Compose runner](COMPOSE_RUNNER.md) и [ADR-0017](adr/0017-owned-attempt-workspaces.md).
 
 ### 6.4 External runner protocol MVP
 
-`/api/v1/runner/*` реализует control-plane protocol slice для внешних runner-ов: register через `CICD_RUNNER_REGISTRATION_TOKEN`, heartbeat с tags/capacity/capabilities, immediate или bounded `work:poll`, lease `ack`, `renew`, `control`, `secrets:resolve`, artifact upload, `logs` и `complete`. Сервер хранит только hash runner credential и lease token, а mutating lease endpoints проверяют runner identity, token, `job_leases.generation` и expiry. `work:poll` claim-ит compatible durable `job_queue` row с `required_tags ⊆ runner.tags` и текущим executor `shell`, если `capabilities.executorKinds` отсутствует или явно содержит `shell`; long-poll просыпается по process-local signal и PostgreSQL `LISTEN/NOTIFY` после enqueue/unblock; затем отдаёт `workspace.checkoutUrl`, declared `attempt.secrets` и `attempt.artifacts`. `forge-runner` умеет зарегистрироваться, heartbeat-ить, подтвердить lease, получить только declared secrets после ack, продлевать lease, держать active-lease heartbeat во время выполнения, poll-ить cancel control signal, выполнить команды в shell workspace, загрузить declared artifact files, отправить stdout/stderr в attempt-owned `job_logs` с masking и отправить terminal result. Runtime reconciliation requeue-ит unacknowledged offer после `ackDeadline`, закрывает expired/missing leases и переводит stale online runner без unexpired active lease в `offline`; при отключённом embedded runner этот maintenance loop всё равно запускается. Richer log chunks, Kubernetes sandbox isolation and advanced pool/protected-tag/capability policy remain target. Resumable artifact sessions, per-project dispatch cap and Docker seccomp/resource classes are current.
+`/api/v1/runner/*` реализует control-plane protocol slice для внешних runner-ов: register через `CICD_RUNNER_REGISTRATION_TOKEN`, heartbeat с tags/capacity/capabilities, immediate или bounded `work:poll`, lease `ack`, `renew`, `control`, `secrets:resolve`, artifact upload, `logs` и `complete`. Сервер хранит только hash runner credential и lease token, а mutating lease endpoints проверяют runner identity, token, `job_leases.generation` и expiry. `work:poll` claim-ит compatible durable `job_queue` row с `required_tags ⊆ runner.tags` и текущим executor `shell`, если `capabilities.executorKinds` отсутствует или явно содержит `shell`; long-poll просыпается по process-local signal и PostgreSQL `LISTEN/NOTIFY` после enqueue/unblock; затем отдаёт `workspace.checkoutUrl`, declared `attempt.secrets` и `attempt.artifacts`. `forge-runner` умеет зарегистрироваться, heartbeat-ить, подтвердить lease, получить только declared secrets после ack, продлевать lease, держать active-lease heartbeat во время выполнения, poll-ить cancel control signal, выполнить команды в shell workspace, загрузить declared artifact files, отправить stdout/stderr в attempt-owned `job_logs` с masking и отправить terminal result. Terminal GET receipt проверяет exact runner/lease/attempt/generation и признак принятого completion `completion_received_at`; expiry cancellation не является ACK. `forge-runner --inspect-workspaces` читает local inventory, `--reconcile-workspaces` требует свежий server readback без повторного completion POST. Unknown result блокирует cleanup и новое polling; process-tree safe-stop и installed acceptance остаются отдельными gates. Runtime reconciliation requeue-ит unacknowledged offer после `ackDeadline`, закрывает expired/missing leases и переводит stale online runner без unexpired active lease в `offline`; при отключённом embedded runner этот maintenance loop всё равно запускается. Richer log chunks, Kubernetes sandbox isolation and advanced pool/protected-tag/capability policy remain target. Resumable artifact sessions, per-project dispatch cap and Docker seccomp/resource classes are current.
 
 ### 6.5 Платформенные ресурсы (MVP)
 
