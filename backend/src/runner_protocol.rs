@@ -93,6 +93,10 @@ pub fn routes() -> Router<Arc<AppState>> {
             "/api/v1/runner/leases/{lease_id}/complete",
             post(complete_runner_lease),
         )
+        .route(
+            "/api/v1/runner/leases/{lease_id}/receipt",
+            get(read_runner_lease_receipt),
+        )
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -293,6 +297,19 @@ pub(crate) struct RunnerCompleteResponse {
     protocol_version: i32,
     accepted: bool,
     terminal_status: String,
+}
+
+#[derive(Debug, Serialize, FromRow, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RunnerLeaseReceipt {
+    protocol_version: i32,
+    lease_id: Uuid,
+    attempt_id: Uuid,
+    fencing_token: i64,
+    lease_status: String,
+    terminal_status: Option<String>,
+    completed_at: Option<DateTime<Utc>>,
+    terminal_acknowledged: bool,
 }
 
 #[derive(Debug, FromRow)]
@@ -1101,7 +1118,7 @@ pub(crate) async fn complete_runner_lease(
 
     sqlx::query(
         "UPDATE job_leases \
-         SET lease_status = $2, completed_at = COALESCE(completed_at, $3), \
+         SET lease_status = $2, completed_at = COALESCE(completed_at, $3), completion_received_at = now(), \
              terminal_status = $4, error_tail = COALESCE(error_tail, $5) \
          WHERE id = $1 AND lease_status = 'active'",
     )
@@ -1126,6 +1143,42 @@ pub(crate) async fn complete_runner_lease(
         accepted: true,
         terminal_status: terminal_status.to_string(),
     }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/runner/leases/{lease_id}/receipt",
+    tag = "runner-protocol",
+    params(("lease_id" = Uuid, Path)),
+    responses((status = 200, body = RunnerLeaseReceipt), (status = 401), (status = 404), (status = 503))
+)]
+pub(crate) async fn read_runner_lease_receipt(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(lease_id): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let db = pool(&state)?;
+    let runner = authenticate_runner(db, &headers).await?;
+    // Expiry and an attempted completion are not terminal acknowledgements.
+    // The immutable lease/attempt identity is read even after a newer job retry.
+    let receipt = sqlx::query_as::<_, RunnerLeaseReceipt>(
+        "SELECT 1::integer AS protocol_version, l.id AS lease_id, l.attempt_id, \
+                l.generation AS fencing_token, l.lease_status, l.terminal_status, l.completed_at, \
+                COALESCE((l.lease_status IN ('completed','canceled') AND l.completed_at IS NOT NULL \
+                 AND l.completion_received_at IS NOT NULL \
+                 AND l.terminal_status IN ('success','failed','canceled') \
+                 AND a.status = l.terminal_status AND a.finished_at IS NOT NULL), false) \
+                AS terminal_acknowledged \
+         FROM job_leases l JOIN execution_attempts a ON a.id = l.attempt_id \
+         WHERE l.id = $1 AND l.runner_id = $2",
+    )
+    .bind(lease_id)
+    .bind(runner.id)
+    .fetch_optional(db)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)?;
+    Ok(([(header::CACHE_CONTROL, "no-store")], Json(receipt)))
 }
 
 async fn claim_next_work(

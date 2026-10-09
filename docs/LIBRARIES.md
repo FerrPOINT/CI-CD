@@ -59,7 +59,7 @@ pnpm build
 | Data | `@tanstack/react-query`, local `api/*` wrapper | Pages используют hooks из `frontend/src/api`, не raw fetch. |
 | UI primitives | `@radix-ui/*`, `class-variance-authority`, `tailwind-merge`, `lucide-react`, `sonner` | Controls должны иметь accessible name, стабильные размеры и i18n strings. |
 | Styling | `tailwindcss`, `@tailwindcss/vite` | Цвета через theme tokens из `frontend/src/index.css`. |
-| I18n | `i18next`, `react-i18next`, `i18next-http-backend` | ru/en ключи в паритете. |
+| I18n | `i18next`, `react-i18next` | ru/en ключи в паритете; переводы поставляются локально, HTTP backend не используется. |
 | Tests/build | `vitest`, `@testing-library/*`, `jsdom`, `typescript`, `vite`, `playwright`, `@playwright/test`, `@axe-core/playwright`, `openapi-typescript` | Unit/build входят в hosted CI; Playwright/axe остаются локальным gate для critical browser journeys и all-route smoke на seeded Compose stack. |
 
 ## 6. Priority candidates

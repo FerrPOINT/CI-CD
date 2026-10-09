@@ -3040,6 +3040,31 @@ paths:
           description: ''
         '413':
           description: log append body exceeds 1 MiB
+  /api/v1/runner/leases/{lease_id}/receipt:
+    get:
+      tags:
+      - runner-protocol
+      operationId: read_runner_lease_receipt
+      parameters:
+      - name: lease_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunnerLeaseReceipt'
+        '401':
+          description: ''
+        '404':
+          description: ''
+        '503':
+          description: ''
   /api/v1/runner/leases/{lease_id}/renew:
     post:
       tags:
@@ -5583,6 +5608,41 @@ components:
         protocolVersion:
           type: integer
           format: int32
+    RunnerLeaseReceipt:
+      type: object
+      required:
+      - protocolVersion
+      - leaseId
+      - attemptId
+      - fencingToken
+      - leaseStatus
+      - terminalAcknowledged
+      properties:
+        attemptId:
+          type: string
+          format: uuid
+        completedAt:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        fencingToken:
+          type: integer
+          format: int64
+        leaseId:
+          type: string
+          format: uuid
+        leaseStatus:
+          type: string
+        protocolVersion:
+          type: integer
+          format: int32
+        terminalAcknowledged:
+          type: boolean
+        terminalStatus:
+          type:
+          - string
+          - 'null'
     RunnerLogAppendRequest:
       type: object
       required:

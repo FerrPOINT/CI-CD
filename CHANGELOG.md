@@ -27,6 +27,12 @@
   Deployment API, роли и runner protocol не менялись; добавлены PostgreSQL
   регрессии fresh/upgrade/replay, immutable history и checksum mismatch.
 
+- Runner создаёт fresh attempt/lease-owned workspace и проверяет full pinned SHA
+  с clean detached HEAD до команд. Old workspace не удаляется при повторной попытке;
+  cleanup требует terminal acknowledgement и сохранённый owner marker. Docker-job
+  больше не получает общий volume с workspace других попыток. Это source foundation,
+  не закрытая автономная SDLC/live acceptance.
+
 - `pipeline wait` учитывает `--timeout-seconds` / `CICD_TIMEOUT_SECONDS` при опросе, включая чтение тела: HTTP timeout возвращает `TRANSPORT_ERROR`, истечение ожидания — `WAIT_TIMEOUT`; pipeline не отменяется.
 
 - CLI возвращает network exit code `3` и `TRANSPORT_ERROR` при обрыве или таймауте чтения artifact download; существующий файл сохраняется при неудачном скачивании.

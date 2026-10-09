@@ -142,6 +142,7 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
     runner(POST, "/api/v1/runner/leases/{lease_id}/ack"),
     runner(POST, "/api/v1/runner/leases/{lease_id}/renew"),
     runner(GET, "/api/v1/runner/leases/{lease_id}/control"),
+    runner(GET, "/api/v1/runner/leases/{lease_id}/receipt"),
     runner(POST, "/api/v1/runner/leases/{lease_id}/secrets:resolve"),
     runner(
         POST,

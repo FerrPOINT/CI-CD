@@ -56,6 +56,10 @@ struct Cli {
     no_checkout: bool,
     #[arg(long, env = "CICD_RUNNER_KEEP_WORKSPACE", default_value_t = false)]
     keep_workspace: bool,
+    #[arg(long, conflicts_with = "reconcile_workspaces")]
+    inspect_workspaces: bool,
+    #[arg(long)]
+    reconcile_workspaces: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -175,22 +179,76 @@ struct ExecutionResult {
     diagnostic: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CompletionAck {
+    protocol_version: i32,
+    accepted: bool,
+    terminal_status: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LeaseReceipt {
+    protocol_version: i32,
+    lease_id: Uuid,
+    attempt_id: Uuid,
+    fencing_token: i64,
+    lease_status: String,
+    terminal_status: Option<String>,
+    completed_at: Option<chrono::DateTime<Utc>>,
+    terminal_acknowledged: bool,
+}
+
 #[derive(Debug)]
 enum CommandOutcome {
     Exited(std::process::ExitStatus),
     Canceled,
 }
 
+#[derive(Debug)]
+struct UnconfirmedExecution;
+
+impl std::fmt::Display for UnconfirmedExecution {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(
+            "command termination is unconfirmed; workspace requires process reconciliation",
+        )
+    }
+}
+
+impl std::error::Error for UnconfirmedExecution {}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     validate_cli(&cli)?;
+    let root = workspace_root(&cli);
+    if cli.inspect_workspaces {
+        println!(
+            "{}",
+            serde_json::to_string(&cicd::runner_workspace::OwnedWorkspace::inventory(&root)?)?
+        );
+        return Ok(());
+    }
+    if !cli.reconcile_workspaces {
+        ensure_no_unresolved_workspaces(&root)?;
+    }
     let base = normalize_api_base(&cli.api_url);
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(45))
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
         .build()
         .context("build runner HTTP client")?;
     let credential = ensure_credential(&client, &base, &cli).await?;
+
+    if cli.reconcile_workspaces {
+        reconcile_workspaces(&client, &base, &credential, &root, cli.keep_workspace).await?;
+        return Ok(());
+    }
+    // A local ACK file is recovery metadata, not fresh server authority.
+    reconcile_workspaces(&client, &base, &credential, &root, true).await?;
 
     loop {
         heartbeat(&client, &base, &credential, &cli, 0, &[]).await?;
@@ -206,6 +264,123 @@ async fn main() -> anyhow::Result<()> {
             None => sleep_after_empty_poll(&cli, poll_started.elapsed()).await,
         }
     }
+}
+
+fn workspace_root(cli: &Cli) -> PathBuf {
+    cli.work_dir
+        .clone()
+        .unwrap_or_else(|| std::env::temp_dir().join("forge-runner"))
+}
+
+fn ensure_no_unresolved_workspaces(root: &Path) -> anyhow::Result<()> {
+    if cicd::runner_workspace::OwnedWorkspace::inventory(root)?
+        .iter()
+        .any(|workspace| !workspace.acknowledged)
+    {
+        bail!(
+            "unresolved workspaces require owner readback; use --inspect-workspaces and --reconcile-workspaces before polling new work"
+        );
+    }
+    Ok(())
+}
+
+async fn read_terminal_receipt(
+    client: &reqwest::Client,
+    base: &str,
+    credential: &str,
+    lease_id: Uuid,
+    attempt_id: Uuid,
+    generation: i64,
+    outcome: &str,
+) -> anyhow::Result<()> {
+    let mut response = client
+        .get(format!("{base}/api/v1/runner/leases/{lease_id}/receipt"))
+        .bearer_auth(credential)
+        .header("Accept-Encoding", "identity")
+        .send()
+        .await
+        .map_err(|_| anyhow::anyhow!("terminal readback unavailable"))?;
+    if response.status() != reqwest::StatusCode::OK {
+        bail!("terminal readback unavailable");
+    }
+    if response
+        .headers()
+        .get("content-encoding")
+        .is_some_and(|value| value != "identity")
+    {
+        bail!("invalid terminal readback encoding");
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| anyhow::anyhow!("terminal readback unavailable"))?
+    {
+        if body.len() + chunk.len() > 4096 {
+            bail!("terminal readback exceeds safety limit");
+        }
+        body.extend_from_slice(&chunk);
+    }
+    let receipt: LeaseReceipt =
+        serde_json::from_slice(&body).map_err(|_| anyhow::anyhow!("invalid terminal readback"))?;
+    if receipt.protocol_version != PROTOCOL_VERSION
+        || receipt.lease_id != lease_id
+        || receipt.attempt_id != attempt_id
+        || receipt.fencing_token != generation
+        || !receipt.terminal_acknowledged
+        || receipt.completed_at.is_none()
+        || receipt.terminal_status.as_deref() != Some(outcome)
+        || receipt.lease_status
+            != if outcome == "canceled" {
+                "canceled"
+            } else {
+                "completed"
+            }
+    {
+        bail!("terminal readback does not acknowledge this attempt result");
+    }
+    Ok(())
+}
+
+async fn reconcile_workspaces(
+    client: &reqwest::Client,
+    base: &str,
+    credential: &str,
+    root: &Path,
+    keep_workspace: bool,
+) -> anyhow::Result<()> {
+    let mut unresolved = 0;
+    for record in cicd::runner_workspace::OwnedWorkspace::inventory(root)? {
+        let Some(outcome) = record.terminal_status.as_deref() else {
+            unresolved += 1;
+            continue;
+        };
+        if read_terminal_receipt(
+            client,
+            base,
+            credential,
+            record.lease_id,
+            record.attempt_id,
+            record.generation,
+            outcome,
+        )
+        .await
+        .is_err()
+        {
+            unresolved += 1;
+            continue;
+        }
+        let workspace = cicd::runner_workspace::OwnedWorkspace::reopen(root, &record.workspace_id)?;
+        workspace.verify_identity(record.attempt_id, record.lease_id, record.generation)?;
+        workspace.acknowledge_completion(outcome)?;
+        if !keep_workspace {
+            workspace.cleanup_after_ack().await?;
+        }
+    }
+    if unresolved > 0 {
+        bail!("{unresolved} workspaces remain unresolved; no commands were re-executed");
+    }
+    Ok(())
 }
 
 fn validate_cli(cli: &Cli) -> anyhow::Result<()> {
@@ -428,16 +603,41 @@ async fn run_offer(
         masks,
     };
     let result = execute_attempt(cli, &offer, Some(log_context), &secret_env).await;
+    let completion_result =
+        complete_attempt_result(client, base, credential, cli, &offer, result).await;
     stop_lease_background_tasks(&stop_tx, renew_task, heartbeat_task).await;
+    completion_result?;
+    heartbeat(client, base, credential, cli, 0, &[]).await?;
+    Ok(())
+}
 
-    let completion_result = match result {
-        Ok(result) => complete_lease(client, base, credential, &offer, result).await,
+async fn complete_attempt_result(
+    client: &reqwest::Client,
+    base: &str,
+    credential: &str,
+    cli: &Cli,
+    offer: &LeaseOffer,
+    result: anyhow::Result<(ExecutionResult, cicd::runner_workspace::OwnedWorkspace)>,
+) -> anyhow::Result<()> {
+    match result {
+        Ok(executed) => {
+            complete_executed_attempt(
+                client,
+                base,
+                credential,
+                offer,
+                executed,
+                cli.keep_workspace,
+            )
+            .await
+        }
+        Err(error) if error.is::<UnconfirmedExecution>() => Err(error),
         Err(error) => {
             complete_lease(
                 client,
                 base,
                 credential,
-                &offer,
+                offer,
                 ExecutionResult {
                     outcome: "failed",
                     exit_code: None,
@@ -446,9 +646,7 @@ async fn run_offer(
             )
             .await
         }
-    };
-    heartbeat(client, base, credential, cli, 0, &[]).await?;
-    completion_result
+    }
 }
 
 async fn ack_lease(
@@ -632,7 +830,52 @@ async fn complete_lease(
         .send()
         .await
         .context("complete request failed")?;
-    ensure_success(response).await.context("complete failed")
+    let ack: CompletionAck = response_json(response).await.context("complete failed")?;
+    if ack.protocol_version != PROTOCOL_VERSION
+        || !ack.accepted
+        || ack.terminal_status != result.outcome
+    {
+        bail!("terminal completion acknowledgement does not match this result");
+    }
+    Ok(())
+}
+
+async fn complete_executed_attempt(
+    client: &reqwest::Client,
+    base: &str,
+    credential: &str,
+    offer: &LeaseOffer,
+    (result, workspace): (ExecutionResult, cicd::runner_workspace::OwnedWorkspace),
+    keep_workspace: bool,
+) -> anyhow::Result<()> {
+    let outcome = result.outcome;
+    workspace.record_completion(outcome)?;
+    let completion = complete_lease(client, base, credential, offer, result).await;
+    // Never repeat the POST: a lost reply may follow a committed completion.
+    let completion = match completion {
+        Ok(()) => Ok(()),
+        Err(_) => {
+            read_terminal_receipt(
+                client,
+                base,
+                credential,
+                offer.lease_id,
+                offer.attempt.id,
+                offer.fencing_token,
+                outcome,
+            )
+            .await
+        }
+    };
+    if completion.is_ok() {
+        workspace.acknowledge_completion(outcome)?;
+    }
+    if completion.is_ok() && !keep_workspace {
+        if let Err(error) = workspace.cleanup_after_ack().await {
+            eprintln!("acknowledged workspace retained: {error:#}");
+        }
+    }
+    completion
 }
 
 async fn execute_attempt(
@@ -640,9 +883,9 @@ async fn execute_attempt(
     offer: &LeaseOffer,
     log_context: Option<LogContext>,
     secret_env: &[(String, String)],
-) -> anyhow::Result<ExecutionResult> {
-    let workspace = prepare_workspace(cli, offer).await?;
-    let cleanup_path = workspace.clone();
+) -> anyhow::Result<(ExecutionResult, cicd::runner_workspace::OwnedWorkspace)> {
+    let owned_workspace = prepare_workspace(cli, offer).await?;
+    let workspace = owned_workspace.checkout();
     let mut last_exit_code = None;
     let mut result = ExecutionResult {
         outcome: "success",
@@ -653,7 +896,7 @@ async fn execute_attempt(
     for command in &offer.attempt.commands {
         let command_outcome = match run_shell_command(
             command,
-            &workspace,
+            workspace,
             offer.attempt.timeout_seconds,
             log_context.as_ref(),
             secret_env,
@@ -662,6 +905,9 @@ async fn execute_attempt(
         {
             Ok(status) => status,
             Err(error) => {
+                if error.is::<UnconfirmedExecution>() {
+                    return Err(error);
+                }
                 result = ExecutionResult {
                     outcome: "failed",
                     exit_code: None,
@@ -702,7 +948,7 @@ async fn execute_attempt(
         None
     } else {
         match log_context.as_ref() {
-            Some(context) => upload_declared_artifacts(context, offer, &workspace)
+            Some(context) => upload_declared_artifacts(context, offer, workspace)
                 .await
                 .err(),
             None if offer.attempt.artifacts.is_empty() => None,
@@ -723,27 +969,27 @@ async fn execute_attempt(
         }
     }
 
-    if !cli.keep_workspace {
-        cleanup_workspace(&cleanup_path, cli.work_dir.as_deref())?;
-    }
     if result.outcome == "success" {
         result.exit_code = last_exit_code.or(Some(0));
     }
-    Ok(result)
+    Ok((result, owned_workspace))
 }
 
-async fn prepare_workspace(cli: &Cli, offer: &LeaseOffer) -> anyhow::Result<PathBuf> {
-    let root = cli
-        .work_dir
-        .clone()
-        .unwrap_or_else(|| std::env::temp_dir().join("forge-runner"));
-    std::fs::create_dir_all(&root)
-        .with_context(|| format!("create runner work root {}", root.display()))?;
-    let workspace = root.join(format!(
-        "attempt-{}-{}",
+async fn prepare_workspace(
+    cli: &Cli,
+    offer: &LeaseOffer,
+) -> anyhow::Result<cicd::runner_workspace::OwnedWorkspace> {
+    let root = workspace_root(cli);
+    let workspace = cicd::runner_workspace::OwnedWorkspace::create(
+        &root,
         offer.attempt.id,
-        Uuid::new_v4().simple()
-    ));
+        offer.lease_id,
+        offer.fencing_token,
+    )?;
+    if offer.attempt.commit_sha.is_some() && (!offer.attempt.workspace.checkout || cli.no_checkout)
+    {
+        bail!("pinned attempt requires checkout; no-checkout cannot bypass verification");
+    }
 
     if offer.attempt.workspace.checkout && !cli.no_checkout {
         let url = offer
@@ -754,45 +1000,17 @@ async fn prepare_workspace(cli: &Cli, offer: &LeaseOffer) -> anyhow::Result<Path
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .context("lease requires checkout but checkoutUrl is missing")?;
-        let workspace_arg = workspace.to_string_lossy().into_owned();
-        if let Err(error) = run_git(["clone", "--quiet", url, workspace_arg.as_str()], &root).await
-        {
-            cleanup_workspace(&workspace, Some(&root))?;
-            return Err(error).with_context(|| format!("clone {url}"));
-        }
-        let checkout_target = offer
-            .attempt
-            .commit_sha
-            .as_deref()
-            .filter(|value| !value.is_empty())
-            .unwrap_or(&offer.attempt.git_ref);
-        if !checkout_target.trim().is_empty() {
-            if let Err(error) = run_git(["checkout", "--quiet", checkout_target], &workspace).await
-            {
-                cleanup_workspace(&workspace, Some(&root))?;
-                return Err(error).with_context(|| format!("checkout {checkout_target}"));
-            }
-        }
+        workspace
+            .clone_checkout(
+                url,
+                offer.attempt.commit_sha.as_deref(),
+                &offer.attempt.git_ref,
+            )
+            .await?;
     } else {
-        std::fs::create_dir_all(&workspace)
-            .with_context(|| format!("create attempt workspace {}", workspace.display()))?;
+        workspace.create_empty_checkout()?;
     }
     Ok(workspace)
-}
-
-async fn run_git<const N: usize>(args: [&str; N], cwd: &Path) -> anyhow::Result<()> {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .stdin(Stdio::null())
-        .status()
-        .await
-        .context("spawn git")?;
-    if status.success() {
-        Ok(())
-    } else {
-        bail!("git exited with {status}");
-    }
 }
 
 async fn run_shell_command(
@@ -857,10 +1075,10 @@ async fn run_shell_command(
 
     let status = loop {
         tokio::select! {
-            status = child.wait() => break status.context("wait for command"),
+            status = child.wait() => break status.map_err(|_| anyhow::Error::new(UnconfirmedExecution)),
             _ = &mut timeout => {
                 let _ = child.kill().await;
-                let _ = child.wait().await;
+                child.wait().await.map_err(|_| UnconfirmedExecution)?;
                 let _ = await_log_task(stdout_task).await;
                 let _ = await_log_task(stderr_task).await;
                 bail!("command timed out after {timeout_seconds}s");
@@ -881,7 +1099,7 @@ async fn run_shell_command(
                             )
                             .await;
                             let _ = child.kill().await;
-                            let _ = child.wait().await;
+                            child.wait().await.map_err(|_| UnconfirmedExecution)?;
                             let _ = await_log_task(stdout_task).await;
                             let _ = await_log_task(stderr_task).await;
                             return Ok(CommandOutcome::Canceled);
@@ -1119,19 +1337,6 @@ fn shell(command: &str) -> Command {
     }
 }
 
-fn cleanup_workspace(path: &Path, configured_root: Option<&Path>) -> anyhow::Result<()> {
-    let root = configured_root
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| std::env::temp_dir().join("forge-runner"));
-    let root = root.canonicalize().unwrap_or(root);
-    let candidate = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    if candidate.starts_with(&root) && candidate != root && candidate.exists() {
-        std::fs::remove_dir_all(&candidate)
-            .with_context(|| format!("cleanup workspace {}", candidate.display()))?;
-    }
-    Ok(())
-}
-
 async fn response_json<T: for<'de> Deserialize<'de>>(
     response: reqwest::Response,
 ) -> anyhow::Result<T> {
@@ -1167,6 +1372,7 @@ fn truncate_diagnostic(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cicd::runner_workspace::OwnedWorkspace;
 
     fn test_cli(work_dir: PathBuf) -> Cli {
         Cli {
@@ -1181,6 +1387,8 @@ mod tests {
             once: true,
             no_checkout: true,
             keep_workspace: false,
+            inspect_workspaces: false,
+            reconcile_workspaces: false,
         }
     }
 
@@ -1204,6 +1412,283 @@ mod tests {
                 },
             },
         }
+    }
+
+    #[tokio::test]
+    async fn unconfirmed_execution_never_submits_terminal_completion() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let requests = Arc::new(AtomicUsize::new(0));
+        let count = requests.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = axum::Router::new().fallback(move || {
+            count.fetch_add(1, Ordering::SeqCst);
+            async { axum::http::StatusCode::OK }
+        });
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let root = std::env::temp_dir().join(format!("forge-unconfirmed-{}", Uuid::new_v4()));
+        let offer = test_offer("exit 0", 5);
+        let workspace =
+            OwnedWorkspace::create(&root, offer.attempt.id, offer.lease_id, offer.fencing_token)
+                .unwrap();
+        drop(workspace);
+        let cli = test_cli(root.clone());
+        let error = complete_attempt_result(
+            &reqwest::Client::new(),
+            &base,
+            "fixture",
+            &cli,
+            &offer,
+            Err(anyhow::Error::new(UnconfirmedExecution).context("child wait failed")),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.is::<UnconfirmedExecution>());
+        assert_eq!(requests.load(Ordering::SeqCst), 0);
+        let inventory = OwnedWorkspace::inventory(&root).unwrap();
+        assert_eq!(inventory.len(), 1);
+        assert!(inventory[0].terminal_status.is_none());
+        assert!(!inventory[0].acknowledged);
+        assert!(ensure_no_unresolved_workspaces(&root).is_err());
+        server.abort();
+        let _ = server.await;
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn completion_ack_controls_workspace_cleanup() {
+        for (body, acknowledged) in [
+            (
+                json!({"protocolVersion": 1, "accepted": true, "terminalStatus": "success"}),
+                true,
+            ),
+            (
+                json!({"protocolVersion": 1, "accepted": false, "terminalStatus": "success"}),
+                false,
+            ),
+            (
+                json!({"protocolVersion": 1, "accepted": true, "terminalStatus": "failed"}),
+                false,
+            ),
+            (
+                json!({"protocolVersion": 2, "accepted": true, "terminalStatus": "success"}),
+                false,
+            ),
+            (json!({}), false),
+        ] {
+            let work_dir = std::env::temp_dir().join(format!("forge-ack-test-{}", Uuid::new_v4()));
+            let cli = test_cli(work_dir.clone());
+            let offer = test_offer("exit 0", 5);
+            let executed = execute_attempt(&cli, &offer, None, &[]).await.unwrap();
+            let checkout = executed.1.checkout().to_path_buf();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            let app = axum::Router::new().route(
+                "/{*path}",
+                axum::routing::post(move || async move { axum::Json(body) }),
+            );
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let completion = complete_executed_attempt(
+                &reqwest::Client::new(),
+                &base,
+                "test-credential",
+                &offer,
+                executed,
+                false,
+            )
+            .await;
+            assert_eq!(completion.is_ok(), acknowledged);
+            assert_eq!(checkout.exists(), !acknowledged);
+            server.abort();
+            let _ = server.await;
+            std::fs::remove_dir_all(work_dir).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn pinned_attempt_cannot_skip_checkout() {
+        let work_dir = std::env::temp_dir().join(format!("forge-pin-test-{}", Uuid::new_v4()));
+        let cli = test_cli(work_dir.clone());
+        let mut offer = test_offer("exit 0", 5);
+        offer.attempt.commit_sha = Some("a".repeat(40));
+        assert!(execute_attempt(&cli, &offer, None, &[]).await.is_err());
+        std::fs::remove_dir_all(work_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn lost_completion_response_retains_workspace() {
+        use tokio::io::AsyncReadExt;
+        let work_dir = std::env::temp_dir().join(format!("forge-lost-ack-test-{}", Uuid::new_v4()));
+        let cli = test_cli(work_dir.clone());
+        let offer = test_offer("exit 0", 5);
+        let executed = execute_attempt(&cli, &offer, None, &[]).await.unwrap();
+        let checkout = executed.1.checkout().to_path_buf();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = [0_u8; 4096];
+            assert!(socket.read(&mut buffer).await.unwrap() > 0);
+            // Request may have been accepted; connection loss is not a terminal ACK.
+        });
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(5))
+            .build()
+            .unwrap();
+        assert!(
+            complete_executed_attempt(&client, &base, "test-credential", &offer, executed, false)
+                .await
+                .is_err()
+        );
+        server.await.unwrap();
+        assert!(checkout.exists());
+        let inventory = cicd::runner_workspace::OwnedWorkspace::inventory(&work_dir).unwrap();
+        assert_eq!(inventory[0].terminal_status.as_deref(), Some("success"));
+        assert!(!inventory[0].acknowledged);
+        assert!(ensure_no_unresolved_workspaces(&work_dir).is_err());
+        std::fs::remove_dir_all(work_dir).unwrap();
+    }
+
+    fn receipt_body(offer: &LeaseOffer) -> serde_json::Value {
+        json!({
+            "protocolVersion": 1, "leaseId": offer.lease_id, "attemptId": offer.attempt.id,
+            "fencingToken": offer.fencing_token, "leaseStatus": "completed",
+            "terminalStatus": "success", "completedAt": Utc::now(), "terminalAcknowledged": true
+        })
+    }
+
+    #[tokio::test]
+    async fn unknown_completion_uses_readback_without_resending_post() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        let root = std::env::temp_dir().join(format!("forge-readback-{}", Uuid::new_v4()));
+        let cli = test_cli(root.clone());
+        let offer = test_offer("exit 0", 5);
+        let body = receipt_body(&offer);
+        let posts = Arc::new(AtomicUsize::new(0));
+        let count = posts.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = axum::Router::new().route(
+            "/{*path}",
+            axum::routing::post(move || {
+                count.fetch_add(1, Ordering::SeqCst);
+                async { axum::http::StatusCode::SERVICE_UNAVAILABLE }
+            })
+            .get(move || async { axum::Json(body) }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let executed = execute_attempt(&cli, &offer, None, &[]).await.unwrap();
+        complete_executed_attempt(
+            &reqwest::Client::new(),
+            &base,
+            "fixture",
+            &offer,
+            executed,
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(posts.load(Ordering::SeqCst), 1);
+        assert!(cicd::runner_workspace::OwnedWorkspace::inventory(&root).unwrap()[0].acknowledged);
+        ensure_no_unresolved_workspaces(&root).unwrap();
+        reconcile_workspaces(&reqwest::Client::new(), &base, "fixture", &root, false)
+            .await
+            .unwrap();
+        assert!(
+            cicd::runner_workspace::OwnedWorkspace::inventory(&root)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(posts.load(Ordering::SeqCst), 1);
+        server.abort();
+        let _ = server.await;
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn restart_reconciliation_requires_exact_owner_receipt() {
+        let root = std::env::temp_dir().join(format!("forge-reconcile-{}", Uuid::new_v4()));
+        let cli = test_cli(root.clone());
+        let offer = test_offer("exit 0", 5);
+        let (_, workspace) = execute_attempt(&cli, &offer, None, &[]).await.unwrap();
+        workspace.record_completion("success").unwrap();
+        let path = workspace.checkout().to_path_buf();
+        drop(workspace);
+        for (field, value) in [
+            ("protocolVersion", json!(2)),
+            ("leaseId", json!(Uuid::new_v4())),
+            ("attemptId", json!(Uuid::new_v4())),
+            ("fencingToken", json!(2)),
+            ("leaseStatus", json!("expired")),
+            ("terminalStatus", json!("failed")),
+            ("terminalAcknowledged", json!(false)),
+            ("completedAt", json!(null)),
+        ] {
+            let mut body = receipt_body(&offer);
+            body[field] = value;
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let base = format!("http://{}", listener.local_addr().unwrap());
+            let app = axum::Router::new().route(
+                "/{*path}",
+                axum::routing::get(move || async { axum::Json(body) }),
+            );
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            assert!(
+                reconcile_workspaces(&reqwest::Client::new(), &base, "fixture", &root, false)
+                    .await
+                    .is_err()
+            );
+            assert!(path.exists());
+            assert!(
+                !cicd::runner_workspace::OwnedWorkspace::inventory(&root).unwrap()[0].acknowledged
+            );
+            server.abort();
+            let _ = server.await;
+        }
+        let body = receipt_body(&offer);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let app = axum::Router::new().route(
+            "/{*path}",
+            axum::routing::get(move || async { axum::Json(body) }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        reconcile_workspaces(&reqwest::Client::new(), &base, "fixture", &root, false)
+            .await
+            .unwrap();
+        assert!(!path.exists());
+        server.abort();
+        let _ = server.await;
+        std::fs::remove_dir(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn unfinished_execution_is_never_reconciled_by_expiry_or_remote_success() {
+        let root = std::env::temp_dir().join(format!("forge-unfinished-{}", Uuid::new_v4()));
+        let offer = test_offer("exit 0", 5);
+        let workspace = prepare_workspace(&test_cli(root.clone()), &offer)
+            .await
+            .unwrap();
+        assert!(ensure_no_unresolved_workspaces(&root).is_err());
+        assert!(
+            reconcile_workspaces(
+                &reqwest::Client::new(),
+                "http://127.0.0.1:1",
+                "fixture",
+                &root,
+                false
+            )
+            .await
+            .is_err()
+        );
+        assert!(workspace.checkout().exists());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1311,10 +1796,17 @@ mod tests {
         let cli = test_cli(work_dir.clone());
         let offer = test_offer("exit 7", 5);
 
-        let result = execute_attempt(&cli, &offer, None, &[]).await.unwrap();
+        let (result, workspace) = execute_attempt(&cli, &offer, None, &[]).await.unwrap();
 
         assert_eq!(result.outcome, "failed");
         assert_eq!(result.exit_code, Some(7));
+        assert!(
+            workspace.checkout().exists(),
+            "no owner acknowledgement yet"
+        );
+        workspace.record_completion(result.outcome).unwrap();
+        workspace.acknowledge_completion(result.outcome).unwrap();
+        workspace.cleanup_after_ack().await.unwrap();
         let _ = std::fs::remove_dir_all(work_dir);
     }
 
@@ -1331,7 +1823,7 @@ mod tests {
         let mut offer = test_offer(command, 5);
         offer.attempt.secrets = vec!["DEPLOY_TOKEN".to_string()];
 
-        let result = execute_attempt(
+        let (result, workspace) = execute_attempt(
             &cli,
             &offer,
             None,
@@ -1341,6 +1833,13 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.outcome, "success");
+        assert!(
+            workspace.checkout().exists(),
+            "no owner acknowledgement yet"
+        );
+        workspace.record_completion(result.outcome).unwrap();
+        workspace.acknowledge_completion(result.outcome).unwrap();
+        workspace.cleanup_after_ack().await.unwrap();
         let _ = std::fs::remove_dir_all(work_dir);
     }
 
@@ -1356,10 +1855,17 @@ mod tests {
         };
         let offer = test_offer(command, 1);
 
-        let result = execute_attempt(&cli, &offer, None, &[]).await.unwrap();
+        let (result, workspace) = execute_attempt(&cli, &offer, None, &[]).await.unwrap();
 
         assert_eq!(result.outcome, "failed");
         assert_eq!(result.exit_code, None);
+        assert!(
+            workspace.checkout().exists(),
+            "no owner acknowledgement yet"
+        );
+        workspace.record_completion(result.outcome).unwrap();
+        workspace.acknowledge_completion(result.outcome).unwrap();
+        workspace.cleanup_after_ack().await.unwrap();
         assert!(
             result
                 .diagnostic

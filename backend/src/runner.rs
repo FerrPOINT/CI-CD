@@ -119,11 +119,49 @@ pub async fn run_job_with_config(
         }
         guard.insert(job_id, 0);
     }
-    if let Err(error) = run_job_inner(pool.clone(), job_id, running.clone(), &config).await {
-        tracing::error!(%job_id, error = ?error, "runner job failed");
-        finish_job_after_runner_error(&pool, job_id, &error).await;
+    let outcome = match run_job_inner(pool.clone(), job_id, running.clone(), &config).await {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            tracing::error!(%job_id, error = ?error, "runner job failed");
+            let outcome = execution_error_outcome(&running, job_id).await;
+            if outcome == ExecutionOutcome::Finished {
+                finish_job_after_runner_error(&pool, job_id, &error).await;
+            } else {
+                tracing::error!(%job_id, "post-spawn error has no completion authority; execution retained for reconciliation");
+            }
+            outcome
+        }
+    };
+    release_execution_reservation(&running, job_id, outcome).await;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExecutionOutcome {
+    Finished,
+    Held,
+}
+
+async fn execution_error_outcome(running: &RunningJobs, job_id: Uuid) -> ExecutionOutcome {
+    if running
+        .lock()
+        .await
+        .get(&job_id)
+        .is_some_and(|pid| *pid != 0)
+    {
+        ExecutionOutcome::Held
+    } else {
+        ExecutionOutcome::Finished
     }
-    running.lock().await.remove(&job_id);
+}
+
+async fn release_execution_reservation(
+    running: &RunningJobs,
+    job_id: Uuid,
+    outcome: ExecutionOutcome,
+) {
+    if outcome == ExecutionOutcome::Finished {
+        running.lock().await.remove(&job_id);
+    }
 }
 
 async fn finish_job_after_runner_error(pool: &PgPool, job_id: Uuid, error: &ApiError) {
@@ -886,7 +924,7 @@ async fn run_job_inner(
     job_id: Uuid,
     running: RunningJobs,
     config: &RuntimeRunnerConfig,
-) -> Result<(), ApiError> {
+) -> Result<ExecutionOutcome, ApiError> {
     let job = sqlx::query_as::<_, JobRow>(
         "SELECT j.id, j.stage_id, j.name, j.image, j.command, j.required_secrets, j.artifact_paths, j.status, \
                 s.pipeline_id, p.project_id, s.name AS stage_name, \
@@ -903,24 +941,25 @@ async fn run_job_inner(
     .ok_or_else(ApiError::not_found)?;
 
     if job.status != "queued" && job.status != "running" {
-        return Ok(()); // terminal already
+        return Ok(ExecutionOutcome::Finished); // terminal already
     }
 
     let lease = if job.status == "queued" {
         let Some(lease) = claim_embedded_job_lease(&pool, job_id).await? else {
-            return Ok(());
+            return Ok(ExecutionOutcome::Finished);
         };
         lease
     } else {
         let Some(lease) = active_embedded_job_lease(&pool, job_id).await? else {
             tracing::warn!(%job_id, "running job has no active lease; skipping embedded execution");
-            return Ok(());
+            return Ok(ExecutionOutcome::Finished);
         };
         lease
     };
     let attempt_id = lease.attempt_id;
 
-    let workspace = prepare_workspace(&pool, &job, config).await?;
+    let owned_workspace = prepare_workspace(&pool, &job, &lease, config).await?;
+    let workspace = owned_workspace.checkout().to_path_buf();
 
     // REQ-SEC-002: inject only job-declared project secrets as env vars.
     let secrets = crate::platform::project_secret_pairs_for_names_with_config(
@@ -1026,7 +1065,7 @@ async fn run_job_inner(
     } else {
         None
     };
-    if let Some(remote) = &remote_job {
+    if let Some(remote) = &mut remote_job {
         remote
             .stage_artifacts(&pipeline_artifacts)
             .await
@@ -1041,9 +1080,7 @@ async fn run_job_inner(
         }
     }
     let mut child = if config.mode == RunnerMode::Docker {
-        // prepare_workspace returns <root>/forge-runner-<job>/workspace; the
-        // bind source must be the per-job directory (one level up from the
-        // clone checkout).
+        // Bind only this fresh attempt wrapper, never a reusable job directory.
         let workspace_subdir = workspace
             .parent()
             .and_then(|parent| parent.file_name())
@@ -1097,13 +1134,14 @@ async fn run_job_inner(
     .map_err(ApiError::internal)?;
     if !active {
         drop(guard);
-        if let Some(remote) = &mut remote_job {
-            remote.cleanup().await;
-        }
-        if !config.keep_workspace {
-            remove_workspace(&workspace).await;
-        }
-        return Ok(());
+        return Ok(finish_workspace_retention(
+            &pool,
+            &lease,
+            owned_workspace,
+            remote_job.as_mut(),
+            config.keep_workspace,
+        )
+        .await);
     }
     let mut child = child
         .spawn()
@@ -1135,12 +1173,17 @@ async fn run_job_inner(
         status = child.wait() => status,
         _ = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs as u64)) => {
             let message = format!("runner: job timed out after {timeout_secs}s, killing");
-            append_attempt_log(&pool, job_id, attempt_id, &message).await?;
             let _ = child.start_kill();
-            let _ = child.wait().await;
-            if let Some(remote) = &mut remote_job {
-                remote.cleanup().await;
+            if confirmed_process_exit(child.wait().await, job_id, attempt_id).is_none() {
+                return Ok(ExecutionOutcome::Held);
             }
+            if let Some(remote) = &mut remote_job {
+                if let Err(error) = remote.stop_execution().await {
+                    tracing::error!(%job_id, %attempt_id, %error, "Compose termination unconfirmed; resources retained");
+                    return Ok(ExecutionOutcome::Held);
+                }
+            }
+            append_attempt_log(&pool, job_id, attempt_id, &message).await?;
             if let Some(task) = stdout_task.take() {
                 await_stdout_task(task).await?;
             }
@@ -1172,20 +1215,24 @@ async fn run_job_inner(
                 )
                 .await?;
                 refresh_stage(pool.clone(), job.id).await?;
-                if !config.keep_workspace {
-                    remove_workspace(&workspace).await;
-                }
-                return Ok(());
+                return Ok(finish_workspace_retention(&pool, &lease, owned_workspace, remote_job.as_mut(), config.keep_workspace).await);
             }
             mark_attempt_failed(&pool, attempt_id, &message).await?;
             complete_embedded_job_lease(&pool, lease.id, "failed", Some(&message)).await?;
             refresh_stage(pool.clone(), job.id).await?;
-            if !config.keep_workspace {
-                remove_workspace(&workspace).await;
-            }
-            return Ok(());
+            return Ok(finish_workspace_retention(&pool, &lease, owned_workspace, remote_job.as_mut(), config.keep_workspace).await);
         }
     };
+
+    let Some(exit_status) = confirmed_process_exit(exit_status, job_id, attempt_id) else {
+        return Ok(ExecutionOutcome::Held);
+    };
+    if let Some(remote) = &mut remote_job {
+        if let Err(error) = remote.confirm_stopped().await {
+            tracing::error!(%job_id, %attempt_id, %error, "Compose process exit has no stopped-container readback; resources retained");
+            return Ok(ExecutionOutcome::Held);
+        }
+    }
 
     if let Some(task) = stdout_task {
         await_stdout_task(task).await?;
@@ -1195,16 +1242,11 @@ async fn run_job_inner(
     }
 
     let (final_status, exit_code, error_tail) = match exit_status {
-        Ok(status) if status.success() => ("success", status.code(), None),
-        Ok(status) => (
+        status if status.success() => ("success", status.code(), None),
+        status => (
             "failed",
             status.code(),
             Some(format!("runner: process exited with status {status}")),
-        ),
-        Err(error) => (
-            "failed",
-            None,
-            Some(format!("runner: failed to wait for process: {error}")),
         ),
     };
     let mut final_status = final_status;
@@ -1222,7 +1264,6 @@ async fn run_job_inner(
             final_status = "failed";
             error_tail = Some(format!("runner: remote artifact transfer failed: {error}"));
         }
-        remote.cleanup().await;
     }
     let artifact_error = collect_declared_artifacts(
         &pool,
@@ -1243,11 +1284,6 @@ async fn run_job_inner(
                 error.message
             )));
         }
-    }
-
-    // Cleanup workspace unless CICD_RUNNER_KEEP_WORKSPACE is enabled.
-    if !config.keep_workspace {
-        remove_workspace(&workspace).await;
     }
 
     let updated = sqlx::query(
@@ -1275,8 +1311,15 @@ async fn run_job_inner(
             Some("runner: job canceled before process result"),
         )
         .await?;
-        refresh_stage(pool, job.id).await?;
-        return Ok(());
+        refresh_stage(pool.clone(), job.id).await?;
+        return Ok(finish_workspace_retention(
+            &pool,
+            &lease,
+            owned_workspace,
+            remote_job.as_mut(),
+            config.keep_workspace,
+        )
+        .await);
     }
     sqlx::query(
         "UPDATE execution_attempts \
@@ -1291,22 +1334,76 @@ async fn run_job_inner(
     .await
     .map_err(ApiError::internal)?;
     complete_embedded_job_lease(&pool, lease.id, final_status, error_tail.as_deref()).await?;
-    refresh_stage(pool, job.id).await?;
-    Ok(())
+    refresh_stage(pool.clone(), job.id).await?;
+    Ok(finish_workspace_retention(
+        &pool,
+        &lease,
+        owned_workspace,
+        remote_job.as_mut(),
+        config.keep_workspace,
+    )
+    .await)
 }
 
-fn cleanup_root(workspace: &Path) -> &Path {
-    if workspace
-        .file_name()
-        .is_some_and(|name| name == "workspace")
-    {
-        return workspace.parent().unwrap_or(workspace);
+fn confirmed_process_exit(
+    result: std::io::Result<std::process::ExitStatus>,
+    job_id: Uuid,
+    attempt_id: Uuid,
+) -> Option<std::process::ExitStatus> {
+    match result {
+        Ok(status) => Some(status),
+        Err(error) => {
+            tracing::error!(%job_id, %attempt_id, %error,
+                "process termination unconfirmed; lease, process identity and workspace retained for reconciliation");
+            None
+        }
     }
-    workspace
 }
 
-async fn remove_workspace(workspace: &Path) {
-    let _ = tokio::fs::remove_dir_all(cleanup_root(workspace)).await;
+async fn finish_workspace_retention(
+    pool: &PgPool,
+    lease: &EmbeddedJobLease,
+    workspace: crate::runner_workspace::OwnedWorkspace,
+    remote_job: Option<&mut crate::runner_docker::RemoteJob>,
+    keep_workspace: bool,
+) -> ExecutionOutcome {
+    // A zero-row completion or a failed readback cannot authorize deletion.
+    let acknowledged = sqlx::query_scalar::<_, String>(
+        "SELECT l.terminal_status FROM job_leases l JOIN execution_attempts a ON a.id = l.attempt_id \
+         WHERE l.id = $1 AND l.attempt_id = $2 AND l.generation = $3 AND l.completed_at IS NOT NULL \
+         AND l.terminal_status IN ('success', 'failed', 'canceled') \
+         AND l.lease_status IN ('completed', 'canceled') \
+         AND a.status = l.terminal_status AND a.finished_at IS NOT NULL",
+    )
+    .bind(lease.id)
+    .bind(lease.attempt_id)
+    .bind(lease.generation)
+    .fetch_optional(pool)
+    .await;
+    if let Ok(Some(outcome)) = acknowledged {
+        if workspace
+            .record_completion(&outcome)
+            .and_then(|()| workspace.acknowledge_completion(&outcome))
+            .is_err()
+        {
+            tracing::warn!(attempt_id = %lease.attempt_id, "workspace completion journal unavailable; files retained");
+            return ExecutionOutcome::Held;
+        }
+        if let Some(remote) = remote_job {
+            if let Err(error) = remote.cleanup(pool).await {
+                tracing::warn!(attempt_id = %lease.attempt_id, %error, "acknowledged Compose resources retained; dispatch held");
+                return ExecutionOutcome::Held;
+            }
+        }
+        if !keep_workspace && let Err(error) = workspace.cleanup_after_ack().await {
+            tracing::warn!(attempt_id = %lease.attempt_id, %error, "acknowledged workspace retained");
+            return ExecutionOutcome::Held;
+        }
+        ExecutionOutcome::Finished
+    } else {
+        tracing::warn!(attempt_id = %lease.attempt_id, "workspace retained: terminal lease acknowledgement missing");
+        ExecutionOutcome::Held
+    }
 }
 
 async fn mark_attempt_failed(
@@ -1502,12 +1599,13 @@ struct JobRow {
     project_name: String,
 }
 
-/// Clones the project repository (bare) into /tmp/forge-runner/<job> at git_ref.
+/// Creates a fresh lease-owned checkout and verifies a supplied commit pin.
 async fn prepare_workspace(
     pool: &PgPool,
     job: &JobRow,
+    lease: &EmbeddedJobLease,
     config: &RuntimeRunnerConfig,
-) -> Result<std::path::PathBuf, ApiError> {
+) -> Result<crate::runner_workspace::OwnedWorkspace, ApiError> {
     let repo_url: String = sqlx::query_scalar("SELECT repository_url FROM projects WHERE id = $1")
         .bind(job.project_id)
         .fetch_one(pool)
@@ -1520,18 +1618,15 @@ async fn prepare_workspace(
         .await
         .map_err(ApiError::internal)?;
 
-    let workspace = workspace_root(config).join(format!("forge-runner-{}", job.id));
-    let _ = tokio::fs::remove_dir_all(&workspace).await;
-    tokio::fs::create_dir_all(&workspace)
-        .await
-        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
-
-    append_log(
-        pool,
-        job.id,
-        &format!("runner: cloning {repo_url} at {git_ref}"),
+    let workspace = crate::runner_workspace::OwnedWorkspace::create(
+        &workspace_root(config),
+        lease.attempt_id,
+        lease.id,
+        lease.generation,
     )
-    .await?;
+    .map_err(|_| ApiError::bad_request("Cannot allocate a guarded attempt workspace"))?;
+
+    append_log(pool, job.id, "runner: preparing a fresh attempt checkout").await?;
 
     // Reject SSH URLs early: the embedded runner container does not ship an
     // SSH client, so `git clone git@…` dies with "cannot run ssh: No such file
@@ -1540,13 +1635,9 @@ async fn prepare_workspace(
         append_log(
             pool,
             job.id,
-            &format!(
-                "runner: SSH clone URLs are not supported by the embedded runner; \
-                 configure an HTTP URL or use an external runner with SSH access: {repo_url}"
-            ),
+            "runner: SSH clone URLs are not supported by the embedded runner; use HTTP or an external runner",
         )
         .await?;
-        let _ = tokio::fs::remove_dir_all(&workspace).await;
         return Err(ApiError::bad_request(
             "SSH clone URLs are not supported by the embedded runner; \
              use an HTTP URL or an external runner with SSH access",
@@ -1555,89 +1646,24 @@ async fn prepare_workspace(
 
     // Prefer local bare repo: avoid HTTP round-trips that can deadlock if the
     // repository_url points back at the same backend serving this runner.
-    let cloned = clone_from_local_bare(&repo_url, &git_ref, &workspace, &config.git_root).await;
-    if !cloned {
-        if let Err(error) = clone_via_http(&repo_url, &git_ref, &workspace, pool, job.id).await {
-            let _ = tokio::fs::remove_dir_all(&workspace).await;
-            return Err(error);
-        }
-    }
-    Ok(workspace.join("workspace"))
-}
-
-/// Attempts `git clone` from a local bare repo under `CICD_GIT_ROOT`.
-async fn clone_from_local_bare(
-    repo_url: &str,
-    git_ref: &str,
-    workspace: &std::path::Path,
-    git_root: &Path,
-) -> bool {
-    let Some(name) = extract_repo_name_from_url(repo_url) else {
-        return false;
-    };
-    let bare_path = git_root.join(format!("{name}.git"));
-    if !bare_path.is_dir() {
-        return false;
-    }
-    let output = tokio::process::Command::new("git")
-        .arg("clone")
-        .arg("--quiet")
-        .arg("--depth")
-        .arg("50")
-        .arg("--branch")
-        .arg(git_ref)
-        .arg(&bare_path)
-        .arg("workspace")
-        .current_dir(workspace)
-        .output()
-        .await;
-    match output {
-        Ok(out) if out.status.success() => true,
-        Ok(out) => {
-            tracing::warn!(
-                "local bare clone failed for {repo_url}: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            );
-            false
-        }
-        Err(err) => {
-            tracing::warn!("local bare clone spawn failed for {repo_url}: {err}");
-            false
-        }
-    }
-}
-
-async fn clone_via_http(
-    repo_url: &str,
-    git_ref: &str,
-    workspace: &std::path::Path,
-    pool: &PgPool,
-    job_id: Uuid,
-) -> Result<(), ApiError> {
-    let clone = tokio::process::Command::new("git")
-        .arg("clone")
-        .arg("--quiet")
-        .arg("--depth")
-        .arg("50")
-        .arg("--branch")
-        .arg(git_ref)
-        .arg(repo_url)
-        .arg("workspace")
-        .current_dir(workspace)
-        .output()
+    let local_bare = extract_repo_name_from_url(&repo_url)
+        .filter(|name| {
+            !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\'])
+        })
+        .map(|name| config.git_root.join(format!("{name}.git")))
+        .filter(|path| path.is_dir());
+    let repository = local_bare
+        .as_ref()
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or(repo_url);
+    // Once a clone is attempted, an uncertain failure is not retried via another source.
+    workspace
+        .clone_checkout(&repository, job.commit_sha.as_deref(), &git_ref)
         .await
-        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
-    if !clone.status.success() {
-        let stderr = String::from_utf8_lossy(&clone.stderr);
-        append_log(
-            pool,
-            job_id,
-            &format!("runner: clone failed: {}", stderr.trim()),
-        )
-        .await?;
-        return Err(ApiError::bad_request(stderr.to_string()));
-    }
-    Ok(())
+        .map_err(|_| {
+            ApiError::bad_request("Checkout verification failed; attempt workspace retained")
+        })?;
+    Ok(workspace)
 }
 
 fn extract_repo_name_from_url(url: &str) -> Option<String> {
@@ -2020,8 +2046,6 @@ fn docker_run_args(
         "--workdir".into(),
         "/workspace/workspace".into(),
         "--mount".into(),
-        format!("type=volume,src={volume_name},dst=/workspaces"),
-        "--mount".into(),
         // Bind sources resolve on the docker HOST, not inside this container:
         // point at the local-driver volume mountpoint so the per-job
         // workspace (shared through the same volume) is visible host-side.
@@ -2113,11 +2137,57 @@ where
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn held_execution_keeps_physical_identity_and_preparation_reservation() {
+        for pid in [0, 4242] {
+            let job = Uuid::new_v4();
+            let neighbor = Uuid::new_v4();
+            let running = Arc::new(Mutex::new(HashMap::from([(job, pid), (neighbor, 77)])));
+            assert_eq!(
+                execution_error_outcome(&running, job).await,
+                if pid == 0 {
+                    ExecutionOutcome::Finished
+                } else {
+                    ExecutionOutcome::Held
+                }
+            );
+            release_execution_reservation(&running, job, ExecutionOutcome::Held).await;
+            assert_eq!(running.lock().await.get(&job), Some(&pid));
+            release_execution_reservation(&running, job, ExecutionOutcome::Finished).await;
+            assert!(!running.lock().await.contains_key(&job));
+            assert_eq!(running.lock().await.get(&neighbor), Some(&77));
+        }
+    }
+
     #[test]
-    fn cleanup_root_removes_the_job_directory_not_only_checkout() {
-        let root = Path::new("/workspaces/forge-runner-123");
-        assert_eq!(cleanup_root(root), root);
-        assert_eq!(cleanup_root(&root.join("workspace")), root);
+    fn embedded_wait_error_is_not_a_confirmed_terminal_exit() {
+        for kind in [
+            std::io::ErrorKind::Other,
+            std::io::ErrorKind::PermissionDenied,
+        ] {
+            assert!(
+                confirmed_process_exit(
+                    Err(std::io::Error::new(kind, "process wait fixture")),
+                    Uuid::new_v4(),
+                    Uuid::new_v4(),
+                )
+                .is_none()
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn confirmed_embedded_exit_preserves_success_and_failure_status() {
+        for code in [0, 7] {
+            let status = tokio::process::Command::new("sh")
+                .args(["-c", &format!("exit {code}")])
+                .status()
+                .await;
+            let confirmed = confirmed_process_exit(status, Uuid::new_v4(), Uuid::new_v4())
+                .expect("a successful wait confirms termination even when the command failed");
+            assert_eq!(confirmed.code(), Some(code));
+        }
     }
 
     #[test]
@@ -2161,16 +2231,15 @@ mod tests {
                 .any(|pair| pair == ["sh", "-c", "cargo test"])
         );
         assert!(!args.iter().any(|arg| arg == "cargo"));
-        // A duplicated --volume/--mount pair for the same destination used to
-        // make every docker execution fail with "Duplicate mount point".
+        // A job must not see any other attempt through the complete workspace volume.
         let workspace_mounts = args
             .windows(2)
             .filter(|pair| pair[0] == "--mount" || pair[0] == "--volume")
             .filter(|pair| pair[1].ends_with(":/workspaces") || pair[1].contains("dst=/workspaces"))
             .count();
         assert_eq!(
-            workspace_mounts, 1,
-            "exactly one /workspaces mount expected"
+            workspace_mounts, 0,
+            "the shared workspace root must not be mounted into a job"
         );
     }
 

@@ -18,6 +18,40 @@ served runtime identity или business acceptance.
 
 ## Target resource protocol
 
+### Source slice: физический workspace runner, 2026-10-03
+
+Оба существующих runners используют `OwnedWorkspace`: новая папка на конкретные
+attempt/lease/generation, marker `.forge-attempt.json`, отдельный `workspace`.
+Прежняя папка job не удаляется и не переиспользуется. Перед командами переданный
+`commit_sha` должен быть полным SHA; checkout detached, `HEAD^{commit}` совпадает
+с pin и исходное дерево clean. Нельзя заменить pin mutable ref или отключить
+checkout через `--no-checkout`. Generic jobs без SHA сохраняют legacy branch path;
+он не удовлетворяет SDLC admission.
+
+Cleanup требует неизменённого owner marker и canonical root без symlink/junction.
+External runner проверяет ответ completion (`protocolVersion`, `accepted`, exact
+`terminalStatus`); embedded runner сверяет persisted terminal lease по attempt и
+generation. Unknown/rejected ACK, ошибка checkout, чужой marker или link оставляют
+папку для reconciliation. Автоматического повторного запуска из такой папки нет.
+Docker-job не получает весь общий workspace volume, только свой attempt bind.
+
+Runner source дополнен durable completion journal и owner readback:
+`GET /api/v1/runner/leases/{lease_id}/receipt` возвращает прежний persisted
+attempt/generation/outcome только аутентифицированному runner-владельцу. Expired
+lease не подтверждает completion. Потерянный ACK сначала сверяется GET, без
+повторного POST или команд. При restart `forge-runner --inspect-workspaces`
+читает bounded local inventory; `--reconcile-workspaces` сверяет каждый законченный
+attempt с owner и выполняет cleanup только при exact match. Незавершённые/старые
+папки без completion intent остаются неизвестными и блокируют новое polling.
+Подробности и ограничения — [Operations](OPERATIONS.md#runner-workspace-recovery).
+
+Это foundation текущего runner, **не** `base-sdlc/workspace-receipt/v1`: task/root/
+assignment binding, scoped Git credentials, SDLC owner operation lookup,
+assignment quarantine registry, checkpoint, candidate/verification/deployment/acceptance receipts ещё target.
+Marker не является cryptographic receipt или OS sandbox; shell runner и embedded
+control-plane boundary сохраняют ограничения ADR-0007. Installation/live acceptance
+этим source срезом не подтверждены.
+
 Логический TaskWorkspace root находится в Tracker. Конкретный Forge attempt
 workspace принадлежит Forge, имеет lease/generation, root/task/assignment/run,
 role/mode/scope/cycle/attempt и pinned repository/base/source/branch. Warm runner
