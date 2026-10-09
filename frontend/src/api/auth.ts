@@ -27,9 +27,8 @@ export function currentSession(): Session | null {
 export function clearSession(): void {
   session = null
   purgeLegacyRefreshToken()
-  if (typeof document !== 'undefined') {
-    document.cookie = 'forge_csrf=; Path=/; Max-Age=0; SameSite=Lax'
-  }
+  // Central SSO owns only the in-memory session. A host-wide legacy cookie
+  // may still belong to another deployment on this hostname.
 }
 
 export function acceptSso(
