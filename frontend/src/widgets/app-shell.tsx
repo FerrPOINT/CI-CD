@@ -1,3 +1,4 @@
+import { SidebarItem } from '@sdlc/ui/ui'
 import { NamespaceShellContext } from './namespace-context'
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router'
@@ -53,31 +54,12 @@ function NavigationList({ onNavigate, responsiveLabels = false }: NavigationList
   return (
     <nav className="flex flex-col gap-1" aria-label={t('navigation.main')}>
       {navItems.map(({ to, icon: Icon, label }) => (
-        <NavLink
-          key={to}
-          to={to}
-          end={to === '/'}
-          onClick={onNavigate}
-          title={responsiveLabels ? label : undefined}
-          className={({ isActive }) =>
-            `flex min-h-11 items-center gap-3 rounded-md px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus md:min-h-10 ${
-              responsiveLabels ? 'md:justify-center md:px-2 xl:justify-start xl:px-3' : ''
-            } ${
-              isActive
-                ? 'bg-surface-raised text-text-primary'
-                : 'text-text-secondary hover:bg-surface-raised hover:text-text-primary'
-            }`
-          }
-        >
-          <Icon className="h-5 w-5 shrink-0" aria-hidden />
-          <span
-            className={
-              responsiveLabels ? 'md:sr-only xl:not-sr-only xl:break-words' : 'break-words'
-            }
-          >
-            {label}
-          </span>
-        </NavLink>
+        <SidebarItem key={to} asChild compact={responsiveLabels ? 'responsive' : false}>
+          <NavLink to={to} end={to === '/'} onClick={onNavigate} aria-label={label} title={label}>
+            <Icon aria-hidden />
+            <span className="base-sidebar-item-label">{label}</span>
+          </NavLink>
+        </SidebarItem>
       ))}
     </nav>
   )
