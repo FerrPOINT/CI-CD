@@ -9,6 +9,11 @@
 
 ## [Unreleased]
 
+- Production Docker-сборки создают временные исходники всех объявленных
+  исполняемых целей, включая forge-delivery/forge-pg-migrate, до кеширования зависимостей.
+  После package cleanup собираются настоящие исходники; необходимые
+  compile-time delivery script witnesses берутся из закреплённого комплекта.
+
 - Workspace и repository deployments вычисляют approval state по тем же решениям
   и правилам environment, что и основной API; исправлен ответ 500 при чтении истории.
   Миграционные регрессии учитывают версию 91, сохраняя проверку historical checksums.
