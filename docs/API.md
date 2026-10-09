@@ -12,6 +12,40 @@ REST API первой версии Forge CI/CD. Контрольная плос�
 
 ## Базовая информация
 
+## Сквозной каталог и выполнение
+
+Новые human endpoints используют прежние scopes/roles и trusted-shared policy.
+Machine reader не получает доступа к human routes. Проект Tracker, репозиторий
+и CI-конфигурация имеют отдельные DTO; строгие SDLC owner envelopes не меняются.
+
+| Endpoint | Назначение |
+| --- | --- |
+| `GET /api/v1/workspace-projects` | Каталог Tracker-проектов с подтверждённым Namespace, `search`, `limit`, `offset` |
+| `GET /api/v1/workspace-projects/{registry}/{namespace}` | Метаданные, Tracker ResourceRef, Git binding и признак stale |
+| `GET .../summary` | Пакетные counters проекта |
+| `GET .../pipelines`, `GET .../deployments` | Общие списки проекта |
+| `GET /api/v1/workspace-summary`, `GET /api/v1/workspace-pipelines` | Общая сводка и список для дашборда |
+| `GET /api/v1/catalog/repositories` | UUID-каталог hosted/external, `search`, `group_id`, `limit`, `offset` |
+| `GET /api/v1/catalog/repositories/{id}/pipelines`, `.../deployments` | Отдельные списки репозитория |
+| `GET/POST /api/v1/catalog/repositories/{id}/delivery-configs` | Конфигурации и атомарное создание с `operation_id` |
+| `GET /api/v1/catalog/repositories/{id}/delivery-config-operations/{operation}` | Readback исходной операции, только её actor |
+| `GET/PUT /api/v1/catalog/repositories/{id}/push-config` | Явный выбор nullable `configuration_id` для push |
+| `GET /api/v1/delivery-configurations`, `GET .../{id}` | Настройки конфигураций; `unbound=true` для диагностики legacy |
+
+Execution lists возвращают `{items,total}` после серверных фильтров:
+`repository_id`, `configuration_id`, `status`, `git_ref`, ISO `since`/`until`,
+`limit` (1–100), `offset`. Чужая repository/config identity относительно route
+возвращает 409. Counts используют тот же фильтр, страницы не размножаются joins.
+Неизвестный каталог — 503; успешно прочитанный пустой каталог — 200 с пустым
+списком. При outage сохраняется последний снимок с `stale=true`.
+
+Legacy `/api/v1/projects` и `project_id` продолжают обозначать CI-конфигурацию.
+`PUT .../delivery-configs/{project_id}` сохраняет явное immutable attach.
+Bound `repository_url` нельзя заменить, удаление конфигурации с history или
+managed binding возвращает 409. Новые starts/mutations проходят archive guards.
+
+## Базовые параметры
+
 - Base URL: `http://{host}:22801/api/v1`
 - Content-Type: `application/json`
 - Auth: conditional. Без непустого `CICD_AUTH_SECRET` API работает в trusted-network режиме; с секретом большинство endpoint-ов требует `Authorization: Bearer <JWT-or-PAT>`.

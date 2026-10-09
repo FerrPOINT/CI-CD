@@ -1,5 +1,7 @@
 # Архитектура Forge CI/CD
 
+[Сквозные проекты и CI-конфигурации](adr/0024-workspace-projects-delivery-configurations.md): Tracker владеет именем и ключом проекта; Forge хранит проверенную локальную проекцию, Git-группу, репозитории и выполнение. Старый `project_id` остаётся ID CI-конфигурации.
+
 Target интеграция автономного SDLC: [delivery receipts v1](SDLC_DELIVERY_V1.md).
 Она переиспользует текущий Forge, не ограничивает его хранением исходников и
 не объявляет candidate/workspace/acceptance protocol уже реализованным.
