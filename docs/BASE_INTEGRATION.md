@@ -1,11 +1,15 @@
 # Интеграция CI-CD с Base
 
-Base SHA закреплён в [`.base-revision`](../.base-revision); `main` Base не является
-воспроизводимой зависимостью. Checkout Base должен лежать соседним каталогом
+Активный Base SHA закреплён в [`.namespace-base-revision`](../.namespace-base-revision).
+При отсутствии этого файла CI и `scripts/build.py` используют legacy
+[`.base-revision`](../.base-revision). `main` Base не является воспроизводимой
+зависимостью. Checkout Base должен лежать соседним каталогом
 `services-base`. Перед standalone build выполнить из корня продукта:
 
 ```sh
-python3 ../services-base/scripts/verify_base_revision.py --base ../services-base --revision .base-revision
+pin=.base-revision
+if [ -f .namespace-base-revision ]; then pin=.namespace-base-revision; fi
+python3 ../services-base/scripts/verify_base_revision.py --base ../services-base --revision "$pin"
 python3 scripts/build.py
 ```
 
