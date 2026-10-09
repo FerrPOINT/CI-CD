@@ -1,0 +1,69 @@
+# Disposable QA only. Always pass an explicit unique sdlc-qa-forge-delivery-* project.
+services:
+  postgres:
+    image: ${CICD_QA_POSTGRES_IMAGE:?Pinned PostgreSQL image required}
+    labels: {sdlc.task: forge-task-delivery, sdlc.purpose: disposable-migration-and-delivery-tests}
+    cpus: 1
+    # Integration migrations need headroom beyond the bounded tmpfs and shared buffers.
+    mem_limit: 1g
+    tmpfs: ["/var/lib/postgresql/data:rw,size=512m"]
+    environment:
+      POSTGRES_USER: forge_qa
+      POSTGRES_DB: forge_test_delivery
+      POSTGRES_HOST_AUTH_METHOD: trust
+    healthcheck:
+      test: [CMD, pg_isready, -h, 127.0.0.1, -U, forge_qa, -d, forge_test_delivery]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+    networks: [qa]
+  delivery-target:
+    init: true
+    image: ${CICD_QA_RUST_IMAGE:?Pinned Rust QA image required}
+    labels: {sdlc.task: forge-task-delivery, sdlc.purpose: disposable-served-manifest-application}
+    cpus: 0.5
+    mem_limit: 256m
+    pids_limit: 64
+    entrypoint: [bash, -c, 'while test ! -f /delivery-qa/ready; do sleep 0.1; done; exec /delivery-qa/manifest-target /delivery-qa/target-root 0.0.0.0:8080']
+    volumes: [delivery-qa:/delivery-qa]
+    networks: [qa]
+  qa:
+    image: ${CICD_QA_RUST_IMAGE:?Pinned Rust QA image required}
+    labels: {sdlc.task: forge-task-delivery, sdlc.purpose: pinned-source-and-actual-delivery-gates}
+    cpus: 2
+    mem_limit: 3g
+    pids_limit: 256
+    working_dir: /work/CI-CD/backend
+    entrypoint: [bash, /work/CI-CD/scripts/task-delivery-qa.sh]
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment:
+      RUSTUP_TOOLCHAIN: 1.88.0
+      CARGO_TARGET_DIR: /cache/forge-task-delivery-20261007
+      CARGO_BUILD_JOBS: 2
+      CARGO_INCREMENTAL: 0
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+      CICD_TEST_DATABASE_URL: postgres://forge_qa@postgres:5432/forge_test_delivery
+      CICD_TEST_DELIVERY_ORIGIN: http://delivery-target:8080
+      CICD_QA_GATE: ${CICD_QA_GATE:-full}
+    volumes:
+      - ${CICD_QA_SOURCE_ROOT:?Source checkout required}/backend:/work/CI-CD/backend:ro
+      - ${CICD_QA_SOURCE_ROOT}/scripts:/work/CI-CD/scripts:ro
+      - ${CICD_QA_SOURCE_ROOT}/deploy:/work/CI-CD/deploy:ro
+      - ${CICD_QA_SOURCE_ROOT}/openapi:/contract:ro
+      - ${CICD_QA_BASE_ROOT:?Pinned Base checkout required}:/work/services-base:ro
+      - ${CICD_QA_OUTPUT_ROOT:?Evidence directory required}:/output
+      - target-cache:/cache
+      - cargo-cache:/usr/local/cargo/registry
+      - rustup-cache:/usr/local/rustup
+      - delivery-qa:/delivery-qa
+    networks: [qa]
+networks:
+  qa: {}
+volumes:
+  delivery-qa:
+    labels: {sdlc.task: forge-task-delivery, sdlc.purpose: disposable-delivery-files}
+  target-cache: {external: true, name: '${CICD_QA_TARGET_CACHE:?Existing target cache required}'}
+  cargo-cache: {external: true, name: '${CICD_QA_CARGO_CACHE:?Existing registry cache required}'}
+  rustup-cache: {external: true, name: '${CICD_QA_RUSTUP_CACHE:?Existing pinned toolchain cache required}'}

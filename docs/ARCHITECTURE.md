@@ -1,10 +1,38 @@
 # Архитектура Forge CI/CD
 
+Owner-local OCI CLI поддерживает preloaded immutable image и read-only data
+snapshot без migrations/restore. Actual container/mount/network, served manifest,
+schema/bytes compatibility и application acceptance отделены от desired Compose
+state. [ADR-0021](adr/0021-owner-local-oci-readonly-data.md); HTTP dispatch закрыт.
+
 Target интеграция автономного SDLC: [delivery receipts v1](SDLC_DELIVERY_V1.md).
 Она переиспользует текущий Forge, не ограничивает его хранением исходников и
 не объявляет candidate/workspace/acceptance protocol уже реализованным.
 
+Bounded source workspace operation ledger: [ADR-0018](adr/0018-blocked-workspace-operation-ledger.md).
+Typed domain request/immutable blocked receipt → owner API с dedicated machine
+authorization → infra transaction и existing lease/source/OwnedWorkspace readback.
+Caller binding не authoritative: pending Tracker admission/workspace binding
+оставляют effect закрытым. Нового scheduler, claim или writable resource нет.
+
+Filesystem-only `runner_workspace::preparation` отдельно переиспользует
+OwnedWorkspace: caller-persisted ID, local intent/active/final journals и exact
+owner-local pinned checkout. Recovery не повторяет unknown Git effect. Это не
+HTTP adapter или producer authority: blocked API не подключён, trusted Tracker
+source binding/live lease проверка остаются prerequisite будущего adapter.
+[Граница primitive](SDLC_DELIVERY_V1.md#source-slice-filesystem-preparation-primitive-2026-10-04),
+[ADR-0019](adr/0019-local-pinned-workspace-preparation.md).
+
 ## 1. Контекст
+
+Owner-local manifest delivery переиспользует existing candidate observer и
+project machine ACL. `domain::task_delivery` задаёт strict commands/evidence;
+server IO primitive `task_delivery` содержит isolated filesystem publication и
+bounded HTTP probes. Privileged CLI — единственный effect adapter; HTTP SDLC POST
+закрыт, GET читает history без effects. Existing platform deployments/approvals
+не становятся admission и не переименовываются в verified deployment.
+Процессный lock и durable filesystem journal не являются общей транзакцией с
+DB или протоколом orchestration stop. [ADR-0020](adr/0020-owner-local-manifest-delivery.md).
 
 Self-hosted CI/CD control plane: Git-хостинг (bare-репозитории + Smart HTTP + post-receive auto-trigger), пайплайны со стадиями и джобами, embedded runner (Docker/shell), внешний `forge-runner` shell MVP поверх runner protocol, платформенные ресурсы (runners, secrets, artifacts, environments, schedules, webhooks, notifications, reports, audit, users, tokens) и React Dashboard.
 
