@@ -279,6 +279,17 @@ fn resource_owned(
         && resource["Name"] == format!("{project}_{logical}")
 }
 
+fn storage_users_owned(users: &[&str], containers: &[Value]) -> bool {
+    users.len() <= 16
+        && users.iter().all(|id| {
+            id.len() == 64
+                && id.bytes().all(|byte| byte.is_ascii_hexdigit())
+                && containers
+                    .iter()
+                    .any(|container| container["Id"].as_str() == Some(*id))
+        })
+}
+
 impl RemoteJob {
     pub(crate) async fn prepare(id: Uuid, attempt: Uuid, workspace: &Path) -> io::Result<Self> {
         let client = Client::from_env()?;
@@ -511,6 +522,27 @@ impl RemoteJob {
                 }
                 if kind == "container" {
                     containers.push(resource.clone());
+                } else {
+                    let users = if kind == "volume" {
+                        self.client
+                            .run(&[
+                                "container",
+                                "ls",
+                                "-aq",
+                                "--no-trunc",
+                                "--filter",
+                                &format!("volume={name}"),
+                            ])
+                            .await?
+                    } else {
+                        let members = resource["Containers"]
+                            .as_object()
+                            .ok_or_else(|| invalid("network membership response missing"))?;
+                        members.keys().cloned().collect::<Vec<_>>().join("\n")
+                    };
+                    if !storage_users_owned(&users.lines().collect::<Vec<_>>(), &containers) {
+                        return Err(invalid("foreign storage user blocks execution and cleanup"));
+                    }
                 }
             }
         }
@@ -796,6 +828,21 @@ mod tests {
         assert!(!source_provenance_matches(&volume, &malformed, "pdlc1"));
     }
 
+    #[test]
+    fn foreign_storage_users_block_cleanup_before_any_side_effect() {
+        for markers in [("a", "b", "c"), ("d", "e", "f")] {
+            let transfer = markers.0.repeat(64);
+            let job = markers.1.repeat(64);
+            let neighbor = markers.2.repeat(64);
+            let containers = vec![json!({"Id":transfer}), json!({"Id":job})];
+            assert!(storage_users_owned(&[], &containers));
+            assert!(storage_users_owned(&[&transfer, &job], &containers));
+            assert!(!storage_users_owned(&[&transfer, &neighbor], &containers));
+            assert!(!storage_users_owned(&[&job, ""], &containers));
+            assert!(!storage_users_owned(&["malformed-id"], &containers));
+            assert!(!storage_users_owned(&[&transfer], &[json!({})]));
+        }
+    }
     #[test]
     fn cleanup_requires_exact_container_and_storage_ownership() {
         for (attempt, job) in [
