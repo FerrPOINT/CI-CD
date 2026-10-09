@@ -24,6 +24,7 @@ struct ActualDelivery {
     _target: Option<tokio::process::Child>,
     tag: String,
     database_url: String,
+    runner_timeout_diagnostic: Option<fn(&std::path::Path)>,
 }
 
 impl Drop for ActualDelivery {
@@ -169,6 +170,7 @@ impl ActualDelivery {
             _target: target,
             tag: format!("delivery-{}", Uuid::new_v4().simple()),
             database_url: database_url.to_string(),
+            runner_timeout_diagnostic: None,
         }
     }
 
@@ -284,6 +286,11 @@ impl ActualDelivery {
         std::fs::write(barrier, b"release").unwrap();
         let output = tokio::time::timeout(completion_timeout, child.wait_with_output())
             .await
+            .inspect_err(|_| {
+                if let Some(diagnostic) = self.runner_timeout_diagnostic {
+                    diagnostic(&self.temp);
+                }
+            })
             .unwrap()
             .unwrap();
         assert!(output.status.success(), "{output:?}");

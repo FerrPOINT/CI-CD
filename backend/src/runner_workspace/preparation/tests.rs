@@ -515,7 +515,7 @@ async fn unsupported_index_flags_are_rejected_even_with_unchanged_physical_bytes
 #[tokio::test]
 async fn same_size_restored_mtime_and_spoofed_stat_cache_cannot_hide_physical_bytes() {
     use sha1::{Digest, Sha1};
-    use std::os::unix::fs::MetadataExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let f = Fixture::new();
     prepare(&f.workspaces, &f.source, &f.request).await.unwrap();
     fixture_git(&f.checkout(), &["update-index", "--index-version=2"]);
@@ -528,9 +528,16 @@ async fn same_size_restored_mtime_and_spoofed_stat_cache_cannot_hide_physical_by
         .unwrap()
         .set_times(fs::FileTimes::new().set_modified(before.modified().unwrap()))
         .unwrap();
+    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o600)).unwrap();
     let meta = fs::metadata(&file_path).unwrap();
     assert_eq!(meta.len(), before.len());
     assert_eq!(meta.modified().unwrap(), before.modified().unwrap());
+    assert_eq!(meta.mode() & 0o777, 0o600);
+    let index_mode = if meta.mode() & 0o100 != 0 {
+        0o100755
+    } else {
+        0o100644
+    };
     // An adversarial index can claim current stat fields while retaining the pinned blob OID.
     let index_path = f.checkout().join(".git/index");
     let mut index = fs::read(&index_path).unwrap();
@@ -542,7 +549,7 @@ async fn same_size_restored_mtime_and_spoofed_stat_cache_cannot_hide_physical_by
         meta.mtime_nsec() as u32,
         meta.dev() as u32,
         meta.ino() as u32,
-        meta.mode(),
+        index_mode,
         meta.uid(),
         meta.gid(),
         meta.len() as u32,

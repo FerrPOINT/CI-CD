@@ -1,6 +1,7 @@
 # Disposable QA only. Always pass an explicit unique sdlc-qa-forge-delivery-* project.
 services:
   postgres:
+    init: true
     image: ${CICD_QA_POSTGRES_IMAGE:?Pinned PostgreSQL image required}
     labels: {sdlc.task: forge-task-delivery, sdlc.purpose: disposable-migration-and-delivery-tests}
     cpus: 1

@@ -6,6 +6,7 @@ import ctypes
 import fcntl
 import hashlib
 import json
+import math
 import os
 import re
 import signal
@@ -40,6 +41,51 @@ def canonical(value):
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def safe_sqlstate(stderr):
+    # Accept only code-only psql reports and known boundary failures, never message fragments.
+    match = re.fullmatch(rb'(?:ERROR|FATAL|PANIC):[ \t]+([0-9A-Z]{5})[ \t]*(?:\r?\n)?', stderr)
+    allowed = {b'08000', b'08001', b'08003', b'08004', b'08006', b'08007', b'08P01',
+               b'25001', b'25006', b'25P02', b'28000', b'28P01', b'3D000', b'3F000',
+               b'40001', b'40P01', b'42501', b'42601', b'42P01', b'42P04',
+               b'53000', b'53100', b'53200', b'53300', b'53400', b'55000', b'55006',
+               b'57014', b'57P01', b'57P02', b'57P03', b'57P04', b'57P05', b'58000', b'58030'}
+    return match.group(1).decode('ascii') if match and match.group(1) in allowed else None
+
+
+def row_fingerprint(document):
+    rows = json.loads(document)
+    require(type(rows) is list and len(rows) <= 512 and all(type(row) is str for row in rows),
+            'unsupported_record_text_inventory')
+    return digest(canonical({'encoding': 'postgres-record-text/v1', 'rows': rows}))
+
+
+def safe_session_diagnostic(observation):
+    count = observation['unknownCount']
+    unavailable = {'unknownCount': count, 'detailsAvailable': False}
+    roles = ('postgres', 'forge_writer', 'reader', 'other')
+    states = ('active', 'idle', 'idle in transaction', 'idle in transaction (aborted)',
+              'fastpath function call', 'disabled', 'other')
+    counts, rows = observation.get('roleCounts'), observation.get('sessions')
+    if not (type(counts) is dict and set(counts) == set(roles)
+            and all(type(counts[role]) is int and 0 <= counts[role] <= count for role in roles)
+            and sum(counts.values()) == count
+            and type(rows) is list and len(rows) == min(count, 16)):
+        return unavailable
+    safe = []
+    for row in rows:
+        if not (type(row) is dict and type(row.get('pid')) is int and 0 < row['pid'] <= 2147483647
+                and row.get('roleCategory') in roles and row.get('state') in states
+                and row.get('databaseKind') in ('target', 'foreign', 'unscoped')):
+            return unavailable
+        safe.append({key: row[key] for key in ('pid', 'roleCategory', 'state', 'databaseKind')})
+    if len({row['pid'] for row in safe}) != len(safe) or any(
+            sum(row['roleCategory'] == role for row in safe) > counts[role] for role in roles):
+        return unavailable
+    return {'unknownCount': count, 'detailsAvailable': True,
+            'roleCounts': {role: counts[role] for role in roles}, 'sessions': safe,
+            'truncated': count > len(safe)}
 
 
 def plain(path):
@@ -155,19 +201,29 @@ class Owner:
         return {'PATH': '/usr/local/bin:/usr/bin:/bin', 'DOCKER_HOST': 'unix:///var/run/docker.sock',
                 'DOCKER_CONFIG': str(self.root / 'docker-config'), 'PYTHONUTF8': '1'}
 
-    def run(self, command, data=None, extra_env=None, limit=32 * 1024 * 1024, deadline=20):
+    def run(self, command, data=None, extra_env=None, limit=32 * 1024 * 1024, deadline=20,
+            sqlstate_only=False):
         environment = self.env()
         environment.update(extra_env or {})
-        child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                 env=environment, preexec_fn=parent_death)
+        started = time.monotonic()
+        child, stderr = None, b''
         try:
-            out, error = child.communicate(data, timeout=deadline)
-        except BaseException:
-            child.kill()
-            child.wait()
+            child = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                     env=environment, preexec_fn=parent_death)
+            try:
+                out, stderr = child.communicate(data, timeout=deadline)
+            except BaseException:
+                child.kill()
+                child.wait()
+                raise
+            require(len(out) <= limit and len(stderr) <= 1024 * 1024, 'command_output_exceeds_bound')
+            require(child.returncode == 0, 'owner_command_failed_or_unknown')
+        except BaseException as error:
+            error.command_failure = {'returncode': child.returncode if child is not None else None,
+                'elapsedSeconds': time.monotonic() - started,
+                'sqlstate': safe_sqlstate(stderr) if sqlstate_only and child is not None
+                    and child.returncode not in (None, 0) and len(stderr) <= 1024 * 1024 else None}
             raise
-        require(len(out) <= limit and len(error) <= 1024 * 1024, 'command_output_exceeds_bound')
-        require(child.returncode == 0, 'owner_command_failed_or_unknown')
         return out
 
     def base_run(self, command, *, input_stream=None, output_stream=None, text=False):
@@ -191,9 +247,10 @@ class Owner:
     def sql(self, database, statement):
         require(database == 'postgres' or re.fullmatch(r'forge_test_pg_[a-z0-9_]{1,42}', database), 'unknown_database_target')
         command = self.base.compose_command(self.args, 'exec', '-T', 'database', 'psql', '-X', '-qAt',
-                                           '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', database)
+                                           '-v', 'ON_ERROR_STOP=1', '-v', 'VERBOSITY=sqlstate',
+                                           '-U', 'postgres', '-d', database)
         bounded = 'SET statement_timeout=8000;\nSET lock_timeout=3000;\n' + statement
-        return self.run(command, bounded.encode(), limit=2 * 1024 * 1024).decode().strip()
+        return self.run(command, bounded.encode(), limit=2 * 1024 * 1024, sqlstate_only=True).decode().strip()
 
     def database(self, name):
         return self.base.Database('isolated-application', 'database', 'postgres', name)
@@ -272,7 +329,7 @@ class Owner:
     def roles(self):
         roles = json.loads(self.sql('postgres', "SELECT json_agg(json_build_object('name',rolname,'login',rolcanlogin,"
             "'super',rolsuper,'createdb',rolcreatedb,'createrole',rolcreaterole,'replication',rolreplication,'bypass',rolbypassrls)) "
-            "FROM pg_roles WHERE rolname NOT LIKE 'pg_%';"))
+            "FROM pg_roles WHERE left(rolname,3) <> 'pg_';"))
         require({x['name'] for x in roles} == {'postgres', 'forge_reader', 'forge_writer'}, 'unknown_database_role')
         for role in roles:
             if role['name'] != 'postgres':
@@ -280,15 +337,45 @@ class Owner:
                         'application_role_has_privileged_access')
         require(self.sql('postgres', "SELECT count(*) FROM pg_auth_members m "
                 "JOIN pg_roles r ON r.oid=m.roleid JOIN pg_roles u ON u.oid=m.member "
-                "WHERE r.rolname NOT LIKE 'pg_%' OR u.rolname NOT LIKE 'pg_%';") == '0',
+                "WHERE left(r.rolname,3) <> 'pg_' OR left(u.rolname,3) <> 'pg_';") == '0',
                 'unknown_role_membership')
         return {x['name']: x for x in roles}
 
-    def sessions(self):
+    def sessions(self, released_database=None):
         pid = self.packet['guardPid']
-        unknown = self.sql('postgres', f"SELECT count(*) FROM pg_stat_activity WHERE backend_type='client backend' "
-            f"AND pid NOT IN (pg_backend_pid(),{int(pid)}) AND usename <> 'forge_reader';")
-        require(unknown == '0', 'unconfirmed_previous_or_unknown_writer')
+        allowed = "usename='forge_reader'" if released_database is None else (
+            "usename IN ('forge_reader','forge_writer') AND datname=" + self.pg.literal(released_database))
+        target = released_database or (getattr(self, 'intent', None) or {}).get('sourceDatabase')
+        database_kind = ("'unscoped'" if target is None else
+            f"CASE WHEN datname={self.pg.literal(target)} THEN 'target' ELSE 'foreign' END")
+        # Count and bounded redacted details share the original predicate and one observation.
+        document = self.sql('postgres', "WITH unknown AS MATERIALIZED (SELECT pid, "
+            "CASE usename WHEN 'postgres' THEN 'postgres' WHEN 'forge_writer' THEN 'forge_writer' "
+            "WHEN 'forge_reader' THEN 'reader' ELSE 'other' END AS role_category, "
+            "CASE WHEN state IN ('active','idle','idle in transaction','idle in transaction (aborted)',"
+            "'fastpath function call','disabled') THEN state ELSE 'other' END AS state, "
+            f"{database_kind} AS database_kind FROM pg_stat_activity WHERE backend_type='client backend' "
+            f"AND pid NOT IN (pg_backend_pid(),{int(pid)}) AND NOT ({allowed})) "
+            "SELECT json_build_object('unknownCount',count(*),'roleCounts',json_build_object("
+            "'postgres',count(*) FILTER (WHERE role_category='postgres'),"
+            "'forge_writer',count(*) FILTER (WHERE role_category='forge_writer'),"
+            "'reader',count(*) FILTER (WHERE role_category='reader'),"
+            "'other',count(*) FILTER (WHERE role_category='other')),"
+            "'sessions',(SELECT COALESCE(json_agg(json_build_object('pid',pid,'roleCategory',role_category,"
+            "'state',state,'databaseKind',database_kind) ORDER BY pid),'[]'::json) "
+            "FROM (SELECT pid,role_category,state,database_kind FROM unknown ORDER BY pid LIMIT 16) sample)) FROM unknown;")
+        try:
+            require(len(document) <= 16 * 1024, 'unconfirmed_previous_or_unknown_writer')
+            observation = json.loads(document)
+        except (ValueError, TypeError, RecursionError):
+            raise Blocked('unconfirmed_previous_or_unknown_writer') from None
+        require(type(observation) is dict and type(observation.get('unknownCount')) is int
+                and 0 <= observation['unknownCount'] <= 9223372036854775807,
+                'unconfirmed_previous_or_unknown_writer')
+        if observation['unknownCount'] != 0:
+            error = Blocked('unconfirmed_previous_or_unknown_writer')
+            error.session_observation = safe_session_diagnostic(observation)
+            raise error
 
     def guard(self):
         require(self.lease is not None and time.time() < self.lease['expiresAt'], 'stale_deployment_lease')
@@ -314,6 +401,26 @@ class Owner:
                 time.sleep(0.05)
         self.guard()
 
+    def reader_permissions(self, database):
+        require(self.sql(database, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE left(n.nspname,3) <> 'pg_' AND n.nspname <> 'information_schema' "
+                "AND CASE WHEN c.relkind IN ('r','p','v','m','f') THEN ("
+                "has_table_privilege('forge_reader',c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN') "
+                "OR has_any_column_privilege('forge_reader',c.oid,'INSERT,UPDATE,REFERENCES')) ELSE false END;") == '0'
+                and self.sql(database, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE left(n.nspname,3) <> 'pg_' AND n.nspname <> 'information_schema' "
+                "AND CASE WHEN c.relkind='S' THEN has_sequence_privilege('forge_reader',c.oid,'USAGE,UPDATE') "
+                "ELSE false END;") == '0'
+                and self.sql(database, "SELECT count(*) FROM pg_namespace n WHERE left(n.nspname,3) <> 'pg_' "
+                "AND n.nspname <> 'information_schema' AND has_schema_privilege('forge_reader',n.oid,'CREATE');") == '0'
+                and self.sql(database, "SELECT has_database_privilege('forge_reader',current_database(),'CREATE,TEMPORARY');") == 'f',
+                'application_reader_can_write_or_create')
+        require(self.sql(database, "SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
+                "WHERE n.nspname='pg_catalog' AND p.proname IN "
+                "('lo_create','lo_creat','lo_from_bytea','lo_import','lo_put','lowrite','lo_truncate','lo_truncate64','lo_unlink') "
+                "AND has_function_privilege('forge_reader',p.oid,'EXECUTE');") == '0',
+                'application_reader_can_mutate_large_objects')
+
     def fingerprint(self, database):
         require(int(self.sql(database, 'SELECT pg_database_size(current_database());')) <= 16 * 1024 * 1024,
                 'database_exceeds_supported_bound')
@@ -325,27 +432,48 @@ class Owner:
         require(self.sql(database, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
                 "WHERE n.nspname='public' AND c.relkind IN ('r','p','S','v','m','f') "
                 "AND pg_get_userbyid(c.relowner)<>'postgres';") == '0', 'unknown_application_object_owner')
+        self.reader_permissions(database)
+        require(self.sql(database, "SELECT count(*) FROM pg_namespace WHERE left(nspname,3) <> 'pg_' "
+                "AND nspname NOT IN ('public','information_schema');") == '0', 'unsupported_database_catalog')
+        require(self.sql(database, 'SELECT count(*) FROM pg_largeobject_metadata;') == '0',
+                'unsupported_large_object_inventory')
+        require(self.sql(database, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE n.nspname='public' AND c.relkind IN ('m','f');") == '0', 'unsupported_database_catalog')
+        require(self.sql(database, "SELECT count(*) FROM pg_rewrite r JOIN pg_class c ON c.oid=r.ev_class "
+                "JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' "
+                "AND NOT (c.relkind='v' AND r.rulename='_RETURN');") == '0', 'unsupported_writer_rules')
+        require(self.sql(database, "SELECT count(*) FROM pg_inherits "
+                "WHERE inhparent='public._sqlx_migrations'::regclass "
+                "OR inhrelid='public._sqlx_migrations'::regclass;") == '0', 'unsupported_history_inheritance')
+        require(self.sql(database, "SELECT count(*) FROM pg_constraint "
+                "WHERE contype='f' AND conrelid='public._sqlx_migrations'::regclass "
+                "AND (confdeltype IN ('c','n','d') OR confupdtype IN ('c','n','d'));") == '0',
+                'unsupported_history_referential_actions')
         evidence = self.pg.database_evidence(self.args, self.database(database))
         require(not evidence['routines'] and not evidence['triggers'], 'unsupported_writer_routines_or_triggers')
-        require(self.sql(database, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
-                "WHERE n.nspname='public' AND c.relkind IN ('r','p') "
-                "AND has_table_privilege('forge_reader',c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER');") == '0'
-                and self.sql(database, "SELECT has_schema_privilege('forge_reader','public','CREATE');") == 'f',
-                'application_reader_can_write_or_create')
         require(self.sql(database, "SELECT has_schema_privilege('forge_writer','public','CREATE') "
                 "OR has_database_privilege('forge_writer',current_database(),'CREATE,TEMPORARY') "
-                "OR has_table_privilege('forge_writer','public._sqlx_migrations','INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER');") == 'f',
+                "OR has_table_privilege('forge_writer','public._sqlx_migrations','INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN') "
+                "OR has_any_column_privilege('forge_writer','public._sqlx_migrations','INSERT,UPDATE,REFERENCES');") == 'f',
                 'application_writer_can_create_or_mutate_history')
+        require(self.sql(database, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE n.nspname='public' AND CASE WHEN c.relkind='v' THEN ("
+                "has_table_privilege('forge_writer',c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN') "
+                "OR has_any_column_privilege('forge_writer',c.oid,'INSERT,UPDATE,REFERENCES')) ELSE false END;") == '0',
+                'application_writer_can_mutate_view')
         tables = json.loads(self.sql(database, "SELECT COALESCE(json_agg(json_build_object('schema',n.nspname,'table',c.relname) "
             "ORDER BY n.nspname,c.relname),'[]') FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
-            "WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema' AND c.relkind IN ('r','p');"))
+            "WHERE left(n.nspname,3) <> 'pg_' AND n.nspname <> 'information_schema' AND c.relkind IN ('r','p');"))
         require(0 < len(tables) <= 16 and all(t['schema'] == 'public' for t in tables), 'unsupported_database_catalog')
         row_hashes = {}
         for table in tables:
             identifier = self.pg.ident(table['schema']) + '.' + self.pg.ident(table['table'])
             require(int(self.sql(database, f'SELECT count(*) FROM {identifier};')) <= 512, 'row_inventory_exceeds_bound')
-            rows = self.sql(database, f"SET timezone='UTC'; SELECT COALESCE(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text COLLATE \"C\"),'[]') FROM {identifier} t;")
-            row_hashes[table['schema'] + '.' + table['table']] = digest(canonical(json.loads(rows)))
+            # Record text preserves exact numeric and raw json values; to_jsonb/float parsing does not.
+            rows = self.sql(database, "SET timezone='UTC'; SET extra_float_digits=3; "
+                "SET datestyle='ISO,YMD'; SET intervalstyle='postgres'; SET bytea_output='hex'; SET lc_monetary='C'; "
+                f"SELECT COALESCE(jsonb_agg(ROW(t.*)::text ORDER BY ROW(t.*)::text COLLATE \"C\"),'[]') FROM {identifier} t;")
+            row_hashes[table['schema'] + '.' + table['table']] = row_fingerprint(rows)
         history = json.loads(self.sql(database, "SELECT COALESCE(json_agg(json_build_object('version',version,"
             "'checksum',encode(checksum,'hex'),'success',success) ORDER BY version),'[]') FROM public._sqlx_migrations;"))
         require(history and all(x['success'] for x in history), 'unknown_migration_history')
@@ -356,7 +484,7 @@ class Owner:
     def history(self, actual, descriptor, version):
         expected = [{'version': m['version'], 'checksum': hashlib.sha384(m['sql'].encode()).hexdigest(), 'success': True}
                     for m in descriptor['migrations'] if m['version'] <= version]
-        require(actual['history'] == expected, 'applied_migration_bytes_changed_or_unknown')
+        require(canonical(actual['history']) == canonical(expected), 'applied_migration_bytes_changed_or_unknown')
 
     def image(self, descriptor):
         actual = self.docker('image', 'inspect', descriptor['imageId'])[0]
@@ -375,14 +503,39 @@ class Owner:
     def drain(self, source):
         self.checkpoint('drain-intent')
         if hasattr(self, 'application_compose'):
-            self.run(['/usr/local/bin/docker-compose', '-p', self.project, '-f', self.application_compose, 'stop', 'application'])
-        self.sql('postgres', 'BEGIN; ALTER ROLE forge_writer NOLOGIN; '
-                 f'REVOKE CONNECT ON DATABASE {self.pg.ident(source)} FROM forge_writer; COMMIT;')
-        self.sql('postgres', "SELECT pg_terminate_backend(pid,5000) FROM pg_stat_activity WHERE usename='forge_writer';")
+            self.run(['/usr/local/bin/docker-compose', '-p', self.project, '-f', self.application_compose,
+                      'stop', '--timeout', '5', 'application'])
+        self.sql('postgres', 'BEGIN; ALTER ROLE forge_writer NOLOGIN; ALTER ROLE forge_reader NOLOGIN; '
+                 f'REVOKE CONNECT ON DATABASE {self.pg.ident(source)} FROM forge_writer,forge_reader; COMMIT;')
+        databases = json.loads(self.sql('postgres', "SELECT json_agg(datname ORDER BY datname) FROM pg_database;"))
+        require(3 <= len(databases) <= 64, 'database_inventory_exceeds_bound')
+        for database in databases:
+            self.sql('postgres', f'REVOKE CONNECT ON DATABASE {self.pg.ident(database)} FROM forge_writer,forge_reader;')
+        self.sql('postgres', "SELECT pg_terminate_backend(pid,5000) FROM pg_stat_activity "
+                 "WHERE usename IN ('forge_writer','forge_reader');")
         self.guard()
         self.sessions()
-        require(not self.roles()['forge_writer']['login'], 'writer_drain_not_enforced')
+        self.source_quiescent(source)
         self.checkpoint('drained', {'sourceDatabase': source, 'rpo': 'zero_acknowledged_pre_drain_writes'})
+
+    def source_quiescent(self, source):
+        roles = self.roles()
+        require(not roles['forge_writer']['login'] and not roles['forge_reader']['login']
+                and self.sql('postgres', "SELECT count(*) FROM pg_database WHERE "
+                    "has_database_privilege('forge_writer',oid,'CONNECT') "
+                    "OR has_database_privilege('forge_reader',oid,'CONNECT');") == '0'
+                and self.sql('postgres', "SELECT count(*) FROM pg_stat_activity "
+                    "WHERE usename IN ('forge_writer','forge_reader');") == '0', 'writer_drain_not_enforced')
+
+    def connection_scope(self, target, writer_enabled):
+        database = self.pg.literal(target)
+        writer = f'(datname={database})' if writer_enabled else 'false'
+        require(self.sql('postgres', "SELECT count(*) FROM pg_database WHERE "
+                f"has_database_privilege('forge_reader',oid,'CONNECT') <> (datname={database}) "
+                f"OR has_database_privilege('forge_writer',oid,'CONNECT') <> {writer};") == '0'
+                and self.sql('postgres', "SELECT count(*) FROM pg_stat_activity "
+                f"WHERE usename IN ('forge_writer','forge_reader') AND datname IS DISTINCT FROM {database};") == '0',
+                'application_database_connection_scope_changed')
 
     def create_database(self, kind):
         name = 'forge_test_pg_' + digest((self.project + self.command['operationKey']).encode())[:20] + '_' + kind
@@ -391,6 +544,14 @@ class Owner:
         self.guard()
         self.sql('postgres', f'CREATE DATABASE {self.pg.ident(name)} TEMPLATE template0;')
         self.sql('postgres', f'REVOKE ALL ON DATABASE {self.pg.ident(name)} FROM PUBLIC;')
+        functions = json.loads(self.sql(name, "SELECT json_agg(p.oid::regprocedure::text ORDER BY p.oid) "
+            "FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='pg_catalog' "
+            "AND p.proname IN ('lo_create','lo_creat','lo_from_bytea','lo_import','lo_put','lowrite','lo_truncate','lo_truncate64','lo_unlink');"))
+        require(1 <= len(functions) <= 16, 'large_object_function_inventory_changed')
+        for function in functions:
+            require(re.fullmatch(r'(?:pg_catalog\.)?lo[a-z_0-9]*\((?:[a-z ]+(?:,[a-z ]+)*)?\)', function),
+                    'large_object_function_identity_changed')
+            self.sql(name, f'REVOKE EXECUTE ON FUNCTION {function} FROM PUBLIC,forge_reader,forge_writer;')
         return name
 
     def restore(self, database, dump):
@@ -407,10 +568,12 @@ class Owner:
         require(not dump.exists(), 'backup_command_never_repeated')
         before = self.fingerprint(source)
         self.sessions()
+        self.source_quiescent(source)
         self.base._write_database_dump(self.args, self.database(source), dump)
         with dump.open('rb') as stream:
             os.fsync(stream.fileno())
         require(before == self.fingerprint(source), 'source_data_changed_during_backup')
+        self.source_quiescent(source)
         snapshot = {'schema': 'forge/isolated-pg-backup/v1', 'sourceDatabase': source,
                     'systemIdentifier': self.policy['systemIdentifier'], 'fingerprint': before,
                     'previousManifestSha256': previous, 'dumpSha256': self.base.sha256(dump),
@@ -470,15 +633,20 @@ class Owner:
         database = manifest['database']
         self.sql(database, 'BEGIN; GRANT USAGE ON SCHEMA public TO forge_reader,forge_writer; '
                  'GRANT SELECT ON ALL TABLES IN SCHEMA public TO forge_reader; '
-                 'GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO forge_writer; '
+                 'GRANT SELECT ON ALL TABLES IN SCHEMA public TO forge_writer; '
                  'REVOKE ALL ON public._sqlx_migrations FROM forge_writer; '
                  'GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO forge_writer; COMMIT;')
-        self.sql('postgres', f'GRANT CONNECT ON DATABASE {self.pg.ident(database)} TO forge_reader;')
-        require(self.sql(database, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
-                "WHERE n.nspname='public' AND c.relkind IN ('r','p') "
-                "AND has_table_privilege('forge_reader',c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER');") == '0'
-                and self.sql(database, "SELECT has_schema_privilege('forge_reader','public','CREATE');") == 'f',
-                'application_reader_can_write_or_create')
+        tables = json.loads(self.sql(database, "SELECT COALESCE(json_agg(c.relname ORDER BY c.relname),'[]') "
+            "FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' "
+            "AND c.relkind IN ('r','p') AND c.relname<>'_sqlx_migrations';"))
+        require(0 < len(tables) <= 16, 'unsupported_database_catalog')
+        for table in tables:
+            self.sql(database, 'GRANT INSERT,UPDATE,DELETE ON public.' + self.pg.ident(table) + ' TO forge_writer;')
+        self.reader_permissions(database)
+        self.sql('postgres', 'BEGIN; '
+                 f'GRANT CONNECT ON DATABASE {self.pg.ident(database)} TO forge_reader; '
+                 'ALTER ROLE forge_reader LOGIN; COMMIT;')
+        self.connection_scope(database, False)
         connection = self.root / 'connections' / (manifest_sha + '.json')
         immutable(connection, {role + 'Url': f'postgres://forge_{role}:{quote(password,safe="")}@{self.pg_ip}:5432/{database}'
                                for role in ('reader', 'writer')})
@@ -568,13 +736,56 @@ class Owner:
     def release(self, manifest, manifest_sha, receipt):
         self.guard()
         self.sessions()
+        self.connection_scope(manifest['database'], False)
         immutable(self.dir / 'verified-checks.json', receipt)
         replace(self.root / 'confirmed.json', manifest_sha)
         self.checkpoint('release-intent', {'database': manifest['database'], 'restorePreviousSnapshotAllowed': False})
         self.sql('postgres', 'BEGIN; '
             f'GRANT CONNECT ON DATABASE {self.pg.ident(manifest["database"])} TO forge_writer; '
             'ALTER ROLE forge_writer LOGIN; COMMIT;')
+        self.connection_scope(manifest['database'], True)
         self.checkpoint('writes-released', {'database': manifest['database']})
+
+    def validate_receipt(self, intent, item, post_release=False):
+        require(item['schema'] == 'forge/local-postgres-operation/v1'
+                and item['scope'] == 'owner_local_isolated_verification'
+                and item['commandSha256'] == digest(canonical(self.command))
+                and canonical(item['originalOperation']) == canonical(self.original)
+                and type(item['generation']) is int and item['generation'] == intent['lease']['generation']
+                and item['status'] in ('verified', 'failed', 'unavailable', 'unknown')
+                and item['previousManifestSha256'] == intent['receipt']['previousManifestSha256']
+                and item['dispatchAllowed'] is False and item['sdlcAcceptanceVerified'] is False,
+                'receipt_binding_mismatch')
+        if item['status'] != 'verified':
+            return
+        manifest_sha = item['manifestSha256']
+        manifest = self.manifest(manifest_sha)
+        require(manifest['operationKey'] == self.command['operationKey']
+                and manifest['generation'] == intent['lease']['generation']
+                and canonical(manifest['candidate']) == canonical(intent['candidate'])
+                and canonical(manifest['descriptor']) == canonical(intent['descriptor'])
+                and manifest['systemIdentifier'] == self.policy['systemIdentifier']
+                and item['database'] == manifest['database'] and item['imageId'] == manifest['descriptor']['imageId']
+                and re.fullmatch(r'[0-9a-f]{64}', item['containerId'])
+                and item['reason'] == 'isolated_image_database_application_checks_verified',
+                'verified_evidence_binding_mismatch')
+        fingerprint = item['databaseFingerprint']
+        require(canonical(fingerprint['schema']) == canonical(manifest['descriptor']['targetSchema'])
+                and all(re.fullmatch(r'[0-9a-f]{64}', fingerprint[key])
+                        for key in ('dataSha256', 'sequencesSha256')), 'verified_fingerprint_mismatch')
+        self.history(fingerprint, manifest['descriptor'], fingerprint['schema']['version'])
+        if not post_release:
+            require(canonical(fingerprint) == canonical(manifest['databaseFingerprint']),
+                    'historical_fingerprint_binding_mismatch')
+        expected = {'version': manifest_sha, 'endVersion': manifest_sha,
+            'database': digest(canonical({'database': manifest['database'], 'schemaVersion': fingerprint['schema']['version']})),
+            'health': self.policy['checks']['healthBodySha256'], 'acceptance': self.policy['checks']['acceptanceBodySha256']}
+        require(set(item['probes']) == set(expected), 'verified_evidence_incomplete')
+        for name, body_hash in expected.items():
+            probe = item['probes'][name]
+            require(probe['status'] == 'verified' and probe['httpStatus'] == 200 and probe['bodySha256'] == body_hash
+                    and type(probe['observedAt']) in (int, float) and math.isfinite(probe['observedAt'])
+                    and probe['observedAt'] > 0, 'verified_probe_binding_mismatch')
 
     def readback(self):
         intent = read(self.dir / 'intent.json')
@@ -582,17 +793,16 @@ class Owner:
                 and intent['policySha256'] == self.packet['policySha256'], 'original_input_or_policy_changed')
         receipt = read(self.dir / 'result.json') if (self.dir / 'result.json').exists() else intent['receipt']
         reconciled = read(self.dir / 'reconciled.json') if (self.dir / 'reconciled.json').exists() else None
-        for item in [receipt, reconciled]:
+        proof = read(self.dir / 'verified-checks.json') if (self.dir / 'verified-checks.json').exists() else None
+        if proof is not None:
+            require(proof['status'] == 'verified', 'verified_evidence_incomplete')
+            self.validate_receipt(intent, proof)
+        for item, post_release in [(receipt, False), (reconciled, True)]:
             if item is None:
                 continue
-            require(item['schema'] == 'forge/local-postgres-operation/v1'
-                    and item['commandSha256'] == digest(canonical(self.command))
-                    and item['originalOperation'] == self.original
-                    and item['generation'] == intent['lease']['generation']
-                    and not item['dispatchAllowed'] and not item['sdlcAcceptanceVerified'], 'receipt_binding_mismatch')
+            self.validate_receipt(intent, item, post_release)
             if item['status'] == 'verified':
-                require((self.dir / 'verified-checks.json').exists() and item.get('manifestSha256')
-                        and all(item['probes'][name]['status'] == 'verified' for name in ('version', 'database', 'health', 'acceptance', 'endVersion')),
+                require(proof is not None and proof['manifestSha256'] == item['manifestSha256'],
                         'verified_evidence_incomplete')
         latest = reconciled or receipt
         return {'schema': 'forge/local-postgres-readback/v1', 'receipt': receipt, 'reconciledReceipt': reconciled,
@@ -605,9 +815,9 @@ class Owner:
             return old
         self.engine()
         self.roles()
-        self.sessions()
         # Only a completed release can be observed as successful. Never repeat a critical command.
         if not (self.dir / 'release-intent.json').exists():
+            self.sessions()
             return old
         intent = read(self.dir / 'intent.json')
         manifest_sha = self.point('current')
@@ -619,6 +829,15 @@ class Owner:
         granted = self.sql('postgres', f"SELECT has_database_privilege('forge_writer',{self.pg.literal(manifest['database'])},'CONNECT');")
         if granted != 't':
             return old
+        checkpoint = read(self.dir / 'release-intent.json')
+        require(checkpoint['phase'] == 'release-intent' and checkpoint['generation'] == intent['lease']['generation']
+                and checkpoint['evidence']['database'] == manifest['database']
+                and checkpoint['evidence']['restorePreviousSnapshotAllowed'] is False, 'release_checkpoint_binding_mismatch')
+        require((self.dir / 'verified-checks.json').exists()
+                and read(self.dir / 'verified-checks.json')['manifestSha256'] == manifest_sha, 'verified_evidence_incomplete')
+        self.connection_scope(manifest['database'], True)
+        self.sessions(manifest['database'])
+        self.reader_permissions(manifest['database'])
         receipt = self.observe(manifest, manifest_sha, dict(intent['receipt']))
         if receipt['status'] == 'verified':
             receipt['manifestSha256'] = manifest_sha
@@ -722,9 +941,14 @@ class Owner:
                 self.release(manifest, manifest_sha, receipt)
             immutable(self.dir / 'result.json', receipt)
         except BaseException as error:
-            immutable(self.dir / 'diagnostic.json', {'class': type(error).__name__,
+            diagnostic = {'class': type(error).__name__,
                 'reason': str(error) if isinstance(error, Blocked) else 'owner_effect_unknown',
-                'frames': [{'function': frame.name, 'line': frame.lineno} for frame in traceback.extract_tb(error.__traceback__)]})
+                'frames': [{'function': frame.name, 'line': frame.lineno} for frame in traceback.extract_tb(error.__traceback__)]}
+            if hasattr(error, 'command_failure'):
+                diagnostic['commandFailure'] = error.command_failure
+            if hasattr(error, 'session_observation'):
+                diagnostic['sessionObservation'] = error.session_observation
+            immutable(self.dir / 'diagnostic.json', diagnostic)
             # Leave the original unknown intent; no automatic dangerous retry or release.
         return self.readback()
 

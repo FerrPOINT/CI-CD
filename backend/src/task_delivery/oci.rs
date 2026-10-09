@@ -455,6 +455,7 @@ impl Owner {
         let intent: Intent = read(&dir.join("intent.json"))?;
         ensure!(
             intent.receipt.command_sha256 == sha(&serde_json::to_vec(command)?)
+                && serde_json::to_vec(&intent.receipt.command)? == serde_json::to_vec(command)?
                 && serde_json::to_vec(&intent.receipt.original_operation)?
                     == serde_json::to_vec(original)?,
             "original OCI input mismatch"
@@ -470,45 +471,14 @@ impl Owner {
             .unwrap_or_else(|| intent.receipt.clone());
         let reconciled_receipt = optional::<Receipt>(&dir.join("reconciled.json"))?;
         for r in std::iter::once(&receipt).chain(reconciled_receipt.iter()) {
+            self.validate_receipt(r, &intent)?;
+        }
+        if let Some(proof) = optional::<Receipt>(&dir.join("verified-checks.json"))? {
             ensure!(
-                r.schema == "forge/local-oci-operation/v1"
-                    && r.scope == "owner_local_verification"
-                    && !r.dispatch_allowed
-                    && !r.sdlc_acceptance_verified
-                    && r.command_sha256 == intent.receipt.command_sha256
-                    && serde_json::to_vec(&r.command)? == serde_json::to_vec(command)?
-                    && r.manifest_sha256 == intent.receipt.manifest_sha256
-                    && r.previous_manifest_sha256 == intent.receipt.previous_manifest_sha256
-                    && serde_json::to_vec(&r.original_operation)? == serde_json::to_vec(original)?,
-                "OCI receipt does not match original intent"
+                proof.status == DeliveryStatus::Verified,
+                "OCI historical checks are not verified"
             );
-            if r.status == DeliveryStatus::Verified {
-                let m = intent
-                    .manifest
-                    .as_ref()
-                    .context("verified OCI manifest missing")?;
-                ensure!(
-                    r.image_id.as_ref() == Some(&m.descriptor.image_id)
-                        && r.container_id.as_ref().is_some_and(|id| digest(id))
-                        && r.data_sha256.as_ref() == Some(&m.data_sha256),
-                    "verified OCI identity missing"
-                );
-                for (probe, expected) in [
-                    (&r.version, r.manifest_sha256.as_ref().unwrap()),
-                    (&r.health, &self.policy.checks.health_body_sha256),
-                    (&r.acceptance, &self.policy.checks.acceptance_body_sha256),
-                    (&r.compatibility, &m.data_sha256),
-                ] {
-                    ensure!(
-                        probe
-                            .as_ref()
-                            .is_some_and(|p| p.status == DeliveryStatus::Verified
-                                && p.http_status == Some(200)
-                                && p.body_sha256.as_ref() == Some(expected)),
-                        "verified OCI check evidence missing"
-                    );
-                }
-            }
+            self.validate_receipt(&proof, &intent)?;
         }
         let current_manifest_sha256 = pointer(&self.root, "current.json")?;
         let confirmed_manifest_sha256 = pointer(&self.root, "confirmed.json")?;
@@ -521,6 +491,78 @@ impl Owner {
             confirmed_manifest_sha256,
             reconciliation_needed,
         })
+    }
+
+    fn validate_receipt(&self, r: &Receipt, intent: &Intent) -> anyhow::Result<()> {
+        ensure!(
+            r.schema == "forge/local-oci-operation/v1"
+                && r.scope == "owner_local_verification"
+                && !r.dispatch_allowed
+                && !r.sdlc_acceptance_verified
+                && r.command_sha256 == intent.receipt.command_sha256
+                && serde_json::to_vec(&r.command)? == serde_json::to_vec(&intent.receipt.command)?
+                && r.manifest_sha256 == intent.receipt.manifest_sha256
+                && r.previous_manifest_sha256 == intent.receipt.previous_manifest_sha256
+                && serde_json::to_vec(&r.original_operation)?
+                    == serde_json::to_vec(&intent.receipt.original_operation)?,
+            "OCI receipt does not match original intent"
+        );
+        if r.status == DeliveryStatus::Verified {
+            let m = intent
+                .manifest
+                .as_ref()
+                .context("verified OCI manifest missing")?;
+            let hash = sha(&serde_json::to_vec(m)?);
+            ensure!(
+                r.reason == "owner_oci_identity_data_application_checks_verified"
+                    && r.manifest_sha256.as_ref() == Some(&hash)
+                    && r.image_id.as_ref() == Some(&m.descriptor.image_id)
+                    && r.container_id.as_ref().is_some_and(|id| digest(id))
+                    && r.data_sha256.as_ref() == Some(&m.data_sha256),
+                "verified OCI identity missing"
+            );
+            for (probe, expected) in [
+                (&r.version, &hash),
+                (&r.health, &self.policy.checks.health_body_sha256),
+                (&r.acceptance, &self.policy.checks.acceptance_body_sha256),
+                (&r.compatibility, &m.data_sha256),
+            ] {
+                ensure!(
+                    probe
+                        .as_ref()
+                        .is_some_and(|p| p.status == DeliveryStatus::Verified
+                            && p.http_status == Some(200)
+                            && p.body_sha256.as_ref() == Some(expected)),
+                    "verified OCI check evidence missing"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn retain_verified_checks(
+        &self,
+        dir: &Path,
+        intent: &Intent,
+        fresh: &Receipt,
+    ) -> anyhow::Result<()> {
+        ensure!(
+            fresh.status == DeliveryStatus::Verified,
+            "fresh OCI checks are not verified"
+        );
+        self.validate_receipt(fresh, intent)?;
+        let path = dir.join("verified-checks.json");
+        if let Some(proof) = optional::<Receipt>(&path)? {
+            ensure!(
+                proof.status == DeliveryStatus::Verified,
+                "OCI historical checks are not verified"
+            );
+            // Historical probe times differ from recovery; retain only exact intent-bound proof.
+            self.validate_receipt(&proof, intent)?;
+            Ok(())
+        } else {
+            immutable(&path, fresh)
+        }
     }
 
     fn child_stopped(&self, dir: &Path) -> anyhow::Result<()> {
@@ -687,13 +729,13 @@ impl Owner {
             if reconcile && old.reconciliation_needed {
                 self.child_stopped(&dir)?;
                 let intent: Intent = read(&dir.join("intent.json"))?;
-                if let Some(manifest) = intent.manifest {
+                if let Some(manifest) = &intent.manifest {
                     let hash = intent.receipt.manifest_sha256.clone().unwrap();
                     if pointer(&self.root, "current.json")?.as_ref() == Some(&hash) {
-                        let receipt = self.observe(intent.receipt, &manifest).await;
+                        let receipt = self.observe(intent.receipt.clone(), manifest).await;
                         if receipt.status != DeliveryStatus::Unknown {
                             if receipt.status == DeliveryStatus::Verified {
-                                immutable(&dir.join("verified-checks.json"), &receipt)?;
+                                self.retain_verified_checks(&dir, &intent, &receipt)?;
                                 replace_pointer(&self.root, "confirmed.json", &hash)?;
                             }
                             immutable(&dir.join("reconciled.json"), &receipt)?;
@@ -859,6 +901,13 @@ impl Owner {
         let receipt = self.observe(receipt, &manifest).await;
         if receipt.status == DeliveryStatus::Verified {
             immutable(&dir.join("verified-checks.json"), &receipt)?;
+            #[cfg(feature = "oci-integration")]
+            if std::env::var("CICD_TEST_OCI_PAUSE_AFTER_VERIFIED_CHECKS").as_deref() == Ok("1") {
+                // Only the opt-in native QA binary exposes this bounded crash window.
+                immutable(&dir.join("qa-verified-checks-ready.json"), &true)?;
+                tokio::time::sleep(Duration::from_secs(20)).await;
+                anyhow::bail!("native QA verified-checks checkpoint was not interrupted");
+            }
             replace_pointer(&self.root, "confirmed.json", &hash)?;
         }
         immutable(&dir.join("result.json"), &receipt)?;
@@ -961,4 +1010,340 @@ pub async fn local_command(
     };
     tx.commit().await?;
     Ok(result)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    struct RecoveryFixture {
+        owner: Owner,
+        dir: PathBuf,
+        intent: Intent,
+    }
+
+    impl RecoveryFixture {
+        fn new() -> Self {
+            let root = std::env::temp_dir().join(format!("forge-oci-recovery-{}", Uuid::new_v4()));
+            directory(&root).unwrap();
+            directory(&root.join("operations")).unwrap();
+            let project = Uuid::new_v4();
+            let policy = Policy {
+                project_name: "sdlc-qa-forge-oci-0123456789ab".into(),
+                network_name: "sdlc-qa-forge-0123456789ab_qa".into(),
+                daemon_id: "test-daemon".into(),
+                docker_bin: root.join("unavailable-docker"),
+                compose_bin: root.join("unavailable-compose"),
+                compose_root: root.clone(),
+                volume_name: "sdlc-qa-forge-0123456789ab_delivery-qa".into(),
+                volume_root: root.clone(),
+                data_file: root.join("data.json"),
+                data_sha256: sha(b"data"),
+                checks: DeliveryPolicy {
+                    origin: "http://127.0.0.1:8000".into(),
+                    health_path: "/health".into(),
+                    health_body_sha256: sha(b"ok\n"),
+                    acceptance_path: "/acceptance".into(),
+                    acceptance_body_sha256: sha(b"accepted\n"),
+                },
+            };
+            let owner = Owner {
+                root,
+                project,
+                policy_hash: sha(&serde_json::to_vec(&policy).unwrap()),
+                policy,
+            };
+            let attempt_id = Uuid::new_v4();
+            let request = WorkspaceOperationRequest {
+                contract_version: 1,
+                operation_key: "workspace:oci-recovery".into(),
+                binding: WorkspaceTaskBinding {
+                    tracker_instance_id: "test-tracker".into(),
+                    tracker_project_id: Uuid::new_v4(),
+                    task_id: Uuid::new_v4(),
+                    root_task_id: Uuid::new_v4(),
+                    assignment_id: Uuid::new_v4(),
+                    execution_id: Uuid::new_v4(),
+                    routing_snapshot_id: Uuid::new_v4(),
+                    requirement_revision: 1,
+                    fencing_token: 1,
+                    assignment_hash: sha(b"assignment"),
+                    workflow_task_ref: "SDLC-1".into(),
+                },
+                repository_id: Uuid::new_v4(),
+                source_commit: "a".repeat(40),
+                lease_id: Uuid::new_v4(),
+                attempt_id,
+                workspace_generation: 1,
+                workspace_id: format!("attempt-{attempt_id}-1-{}", Uuid::new_v4().simple()),
+                role: WorkspaceRole::Developer,
+                access: WorkspaceAccess::ReadWrite,
+            };
+            request.validate().unwrap();
+            let original = WorkspaceOperationReceipt {
+                schema: "forge/workspace-operation-receipt/v1".into(),
+                operation_id: Uuid::new_v4(),
+                project_id: project,
+                request_hash: sha(&serde_json::to_vec(&request).unwrap()),
+                request,
+                recorded_at: "2026-10-07T00:00:00Z".parse().unwrap(),
+                status: WorkspaceOperationStatus::Blocked,
+                blockers: vec![WorkspaceOperationBlocker::TrackerAdmissionUnavailable],
+                physical_source_observed: false,
+                dispatch_allowed: false,
+            };
+            let artifact_id = Uuid::new_v4();
+            let command = DeliveryCommand {
+                operation_key: "oci:recovery".into(),
+                workspace_operation_key: original.request.operation_key.clone(),
+                original: WorkspaceOperationLookup {
+                    request_hash: original.request_hash.clone(),
+                    task_id: original.request.binding.task_id,
+                    root_task_id: original.request.binding.root_task_id,
+                    assignment_id: original.request.binding.assignment_id,
+                    execution_id: original.request.binding.execution_id,
+                    fencing_token: original.request.binding.fencing_token,
+                },
+                action: DeliveryAction::Deploy,
+                artifact_id: Some(artifact_id),
+                expected_manifest_sha256: None,
+            };
+            command.validate().unwrap();
+            let manifest = Manifest {
+                schema: "forge/local-oci-manifest/v1".into(),
+                candidate: DeliveryManifest {
+                    schema: "forge/local-static-manifest/v1".into(),
+                    operation_receipt: original.clone(),
+                    pipeline_id: Uuid::new_v4(),
+                    artifact_id,
+                    artifact_attempt_id: Uuid::new_v4(),
+                    artifact_sha256: sha(b"descriptor"),
+                    artifact_size_bytes: 10,
+                    config_sha256: sha(b"config"),
+                    plan_sha256: sha(b"plan"),
+                    target_policy_sha256: owner.policy_hash.clone(),
+                },
+                descriptor: Descriptor {
+                    schema: "forge/oci-candidate/v1".into(),
+                    image_id: format!("sha256:{}", sha(b"image")),
+                    source_commit: original.request.source_commit.clone(),
+                    data_protocol: "readonly_snapshot_v1".into(),
+                    readable_schema_versions: vec![1],
+                    migrations: vec![],
+                },
+                data_schema_version: 1,
+                data_sha256: owner.policy.data_sha256.clone(),
+            };
+            let hash = sha(&serde_json::to_vec(&manifest).unwrap());
+            let intent = Intent {
+                receipt: Receipt {
+                    schema: "forge/local-oci-operation/v1".into(),
+                    scope: "owner_local_verification".into(),
+                    command_sha256: sha(&serde_json::to_vec(&command).unwrap()),
+                    command,
+                    original_operation: original,
+                    manifest_sha256: Some(hash.clone()),
+                    previous_manifest_sha256: None,
+                    status: DeliveryStatus::Unknown,
+                    reason: "oci_effect_not_finalized".into(),
+                    version: None,
+                    health: None,
+                    acceptance: None,
+                    compatibility: None,
+                    container_id: None,
+                    image_id: None,
+                    data_sha256: None,
+                    dispatch_allowed: false,
+                    sdlc_acceptance_verified: false,
+                },
+                manifest: Some(manifest),
+            };
+            let dir = operation_dir(&owner.root, &intent.receipt.command.operation_key);
+            directory(&dir).unwrap();
+            immutable(&dir.join("intent.json"), &intent).unwrap();
+            replace_pointer(&owner.root, "current.json", &hash).unwrap();
+            Self { owner, dir, intent }
+        }
+
+        fn verified(&self, timestamp: &str) -> Receipt {
+            let mut receipt = self.intent.receipt.clone();
+            let manifest = self.intent.manifest.as_ref().unwrap();
+            let probe = |hash: &str| {
+                Some(DeliveryProbe {
+                    status: DeliveryStatus::Verified,
+                    http_status: Some(200),
+                    body_sha256: Some(hash.into()),
+                    observed_at: timestamp.parse().unwrap(),
+                })
+            };
+            receipt.status = DeliveryStatus::Verified;
+            receipt.reason = "owner_oci_identity_data_application_checks_verified".into();
+            receipt.version = probe(receipt.manifest_sha256.as_ref().unwrap());
+            receipt.health = probe(&self.owner.policy.checks.health_body_sha256);
+            receipt.acceptance = probe(&self.owner.policy.checks.acceptance_body_sha256);
+            receipt.compatibility = probe(&manifest.data_sha256);
+            receipt.container_id = Some(sha(b"container"));
+            receipt.image_id = Some(manifest.descriptor.image_id.clone());
+            receipt.data_sha256 = Some(manifest.data_sha256.clone());
+            receipt
+        }
+
+        fn readback(&self) -> anyhow::Result<Readback> {
+            self.owner.readback(
+                &self.intent.receipt.command,
+                &self.intent.receipt.original_operation,
+            )
+        }
+    }
+
+    impl Drop for RecoveryFixture {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.owner.root).unwrap();
+        }
+    }
+
+    #[test]
+    fn recovery_retains_verified_checks_with_different_probe_times() {
+        let fixture = RecoveryFixture::new();
+        let proof = fixture.verified("2026-10-07T00:01:00Z");
+        let fresh = fixture.verified("2026-10-08T00:01:00Z");
+        let path = fixture.dir.join("verified-checks.json");
+        immutable(&path, &proof).unwrap();
+        let historical_bytes = std::fs::read(&path).unwrap();
+        let intent_bytes = std::fs::read(fixture.dir.join("intent.json")).unwrap();
+        assert_ne!(historical_bytes, serde_json::to_vec(&fresh).unwrap());
+        assert!(fixture.readback().unwrap().reconciliation_needed);
+        fixture
+            .owner
+            .retain_verified_checks(&fixture.dir, &fixture.intent, &fresh)
+            .unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), historical_bytes);
+        immutable(&fixture.dir.join("reconciled.json"), &fresh).unwrap();
+        let readback = fixture.readback().unwrap();
+        assert_eq!(readback.latest_status(), DeliveryStatus::Verified);
+        assert_eq!(
+            serde_json::to_vec(&readback.reconciled_receipt.unwrap()).unwrap(),
+            serde_json::to_vec(&fresh).unwrap()
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), historical_bytes);
+        assert_eq!(
+            std::fs::read(fixture.dir.join("intent.json")).unwrap(),
+            intent_bytes
+        );
+    }
+
+    #[test]
+    fn recovery_without_historical_checks_writes_fresh_proof() {
+        let fixture = RecoveryFixture::new();
+        let fresh = fixture.verified("2026-10-08T00:01:00Z");
+        let path = fixture.dir.join("verified-checks.json");
+        assert!(!path.exists());
+        fixture
+            .owner
+            .retain_verified_checks(&fixture.dir, &fixture.intent, &fresh)
+            .unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            serde_json::to_vec(&fresh).unwrap()
+        );
+        fixture
+            .owner
+            .retain_verified_checks(&fixture.dir, &fixture.intent, &fresh)
+            .unwrap();
+        assert!(fixture.readback().unwrap().reconciliation_needed);
+    }
+
+    #[test]
+    fn recovery_rejects_foreign_or_tampered_historical_checks() {
+        use serde_json::json;
+        let mutations = [
+            ("/schema", json!("foreign/v1")),
+            ("/scope", json!("foreign")),
+            ("/commandSha256", json!(sha(b"foreign-command"))),
+            ("/command/operationKey", json!("oci:foreign")),
+            ("/command/workspaceOperationKey", json!("workspace:foreign")),
+            ("/command/artifactId", json!(Uuid::new_v4())),
+            ("/command/original/fencingToken", json!(2)),
+            ("/originalOperation/operationId", json!(Uuid::new_v4())),
+            ("/originalOperation/projectId", json!(Uuid::new_v4())),
+            (
+                "/originalOperation/request/sourceCommit",
+                json!("b".repeat(40)),
+            ),
+            ("/manifestSha256", json!(sha(b"foreign-manifest"))),
+            ("/previousManifestSha256", json!(sha(b"foreign-previous"))),
+            ("/status", json!("unknown")),
+            ("/reason", json!("foreign_success")),
+            (
+                "/imageId",
+                json!(format!("sha256:{}", sha(b"foreign-image"))),
+            ),
+            ("/containerId", json!("invalid")),
+            ("/dataSha256", json!(sha(b"foreign-data"))),
+            ("/version", json!(null)),
+            ("/version/bodySha256", json!(sha(b"foreign-version"))),
+            ("/health/bodySha256", json!(sha(b"foreign-health"))),
+            ("/health/httpStatus", json!(503)),
+            ("/acceptance/status", json!("failed")),
+            ("/acceptance/bodySha256", json!(sha(b"foreign-acceptance"))),
+            (
+                "/compatibility/bodySha256",
+                json!(sha(b"foreign-compatibility")),
+            ),
+            ("/dispatchAllowed", json!(true)),
+            ("/sdlcAcceptanceVerified", json!(true)),
+        ];
+        for (field, value) in mutations {
+            let fixture = RecoveryFixture::new();
+            let mut proof = serde_json::to_value(fixture.verified("2026-10-07T00:01:00Z")).unwrap();
+            *proof.pointer_mut(field).unwrap() = value;
+            let path = fixture.dir.join("verified-checks.json");
+            immutable(&path, &proof).unwrap();
+            let historical_bytes = std::fs::read(&path).unwrap();
+            let fresh = fixture.verified("2026-10-08T00:01:00Z");
+            assert!(
+                fixture
+                    .owner
+                    .retain_verified_checks(&fixture.dir, &fixture.intent, &fresh)
+                    .is_err(),
+                "accepted tampered proof: {field}"
+            );
+            assert!(fixture.readback().is_err(), "read foreign proof: {field}");
+            assert_eq!(std::fs::read(&path).unwrap(), historical_bytes);
+            assert!(!fixture.dir.join("reconciled.json").exists());
+            assert!(
+                pointer(&fixture.owner.root, "confirmed.json")
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn recovery_requires_fresh_observation_despite_historical_verified_checks() {
+        let fixture = RecoveryFixture::new();
+        let proof = fixture.verified("2026-10-07T00:01:00Z");
+        let path = fixture.dir.join("verified-checks.json");
+        immutable(&path, &proof).unwrap();
+        immutable(&fixture.dir.join("child-stopped.json"), &true).unwrap();
+        let historical_bytes = std::fs::read(&path).unwrap();
+        // The unavailable engine makes fresh observation Unknown without running Docker/Compose.
+        let readback = fixture
+            .owner
+            .execute(
+                &fixture.intent.receipt.command,
+                fixture.intent.receipt.original_operation.clone(),
+                None,
+                true,
+            )
+            .await
+            .unwrap();
+        assert!(readback.reconciliation_needed);
+        assert_eq!(readback.latest_status(), DeliveryStatus::Unknown);
+        assert!(readback.reconciled_receipt.is_none());
+        assert!(readback.confirmed_manifest_sha256.is_none());
+        assert!(!fixture.dir.join("compose.json").exists());
+        assert!(!fixture.dir.join("child.json").exists());
+        assert_eq!(std::fs::read(&path).unwrap(), historical_bytes);
+    }
 }
