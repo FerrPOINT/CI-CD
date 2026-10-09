@@ -53,6 +53,25 @@ pub struct CatalogRepository {
 pub struct CatalogPage {
     pub items: Vec<CatalogRepository>,
 }
+#[utoipa::path(get,operation_id="forge_repository_catalog_all",path="/api/v1/catalog/repositories",tag="namespaces",params(Page),responses((status=200,body=CatalogPage)))]
+pub async fn all(
+    State(state): State<Arc<AppState>>,
+    Query(page): Query<Page>,
+) -> Result<Json<CatalogPage>, ApiError> {
+    let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    let rows:Vec<serde_json::Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',r.id,'group_id',r.group_id,'slug',r.slug,'kind',r.kind,'ready',r.ready,'external_url',r.external_url,'provider_refs',r.provider_refs,'public_name',COALESCE(g.slug||'/'||r.slug,r.slug),'storage_name',r.storage_name,'visibility',s.visibility,'namespace',CASE WHEN b.resource_id IS NOT NULL THEN jsonb_build_object('registry_instance_id',b.registry_instance_id,'namespace_id',b.namespace_id) ELSE NULL END,'state',b.state) FROM repository_catalog r JOIN repositories s ON s.id=r.id LEFT JOIN git_groups g ON g.id=r.group_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=g.id WHERE ($3::uuid IS NULL OR r.group_id=$3) AND position(lower($4) in lower(COALESCE(g.slug||'/'||r.slug,r.slug)))>0 ORDER BY g.slug NULLS LAST,r.slug,r.id LIMIT $1 OFFSET $2").bind(page.limit.unwrap_or(50).clamp(1,100)).bind(page.offset.unwrap_or(0).max(0)).bind(page.group_id).bind(page.search.as_deref().unwrap_or("")) .fetch_all(pool).await.map_err(catalog_database_error)?;
+    let mut items = Vec::new();
+    for value in rows {
+        let mut repo: CatalogRepository = serde_json::from_value(value)
+            .map_err(|_| ApiError::service_unavailable("invalid_repository_catalog"))?;
+        if let Some(group) = repo.group_id {
+            crate::namespace::binding(pool, group).await?;
+        }
+        check_availability(&state, &mut repo).await;
+        items.push(repo);
+    }
+    Ok(Json(CatalogPage { items }))
+}
 #[derive(Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AttachRepository {
@@ -71,6 +90,8 @@ pub struct AttachReadback {
 pub struct Page {
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+    pub search: Option<String>,
+    pub group_id: Option<Uuid>,
 }
 #[derive(Deserialize, utoipa::IntoParams)]
 pub struct NamespaceQuery {
@@ -213,6 +234,13 @@ pub async fn write_lease<'a>(
             .await
             .map_err(catalog_database_error)?
             .ok_or_else(ApiError::not_found)?;
+    catalog_write_lease(state, repository).await
+}
+
+pub async fn catalog_write_lease<'a>(
+    state: &'a AppState,
+    repository: Uuid,
+) -> Result<sqlx::Transaction<'a, sqlx::Postgres>, ApiError> {
     let mut tx = state
         .namespace_admission_pool
         .as_ref()
@@ -342,8 +370,8 @@ pub async fn list(
 ) -> Result<Json<CatalogPage>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     crate::namespace::binding(pool, id).await?;
-    let items: Vec<serde_json::Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',r.id,'group_id',r.group_id,'slug',r.slug,'kind',r.kind,'ready',r.ready,'external_url',r.external_url,'provider_refs',r.provider_refs,'public_name',g.slug||'/'||r.slug,'storage_name',r.storage_name,'visibility',s.visibility) FROM repository_catalog r JOIN git_groups g ON g.id=r.group_id JOIN repositories s ON s.id=r.id WHERE r.group_id=$1 ORDER BY r.slug,r.id LIMIT $2 OFFSET $3")
-        .bind(id).bind(page.limit.unwrap_or(50).clamp(1,100)).bind(page.offset.unwrap_or(0).max(0)).fetch_all(pool).await.map_err(catalog_database_error)?;
+    let items: Vec<serde_json::Value> = sqlx::query_scalar("SELECT jsonb_build_object('id',r.id,'group_id',r.group_id,'slug',r.slug,'kind',r.kind,'ready',r.ready,'external_url',r.external_url,'provider_refs',r.provider_refs,'public_name',g.slug||'/'||r.slug,'storage_name',r.storage_name,'visibility',s.visibility) FROM repository_catalog r JOIN git_groups g ON g.id=r.group_id JOIN repositories s ON s.id=r.id WHERE r.group_id=$1 AND position(lower($4) in lower(r.slug))>0 ORDER BY r.slug,r.id LIMIT $2 OFFSET $3")
+        .bind(id).bind(page.limit.unwrap_or(50).clamp(1,100)).bind(page.offset.unwrap_or(0).max(0)).bind(page.search.as_deref().unwrap_or("")) .fetch_all(pool).await.map_err(catalog_database_error)?;
     let mut items = items
         .into_iter()
         .map(|value| {
@@ -609,9 +637,13 @@ pub async fn create(
 pub async fn connect_delivery(
     State(state): State<Arc<AppState>>,
     Path((id, project)): Path<(Uuid, Uuid)>,
+    axum::Extension(claims): axum::Extension<crate::auth::AccessClaims>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
-    let mut tx = pool.begin().await.map_err(catalog_database_error)?;
+    if !crate::delivery_configs::configuration_visible(pool, project, &claims).await? {
+        return Err(ApiError::not_found());
+    }
+    let mut tx = catalog_write_lease(&state, id).await?;
     let row = sqlx::query("SELECT r.group_id,b.state FROM repository_catalog r LEFT JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE r.id=$1").bind(id).fetch_optional(&mut *tx).await.map_err(catalog_database_error)?.ok_or_else(ApiError::not_found)?;
     if row.get::<Option<Uuid>, _>("group_id").is_some()
         && row.get::<Option<String>, _>("state").as_deref() != Some("active")

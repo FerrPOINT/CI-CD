@@ -1054,7 +1054,7 @@ async fn sdlc_workspace_fail_closed_config_subject_rotation_write_only_and_json_
 
 #[tokio::test]
 async fn sdlc_workspace_repository_uuid_wins_over_a_conflicting_url_tail() {
-    let f = Fixture::new().await;
+    let f = Fixture::with_repository_binding(false).await;
     let other = Uuid::new_v4();
     let other_name = format!("other-{}", other.simple());
     sqlx::query("INSERT INTO repositories(id,name) VALUES($1,$2)")
@@ -1063,9 +1063,10 @@ async fn sdlc_workspace_repository_uuid_wins_over_a_conflicting_url_tail() {
         .execute(&f.pool)
         .await
         .unwrap();
-    sqlx::query("UPDATE projects SET repository_url=$2 WHERE id=$1")
+    sqlx::query("UPDATE projects SET repository_url=$2,repository_id=$3 WHERE id=$1")
         .bind(f.project)
         .bind(format!("https://foreign.invalid/git/{other_name}.git"))
+        .bind(f.request.repository_id)
         .execute(&f.pool)
         .await
         .unwrap();

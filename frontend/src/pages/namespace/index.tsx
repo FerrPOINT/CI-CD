@@ -10,12 +10,13 @@ import type { components } from '@/api/schema'
 import { useNamespaceContext } from '@/widgets/namespace-context'
 import { AttachRepository } from './attach-repository'
 type CreateRepository = components['schemas']['CreateRepository']
-export function NamespacePage() {
+export function NamespacePage({ embedded = false }: { embedded?: boolean }) {
   const { ref, malformed, query } = useNamespaceContext()
   const resource = query.data
   const cache = useQueryClient()
   const { session } = useAuth()
   const [offset, setOffset] = useState(0)
+  const [search, setSearch] = useState('')
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
   const [kind, setKind] = useState<'hosted' | 'external'>('hosted')
@@ -29,11 +30,12 @@ export function NamespacePage() {
       ref?.namespace_id,
       resource?.binding.resource.resource_id,
       offset,
+      search,
     ],
     enabled: Boolean(resource),
     queryFn: ({ signal }) =>
       api<components['schemas']['CatalogPage']>(
-        `/git-groups/${resource!.binding.resource.resource_id}/repositories?limit=50&offset=${offset}`,
+        `/git-groups/${resource!.binding.resource.resource_id}/repositories?limit=50&offset=${offset}&search=${encodeURIComponent(search)}`,
         { signal },
       ),
   })
@@ -94,12 +96,22 @@ export function NamespacePage() {
     )
   return (
     <div className="space-y-5">
-      <h1 className="text-xl font-semibold">{resource.label}</h1>
+      {!embedded && <h1 className="text-xl font-semibold">Репозитории проекта</h1>}
       <p className="text-sm text-text-muted">
         {resource.binding.state === 'archived'
           ? 'Проект в архиве. Push, merge и новые pipeline закрыты.'
           : 'Репозитории проекта'}
       </p>
+      <Input
+        aria-label="Поиск репозиториев проекта"
+        placeholder="Поиск репозиториев…"
+        value={search}
+        onChange={(event) => {
+          setSearch(event.target.value)
+          setOffset(0)
+        }}
+        className="max-w-md"
+      />
       {repositories.isPending ? (
         <p role="status">Загружаем репозитории…</p>
       ) : repositories.isError ? (

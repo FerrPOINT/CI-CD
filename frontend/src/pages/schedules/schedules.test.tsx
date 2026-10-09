@@ -56,9 +56,9 @@ function renderSchedulesPage(requests: string[]) {
 
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[`/projects/${projectId}/schedules`]}>
+      <MemoryRouter initialEntries={[`/delivery-configs/${projectId}/schedules`]}>
         <Routes>
-          <Route path="/projects/:projectId/schedules" element={<SchedulesPage />} />
+          <Route path="/delivery-configs/:projectId/schedules" element={<SchedulesPage />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,

@@ -92,9 +92,9 @@ curl -fsS -X POST http://127.0.0.1:22801/api/v1/projects \
   }'
 ```
 
-Каждый созданный репозиторий получает executable `hooks/post-receive`. Hook отправляет имя репозитория, pushed ref, `old_rev` и `new_rev` на internal endpoint. Backend ищет первый проект, `repository_url` которого указывает на exact repo tail: `/{name}.git`, `:{name}.git` или ровно `{name}.git`, и создаёт queued pipeline с `git_ref` из `refs/heads/<branch>` или `refs/tags/<tag>`.
+Каждый созданный репозиторий получает executable `hooks/post-receive`. Hook отправляет storage identity, pushed ref, `old_rev` и `new_rev` на internal endpoint. Backend разрешает stable repository UUID по однозначному alias и читает явную push policy: одна CI-конфигурация либо «Отключён». Совпадение URL tail и выбор первой конфигурации не используются. `project_id` по-прежнему обозначает CI-конфигурацию.
 
-Повтор того же hook event с тем же `repository/ref_name/new_rev` не создаёт второй pipeline: backend хранит stable idempotency record в `pipeline_triggers` и возвращает существующий `pipeline_id`. Удаление ref (`new_rev` из нулей) не запускает pipeline.
+Повтор того же hook event с тем же `repository/ref_name/new_rev` сохраняет исходное push-решение в `repository_push_operations`, включая отключённый запуск. Изменение policy не перенаправляет повтор на другую конфигурацию. `pipeline_triggers` возвращает существующий `pipeline_id` для исходного запуска. Удаление ref (`new_rev` из нулей) не запускает pipeline.
 
 Если проект не связан с репозиторием, push остаётся успешным, но pipeline не создаётся.
 

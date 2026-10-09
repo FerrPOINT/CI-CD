@@ -101,7 +101,7 @@ projects (1) ──── (N) pipelines (1) ──── (N) stages (1) ──�
                                                                                                    └──── (N) job_leases
    │                    │                    │                    │
    │ UUID PK            │ UUID PK            │ UUID PK            │ UUID PK
-   │ name UNIQUE        │ project_id FK      │ pipeline_id FK     │ stage_id FK
+   │ repo/name UNIQUE   │ project_id FK      │ pipeline_id FK     │ stage_id FK
    │                    │ status CHECK       │ position UNIQUE    │ status CHECK
    │                    │                    │ status CHECK       │
    │                    │                    │                    │ BIGSERIAL PK
@@ -115,7 +115,31 @@ repositories (1) ──── (N) pull_requests (по repository_name)
    │ UUID PK, name UNIQUE
 ```
 
-Уровень изоляции: каждый родитель CASCADE-deletes удаляет всех потомков.
+Legacy foreign keys сохраняют CASCADE, но admission и database trigger запрещают
+удаление CI-конфигурации с execution/deployment history или managed binding.
+Это не операция каскадного удаления пользовательской истории.
+
+### Namespace и презентационная проекция (0090–0091)
+
+Admin Namespace связывается с `git_groups` через `forge_namespace_bindings`.
+`repository_catalog.id` — публичная stable repository identity; hosted storage
+и flat aliases живут отдельно. PR использует `repository_id`, сохраняя прежние
+номера и legacy names. `projects.repository_id` связывает CI-конфигурацию ровно
+с одним репозиторием; один репозиторий допускает несколько конфигураций.
+
+`forge_workspace_projects` хранит Tracker ResourceRef, NamespaceRef, generation,
+имя, ключ, lifecycle и время проверенного полного снимка. NamespaceRef — PK;
+Tracker instance/project UUID уникален. `forge_workspace_catalog_sync` отличает
+успешно пустой снимок от отсутствия данных. Это presentation, не второй owner.
+
+`delivery_configuration_operations` хранит immutable payload/actor/readback
+атомарного create. `repository_push_configs` хранит nullable конфигурацию
+автозапуска с проверкой принадлежности репозиторию. `repository_push_operations`
+сохраняет оригинальный выбор для hook key, включая отключённый автозапуск.
+Повтор hook не выбирает новую конфигурацию после изменения policy.
+
+Имена конфигураций уникальны внутри репозитория; unbound legacy names имеют
+отдельную уникальность. Historical migration checksums не переписываются.
 
 ---
 

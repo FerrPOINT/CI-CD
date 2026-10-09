@@ -92,6 +92,23 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         )
     ),
     paths(
+        crate::workspace_projects::all_pipelines,
+        crate::workspace_projects::all_summary,
+        crate::repository_catalog::all,
+        crate::delivery_configs::readback,
+        crate::workspace_projects::list,
+        crate::workspace_projects::get,
+        crate::workspace_projects::summary,
+        crate::workspace_projects::pipelines,
+        crate::workspace_projects::deployments,
+        crate::workspace_projects::repository_pipelines,
+        crate::workspace_projects::repository_deployments,
+        crate::delivery_configs::unbound,
+        crate::delivery_configs::get,
+        crate::delivery_configs::list,
+        crate::delivery_configs::create,
+        crate::delivery_configs::push_get,
+        crate::delivery_configs::push_put,
         crate::namespace::apply,
         crate::task_links::link,
         crate::task_links::list,
@@ -435,10 +452,26 @@ impl ApiError {
     }
     pub(crate) fn internal(error: sqlx::Error) -> Self {
         if let Some(database) = error.as_database_error()
-            && database.code().as_deref() == Some("42501")
-            && database.message() == "namespace_resource_read_only"
+            && database.code().as_deref() == Some("23505")
+            && matches!(
+                database.constraint(),
+                Some(
+                    "delivery_configuration_repository_name" | "legacy_unbound_configuration_name"
+                )
+            )
         {
-            return Self::conflict("namespace_resource_read_only");
+            return Self::conflict("delivery_configuration_name_conflict");
+        }
+        if let Some(database) = error.as_database_error()
+            && database.code().as_deref() == Some("42501")
+            && matches!(
+                database.message(),
+                "namespace_resource_read_only"
+                    | "delivery_configuration_history_protected"
+                    | "delivery_checkout_identity_immutable"
+            )
+        {
+            return Self::conflict(database.message());
         }
         tracing::error!(%error, "internal API error");
         Self {

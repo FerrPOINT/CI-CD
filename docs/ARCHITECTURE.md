@@ -4,6 +4,7 @@ Owner-local OCI CLI поддерживает preloaded immutable image и read-o
 snapshot без migrations/restore. Actual container/mount/network, served manifest,
 schema/bytes compatibility и application acceptance отделены от desired Compose
 state. [ADR-0021](adr/0021-owner-local-oci-readonly-data.md); HTTP dispatch закрыт.
+[Сквозные проекты и CI-конфигурации](adr/0024-workspace-projects-delivery-configurations.md): Tracker владеет именем и ключом проекта; Forge хранит проверенную локальную проекцию, Git-группу, репозитории и выполнение. Старый `project_id` остаётся ID CI-конфигурации.
 
 Target интеграция автономного SDLC: [delivery receipts v1](SDLC_DELIVERY_V1.md).
 Она переиспользует текущий Forge, не ограничивает его хранением исходников и

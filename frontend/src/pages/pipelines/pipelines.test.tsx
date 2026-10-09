@@ -3,6 +3,11 @@ import { NamespaceLink as Link } from '@sdlc/ui/ui'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PipelinesPage } from './index'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+vi.mock('@/api/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/client')>()),
+  api: vi.fn().mockResolvedValue({ id: 'project-1', name: 'Build', default_branch: 'main' }),
+}))
 
 const mocks = vi.hoisted(() => ({
   usePipelines: vi.fn(),
@@ -39,20 +44,24 @@ function pipeline(index: number) {
 
 function setup() {
   render(
-    <MemoryRouter initialEntries={['/projects/project-1/pipelines']}>
-      <Routes>
-        <Route
-          path="/projects/:projectId/pipelines"
-          element={
-            <>
-              <Link to="/projects/project-2/pipelines">Switch project</Link>
-              <PipelinesPage />
-            </>
-          }
-        />
-        <Route path="/pipelines/:pipelineId" element={<div>Created pipeline</div>} />
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <MemoryRouter initialEntries={['/projects/project-1/pipelines']}>
+        <Routes>
+          <Route
+            path="/projects/:projectId/pipelines"
+            element={
+              <>
+                <Link to="/projects/project-2/pipelines">Switch project</Link>
+                <PipelinesPage />
+              </>
+            }
+          />
+          <Route path="/pipelines/:pipelineId" element={<div>Created pipeline</div>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   )
 }
 

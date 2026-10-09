@@ -35,7 +35,7 @@ impl Drop for ActualDelivery {
 
 impl ActualDelivery {
     async fn new() -> Self {
-        let mut f = Fixture::new().await;
+        let mut f = Fixture::with_repository_binding(false).await;
         let schema: String = sqlx::query_scalar("SELECT current_setting('search_path')")
             .fetch_one(&f.pool)
             .await
@@ -128,9 +128,10 @@ impl ActualDelivery {
                 bare.to_str().unwrap(),
             ],
         );
-        sqlx::query("UPDATE projects SET repository_url=$1 WHERE id=$2")
+        sqlx::query("UPDATE projects SET repository_url=$1,repository_id=$3 WHERE id=$2")
             .bind(format!("file://{}", bare.display()))
             .bind(f.project)
+            .bind(f.request.repository_id)
             .execute(&f.pool)
             .await
             .unwrap();

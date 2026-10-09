@@ -45,6 +45,11 @@ IDs. Legacy `repository delete` отказывает с 409 для managed repos
 `TRACKER_URL`, `TRACKER_INSTANCE_ID`, `TRACKER_TOKEN_FILE` с тем же prefix.
 `CICD_NAMESPACE__PUBLIC_GIT_ORIGIN` — фиксированный публичный Git origin.
 Endpoints не поступают из human requests; redirects отключены, 10 s/64 KiB.
+Каталог презентационных данных использует `GET /api/v1/namespace-projects`
+Tracker: до 100 ресурсов на страницу, 256 KiB на ответ, полный снимок до
+10 000 ресурсов. Worker обновляет локальную проекцию каждую минуту. Ошибка
+не заменяет прежний снимок. Известная ошибка refresh сразу помечает сохранённые
+данные устаревшими; возраст свыше пяти минут также считается stale.
 Machine subjects проверяются до human/admin mapping; service scopes остаются.
 
 Admission pool имеет две дополнительные connections, основной pool остаётся
@@ -52,3 +57,27 @@ Admission pool имеет две дополнительные connections, ос�
 UI включается `VITE_NAMESPACE_ENABLED=true` после compatible schema/cohort.
 Rollback сохраняет guards даже с выключенным UI; старые namespace-unaware
 writers после активации не допускаются.
+
+## Сквозные проекты и CI-конфигурации
+
+`/projects` показывает имя, ключ и avatar Tracker из локальной проекции,
+а не строки legacy `projects`. Git Group — отдельная привязка. Проект без
+Git binding остаётся видимым с переходом в Admin для подключения.
+`/workspaces/{registry}/{namespace}` содержит обзор, репозитории, общий список
+пайплайнов и деплоев. Внутри `/catalog/repositories/{id}` доступны отдельные
+списки и несколько CI-конфигураций. UUID конфигурации остаётся legacy
+`project_id`; settings routes — `/delivery-configs/{id}/...`. Прежние
+`/projects/{id}/...` перенаправляют к той же конфигурации.
+
+Base владеет `ProjectAvatar` и `ProjectNavigationGroup`. Forge передаёт данные
+и маршруты; fold-state хранится по Tracker instance/project UUID. Выбор
+«Все проекты» (`project_scope=all`) сохраняется при переходах внутри проекта
+и не стирает другие секции сайдбара.
+
+Migration 0091 сохраняет execution history, вводит атомарный create/readback
+CI-конфигурации и явную push policy: одна конфигурация либо «Отключён».
+Первое решение по hook key сохраняется независимо от последующих изменений
+policy. Replay не перенаправляет тот же push в другую конфигурацию.
+Удаление managed-конфигурации или конфигурации с pipeline/deployment history
+возвращает 409; связанный checkout URL неизменяем.
+Подробности: [ADR 0024](adr/0024-workspace-projects-delivery-configurations.md).

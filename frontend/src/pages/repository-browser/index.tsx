@@ -74,11 +74,15 @@ function formatBytes(value: number, locale: string): string {
   return `${new Intl.NumberFormat(locale, { maximumFractionDigits: unit === 0 ? 0 : 1 }).format(amount)} ${units[unit]}`
 }
 
-export function RepositoryBrowserPage() {
+export function RepositoryBrowserPage({
+  repositoryName,
+  embedded = false,
+}: { repositoryName?: string; embedded?: boolean } = {}) {
   const { t, i18n } = useTranslation()
-  const { repo } = useParams<{ repo: string }>()
+  const { repo: routeRepository } = useParams<{ repo: string }>()
+  const repo = repositoryName ?? routeRepository
   const [searchParams, setSearchParams] = useSearchParams()
-  const tabParam = searchParams.get('tab')
+  const tabParam = searchParams.get(embedded ? 'git_tab' : 'tab')
   const tab = browserTabs.find((value) => value === tabParam) ?? 'code'
   const gitRef = searchParams.get('ref') || 'HEAD'
   const rawCommitPage = Number(searchParams.get('commitPage'))
@@ -98,44 +102,47 @@ export function RepositoryBrowserPage() {
   function updateParams(changes: Record<string, string | null>, options?: { replace?: boolean }) {
     const next = new URLSearchParams(searchParams)
     for (const [key, value] of Object.entries(changes)) {
-      if (value) next.set(key, value)
-      else next.delete(key)
+      const target = embedded && key === 'tab' ? 'git_tab' : key
+      if (value) next.set(target, value)
+      else next.delete(target)
     }
     setSearchParams(next, options)
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <div className="flex items-center gap-2 text-sm text-text-muted">
-            <Link
-              to="/repositories"
-              className="inline-flex min-h-10 items-center hover:text-text-primary"
-            >
-              {t('navigation.repositories')}
-            </Link>
-            <ChevronRight className="h-3 w-3" />
-            <span className="min-w-0 break-all">{repo}</span>
+      {!embedded && (
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-sm text-text-muted">
+              <Link
+                to="/repositories"
+                className="inline-flex min-h-10 items-center hover:text-text-primary"
+              >
+                {t('navigation.repositories')}
+              </Link>
+              <ChevronRight className="h-3 w-3" />
+              <span className="min-w-0 break-all">{repo}</span>
+            </div>
+            <div className="mt-2 flex items-center gap-3">
+              <GitBranch className="h-6 w-6 text-accent" />
+              <h1 className="min-w-0 break-all text-2xl font-bold">{repo}</h1>
+            </div>
           </div>
-          <div className="mt-2 flex items-center gap-3">
-            <GitBranch className="h-6 w-6 text-accent" />
-            <h1 className="min-w-0 break-all text-2xl font-bold">{repo}</h1>
+          <div className="flex flex-wrap gap-2">
+            <Button asChild variant="outline" size="sm" className="h-10">
+              <Link to={`/repositories/${encodeURIComponent(repo)}/compare`}>
+                <GitCompareArrows className="h-4 w-4" /> {t('repositoryBrowser.compareChanges')}
+              </Link>
+            </Button>
+            <Button asChild size="sm" className="h-10">
+              <Link to={`/repositories/${encodeURIComponent(repo)}/pulls`}>
+                <GitPullRequest className="h-4 w-4" /> {t('repositoryBrowser.createPullRequest')}
+              </Link>
+            </Button>
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button asChild variant="outline" size="sm" className="h-10">
-            <Link to={`/repositories/${encodeURIComponent(repo)}/compare`}>
-              <GitCompareArrows className="h-4 w-4" /> {t('repositoryBrowser.compareChanges')}
-            </Link>
-          </Button>
-          <Button asChild size="sm" className="h-10">
-            <Link to={`/repositories/${encodeURIComponent(repo)}/pulls`}>
-              <GitPullRequest className="h-4 w-4" /> {t('repositoryBrowser.createPullRequest')}
-            </Link>
-          </Button>
-        </div>
-      </div>
+      )}
 
       <Tabs
         value={tab}

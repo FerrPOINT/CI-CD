@@ -276,6 +276,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/catalog/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_repository_catalog_all"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/catalog/repositories/{id}": {
         parameters: {
             query?: never;
@@ -286,6 +302,38 @@ export interface paths {
         get: operations["forge_repository_catalog_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog/repositories/{id}/delivery-config-operations/{operation}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_delivery_readback"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog/repositories/{id}/delivery-configs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_delivery_list"];
+        put?: never;
+        post: operations["forge_delivery_create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -308,6 +356,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/catalog/repositories/{id}/deployments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_workspace_repository_deployments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/catalog/repositories/{id}/group": {
         parameters: {
             query?: never;
@@ -317,6 +381,22 @@ export interface paths {
         };
         get?: never;
         put: operations["forge_attach_repository"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog/repositories/{id}/pipelines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_workspace_repository_pipelines"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -382,6 +462,54 @@ export interface paths {
         get: operations["forge_pull_task_links"];
         put?: never;
         post: operations["forge_link_task_pull"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog/repositories/{id}/push-config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_delivery_push_get"];
+        put: operations["forge_delivery_push_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/delivery-configurations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_delivery_unbound"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/delivery-configurations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_delivery_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -511,7 +639,7 @@ export interface paths {
         put?: never;
         /**
          * Internal endpoint called by the generated `post-receive` hook.
-         *     Finds a project whose repository_url points at this repo and triggers a pipeline.
+         *     Resolves repository identity and executes its saved push configuration decision.
          */
         post: operations["internal_git_push"];
         delete?: never;
@@ -1950,6 +2078,118 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workspace-pipelines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_workspace_all_pipelines"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspace-projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_workspace_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspace-projects/{registry}/{namespace}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_workspace_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspace-projects/{registry}/{namespace}/deployments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_workspace_deployments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspace-projects/{registry}/{namespace}/pipelines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_workspace_pipelines"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspace-projects/{registry}/{namespace}/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_workspace_summary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workspace-summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_workspace_all_summary"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/git/{repo}/git-receive-pack": {
         parameters: {
             query?: never;
@@ -2218,6 +2458,17 @@ export interface components {
             sha: string;
             short_sha: string;
         };
+        ConfigPage: {
+            items: components["schemas"]["DeliveryConfig"][];
+            /** Format: int64 */
+            total: number;
+        };
+        CreateConfig: {
+            default_branch: string;
+            name: string;
+            /** Format: uuid */
+            operation_id: string;
+        };
         CreateDeployment: {
             git_ref: string;
             /** Format: uuid */
@@ -2331,6 +2582,19 @@ export interface components {
             operationKey: string;
             original: components["schemas"]["WorkspaceOperationLookup"];
             workspaceOperationKey: string;
+        };
+        DeliveryConfig: {
+            /** Format: date-time */
+            created_at: string;
+            default_branch: string;
+            /** Format: uuid */
+            id: string;
+            /** Format: int32 */
+            max_running_jobs?: number | null;
+            name: string;
+            /** Format: uuid */
+            repository_id?: string | null;
+            repository_url: string;
         };
         DeliveryManifest: {
             /** Format: uuid */
@@ -2459,6 +2723,33 @@ export interface components {
             required_approvals: number;
             status: string;
             url?: string | null;
+        };
+        ExecutionPage: {
+            items: components["schemas"]["ExecutionRow"][];
+            /** Format: int64 */
+            total: number;
+        };
+        ExecutionRow: {
+            approval_state?: string | null;
+            commit_sha?: string | null;
+            /** Format: uuid */
+            configuration_id: string;
+            configuration_name: string;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            environment_id?: string | null;
+            environment_name?: string | null;
+            git_ref: string;
+            /** Format: uuid */
+            id: string;
+            namespace: components["schemas"]["NamespaceRef"];
+            /** Format: uuid */
+            pipeline_id?: string | null;
+            /** Format: uuid */
+            repository_id: string;
+            repository_name: string;
+            status: string;
         };
         GitPushEvent: {
             new_rev?: string | null;
@@ -2906,6 +3197,10 @@ export interface components {
             source_commit_sha: string;
             task: components["schemas"]["TaskRef"];
             task_key: string;
+        };
+        PushConfig: {
+            /** Format: uuid */
+            configuration_id?: string | null;
         };
         Readiness: {
             database: string;
@@ -3473,8 +3768,52 @@ export interface components {
         };
         /** @enum {string} */
         WorkspaceOperationStatus: "blocked";
+        WorkspacePage: {
+            items: components["schemas"]["WorkspaceProject"][];
+            /** Format: int64 */
+            total: number;
+        };
+        WorkspaceProject: {
+            /** Format: int64 */
+            generation: number;
+            git_state?: string | null;
+            /** Format: uuid */
+            group_id?: string | null;
+            group_slug?: string | null;
+            latest_status?: string | null;
+            name: string;
+            /** Format: uuid */
+            namespace_id: string;
+            /** Format: date-time */
+            observed_at: string;
+            project_key: string;
+            /** Format: uuid */
+            registry_instance_id: string;
+            /** Format: int64 */
+            repositories: number;
+            stale: boolean;
+            state: string;
+            /** Format: uuid */
+            tracker_instance_id: string;
+            /** Format: uuid */
+            tracker_project_id: string;
+        };
         /** @enum {string} */
         WorkspaceRole: "analyst" | "architect" | "developer" | "reviewer" | "tester" | "devops";
+        WorkspaceSummary: {
+            /** Format: int64 */
+            configurations: number;
+            /** Format: int64 */
+            failed: number;
+            /** Format: int64 */
+            projects: number;
+            /** Format: int64 */
+            queued: number;
+            /** Format: int64 */
+            repositories: number;
+            /** Format: int64 */
+            running: number;
+        };
         WorkspaceTaskBinding: {
             assignmentHash: string;
             /** Format: uuid */
@@ -4000,6 +4339,32 @@ export interface operations {
             query?: {
                 limit?: number | null;
                 offset?: number | null;
+                search?: string | null;
+                group_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogPage"];
+                };
+            };
+        };
+    };
+    forge_repository_catalog_all: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+                offset?: number | null;
+                search?: string | null;
+                group_id?: string | null;
             };
             header?: never;
             path?: never;
@@ -4038,6 +4403,95 @@ export interface operations {
             };
         };
     };
+    forge_delivery_readback: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                operation: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryConfig"];
+                };
+            };
+            /** @description Original operation not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    forge_delivery_list: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+                offset?: number | null;
+                search?: string | null;
+                unbound?: boolean | null;
+                registry_instance_id?: string | null;
+                namespace_id?: string | null;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigPage"];
+                };
+            };
+        };
+    };
+    forge_delivery_create: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateConfig"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryConfig"];
+                };
+            };
+            /** @description Original operation conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     forge_repository_catalog_connect_delivery: {
         parameters: {
             query?: never;
@@ -4056,6 +4510,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    forge_workspace_repository_deployments: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+                offset?: number | null;
+                search?: string | null;
+                repository_id?: string | null;
+                configuration_id?: string | null;
+                status?: string | null;
+                git_ref?: string | null;
+                since?: string | null;
+                until?: string | null;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionPage"];
+                };
             };
         };
     };
@@ -4088,6 +4573,37 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    forge_workspace_repository_pipelines: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+                offset?: number | null;
+                search?: string | null;
+                repository_id?: string | null;
+                configuration_id?: string | null;
+                status?: string | null;
+                git_ref?: string | null;
+                since?: string | null;
+                until?: string | null;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionPage"];
+                };
             };
         };
     };
@@ -4190,6 +4706,8 @@ export interface operations {
             query?: {
                 limit?: number | null;
                 offset?: number | null;
+                search?: string | null;
+                group_id?: string | null;
             };
             header?: never;
             path: {
@@ -4232,6 +4750,99 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TaskRef"];
+                };
+            };
+        };
+    };
+    forge_delivery_push_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushConfig"];
+                };
+            };
+        };
+    };
+    forge_delivery_push_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PushConfig"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushConfig"];
+                };
+            };
+        };
+    };
+    forge_delivery_unbound: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+                offset?: number | null;
+                search?: string | null;
+                unbound?: boolean | null;
+                registry_instance_id?: string | null;
+                namespace_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigPage"];
+                };
+            };
+        };
+    };
+    forge_delivery_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeliveryConfig"];
                 };
             };
         };
@@ -4489,6 +5100,8 @@ export interface operations {
             query?: {
                 limit?: number | null;
                 offset?: number | null;
+                search?: string | null;
+                group_id?: string | null;
             };
             header?: never;
             path: {
@@ -8328,6 +8941,198 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    forge_workspace_all_pipelines: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+                offset?: number | null;
+                search?: string | null;
+                repository_id?: string | null;
+                configuration_id?: string | null;
+                status?: string | null;
+                git_ref?: string | null;
+                since?: string | null;
+                until?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionPage"];
+                };
+            };
+        };
+    };
+    forge_workspace_list: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+                offset?: number | null;
+                search?: string | null;
+                repository_id?: string | null;
+                configuration_id?: string | null;
+                status?: string | null;
+                git_ref?: string | null;
+                since?: string | null;
+                until?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspacePage"];
+                };
+            };
+            /** @description Tracker project catalog unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    forge_workspace_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                registry: string;
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceProject"];
+                };
+            };
+        };
+    };
+    forge_workspace_deployments: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+                offset?: number | null;
+                search?: string | null;
+                repository_id?: string | null;
+                configuration_id?: string | null;
+                status?: string | null;
+                git_ref?: string | null;
+                since?: string | null;
+                until?: string | null;
+            };
+            header?: never;
+            path: {
+                registry: string;
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionPage"];
+                };
+            };
+        };
+    };
+    forge_workspace_pipelines: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+                offset?: number | null;
+                search?: string | null;
+                repository_id?: string | null;
+                configuration_id?: string | null;
+                status?: string | null;
+                git_ref?: string | null;
+                since?: string | null;
+                until?: string | null;
+            };
+            header?: never;
+            path: {
+                registry: string;
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionPage"];
+                };
+            };
+        };
+    };
+    forge_workspace_summary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                registry: string;
+                namespace: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceSummary"];
+                };
+            };
+        };
+    };
+    forge_workspace_all_summary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceSummary"];
+                };
             };
         };
     };

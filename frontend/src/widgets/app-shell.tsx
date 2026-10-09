@@ -1,5 +1,6 @@
 import { SidebarItem } from '@sdlc/ui/ui'
 import { NamespaceShellContext } from './namespace-context'
+import { useProjectDisclosures, WorkspaceNavigation } from './workspace-navigation'
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router'
 import {
@@ -11,6 +12,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  PanelLeft,
   Settings,
   Users,
 } from 'lucide-react'
@@ -35,11 +37,14 @@ import { useAuth } from '@/shared/auth/auth-provider'
 
 type NavigationListProps = {
   onNavigate?: () => void
-  responsiveLabels?: boolean
+  compact?: boolean
+  disclosures: ReturnType<typeof useProjectDisclosures>
 }
 
-function NavigationList({ onNavigate, responsiveLabels = false }: NavigationListProps) {
+function NavigationList({ onNavigate, compact = false, disclosures }: NavigationListProps) {
   const { t } = useTranslation()
+  const location = useLocation()
+  const scope = new URLSearchParams(location.search).get('project_scope') === 'all' ? '?project_scope=all' : location.search
 
   const navItems = [
     { to: '/', icon: LayoutDashboard, label: t('navigation.dashboard') },
@@ -52,16 +57,16 @@ function NavigationList({ onNavigate, responsiveLabels = false }: NavigationList
   ]
 
   return (
-    <nav className="flex flex-col gap-1" aria-label={t('navigation.main')}>
+    <div><nav className="flex flex-col gap-1" aria-label={t('navigation.main')}>
       {navItems.map(({ to, icon: Icon, label }) => (
-        <SidebarItem key={to} asChild compact={responsiveLabels ? 'responsive' : false}>
-          <NavLink to={to} end={to === '/'} onClick={onNavigate} aria-label={label} title={label}>
+        <SidebarItem key={to} asChild compact={compact}>
+          <NavLink to={to + scope} end={to === '/'} onClick={onNavigate} aria-label={label} title={label}>
             <Icon aria-hidden />
             <span className="base-sidebar-item-label">{label}</span>
           </NavLink>
         </SidebarItem>
       ))}
-    </nav>
+    </nav>{import.meta.env.VITE_NAMESPACE_ENABLED === 'true' && <WorkspaceNavigation {...disclosures} compact={compact} onNavigate={onNavigate} />}</div>
   )
 }
 
@@ -70,6 +75,9 @@ export function AppShell() {
   const { t } = useTranslation()
   const location = useLocation()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const disclosures = useProjectDisclosures()
+  const [compact, setCompact] = useState(() => { try { return localStorage.getItem('forge:sidebar-compact') === 'true' } catch { return false } })
+  useEffect(() => { try { localStorage.setItem('forge:sidebar-compact', String(compact)) } catch { /* Storage is optional. */ } }, [compact])
   useEffect(() => {
     if (!window.matchMedia) return
     const media = window.matchMedia('(min-width: 768px)')
@@ -123,7 +131,7 @@ export function AppShell() {
                   </DialogTitle>
                 </DialogHeader>
                 <div className="min-h-0 flex-1 overflow-y-auto p-3" id="mobile-navigation">
-                  <NavigationList onNavigate={() => setMobileMenuOpen(false)} />
+                  <NavigationList disclosures={disclosures} onNavigate={() => setMobileMenuOpen(false)} />
                 </div>
               </DialogContent>
             </Dialog>
@@ -170,12 +178,13 @@ export function AppShell() {
           </>
         }
       />
-      <aside className="fixed bottom-0 left-0 top-[var(--shell-header-height)] z-20 hidden w-[var(--shell-sidebar-compact)] flex-col border-r border-border bg-surface md:flex xl:w-[var(--shell-sidebar-expanded)]">
+      <aside className={`fixed bottom-0 left-0 top-[var(--shell-header-height)] z-20 hidden ${compact ? 'w-[var(--shell-sidebar-compact)]' : 'w-[var(--shell-sidebar-expanded)]'} flex-col border-r border-border bg-surface md:flex`}>
         <div className="min-h-0 flex-1 overflow-y-auto p-2 xl:p-3">
-          <NavigationList responsiveLabels />
+          <Button variant="ghost" size="icon" title={compact ? 'Развернуть навигацию' : 'Свернуть навигацию'} aria-label={compact ? 'Развернуть навигацию' : 'Свернуть навигацию'} aria-expanded={!compact} onClick={() => setCompact(value => !value)}><PanelLeft aria-hidden size={16} /></Button>
+          <NavigationList disclosures={disclosures} compact={compact} />
         </div>
       </aside>
-      <div className="min-w-0 md:pl-[var(--shell-sidebar-compact)] xl:pl-[var(--shell-sidebar-expanded)]">
+      <div className={`min-w-0 ${compact ? 'md:pl-[var(--shell-sidebar-compact)]' : 'md:pl-[var(--shell-sidebar-expanded)]'}`}>
         <main className="shell-main min-h-[calc(100dvh-var(--shell-header-height))]">
           <PageFrame mode={pageLayout}>
             <Outlet />

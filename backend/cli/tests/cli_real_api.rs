@@ -6,10 +6,10 @@
 
 #![cfg(feature = "integration")]
 
-use std::process::Command;
+use std::{process::Command, str::FromStr};
 
 use serde_json::json;
-use sqlx::postgres::PgPoolOptions;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use uuid::Uuid;
 
 struct ApiServer {
@@ -53,21 +53,60 @@ impl ApiServer {
     }
 }
 
-async fn test_pool() -> sqlx::PgPool {
+struct TestDatabase {
+    pool: sqlx::PgPool,
+    admin: sqlx::PgPool,
+    schema: String,
+}
+
+impl TestDatabase {
+    async fn cleanup(self) {
+        self.pool.close().await;
+        sqlx::query(&format!("DROP SCHEMA {} CASCADE", self.schema))
+            .execute(&self.admin)
+            .await
+            .expect("drop owned CLI schema");
+        self.admin.close().await;
+    }
+}
+
+async fn test_pool() -> TestDatabase {
     let url = std::env::var("CICD_TEST_DATABASE_URL")
         .expect("CICD_TEST_DATABASE_URL must point at the integration PostgreSQL");
-    let pool = PgPoolOptions::new()
-        .max_connections(2)
-        .connect(&url)
+    let options = PgConnectOptions::from_str(&url).expect("parse integration PostgreSQL URL");
+    assert!(
+        options
+            .get_database()
+            .is_some_and(|name| name.starts_with("forge_test_")),
+        "CLI integration tests require an explicit disposable forge_test_ database"
+    );
+    let admin = PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(options.clone())
         .await
         .expect("connect integration PostgreSQL");
+    // Generated identifiers contain only a fixed prefix and UUID hex digits.
+    let schema = format!("it_cli_{}", Uuid::new_v4().simple());
+    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+        .execute(&admin)
+        .await
+        .expect("create owned CLI schema");
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect_with(options.options([("search_path", schema.as_str())]))
+        .await
+        .expect("connect owned CLI schema");
     cicd::migrations()
         .await
         .expect("load migrations")
         .run(&pool)
         .await
         .expect("run migrations");
-    pool
+    TestDatabase {
+        pool,
+        admin,
+        schema,
+    }
 }
 
 fn cli_json_from_env(api_url: &str, token: &str, args: &[&str]) -> serde_json::Value {
@@ -212,7 +251,8 @@ async fn login_access_token(api_url: &str, username: &str, password: &str) -> St
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cli_exercises_real_http_api_and_postgres_stack() {
-    let pool = test_pool().await;
+    let database = test_pool().await;
+    let pool = database.pool.clone();
     let server = ApiServer::start_with_auth_secret(
         pool.clone(),
         Some(format!("fixture-secret-{}", Uuid::new_v4())),
@@ -693,11 +733,19 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
         "CLI should surface non-zero API errors, got stderr:\n{stderr}"
     );
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(Uuid::parse_str(&project_id).expect("parse project id"))
-        .execute(&pool)
+    let deletion = reqwest::Client::new()
+        .delete(format!("{}/api/v1/projects/{project_id}", server.base_url))
+        .bearer_auth(&fixture_access)
+        .send()
         .await
-        .expect("cleanup project");
+        .expect("delete project with history");
+    assert_eq!(deletion.status(), reqwest::StatusCode::CONFLICT);
+    let denial: serde_json::Value = deletion.json().await.expect("history denial JSON");
+    assert_eq!(denial["error"]["code"], "conflict");
+    assert_eq!(
+        denial["error"]["message"],
+        "delivery_configuration_history_protected"
+    );
     let refused = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
         .env("CICD_API_URL", &server.base_url)
         .env("CICD_API_TOKEN", &fixture_access)
@@ -731,11 +779,13 @@ async fn cli_exercises_real_http_api_and_postgres_stack() {
             .is_dir()
     );
     server.shutdown().await;
+    database.cleanup().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cli_exercises_auth_rbac_and_token_redaction_against_real_api() {
-    let pool = test_pool().await;
+    let database = test_pool().await;
+    let pool = database.pool.clone();
     let namespace = Uuid::new_v4();
     let auth_secret = format!("cli-auth-secret-{namespace}");
     let server = ApiServer::start_with_auth_secret(pool.clone(), Some(auth_secret)).await;
@@ -935,17 +985,6 @@ async fn cli_exercises_auth_rbac_and_token_redaction_against_real_api() {
         "read-only PAT should be denied write actions, got stderr:\n{pat_denied}"
     );
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(Uuid::parse_str(&project_id).expect("parse project id"))
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
-    for username in [&admin_username, &developer_username, &viewer_username] {
-        sqlx::query("DELETE FROM users WHERE username = $1")
-            .bind(username)
-            .execute(&pool)
-            .await
-            .expect("cleanup user");
-    }
     server.shutdown().await;
+    database.cleanup().await;
 }
