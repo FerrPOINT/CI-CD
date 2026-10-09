@@ -8,7 +8,7 @@
 
 `protocolVersion` в этом документе равен `1`. Идентификаторы являются UUID, время - RFC 3339 UTC, а `commitSha` - полный 40- или 64-символьный hex SHA. Ответы не содержат DB credentials, control-plane token, Docker socket либо plaintext секреты вне `secrets:resolve`.
 
-Ошибки используют envelope из `docs/IMPLEMENTATION_CONTRACTS.md`: `401` invalid/revoked credential, `403` scope запрещён, `409` `lease_fenced`/sequence conflict, `410` expired lease, `422` validation failure, `429` rate limit, `503` temporary dependency failure. Runner повторяет только transport/`429`/`503` с exponential full-jitter backoff.
+Ошибки используют envelope из `docs/IMPLEMENTATION_CONTRACTS.md`: `401` invalid/revoked credential, `403` scope запрещён, `409` `lease_fenced`/sequence conflict, `410` expired lease, `422` validation failure, `429` rate limit, `503` temporary dependency failure. Target retry policy допускает transport/`429`/`503` с exponential full-jitter backoff только для доказанно безопасных операций. Current external completion POST не повторяется автоматически: неизвестный результат сначала сверяется owner GET.
 
 Общие фрагменты JSON Schema (Draft 2020-12):
 
@@ -169,7 +169,30 @@ Target chunked upload заменяет server-generated sequence на idempotent
 },"additionalProperties":false}
 ```
 
-Completion terminal и идемпотентен только для идентичных данных той же active lease. Сервер применяет принятый cancel intent с приоритетом над конкурентным completion: после user cancel external runner может закрыть active lease только `outcome: "canceled"`. `409`/`410` требуют от runner немедленно прекратить stale execution и удалить workspace/backend resource.
+Current completion принимается только для authenticated owner active acknowledged lease с exact attempt/generation/token. Повтор POST после terminal transition не гарантирует replay; идемпотентный completion operation receipt остаётся target. Сервер применяет принятый cancel intent с приоритетом над конкурентным completion: после user cancel external runner может закрыть active lease только `outcome: "canceled"`. `409`/`410` требуют прекратить stale execution, но не разрешают удалять workspace/backend resource. Неизвестная остановка или acceptance сохраняет контекст reconciliation.
+
+### Source Follow-Up 2026-10-03: Terminal Readback
+
+`GET /api/v1/runner/leases/{lease_id}/receipt` возвращает metadata-only
+`protocolVersion`, `leaseId`, `attemptId`, `fencingToken`, `leaseStatus`,
+`terminalStatus`, `completedAt`, `terminalAcknowledged`; `Cache-Control: no-store`.
+Актуальная runner credential обязательна даже при trusted-network mode;
+foreign/missing lease — `404`, revoked/expired credential — `401`.
+
+ACK требует `job_leases.completion_received_at`, который записывает только
+accepted fenced completion в terminal transaction (pending migration0039,
+без historical backfill), и совпадения terminal attempt state/time. Expiry,
+включая canceled-on-expiry, не является ACK. Caller проверяет точные IDs,
+generation, protocol/outcome, затем повторно path/marker identity перед cleanup.
+После неизвестного POST external runner делает GET, не повторяет команды/POST.
+Локальный journal сам по себе не даёт разрешение cleanup.
+
+Если child wait не подтвердил остановку, outer handler не отправляет terminal
+completion и не объявляет idle capacity: polling прекращается. Unknown workspace
+остаётся для owner/process reconciliation. Это source component contract;
+OS process-tree safe-stop, formal SDLC task/assignment receipts и installed runtime
+acceptance этим не доказаны. Подробности — [API](../API.md#runner-terminal-readback),
+[ADR-0017](../adr/0017-owned-attempt-workspaces.md) и [Operations](../OPERATIONS.md).
 
 ## 5. Lease, timeout и состояния
 

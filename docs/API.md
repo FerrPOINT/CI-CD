@@ -19,6 +19,32 @@ REST API первой версии Forge CI/CD. Контрольная плос�
 - Сериализация: `serde_json`, `snake_case` для enum-значений статусов.
 - Ошибки: `{"error":{"code":"...","message":"...","request_id":"..."}}` с соответствующим HTTP статусом и header `x-request-id`.
 
+## Runner Terminal Readback
+
+`GET /api/v1/runner/leases/{lease_id}/receipt` требует актуальную runner credential,
+даже в trusted-network режиме. Human/admin PAT или credential другого runner её
+не заменяет; чужой/несуществующий lease — одинаковый `404`, revoked/expired
+runner credential — `401`. Ответ `200`, `Cache-Control: no-store` содержит:
+`protocolVersion`, `leaseId`, `attemptId`, `fencingToken`, `leaseStatus`,
+`terminalStatus`, `completedAt`, `terminalAcknowledged`. Нет lease token,
+diagnostic, task titles или команд.
+
+`terminalAcknowledged=true` требует persisted terminal completed/canceled lease,
+совпадения terminal attempt status и времени окончания, а также ненулевого
+`job_leases.completion_received_at`: его пишет только принятый authenticated
+completion. Cancel-on-expiry и исторические terminal rows без такого признака
+возвращают `false`, как active/expired/mismatched attempt; это не разрешение
+cleanup/retry. Новая попытка job не подменяет
+identity прежнего receipt. Это runner completion readback, **не** SDLC delivery
+receipt. POST completion остаётся прежней мутацией; unknown POST сверяется GET,
+а не повторной отправкой. Client требует exact version/lease/attempt/generation/
+outcome и terminal lease status; bounded body, без redirect/automatic retry.
+
+```bash
+curl -fsS -H "Authorization: Bearer $CICD_RUNNER_CREDENTIAL" \
+  "$CICD_API_URL/api/v1/runner/leases/$LEASE_ID/receipt"
+```
+
 ## Коды ответов
 
 | Код | Назначение |
@@ -76,8 +102,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 38,
-    "latest_required_version": 38,
+    "latest_applied_version": 39,
+    "latest_required_version": 39,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],
@@ -1438,6 +1464,14 @@ Runner protocol обслуживается на `/api/v1/runner/*` и не ис�
 `work:poll` атомарно выбирает compatible queued `job_queue` row через `SKIP LOCKED`, проверяя `job_queue.required_tags ⊆ runner.tags`; текущий executor offer равен `shell`, поэтому runner с явным `capabilities.executorKinds` должен включать `shell`, а отсутствие `executorKinds` остаётся legacy-compatible. Проектная квота проверяется в сериализуемой PostgreSQL-транзакции; конфликт `40001` повторяется до восьми раз с новым lease token, а затем возвращается `204` без выдачи работы сверх квоты, чтобы runner продолжил polling. Если immediate claim пустой и `waitSeconds > 0`, сервер ждёт wakeup после committed enqueue/разблокировки следующей стадии через process-local signal и PostgreSQL `LISTEN/NOTIFY` channel `runner_work_available`, затем повторяет claim до истечения бюджета. Затем сервер создаёт active `job_leases`, генерирует opaque `leaseToken`, хранит только hash, фиксирует `ackDeadline`, `leaseExpiresAt`, `runnerProtocolVersion=1`, переводит queue row/job/attempt в `leased`/`running` и возвращает `fencingToken = job_leases.generation`. Если lease не acknowledged до `ackDeadline`, reconciler закрывает её как expired delivery, очищает `lease_id`/`leased_at` и возвращает тот же queue row/job/attempt в `queued`, чтобы следующий poll получил новую generation. `ack`, `renew`, `control`, `secrets:resolve`, artifact upload, `logs` и `complete` одновременно проверяют runner identity, lease token hash, generation, active state и expiry; stale или fenced mutation возвращает `409`, expired lease — `410`. `control` не продлевает lease и отдаёт durable `cancelRequested`, который user cancel выставляет через `job_leases.cancel_requested_at` для external leases. `secrets:resolve` дополнительно требует acknowledged lease и возвращает только requested names из `jobs.required_secrets`; лишние имена получают `403`. Artifact upload также требует acknowledged lease, matching `attemptId`, body 1 byte..50 MiB, безопасный `X-Artifact-Name` и `X-Artifact-Path`, входящий в `jobs.artifact_paths`.
 
 `LeaseOffer.attempt.workspace.checkoutUrl` содержит `projects.repository_url`, чтобы внешний `forge-runner` мог выполнить checkout без доступа к БД. `LeaseOffer.attempt.artifacts` содержит только declared relative file paths. Current `forge-runner` — отдельный shell-runner process: он умеет register/heartbeat/poll/ack/scoped secrets resolve/renew/control/artifact upload/logs/complete, checkout по `checkoutUrl`, запуск команд в workspace, передачу declared secrets в env, active-lease heartbeat во время выполнения, polling cancel signal во время команды, отправку stdout/stderr в `job_logs` с best-effort masking, загрузку declared artifact files и terminal completion.
+
+Source delta 2026-10-03: переданный `commitSha` проверяется как full SHA и
+сверяется с detached HEAD до команд. `--no-checkout` не обходит pin; invalid/missing
+object блокирует попытку без fallback на ref. Completion HTTP status сам по себе
+не разрешает cleanup: runner проверяет `{protocolVersion:1,accepted:true,terminalStatus}`
+на соответствие отправленному результату. Rejected/unknown/malformed ACK сохраняет
+attempt directory. Wire API не меняется, новый SDLC receipt endpoint не добавлен.
+Границы source среза описаны в [SDLC delivery](SDLC_DELIVERY_V1.md).
 
 Ограничения MVP: long-poll wakeup уже работает как process-local fast path + PostgreSQL `LISTEN/NOTIFY` для нескольких API-процессов, но это не broker/fairness policy; idempotent chunked log upload, pool/protected-tag policy, advanced capability matching, Kubernetes isolation, full secret rotation/redaction policy и production runner-zone boundary остаются target. Durable `job_queue`, bounded long-poll, ack-timeout requeue, basic tag + current `shell` executor matching, lease-scoped secret delivery, resumable artifact sessions (begin/chunk/complete/abort), active runner heartbeat, project dispatch cap и stale-runner offline reconciliation уже есть как базовый dispatch ledger/execution boundary; Docker job execution ограничен seccomp/resource-class policy. Целевая production runner policy описана в `docs/RUNNER_ARCHITECTURE.md` и `docs/contracts/RUNNER_PROTOCOL.md`.
 

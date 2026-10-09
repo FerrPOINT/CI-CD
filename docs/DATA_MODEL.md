@@ -2,6 +2,36 @@
 
 ## 0. Фактическая схема реализованных таблиц
 
+Source delta 2026-10-03 не добавляет таблиц: физическая runner-папка использует
+существующие `execution_attempts.id`, `job_leases.id/generation` и marker
+`forge/attempt-workspace/v1`. Это не самостоятельный queue/lease ledger и не
+SDLC workspace receipt. Cleanup сверяет terminal owner acknowledgement и marker;
+unknown outcome сохраняет папку. Target task/root/assignment receipts остаются в
+[SDLC_DELIVERY_V1](SDLC_DELIVERY_V1.md), а не выводятся из marker JSON.
+
+Runner source хранит два create-new/sync metadata файла в owner attempt directory:
+`.forge-completion.json` — immutable local terminal intent перед completion POST;
+`.forge-completion-ack.json` — тот же intent после exact ACK/readback. Schema
+`forge/attempt-completion/v1`, вложенный прежний owner и `terminal_status`
+(`success | failed | canceled`). Diagnostic, команды, URL, credentials и secrets
+не сохраняются. Повтор равного intent допустим; conflict/torn/link не перезаписывается.
+Local metadata не является trusted SDLC receipt или доказательством отсутствия
+процесса. Server readback использует существующие `job_leases` и
+`execution_attempts`; новых PostgreSQL таблиц и второго scheduler нет.
+Pending migration `0039_runner_completion_readback.sql` добавляет nullable
+`job_leases.completion_received_at`. Только authenticated accepted completion
+устанавливает этот признак в той же транзакции, что и terminal state. CHECK
+требует acknowledged terminal lease с непустым outcome и completed timestamp.
+Reconciler expiry его не устанавливает; исторические rows не backfill-ятся.
+Поэтому canceled-on-expiry и старый terminal state не дают cleanup ACK.
+
+Source-каталог recovery сохраняет принятые исторические migrations 36/37 и 38
+с exact SQLx checksum/line endings; новая 39 применяется после них. Regression
+проверяет fresh и upgrade с 35/37/38, неизменность исторического migration ledger,
+deployment/outbox данных и отсутствие backfill нового completion discriminator
+у прежней terminal lease. Это source upgrade gate на disposable PostgreSQL,
+не изменение установленной БД или доказательство остановки процессов.
+
 Фактическая схема задаётся committed SQLx migrations в `backend/migrations/*.sql` и применяется backend при старте через runtime `sqlx::migrate::Migrator`; тот же набор использует `cicd-migrate`. `backend/src/store.rs` остаётся историческим baseline-источником для `0001_bootstrap_v1.sql`, но новые изменения схемы должны идти только отдельными immutable migration files.
 
 ### ER-диаграмма (логическая)

@@ -4,6 +4,25 @@
 
 ## Статусы
 
+### Scoped Runner Recovery Source Gate
+
+`cargo test --locked -p cicd-server --lib runner_workspace`, binary unit tests
+`--bin forge-runner`, `--test runner_binary_contract` и PostgreSQL integration
+`runner_terminal_receipt_is_owned_durable_and_does_not_acknowledge_expiry`
+проверяют journal/reopen/conflicts, retained unknown execution, offline CLI,
+restart readback, отсутствие duplicate POST, чужую/revoked credential, expired
+lease и old attempt identity после retry. DB-тест также выполняет curl к
+настоящему ephemeral Axum HTTP listener. Тот же DB/API-тест запускает настоящий
+`forge-runner` в отдельных процессах: readback с сохранением workspace, повторный
+readback перед cleanup, затем отказ cleanup/poll при server expiry и revoked
+credential даже с сохранённым локальным ACK. Счётчики HTTP подтверждают только
+семь GET и ни одного completion POST или нового work poll в этой recovery-фазе.
+Embedded pin/prepare-failure regressions
+проверяют прежний cleanup и сохранение foreign папки. Это source/component
+evidence, не автономный installed SDLC или подтверждение process-tree sandbox.
+Fault injection OS `wait()` failure и полная crash/power-loss приёмка остаются
+отдельными gates; source не превращает неизвестное завершение в ACK.
+
 ### Live Header Gate
 
 `SDLC_LIVE_QA=1 SDLC_QA_SESSION_FILE=/private/qa-session.json
@@ -23,7 +42,7 @@ gitignored каталог; `SDLC_HEADER_EVIDENCE_DIR` переопределяе
 
 ### Требования
 
-Для полного Docker-цикла достаточно Docker Engine с Compose plugin, `curl` и (опционально) `just`. Локальный режим дополнительно требует Rust 1.88+ и Node.js 22 с pnpm 11. Версии runtime и образов зафиксированы в `docker-compose.yml` и `.github/workflows/ci.yml`.
+Для полного Docker-цикла достаточно Docker Engine с Compose plugin, `curl` и (опционально) `just`. Локальный режим дополнительно требует Rust 1.88, Node.js 22.20.0 и pnpm 10.28.1. Версии runtime и образов зафиксированы в `docker-compose.yml` и `.github/workflows/ci.yml`.
 
 Перед первым запуском создайте только локальный файл конфигурации:
 
@@ -123,6 +142,30 @@ CICD_EMBEDDED_RUNNER_ENABLED=false docker compose --profile external-runner up -
 Current `forge-runner` регистрируется или использует `CICD_RUNNER_CREDENTIAL`, heartbeat-ит capacity/tags/capabilities, получает compatible `LeaseOffer` через durable `job_queue` claim с `required_tags ⊆ runner.tags`, current `shell` executor compatibility и bounded `waitSeconds` long-poll wakeup через process-local signal + PostgreSQL `LISTEN/NOTIFY`, клонирует `workspace.checkoutUrl`, после ack получает only declared `attempt.secrets`, держит active-lease heartbeat во время выполнения, выполняет команды shell с secret env, загружает only declared `attempt.artifacts` files, отправляет stdout/stderr в attempt-owned `job_logs` с masking, poll-ит cancel control signal и отправляет terminal result. Когда embedded runner выключен, backend всё равно запускает maintenance loop для ack-timeout requeue, expiry/missing lease и stale-runner offline reconciliation. Idempotent chunked logs, Kubernetes isolation, pool/protected-tag policy and advanced capability matching remain target; resumable artifact sessions, per-project dispatch cap and Docker seccomp/resource classes are current.
 
 ## Карта workspace и пакетов
+
+### Scoped workspace checks, source slice 2026-10-03
+
+```bash
+cargo test --locked -p cicd-server --lib runner_workspace -- --test-threads=1
+cargo test --locked -p cicd-server --lib docker_execution_uses_the_declared_image -- --test-threads=1
+cargo test --locked -p cicd-server --bin forge-runner -- --test-threads=1
+cargo test --locked -p cicd-server --features integration --test integration_db embedded_workspace_uses_pin -- --test-threads=1
+cargo test --locked -p cicd-server --features integration --test integration_db embedded_runner_closes_lease_when_prepare_fails -- --test-threads=1
+cargo clippy --locked -p cicd-server --lib --bin forge-runner -- -D warnings
+```
+
+Integration tests используют собственную PostgreSQL test database и схемы, никогда
+принятые runtime volumes. Git fixture с двумя commits проверяет checkout старого pin
+при новом branch HEAD. Также проверяются сохранение чужой старой папки, failed retry
+с новой generation, marker/link denial, запрет no-checkout bypass и потеря completion
+response. HTTP ACK fixture не доказывает live owner integration. Эти быстрые source
+checks не заменяют общий release gate или автономную SDLC acceptance.
+
+Результат 2026-10-03: 21 scoped тест PASS (4 physical IO, 1 Docker arguments,
+14 external runner, 2 PostgreSQL17.6 integration), scoped clippy для lib/bin и
+изменённого integration target PASS, fmt и docs links/anchors/canonical/orphans PASS.
+Secret scan: 440 text files PASS. Ни deployment, ни live seven-agent scenario,
+ни общий release build этим evidence не подтверждены.
 
 | Путь / package | Ответственность | Статус |
 |---|---|---|

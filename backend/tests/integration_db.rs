@@ -1991,6 +1991,321 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
 }
 
 #[tokio::test]
+async fn runner_terminal_receipt_is_owned_durable_and_does_not_acknowledge_expiry() {
+    let pool = test_pool().await;
+    let project = Uuid::new_v4();
+    let pipeline = Uuid::new_v4();
+    let stage = Uuid::new_v4();
+    let job = Uuid::new_v4();
+    let attempt = Uuid::new_v4();
+    let lease = Uuid::new_v4();
+    let runner = Uuid::new_v4();
+    let foreign_runner = Uuid::new_v4();
+    for (id, credential) in [
+        (runner, "receipt-owner-fixture"),
+        (foreign_runner, "receipt-foreign-fixture"),
+    ] {
+        sqlx::query("INSERT INTO runners(id,name,credential_hash,credential_expires_at) VALUES($1,$2,$3,now()+interval '1 hour')")
+            .bind(id).bind(format!("receipt-{id}"))
+            .bind(cicd::auth::hash_token(credential)).execute(&pool).await.unwrap();
+    }
+    sqlx::query("INSERT INTO projects(id,name,repository_url) VALUES($1,$2,'https://example.invalid/source.git')")
+        .bind(project).bind(format!("receipt-{project}")).execute(&pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO pipelines(id,project_id,git_ref,status) VALUES($1,$2,'main','running')",
+    )
+    .bind(pipeline)
+    .bind(project)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO stages(id,pipeline_id,name,position,status) VALUES($1,$2,'test',0,'running')",
+    )
+    .bind(stage)
+    .bind(pipeline)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO jobs(id,stage_id,name,image,command,position,status) VALUES($1,$2,'test','unused','true',0,'running')")
+        .bind(job).bind(stage).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO execution_attempts(id,job_id,attempt_no,status,trigger) VALUES($1,$2,1,'running','initial')")
+        .bind(attempt).bind(job).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO job_leases(id,job_id,attempt_id,runner_id,runner_name,generation,lease_expires_at,acknowledged_at,lease_token_hash) VALUES($1,$2,$3,$4,'receipt-owner',1,now()+interval '1 minute',now(),$5)")
+        .bind(lease).bind(job).bind(attempt).bind(runner)
+        .bind(cicd::auth::hash_token("receipt-lease-fixture"))
+        .execute(&pool).await.unwrap();
+    let app = cicd::api::app_with_auth_secret(Some(pool.clone()), None);
+    let url = format!("/api/v1/runner/leases/{lease}/receipt");
+    for (credential, expected) in [
+        ("invalid-fixture", StatusCode::UNAUTHORIZED),
+        ("receipt-foreign-fixture", StatusCode::NOT_FOUND),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(&url)
+                    .header("authorization", format!("Bearer {credential}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected);
+    }
+    let request = || {
+        Request::get(&url)
+            .header("authorization", "Bearer receipt-owner-fixture")
+            .body(Body::empty())
+            .unwrap()
+    };
+    let response = app.clone().oneshot(request()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let receipt = response_json(response).await;
+    assert_eq!(receipt["terminalAcknowledged"], false);
+    assert_eq!(receipt["completedAt"], serde_json::Value::Null);
+    // A terminal row alone is not an accepted runner completion.
+    assert!(
+        sqlx::query("UPDATE job_leases SET completion_received_at=now() WHERE id=$1")
+            .bind(lease)
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    let completed = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/runner/leases/{lease}/complete"))
+                .header("authorization", "Bearer receipt-owner-fixture")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "protocolVersion": 1, "leaseToken": "receipt-lease-fixture",
+                        "fencingToken": 1, "attemptId": attempt, "outcome": "success",
+                        "finishedAt": Utc::now()
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(completed.status(), StatusCode::OK);
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT completion_received_at IS NOT NULL FROM job_leases WHERE id=$1"
+        )
+        .bind(lease)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    );
+    let receipt = response_json(app.clone().oneshot(request()).await.unwrap()).await;
+    assert_eq!(receipt["leaseId"], lease.to_string());
+    assert_eq!(receipt["attemptId"], attempt.to_string());
+    assert_eq!(receipt["fencingToken"], 1);
+    assert_eq!(receipt["terminalAcknowledged"], true);
+    assert_eq!(receipt.as_object().unwrap().len(), 8);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let requests = std::sync::Arc::new([
+        std::sync::atomic::AtomicUsize::new(0),
+        std::sync::atomic::AtomicUsize::new(0),
+        std::sync::atomic::AtomicUsize::new(0),
+    ]);
+    let observed_requests = requests.clone();
+    let served = app.clone().layer(axum::middleware::from_fn(
+        move |request: Request<Body>, next: axum::middleware::Next| {
+            let requests = observed_requests.clone();
+            async move {
+                let path = request.uri().path();
+                let index = if path.ends_with("/receipt") {
+                    Some(0)
+                } else if path.ends_with("/complete") {
+                    Some(1)
+                } else if path.ends_with("/work:poll") {
+                    Some(2)
+                } else {
+                    None
+                };
+                if let Some(index) = index {
+                    requests[index].fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                }
+                next.run(request).await
+            }
+        },
+    ));
+    let server = tokio::spawn(async move { axum::serve(listener, served).await.unwrap() });
+    let curl = tokio::process::Command::new("curl")
+        .args([
+            "-fsS",
+            "--max-time",
+            "5",
+            "-H",
+            "Authorization: Bearer receipt-owner-fixture",
+            &format!("http://{address}{url}"),
+        ])
+        .output()
+        .await
+        .unwrap();
+    assert!(curl.status.success());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&curl.stdout).unwrap(),
+        receipt
+    );
+    // The restarted binary must resolve a retained completion through the real API.
+    let root = std::env::temp_dir().join(format!("forge-receipt-restart-{}", Uuid::new_v4()));
+    let workspace =
+        cicd::runner_workspace::OwnedWorkspace::create(&root, attempt, lease, 1).unwrap();
+    workspace.create_empty_checkout().unwrap();
+    workspace.record_completion("success").unwrap();
+    let run_binary = |mode: &str, keep: bool| {
+        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_forge-runner"));
+        command
+            .kill_on_drop(true)
+            .args(["--api-url", &format!("http://{address}"), "--work-dir"])
+            .arg(&root)
+            .arg(mode)
+            .env("CICD_RUNNER_CREDENTIAL", "receipt-owner-fixture")
+            .env_remove("CICD_RUNNER_REGISTRATION_TOKEN")
+            .env_remove("CICD_RUNNER_KEEP_WORKSPACE")
+            .env_remove("CICD_RUNNER_ONCE");
+        if keep {
+            command.arg("--keep-workspace");
+        }
+        async move {
+            tokio::time::timeout(std::time::Duration::from_secs(10), command.output())
+                .await
+                .expect("bounded runner restart")
+                .expect("run actual forge-runner")
+        }
+    };
+    let recovered = run_binary("--reconcile-workspaces", true).await;
+    assert!(recovered.status.success());
+    assert!(workspace.checkout().exists());
+    assert!(cicd::runner_workspace::OwnedWorkspace::inventory(&root).unwrap()[0].acknowledged);
+    assert!(
+        run_binary("--reconcile-workspaces", false)
+            .await
+            .status
+            .success()
+    );
+    assert!(
+        cicd::runner_workspace::OwnedWorkspace::inventory(&root)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(requests[0].load(std::sync::atomic::Ordering::SeqCst), 3);
+    // A subsequent job attempt does not replace the original lease receipt.
+    sqlx::query("UPDATE jobs SET status='queued' WHERE id=$1")
+        .bind(job)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        response_json(app.clone().oneshot(request()).await.unwrap()).await,
+        receipt
+    );
+    // Exercise mismatch while the authenticated completion discriminator is present.
+    assert!(
+        sqlx::query("UPDATE job_leases SET terminal_status=NULL WHERE id=$1")
+            .bind(lease)
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    sqlx::query("UPDATE execution_attempts SET status='failed' WHERE id=$1")
+        .bind(attempt)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        response_json(app.clone().oneshot(request()).await.unwrap()).await["terminalAcknowledged"],
+        false
+    );
+    sqlx::query("UPDATE execution_attempts SET status='success' WHERE id=$1")
+        .bind(attempt)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        response_json(app.clone().oneshot(request()).await.unwrap()).await,
+        receipt
+    );
+    sqlx::query(
+        "UPDATE job_leases SET lease_status='expired',completion_received_at=NULL WHERE id=$1",
+    )
+    .bind(lease)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let expired = response_json(app.clone().oneshot(request()).await.unwrap()).await;
+    assert_eq!(expired["terminalAcknowledged"], false);
+    // Cancellation followed by actual expiry reconciliation has terminal metadata,
+    // but does not prove that the runner stopped and submitted completion.
+    sqlx::query("UPDATE jobs SET status='running',finished_at=NULL WHERE id=$1")
+        .bind(job)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE execution_attempts SET status='running',finished_at=NULL WHERE id=$1")
+        .bind(attempt)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE job_leases SET lease_status='active',terminal_status=NULL,completed_at=NULL,cancel_requested_at=now(),lease_expires_at=now()-interval '1 second' WHERE id=$1")
+        .bind(lease).execute(&pool).await.unwrap();
+    assert_eq!(
+        cicd::runner::reconcile_expired_leases(&pool).await.unwrap(),
+        1
+    );
+    let cancelled = response_json(app.clone().oneshot(request()).await.unwrap()).await;
+    assert_eq!(cancelled["leaseStatus"], "canceled");
+    assert_eq!(cancelled["terminalStatus"], "canceled");
+    assert!(!cancelled["completedAt"].is_null());
+    assert_eq!(cancelled["terminalAcknowledged"], false);
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT completion_received_at IS NULL FROM job_leases WHERE id=$1"
+        )
+        .bind(lease)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    );
+    let retained =
+        cicd::runner_workspace::OwnedWorkspace::create(&root, attempt, lease, 1).unwrap();
+    retained.create_empty_checkout().unwrap();
+    retained.record_completion("success").unwrap();
+    retained.acknowledge_completion("success").unwrap();
+    // A stale local ACK must not authorize cleanup or polling after server expiry.
+    for mode in ["--once", "--reconcile-workspaces"] {
+        assert!(!run_binary(mode, false).await.status.success());
+        assert!(retained.checkout().exists());
+    }
+    sqlx::query("UPDATE runners SET disabled_at=now() WHERE id=$1")
+        .bind(runner)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        app.oneshot(request()).await.unwrap().status(),
+        StatusCode::UNAUTHORIZED
+    );
+    for mode in ["--once", "--reconcile-workspaces"] {
+        assert!(!run_binary(mode, false).await.status.success());
+        assert!(retained.checkout().exists());
+    }
+    assert_eq!(requests[0].load(std::sync::atomic::Ordering::SeqCst), 7);
+    assert_eq!(requests[1].load(std::sync::atomic::Ordering::SeqCst), 0);
+    assert_eq!(requests[2].load(std::sync::atomic::Ordering::SeqCst), 0);
+    server.abort();
+    let _ = server.await;
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[tokio::test]
 async fn external_runner_long_poll_wakes_when_work_is_enqueued() {
     let pool = test_pool().await;
     let namespace = Uuid::new_v4();
@@ -4531,6 +4846,160 @@ async fn embedded_runner_closes_lease_when_prepare_fails() {
         .execute(&pool)
         .await
         .expect("cleanup project");
+}
+
+#[tokio::test]
+async fn embedded_workspace_uses_pin_and_retains_failed_attempt_without_deleting_old_files() {
+    let pool = test_pool().await;
+    let project_id = Uuid::new_v4();
+    let pipeline_id = Uuid::new_v4();
+    let stage_id = Uuid::new_v4();
+    let job_id = Uuid::new_v4();
+    let attempt_id = Uuid::new_v4();
+    let root = std::env::temp_dir().join(format!("forge-workspace-db-{project_id}"));
+    let repository = root.join("repository");
+    std::fs::create_dir_all(&repository).unwrap();
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&repository)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "Git fixture command failed");
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    };
+    git(&["init", "--initial-branch=main"]);
+    git(&["config", "user.name", "Workspace fixture"]);
+    git(&["config", "user.email", "workspace@example.invalid"]);
+    std::fs::write(repository.join("tracked.txt"), "old").unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-m", "old"]);
+    let pin = git(&["rev-parse", "HEAD"]);
+    std::fs::write(repository.join("tracked.txt"), "new").unwrap();
+    git(&["commit", "-am", "new"]);
+
+    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
+        .bind(project_id)
+        .bind(format!("it-owned-workspace-{project_id}"))
+        .bind(repository.to_string_lossy().as_ref())
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO pipelines (id, project_id, git_ref, commit_sha, status) VALUES ($1, $2, 'main', $3, 'queued')")
+        .bind(pipeline_id).bind(project_id).bind(&pin).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO stages (id, pipeline_id, name, position, status) VALUES ($1, $2, 'test', 0, 'queued')")
+        .bind(stage_id).bind(pipeline_id).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO jobs (id, stage_id, name, image, command, position, status, timeout_seconds) VALUES ($1, $2, 'pinned-check', 'unused-shell-image', $3, 0, 'queued', 5)")
+        .bind(job_id).bind(stage_id)
+        .bind("test \"$(cat tracked.txt)\" = old && echo verified-pinned-old && printf dirty > untracked.txt")
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) VALUES ($1, $2, 1, 'queued', 'initial')")
+        .bind(attempt_id).bind(job_id).execute(&pool).await.unwrap();
+    let old_directory = std::env::temp_dir().join(format!("forge-runner-{job_id}"));
+    std::fs::create_dir(&old_directory).unwrap();
+    std::fs::write(
+        old_directory.join("do-not-delete"),
+        "foreign previous workspace",
+    )
+    .unwrap();
+    let mut config = cicd::runner::RuntimeRunnerConfig::from_config(
+        &cicd::config::RuntimeConfig::test_default(),
+    );
+    config.mode = cicd::config::RunnerMode::HostShell;
+    config.keep_workspace = false;
+    config.git_root = root.join("bare-repositories");
+    config.artifacts.root = root.join("artifacts");
+    let attempts = |id: Uuid| -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(std::env::temp_dir())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(&format!("attempt-{id}-"))
+            })
+            .map(|entry| entry.path())
+            .collect()
+    };
+    cicd::runner::run_job_with_config(
+        pool.clone(),
+        job_id,
+        cicd::runner::RunningJobs::default(),
+        config.clone(),
+    )
+    .await;
+    let (status, terminal, generation): (String, String, i64) = sqlx::query_as(
+        "SELECT a.status, l.terminal_status, l.generation FROM execution_attempts a JOIN job_leases l ON l.attempt_id = a.id WHERE a.id = $1")
+        .bind(attempt_id).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        (status.as_str(), terminal.as_str(), generation),
+        ("success", "success", 1)
+    );
+    assert!(
+        attempts(attempt_id).is_empty(),
+        "cleanup follows persisted completion"
+    );
+    assert_eq!(
+        std::fs::read_to_string(old_directory.join("do-not-delete")).unwrap(),
+        "foreign previous workspace"
+    );
+    let logs: String = sqlx::query_scalar(
+        "SELECT string_agg(message, E'\\n' ORDER BY sequence) FROM job_logs WHERE attempt_id = $1",
+    )
+    .bind(attempt_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(logs.contains("verified-pinned-old"));
+
+    let retry_id = Uuid::new_v4();
+    sqlx::query(
+        "UPDATE pipelines SET status = 'queued', finished_at = NULL, commit_sha = $2 WHERE id = $1",
+    )
+    .bind(pipeline_id)
+    .bind("f".repeat(40))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE stages SET status = 'queued' WHERE id = $1")
+        .bind(stage_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE jobs SET status = 'queued', finished_at = NULL WHERE id = $1")
+        .bind(job_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) VALUES ($1, $2, 2, 'queued', 'job_retry')")
+        .bind(retry_id).bind(job_id).execute(&pool).await.unwrap();
+    cicd::runner::run_job_with_config(
+        pool.clone(),
+        job_id,
+        cicd::runner::RunningJobs::default(),
+        config,
+    )
+    .await;
+    let (status, terminal, generation): (String, String, i64) = sqlx::query_as(
+        "SELECT a.status, l.terminal_status, l.generation FROM execution_attempts a JOIN job_leases l ON l.attempt_id = a.id WHERE a.id = $1")
+        .bind(retry_id).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        (status.as_str(), terminal.as_str(), generation),
+        ("failed", "failed", 2)
+    );
+    let retained = attempts(retry_id);
+    assert_eq!(retained.len(), 1);
+    let marker: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(retained[0].join(".forge-attempt.json")).unwrap())
+            .unwrap();
+    assert_eq!(marker["attempt_id"], retry_id.to_string());
+    assert_eq!(marker["generation"], 2);
+    assert!(old_directory.join("do-not-delete").exists());
+    std::fs::remove_dir_all(&retained[0]).unwrap();
+    std::fs::remove_dir_all(old_directory).unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+    pool.close().await;
 }
 
 #[tokio::test]
@@ -8439,7 +8908,7 @@ async fn migration_catalog_contains_exact_historical_36_and_37() {
     let catalog = cicd::migrations().await.unwrap();
     assert_eq!(
         catalog.iter().map(|m| m.version).collect::<Vec<_>>(),
-        (1..=38).collect::<Vec<_>>()
+        (1..=39).collect::<Vec<_>>()
     );
     for (version, description, sql, checksum) in HISTORICAL_DEPLOYMENT_MIGRATIONS {
         let migration = catalog
@@ -8458,7 +8927,7 @@ async fn migration_catalog_contains_exact_historical_36_and_37() {
 #[tokio::test]
 async fn migration_catalog_fresh_and_prior_35_or_37_upgrade() {
     let catalog = cicd::migrations().await.unwrap();
-    for prior_schema in [None, Some(35), Some(37)] {
+    for prior_schema in [None, Some(35), Some(37), Some(38)] {
         let (pool, admin, schema) = migration_catalog_empty_pool().await;
         if let Some(version) = prior_schema {
             migration_catalog_subset(&catalog, version)
@@ -8472,7 +8941,7 @@ async fn migration_catalog_fresh_and_prior_35_or_37_upgrade() {
                 .fetch_all(&pool)
                 .await
                 .unwrap();
-        assert_eq!(versions, (1..=38).collect::<Vec<_>>());
+        assert_eq!(versions, (1..=39).collect::<Vec<_>>());
         let history = migration_catalog_history(&pool).await;
         catalog.run(&pool).await.unwrap();
         assert_eq!(migration_catalog_history(&pool).await, history);
@@ -8587,7 +9056,7 @@ async fn migration_catalog_checksum_mismatch_does_not_change_history() {
     let (pool, admin, schema) = migration_catalog_empty_pool().await;
     catalog.run(&pool).await.unwrap();
     let history = migration_catalog_history(&pool).await;
-    let mut changed = migration_catalog_subset(&catalog, 38);
+    let mut changed = migration_catalog_subset(&catalog, 39);
     let migration = changed
         .migrations
         .to_mut()
@@ -8652,7 +9121,15 @@ async fn migration_catalog_accepts_historical_38_and_preserves_outbox() {
         .run(&pool)
         .await
         .expect("published catalog accepts applied version 38");
-    assert_eq!(migration_catalog_history(&pool).await, history);
+    let upgraded_history = migration_catalog_history(&pool).await;
+    let preserved_history: Vec<_> = upgraded_history
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["version"].as_i64().unwrap() <= 38)
+        .cloned()
+        .collect();
+    assert_eq!(serde_json::json!(preserved_history), history);
     let current: serde_json::Value = sqlx::query_scalar(snapshot_sql)
         .bind(pipeline)
         .bind(message)
@@ -8665,7 +9142,7 @@ async fn migration_catalog_accepts_historical_38_and_preserves_outbox() {
         .find(|m| m.version == 38)
         .expect("version 38");
     assert_eq!(migration.sql, historical_sql);
-    let mut changed = migration_catalog_subset(&catalog, 38);
+    let mut changed = migration_catalog_subset(&catalog, 39);
     changed
         .migrations
         .to_mut()
@@ -8677,7 +9154,7 @@ async fn migration_catalog_accepts_historical_38_and_preserves_outbox() {
         migration_catalog_failure(&changed, &pool).await,
         MigrateError::VersionMismatch(38)
     ));
-    assert_eq!(migration_catalog_history(&pool).await, history);
+    assert_eq!(migration_catalog_history(&pool).await, upgraded_history);
     let current: serde_json::Value = sqlx::query_scalar(snapshot_sql)
         .bind(pipeline)
         .bind(message)
@@ -8698,5 +9175,91 @@ async fn migration_catalog_accepts_historical_38_and_preserves_outbox() {
     let response = response_json(response).await;
     assert_eq!(response["pipeline"]["id"], pipeline.to_string());
     assert_eq!(response["pipeline"]["status"], "success");
+    migration_catalog_cleanup(pool, admin, schema).await;
+}
+
+#[tokio::test]
+async fn migration_catalog_39_does_not_backfill_historical_terminal_authority() {
+    let catalog = cicd::migrations().await.unwrap();
+    let (pool, admin, schema) = migration_catalog_empty_pool().await;
+    migration_catalog_subset(&catalog, 38)
+        .run(&pool)
+        .await
+        .unwrap();
+    let project = Uuid::new_v4();
+    let pipeline = Uuid::new_v4();
+    let stage = Uuid::new_v4();
+    let job = Uuid::new_v4();
+    let attempt = Uuid::new_v4();
+    let lease = Uuid::new_v4();
+    let runner = Uuid::new_v4();
+    sqlx::query("INSERT INTO runners(id,name,credential_hash,credential_expires_at) VALUES($1,'historical-owner',$2,now()+interval '1 hour')")
+        .bind(runner).bind(cicd::auth::hash_token("historical-owner-fixture"))
+        .execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO projects(id,name,repository_url) VALUES($1,'historical-terminal','https://example.invalid/source.git')")
+        .bind(project).execute(&pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO pipelines(id,project_id,git_ref,status) VALUES($1,$2,'main','success')",
+    )
+    .bind(pipeline)
+    .bind(project)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO stages(id,pipeline_id,name,position,status) VALUES($1,$2,'test',0,'success')",
+    )
+    .bind(stage)
+    .bind(pipeline)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO jobs(id,stage_id,name,image,command,position,status) VALUES($1,$2,'test','unused','true',0,'success')")
+        .bind(job).bind(stage).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO execution_attempts(id,job_id,attempt_no,status,trigger) VALUES($1,$2,1,'success','initial')")
+        .bind(attempt).bind(job).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO job_leases(id,job_id,attempt_id,runner_id,runner_name,generation,lease_expires_at,acknowledged_at,completed_at,lease_status,terminal_status,lease_token_hash) VALUES($1,$2,$3,$4,'historical-owner',1,now(),now(),now(),'completed','success',$5)")
+        .bind(lease).bind(job).bind(attempt).bind(runner)
+        .bind(cicd::auth::hash_token("historical-lease-fixture"))
+        .execute(&pool).await.unwrap();
+    let original: serde_json::Value =
+        sqlx::query_scalar("SELECT to_jsonb(l) FROM job_leases l WHERE id=$1")
+            .bind(lease)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    catalog.run(&pool).await.unwrap();
+    catalog.run(&pool).await.unwrap();
+    let preserved: serde_json::Value = sqlx::query_scalar(
+        "SELECT to_jsonb(l) - 'completion_received_at' FROM job_leases l WHERE id=$1",
+    )
+    .bind(lease)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(preserved, original);
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT completion_received_at IS NULL FROM job_leases WHERE id=$1"
+        )
+        .bind(lease)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    );
+    let app = cicd::api::app_with_auth_secret(Some(pool.clone()), None);
+    let response = app
+        .oneshot(
+            Request::get(format!("/api/v1/runner/leases/{lease}/receipt"))
+                .header("authorization", "Bearer historical-owner-fixture")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let receipt = response_json(response).await;
+    assert_eq!(receipt["terminalStatus"], "success");
+    assert_eq!(receipt["terminalAcknowledged"], false);
     migration_catalog_cleanup(pool, admin, schema).await;
 }

@@ -5,6 +5,81 @@
 
 ## Что работает сейчас (Current verified)
 
+### Release candidate 2026-10-07: runner workspace recovery
+
+Из общей опубликованной ветки отдельно выделен `feat/runner-workspace-recovery-20261007`
+от `main c606886`. Он содержит только runner-owned workspace/recovery и одну
+новую migration0039; task-bound operation ledger0040 и preparation не включены.
+Base pin остаётся принятым `875cac2edf1a18c3a8a59e2f67256d02a8fc04e4`.
+
+Дополнительный release audit 7 октября обнаружил два frontend advisory:
+GHSA-68fv-2mgg-jv7q и GHSA-xvq9-wjp8-hwqf. Неиспользуемый HTTP translation
+backend удалён, `source-map-js` закреплён на исправленной1.2.2. Frozen install,
+201 tests, lint/typecheck/build и `pnpm audit --json` проходят:0 advisories.
+SBOM пересоздан из lockfiles (394 компонента); CI теперь проверяет его drift и
+frontend advisories. Свежий Linux/PostgreSQL gate e3ee650c0465 проходит все
+runner/migration/recovery проверки, release build и OpenAPI equality. Он также
+подтверждает отсутствие `rsa` и `sqlx-mysql` в активном graph для всех target.
+Поэтому уже документированное исключение RUSTSEC-2023-0071 остаётся применимым
+только к optional lockfile path; необработанный `cargo audit` всё ещё сообщает
+этот advisory, с указанным исключением остальные findings отсутствуют.
+Hosted CI нового commit проверяется отдельно; эти результаты не означают
+установку candidate или готовность всего SDLC.
+
+На exact source355885f Compose `sdlc-qa-forge-merge-ff054300108e` проходит
+Rust1.88 locked/offline fmt, workspace/all-target check/strict Clippy с integration,
+весь `cargo test --workspace`, release workspace build, Rust OpenAPI equality
+и8 целевых PostgreSQL-тестов migration/owned terminal receipt/embedded pinned run.
+Все202 backend/deploy/OpenAPI/SDK inputs неизменны; containers/networks удалены,
+external caches сохранены. Первый packet7d031f4a7da1 не прошёл из-за отсутствия
+read-only mount seccomp profile в QA; тест не отключён и production profile не менялся.
+
+Frontend с тем же SDK и Node22.20.0/pnpm10.28.1 проходит frozen/offline install,
+typecheck/lint,201 tests/build, OpenAPI check и compatibility с main. Generated
+client отдельно совпадает с committed schema. Docs verifier и heuristic scan
+tracked export (450 text files) проходят. Нового UI layout нет; новые screenshots
+этим candidate не заявляются. DB-тест receipt включает реальный curl к ephemeral
+Axum HTTP listener; это не smoke установленного runtime. На исходном head ed69fb0
+все четыре CI jobs (docs/backend/frontend/minimum-rust) проходят, включая полную
+integration/CLI matrix. Для последующих commits нужны их собственные checks.
+Installation остаётся отдельным gate. Это не full SDLC acceptance:
+task admission, candidate/deployment/acceptance/rollback receipts не реализованы
+этим PR и не выдаются из workspace marker или EOF.
+
+Recovery-проверка расширена настоящим `forge-runner` против PostgreSQL/Axum:
+отдельные процессы читают принятый completion, сохраняют workspace по флагу и
+удаляют его только после нового readback. При expiry или revoked credential
+локальный ACK не разрешает ни cleanup, ни polling. Семь наблюдённых GET, ноль
+повторных completion POST и work poll. Fresh Composec94310c35af2 проходит весь
+локальный Rust/PG gate выше;202 input hashes неизменны, own containers/network
+удалены. Это recovery accepted completion, не повторное исполнение pipeline,
+не доказательство безопасной остановки всего process tree и не deployment receipt.
+
+### Source delta 2026-10-03, не installation evidence
+
+Runner workspace foundation реализован в source: fresh attempt/lease/generation
+directory, owner marker/path checks, full SHA + clean detached HEAD перед командами,
+cleanup после проверенного terminal acknowledgement. Docker-job больше не видит
+общий root всех попыток. Негативный или неизвестный completion/checkout сохраняет
+папку. Scoped source tests перечислены в [DEVELOPMENT_GUIDE](DEVELOPMENT_GUIDE.md); полный интегрированный
+gate и live acceptance ещё не выполнены. Это не закрывает весь B-SDLC-04:
+см. [границы SDLC receipts](SDLC_DELIVERY_V1.md).
+
+Source follow-up: runner-owned completion GET, durable local outcome/ACK journal,
+offline inventory и explicit restart reconciliation. Unknown completion сверяется
+без повторного POST; unresolved workspace не разрешает новое external polling.
+Local ACK не является server proof: restart/cleanup повторно читает owner.
+Expiry, другой attempt/fence и подмена marker не подтверждают результат. Source
+tests/ограничения — [runner recovery gate](DEVELOPMENT_GUIDE.md#scoped-runner-recovery-source-gate).
+Installed runtime и B-SDLC-04 task/assignment delivery receipts этим не закрыты.
+
+Independent review follow-up: неподтверждённый child wait больше не превращается
+outer handler в failed completion или idle capacity/poll. Pending migration 0039
+отделяет принятый external completion от expiry cancellation; historical rows
+не backfill-ятся. 32 scoped tests PASS, включая actual completion POST и actual
+cancel-on-expiry GETfalse; status mismatch проверен при присутствующем признаке
+completion. Component failure injection не является OS process-tree stop proof.
+
 | Capability | Статус | Границы |
 |---|---|---|
 | Проекты CRUD | ✅ | name/repository_url/default_branch; удаление CASCADE |
