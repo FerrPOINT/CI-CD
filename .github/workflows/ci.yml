@@ -104,6 +104,8 @@ jobs:
         run: cargo test --locked -p cicd-cli --features integration --test cli_real_api -- --test-threads=1
       - name: CLI integration clippy
         run: cargo clippy --locked -p cicd-cli --all-targets --features integration -- -D warnings
+      - name: release build
+        run: cargo build --locked --release --workspace
       - name: openapi drift gate
         run: |
           cargo run --locked --bin openapi-dump -- /tmp/openapi.yaml
