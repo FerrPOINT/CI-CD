@@ -41,7 +41,8 @@ lease и удаления файлов. Чужие owner/project/manifest/resour
 и состояние БД перед новой диспетчеризацией. Оборванный attempt становится
 failed с неизвестным результатом исполнения; ресурсы очищаются через его
 Compose manifest. Автоматического replay нет. Повтор требует явного retry API.
-Чужие labels или неправильный daemon блокируют cleanup и dispatch.
+Чужие labels, foreign volume users/network members или неправильный daemon
+блокируют stop/cleanup и dispatch до первой операции с ресурсами.
 
 Pulse размещается только в приватном Git/project CI/CD `sdlc1`. При импорте
 сначала передаются проверенные commits и tags, затем регистрируется project:
