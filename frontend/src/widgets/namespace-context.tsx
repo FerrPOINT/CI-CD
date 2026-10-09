@@ -1,6 +1,6 @@
 import { useLocation, useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { NamespacePicker, usePlatformServices } from "@sdlc/ui/ui";
+import { NamespacePicker } from "@sdlc/ui/ui";
 import { parseNamespaceLocation, withNamespaceLocation } from "@sdlc/ui/lib";
 import type { components } from "@/api/schema";
 import { api } from "@/api/client";
@@ -33,7 +33,6 @@ export function useNamespaceContext() {
 }
 export function NamespaceShellContext() {
   const navigate = useNavigate();
-  const { services } = usePlatformServices();
   const { ref, malformed, query } = useNamespaceContext();
   const catalog = useQuery({
     queryKey: ["namespace-contexts", "ci-cd"],
@@ -52,9 +51,6 @@ export function NamespaceShellContext() {
     )
   )
     items.push(query.data);
-  const admin = services.find(
-    (service) => service.key === "admin-panel",
-  )?.ui_url;
   const value = ref
     ? `${ref.registry_instance_id}/${ref.namespace_id}`
     : malformed
@@ -71,14 +67,6 @@ export function NamespaceShellContext() {
         value: `${item.binding.namespace.registry_instance_id}/${item.binding.namespace.namespace_id}`,
         label: `${item.label} · ${item.resource_key ?? item.binding.namespace.namespace_id}`,
       }))}
-      manageUrl={
-        admin
-          ? withNamespaceLocation(
-              admin + (ref ? `/namespaces/${ref.namespace_id}` : "/namespaces"),
-              ref,
-            )
-          : "/namespace"
-      }
       onChange={(next) => {
         const [registry_instance_id = "", namespace_id = ""] = next.split("/");
         navigate(
