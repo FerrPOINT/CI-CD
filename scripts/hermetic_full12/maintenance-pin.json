@@ -1,0 +1,20 @@
+{
+  "schema": "forge/private-maintenance-pin/v1",
+  "repository": "FerrPOINT/services-base",
+  "commit": null,
+  "qualification": "missing_published_exact_commit",
+  "files": {
+    "scripts/compose_helpers.py": {
+      "blob": "6f03edc996ad660384b46e97d298ccf419697c65",
+      "sha256": "2569882c3bb6a8b86ebb42367254720c5f802d5423bc98ef02c6fe3283e0874f"
+    },
+    "scripts/local_resource_cleanup.py": {
+      "blob": "aed6edc8ab5af6ec656ae8c591b034a2663eec76",
+      "sha256": "babc3fbba5094608b03a34a27fecf512fa917950b1ae55636277dd33741031e1"
+    },
+    "scripts/install_resource_cleanup.ps1": {
+      "blob": "63e3b543caf002a62d67d123beb5eb30ec66ed94",
+      "sha256": "33fe120af1854034220d940095d04774d660ffba1da47d2f9daa5e244cafae18"
+    }
+  }
+}

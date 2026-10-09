@@ -1,0 +1,15 @@
+{
+  "kind": "reviewed_public_QA_components_private_Git_maintenance_contract",
+  "product_base": "19a7a381ae6dbea61a643bb96189e483fa64df5c",
+  "files": {
+    "sql_smoke.py": "d6c565d0c088583c7b34cacff4d74b44653e1e4f430afa275dcd45f12f0afce0",
+    "row_smoke.py": "5d702e5d8a05359a3cfbcdd2a4e2b31e533f0a8b424aad417b7a115a59835271",
+    "gates.sh": "3b4d1cdcb2a13684fc63f9ae8fe636e7ecd0e9e12ca10ee79478e33e7fc6c51b",
+    "followups.sh": "482c81e497e247b94a58d921a1824542b24459ab12e9002bb046cf09127d0768",
+    "observer.py": "1f8312b39bbd8db33972fd881a094fbb408fd8ecafd0f0039640b9fd1ff09405",
+    "transport.py": "885f64f16d42c2da32fdf129524415bbf9b169de973e13bab5486b0dc30813b6",
+    "parent.py": "7a68bc9f7139a2810b643395cb12a9ead26de044172a31c50a85c1935612b886"
+  },
+  "translation": "Only admission-bound globals are adapted by hosted orchestrator; originals and archived packets unchanged.",
+  "maintenance_delivery": "maintenance-pin.json; missing published commit fails closed; no private payloads vendored"
+}

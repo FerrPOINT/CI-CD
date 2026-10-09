@@ -1,0 +1,224 @@
+name: Forge Exact25be Hermetic Full12
+
+on:
+  push:
+    branches: [build-only/forge-public-safe-full12-25be-20261009]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: forge-hermetic-full12-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  A:
+    if: github.repository == 'FerrPOINT/CI-CD' && github.event_name == 'push' && github.ref == 'refs/heads/build-only/forge-public-safe-full12-25be-20261009' && github.event.deleted == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      report_sha256: ${{ steps.gates.outputs.report_sha256 }}
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Reviewed immutable controls
+        timeout-minutes: 2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: controls
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Read-only Base authorization availability
+        timeout-minutes: 1
+        env:
+          BASE_READ_SECRET_AVAILABLE: ${{ secrets.SERVICES_BASE_TOKEN != '' }}
+        run: |
+          test "$BASE_READ_SECRET_AVAILABLE" = true
+          python3 -B controls/scripts/hermetic_full12/maintenance_git.py preflight
+      - name: Exact product source
+        timeout-minutes: 2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 25be2e82d4d42673897c8a16070eb8a9519244f0
+          path: source
+          persist-credentials: false
+      - name: Exact authenticated product SDK
+        timeout-minutes: 2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: FerrPOINT/services-base
+          ref: 19a7a381ae6dbea61a643bb96189e483fa64df5c
+          path: services-base
+          fetch-depth: 0
+          token: ${{ secrets.SERVICES_BASE_TOKEN }}
+          persist-credentials: false
+      - name: Fresh admission and original stages 1 through 5
+        id: gates
+        run: python3 -B controls/scripts/hermetic_full12/run.py run A
+      - name: Safe partition receipts only
+        timeout-minutes: 3
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: forge-full12-A-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/f12-${{ github.run_id }}-${{ github.run_attempt }}-A/public/report.json
+            ${{ runner.temp }}/f12-${{ github.run_id }}-${{ github.run_attempt }}-A/public/provenance.json
+            ${{ runner.temp }}/f12-${{ github.run_id }}-${{ github.run_attempt }}-A/public/SHA256SUMS.json
+          if-no-files-found: error
+          retention-days: 14
+          archive: true
+          overwrite: false
+          include-hidden-files: false
+  B:
+    needs: A
+    if: github.repository == 'FerrPOINT/CI-CD' && github.event_name == 'push' && github.ref == 'refs/heads/build-only/forge-public-safe-full12-25be-20261009' && github.event.deleted == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      report_sha256: ${{ steps.gates.outputs.report_sha256 }}
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Reviewed immutable controls
+        timeout-minutes: 2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: controls
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Read-only Base authorization availability
+        timeout-minutes: 1
+        env:
+          BASE_READ_SECRET_AVAILABLE: ${{ secrets.SERVICES_BASE_TOKEN != '' }}
+        run: |
+          test "$BASE_READ_SECRET_AVAILABLE" = true
+          python3 -B controls/scripts/hermetic_full12/maintenance_git.py preflight
+      - name: Exact product source
+        timeout-minutes: 2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 25be2e82d4d42673897c8a16070eb8a9519244f0
+          path: source
+          persist-credentials: false
+      - name: Exact authenticated product SDK
+        timeout-minutes: 2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: FerrPOINT/services-base
+          ref: 19a7a381ae6dbea61a643bb96189e483fa64df5c
+          path: services-base
+          fetch-depth: 0
+          token: ${{ secrets.SERVICES_BASE_TOKEN }}
+          persist-credentials: false
+      - name: Fresh admission and original stage 6
+        id: gates
+        run: python3 -B controls/scripts/hermetic_full12/run.py run B
+      - name: Safe partition receipts only
+        timeout-minutes: 3
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: forge-full12-B-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/f12-${{ github.run_id }}-${{ github.run_attempt }}-B/public/report.json
+            ${{ runner.temp }}/f12-${{ github.run_id }}-${{ github.run_attempt }}-B/public/provenance.json
+            ${{ runner.temp }}/f12-${{ github.run_id }}-${{ github.run_attempt }}-B/public/SHA256SUMS.json
+          if-no-files-found: error
+          retention-days: 14
+          archive: true
+          overwrite: false
+          include-hidden-files: false
+  C:
+    needs: [A, B]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Reviewed immutable controls
+        timeout-minutes: 2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: controls
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Read-only Base authorization availability
+        timeout-minutes: 1
+        env:
+          BASE_READ_SECRET_AVAILABLE: ${{ secrets.SERVICES_BASE_TOKEN != '' }}
+        run: |
+          test "$BASE_READ_SECRET_AVAILABLE" = true
+          python3 -B controls/scripts/hermetic_full12/maintenance_git.py preflight
+      - name: Exact product source
+        timeout-minutes: 2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 25be2e82d4d42673897c8a16070eb8a9519244f0
+          path: source
+          persist-credentials: false
+      - name: Exact authenticated product SDK
+        timeout-minutes: 2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: FerrPOINT/services-base
+          ref: 19a7a381ae6dbea61a643bb96189e483fa64df5c
+          path: services-base
+          fetch-depth: 0
+          token: ${{ secrets.SERVICES_BASE_TOKEN }}
+          persist-credentials: false
+      - name: Fresh admission and original stages 7 through 12
+        run: python3 -B controls/scripts/hermetic_full12/run.py run C
+      - name: Same-attempt safe A receipt, never runtime state
+        timeout-minutes: 3
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: forge-full12-A-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/forge-full12-A-receipt
+          digest-mismatch: error
+      - name: Same-attempt safe B receipt, never runtime state
+        timeout-minutes: 3
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: forge-full12-B-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/forge-full12-B-receipt
+          digest-mismatch: error
+      - name: All12 acceptance only after all three partitions and cleanup
+        timeout-minutes: 1
+        env:
+          A_REPORT_SHA256: ${{ needs.A.outputs.report_sha256 }}
+          B_REPORT_SHA256: ${{ needs.B.outputs.report_sha256 }}
+        run: >-
+          python3 -B controls/scripts/hermetic_full12/run.py aggregate
+          "$RUNNER_TEMP/forge-full12-A-receipt/report.json"
+          "$RUNNER_TEMP/forge-full12-B-receipt/report.json"
+          "$RUNNER_TEMP/f12-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-C/public/report.json"
+          "$A_REPORT_SHA256" "$B_REPORT_SHA256"
+      - name: Safe C and combined receipts only
+        timeout-minutes: 3
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: forge-full12-C-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/f12-${{ github.run_id }}-${{ github.run_attempt }}-C/public/report.json
+            ${{ runner.temp }}/f12-${{ github.run_id }}-${{ github.run_attempt }}-C/public/provenance.json
+            ${{ runner.temp }}/f12-${{ github.run_id }}-${{ github.run_attempt }}-C/public/SHA256SUMS.json
+            ${{ runner.temp }}/f12-${{ github.run_id }}-${{ github.run_attempt }}-C/public/full12.json
+          if-no-files-found: error
+          retention-days: 14
+          archive: true
+          overwrite: false
+          include-hidden-files: false

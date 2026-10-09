@@ -1,0 +1,412 @@
+{
+  "kind": "hermetic_full12_three_job_coverage",
+  "source_sha": "25be2e82d4d42673897c8a16070eb8a9519244f0",
+  "inherited_gate_results": false,
+  "executed": false,
+  "all_stages_required": true,
+  "expected_exit": 0,
+  "stage_order": [
+    "python",
+    "row-smoke",
+    "smoke",
+    "check",
+    "clippy",
+    "postgres",
+    "oci",
+    "workspace",
+    "integration",
+    "cli",
+    "openapi",
+    "release"
+  ],
+  "stages": [
+    {
+      "stage": "python",
+      "timeout_seconds": 2400,
+      "expected_exit": 0,
+      "commands": [
+        [
+          "python3",
+          "-B",
+          "-m",
+          "unittest",
+          "scripts.tests.test_postgres_delivery",
+          "scripts.tests.test_oci_offline_fixture"
+        ]
+      ],
+      "assertions": [
+        "Ran 75 tests",
+        "FROZEN_LINUX_PYTHON_UNITS:PASS"
+      ],
+      "execution": "REQUIRED_FRESH",
+      "unchanged_source_parity_and_exact_cleanup_required": true,
+      "assertion_authority": "pinned original run.py:run plus full_retention_v2 stage_receipt"
+    },
+    {
+      "stage": "row-smoke",
+      "timeout_seconds": 300,
+      "expected_exit": 0,
+      "commands": [
+        [
+          "python3",
+          "-B",
+          "<frozen>/row_smoke.py",
+          "<project>",
+          "<exact-compose.json>",
+          "<export>/scripts/postgres-delivery.py"
+        ]
+      ],
+      "assertions": [
+        "all original16 template assertions",
+        "ACTUAL_PG17_RECORD_TEXT_SMOKE:PASS"
+      ],
+      "execution": "REQUIRED_FRESH",
+      "unchanged_source_parity_and_exact_cleanup_required": true,
+      "assertion_authority": "pinned original run.py:run plus full_retention_v2 stage_receipt"
+    },
+    {
+      "stage": "smoke",
+      "timeout_seconds": 300,
+      "expected_exit": 0,
+      "commands": [
+        [
+          "python3",
+          "-B",
+          "controls/scripts/hermetic_full12/run.py",
+          "run",
+          "A"
+        ]
+      ],
+      "in_process_stage_call": "run.smoke: validate_inputs + BoundExec.bind + original observer.execute(sql_smoke.py) + finally observer.cleanup",
+      "assertions": [
+        "all original30 template assertions and13 required markers",
+        "ACTUAL_PG17_SQL_SMOKE:PASS",
+        "full connection-scope/role/search_path matrix",
+        "fresh psql per call; aggregate300/per-call30/explicit-wait10; exact Compose-resolved container ID"
+      ],
+      "execution": "REQUIRED_FRESH",
+      "unchanged_source_parity_and_exact_cleanup_required": true,
+      "assertion_authority": "run.py:assertions plus byte-identical sql_smoke.py/observer.py/transport.py"
+    },
+    {
+      "stage": "check",
+      "timeout_seconds": 2400,
+      "expected_exit": 0,
+      "commands": [
+        [
+          "cargo",
+          "check",
+          "--locked",
+          "--offline",
+          "--workspace",
+          "--all-targets",
+          "--features",
+          "integration,postgres-integration,oci-integration"
+        ]
+      ],
+      "assertions": [
+        "LOCKED_INTEGRATION_FEATURES_CHECK:PASS"
+      ],
+      "execution": "REQUIRED_FRESH",
+      "unchanged_source_parity_and_exact_cleanup_required": true,
+      "assertion_authority": "pinned original run.py:run plus full_retention_v2 stage_receipt"
+    },
+    {
+      "stage": "clippy",
+      "timeout_seconds": 2400,
+      "expected_exit": 0,
+      "commands": [
+        [
+          "cargo",
+          "clippy",
+          "--locked",
+          "--offline",
+          "--workspace",
+          "--all-targets",
+          "--features",
+          "integration,postgres-integration,oci-integration",
+          "--",
+          "-D",
+          "warnings"
+        ]
+      ],
+      "assertions": [
+        "LOCKED_INTEGRATION_FEATURES_CLIPPY:PASS"
+      ],
+      "execution": "REQUIRED_FRESH",
+      "unchanged_source_parity_and_exact_cleanup_required": true,
+      "assertion_authority": "pinned original run.py:run plus full_retention_v2 stage_receipt"
+    },
+    {
+      "stage": "postgres",
+      "timeout_seconds": 5400,
+      "expected_exit": 0,
+      "commands": [
+        [
+          "cargo",
+          "build",
+          "--locked",
+          "--offline",
+          "--bins",
+          "--example",
+          "postgres_target"
+        ],
+        [
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "-p",
+          "cicd-server",
+          "--features",
+          "postgres-integration",
+          "--test",
+          "integration_db",
+          "sdlc_pg_delivery",
+          "--",
+          "--test-threads=1",
+          "--nocapture"
+        ]
+      ],
+      "assertions": [
+        "3 passed; 0 failed",
+        "ACTUAL_PG_READER_LO_DENIED_AND_EXCLUSIVE_DATABASE_ACCESS:PASS",
+        "ACTUAL_PG_WRITER_HISTORY_VIEW_DML_DENIED:PASS",
+        "ACTUAL_PG_FOREIGN_PROOF_REJECTED_CURRENT_WRITER_POOL_RECOVERY:PASS",
+        "24 exact restore-negative identities including writer-history child/grandchild/parent/FK-delete/FK-update and column/view/view-column/rule"
+      ],
+      "execution": "REQUIRED_FRESH",
+      "unchanged_source_parity_and_exact_cleanup_required": true,
+      "assertion_authority": "pinned original run.py:run plus full_retention_v2 stage_receipt"
+    },
+    {
+      "stage": "oci",
+      "timeout_seconds": 2400,
+      "expected_exit": 0,
+      "commands": [
+        [
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "-p",
+          "cicd-server",
+          "--features",
+          "oci-integration",
+          "--test",
+          "integration_db",
+          "sdlc_oci_delivery",
+          "--",
+          "--test-threads=1",
+          "--nocapture"
+        ]
+      ],
+      "assertions": [
+        "1 passed; 0 failed",
+        "ACTUAL_OCI_SIGKILL_AFTER_VERIFIED_CHECKS_HISTORICAL_PROOF_PRESERVED:PASS",
+        "actual native OCI fixture; no receipt-policy/exit0 waiver"
+      ],
+      "execution": "REQUIRED_FRESH",
+      "unchanged_source_parity_and_exact_cleanup_required": true,
+      "assertion_authority": "pinned original run.py:run plus full_retention_v2 stage_receipt"
+    },
+    {
+      "stage": "workspace",
+      "timeout_seconds": 900,
+      "expected_exit": 0,
+      "commands": [
+        [
+          "cargo",
+          "fmt",
+          "--all",
+          "--",
+          "--check"
+        ],
+        [
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "--workspace",
+          "--",
+          "--test-threads=1"
+        ]
+      ],
+      "assertions": [
+        "221 passed; 0 failed; source-derived +2 main safety tests, native unverified",
+        "FROZEN_WORKSPACE_RUSTFMT:PASS",
+        "FROZEN_WORKSPACE_UMASK=0022"
+      ],
+      "execution": "REQUIRED_FRESH",
+      "unchanged_source_parity_and_exact_cleanup_required": true,
+      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace219->221 only"
+    },
+    {
+      "stage": "integration",
+      "timeout_seconds": 900,
+      "expected_exit": 0,
+      "commands": [
+        [
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "-p",
+          "cicd-server",
+          "--features",
+          "integration",
+          "--test",
+          "integration_db",
+          "--",
+          "--test-threads=1",
+          "--nocapture"
+        ]
+      ],
+      "assertions": [
+        "80 passed; 0 failed"
+      ],
+      "execution": "REQUIRED_FRESH",
+      "unchanged_source_parity_and_exact_cleanup_required": true,
+      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace219->221 only"
+    },
+    {
+      "stage": "cli",
+      "timeout_seconds": 900,
+      "expected_exit": 0,
+      "commands": [
+        [
+          "cargo",
+          "test",
+          "--locked",
+          "--offline",
+          "-p",
+          "cicd-cli",
+          "--features",
+          "integration",
+          "--test",
+          "cli_real_api",
+          "--",
+          "--test-threads=1",
+          "--nocapture"
+        ],
+        [
+          "cargo",
+          "clippy",
+          "--locked",
+          "--offline",
+          "-p",
+          "cicd-cli",
+          "--all-targets",
+          "--features",
+          "integration",
+          "--",
+          "-D",
+          "warnings"
+        ]
+      ],
+      "assertions": [
+        "2 passed; 0 failed",
+        "CLI_INTEGRATION_CLIPPY:PASS"
+      ],
+      "execution": "REQUIRED_FRESH",
+      "unchanged_source_parity_and_exact_cleanup_required": true,
+      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace219->221 only"
+    },
+    {
+      "stage": "openapi",
+      "timeout_seconds": 900,
+      "expected_exit": 0,
+      "commands": [
+        [
+          "cargo",
+          "run",
+          "--locked",
+          "--offline",
+          "--bin",
+          "openapi-dump",
+          "--",
+          "/output/openapi-export.yaml"
+        ],
+        [
+          "diff",
+          "--strip-trailing-cr",
+          "/output/openapi-export.yaml",
+          "/work/CI-CD/openapi/openapi.yaml"
+        ]
+      ],
+      "assertions": [
+        "OPENAPI_EXPORTER_EQUALITY_STRIP_TRAILING_CR:PASS"
+      ],
+      "execution": "REQUIRED_FRESH",
+      "unchanged_source_parity_and_exact_cleanup_required": true,
+      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace219->221 only"
+    },
+    {
+      "stage": "release",
+      "timeout_seconds": 1800,
+      "expected_exit": 0,
+      "commands": [
+        [
+          "cargo",
+          "build",
+          "--locked",
+          "--offline",
+          "--release",
+          "--workspace"
+        ]
+      ],
+      "assertions": [
+        "RELEASE_WORKSPACE_BUILD:PASS",
+        "7 exact binary SHA receipts"
+      ],
+      "execution": "REQUIRED_FRESH",
+      "unchanged_source_parity_and_exact_cleanup_required": true,
+      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace219->221 only"
+    }
+  ],
+  "original_components_sha256": {
+    "run.py": "16fab43c8b1ee6b49e937adccef3c4f5ad68e6dad41fbc916824fa6fd978c70a",
+    "full_retention_v2_20261009.py": "563b4e91038e611d5f6bf7de8614d7b80365539e86a96b0b8633efd5b8305bf7",
+    "gates.sh": "3b4d1cdcb2a13684fc63f9ae8fe636e7ecd0e9e12ca10ee79478e33e7fc6c51b",
+    "followups.sh": "482c81e497e247b94a58d921a1824542b24459ab12e9002bb046cf09127d0768",
+    "sql_smoke.py": "d6c565d0c088583c7b34cacff4d74b44653e1e4f430afa275dcd45f12f0afce0",
+    "row_smoke.py": "5d702e5d8a05359a3cfbcdd2a4e2b31e533f0a8b424aad417b7a115a59835271",
+    "smoke_transport.py": "885f64f16d42c2da32fdf129524415bbf9b169de973e13bab5486b0dc30813b6",
+    "full_main_transport.py": "77369bdc28be219cb075e684dd0af65e747a3facbba43bf1c26c1b5a81d9db22",
+    "source_review_seal.json": "646d0757d11c8c17681a8086c713811d9762f8e671b2abbaf699cb467b15fe76"
+  },
+  "jobs": {
+    "A": [
+      "python",
+      "row-smoke",
+      "smoke",
+      "check",
+      "clippy"
+    ],
+    "B": [
+      "postgres"
+    ],
+    "C": [
+      "oci",
+      "workspace",
+      "integration",
+      "cli",
+      "openapi",
+      "release"
+    ]
+  },
+  "orchestration_budget": {
+    "bootstrap_seconds": 5400,
+    "stage_entry_seconds": 300,
+    "assertions_seconds": 10,
+    "stage_exit_seconds": 500,
+    "finally_seconds": 1800,
+    "command_cleanup_seconds": 20,
+    "actions_seconds": {"A": 840, "B": 840, "C": 1260},
+    "host_job_seconds": 21600,
+    "sourceprep_scope": "one monotonic bootstrap deadline from run_job entry shared by verification/setup and materialization",
+    "assertions_teardown_scope": "separate non-nested alarms; teardown rearms after assertions context exits even on timeout",
+    "total_job_seconds": {"A": 20232, "B": 14350, "C": 21570},
+    "unknown_overhead": "FAIL_CLOSED_NO_ACCEPTANCE"
+  }
+}
