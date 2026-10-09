@@ -119,31 +119,49 @@ pub async fn run_job_with_config(
         }
         guard.insert(job_id, 0);
     }
-    let outcome = run_job_inner(pool.clone(), job_id, running.clone(), &config).await;
-    finish_embedded_execution(&pool, job_id, &running, outcome).await;
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum EmbeddedJobOutcome {
-    Finished,
-    TerminationUnconfirmed,
-}
-
-async fn finish_embedded_execution(
-    pool: &PgPool,
-    job_id: Uuid,
-    running: &RunningJobs,
-    outcome: Result<EmbeddedJobOutcome, ApiError>,
-) {
-    match outcome {
-        Ok(EmbeddedJobOutcome::TerminationUnconfirmed) => return,
+    let outcome = match run_job_inner(pool.clone(), job_id, running.clone(), &config).await {
+        Ok(outcome) => outcome,
         Err(error) => {
             tracing::error!(%job_id, error = ?error, "runner job failed");
-            finish_job_after_runner_error(pool, job_id, &error).await;
+            let outcome = execution_error_outcome(&running, job_id).await;
+            if outcome == ExecutionOutcome::Finished {
+                finish_job_after_runner_error(&pool, job_id, &error).await;
+            } else {
+                tracing::error!(%job_id, "post-spawn error has no completion authority; execution retained for reconciliation");
+            }
+            outcome
         }
-        Ok(EmbeddedJobOutcome::Finished) => {}
+    };
+    release_execution_reservation(&running, job_id, outcome).await;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExecutionOutcome {
+    Finished,
+    Held,
+}
+
+async fn execution_error_outcome(running: &RunningJobs, job_id: Uuid) -> ExecutionOutcome {
+    if running
+        .lock()
+        .await
+        .get(&job_id)
+        .is_some_and(|pid| *pid != 0)
+    {
+        ExecutionOutcome::Held
+    } else {
+        ExecutionOutcome::Finished
     }
-    running.lock().await.remove(&job_id);
+}
+
+async fn release_execution_reservation(
+    running: &RunningJobs,
+    job_id: Uuid,
+    outcome: ExecutionOutcome,
+) {
+    if outcome == ExecutionOutcome::Finished {
+        running.lock().await.remove(&job_id);
+    }
 }
 
 async fn finish_job_after_runner_error(pool: &PgPool, job_id: Uuid, error: &ApiError) {
@@ -906,7 +924,7 @@ async fn run_job_inner(
     job_id: Uuid,
     running: RunningJobs,
     config: &RuntimeRunnerConfig,
-) -> Result<EmbeddedJobOutcome, ApiError> {
+) -> Result<ExecutionOutcome, ApiError> {
     let job = sqlx::query_as::<_, JobRow>(
         "SELECT j.id, j.stage_id, j.name, j.image, j.command, j.required_secrets, j.artifact_paths, j.status, \
                 s.pipeline_id, p.project_id, s.name AS stage_name, \
@@ -923,18 +941,18 @@ async fn run_job_inner(
     .ok_or_else(ApiError::not_found)?;
 
     if job.status != "queued" && job.status != "running" {
-        return Ok(EmbeddedJobOutcome::Finished); // terminal already
+        return Ok(ExecutionOutcome::Finished); // terminal already
     }
 
     let lease = if job.status == "queued" {
         let Some(lease) = claim_embedded_job_lease(&pool, job_id).await? else {
-            return Ok(EmbeddedJobOutcome::Finished);
+            return Ok(ExecutionOutcome::Finished);
         };
         lease
     } else {
         let Some(lease) = active_embedded_job_lease(&pool, job_id).await? else {
             tracing::warn!(%job_id, "running job has no active lease; skipping embedded execution");
-            return Ok(EmbeddedJobOutcome::Finished);
+            return Ok(ExecutionOutcome::Finished);
         };
         lease
     };
@@ -1047,7 +1065,7 @@ async fn run_job_inner(
     } else {
         None
     };
-    if let Some(remote) = &remote_job {
+    if let Some(remote) = &mut remote_job {
         remote
             .stage_artifacts(&pipeline_artifacts)
             .await
@@ -1116,11 +1134,14 @@ async fn run_job_inner(
     .map_err(ApiError::internal)?;
     if !active {
         drop(guard);
-        if let Some(remote) = &mut remote_job {
-            remote.cleanup().await;
-        }
-        finish_workspace_retention(&pool, &lease, owned_workspace, config.keep_workspace).await;
-        return Ok(EmbeddedJobOutcome::Finished);
+        return Ok(finish_workspace_retention(
+            &pool,
+            &lease,
+            owned_workspace,
+            remote_job.as_mut(),
+            config.keep_workspace,
+        )
+        .await);
     }
     let mut child = child
         .spawn()
@@ -1154,10 +1175,13 @@ async fn run_job_inner(
             let message = format!("runner: job timed out after {timeout_secs}s, killing");
             let _ = child.start_kill();
             if confirmed_process_exit(child.wait().await, job_id, attempt_id).is_none() {
-                return Ok(EmbeddedJobOutcome::TerminationUnconfirmed);
+                return Ok(ExecutionOutcome::Held);
             }
             if let Some(remote) = &mut remote_job {
-                remote.cleanup().await;
+                if let Err(error) = remote.stop_execution().await {
+                    tracing::error!(%job_id, %attempt_id, %error, "Compose termination unconfirmed; resources retained");
+                    return Ok(ExecutionOutcome::Held);
+                }
             }
             append_attempt_log(&pool, job_id, attempt_id, &message).await?;
             if let Some(task) = stdout_task.take() {
@@ -1191,20 +1215,24 @@ async fn run_job_inner(
                 )
                 .await?;
                 refresh_stage(pool.clone(), job.id).await?;
-                finish_workspace_retention(&pool, &lease, owned_workspace, config.keep_workspace).await;
-                return Ok(EmbeddedJobOutcome::Finished);
+                return Ok(finish_workspace_retention(&pool, &lease, owned_workspace, remote_job.as_mut(), config.keep_workspace).await);
             }
             mark_attempt_failed(&pool, attempt_id, &message).await?;
             complete_embedded_job_lease(&pool, lease.id, "failed", Some(&message)).await?;
             refresh_stage(pool.clone(), job.id).await?;
-            finish_workspace_retention(&pool, &lease, owned_workspace, config.keep_workspace).await;
-            return Ok(EmbeddedJobOutcome::Finished);
+            return Ok(finish_workspace_retention(&pool, &lease, owned_workspace, remote_job.as_mut(), config.keep_workspace).await);
         }
     };
 
     let Some(exit_status) = confirmed_process_exit(exit_status, job_id, attempt_id) else {
-        return Ok(EmbeddedJobOutcome::TerminationUnconfirmed);
+        return Ok(ExecutionOutcome::Held);
     };
+    if let Some(remote) = &mut remote_job {
+        if let Err(error) = remote.confirm_stopped().await {
+            tracing::error!(%job_id, %attempt_id, %error, "Compose process exit has no stopped-container readback; resources retained");
+            return Ok(ExecutionOutcome::Held);
+        }
+    }
 
     if let Some(task) = stdout_task {
         await_stdout_task(task).await?;
@@ -1236,7 +1264,6 @@ async fn run_job_inner(
             final_status = "failed";
             error_tail = Some(format!("runner: remote artifact transfer failed: {error}"));
         }
-        remote.cleanup().await;
     }
     let artifact_error = collect_declared_artifacts(
         &pool,
@@ -1285,8 +1312,14 @@ async fn run_job_inner(
         )
         .await?;
         refresh_stage(pool.clone(), job.id).await?;
-        finish_workspace_retention(&pool, &lease, owned_workspace, config.keep_workspace).await;
-        return Ok(EmbeddedJobOutcome::Finished);
+        return Ok(finish_workspace_retention(
+            &pool,
+            &lease,
+            owned_workspace,
+            remote_job.as_mut(),
+            config.keep_workspace,
+        )
+        .await);
     }
     sqlx::query(
         "UPDATE execution_attempts \
@@ -1302,8 +1335,14 @@ async fn run_job_inner(
     .map_err(ApiError::internal)?;
     complete_embedded_job_lease(&pool, lease.id, final_status, error_tail.as_deref()).await?;
     refresh_stage(pool.clone(), job.id).await?;
-    finish_workspace_retention(&pool, &lease, owned_workspace, config.keep_workspace).await;
-    Ok(EmbeddedJobOutcome::Finished)
+    Ok(finish_workspace_retention(
+        &pool,
+        &lease,
+        owned_workspace,
+        remote_job.as_mut(),
+        config.keep_workspace,
+    )
+    .await)
 }
 
 fn confirmed_process_exit(
@@ -1325,8 +1364,9 @@ async fn finish_workspace_retention(
     pool: &PgPool,
     lease: &EmbeddedJobLease,
     workspace: crate::runner_workspace::OwnedWorkspace,
+    remote_job: Option<&mut crate::runner_docker::RemoteJob>,
     keep_workspace: bool,
-) {
+) -> ExecutionOutcome {
     // A zero-row completion or a failed readback cannot authorize deletion.
     let acknowledged = sqlx::query_scalar::<_, String>(
         "SELECT l.terminal_status FROM job_leases l JOIN execution_attempts a ON a.id = l.attempt_id \
@@ -1347,13 +1387,22 @@ async fn finish_workspace_retention(
             .is_err()
         {
             tracing::warn!(attempt_id = %lease.attempt_id, "workspace completion journal unavailable; files retained");
-            return;
+            return ExecutionOutcome::Held;
+        }
+        if let Some(remote) = remote_job {
+            if let Err(error) = remote.cleanup(pool).await {
+                tracing::warn!(attempt_id = %lease.attempt_id, %error, "acknowledged Compose resources retained; dispatch held");
+                return ExecutionOutcome::Held;
+            }
         }
         if !keep_workspace && let Err(error) = workspace.cleanup_after_ack().await {
             tracing::warn!(attempt_id = %lease.attempt_id, %error, "acknowledged workspace retained");
+            return ExecutionOutcome::Held;
         }
+        ExecutionOutcome::Finished
     } else {
         tracing::warn!(attempt_id = %lease.attempt_id, "workspace retained: terminal lease acknowledgement missing");
+        ExecutionOutcome::Held
     }
 }
 
@@ -2091,13 +2140,7 @@ mod tests {
         let running = RunningJobs::default();
         running.lock().await.insert(job_id, 42);
 
-        finish_embedded_execution(
-            &pool,
-            job_id,
-            &running,
-            Ok(EmbeddedJobOutcome::TerminationUnconfirmed),
-        )
-        .await;
+        release_execution_reservation(&running, job_id, ExecutionOutcome::Held).await;
 
         assert_eq!(running.lock().await.get(&job_id).copied(), Some(42));
         run_job_with_config(
@@ -2112,16 +2155,12 @@ mod tests {
 
     #[tokio::test]
     async fn finished_embedded_outcome_releases_only_its_own_reservation() {
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .connect_lazy("postgres://qa:qa@127.0.0.1:1/unused")
-            .unwrap();
-        pool.close().await;
         let job_id = Uuid::new_v4();
         let neighbor = Uuid::new_v4();
         let running = RunningJobs::default();
         running.lock().await.extend([(job_id, 42), (neighbor, 43)]);
 
-        finish_embedded_execution(&pool, job_id, &running, Ok(EmbeddedJobOutcome::Finished)).await;
+        release_execution_reservation(&running, job_id, ExecutionOutcome::Finished).await;
 
         let guard = running.lock().await;
         assert!(!guard.contains_key(&job_id));
@@ -2137,19 +2176,41 @@ mod tests {
         let job_id = Uuid::new_v4();
         let neighbor = Uuid::new_v4();
         let running = RunningJobs::default();
-        running.lock().await.extend([(job_id, 0), (neighbor, 43)]);
+        running.lock().await.insert(neighbor, 43);
 
-        finish_embedded_execution(
-            &pool,
+        run_job_with_config(
+            pool,
             job_id,
-            &running,
-            Err(ApiError::internal(sqlx::Error::PoolClosed)),
+            running.clone(),
+            RuntimeRunnerConfig::from_config(&RuntimeConfig::test_default()),
         )
         .await;
 
         let guard = running.lock().await;
         assert!(!guard.contains_key(&job_id));
         assert_eq!(guard.get(&neighbor).copied(), Some(43));
+    }
+
+    #[tokio::test]
+    async fn held_execution_keeps_physical_identity_and_preparation_reservation() {
+        for pid in [0, 4242] {
+            let job = Uuid::new_v4();
+            let neighbor = Uuid::new_v4();
+            let running = Arc::new(Mutex::new(HashMap::from([(job, pid), (neighbor, 77)])));
+            assert_eq!(
+                execution_error_outcome(&running, job).await,
+                if pid == 0 {
+                    ExecutionOutcome::Finished
+                } else {
+                    ExecutionOutcome::Held
+                }
+            );
+            release_execution_reservation(&running, job, ExecutionOutcome::Held).await;
+            assert_eq!(running.lock().await.get(&job), Some(&pid));
+            release_execution_reservation(&running, job, ExecutionOutcome::Finished).await;
+            assert!(!running.lock().await.contains_key(&job));
+            assert_eq!(running.lock().await.get(&neighbor), Some(&77));
+        }
     }
 
     #[test]

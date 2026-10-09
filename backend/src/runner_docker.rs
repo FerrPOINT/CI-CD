@@ -160,6 +160,7 @@ pub(crate) struct RemoteJob {
     directory: PathBuf,
     manifest: Value,
     active: bool,
+    stopped: bool,
 }
 
 fn literal(value: &mut Value) {
@@ -208,6 +209,76 @@ fn owner_alive(owner: &str) -> bool {
     pid.parse::<u32>().ok().and_then(process_start).as_deref() == Some(start)
 }
 
+fn resource_owned(
+    kind: &str,
+    resource: &Value,
+    manifest: &Value,
+    project: &str,
+    file: &Path,
+) -> bool {
+    let expected = &manifest["services"]["transfer"]["labels"];
+    let Some(attempt) = expected["sdlc.attempt"]
+        .as_str()
+        .and_then(|v| Uuid::parse_str(v).ok())
+    else {
+        return false;
+    };
+    let Some(job) = expected["sdlc.job"]
+        .as_str()
+        .and_then(|v| Uuid::parse_str(v).ok())
+    else {
+        return false;
+    };
+    if project != format!("sdlc-build-job-{}", attempt.simple())
+        || expected["sdlc.task"] != format!("job-{job}")
+        || expected["sdlc.purpose"] != "cicd-job"
+    {
+        return false;
+    }
+    let labels = if kind == "container" {
+        &resource["Config"]["Labels"]
+    } else {
+        &resource["Labels"]
+    };
+    if labels["com.docker.compose.project"] != project
+        || [
+            "sdlc.task",
+            "sdlc.purpose",
+            "sdlc.job",
+            "sdlc.attempt",
+            "sdlc.control-volume",
+        ]
+        .iter()
+        .any(|key| labels[*key] != expected[*key])
+    {
+        return false;
+    }
+    if kind == "container" {
+        let Some(service) = labels["com.docker.compose.service"].as_str() else {
+            return false;
+        };
+        return manifest["services"][service].is_object()
+            && labels["com.docker.compose.project.config_files"].as_str() == file.to_str()
+            && resource["Name"].as_str().is_some_and(|name| {
+                manifest["services"][service]["container_name"]
+                    .as_str()
+                    .is_some_and(|expected| name.trim_start_matches('/') == expected)
+            });
+    }
+    let collection = match kind {
+        "volume" => "volumes",
+        "network" => "networks",
+        _ => return false,
+    };
+    let Some(logical) = labels[format!("com.docker.compose.{kind}")].as_str() else {
+        return false;
+    };
+    let definition = &manifest[collection][logical];
+    definition.is_object()
+        && definition["external"] != true
+        && resource["Name"] == format!("{project}_{logical}")
+}
+
 impl RemoteJob {
     pub(crate) async fn prepare(id: Uuid, attempt: Uuid, workspace: &Path) -> io::Result<Self> {
         let client = Client::from_env()?;
@@ -236,14 +307,15 @@ impl RemoteJob {
             "entrypoint":["/bin/sh"], "command":["-c","sleep 86400"], "network_mode":"none",
             "read_only":true, "tmpfs":["/tmp:mode=700"], "security_opt":["no-new-privileges:true"],
             "labels":labels, "volumes":[{"type":"volume","source":"workspace","target":"/workspace"},{"type":"volume","source":"cargo","target":"/cache"}]
-        }}, "volumes":{"workspace":{}, "cargo":{}}, "networks":{"job":{}}});
-        let mut job = Self {
+        }}, "volumes":{"workspace":{"labels":labels}, "cargo":{"labels":labels}}, "networks":{"job":{"labels":labels}}});
+        let job = Self {
             client,
             helper,
             project,
             directory,
             manifest,
             active: true,
+            stopped: false,
         };
         job.record("prepared")?;
         let prepared = async {
@@ -274,17 +346,14 @@ impl RemoteJob {
             Ok::<_, io::Error>(())
         }
         .await;
-        if let Err(e) = prepared {
-            job.cleanup().await;
-            return Err(e);
-        }
+        prepared?;
         Ok(job)
     }
     fn record(&self, phase: &str) -> io::Result<()> {
         write_private(
             &self.directory.join("journal.json"),
             &json!({"project":self.project,
-            "daemon_id":self.client.daemon_id, "phase":phase, "owner":process_owner(), "manifest":self.directory.join("compose.json")}),
+            "daemon_id":self.client.daemon_id, "phase":phase, "owner":process_owner(), "stopped":self.stopped, "manifest":self.directory.join("compose.json")}),
         )
     }
     fn save_manifest(&self) -> io::Result<()> {
@@ -406,17 +475,117 @@ impl RemoteJob {
         }
         Ok(())
     }
-    pub(crate) async fn cleanup(&mut self) {
-        if self.client.verify().await.is_err()
-            || self
-                .compose(&["down", "--remove-orphans", "--volumes"])
-                .await
-                .is_err()
-        {
-            let _ = self.record("cleanup-required");
-            return;
+    async fn owned_resources(&self) -> io::Result<Vec<Value>> {
+        self.client.verify().await?;
+        let mut containers = Vec::new();
+        for kind in ["container", "volume", "network"] {
+            let names = self
+                .client
+                .run(&[
+                    kind,
+                    "ls",
+                    if kind == "container" { "-aq" } else { "-q" },
+                    "--filter",
+                    &format!("label=com.docker.compose.project={}", self.project),
+                ])
+                .await?;
+            let names: Vec<&str> = names.lines().collect();
+            if names.len() > 16 {
+                return Err(invalid("unexpected resource inventory; cleanup blocked"));
+            }
+            for name in names {
+                let inspected: Value =
+                    serde_json::from_str(&self.client.run(&[kind, "inspect", name]).await?)?;
+                let resource = inspected
+                    .as_array()
+                    .and_then(|items| items.first())
+                    .ok_or_else(|| invalid("resource ownership response missing"))?;
+                if !resource_owned(
+                    kind,
+                    resource,
+                    &self.manifest,
+                    &self.project,
+                    &self.directory.join("compose.json"),
+                ) {
+                    return Err(invalid("foreign resource blocks execution and cleanup"));
+                }
+                if kind == "container" {
+                    containers.push(resource.clone());
+                }
+            }
         }
-        let _ = self.record("cleaned");
+        Ok(containers)
+    }
+
+    pub(crate) async fn confirm_stopped(&mut self) -> io::Result<()> {
+        let containers = self.owned_resources().await?;
+        for container in containers {
+            if container["Config"]["Labels"]["com.docker.compose.service"] == "job"
+                && container["State"]["Running"].as_bool() != Some(false)
+            {
+                return Err(invalid("job termination is unconfirmed"));
+            }
+        }
+        self.stopped = true;
+        self.record("execution-stopped")
+    }
+
+    pub(crate) async fn stop_execution(&mut self) -> io::Result<()> {
+        for container in self.owned_resources().await? {
+            if container["Config"]["Labels"]["com.docker.compose.service"] == "job" {
+                let id = container["Id"]
+                    .as_str()
+                    .ok_or_else(|| invalid("container ID missing"))?;
+                self.client.run(&["stop", "-t", "2", id]).await?;
+            }
+        }
+        self.confirm_stopped().await
+    }
+
+    pub(crate) async fn cleanup(&mut self, pool: &sqlx::PgPool) -> io::Result<()> {
+        self.confirm_stopped().await?;
+        let labels = &self.manifest["services"]["transfer"]["labels"];
+        let attempt = labels["sdlc.attempt"]
+            .as_str()
+            .and_then(|v| Uuid::parse_str(v).ok())
+            .ok_or_else(|| invalid("attempt owner missing"))?;
+        let job = labels["sdlc.job"]
+            .as_str()
+            .and_then(|v| Uuid::parse_str(v).ok())
+            .ok_or_else(|| invalid("job owner missing"))?;
+        let acknowledged: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM job_leases l JOIN execution_attempts a ON a.id=l.attempt_id \
+             WHERE a.id=$1 AND a.job_id=$2 AND l.job_id=$2 AND l.completed_at IS NOT NULL \
+             AND l.lease_status IN ('completed','canceled') AND a.finished_at IS NOT NULL \
+             AND a.status=l.terminal_status AND l.terminal_status IN ('success','failed','canceled'))")
+            .bind(attempt).bind(job).fetch_one(pool).await
+            .map_err(|_| invalid("terminal receipt readback failed; resources retained"))?;
+        if !acknowledged {
+            return Err(invalid("terminal receipt missing; resources retained"));
+        }
+        self.owned_resources().await?;
+        self.compose(&["down", "--remove-orphans", "--volumes"])
+            .await?;
+        if !self.owned_resources().await?.is_empty() {
+            return Err(invalid("Compose containers remain after cleanup"));
+        }
+        for kind in ["volume", "network"] {
+            if !self
+                .client
+                .run(&[
+                    kind,
+                    "ls",
+                    "-q",
+                    "--filter",
+                    &format!("label=com.docker.compose.project={}", self.project),
+                ])
+                .await?
+                .is_empty()
+            {
+                return Err(invalid("Compose storage remains after cleanup"));
+            }
+        }
+        self.record("cleaned")?;
         self.active = false;
         // Erase per-job environment only after successful cleanup. Keep safe recovery journal.
         for service in self.manifest["services"]
@@ -426,34 +595,16 @@ impl RemoteJob {
         {
             service.as_object_mut().unwrap().remove("environment");
         }
-        let _ = self.save_manifest();
+        self.save_manifest()?;
+        Ok(())
     }
 }
 impl Drop for RemoteJob {
     fn drop(&mut self) {
         if self.active {
             let _ = self.record("cleanup-required");
-            let client = self.client.clone();
-            let directory = self.directory.clone();
-            let project = self.project.clone();
-            tokio::spawn(async move {
-                if client.verify().await.is_ok() {
-                    let file = directory.join("compose.json");
-                    let _ = client
-                        .run(&[
-                            "compose",
-                            "-p",
-                            &project,
-                            "-f",
-                            file.to_str().unwrap(),
-                            "down",
-                            "--remove-orphans",
-                            "--volumes",
-                        ])
-                        .await;
-                }
-                // Keep cleanup-required journal after abnormal unwinding; reconciliation verifies resources.
-            });
+            // Unwinding is not termination or completion authority. Recovery must
+            // read fresh Engine state and the terminal lease before deletion.
         }
     }
 }
@@ -483,10 +634,15 @@ pub(crate) async fn reconcile(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
         if journal["phase"] == "cleaned" {
             continue;
         }
-        if journal["phase"] != "cleanup-required"
-            && journal["owner"].as_str().is_some_and(owner_alive)
-        {
-            continue;
+        if journal["owner"].as_str().is_some_and(owner_alive) {
+            if journal["phase"] != "cleanup-required" {
+                continue;
+            }
+            if journal["stopped"] != true {
+                return Err(sqlx::Error::Io(invalid(
+                    "live owner has unconfirmed execution; dispatch held",
+                )));
+            }
         }
         let manifest_path = directory.join("compose.json");
         let manifest: Value =
@@ -513,51 +669,6 @@ pub(crate) async fn reconcile(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
                 "journal endpoint/project ownership differs",
             )));
         }
-        let containers = client
-            .run(&[
-                "ps",
-                "-aq",
-                "--filter",
-                &format!("label=com.docker.compose.project={project}"),
-            ])
-            .await
-            .map_err(sqlx::Error::Io)?;
-        for container_id in containers.lines() {
-            let inspected: Value = serde_json::from_str(
-                &client
-                    .run(&["inspect", container_id])
-                    .await
-                    .map_err(sqlx::Error::Io)?,
-            )
-            .map_err(|_| sqlx::Error::Io(invalid("invalid container ownership response")))?;
-            let actual = &inspected[0]["Config"]["Labels"];
-            if actual["sdlc.job"] != id.to_string()
-                || actual["sdlc.attempt"] != attempt.to_string()
-                || actual["sdlc.purpose"] != "cicd-job"
-            {
-                return Err(sqlx::Error::Io(invalid(
-                    "foreign resource blocks journal cleanup",
-                )));
-            }
-        }
-        // Mark the old attempt terminal before cleanup. A later explicit retry is untouched.
-        let mut tx = pool.begin().await?;
-        sqlx::query("UPDATE execution_attempts SET status='failed', finished_at=COALESCE(finished_at,now()), error_tail=COALESCE(error_tail,'runner interrupted; execution outcome uncertain; explicit retry required') WHERE id=$1 AND job_id=$2 AND status IN ('queued','running')")
-            .bind(attempt).bind(id).execute(&mut *tx).await?;
-        let stage: Option<Uuid> = sqlx::query_scalar("UPDATE jobs SET status='failed', finished_at=COALESCE(finished_at,now()) WHERE id=$1 AND status IN ('queued','running') AND EXISTS (SELECT 1 FROM job_queue WHERE job_id=$1 AND attempt_id=$2) RETURNING stage_id")
-            .bind(id).bind(attempt).fetch_optional(&mut *tx).await?;
-        sqlx::query("UPDATE job_leases SET lease_status='expired', terminal_status='failed', completed_at=COALESCE(completed_at,now()), error_tail=COALESCE(error_tail,'runner interrupted; explicit retry required') WHERE attempt_id=$1 AND lease_status='active'")
-            .bind(attempt).execute(&mut *tx).await?;
-        sqlx::query("UPDATE job_queue SET state='completed', completed_at=COALESCE(completed_at,now()), updated_at=now() WHERE attempt_id=$1 AND state IN ('queued','leased')")
-            .bind(attempt).execute(&mut *tx).await?;
-        tx.commit().await?;
-        if let Some(stage) = stage {
-            crate::api::refresh_statuses(pool, stage)
-                .await
-                .map_err(|e| {
-                    sqlx::Error::Io(invalid(&format!("status reconciliation failed: {e:?}")))
-                })?;
-        }
         let mut job = RemoteJob {
             helper: manifest["services"]["transfer"]["container_name"]
                 .as_str()
@@ -568,13 +679,29 @@ pub(crate) async fn reconcile(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
             directory,
             manifest,
             active: true,
+            stopped: false,
         };
-        job.cleanup().await;
-        if job.active {
-            return Err(sqlx::Error::Io(invalid(
-                "Compose cleanup incomplete; dispatch blocked",
-            )));
+        // Fresh Engine termination precedes releasing the project's lease.
+        job.stop_execution().await.map_err(sqlx::Error::Io)?;
+        // Mark only the old attempt terminal; an explicit newer retry is untouched.
+        let mut tx = pool.begin().await?;
+        sqlx::query("UPDATE execution_attempts SET status='failed', finished_at=COALESCE(finished_at,now()), error_tail=COALESCE(error_tail,'runner interrupted; execution outcome uncertain; explicit retry required') WHERE id=$1 AND job_id=$2 AND status IN ('queued','running')")
+            .bind(attempt).bind(id).execute(&mut *tx).await?;
+        let stage: Option<Uuid> = sqlx::query_scalar("UPDATE jobs SET status='failed', finished_at=COALESCE(finished_at,now()) WHERE id=$1 AND status IN ('queued','running') AND EXISTS (SELECT 1 FROM job_queue WHERE job_id=$1 AND attempt_id=$2) RETURNING stage_id")
+            .bind(id).bind(attempt).fetch_optional(&mut *tx).await?;
+        sqlx::query("UPDATE job_leases SET lease_status='completed', terminal_status='failed', completed_at=COALESCE(completed_at,now()), error_tail=COALESCE(error_tail,'runner interrupted; explicit retry required') WHERE attempt_id=$1 AND job_id=$2 AND lease_status='active'")
+            .bind(attempt).bind(id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE job_queue SET state='completed', completed_at=COALESCE(completed_at,now()), updated_at=now() WHERE attempt_id=$1 AND state IN ('queued','leased')")
+            .bind(attempt).execute(&mut *tx).await?;
+        tx.commit().await?;
+        if let Some(stage) = stage {
+            crate::api::refresh_statuses(pool, stage)
+                .await
+                .map_err(|e| {
+                    sqlx::Error::Io(invalid(&format!("status reconciliation failed: {e:?}")))
+                })?;
         }
+        job.cleanup(pool).await.map_err(sqlx::Error::Io)?;
         tracing::warn!(job_id=%id, attempt_id=%attempt, "interrupted Compose attempt reconciled without replay");
     }
     Ok(())
@@ -667,6 +794,98 @@ mod tests {
         let malformed = "z".repeat(40);
         let volume = json!([{"Labels":{"sdlc.base-revision":malformed,"sdlc.workspace":"pdlc1"}}]);
         assert!(!source_provenance_matches(&volume, &malformed, "pdlc1"));
+    }
+
+    #[test]
+    fn cleanup_requires_exact_container_and_storage_ownership() {
+        for (attempt, job) in [
+            (Uuid::new_v4(), Uuid::new_v4()),
+            (Uuid::new_v4(), Uuid::new_v4()),
+        ] {
+            let project = format!("sdlc-build-job-{}", attempt.simple());
+            let file = PathBuf::from("/work/control/compose.json");
+            let expected = json!({"sdlc.job":job.to_string(), "sdlc.attempt":attempt.to_string(),
+                "sdlc.task":format!("job-{job}"), "sdlc.purpose":"cicd-job", "sdlc.control-volume":"owned-control"});
+            let manifest = json!({"services":{"transfer":{"labels":expected, "container_name":"owned-transfer"},
+                "job":{"container_name":"owned-job"}},
+                "volumes":{"workspace":{},"sources":{"external":true}}, "networks":{"job":{}}});
+            for (kind, logical) in [
+                ("container", "transfer"),
+                ("container", "job"),
+                ("volume", "workspace"),
+                ("network", "job"),
+            ] {
+                let mut labels = expected.clone();
+                labels["com.docker.compose.project"] = json!(project);
+                labels[format!(
+                    "com.docker.compose.{}",
+                    if kind == "container" { "service" } else { kind }
+                )] = json!(logical);
+                labels["com.docker.compose.project.config_files"] = json!(file.to_str().unwrap());
+                let resource = if kind == "container" {
+                    json!({"Name":format!("/owned-{logical}"),"Config":{"Labels":labels}})
+                } else {
+                    json!({"Name":format!("{project}_{logical}"),"Labels":labels})
+                };
+                assert!(resource_owned(kind, &resource, &manifest, &project, &file));
+                for key in [
+                    "sdlc.job",
+                    "sdlc.attempt",
+                    "sdlc.task",
+                    "sdlc.purpose",
+                    "com.docker.compose.project",
+                ] {
+                    let mut foreign = resource.clone();
+                    let foreign_labels = if kind == "container" {
+                        &mut foreign["Config"]["Labels"]
+                    } else {
+                        &mut foreign["Labels"]
+                    };
+                    foreign_labels[key] = json!("different-owner");
+                    assert!(!resource_owned(kind, &foreign, &manifest, &project, &file));
+                }
+                let mut wrong_name = resource.clone();
+                wrong_name["Name"] = json!("foreign-name");
+                assert!(!resource_owned(
+                    kind,
+                    &wrong_name,
+                    &manifest,
+                    &project,
+                    &file
+                ));
+                let mut wrong_logical = resource.clone();
+                let foreign_labels = if kind == "container" {
+                    &mut wrong_logical["Config"]["Labels"]
+                } else {
+                    &mut wrong_logical["Labels"]
+                };
+                foreign_labels[format!(
+                    "com.docker.compose.{}",
+                    if kind == "container" { "service" } else { kind }
+                )] = json!("neighbor");
+                assert!(!resource_owned(
+                    kind,
+                    &wrong_logical,
+                    &manifest,
+                    &project,
+                    &file
+                ));
+            }
+            let mut external_labels = expected.clone();
+            external_labels["com.docker.compose.project"] = json!(project);
+            external_labels["com.docker.compose.volume"] = json!("sources");
+            let external = json!({"Name":format!("{project}_sources"),"Labels":external_labels});
+            assert!(!resource_owned(
+                "volume", &external, &manifest, &project, &file
+            ));
+            assert!(!resource_owned(
+                "container",
+                &json!({}),
+                &json!({}),
+                &project,
+                &file
+            ));
+        }
     }
     #[test]
     fn recovery_distinguishes_dead_process_and_current_owner() {

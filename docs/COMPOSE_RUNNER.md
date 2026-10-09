@@ -27,6 +27,19 @@ Fallback на другой Docker context запрещён.
 из сохранённого manifest. Удаляются только volumes данного attempt; immutable
 sources объявлены external и сохраняются.
 
+Выход Docker CLI не доказывает остановку job: перед terminal completion требуется
+свежий Engine readback остановленного собственного контейнера. Timeout явно
+останавливает только контейнер текущего attempt и повторяет readback. Cleanup
+проверяет ownership контейнеров, volumes и сетей, затем свежий terminal receipt
+своего attempt/job. Неизвестный completion не разрешает удаление.
+
+Drop только сохраняет `cleanup-required`; фоновой команды down нет. Неподтверждённый
+выход сохраняет PID либо reservation в обёртке runner. Живой владелец с неизвестной
+остановкой блокирует новую диспетчеризацию до reconciliation; автоматический
+replay отсутствует. После рестарта recovery подтверждает остановку до освобождения
+lease и удаления файлов. Чужие owner/project/manifest/resource names блокируют
+действия. Неизвестное или отозванное acknowledgement сохраняет данные.
+
 После прерывания backend сверяет journal, daemon, labels, execution attempt
 и состояние БД перед новой диспетчеризацией. Оборванный attempt становится
 failed с неизвестным результатом исполнения; ресурсы очищаются через его
