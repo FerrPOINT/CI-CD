@@ -131,7 +131,7 @@ pub async fn all_summary(
         failed: row.get("failed"),
     }))
 }
-const PROJECT_SELECT: &str = "SELECT w.*,w.observed_at < now()-interval '5 minutes' AS stale,b.resource_id AS group_id,g.slug AS group_slug,b.state AS git_state,(SELECT count(*) FROM repository_catalog r WHERE r.group_id=g.id) AS repositories,(SELECT pl.status FROM pipelines pl JOIN projects p ON p.id=pl.project_id JOIN repository_catalog r ON r.id=p.repository_id WHERE r.group_id=g.id ORDER BY pl.created_at DESC,pl.id DESC LIMIT 1) AS latest_status FROM forge_workspace_projects w LEFT JOIN forge_namespace_bindings b ON b.registry_instance_id=w.registry_instance_id AND b.namespace_id=w.namespace_id LEFT JOIN git_groups g ON g.id=b.resource_id";
+const PROJECT_SELECT: &str = "SELECT w.*,(w.observed_at < now()-interval '5 minutes' OR NOT coalesce((SELECT available FROM forge_workspace_catalog_sync),false)) AS stale,b.resource_id AS group_id,g.slug AS group_slug,b.state AS git_state,(SELECT count(*) FROM repository_catalog r WHERE r.group_id=g.id) AS repositories,(SELECT pl.status FROM pipelines pl JOIN projects p ON p.id=pl.project_id JOIN repository_catalog r ON r.id=p.repository_id WHERE r.group_id=g.id ORDER BY pl.created_at DESC,pl.id DESC LIMIT 1) AS latest_status FROM forge_workspace_projects w LEFT JOIN forge_namespace_bindings b ON b.registry_instance_id=w.registry_instance_id AND b.namespace_id=w.namespace_id LEFT JOIN git_groups g ON g.id=b.resource_id";
 
 pub async fn ensure_context(
     pool: &PgPool,
@@ -484,7 +484,7 @@ pub async fn refresh(pool: &PgPool) -> Result<(), ApiError> {
             ));
         }
     }
-    sqlx::query("INSERT INTO forge_workspace_catalog_sync(id,observed_at) VALUES(true,now()) ON CONFLICT(id) DO UPDATE SET observed_at=EXCLUDED.observed_at").execute(&mut *tx).await.map_err(ApiError::internal)?;
+    sqlx::query("INSERT INTO forge_workspace_catalog_sync(id,observed_at,available) VALUES(true,now(),true) ON CONFLICT(id) DO UPDATE SET observed_at=EXCLUDED.observed_at,available=true").execute(&mut *tx).await.map_err(ApiError::internal)?;
     tx.commit().await.map_err(ApiError::internal)
 }
 pub fn validate_project(
@@ -513,12 +513,23 @@ pub fn validate_project(
     }
     Ok(())
 }
+/// A failed refresh marks retained metadata stale without turning an unknown catalog into an empty one.
+pub async fn refresh_checked(pool: &PgPool) -> Result<(), ApiError> {
+    let result = refresh(pool).await;
+    if result.is_err() {
+        sqlx::query("UPDATE forge_workspace_catalog_sync SET available=false WHERE id=true")
+            .execute(pool)
+            .await
+            .map_err(ApiError::internal)?;
+    }
+    result
+}
 pub async fn supervisor(pool: PgPool) {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         interval.tick().await;
-        if refresh(&pool).await.is_err() {
+        if refresh_checked(&pool).await.is_err() {
             tracing::warn!(
                 "Tracker project catalog refresh unavailable; preserving local projection"
             );

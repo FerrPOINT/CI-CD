@@ -44,7 +44,7 @@ CREATE INDEX projects_repository_id_idx ON projects(repository_id);
 ALTER TABLE projects DROP CONSTRAINT projects_name_key;
 CREATE UNIQUE INDEX delivery_configuration_repository_name ON projects(repository_id,name) WHERE repository_id IS NOT NULL;
 CREATE UNIQUE INDEX legacy_unbound_configuration_name ON projects(name) WHERE repository_id IS NULL;
-CREATE TABLE forge_workspace_catalog_sync(id boolean PRIMARY KEY CHECK(id), observed_at timestamptz NOT NULL);
+CREATE TABLE forge_workspace_catalog_sync(id boolean PRIMARY KEY CHECK(id), observed_at timestamptz NOT NULL, available boolean NOT NULL DEFAULT true);
 CREATE FUNCTION forge_push_configuration_identity() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.configuration_id IS NOT NULL AND NOT EXISTS(

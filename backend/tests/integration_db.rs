@@ -21,6 +21,8 @@ use sqlx::postgres::PgPoolOptions;
 use std::str::FromStr;
 use tower::ServiceExt;
 use uuid::Uuid;
+#[path = "support/fixture_cleanup.rs"]
+mod fixture_cleanup;
 
 type CanceledExternalLeaseState = (
     String,
@@ -475,11 +477,7 @@ async fn job_log_append_serializes_concurrent_attempt_writes() {
             .expect("fetch log sequences");
     assert_eq!(sequences, vec![1, 2]);
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -1245,11 +1243,7 @@ async fn scoped_api_tokens_limit_project_routes_and_soft_revoke() {
         .execute(&pool)
         .await
         .expect("cleanup token admin");
-    sqlx::query("DELETE FROM projects WHERE id = ANY($1)")
-        .bind([project_a, project_b])
-        .execute(&pool)
-        .await
-        .expect("cleanup scoped token projects");
+    fixture_cleanup::projects(&pool).await;
     for table in ["repository_aliases", "repository_pr_counters"] {
         sqlx::query(&format!(
             "DELETE FROM {table} WHERE repository_id = ANY($1)"
@@ -1274,10 +1268,7 @@ async fn scoped_api_tokens_limit_project_routes_and_soft_revoke() {
 #[tokio::test]
 async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job() {
     let pool = test_pool().await;
-    sqlx::query("DELETE FROM projects WHERE name LIKE 'it-runner-protocol-%'")
-        .execute(&pool)
-        .await
-        .expect("cleanup stale runner protocol projects");
+    fixture_cleanup::projects(&pool).await;
 
     let namespace = Uuid::new_v4();
     let registration_token = format!("registration-{}", namespace.simple());
@@ -2007,11 +1998,7 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
         .unwrap();
     assert_eq!(response.status(), StatusCode::CONFLICT);
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup protocol project");
+    fixture_cleanup::projects(&pool).await;
     sqlx::query("DELETE FROM runners WHERE id = $1")
         .bind(runner_id)
         .execute(&pool)
@@ -2467,11 +2454,7 @@ async fn external_runner_long_poll_wakes_when_work_is_enqueued() {
     assert_eq!(offer["attempt"]["id"], attempt_id.to_string());
     assert_eq!(offer["attempt"]["jobId"], job_id.to_string());
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup long poll project");
+    fixture_cleanup::projects(&pool).await;
     sqlx::query("DELETE FROM runners WHERE id = $1")
         .bind(runner_id)
         .execute(&pool)
@@ -2633,11 +2616,7 @@ async fn external_runner_long_poll_wakes_from_postgres_notify() {
     listener.abort();
     let _ = listener.await;
     notify_pool.close().await;
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup pg notify project");
+    fixture_cleanup::projects(&pool).await;
     sqlx::query("DELETE FROM runners WHERE id = $1")
         .bind(runner_id)
         .execute(&pool)
@@ -2981,11 +2960,7 @@ async fn git_smart_http_uses_project_membership_when_auth_enabled() {
         .execute(&pool)
         .await
         .expect("cleanup git users");
-    sqlx::query("DELETE FROM projects WHERE id = ANY($1)")
-        .bind([project_id, lookalike_project_id])
-        .execute(&pool)
-        .await
-        .expect("cleanup git projects");
+    fixture_cleanup::projects(&pool).await;
     for statement in [
         "DELETE FROM repository_aliases WHERE repository_id IN (SELECT id FROM repository_catalog WHERE storage_name=ANY($1))",
         "DELETE FROM repository_pr_counters WHERE repository_id IN (SELECT id FROM repository_catalog WHERE storage_name=ANY($1))",
@@ -3140,11 +3115,7 @@ async fn pipeline_trigger_replays_same_idempotency_key() {
         .await
         .expect("rollback immutability check");
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -3402,11 +3373,7 @@ jobs:
         "set -e\ncargo test\ncargo clippy --all-targets"
     );
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup v1 project");
+    fixture_cleanup::projects(&pool).await;
     let _ = tokio::fs::remove_dir_all(&root).await;
 }
 
@@ -3592,11 +3559,7 @@ async fn artifact_download_rejects_storage_paths_outside_artifact_root() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
     let _ = std::fs::remove_dir_all(&artifact_root);
     let _ = std::fs::remove_file(&outside_path);
 }
@@ -3754,11 +3717,7 @@ async fn artifact_retention_expires_download_and_purges_file() {
     assert_eq!(listed[0]["id"].as_str(), Some(artifact_id_text.as_str()));
     assert!(listed[0]["purged_at"].as_str().is_some());
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
     let _ = std::fs::remove_dir_all(&artifact_root);
     unsafe {
         match previous_artifacts_dir {
@@ -4008,11 +3967,7 @@ async fn job_retry_preserves_attempt_logs_and_appends_to_new_attempt() {
             .any(|(id, count)| *id == second_attempt_id && *count == 1)
     );
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -4107,11 +4062,7 @@ async fn manual_job_start_materializes_queue_row() {
     assert_eq!(queue_state, "queued");
     assert!(queue_completed_at.is_none());
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -4292,11 +4243,7 @@ async fn job_log_page_is_bounded_and_searchable() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -4483,11 +4430,7 @@ async fn cancel_pipeline_marks_open_attempts_canceled() {
     .expect("count canceled queue rows");
     assert_eq!(canceled_queue_rows, 2);
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -4774,11 +4717,7 @@ async fn cancel_pipeline_signals_external_runner_until_confirmed() {
     assert_eq!(latest_attempt_status, "queued");
     assert_eq!(queue_state, "queued");
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -4908,11 +4847,7 @@ async fn embedded_runner_closes_lease_when_prepare_fails() {
     assert_eq!(queue_state, "completed");
     assert!(queue_completed_at.is_some());
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -5193,11 +5128,7 @@ async fn expired_job_lease_is_reconciled_to_failed_attempt() {
     assert_eq!(queue_state, "completed");
     assert!(queue_completed_at.is_some());
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -5369,11 +5300,7 @@ async fn unacknowledged_external_lease_is_requeued_after_ack_deadline() {
     .expect("count active leases after requeue poll");
     assert_eq!(active_leases, 1);
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
     sqlx::query("DELETE FROM runners WHERE id = $1")
         .bind(runner_id)
         .execute(&pool)
@@ -5483,11 +5410,7 @@ async fn queued_job_without_compatible_runner_fails_after_queue_timeout() {
     assert_eq!(pipeline_status, "failed");
     assert_eq!(queue_state, "completed");
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup timed out project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -5676,11 +5599,7 @@ async fn queue_timeout_keeps_old_work_when_compatible_protocol_runner_exists() {
     assert_eq!(pipeline_status, "queued");
     assert_eq!(queue_state, "queued");
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup compatible project");
+    fixture_cleanup::projects(&pool).await;
     sqlx::query("DELETE FROM runners WHERE id = $1")
         .bind(runner_id)
         .execute(&pool)
@@ -5855,11 +5774,7 @@ async fn stale_runner_with_active_unexpired_lease_is_not_marked_offline() {
     assert_eq!(status, "offline");
     assert_eq!(busy_slots, Some(0));
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
     sqlx::query("DELETE FROM runners WHERE id = $1")
         .bind(runner_id)
         .execute(&pool)
@@ -5987,11 +5902,7 @@ async fn cron_schedule_materializes_unique_fire_slots() {
             .expect("count project pipelines");
     assert_eq!(pipeline_count, 1);
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -6066,11 +5977,7 @@ async fn outbox_retention_sweeps_old_delivered_messages() {
             .expect("count old attempts");
     assert_eq!(old_attempts, 0, "attempt history cascades with the message");
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -6133,11 +6040,7 @@ async fn egress_allowlist_blocks_disallowed_webhook_host() {
         "unexpected error: {error}"
     );
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -6243,11 +6146,7 @@ async fn parallel_delivery_claims_message_exactly_once() {
             .unwrap_or(0);
     assert_eq!(history, 1, "exactly one delivery history row");
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -6311,11 +6210,7 @@ async fn notification_aggregation_collapses_repeats() {
     .expect("agg count");
     assert_eq!(agg, 2, "two repeats must be counted");
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -6409,11 +6304,7 @@ async fn quiet_drop_skips_delivery_unless_bypass_status() {
     .expect("fail delivered");
     assert_eq!(fail_delivered, 1, "failed must bypass quiet hours");
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -6515,11 +6406,7 @@ async fn notification_rules_filter_and_templates_render() {
         "CUSTOM pipeline.failed -> failed"
     );
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -6706,11 +6593,7 @@ async fn in_app_notification_events_are_fanned_out_and_delivered() {
     assert!(events[0]["delivered_at"].is_string());
     assert!(events[0]["last_error"].is_null());
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -6785,11 +6668,7 @@ async fn email_notification_channel_fans_out_and_delivers_when_smtp_disabled() {
         "disabled smtp still marks email delivered"
     );
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -6896,11 +6775,7 @@ async fn external_notification_channels_fan_out_to_outbox_webhook_delivery() {
     .expect("count disabled rows");
     assert_eq!(rows2, 0, "disabled configs do not fan out");
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -7186,11 +7061,7 @@ async fn failed_outbox_delivery_records_attempt_and_can_be_requeued() {
         .execute(&pool)
         .await
         .expect("cleanup domain event");
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -7293,11 +7164,7 @@ async fn protected_environment_deployment_requires_approval_before_pipeline() {
             .expect("fetch authenticated approver");
     assert_eq!(approvals[0]["actor"], authenticated_actor.to_string());
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -7373,20 +7240,13 @@ async fn deployment_rollback_creates_separate_traceable_pipeline_record() {
     assert_eq!(source_after.0, "success");
     assert_eq!(source_after.1, None);
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
 async fn artifact_upload_sessions_resume_and_complete() {
     let pool = test_pool().await;
-    sqlx::query("DELETE FROM projects WHERE name LIKE 'it-artifact-sessions-%'")
-        .execute(&pool)
-        .await
-        .expect("cleanup stale artifact session projects");
+    fixture_cleanup::projects(&pool).await;
 
     let namespace = Uuid::new_v4();
     let registration_token = format!("registration-{}", namespace.simple());
@@ -7809,11 +7669,7 @@ async fn artifact_upload_sessions_resume_and_complete() {
         }
         std::env::remove_var("CICD_RUNNER_REGISTRATION_TOKEN");
     }
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
     let _ = std::fs::remove_dir_all(&artifact_root);
 }
 
@@ -7852,10 +7708,7 @@ async fn project_patch_null_max_running_jobs_clears_dispatch_cap() {
 #[tokio::test]
 async fn project_dispatch_limit_defers_work_beyond_cap() {
     let pool = test_pool().await;
-    sqlx::query("DELETE FROM projects WHERE name LIKE 'it-dispatch-limit-%'")
-        .execute(&pool)
-        .await
-        .expect("cleanup stale dispatch-limit projects");
+    fixture_cleanup::projects(&pool).await;
 
     let namespace = Uuid::new_v4();
     let project_id = Uuid::new_v4();
@@ -8106,11 +7959,7 @@ async fn project_dispatch_limit_defers_work_beyond_cap() {
         }
         std::env::remove_var("CICD_RUNNER_REGISTRATION_TOKEN");
     }
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
     let _ = queue_ids;
 }
 
@@ -9666,7 +9515,7 @@ async fn workspace_fixture(
     sqlx::query("UPDATE repository_catalog SET group_id=$2,slug='api',kind='external',storage_name=NULL,ready=true,external_url='https://example.test/api.git' WHERE id=$1").bind(repository).bind(group).execute(pool).await.unwrap();
     sqlx::query("INSERT INTO forge_workspace_projects(registry_instance_id,namespace_id,tracker_instance_id,tracker_project_id,generation,name,project_key,state,observed_at) VALUES($1,$2,$3,$4,1,'Same project','SAME','active',now())").bind(registry).bind(namespace).bind(Uuid::new_v4()).bind(Uuid::new_v4()).execute(pool).await.unwrap();
     sqlx::query(
-        "INSERT INTO forge_workspace_catalog_sync VALUES(true,now()) ON CONFLICT DO NOTHING",
+        "INSERT INTO forge_workspace_catalog_sync(id,observed_at) VALUES(true,now()) ON CONFLICT DO NOTHING",
     )
     .execute(pool)
     .await
@@ -10076,4 +9925,100 @@ async fn workspace_first_refresh_unavailable_is_distinct_from_verified_empty_cat
             StatusCode::OK
         );
     }
+}
+
+#[tokio::test]
+async fn workspace_failed_reader_preserves_identity_and_marks_retained_metadata_stale() {
+    let pool = test_pool().await;
+    let namespace = Uuid::new_v4();
+    let (_, repository, command) = workspace_fixture(&pool, namespace, "reader-outage").await;
+    assert!(
+        cicd::workspace_projects::refresh_checked(&pool)
+            .await
+            .is_err()
+    );
+    let context = cicd::workspace_projects::ensure_context(
+        &pool,
+        command.namespace.registry_instance_id,
+        namespace,
+    )
+    .await
+    .unwrap();
+    assert!(context.stale);
+    assert_eq!(context.name, "Same project");
+    let app = authenticated_app(pool.clone()).await;
+    let response=app.oneshot(Request::post(format!("/api/v1/catalog/repositories/{repository}/delivery-configs"))
+        .header("content-type","application/json")
+        .body(Body::from(serde_json::json!({"operation_id":Uuid::new_v4(),"name":"Retained CI","default_branch":"main"}).to_string())).unwrap()).await.unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "Metadata outage does not close valid local active admission"
+    );
+    assert_eq!(
+        response_json(response).await["repository_id"],
+        repository.to_string()
+    );
+}
+
+#[tokio::test]
+async fn legacy_configuration_delete_preserves_history_and_allows_empty_configuration() {
+    let pool = test_pool().await;
+    let retained = Uuid::new_v4();
+    let empty = Uuid::new_v4();
+    let pipeline = Uuid::new_v4();
+    for (id, name) in [(retained, "Retained legacy"), (empty, "Empty legacy")] {
+        sqlx::query("INSERT INTO projects(id,name,repository_url) VALUES($1,$2,'https://example.test/api.git')").bind(id).bind(name).execute(&pool).await.unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO pipelines(id,project_id,status,git_ref) VALUES($1,$2,'success','main')",
+    )
+    .bind(pipeline)
+    .bind(retained)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let app = authenticated_app(pool.clone()).await;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::delete(format!("/api/v1/projects/{retained}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        sqlx::query_scalar::<_, Uuid>("SELECT id FROM pipelines WHERE id=$1")
+            .bind(pipeline)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        pipeline
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, Uuid>("SELECT id FROM projects WHERE id=$1")
+            .bind(retained)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        retained
+    );
+    let response = app
+        .oneshot(
+            Request::delete(format!("/api/v1/projects/{empty}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        !sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM projects WHERE id=$1)")
+            .bind(empty)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    );
 }
