@@ -3,6 +3,7 @@ import { NamespaceLink as Link } from '@sdlc/ui/ui'
 import { useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { ApiError } from '@/api/client'
+import { ConfigurationContext } from '@/widgets/configuration-context'
 import { ForbiddenPage } from '@/pages/forbidden'
 import {
   usePipeline,
@@ -121,157 +122,152 @@ export function PipelineDetailPage() {
   }
 
   return (
-    <div className="min-w-0 space-y-6">
-      <div>
-        <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-text-muted">
-          <Link
-            to="/projects"
-            className="inline-flex min-h-10 items-center hover:text-text-primary"
-          >
-            {t('navigation.projects')}
-          </Link>
-          <ChevronRight className="h-3 w-3" />
-          <Link
-            to={`/projects/${pipeline.project_id}/pipelines`}
-            className="inline-flex min-h-10 items-center hover:text-text-primary"
-          >
-            {t('navigation.pipelines')}
-          </Link>
-          <ChevronRight className="h-3 w-3" />
-          <span>#{pipeline.id.slice(0, 8)}</span>
-        </div>
-        <div className="mt-2 flex min-w-0 flex-wrap items-center gap-3">
-          <h1 className="text-2xl font-bold">#{pipeline.id.slice(0, 8)}</h1>
-          {(pipeline.status === 'queued' || pipeline.status === 'running') && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="min-h-10 gap-1 text-danger hover:text-danger sm:min-h-10"
-              disabled={cancelPipeline.isPending}
-              onClick={() => setConfirmCancel(true)}
+    <ConfigurationContext configurationId={pipeline.project_id} showSettings={false}>
+      <div className="min-w-0 space-y-6">
+        <div>
+          <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-text-muted">
+            <Link
+              to={`/delivery-configs/${pipeline.project_id}/pipelines`}
+              className="inline-flex min-h-10 items-center hover:text-text-primary"
             >
-              <Ban className="h-4 w-4" /> {t('pipelines.cancel')}
-            </Button>
-          )}
-          {(pipeline.status === 'failed' || pipeline.status === 'canceled') && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="min-h-10 gap-1 sm:min-h-10"
-              disabled={retryPipeline.isPending}
-              onClick={handleRetry}
-            >
-              <RotateCcw className="h-4 w-4" /> {t('pipelines.retry')}
-            </Button>
-          )}
-          <code className="rounded bg-surface-raised px-2 py-1 text-sm">{pipeline.git_ref}</code>
-          <span role="status" className="flex items-center gap-1.5 text-sm text-text-secondary">
-            <span
-              className={`h-2.5 w-2.5 rounded-full ${statusColors[pipeline.status]}`}
-              aria-hidden
-            />
-            {t(`pipelines.${pipeline.status}`)}
-          </span>
-        </div>
-      </div>
-
-      {error && (
-        <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-danger">
-          <span>{t('pipelines.loadError')}</span>
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-10"
-            onClick={() => void refetch()}
-          >
-            {t('common.retry')}
-          </Button>
-        </div>
-      )}
-
-      {plan && <PipelinePlanCard plan={plan} />}
-
-      <div className="grid min-w-0 gap-4 lg:grid-cols-3" data-pipeline-layout="stage-grid">
-        {stages.map((stage) => (
-          <Card key={stage.id} className="min-w-0 p-4">
-            <div className="flex items-center justify-between gap-3 border-b border-border pb-3">
-              <h3 className="min-w-0 break-words text-sm font-semibold">{stage.name}</h3>
-              <span className="flex shrink-0 items-center gap-1.5 text-xs text-text-muted">
-                <span
-                  className={`h-2.5 w-2.5 rounded-full ${statusColors[stage.status]}`}
-                  aria-hidden
-                />
-                {t(`pipelines.${stage.status}`)}
-              </span>
-            </div>
-            <div className="mt-3 space-y-3">
-              {stage.jobs.map((job) => (
-                <JobCard
-                  key={job.id}
-                  job={job}
-                  onStatus={handleStatus}
-                  onShowLogs={() => setSelectedJobId(job.id)}
-                  pending={updateStatus.isPending}
-                />
-              ))}
-            </div>
-          </Card>
-        ))}
-      </div>
-
-      {selectedJob && (
-        <div ref={logPanelRef} className="scroll-mt-16">
-          <Card className="p-4">
-            <div className="flex items-center justify-between border-b border-border pb-3">
-              <div className="flex items-center gap-2">
-                <Terminal className="h-4 w-4 text-accent" />
-                <h3 className="text-sm font-semibold">
-                  {t('jobs.logs')} — {selectedJob.name}
-                </h3>
-              </div>
+              {t('navigation.pipelines')}
+            </Link>
+            <ChevronRight className="h-3 w-3" />
+            <span>#{pipeline.id.slice(0, 8)}</span>
+          </div>
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-3">
+            <h1 className="text-2xl font-bold">#{pipeline.id.slice(0, 8)}</h1>
+            {(pipeline.status === 'queued' || pipeline.status === 'running') && (
               <Button
                 size="sm"
                 variant="outline"
-                className="min-h-10 sm:min-h-10"
-                onClick={() => setSelectedJobId(null)}
+                className="min-h-10 gap-1 text-danger hover:text-danger sm:min-h-10"
+                disabled={cancelPipeline.isPending}
+                onClick={() => setConfirmCancel(true)}
               >
-                {t('common.close')}
+                <Ban className="h-4 w-4" /> {t('pipelines.cancel')}
               </Button>
-            </div>
-            <JobLogPanel
-              jobId={selectedJob.id}
-              live={selectedJob.status === 'queued' || selectedJob.status === 'running'}
-              logMessage={logMessage}
-              setLogMessage={setLogMessage}
-            />
-          </Card>
+            )}
+            {(pipeline.status === 'failed' || pipeline.status === 'canceled') && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="min-h-10 gap-1 sm:min-h-10"
+                disabled={retryPipeline.isPending}
+                onClick={handleRetry}
+              >
+                <RotateCcw className="h-4 w-4" /> {t('pipelines.retry')}
+              </Button>
+            )}
+            <code className="rounded bg-surface-raised px-2 py-1 text-sm">{pipeline.git_ref}</code>
+            <span role="status" className="flex items-center gap-1.5 text-sm text-text-secondary">
+              <span
+                className={`h-2.5 w-2.5 rounded-full ${statusColors[pipeline.status]}`}
+                aria-hidden
+              />
+              {t(`pipelines.${pipeline.status}`)}
+            </span>
+          </div>
         </div>
-      )}
-      {selectedJob && <JobTestReportPanel jobId={selectedJob.id} />}
-      <AlertDialog open={confirmCancel} onOpenChange={setConfirmCancel}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('pipelines.cancelTitle')}</AlertDialogTitle>
-            <AlertDialogDescription>{t('pipelines.cancelDescription')}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="min-h-10" disabled={cancelPipeline.isPending}>
-              {t('pipelines.keepRunning')}
-            </AlertDialogCancel>
-            <AlertDialogAction
+
+        {error && (
+          <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-danger">
+            <span>{t('pipelines.loadError')}</span>
+            <Button
+              type="button"
+              variant="outline"
               className="min-h-10"
-              disabled={cancelPipeline.isPending}
-              onClick={(event) => {
-                event.preventDefault()
-                handleCancel()
-              }}
+              onClick={() => void refetch()}
             >
-              {t('pipelines.confirmCancel')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
+              {t('common.retry')}
+            </Button>
+          </div>
+        )}
+
+        {plan && <PipelinePlanCard plan={plan} />}
+
+        <div className="grid min-w-0 gap-4 lg:grid-cols-3" data-pipeline-layout="stage-grid">
+          {stages.map((stage) => (
+            <Card key={stage.id} className="min-w-0 p-4">
+              <div className="flex items-center justify-between gap-3 border-b border-border pb-3">
+                <h3 className="min-w-0 break-words text-sm font-semibold">{stage.name}</h3>
+                <span className="flex shrink-0 items-center gap-1.5 text-xs text-text-muted">
+                  <span
+                    className={`h-2.5 w-2.5 rounded-full ${statusColors[stage.status]}`}
+                    aria-hidden
+                  />
+                  {t(`pipelines.${stage.status}`)}
+                </span>
+              </div>
+              <div className="mt-3 space-y-3">
+                {stage.jobs.map((job) => (
+                  <JobCard
+                    key={job.id}
+                    job={job}
+                    onStatus={handleStatus}
+                    onShowLogs={() => setSelectedJobId(job.id)}
+                    pending={updateStatus.isPending}
+                  />
+                ))}
+              </div>
+            </Card>
+          ))}
+        </div>
+
+        {selectedJob && (
+          <div ref={logPanelRef} className="scroll-mt-16">
+            <Card className="p-4">
+              <div className="flex items-center justify-between border-b border-border pb-3">
+                <div className="flex items-center gap-2">
+                  <Terminal className="h-4 w-4 text-accent" />
+                  <h3 className="text-sm font-semibold">
+                    {t('jobs.logs')} — {selectedJob.name}
+                  </h3>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="min-h-10 sm:min-h-10"
+                  onClick={() => setSelectedJobId(null)}
+                >
+                  {t('common.close')}
+                </Button>
+              </div>
+              <JobLogPanel
+                jobId={selectedJob.id}
+                live={selectedJob.status === 'queued' || selectedJob.status === 'running'}
+                logMessage={logMessage}
+                setLogMessage={setLogMessage}
+              />
+            </Card>
+          </div>
+        )}
+        {selectedJob && <JobTestReportPanel jobId={selectedJob.id} />}
+        <AlertDialog open={confirmCancel} onOpenChange={setConfirmCancel}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{t('pipelines.cancelTitle')}</AlertDialogTitle>
+              <AlertDialogDescription>{t('pipelines.cancelDescription')}</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel className="min-h-10" disabled={cancelPipeline.isPending}>
+                {t('pipelines.keepRunning')}
+              </AlertDialogCancel>
+              <AlertDialogAction
+                className="min-h-10"
+                disabled={cancelPipeline.isPending}
+                onClick={(event) => {
+                  event.preventDefault()
+                  handleCancel()
+                }}
+              >
+                {t('pipelines.confirmCancel')}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+    </ConfigurationContext>
   )
 }
 

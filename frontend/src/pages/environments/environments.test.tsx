@@ -113,9 +113,9 @@ function renderEnvironmentsPage(requests: string[], override?: (url: string, met
 
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[`/projects/${projectId}/environments`]}>
+      <MemoryRouter initialEntries={[`/delivery-configs/${projectId}/environments`]}>
         <Routes>
-          <Route path="/projects/:projectId/environments" element={<EnvironmentsPage />} />
+          <Route path="/delivery-configs/:projectId/environments" element={<EnvironmentsPage />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,

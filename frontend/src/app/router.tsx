@@ -1,6 +1,8 @@
+import { ConfigurationContext } from '@/widgets/configuration-context'
 import { CatalogRepositoryPage } from '@/pages/catalog-repository'
 import { CatalogPullPage } from '@/pages/catalog-pull'
-import { NamespacePage } from '@/pages/namespace'
+import { WorkspacePage, NamespaceRedirect, LegacyConfigRedirect } from '@/pages/workspace'
+import { DeliveryConfigurationsPage } from '@/pages/delivery-configurations'
 import { lazy, Suspense, type ReactElement } from 'react'
 import { createBrowserRouter, Navigate, Outlet } from 'react-router'
 import { AppShell } from '@/widgets/app-shell'
@@ -77,6 +79,9 @@ function PageLoader() {
 }
 
 const withSuspense = (el: ReactElement) => <Suspense fallback={<PageLoader />}>{el}</Suspense>
+const ConfigurationSettingsPage = lazy(() =>
+  import('@/pages/configuration-settings').then((m) => ({ default: m.ConfigurationSettingsPage })),
+)
 
 export const appRoutes = [
   {
@@ -92,7 +97,17 @@ export const appRoutes = [
           {
             element: <AppShell />,
             children: [
-              { path: '/namespace', element: <NamespacePage /> },
+              { path: '/namespace', element: <NamespaceRedirect /> },
+              { path: '/workspaces/:registry/:namespace/*', element: <WorkspacePage /> },
+              { path: '/delivery-configs', element: <DeliveryConfigurationsPage /> },
+              {
+                path: '/delivery-configs/:projectId/settings',
+                element: withSuspense(
+                  <ConfigurationContext>
+                    <ConfigurationSettingsPage />
+                  </ConfigurationContext>,
+                ),
+              },
               {
                 path: '/catalog/repositories/:id',
                 element: <CatalogRepositoryPage />,
@@ -104,8 +119,12 @@ export const appRoutes = [
               { path: '/', element: withSuspense(<DashboardPage />) },
               { path: '/projects', element: withSuspense(<ProjectsPage />) },
               {
-                path: '/projects/:projectId/pipelines',
-                element: withSuspense(<PipelinesPage />),
+                path: '/delivery-configs/:projectId/pipelines',
+                element: withSuspense(
+                  <ConfigurationContext>
+                    <PipelinesPage />
+                  </ConfigurationContext>,
+                ),
               },
               {
                 path: '/pipelines/:pipelineId',
@@ -134,8 +153,12 @@ export const appRoutes = [
               { path: '/settings', element: withSuspense(<SettingsPage />) },
               { path: '/runners', element: withSuspense(<RunnersPage />) },
               {
-                path: '/projects/:projectId/secrets',
-                element: withSuspense(<SecretsPage />),
+                path: '/delivery-configs/:projectId/secrets',
+                element: withSuspense(
+                  <ConfigurationContext>
+                    <SecretsPage />
+                  </ConfigurationContext>,
+                ),
               },
               // Preserve old bookmarks; membership mutations are unavailable in Central Auth mode.
               {
@@ -147,21 +170,43 @@ export const appRoutes = [
                 element: withSuspense(<ArtifactsPage />),
               },
               {
-                path: '/projects/:projectId/environments',
-                element: withSuspense(<EnvironmentsPage />),
+                path: '/delivery-configs/:projectId/environments',
+                element: withSuspense(
+                  <ConfigurationContext>
+                    <EnvironmentsPage />
+                  </ConfigurationContext>,
+                ),
               },
               {
-                path: '/projects/:projectId/schedules',
-                element: withSuspense(<SchedulesPage />),
+                path: '/delivery-configs/:projectId/schedules',
+                element: withSuspense(
+                  <ConfigurationContext>
+                    <SchedulesPage />
+                  </ConfigurationContext>,
+                ),
               },
               {
-                path: '/projects/:projectId/webhooks',
-                element: withSuspense(<WebhooksPage />),
+                path: '/delivery-configs/:projectId/webhooks',
+                element: withSuspense(
+                  <ConfigurationContext>
+                    <WebhooksPage />
+                  </ConfigurationContext>,
+                ),
               },
               {
-                path: '/projects/:projectId/reports',
-                element: withSuspense(<ReportsPage />),
+                path: '/delivery-configs/:projectId/reports',
+                element: withSuspense(
+                  <ConfigurationContext>
+                    <ReportsPage />
+                  </ConfigurationContext>,
+                ),
               },
+              ...['pipelines', 'secrets', 'environments', 'schedules', 'webhooks', 'reports'].map(
+                (section) => ({
+                  path: `/projects/:projectId/${section}`,
+                  element: <LegacyConfigRedirect />,
+                }),
+              ),
               { path: '/audit-log', element: withSuspense(<AuditLogPage />) },
               { path: '/users', element: withSuspense(<UsersPage />) },
             ],

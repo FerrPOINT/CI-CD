@@ -80,6 +80,22 @@ beforeEach(() => {
 afterEach(() => vi.clearAllMocks())
 
 describe('RepositoryBrowserPage', () => {
+  it('keeps the catalog tab and stable storage identity when browsing embedded history', () => {
+    render(
+      <MemoryRouter initialEntries={['/catalog/repositories/repository-id?tab=files&project_scope=all']}>
+        <RepositoryBrowserPage repositoryName="immutable-storage-name" embedded />
+        <Location />
+      </MemoryRouter>,
+    )
+    expect(mocks.tree).toHaveBeenCalledWith('immutable-storage-name', 'HEAD', undefined, { limit: 101, offset: 0, search: '' })
+    expect(screen.queryByRole('link', { name: 'navigation.repositories' })).not.toBeInTheDocument()
+    fireEvent.mouseDown(screen.getByRole('tab', { name: 'repositoryBrowser.commits' }), { button: 0, ctrlKey: false })
+    expect(screen.getByTestId('location')).toHaveTextContent('tab=files')
+    expect(screen.getByTestId('location')).toHaveTextContent('git_tab=commits')
+    expect(screen.getByTestId('location')).toHaveTextContent('project_scope=all')
+    expect(mocks.commits).toHaveBeenCalledWith('immutable-storage-name', 'HEAD', 1, 25)
+  })
+
   it('opens code by default and keeps nested directories and files in the URL', () => {
     mocks.tree.mockImplementation((_repo: string, _ref: string, dir?: string) => result(dir === 'src'
       ? [{ path: 'src/index.tsx', name: 'index.tsx', kind: 'blob', sha: 'def123456', size: 12 }]

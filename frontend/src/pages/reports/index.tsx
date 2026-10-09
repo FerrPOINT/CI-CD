@@ -10,7 +10,7 @@ export function ReportsPage() {
   const { t, i18n } = useTranslation()
   const { projectId } = useParams()
   const reportQuery = useProjectReport(projectId)
-  const pipelinesPath = `/projects/${projectId}/pipelines`
+  const pipelinesPath = `/delivery-configs/${projectId}/pipelines`
 
   return (
     <div className="space-y-5">

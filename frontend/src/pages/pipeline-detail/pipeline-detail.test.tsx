@@ -41,6 +41,9 @@ function renderPipelineDetail(
     vi.fn((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString()
       requests.push(url)
+      if (url === `/api/v1/delivery-configurations/${projectId}`) {
+        return json({ id: projectId, name: 'Build', repository_id: null, default_branch: 'main' })
+      }
       if (url === `/api/v1/pipelines/${pipelineId}`) {
         if (options.failFirstDetail && detailCalls++ === 0) {
           return Promise.resolve(new Response('unavailable', { status: 503 }))

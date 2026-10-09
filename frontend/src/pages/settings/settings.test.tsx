@@ -1,3 +1,4 @@
+import { MemoryRouter } from 'react-router'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SettingsPage } from './index'
@@ -10,7 +11,7 @@ afterEach(cleanup)
 
 describe('SettingsPage', () => {
   it('filters variables by key and description and can clear the search', () => {
-    render(<SettingsPage />)
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>)
     const search = screen.getByRole('searchbox', { name: 'settings.search' })
 
     fireEvent.change(search, { target: { value: 'CICD_RUNNER_TAGS' } })
@@ -26,7 +27,7 @@ describe('SettingsPage', () => {
   })
 
   it('shows an empty search result', () => {
-    render(<SettingsPage />)
+    render(<MemoryRouter><SettingsPage /></MemoryRouter>)
     fireEvent.change(screen.getByRole('searchbox', { name: 'settings.search' }), { target: { value: 'no-such-variable' } })
     expect(screen.getByRole('status')).toHaveTextContent('settings.noMatches')
   })

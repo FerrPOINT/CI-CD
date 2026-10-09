@@ -1,3 +1,6 @@
+import { useQuery } from '@tanstack/react-query'
+import { api } from '@/api/client'
+import type { Configuration } from '@/api/workspaces'
 import { FormEvent, useEffect, useState } from 'react'
 import { NamespaceLink as Link } from '@sdlc/ui/ui'
 import { useNamespaceNavigate as useNavigate } from '@sdlc/ui/ui'
@@ -5,7 +8,7 @@ import { useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { ChevronRight, Clock, Play } from 'lucide-react'
 import { toast } from 'sonner'
-import { usePipelines, useProjects, useTriggerPipeline } from '@/api/hooks'
+import { usePipelines, useTriggerPipeline } from '@/api/hooks'
 import { QueryState } from '@/shared/ui/query-state'
 import { Button, Input, Label } from '@sdlc/ui/ui'
 
@@ -22,8 +25,8 @@ export function PipelinesPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const { projectId } = useParams<{ projectId: string }>()
-  const { data: projects = [] } = useProjects()
-  const project = projects.find((item) => item.id === projectId)
+  const configQuery = useQuery({ queryKey: ['delivery-config', projectId], queryFn: ({ signal }) => api<Configuration>(`/delivery-configurations/${projectId}`, { signal }) })
+  const project = configQuery.data
   const [page, setPage] = useState(0)
   useEffect(() => setPage(0), [projectId])
   const pipelinesQuery = usePipelines(projectId, page, pageSize)
@@ -59,8 +62,8 @@ export function PipelinesPage() {
             aria-label={t('pipelines.title')}
             className="flex min-w-0 items-center gap-2 text-sm text-text-muted"
           >
-            <Link to="/projects" className="min-h-10 content-center hover:text-text-primary">
-              {t('navigation.projects')}
+            <Link to="/delivery-configs" className="min-h-10 content-center hover:text-text-primary">
+              CI-конфигурации
             </Link>
             <ChevronRight className="h-4 w-4 shrink-0" aria-hidden />
             <span className="truncate">{project?.name ?? projectId}</span>
