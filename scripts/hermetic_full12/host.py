@@ -31,7 +31,8 @@ CACHE_BOUNDARY_CONTROLS = '3f366b5c73c1386f3d710f4dd94dc1c0ac074bc6'
 CACHE_PREPARE_CONTROLS = '970f785cf05f72cf88f21adc2d0c5ee5012ecf9c'
 CACHE_ALLOCATE_CONTROLS = '6241d2b381a22302f6fd8fae4ee14e0d200c1282'
 PRE_CACHE_CAPACITY_CONTROLS = 'ab623f1ea7f47c0afa182ab4b913c89f981d305b'
-CONTROLS_PARENT = 'dcad6522c9dc313bf6f8113deb9ecb885e6710ad'
+CUMULATIVE_RECLAIM_CONTROLS = 'dcad6522c9dc313bf6f8113deb9ecb885e6710ad'
+CONTROLS_PARENT = '9e3241ef9b83536600ee1a7660a53f588cf232a0'
 BRANCH = 'build-only/forge-delegation-full12-20261010'
 CONSUMER_PATHS = {
     '.github/workflows/forge-hermetic-full12.yml',
@@ -381,7 +382,8 @@ def bind_maintenance(module, proof):
 
 def controls_history(controls):
     require(git(controls, 'rev-parse', '--is-shallow-repository').strip() == b'false')
-    for revision, parent in (('HEAD', CONTROLS_PARENT), (CONTROLS_PARENT, PRE_CACHE_CAPACITY_CONTROLS),
+    for revision, parent in (('HEAD', CONTROLS_PARENT), (CONTROLS_PARENT, CUMULATIVE_RECLAIM_CONTROLS),
+                             (CUMULATIVE_RECLAIM_CONTROLS, PRE_CACHE_CAPACITY_CONTROLS),
                              (PRE_CACHE_CAPACITY_CONTROLS, CACHE_ALLOCATE_CONTROLS),
                              (CACHE_ALLOCATE_CONTROLS, CACHE_PREPARE_CONTROLS),
                              (CACHE_PREPARE_CONTROLS, CACHE_BOUNDARY_CONTROLS),

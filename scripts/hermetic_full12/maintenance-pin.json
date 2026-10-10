@@ -1,8 +1,8 @@
 {
   "schema": "forge/private-maintenance-pin/v2",
   "repository": "FerrPOINT/services-base",
-  "commit": "6602c63a9719142c3b5aafbe6bc61ff0bb3b6e4f",
-  "ref": "refs/heads/fix/maintenance-admission-and-installer-20261010",
+  "commit": "66b7fafdee47ada41f663f07af2bfdf32363e467",
+  "ref": "refs/heads/main",
   "qualification": "published_exact_commit",
   "files": {
     "scripts/compose_helpers.py": {

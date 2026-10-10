@@ -1,7 +1,7 @@
 # Public-safe exact-source full12 controls
 
 Этот source-only successor имеет непосредственный parent
-`dcad6522c9dc313bf6f8113deb9ecb885e6710ad`; все exact parent edges предыдущих
+`9e3241ef9b83536600ee1a7660a53f588cf232a0`; все exact parent edges предыдущих
 controls сохранены в `host.controls_history`, включая maintenance controls
 `b9375dc4b4f070b0f6cff1733228f1a6865b1368`, safety controls
 `4d97c54f35b485224a8229495763658fcbbd40e9`, qualification controls
@@ -13,19 +13,18 @@ retired/private controls. Product SDK остаётся
 
 ## Closed Dependency
 
-`maintenance-pin.json` v2 связывает parent-reviewed safety successor
-`6602c63a9719142c3b5aafbe6bc61ff0bb3b6e4f` и explicit published ref
-`refs/heads/fix/maintenance-admission-and-installer-20261010` в private
-`FerrPOINT/services-base` (Draft PR183). Parent publication ACK и отдельный actual
-read-only qualification подтверждают точный tip до/после, fetched ref, три Git
+`maintenance-pin.json` v2 связывает merged Base commit
+`66b7fafdee47ada41f663f07af2bfdf32363e467` и historical approval ref
+`refs/heads/main` в private `FerrPOINT/services-base` (merged PR183).
+Отдельный actual read-only qualification подтверждает точный tip до/после, full history, три Git
 blobs и raw SHA256. `published_exact_commit` относится только к этой dependency,
 не к native/full12 acceptance. Private717, installed packet, рабочие файлы,
 SDK19a и старые helper hashes не являются fallback.
 
-Exact660 прошёл существующий Linux CLI qualifier в уже работающем Ubuntu WSL:
-fresh authenticated ref до/после, отдельный fetched full-history Git checkout,
-три regular-file blob и raw SHA256. Три helper bytes идентичны прежнему43;
-опубликованные43 и63 больше не являются текущим advertised tip и отвергаются.
+Exact66b7 прошёл существующий Linux qualifier в уже работающем Ubuntu WSL:
+fresh authenticated main до/после, отдельный fetched full-history Git checkout,
+три regular-file mode/blob и raw SHA256, идентичные квалифицированному660.
+Опубликованные43,63 и660 не являются текущим candidate и отвергаются при новой qualification.
 Product SDK19a и installed packet не менялись. Эта metadata qualification не
 означает успешный hosted run, recovery capacity или native/full12 acceptance.
 
@@ -38,29 +37,30 @@ Canonical absolute registry/output и original owner/cleanup semantics сохр�
 
 ### Проверка candidate без записи
 
-Из аутентифицированного full-history checkout с актуальным fetched
-`refs/remotes/origin/fix/maintenance-admission-and-installer-20261010` проверить:
+Из аутентифицированного full-history checkout с доступными exact66b7 objects проверить:
 
 ```sh
 python3 -B scripts/hermetic_full12/maintenance_git.py qualify \
-  /absolute/private/services-base 6602c63a9719142c3b5aafbe6bc61ff0bb3b6e4f \
-  refs/heads/fix/maintenance-admission-and-installer-20261010
+  /absolute/private/services-base 66b7fafdee47ada41f663f07af2bfdf32363e467 \
+  refs/heads/main
 ```
 
 Команда использует существующий Linux owned-process helper, включая WNOWAIT и
 group cleanup: общий Git work budget 60 секунд и неизменный teardown tail.
 Проверяются canonical origin до сетевого запроса, exact configured commit/ref,
-опубликованный branch tip до и после readback, fetched tracking tip, full history,
+опубликованный branch tip до и после readback, full history,
 commit, три regular-file blob и raw SHA256 (без EOL normalization).
 Вывод содержит только candidate pin JSON либо фиксированный отказ
 `MAINTENANCE_PIN_UNQUALIFIED` (exit1). Нет fetch, установки/import helper, записи
 pin, материализации private files, cleanup или допуска full12. Изменение branch
-tip во время readback запрещено; ref сохраняется как дополнительное ограничение,
-а не вместо immutable commit. Приватный код
+tip во время qualification readback запрещено. После approval ref сохраняется
+как historical provenance, не как runtime freshness predicate: движение или
+удаление branch не меняет approved commit/bytes. Отсутствующий approved object
+закрывает runtime без fallback на новый tip. Приватный код
 и credentials не входят в публичный checkout или artifacts.
 
 Текущий checkout guard требует exact normal chain из `host.controls_history`,
-full history, task-owned modifications относительно dcad и add-only controls относительно25be.
+full history, task-owned modifications относительно9e и add-only controls относительно25be.
 Предыдущий workflow/host branch: `build-only/forge-bootstrap-full12-20261010`.
 Изменение родителя в следующем reviewed commit требует сохранить всю chain,
 не заменить проверку на произвольный ancestor. Candidate JSON и installed bytes
@@ -78,8 +78,10 @@ cleanup или копирования дополнительных private files
 
 Существующий authenticated SDK checkout сохраняет timeout2min/fetch-depth0;
 его object database содержит SDK19a и отдельный maintenance commit. При каждом
-raw readback проверяется exact fetched private branch tip, без дополнительного
-token, registry fallback или сетевого запроса из runtime. Seals/aggregate связывают
+raw readback проверяются strict origin, exact approved commit и три mode/blob/raw hashes,
+без runtime tracking-tip equality, дополнительного token, registry fallback
+или сетевого запроса из runtime. Existing SDK19a full-history checkout получает
+merged66b7 через main; никакого дополнительного checkout action нет. Seals/aggregate связывают
 repository/commit/ref/три hashes. Только metadata входит в public evidence.
 Private bytes остаются в памяти/ephemeral VM, не в public Git/logs/artifacts.
 

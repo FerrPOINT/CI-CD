@@ -182,8 +182,8 @@ class MaintenanceGitTests(unittest.TestCase):
 
     def test_current_pin_exact_reviewed_safety_successor(self):
         pin = json.loads(m.PIN.read_bytes())
-        self.assertEqual(pin['commit'], '6602c63a9719142c3b5aafbe6bc61ff0bb3b6e4f')
-        self.assertEqual(pin['ref'], 'refs/heads/fix/maintenance-admission-and-installer-20261010')
+        self.assertEqual(pin['commit'], '66b7fafdee47ada41f663f07af2bfdf32363e467')
+        self.assertEqual(pin['ref'], 'refs/heads/main')
         self.assertEqual(pin['qualification'], 'published_exact_commit')
         self.assertEqual(m.CANDIDATE_COMMIT, pin['commit'])
         self.assertEqual(pin['files'], m.EXPECTED_FILES)
@@ -271,9 +271,9 @@ class MaintenanceGitTests(unittest.TestCase):
                         m.qualify(Path('.'), commit, ref, git)
                     git.assert_not_called()
 
-    def test_fetched_branch_mismatch_or_missing_before_payload_read(self):
+    def test_fetched_branch_mismatch_or_missing_keeps_approved_payload_read(self):
         for failure in (b'b' * 40 + b'\n', RuntimeError('PRIVATE REF ERROR')):
-            with self.subTest(failure=type(failure).__name__), fixture() as (root, _, _, original):
+            with self.subTest(failure=type(failure).__name__), fixture() as (root, pin, payloads, original):
                 def changed(checkout, *args):
                     if args == ('rev-parse', '--verify', 'refs/remotes/origin/maintenance-reviewed^{commit}'):
                         if isinstance(failure, Exception):
@@ -281,9 +281,14 @@ class MaintenanceGitTests(unittest.TestCase):
                         return failure
                     return original(checkout, *args)
                 git = Mock(side_effect=changed)
-                with self.assertRaises(m.QualificationFailure):
-                    m.read_payloads(root, git)
-                self.assertFalse(any(c.args[1] in ('cat-file', 'ls-tree') for c in git.call_args_list))
+                proof, actual = m.read_payloads(root, git)
+                self.assertEqual(actual, payloads)
+                self.assertEqual(proof, {key: pin[key] for key in ('repository', 'commit', 'ref', 'files')})
+                reads = [call.args[1:] for call in git.call_args_list]
+                self.assertIn(('rev-parse', '--verify', pin['commit'] + '^{commit}'), reads)
+                self.assertEqual(sum(args[0] == 'cat-file' for args in reads), 3)
+                self.assertFalse(any(args[0] == 'ls-remote' or any('refs/remotes/' in arg for arg in args)
+                                     for args in reads))
                 self.assertEqual(list(root.iterdir()), [m.PIN])
 
     def test_unapproved_717_cannot_qualify_before_git(self):
@@ -294,7 +299,8 @@ class MaintenanceGitTests(unittest.TestCase):
 
     def test_superseded_published_tips_cannot_qualify_or_preflight(self):
         for commit in ('43d02057d96b326b4ea077388277e6064602ef61',
-                       '63e7a77688b5bae49f9673de5031294c5b7cb77a'):
+                       '63e7a77688b5bae49f9673de5031294c5b7cb77a',
+                       '6602c63a9719142c3b5aafbe6bc61ff0bb3b6e4f'):
             with self.subTest(commit=commit):
                 git = Mock()
                 with self.assertRaises(m.QualificationFailure):
@@ -408,7 +414,8 @@ class ConsumerHistoryTests(unittest.TestCase):
         if args == ('rev-parse', '--is-shallow-repository'):
             return b'false\n'
         parents = {'HEAD': ('a' * 40, h.CONTROLS_PARENT),
-                   h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.PRE_CACHE_CAPACITY_CONTROLS),
+                   h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.CUMULATIVE_RECLAIM_CONTROLS),
+                   h.CUMULATIVE_RECLAIM_CONTROLS: (h.CUMULATIVE_RECLAIM_CONTROLS, h.PRE_CACHE_CAPACITY_CONTROLS),
                    h.PRE_CACHE_CAPACITY_CONTROLS: (h.PRE_CACHE_CAPACITY_CONTROLS, h.CACHE_ALLOCATE_CONTROLS),
                    h.CACHE_ALLOCATE_CONTROLS: (h.CACHE_ALLOCATE_CONTROLS, h.CACHE_PREPARE_CONTROLS),
                    h.CACHE_PREPARE_CONTROLS: (h.CACHE_PREPARE_CONTROLS, h.CACHE_BOUNDARY_CONTROLS),
@@ -431,7 +438,8 @@ class ConsumerHistoryTests(unittest.TestCase):
     def test_exact_normal_successor_history_admitted(self):
         with patch.object(h, 'git', side_effect=self.git):
             h.controls_history(Path('controls'))
-        self.assertEqual(h.CONTROLS_PARENT, 'dcad6522c9dc313bf6f8113deb9ecb885e6710ad')
+        self.assertEqual(h.CONTROLS_PARENT, '9e3241ef9b83536600ee1a7660a53f588cf232a0')
+        self.assertEqual(h.CUMULATIVE_RECLAIM_CONTROLS, 'dcad6522c9dc313bf6f8113deb9ecb885e6710ad')
         self.assertEqual(h.PRE_CACHE_CAPACITY_CONTROLS, 'ab623f1ea7f47c0afa182ab4b913c89f981d305b')
         self.assertEqual(h.CACHE_ALLOCATE_CONTROLS, '6241d2b381a22302f6fd8fae4ee14e0d200c1282')
         self.assertEqual(h.CACHE_PREPARE_CONTROLS, '970f785cf05f72cf88f21adc2d0c5ee5012ecf9c')
@@ -450,6 +458,7 @@ class ConsumerHistoryTests(unittest.TestCase):
                 (('rev-list', '--parents', '-n', '1', 'HEAD'), ('a' * 40 + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', 'HEAD'), ('a' * 40 + ' ' + h.CONTROLS_PARENT + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.CONTROLS_PARENT), (h.CONTROLS_PARENT + ' ' + h.SOURCE).encode()),
+                (('rev-list', '--parents', '-n', '1', h.CUMULATIVE_RECLAIM_CONTROLS), (h.CUMULATIVE_RECLAIM_CONTROLS + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.PRE_CACHE_CAPACITY_CONTROLS), (h.PRE_CACHE_CAPACITY_CONTROLS + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.CACHE_ALLOCATE_CONTROLS), (h.CACHE_ALLOCATE_CONTROLS + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.CACHE_PREPARE_CONTROLS), (h.CACHE_PREPARE_CONTROLS + ' ' + h.SOURCE).encode()),

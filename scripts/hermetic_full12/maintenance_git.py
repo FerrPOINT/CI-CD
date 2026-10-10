@@ -8,8 +8,8 @@ import time
 
 PIN = Path(__file__).with_name('maintenance-pin.json')
 REPOSITORY = 'FerrPOINT/services-base'
-CANDIDATE_COMMIT = '6602c63a9719142c3b5aafbe6bc61ff0bb3b6e4f'
-CANDIDATE_REF = 'refs/heads/fix/maintenance-admission-and-installer-20261010'
+CANDIDATE_COMMIT = '66b7fafdee47ada41f663f07af2bfdf32363e467'
+CANDIDATE_REF = 'refs/heads/main'
 EXPECTED_FILES = {
     'scripts/compose_helpers.py': {
         'blob': '1ec8803af11c1cb99d59f58dd89019b04cd07cc0',
@@ -70,9 +70,7 @@ def _read_payloads(checkout, git, pin):
         commit = pin['commit']
         require(git(checkout, 'rev-parse', '--verify', commit + '^{commit}').decode().strip() == commit)
         require(git(checkout, 'rev-parse', '--is-shallow-repository').strip() == b'false')
-        # The authenticated full-history checkout must have fetched this exact branch tip.
-        tracking = 'refs/remotes/origin/' + pin['ref'].removeprefix('refs/heads/')
-        require(git(checkout, 'rev-parse', '--verify', tracking + '^{commit}').decode().strip() == commit)
+        # Ref records fresh approval provenance; runtime reads only the approved objects.
         entries = git(checkout, 'ls-tree', '-z', commit, '--', *sorted(EXPECTED_FILES)).split(b'\0')
         tree = {}
         for entry in entries:

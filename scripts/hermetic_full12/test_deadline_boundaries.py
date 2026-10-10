@@ -26,7 +26,8 @@ def git_response(argv):
         return b'false\n'
     if args[0] == 'rev-list':
         chain = {'HEAD': (os.environ['GITHUB_SHA'], h.CONTROLS_PARENT),
-                 h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.PRE_CACHE_CAPACITY_CONTROLS),
+                 h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.CUMULATIVE_RECLAIM_CONTROLS),
+                 h.CUMULATIVE_RECLAIM_CONTROLS: (h.CUMULATIVE_RECLAIM_CONTROLS, h.PRE_CACHE_CAPACITY_CONTROLS),
                  h.PRE_CACHE_CAPACITY_CONTROLS: (h.PRE_CACHE_CAPACITY_CONTROLS, h.CACHE_ALLOCATE_CONTROLS),
                  h.CACHE_ALLOCATE_CONTROLS: (h.CACHE_ALLOCATE_CONTROLS, h.CACHE_PREPARE_CONTROLS),
                  h.CACHE_PREPARE_CONTROLS: (h.CACHE_PREPARE_CONTROLS, h.CACHE_BOUNDARY_CONTROLS),
@@ -119,8 +120,8 @@ class DeadlineBoundaryTests(unittest.TestCase):
                    'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_SHA': 'a' * 40}
             with patch.dict(os.environ, env), patch.object(h.m, 'preflight'), patch.object(h.m, 'read_payloads', return_value=({}, {})), patch.object(h, 'hosted_guard'), patch.object(h, 'verify_components', return_value={}), patch.object(h, 'wall_budget', side_effect=wall), patch.object(h.time, 'monotonic', side_effect=lambda: clock[0]), patch.object(h, 'command', side_effect=command), patch.object(h, 'reclaim', side_effect=h.CapacityFailure({'host_free_bytes': 0})), patch.object(gate, 'start_daemon') as start, patch.object(gate, 'stop_daemon', return_value={'stopped': True}):
                 self.assertEqual(gate.run_job('C'), 1)
-            self.assertEqual(envelopes[:2], [5400, 3960])  # Twenty-four successful Git calls consume1440.
-            self.assertEqual(len(git_calls), 48)  # Initial + final parity proof, private qualification separately tested.
+            self.assertEqual(envelopes[:2], [5400, 3900])  # Twenty-five successful Git calls consume1500.
+            self.assertEqual(len(git_calls), 50)  # Initial + final parity proof, private qualification separately tested.
             start.assert_not_called()
             self.assertIsNone(h.BOOTSTRAP_DEADLINE)
 
