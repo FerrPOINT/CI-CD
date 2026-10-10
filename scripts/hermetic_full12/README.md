@@ -1,5 +1,37 @@
 # Public-safe exact-source full12 controls
 
+Текущий successor имеет sole parent `e281bd1f8da4bfc74baa76e84db95daa4dd610db`:
+normal merge с ordered parents controls `20e4f4fd12230ed87d01f05b18d3417a11e052a8`
+и product `e781b533bfb25fa669d5a5c65f8fa7094de7af02`. Product e781 сохраняет ordered
+parents `f05d4796160f1ebd14cb60ddc14da9e3eb78c36d` и foreign PR88
+`903db592f17beb761ed82a20cb8f4645f11ed200`; f05 имеет sole parent5f.
+Все три product checkout, catalogue и coverage привязаны к EXACT e781, не к mergee281.
+Исторический merge27bc по-прежнему связан с original5f через отдельный
+`CHILD_CLASS_SOURCE`; старые objects не переименованы в e781. Existing history
+guard проверяет exact parents, add-only controls относительно e781 как в merge-prefix,
+так и в successor, и только consumer modifications после prefix. Старые edges сохранены.
+
+Catalogue теперь содержит Forge178 + Base88 =266: прежние177 paths сохранены,
+добавлен только foreign `deploy/qa/task-delivery-engine-tools.compose.yml`.
+Этот файл экспортируется как source input, но не используется вместо pinned hosted
+tools image. SDK19a, maintenance66b7, locks и schema неизменны. Historical
+`source_seal_sha256` и `original_components_sha256` остаются прежними reference hashes,
+не являются seal текущего e781 и не подтверждают новый native/full12 PASS.
+
+Фактический Python gate теперь81 (PG49 + OCI32); все прежние cases сохранены.
+PG native predicate требует5 tests, все24 exact restore-negative identities
+(прежний table case теперь `reader-table`) и два дополнительных existing markers
+`ACTUAL_PG_READER_SEQUENCE_AND_VIEW_WRITES=REJECTED` /
+`ACTUAL_PG_MANIFEST_FINGERPRINT_DRIFT=REJECTED`. Это source-derived expectations,
+не утверждение native PASS. Existing hosted manifest передаёт только fixture override
+`CICD_TEST_PG_PYTHON=/usr/local/bin/python3`: foreign fixture default `/usr/bin/python3.11`
+и external QA wrappers сохранены; production absolute-path validation без fallback.
+Исходные12 commands, positive predicates, budgets/deadlines, HOST/DATA reserves,
+`SDLC_MIN_FREE_GIB`, resources, pins, cleanup и privacy limits не ослаблены.
+
+Ниже сохранено описание предыдущих frozen successors; их counts/source identities
+исторические, не текущие acceptance receipts.
+
 Этот count-correction successor имеет непосредственный parent
 `29447047bc1eb5a63bea3048c2706a865a363d85`. На его actual run38083675365
 предварительная проверка остановилась до первого stage: старый guard ожидал
@@ -78,7 +110,7 @@ tip во время qualification readback запрещено. После approv
 закрывает runtime без fallback на новый tip. Приватный код
 и credentials не входят в публичный checkout или artifacts.
 
-Текущий checkout guard требует exact normal history из `host.controls_history`,
+Предыдущий checkout guard требовал exact normal history из `host.controls_history`,
 full history, task-owned modifications относительно exact merge27bc и add-only controls
 относительно source5f. Merge abf/5f имеет ровно два ordered parents и ровно четыре
 approved source modifications относительноabf. Предыдущий merge667 сохраняет
@@ -178,6 +210,13 @@ legacy entries без этого поля валидны. Source5f добавл�
 и actual integer `exitCode`1..255. Фиксированный allowlist: `ValueError`, `RuntimeError`,
 `OSError`, `TimeoutError`, `FileNotFoundError`, `PermissionError`, `AssertionError`,
 `JSONDecodeError`, `KeyError`, `TypeError`, `TimeoutExpired`, `unknown`.
+Source f05/e781 добавляет только `DiskSpaceGuard`, `DaemonIdentityGuard`,
+`ExistingResourcesGuard` в тот же optional enum, без новых keys. Это whole exact
+literal classifications трёх static SDK RuntimeError сообщений, только для
+`type(error) is RuntimeError`, одного actual string arg и exact equality; не substring
+или `str(exception)`. Другие RuntimeError остаются `RuntimeError`.
+Label не доказывает SDK origin, bridge arrival, authority, effects или root cause;
+underlying historical OCI failure остаётся неизвестным без нового actual readback.
 Blocked pairs, zero/null/bool exit и другие payload kinds не могут иметь этот ключ.
 Legacy entries без class остаются прежними. Все остальные поля запрещены. Duplicate JSON keys, unknown enum,
 wrong bool/int/range, duplicate/empty/unbounded lists отвергаются. CLI code не
@@ -189,7 +228,7 @@ command hashes и records не входят в projection. `unavailable` озн�
 наблюдение, включая stat failure, неподходящий file type/link или prefix gap.
 Ни prefix, ни `result` не доказывают record validity, owner authority, coherent
 snapshot, bridge arrival, successful child effect или acceptance. Source size/hash
-attestation по exact5f catalogue не подписывает происхождение observation.
+attestation по exacte781 catalogue не подписывает происхождение observation.
 
 Class возникает только после completed bounded stderr/read/wait и failed effect
 child в source. Приватный typed error сохраняет лишь enum, с прежним static Display;
@@ -302,7 +341,7 @@ Docker29.8.2/Compose5.5.1 daemon before effects and uses real PG/OCI fixtures.
 There is no runtime, database, image or cache custody transfer between jobs.
 Only allowlisted redacted evidence crosses jobs. No receipt is acceptance by
 itself: safe receipts are evidence, not transferable native runtime custody.
-Final PASS requires all12 in the same workflow attempt, exact sources265,
+Final PASS requires all12 in the same workflow attempt, exact sources266,
 component/maintenance parity, all assertions and independent exact cleanup.
 
 Original stage budgets remain 2400/300/300/2400/2400/5400/2400/900/900/900/900/1800s.

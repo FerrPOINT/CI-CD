@@ -78,7 +78,7 @@ class ControlsTests(unittest.TestCase):
 
     def test_source265_catalogues(self):
         catalogues = h.read(h.HERE / 'source-catalogue.json')['catalogues']
-        self.assertEqual({key: value['count'] for key, value in catalogues.items()}, {'forge': 177, 'base': 88})
+        self.assertEqual({key: value['count'] for key, value in catalogues.items()}, {'forge': 178, 'base': 88})
         for spec in catalogues.values():
             raw = json.dumps(spec['files'], sort_keys=True, separators=(',', ':')).encode()
             self.assertEqual(hashlib.sha256(raw).hexdigest(), spec['sha256'])
@@ -100,7 +100,7 @@ class ControlsTests(unittest.TestCase):
         self.assertEqual(sum(isinstance(node, ast.Assert) for node in ast.walk(ast.parse((h.HERE / 'row_smoke.py').read_bytes()))), 16)
 
     def test_source_and_base_exact(self):
-        self.assertEqual(h.SOURCE, '5f973b33e758a4d60e86fc8ff4eda99c6d4496c1')
+        self.assertEqual(h.SOURCE, 'e781b533bfb25fa669d5a5c65f8fa7094de7af02')
         self.assertEqual(h.BASE, '19a7a381ae6dbea61a643bb96189e483fa64df5c')
 
     def test_checkpoint_source_catalogue_and_all_three_checkout_bindings(self):
@@ -113,9 +113,11 @@ class ControlsTests(unittest.TestCase):
         self.assertNotIn('ref: ' + h.SOURCE_PARENT, workflow)
         expected = {
             'backend/src/bin/forge-delivery.rs': (4919, '61fe2874c3bd32564c66232c91a113f771c09b6b5660ed026b89c0e183d7af59'),
-            'backend/src/task_delivery/oci.rs': (64079, '599561c37e29ed0059d77e61d30c46be9c0a3a25c1362b0af395980dcfe9aae7'),
-            'backend/tests/support/oci_delivery.rs': (33640, '855a78015c51938d00b1feecd5851578fac44fb234b33981cca71915e46f0def'),
-            'scripts/tests/test_oci_offline_fixture.py': (41731, '45a411cb1704096ec1d9a87c6ea7cefdfcfb876cb040739e57148a11ea70ad03'),
+            'backend/src/task_delivery/oci.rs': (65354, 'ccfdce2b67bc222ff7e81a6d8cb0fb1c23452e1fc8ac895b339b261492afcb44'),
+            'backend/tests/support/oci_delivery.rs': (33707, 'f769f2cc3c8ba758fa202625e5c2cf52c0e67a157f0845a85e80580d6f1e6f72'),
+            'scripts/tests/test_oci_offline_fixture.py': (42548, '382d4a91b88d54786a57b132d28d3c295199ea0da0146091cc41a894ae7a6514'),
+            'backend/tests/support/postgres_delivery.rs': (48885, '1c893637921bafacddee6a9d631c557d314524d119b93af5b7d4b748673daccd'),
+            'scripts/tests/test_postgres_delivery.py': (50886, '291d090bdf6455c653de0ef8b3a282c3a0cf78ee2c55f42e74f8a42631593eae'),
         }
         files = {item['path']: item for item in catalogue['catalogues']['forge']['files']}
         for name, (size, digest) in expected.items():
@@ -144,7 +146,7 @@ class ControlsTests(unittest.TestCase):
         self.assertIn('sdlc_oci_delivery -- --test-threads=1 --nocapture', text)
 
     def test_python_admission_counts_actual_source_and_rejects_missing_or_extra_test(self):
-        expected = {'test_postgres_delivery.py': 47, 'test_oci_offline_fixture.py': 31}
+        expected = {'test_postgres_delivery.py': 49, 'test_oci_offline_fixture.py': 32}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             tests = root / 'sources/CI-CD/scripts/tests'
@@ -200,7 +202,7 @@ class ControlsTests(unittest.TestCase):
             tree = ast.parse((root / ('scripts/tests/' + name + '.py')).read_text(encoding='utf-8'))
             counts[name] = sum(isinstance(node, ast.FunctionDef) and node.name.startswith('test_')
                                for node in ast.walk(tree))
-        self.assertEqual(counts, {'test_postgres_delivery': 47, 'test_oci_offline_fixture': 31})
+        self.assertEqual(counts, {'test_postgres_delivery': 49, 'test_oci_offline_fixture': 32})
         for raw in (b'Ran 75 tests\nFROZEN_LINUX_PYTHON_UNITS:PASS',
                     b'Ran 77 tests\nFROZEN_LINUX_PYTHON_UNITS:PASS'):
             with self.assertRaises(ValueError):
@@ -213,7 +215,7 @@ class ControlsTests(unittest.TestCase):
         coverage = h.read(h.HERE / 'coverage.json')
         self.assertFalse(coverage['executed'])
         self.assertFalse(coverage['inherited_gate_results'])
-        self.assertIn('Ran 78 tests', coverage['stages'][0]['assertions'])
+        self.assertIn('Ran 81 tests', coverage['stages'][0]['assertions'])
         tests = (root / 'backend/src/task_delivery/oci.rs').read_text(encoding='utf-8').split('mod child_diagnostic_tests {', 1)[1]
         self.assertIn('fn child_outcome_preserves_failure_and_rejection_contract()', tests)
         self.assertIn('fn ordinary_feature_excludes_child_observation()', tests)
@@ -604,12 +606,47 @@ class AtomicAndFailureTests(unittest.TestCase):
 
 
 class GateAssertionTests(unittest.TestCase):
+    def test_merged_pg_five_requires_all_negative_identities_and_new_markers(self):
+        cases = ('corrupt,role,session,drift,reader-table,column,view,sequence-usage,sequence-update,'
+                 'maintain,reader-lo,writer-history-column,writer-history-view,writer-history-view-column,'
+                 'writer-history-rule,writer-history-child,writer-history-grandchild,writer-history-parent,'
+                 'writer-history-fk-delete,writer-history-fk-update,pgx-schema,large-object,pgx-role,owner')
+        markers = ('5 passed; 0 failed', 'ACTUAL_PG_READER_LO_DENIED_AND_EXCLUSIVE_DATABASE_ACCESS:PASS',
+                   'ACTUAL_PG_WRITER_HISTORY_VIEW_DML_DENIED:PASS',
+                   'ACTUAL_PG_FOREIGN_PROOF_REJECTED_CURRENT_WRITER_POOL_RECOVERY:PASS',
+                   'ACTUAL_PG_READER_SEQUENCE_AND_VIEW_WRITES=REJECTED',
+                   'ACTUAL_PG_MANIFEST_FINGERPRINT_DRIFT=REJECTED',
+                   'ACTUAL_PG_RESTORE_NEGATIVES=' + cases + ':PASS')
+        raw = '\n'.join(markers).encode()
+        self.assertEqual(gate.assertions('postgres', raw, Path('.')), {'tests_passed': 5, 'negative_count': 24})
+        for marker in markers:
+            with self.subTest(missing=marker), self.assertRaises(ValueError):
+                gate.assertions('postgres', raw.replace(marker.encode(), b''), Path('.'))
+        for before, after in (('5 passed', '3 passed'), ('reader-table,', 'reader,'),
+                              ('corrupt,', 'unknown-case,'), ('role,', 'corrupt,'), (':PASS', ':FAIL')):
+            with self.subTest(before=before, after=after), self.assertRaises(ValueError):
+                gate.assertions('postgres', raw.replace(before.encode(), after.encode()), Path('.'))
+
+    def test_merged_python81_and_hosted_fixture_interpreter(self):
+        self.assertEqual(gate.PYTHON_METHOD_COUNTS, {'test_postgres_delivery.py': 49, 'test_oci_offline_fixture.py': 32})
+        self.assertEqual(gate.assertions('python', b'Ran 81 tests\nFROZEN_LINUX_PYTHON_UNITS:PASS', Path('.')),
+                         {'tests_passed': 81})
+        for count in (75, 78, 80, 82):
+            with self.subTest(count=count), self.assertRaises(ValueError):
+                gate.assertions('python', f'Ran {count} tests\nFROZEN_LINUX_PYTHON_UNITS:PASS'.encode(), Path('.'))
+        config = {'project': 'owned', 'pg_project': 'pg', 'oci_project': 'oci'}
+        images = {'tools': 'tools', 'postgres': 'postgres'}
+        manifest = gate.manifest(Path('/unused'), config, images)
+        self.assertEqual(manifest['services']['qa']['environment']['CICD_TEST_PG_PYTHON'], '/usr/local/bin/python3')
+        self.assertNotIn('CICD_TEST_PG_PYTHON', manifest['services']['postgres']['environment'])
+        self.assertEqual((h.HOST_BYTES, h.DATA_BYTES), (108279229428, 71319483898))
+
     def test_python74_rejected(self):
         with self.assertRaises(ValueError):
             gate.assertions('python', b'Ran 74 tests\nFROZEN_LINUX_PYTHON_UNITS:PASS', Path('.'))
 
     def test_python75(self):
-        self.assertEqual(gate.assertions('python', b'Ran 78 tests\nFROZEN_LINUX_PYTHON_UNITS:PASS', Path('.'))['tests_passed'], 78)
+        self.assertEqual(gate.assertions('python', b'Ran 81 tests\nFROZEN_LINUX_PYTHON_UNITS:PASS', Path('.'))['tests_passed'], 81)
 
     def test_workspace219_rejected(self):
         raw = b'test result: ok. 219 passed; 0 failed;\nFROZEN_WORKSPACE_RUSTFMT:PASS\nFROZEN_WORKSPACE_UMASK=0022'
@@ -1632,7 +1669,7 @@ MAINTENANCE_TEST_FILES = {name: {'blob': 'd' * 40, 'sha256': 'c' * 64} for name 
 
 def report_fixture(job):
     catalogue = h.read(h.HERE / 'source-catalogue.json')['catalogues']
-    counts = {'python': 78, 'postgres': 3, 'oci': 1, 'workspace': 225, 'integration': 80, 'cli': 2}
+    counts = {'python': 81, 'postgres': 5, 'oci': 1, 'workspace': 225, 'integration': 80, 'cli': 2}
     stages = [{'stage': stage, 'status': 'PASS', 'timeout_seconds': gate.BUDGETS[stage],
                'source_parity': True, 'cleanup_complete': True, **({'tests_passed': counts[stage]} if stage in counts else {})}
               for stage in gate.JOBS[job]]
@@ -1660,11 +1697,11 @@ def report_fixture(job):
     return {'schema': 'forge/hermetic-full12-partition/v1', 'job': job, 'status': 'PARTITION_PASS',
         'inherited_gate_results': False, 'workflow_run': '123', 'workflow_attempt': '1',
         'checkout': {'controls': 'a' * 40, 'source': h.SOURCE, 'base': h.BASE}, 'components': {'fixture': 'a' * 64},
-        'job_budget_seconds': gate.job_budget(job), 'source_count': 265, 'source_parity': True, 'checkout_parity': True,
+        'job_budget_seconds': gate.job_budget(job), 'source_count': 266, 'source_parity': True, 'checkout_parity': True,
         'source_hashes': {key: value['sha256'] for key, value in catalogue.items()},
         'maintenance_sha256': 'c' * 64,
         'maintenance_git': {'repository': h.m.REPOSITORY, 'commit': 'f' * 40, 'ref': h.m.CANDIDATE_REF, 'files': MAINTENANCE_TEST_FILES},
-        'python_methods': {'test_postgres_delivery.py': 47, 'test_oci_offline_fixture.py': 31},
+        'python_methods': {'test_postgres_delivery.py': 49, 'test_oci_offline_fixture.py': 32},
         'admission_sha256': 'b' * 64, 'execution_sha256': 'c' * 64,
         'cache': {'new_locked_cache': True, 'private_cache_imported': False,
             'journal': {**journal, 'project': 'sdlc-build-forge-cache-' + token, 'purpose': 'locked-dependency-fetch-only'}},
@@ -1706,7 +1743,7 @@ class AggregationTests(unittest.TestCase):
 
     def test_stale_python_method_counts_rejected_in_each_partition(self):
         for index in range(3):
-            for stale_count in (28, 30, 32):
+            for stale_count in (28, 30, 31, 33):
                 with self.subTest(partition=index, count=stale_count):
                     def modify(*reports):
                         reports[index]['python_methods']['test_oci_offline_fixture.py'] = stale_count
@@ -1944,6 +1981,18 @@ class OciDiagnosticTests(unittest.TestCase):
 
 
 class OciCliDiagnosticTests(unittest.TestCase):
+    def test_three_literal_classes_use_existing_closed_projection_and_failure_context(self):
+        for name in ('DiskSpaceGuard', 'DaemonIdentityGuard', 'ExistingResourcesGuard'):
+            entry = self.observation(payloadKind='rejection', status='unknown_or_rejected',
+                                     reason='oci_command_rejected_or_unavailable', childErrorClass=name)
+            h.validate_safe_error(self.error([entry]))
+            with self.fixture([entry]) as (root, _, _):
+                self.assertEqual(h.oci_failure_diagnostics(root)['cli'], [entry])
+            for changed in ({'exitCode': 0}, {'exitCode': True}, {'status': 'blocked'},
+                            {'childErrorClass': name + ': PRIVATE'}, {'message': 'PRIVATE'}):
+                with self.subTest(name=name, changed=changed), self.assertRaises(ValueError):
+                    h.validate_safe_error(self.error([{**entry, **changed}]))
+
     @staticmethod
     def observation(**changes):
         return {'schema': 'forge/oci-cli-failure-diagnostic/v1', 'scope': 'fixture_observation_only',
@@ -1998,7 +2047,8 @@ class OciCliDiagnosticTests(unittest.TestCase):
         classes = namespace['CHILD_ERROR_CLASSES']
         self.assertEqual(classes, ('ValueError', 'RuntimeError', 'OSError', 'TimeoutError', 'FileNotFoundError',
                                   'PermissionError', 'AssertionError', 'JSONDecodeError', 'KeyError',
-                                  'TypeError', 'TimeoutExpired', 'unknown'))
+                                  'TypeError', 'TimeoutExpired', 'DiskSpaceGuard', 'DaemonIdentityGuard',
+                                  'ExistingResourcesGuard', 'unknown'))
         for child_class in classes:
             payload = {'schema': 'forge/local-oci-rejection/v1', 'status': 'unknown_or_rejected',
                        'reason': 'oci_command_rejected_or_unavailable', 'dispatchAllowed': False,

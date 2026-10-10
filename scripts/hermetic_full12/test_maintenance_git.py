@@ -409,16 +409,49 @@ class MaintenanceGitTests(unittest.TestCase):
 
 
 class ConsumerHistoryTests(unittest.TestCase):
+    def test_approved_pg_merge_and_old_source_edges_are_not_relabelled(self):
+        self.assertEqual(h.SOURCE_MERGE, 'e281bd1f8da4bfc74baa76e84db95daa4dd610db')
+        self.assertEqual(h.COUNT_CONTROLS, '20e4f4fd12230ed87d01f05b18d3417a11e052a8')
+        self.assertEqual(h.LITERAL_CLASS_SOURCE, 'f05d4796160f1ebd14cb60ddc14da9e3eb78c36d')
+        self.assertEqual(h.PG_MERGE_PARENT, '903db592f17beb761ed82a20cb8f4645f11ed200')
+        for revision in (h.SOURCE_MERGE, h.SOURCE, h.COUNT_CONTROLS, h.LITERAL_CLASS_SOURCE,
+                         h.CHILD_CLASS_SOURCE, h.CONTROLS_PARENT):
+            selector = ('rev-list', '--parents', '-n', '1', revision)
+            good = self.git(None, *selector).decode().split()
+            bad = (good[:-1], good + [h.SOURCE], [good[0], *reversed(good[1:])],
+                   [good[0], h.SOURCE])
+            for row in bad:
+                raw = ' '.join(row).encode()
+                if raw.strip() == ' '.join(good).encode():
+                    continue
+                with self.subTest(revision=revision, row=row), patch.object(h, 'git', side_effect=lambda root, *a:
+                        raw if a == selector else self.git(root, *a)), self.assertRaises(ValueError):
+                    h.controls_history(Path('controls'))
+
+    def test_merge_prefix_has_exact_product_and_successor_only_consumer_changes(self):
+        for selector in (('diff', '--name-status', h.SOURCE, h.SOURCE_MERGE),
+                         ('diff', '--name-status', h.CONTROLS_PARENT, h.COUNT_CONTROLS),
+                         ('diff', '--name-status', h.SOURCE_MERGE, 'HEAD')):
+            for raw in (b'', b'M\tbackend/src/task_delivery/oci.rs\n',
+                        b'A\t.local/private.py\n', b'D\tscripts/hermetic_full12/run.py\n'):
+                with self.subTest(selector=selector, raw=raw), patch.object(h, 'git', side_effect=lambda root, *a:
+                        raw if a == selector else self.git(root, *a)), self.assertRaises(ValueError):
+                    h.controls_history(Path('controls'))
+
     @staticmethod
     def git(_, *args):
         if args == ('rev-parse', '--is-shallow-repository'):
             return b'false\n'
-        parents = {'HEAD': ('a' * 40, h.CHILD_CLASS_CONTROLS),
+        parents = {'HEAD': ('a' * 40, h.SOURCE_MERGE),
+                   h.SOURCE_MERGE: (h.SOURCE_MERGE, h.COUNT_CONTROLS, h.SOURCE),
+                   h.COUNT_CONTROLS: (h.COUNT_CONTROLS, h.CHILD_CLASS_CONTROLS),
+                   h.LITERAL_CLASS_SOURCE: (h.LITERAL_CLASS_SOURCE, h.CHILD_CLASS_SOURCE),
                    h.CHILD_CLASS_CONTROLS: (h.CHILD_CLASS_CONTROLS, h.CONTROLS_PARENT),
-                   h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.CHECKPOINT_CONTROLS, h.SOURCE),
+                   h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.CHECKPOINT_CONTROLS, h.CHILD_CLASS_SOURCE),
                    h.CHECKPOINT_MERGE: (h.CHECKPOINT_MERGE, h.OCI_CLI_CONTROLS, h.SOURCE_PARENT),
                    h.CHECKPOINT_CONTROLS: (h.CHECKPOINT_CONTROLS, h.CHECKPOINT_MERGE),
-                   h.SOURCE: (h.SOURCE, h.SOURCE_PARENT),
+                   h.SOURCE: (h.SOURCE, h.LITERAL_CLASS_SOURCE, h.PG_MERGE_PARENT),
+                   h.CHILD_CLASS_SOURCE: (h.CHILD_CLASS_SOURCE, h.SOURCE_PARENT),
                    h.SOURCE_PARENT: (h.SOURCE_PARENT, h.ORIGINAL_SOURCE),
                    h.OCI_CLI_CONTROLS: (h.OCI_CLI_CONTROLS, h.OCI_CLI_PARENT),
                    h.OCI_CLI_PARENT: (h.OCI_CLI_PARENT, h.OCI_LOCATION_CONTROLS),
@@ -438,14 +471,16 @@ class ConsumerHistoryTests(unittest.TestCase):
                    h.PUBLIC_CONTROLS: (h.PUBLIC_CONTROLS, h.ORIGINAL_SOURCE)}
         if args[:4] == ('rev-list', '--parents', '-n', '1'):
             return (' '.join(parents[args[4]]) + '\n').encode()
-        if args == ('diff', '--name-status', h.CONTROLS_PARENT, 'HEAD'):
+        if args in (('diff', '--name-status', h.CONTROLS_PARENT, h.COUNT_CONTROLS),
+                    ('diff', '--name-status', h.SOURCE_MERGE, 'HEAD')):
             return b'M\tscripts/hermetic_full12/maintenance-pin.json\n'
         if args == ('diff', '--name-status', h.OCI_CLI_CONTROLS, h.CHECKPOINT_MERGE):
             return b'M\tbackend/tests/support/oci_delivery.rs\nM\tscripts/tests/test_oci_offline_fixture.py\n'
         if args == ('diff', '--name-status', h.CHECKPOINT_CONTROLS, h.CONTROLS_PARENT):
             return (b'M\tbackend/src/bin/forge-delivery.rs\nM\tbackend/src/task_delivery/oci.rs\n'
                     b'M\tbackend/tests/support/oci_delivery.rs\nM\tscripts/tests/test_oci_offline_fixture.py\n')
-        if args == ('diff', '--name-status', h.SOURCE, 'HEAD'):
+        if args in (('diff', '--name-status', h.SOURCE, 'HEAD'),
+                    ('diff', '--name-status', h.SOURCE, h.SOURCE_MERGE)):
             return b'A\tscripts/hermetic_full12/maintenance-pin.json\n'
         raise AssertionError('unexpected synthetic Git invocation')
 
@@ -456,7 +491,8 @@ class ConsumerHistoryTests(unittest.TestCase):
         self.assertEqual(h.CONTROLS_PARENT, '27bc299b995ff98e6ad4d6a53870af0e7890752b')
         self.assertEqual(h.CHECKPOINT_CONTROLS, 'abf62e7d310249a3abd74ebbdd53c626f6312f55')
         self.assertEqual(h.CHECKPOINT_MERGE, '667d1be736c8834deb1a20602b95bb0d6c815157')
-        self.assertEqual(h.SOURCE, '5f973b33e758a4d60e86fc8ff4eda99c6d4496c1')
+        self.assertEqual(h.CHILD_CLASS_SOURCE, '5f973b33e758a4d60e86fc8ff4eda99c6d4496c1')
+        self.assertEqual(h.SOURCE, 'e781b533bfb25fa669d5a5c65f8fa7094de7af02')
         self.assertEqual(h.SOURCE_PARENT, 'd7443f8dffdd7f5d921c5758bed4e5a35423c0ff')
         self.assertEqual(h.ORIGINAL_SOURCE, '25be2e82d4d42673897c8a16070eb8a9519244f0')
         self.assertEqual(h.OCI_CLI_CONTROLS, '876784219c3b2751b4351c81a90fc4971c797fde')
@@ -503,11 +539,11 @@ class ConsumerHistoryTests(unittest.TestCase):
                     h.controls_history(Path('controls'))
 
     def test_consumer_delta_and_public_history_path_guards(self):
-        for baseline, raw in ((h.CONTROLS_PARENT, b''),
-                              (h.CONTROLS_PARENT, b'M\tbackend/src/main.rs\n'),
-                              (h.CONTROLS_PARENT, b'M\tscripts/hermetic_full12/tools.Dockerfile\n'),
-                              (h.CONTROLS_PARENT, b'D\tscripts/hermetic_full12/maintenance-pin.json\n'),
-                              (h.CONTROLS_PARENT, b'A\tscripts/hermetic_full12/private.py\n'),
+        for baseline, raw in ((h.SOURCE_MERGE, b''),
+                              (h.SOURCE_MERGE, b'M\tbackend/src/main.rs\n'),
+                              (h.SOURCE_MERGE, b'M\tscripts/hermetic_full12/tools.Dockerfile\n'),
+                              (h.SOURCE_MERGE, b'D\tscripts/hermetic_full12/maintenance-pin.json\n'),
+                              (h.SOURCE_MERGE, b'A\tscripts/hermetic_full12/private.py\n'),
                               (h.SOURCE, b'M\tbackend/Cargo.lock\n'),
                               (h.SOURCE, b'A\t.local/private.py\n')):
             with self.subTest(baseline=baseline, raw=raw), patch.object(h, 'git', side_effect=lambda root, *a:

@@ -18,7 +18,12 @@ import urllib.request
 import maintenance_git as m
 
 HERE = Path(__file__).resolve().parent
-SOURCE = '5f973b33e758a4d60e86fc8ff4eda99c6d4496c1'
+SOURCE = 'e781b533bfb25fa669d5a5c65f8fa7094de7af02'
+CHILD_CLASS_SOURCE = '5f973b33e758a4d60e86fc8ff4eda99c6d4496c1'
+LITERAL_CLASS_SOURCE = 'f05d4796160f1ebd14cb60ddc14da9e3eb78c36d'
+PG_MERGE_PARENT = '903db592f17beb761ed82a20cb8f4645f11ed200'
+SOURCE_MERGE = 'e281bd1f8da4bfc74baa76e84db95daa4dd610db'
+COUNT_CONTROLS = '20e4f4fd12230ed87d01f05b18d3417a11e052a8'
 SOURCE_PARENT = 'd7443f8dffdd7f5d921c5758bed4e5a35423c0ff'
 ORIGINAL_SOURCE = '25be2e82d4d42673897c8a16070eb8a9519244f0'
 BASE = '19a7a381ae6dbea61a643bb96189e483fa64df5c'
@@ -288,7 +293,8 @@ def validate_safe_error(result):
                             and type(entry['childErrorClass']) is str and entry['childErrorClass'] in (
                                 'ValueError', 'RuntimeError', 'OSError', 'TimeoutError', 'FileNotFoundError',
                                 'PermissionError', 'AssertionError', 'JSONDecodeError', 'KeyError',
-                                'TypeError', 'TimeoutExpired', 'unknown'))
+                                'TypeError', 'TimeoutExpired', 'DiskSpaceGuard', 'DaemonIdentityGuard',
+                                'ExistingResourcesGuard', 'unknown'))
                 require(set(entry) == keys)
                 identity = json.dumps(entry, sort_keys=True)
                 require(identity not in seen)
@@ -557,12 +563,17 @@ def bind_maintenance(module, proof):
 
 def controls_history(controls):
     require(git(controls, 'rev-parse', '--is-shallow-repository').strip() == b'false')
+    row = git(controls, 'rev-list', '--parents', '-n', '1', SOURCE_MERGE).decode().split()
+    require(row == [SOURCE_MERGE, COUNT_CONTROLS, SOURCE])
+    row = git(controls, 'rev-list', '--parents', '-n', '1', SOURCE).decode().split()
+    require(row == [SOURCE, LITERAL_CLASS_SOURCE, PG_MERGE_PARENT])
     row = git(controls, 'rev-list', '--parents', '-n', '1', CONTROLS_PARENT).decode().split()
-    require(row == [CONTROLS_PARENT, CHECKPOINT_CONTROLS, SOURCE])
+    require(row == [CONTROLS_PARENT, CHECKPOINT_CONTROLS, CHILD_CLASS_SOURCE])
     row = git(controls, 'rev-list', '--parents', '-n', '1', CHECKPOINT_MERGE).decode().split()
     require(row == [CHECKPOINT_MERGE, OCI_CLI_CONTROLS, SOURCE_PARENT])
-    for revision, parent in (('HEAD', CHILD_CLASS_CONTROLS), (CHILD_CLASS_CONTROLS, CONTROLS_PARENT),
-                             (SOURCE, SOURCE_PARENT),
+    for revision, parent in (('HEAD', SOURCE_MERGE), (COUNT_CONTROLS, CHILD_CLASS_CONTROLS),
+                             (LITERAL_CLASS_SOURCE, CHILD_CLASS_SOURCE),
+                             (CHILD_CLASS_CONTROLS, CONTROLS_PARENT), (CHILD_CLASS_SOURCE, SOURCE_PARENT),
                              (SOURCE_PARENT, ORIGINAL_SOURCE), (CHECKPOINT_CONTROLS, CHECKPOINT_MERGE),
                              (OCI_CLI_CONTROLS, OCI_CLI_PARENT), (OCI_CLI_PARENT, OCI_LOCATION_CONTROLS),
                              (OCI_LOCATION_CONTROLS, IMMUTABLE_MAINTENANCE_CONTROLS),
@@ -587,11 +598,13 @@ def controls_history(controls):
     changes = git(controls, 'diff', '--name-status', CHECKPOINT_CONTROLS, CONTROLS_PARENT).decode().splitlines()
     require(changes == ['M\tbackend/src/bin/forge-delivery.rs', 'M\tbackend/src/task_delivery/oci.rs',
                         'M\tbackend/tests/support/oci_delivery.rs', 'M\tscripts/tests/test_oci_offline_fixture.py'])
-    changes = git(controls, 'diff', '--name-status', CONTROLS_PARENT, 'HEAD').decode().splitlines()
-    require(changes and all(line.startswith('M\t') and line[2:] in CONSUMER_PATHS for line in changes))
-    changes = git(controls, 'diff', '--name-status', SOURCE, 'HEAD').decode().splitlines()
-    require(changes and all(line.startswith('A\t') and
-        (line[2:].startswith('scripts/hermetic_full12/') or line[2:] == '.github/workflows/forge-hermetic-full12.yml') for line in changes))
+    for baseline, revision in ((CONTROLS_PARENT, COUNT_CONTROLS), (SOURCE_MERGE, 'HEAD')):
+        changes = git(controls, 'diff', '--name-status', baseline, revision).decode().splitlines()
+        require(changes and all(line.startswith('M\t') and line[2:] in CONSUMER_PATHS for line in changes))
+    for revision in (SOURCE_MERGE, 'HEAD'):
+        changes = git(controls, 'diff', '--name-status', SOURCE, revision).decode().splitlines()
+        require(changes and all(line.startswith('A\t') and
+            (line[2:].startswith('scripts/hermetic_full12/') or line[2:] == '.github/workflows/forge-hermetic-full12.yml') for line in changes))
 
 
 def checkout_proof(workspace):
@@ -607,7 +620,7 @@ def checkout_proof(workspace):
 
 def export_sources(checkouts, destination):
     catalogues = read(HERE / 'source-catalogue.json')['catalogues']
-    require(sum(x['count'] for x in catalogues.values()) == 265)
+    require(sum(x['count'] for x in catalogues.values()) == 266)
     for label, folder, revision in (('forge', 'CI-CD', SOURCE), ('base', 'services-base', BASE)):
         spec = catalogues[label]
         require(len(spec['files']) == spec['count'])

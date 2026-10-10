@@ -1,6 +1,6 @@
 {
   "kind": "hermetic_full12_three_job_coverage",
-  "source_sha": "5f973b33e758a4d60e86fc8ff4eda99c6d4496c1",
+  "source_sha": "e781b533bfb25fa669d5a5c65f8fa7094de7af02",
   "inherited_gate_results": false,
   "executed": false,
   "all_stages_required": true,
@@ -35,7 +35,7 @@
         ]
       ],
       "assertions": [
-        "Ran 78 tests",
+        "Ran 81 tests",
         "FROZEN_LINUX_PYTHON_UNITS:PASS"
       ],
       "execution": "REQUIRED_FRESH",
@@ -169,11 +169,13 @@
         ]
       ],
       "assertions": [
-        "3 passed; 0 failed",
+        "5 passed; 0 failed",
         "ACTUAL_PG_READER_LO_DENIED_AND_EXCLUSIVE_DATABASE_ACCESS:PASS",
         "ACTUAL_PG_WRITER_HISTORY_VIEW_DML_DENIED:PASS",
         "ACTUAL_PG_FOREIGN_PROOF_REJECTED_CURRENT_WRITER_POOL_RECOVERY:PASS",
-        "24 exact restore-negative identities including writer-history child/grandchild/parent/FK-delete/FK-update and column/view/view-column/rule"
+        "ACTUAL_PG_READER_SEQUENCE_AND_VIEW_WRITES=REJECTED",
+        "ACTUAL_PG_MANIFEST_FINGERPRINT_DRIFT=REJECTED",
+        "24 exact restore-negative identities including reader-table and writer-history child/grandchild/parent/FK-delete/FK-update and column/view/view-column/rule"
       ],
       "execution": "REQUIRED_FRESH",
       "unchanged_source_parity_and_exact_cleanup_required": true,
