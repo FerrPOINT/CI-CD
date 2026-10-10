@@ -142,8 +142,17 @@ export function CatalogRepositoryPage() {
         ) : (
           <RepositoryBrowserPage repositoryName={repo.storage_name} embedded />
         ))}
-      {tab === 'pipelines' && <ExecutionList key={id + tab} repositoryId={id} />}
-      {tab === 'deployments' && <ExecutionList key={id + tab} repositoryId={id} deployment />}
+      {tab === 'pipelines' && (
+        <ExecutionList key={id + tab} namespace={repo.namespace ?? undefined} repositoryId={id} />
+      )}
+      {tab === 'deployments' && (
+        <ExecutionList
+          key={id + tab}
+          namespace={repo.namespace ?? undefined}
+          repositoryId={id}
+          deployment
+        />
+      )}
       {tab === 'configurations' && (
         <RepositoryConfigurations
           key={id}
