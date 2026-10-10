@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import re
 import sys
+import time
 
 PIN = Path(__file__).with_name('maintenance-pin.json')
 REPOSITORY = 'FerrPOINT/services-base'
@@ -46,6 +47,10 @@ def preflight():
 
 def read_payloads(checkout, git):
     pin = preflight()  # Never attempt Git/network/materialization on a missing pin.
+    return _read_payloads(checkout, git, pin)
+
+
+def _read_payloads(checkout, git, pin):
     try:
         remote = git(checkout, 'remote', 'get-url', 'origin').decode().strip()
         require(remote in ('https://github.com/' + REPOSITORY + '.git',
@@ -77,6 +82,45 @@ def read_payloads(checkout, git):
         raise QualificationFailure() from None
 
 
+def qualify(checkout, commit, ref, git):
+    """Read-only candidate metadata, never activation of the checked-in pin."""
+    try:
+        require(isinstance(commit, str) and re.fullmatch('[a-f0-9]{40}', commit))
+        require(isinstance(ref, str) and ref.startswith('refs/heads/'))
+        require(len(ref) <= 256 and re.fullmatch('[A-Za-z0-9_./-]+', ref))
+        git(checkout, 'check-ref-format', ref)
+        # Authenticate the origin before any network call. No URL supplied by caller.
+        remote = git(checkout, 'remote', 'get-url', 'origin').decode().strip()
+        require(remote in ('https://github.com/' + REPOSITORY + '.git',
+                           'https://github.com/' + REPOSITORY,
+                           'git@github.com:' + REPOSITORY + '.git'))
+        advertised = (commit + '\t' + ref + '\n').encode('ascii')
+        require(git(checkout, 'ls-remote', '--exit-code', 'origin', ref) == advertised)
+        pin = {'schema': 'forge/private-maintenance-pin/v1', 'repository': REPOSITORY,
+               'commit': commit, 'qualification': 'published_exact_commit', 'files': EXPECTED_FILES}
+        _read_payloads(checkout, git, pin)
+        require(git(checkout, 'ls-remote', '--exit-code', 'origin', ref) == advertised)
+        return pin
+    except Exception:
+        raise QualificationFailure() from None
+
+
+def qualification_git(deadline):
+    from host import command
+
+    def git(checkout, *args):
+        try:
+            remaining = deadline - time.monotonic()
+            require(remaining > 0)
+            raw = command(['git', '--no-replace-objects', '--no-optional-locks',
+                           '-C', str(checkout), *args], timeout=remaining)
+            require(len(raw) <= 2**20 and time.monotonic() < deadline)
+            return raw
+        except Exception:
+            raise QualificationFailure() from None
+    return git
+
+
 def proof_matches(proof):
     pin = preflight()
     require(proof == {'repository': REPOSITORY, 'commit': pin['commit'], 'files': pin['files']})
@@ -84,11 +128,16 @@ def proof_matches(proof):
 
 def main():
     try:
+        if len(sys.argv) == 5 and sys.argv[1] == 'qualify':
+            pin = qualify(Path(sys.argv[2]), sys.argv[3], sys.argv[4],
+                          qualification_git(time.monotonic() + 60))
+            print(json.dumps(pin, sort_keys=True, indent=2))
+            return 0
         require(sys.argv[1:] == ['preflight'])
         preflight()
         print('MAINTENANCE_PIN_QUALIFIED')
         return 0
-    except QualificationFailure:
+    except Exception:
         print('MAINTENANCE_PIN_UNQUALIFIED')
         return 1
 

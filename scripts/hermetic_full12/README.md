@@ -21,6 +21,42 @@ component lock and repeat validation. Raw Git bytes, including line endings,
 must match both blob IDs and SHA256. Current private main's older helper and
 missing two companion paths do not qualify.
 
+### Проверка candidate без записи
+
+После публикации и review точного maintenance packet владельцем Base проверить
+commit опубликованной ветки из аутентифицированного full-history checkout на Linux:
+
+```sh
+python3 -B scripts/hermetic_full12/maintenance_git.py qualify \
+  /absolute/private/services-base <exact-40-lowercase-commit> refs/heads/<reviewed-owner-branch>
+```
+
+Команда использует существующий Linux owned-process helper, включая WNOWAIT и
+group cleanup: общий Git work budget 60 секунд и неизменный teardown tail.
+Проверяются canonical origin до сетевого запроса, опубликованный branch tip до и
+после raw-Git readback, full history, commit, три regular-file blob и raw SHA256.
+Вывод содержит только candidate pin JSON либо фиксированный отказ
+`MAINTENANCE_PIN_UNQUALIFIED` (exit1). Нет fetch, установки/import helper, записи
+pin, материализации private files, cleanup или допуска full12. Изменение branch
+tip во время readback запрещено; moving refs не сохраняются в pin. Приватный код
+и credentials не входят в публичный checkout или artifacts.
+
+Отдельный reviewed follow-up должен независимо подтвердить metadata, заменить
+maintenance pin точным commit и обновить component lock. Исходный workflow всё
+ещё требует original build-only branch и exact single controls parent; этот
+qualification-only successor не меняет execution guards. Перед публикацией
+исполняемый successor требует отдельного review normal parent/branch binding.
+Candidate JSON и совпадение локальных installed bytes не доказывают native/SDLC
+acceptance.
+
+Три hash связывают v2 helper с cleanup/installer. Политика Base сохраняется: exact
+owned Compose down в finally, v2 daemon/manifest/owner проверки до удаления
+disposable volumes, сохранение external caches/runtime/backups/evidence,
+installer audit до регистрации scheduler. Global Docker-group audit остаётся
+workspace контрактом Base (`scripts/audit_docker_groups.py`), а не разрешением
+cleanup или копирования дополнительных private files в packet. Disk/RAM guards
+обязательны; native execution здесь не разрешён.
+
 The existing authenticated SDK checkout remains two minutes, now fetch-depth0.
 The same private object database delivers product SDK19a and the distinct
 maintenance commit. Qualification checks repository, full history, commit,

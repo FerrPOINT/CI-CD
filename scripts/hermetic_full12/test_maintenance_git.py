@@ -44,6 +44,137 @@ def fixture():
 
 
 class MaintenanceGitTests(unittest.TestCase):
+    @staticmethod
+    def candidate_git(original):
+        def git(root, *args):
+            if args == ('check-ref-format', 'refs/heads/maintenance-reviewed'):
+                return b''
+            if args == ('ls-remote', '--exit-code', 'origin', 'refs/heads/maintenance-reviewed'):
+                return b'a' * 40 + b'\trefs/heads/maintenance-reviewed\n'
+            return original(root, *args)
+        return git
+
+    def test_candidate_metadata_without_activating_or_materializing(self):
+        with fixture() as (root, pin, _, git):
+            m.PIN.write_text('{"commit": null}', encoding='ascii')
+            before = m.PIN.read_bytes()
+            call = Mock(side_effect=self.candidate_git(git))
+            candidate = m.qualify(root, 'a' * 40, 'refs/heads/maintenance-reviewed', call)
+            self.assertEqual(candidate, pin)
+            self.assertEqual(m.PIN.read_bytes(), before)
+            self.assertEqual(list(root.iterdir()), [m.PIN])
+            reads = [c.args[1:] for c in call.call_args_list]
+            self.assertEqual(reads.count(('ls-remote', '--exit-code', 'origin',
+                                          'refs/heads/maintenance-reviewed')), 2)
+            self.assertEqual(reads[-1], reads[2])
+            with self.assertRaises(m.QualificationFailure):
+                m.preflight()
+
+    def test_candidate_invalid_selectors_never_call_git(self):
+        for commit, ref in [('main', 'refs/heads/maintenance-reviewed'),
+                            ('A' * 40, 'refs/heads/maintenance-reviewed'),
+                            ('a' * 40, 'refs/tags/maintenance-reviewed'),
+                            ('a' * 40, 'refs/heads/*'), ('a' * 40, '--upload-pack=evil'),
+                            ('a' * 40, 'refs/heads/secret\nother'),
+                            ('a' * 40, 'refs/heads/' + 'a' * 257)]:
+            with self.subTest(commit=commit, ref=ref):
+                git = Mock()
+                with self.assertRaises(m.QualificationFailure):
+                    m.qualify(Path('.'), commit, ref, git)
+                git.assert_not_called()
+
+    def reject_candidate(self, change):
+        with fixture() as (root, _, _, original):
+            git = self.candidate_git(original)
+            call = Mock(side_effect=lambda checkout, *args: change(args, lambda: git(checkout, *args)))
+            with self.assertRaises(m.QualificationFailure) as error:
+                m.qualify(root, 'a' * 40, 'refs/heads/maintenance-reviewed', call)
+            self.assertEqual(str(error.exception), 'maintenance_pin_unqualified')
+            self.assertEqual(list(root.iterdir()), [m.PIN])
+            return [c.args[1:] for c in call.call_args_list]
+
+    def test_candidate_foreign_origin_before_network(self):
+        reads = self.reject_candidate(lambda a, normal: b'https://evil.invalid/private' if a[0] == 'remote' else normal())
+        self.assertFalse(any(a[0] == 'ls-remote' for a in reads))
+
+    def test_candidate_malformed_git_ref_refused(self):
+        def changed(args, normal):
+            if args[0] == 'check-ref-format':
+                raise RuntimeError('private Git error')
+            return normal()
+        self.assertEqual(len(self.reject_candidate(changed)), 1)
+
+    def test_candidate_unpublished_changed_or_ambiguous_tip_refused(self):
+        for raw in (b'', b'b' * 40 + b'\trefs/heads/maintenance-reviewed\n',
+                    b'a' * 40 + b'\trefs/heads/other\n',
+                    (b'a' * 40 + b'\trefs/heads/maintenance-reviewed\n') * 2):
+            with self.subTest(raw=raw):
+                reads = self.reject_candidate(lambda a, normal: raw if a[0] == 'ls-remote' else normal())
+                self.assertFalse(any(a[0] == 'cat-file' for a in reads))
+
+    def test_candidate_moved_during_readback_refused(self):
+        calls = 0
+        def changed(args, normal):
+            nonlocal calls
+            if args[0] == 'ls-remote':
+                calls += 1
+                if calls == 2:
+                    return b'b' * 40 + b'\trefs/heads/maintenance-reviewed\n'
+            return normal()
+        self.reject_candidate(changed)
+        self.assertEqual(calls, 2)
+
+    def test_candidate_preserves_tree_history_and_raw_hash_guards(self):
+        for command, replacement in (
+                ('ls-tree', lambda b: b.replace(b'100644', b'120000')),
+                ('ls-tree', lambda b: b.split(b'\0', 1)[1]),
+                ('cat-file', lambda b: b.replace(b'\r\n', b'\n')),
+                ('rev-parse', lambda b: b'false' if b.strip() == b'a' * 40 else b'true')):
+            with self.subTest(command=command):
+                self.reject_candidate(lambda a, normal: replacement(normal()) if a[0] == command else normal())
+
+    def test_candidate_cli_outputs_only_metadata_and_no_writes(self):
+        with fixture() as (root, pin, _, git), patch.object(m, 'qualification_git',
+                return_value=self.candidate_git(git)), patch('sys.stdout', new_callable=io.StringIO) as output:
+            before = m.PIN.read_bytes()
+            with patch('sys.argv', ['maintenance_git.py', 'qualify', str(root), 'a' * 40,
+                                    'refs/heads/maintenance-reviewed']):
+                self.assertEqual(m.main(), 0)
+            self.assertEqual(json.loads(output.getvalue()), pin)
+            self.assertNotIn('public-unit-fixture', output.getvalue())
+            self.assertEqual(m.PIN.read_bytes(), before)
+
+    def test_candidate_cli_failure_never_prints_private_error(self):
+        with (patch.object(m, 'qualification_git', return_value=Mock(side_effect=RuntimeError(
+                'TOKEN SQL PRIVATE PATH'))), patch('sys.stdout', new_callable=io.StringIO) as output,
+                patch('sys.argv', ['maintenance_git.py', 'qualify', '.', 'a' * 40,
+                                   'refs/heads/maintenance-reviewed'])):
+            self.assertEqual(m.main(), 1)
+        self.assertEqual(output.getvalue(), 'MAINTENANCE_PIN_UNQUALIFIED\n')
+
+    def test_candidate_git_shared_absolute_deadline_and_no_replace(self):
+        with patch.object(m.time, 'monotonic', side_effect=[10, 11, 12, 13]), patch.object(
+                h, 'command', return_value=b'metadata') as run:
+            git = m.qualification_git(20)
+            self.assertEqual(git(Path('checkout'), 'check-ref-format', 'refs/heads/reviewed'), b'metadata')
+            git(Path('checkout'), 'remote', 'get-url', 'origin')
+        self.assertEqual([c.kwargs['timeout'] for c in run.call_args_list], [10, 8])
+        self.assertEqual(run.call_args.args[0][:3], ['git', '--no-replace-objects', '--no-optional-locks'])
+
+    def test_candidate_git_expired_budget_no_subprocess(self):
+        with patch.object(m.time, 'monotonic', return_value=20), patch.object(h, 'command') as run:
+            with self.assertRaises(m.QualificationFailure):
+                m.qualification_git(20)(Path('.'), 'remote', 'get-url', 'origin')
+        run.assert_not_called()
+
+    def test_candidate_git_late_nonzero_or_oversize_refused(self):
+        for raw, finish in ((b'ok', 20), (RuntimeError('PRIVATE'), 11), (b'x' * (2**20 + 1), 11)):
+            with self.subTest(finish=finish), patch.object(
+                    m.time, 'monotonic', side_effect=[10, finish]), patch.object(h, 'command',
+                    side_effect=raw if isinstance(raw, Exception) else None, return_value=raw):
+                with self.assertRaises(m.QualificationFailure):
+                    m.qualification_git(20)(Path('.'), 'remote', 'get-url', 'origin')
+
     def test_current_pin_explicitly_missing(self):
         pin = json.loads(m.PIN.read_bytes())
         self.assertIsNone(pin['commit'])
