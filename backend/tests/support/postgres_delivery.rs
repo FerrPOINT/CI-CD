@@ -141,7 +141,7 @@ impl Pg {
             "labels":{"sdlc.task":"forge-task-delivery","sdlc.purpose":"disposable-postgres-target"},
             "volumes":[{"type":"volume","source":"data","target":"/var/lib/postgresql/data"},
                 {"type":"bind","source":format!("{mount}/pg-{case}/pg_hba.conf"),"target":"/etc/forge/pg_hba.conf","read_only":true}],
-            "networks":["owner"],"healthcheck":{"test":["CMD-SHELL",format!("pg_isready -h 127.0.0.1 -U postgres && psql -X -qAt -U postgres -d {seed} -c 'SELECT 1'")],"interval":"1s","timeout":"2s","start_period":"15s","retries":60}}},
+            "networks":["owner"],"healthcheck":{"test":["CMD-SHELL","pg_isready -h 127.0.0.1 -U postgres"],"interval":"1s","timeout":"2s","start_period":"15s","retries":60}}},
             "networks":{"owner":{"external":true,"name":network}},
             "volumes":{"data":{"name":pg_volume,"labels":{"sdlc.task":"forge-task-delivery","sdlc.purpose":"disposable-postgres-data"}}}});
         std::fs::write(&compose_file, serde_json::to_vec(&spec).unwrap()).unwrap();
@@ -188,7 +188,7 @@ impl Pg {
             "daemonId":daemon,"systemIdentifier":system,"controllerIp":controller,"hbaFile":hba,
             "composeFile":compose_file,"composeRoot":compose_root,"postgresImageId":image,"postgresVolumeName":pg_volume,
             "networkName":network,"volumeName":volume,"volumeRoot":"/delivery-qa","initialDatabase":seed,
-            "baseRoot":"/work/services-base","pythonBin":"/usr/local/bin/python3","executor":"/work/CI-CD/scripts/postgres-delivery.py",
+            "baseRoot":"/work/services-base","pythonBin":"/usr/bin/python3.11","executor":"/work/CI-CD/scripts/postgres-delivery.py",
             "migrationBin":env!("CARGO_BIN_EXE_forge-pg-migrate"),"leaseSeconds":300,
             "checks":{"origin":"http://127.0.0.1:8000","healthPath":"/health","healthBodySha256":hash(b"ok\n"),
                 "acceptancePath":"/acceptance","acceptanceBodySha256":hash(b"accepted:records\n")}});
@@ -424,7 +424,7 @@ impl Pg {
         );
         self.sql(failed_db, "ALTER TABLE public.records OWNER TO postgres;")
             .await;
-        println!("ACTUAL_PG_RESTORE_NEGATIVES=corrupt,role,session,drift,reader,owner:PASS");
+        println!("ACTUAL_PG_RESTORE_NEGATIVES=corrupt,role,session,drift,reader-table,owner:PASS");
     }
 }
 
@@ -487,6 +487,116 @@ async fn sdlc_pg_delivery_actual_migration_restore_rows_sequences_and_write_boun
         }
         println!("ACTUAL_PG_SCENARIO={mode}:PASS");
     }
+}
+
+#[tokio::test]
+async fn sdlc_pg_delivery_rejects_reader_sequence_and_view_writes() {
+    let mut t = Pg::new().await;
+    let command = t.build("A", None).await;
+    let seed = t.config["seedDatabase"].as_str().unwrap();
+    t.sql(
+        seed,
+        "GRANT UPDATE ON SEQUENCE public.records_id_seq TO forge_reader;",
+    )
+    .await;
+    assert_eq!(
+        t.execute(&command, None).await["reason"],
+        "application_reader_can_write_or_create"
+    );
+    t.sql(
+        seed,
+        "REVOKE UPDATE ON SEQUENCE public.records_id_seq FROM forge_reader;",
+    )
+    .await;
+
+    t.sql(
+        seed,
+        "CREATE VIEW public.editable_records AS SELECT id,payload FROM public.records; GRANT SELECT,UPDATE ON public.editable_records TO forge_reader;",
+    )
+    .await;
+    t.sql(
+        seed,
+        "BEGIN; SET ROLE forge_reader; UPDATE public.editable_records SET payload='view write' WHERE id=1; ROLLBACK;",
+    )
+    .await;
+    assert_eq!(
+        t.execute(&command, None).await["reason"],
+        "application_reader_can_write_or_create"
+    );
+    t.sql(seed, "DROP VIEW public.editable_records;").await;
+    println!("ACTUAL_PG_READER_SEQUENCE_AND_VIEW_WRITES=REJECTED");
+}
+
+#[tokio::test]
+async fn sdlc_pg_delivery_rejects_serving_database_fingerprint_drift() {
+    let mut t = Pg::new().await;
+    let command = t.build("A", None).await;
+    let operation = t
+        .root
+        .join("operations")
+        .join(hash(command.operation_key.as_bytes()));
+    let resume = t.t.temp.join("resume-after-manifest-drift");
+    let mut child = t
+        .process(&command)
+        .env("CICD_TEST_PG_PAUSE_AT", "application-started")
+        .env("CICD_TEST_PG_RESUME_FILE", &resume)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let checkpoint = operation.join("application-started.json");
+    let deadline = Instant::now() + Duration::from_secs(300);
+    while !checkpoint.exists() {
+        if let Some(status) = child.try_wait().unwrap() {
+            let output = child.wait_with_output().await.unwrap();
+            panic!(
+                "child stopped before application-started: {status}; stdout: {}; stderr: {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        assert!(
+            Instant::now() < deadline,
+            "checkpoint deadline: application-started"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let manifest_sha: String =
+        serde_json::from_slice(&std::fs::read(t.root.join("current.json")).unwrap()).unwrap();
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(
+            t.root
+                .join("manifests")
+                .join(format!("{manifest_sha}.json")),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let database = manifest["database"].as_str().unwrap();
+    t.sql(
+        database,
+        "UPDATE public.records SET payload='post-publication drift' WHERE id=1;",
+    )
+    .await;
+    std::fs::write(&resume, b"resume").unwrap();
+    let output = tokio::time::timeout(Duration::from_secs(330), child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "PG CLI did not return a non-verified outcome: stdout: {}; stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["receipt"]["status"], "unknown");
+    assert_eq!(
+        result["receipt"]["reason"],
+        "serving_database_fingerprint_mismatch"
+    );
+    println!("ACTUAL_PG_MANIFEST_FINGERPRINT_DRIFT=REJECTED");
 }
 
 #[tokio::test]
