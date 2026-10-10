@@ -103,8 +103,8 @@ Historical b937 failure не переписывается и не объявля
 
 ## Resource Admission Successor
 
-Normal child `1310958` использует отдельный hosted-only branch
-`build-only/forge-resource-full12-20261010`. Product25be, SDK19a, maintenance43,
+Normal child `eb91d4f` использует отдельный hosted-only branch
+`build-only/forge-delegation-full12-20261010`. Product25be, SDK19a, maintenance43,
 265 source inputs, 12 stages, manifests, budgets и cleanup неизменны.
 `Warnings` больше не является blanket admission predicate: это информационный
 нестабильный текст Docker, он не парсится и не экспортируется.
@@ -116,26 +116,49 @@ Normal child `1310958` использует отдельный hosted-only branc
 Старый `identity_cgroup_warnings` остаётся допустимым только для readback старых
 receipts; новый код его не выдаёт. Stage entry/exit сохраняет повторный admission.
 
-До rootless launch existing hosted bootstrap выполняет для exact current UID:
-`sudo -n systemctl set-property --runtime user@<uid>.service 'Delegate=cpu memory pids'`.
-Затем требует наличие всех трёх controllers в exact user-manager
-`cgroup.controllers`. Нет restart/reboot/fallback или persistent `/etc` изменения;
-неподдерживаемая команда/отсутствующий CPU закрывает bootstrap в `manager`.
+До enable-linger/start manager/rootless launch bootstrap публикует runtime-only
+drop-in `/run/systemd/system/user@<exactuid>.service.d/90-forge-full12-<token>.conf`
+с `[Service] Delegate=cpu memory pids`. Уникальный token и intent сохраняются до
+root effect. Root-only Python helper проверяет identity/root-owned nofollow
+directories, полностью пишет и fsync файл в hidden owned directory, затем
+публикует completed inode через atomic no-overwrite hard link и directory fsync.
+Existing foreign drop-in не перезаписывается. Shared drop-in directory не удаляется.
+
+После `daemon-reload`/start обязательны systemd source readback exact DropInPaths,
+Delegate=yes, DelegateControllers cpu/memory/pids, exact ControlGroup и actual
+`cgroup.controllers`. Separate fixed labels: manager_dropin/reload/linger/start/
+readback/controllers. Старый manager остаётся readback-compatible, но не emitted.
+Нет dynamic Delegate setter, restart/reboot/fallback или persistent `/etc` изменения.
+Systemd255 разрешает этот D-Bus setter только для transient UNIT_STUB, не loaded
+user@ service; это source-proven defect eb91. Исторический manager failure receipt
+не локализует точный subcommand и не переписывается как доказанный root cause.
+
+Independent finally после остановки own daemon удаляет только published inode,
+совпадающий с completed owned source и exact bytes/token, затем own source/directory
+и daemon-reload. Он работает и без daemon-owner marker (ошибка bootstrap до launch).
+Foreign replacement inode сохраняется; corrupt/missing ownership proof закрывает
+cleanup, не создаёт PASS. Cleanup result delegation_removed обязателен в aggregate.
 Это только disposable GitHub-hosted VM после existing host/source qualification,
-не инструкция менять локальный daemon. Systemd поддерживает runtime controller
-delegation; Docker rootless требует v2/systemd и отдельного CPU delegation:
+не инструкция менять локальный daemon. Docker rootless требует v2/systemd и CPU:
 [Docker](https://docs.docker.com/engine/security/rootless/tips/#limiting-resources),
 [systemctl255](https://github.com/systemd/systemd/blob/v255/man/systemctl.xml),
 [Delegate setter255](https://github.com/systemd/systemd/blob/v255/src/core/dbus-cgroup.c).
 
-Это source/pure fix, не native enforcement proof и не доказанная причина run38035575536.
-Его safe receipt различает только прежний combined boundary. Existing stage entry
-проверяет daemon ID, но не actual `HostConfig`/cgroup limits. Bounded follow-up перед
-workload: после owned Compose-up проверить exact QA/Postgres container IDs и
-`HostConfig` против unchanged manifest; в тех же контейнерах прочитать bounded
-`cpu.max`/`memory.max` и QA `pids.max`, отклонить missing/unlimited/mismatch и
-сохранить лишь fixed checks/numeric limits, не raw inspect. Это отдельный reviewable
-patch; в данном successor он не реализован. Full12/native acceptance остаётся pending.
+Это source/pure fix, не native enforcement proof и не доказанная причина run38037085181.
+Его safe receipt различает только прежний combined manager boundary. Новый stage
+entry после owned Compose-up и до workload проверяет exact QA/Postgres container IDs,
+images, running/owner/project/service labels, private cgroup namespace, actual
+`HostConfig` NanoCpus/Memory и QA PidsLimit. В тех же существующих контейнерах
+по inspected ID читает bounded `cpu.max`/`memory.max`/`pids.max`; missing/unlimited/
+mismatch закрывает stage. Повторный inspect после чтения исключает смену limits,
+image/state/owner в readback. Значения неизменны: QA CPU2/memory5GiB/PID512;
+Postgres CPU1/memory1GiB без придуманного нового PID limit. Existing entry deadline300s
+ограничивает все readbacks, каждый command имеет10s; budget не расширен.
+Public receipt содержит только fixed numeric limits двух services; raw inspect,
+container IDs, controller paths и содержимое warnings не экспортируются. Aggregate
+требует resource_enforcement для всех12 stages и delegation_removed в cleanup.
+Эта реализация проверена pure fixtures, actual HostConfig/cgroup и full12 acceptance
+по-прежнему PENDING до запуска exact successor после независимого review/ACK.
 
 Three independent jobs: A python/row-smoke/smoke/check/clippy; B postgres;
 C oci/workspace/integration/cli/openapi/release. Each admits a fresh rootless

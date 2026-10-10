@@ -30,6 +30,158 @@ PYTHON = 'python:3.12-bookworm@sha256:e91fec3d1ac69f04e4eddcd29c327e630ce34658cf
 RUST = 'rust:1.88.0@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0'
 BINARIES = ('cicd-server', 'forge-runner', 'forge-delivery', 'forge-pg-migrate', 'openapi-dump', 'cicd-cli', 'cicd-migrate')
 
+# Root-only filesystem operation; no shell, environment, private input or unit restart.
+DELEGATION_PROGRAM = r'''
+import os
+from pathlib import Path
+import re
+import stat
+import sys
+
+BASE = Path('/run/systemd/system')
+
+
+def directory(path):
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    info = os.fstat(fd)
+    if info.st_uid != 0 or info.st_mode & 0o022:
+        os.close(fd)
+        raise ValueError('root_directory_required')
+    return fd
+
+
+def apply(action, uid, token):
+    if (os.geteuid() != 0 or action not in ('install', 'cleanup')
+            or not re.fullmatch('[1-9][0-9]{0,9}', uid)
+            or not re.fullmatch('[a-f0-9]{32}', token)):
+        raise ValueError('closed_delegation_identity')
+    unit = 'user@' + uid + '.service'
+    name = '90-forge-full12-' + token + '.conf'
+    owned = '.forge-full12-' + token
+    payload = ('# Forge full12 ' + token + '\n[Service]\nDelegate=cpu memory pids\n').encode()
+    base = directory(BASE)
+    parent = owner = None
+    created = file_created = published = False
+    try:
+        try:
+            os.mkdir(unit + '.d', 0o755, dir_fd=base)
+        except FileExistsError:
+            pass
+        parent = directory(BASE / (unit + '.d'))
+        if action == 'install':
+            # The hidden owner directory is not a systemd drop-in. Publication is
+            # one no-overwrite hard link to a completed, fsynced regular file.
+            os.mkdir(owned, 0o700, dir_fd=parent)
+            created = True
+            os.fsync(parent)
+            owner = directory(BASE / (unit + '.d') / owned)
+            fd = os.open('delegate', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=owner)
+            file_created = True
+            with os.fdopen(fd, 'wb') as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.fsync(owner)
+            os.link('delegate', name, src_dir_fd=owner, dst_dir_fd=parent, follow_symlinks=False)
+            published = True
+            os.fsync(parent)
+        else:
+            try:
+                owner = directory(BASE / (unit + '.d') / owned)
+            except FileNotFoundError:
+                # No installation happened. An unrelated final path is never removed.
+                if os.path.lexists(BASE / (unit + '.d') / name):
+                    raise ValueError('unproven_delegation_file')
+                return
+            if set(os.listdir(owner)) != {'delegate'}:
+                raise ValueError('unproven_owner_directory')
+            fd = os.open('delegate', os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=owner)
+            with os.fdopen(fd, 'rb') as stream:
+                info = os.fstat(stream.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+                    raise ValueError('owned_regular_required')
+                if info.st_size != len(payload) or stream.read(len(payload) + 1) != payload:
+                    raise ValueError('unproven_delegation_bytes')
+            try:
+                published = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                published = None
+            if published is not None and (published.st_dev, published.st_ino) == (info.st_dev, info.st_ino):
+                os.unlink(name, dir_fd=parent)
+                os.fsync(parent)
+            # If publication collided with a foreign inode, preserve that inode.
+            os.unlink('delegate', dir_fd=owner)
+            os.fsync(owner)
+            os.close(owner)
+            owner = None
+            os.rmdir(owned, dir_fd=parent)
+            os.fsync(parent)
+    except BaseException:
+        # On a reported installation failure remove only entries created by this
+        # invocation. A killed/unknown helper is checked again by outer finally.
+        if action == 'install' and created:
+            if published:
+                os.unlink(name, dir_fd=parent)
+            if file_created:
+                os.unlink('delegate', dir_fd=owner)
+            if owner is not None:
+                os.close(owner)
+                owner = None
+            os.rmdir(owned, dir_fd=parent)
+            os.fsync(parent)
+        raise
+    finally:
+        for fd in (owner, parent, base):
+            if fd is not None:
+                os.close(fd)
+
+
+if __name__ == '__main__':
+    apply(*sys.argv[1:])
+'''
+
+
+def delegation_owner(root):
+    owner = h.read(root / 'delegation-owner.json')
+    h.require(set(owner) == {'uid', 'token', 'owner_pid', 'root'}
+              and owner['uid'] == str(os.getuid()) and owner['owner_pid'] == os.getpid()
+              and owner['root'] == str(root) and re.fullmatch('[a-f0-9]{32}', owner['token']))
+    return owner
+
+
+def install_delegation(root):
+    h.hosted_guard()
+    owner = {'uid': str(os.getuid()), 'token': uuid.uuid4().hex, 'owner_pid': os.getpid(), 'root': str(root)}
+    h.atomic(root / 'delegation-owner.json', owner, exclusive=True)
+    h.command(['sudo', '-n', 'python3', '-c', DELEGATION_PROGRAM, 'install', owner['uid'], owner['token']], timeout=90)
+
+
+def cleanup_delegation(root):
+    if not (root / 'delegation-owner.json').exists():
+        return True
+    h.hosted_guard()
+    owner = delegation_owner(root)
+    h.command(['sudo', '-n', 'python3', '-c', DELEGATION_PROGRAM, 'cleanup', owner['uid'], owner['token']], timeout=20)
+    h.command(['sudo', '-n', 'systemctl', 'daemon-reload'], timeout=20)
+    return True
+
+
+def verify_delegation(root):
+    owner = delegation_owner(root)
+    unit = 'user@' + owner['uid'] + '.service'
+    raw = h.command(['systemctl', 'show', unit, '--property=Delegate', '--property=DelegateControllers',
+                     '--property=DropInPaths', '--property=ControlGroup']).decode()
+    rows = [line.split('=', 1) for line in raw.splitlines()]
+    h.require(all(len(row) == 2 for row in rows) and len(rows) == 4)
+    values = dict(rows)
+    h.require(set(values) == {'Delegate', 'DelegateControllers', 'DropInPaths', 'ControlGroup'})
+    h.require(values['Delegate'] == 'yes' and {'cpu', 'memory', 'pids'} <= set(values['DelegateControllers'].split()))
+    path = '/run/systemd/system/' + unit + '.d/90-forge-full12-' + owner['token'] + '.conf'
+    h.require(path in values['DropInPaths'].split())
+    group = '/user.slice/user-' + owner['uid'] + '.slice/' + unit
+    h.require(values['ControlGroup'] == group)
+    return Path('/sys/fs/cgroup' + group) / 'cgroup.controllers'
+
 
 def job_budget(job):
     # Three possible command-group cleanups per stage: entry, native call, exit.
@@ -129,13 +281,17 @@ def start_daemon(root):
             if not any(parts[0] == user and int(parts[2]) >= 65536 for parts in ranges):
                 h.require(not any(int(parts[1]) < 165536 and int(parts[1]) + int(parts[2]) > 100000 for parts in ranges))
                 h.command(['sudo', '-n', 'usermod', '--add-' + file + 's', '100000-165535', user])
-    with h.bootstrap_step('manager'):
+    with h.bootstrap_step('manager_dropin'):
+        install_delegation(root)
+    with h.bootstrap_step('manager_reload'):
+        h.command(['sudo', '-n', 'systemctl', 'daemon-reload'], timeout=90)
+    with h.bootstrap_step('manager_linger'):
         h.command(['sudo', '-n', 'loginctl', 'enable-linger', user])
+    with h.bootstrap_step('manager_start'):
         h.command(['sudo', '-n', 'systemctl', 'start', 'user@' + uid + '.service'])
-        # Runtime-only on the disposable hosted VM; never restart the user manager.
-        h.command(['sudo', '-n', 'systemctl', 'set-property', '--runtime', 'user@' + uid + '.service',
-                   'Delegate=cpu memory pids'], timeout=90)
-        controllers = Path('/sys/fs/cgroup/user.slice/user-' + uid + '.slice/user@' + uid + '.service/cgroup.controllers')
+    with h.bootstrap_step('manager_readback'):
+        controllers = verify_delegation(root)
+    with h.bootstrap_step('manager_controllers'):
         h.require({'cpu', 'memory', 'pids'} <= set(controllers.read_text().split()))
         os.environ.update(XDG_RUNTIME_DIR='/run/user/' + uid, DBUS_SESSION_BUS_ADDRESS='unix:path=/run/user/' + uid + '/bus')
     with h.bootstrap_step('rootless_launch'):
@@ -223,6 +379,50 @@ def manifest(root, config, images):
                         'interval': '1s', 'timeout': '2s', 'retries': 60, 'start_period': '15s'}}
     return {'services': {'postgres': postgres, 'qa': qa}, 'networks': {'qa': {'internal': True, 'labels': labels}},
             'volumes': {'delivery-qa': {'labels': labels}}}
+
+
+def resource_enforcement(operation, images):
+    """Read the two existing containers; no helpers or workload start before proof."""
+    proof = {}
+    for service, cpu, memory, pids, image in (
+            ('qa', 2, 5 * 2**30, 512, images['tools']), ('postgres', 1, 2**30, None, images['postgres'])):
+        raw = h.command(operation.command + ['ps', '--all', '-q', service], timeout=10).decode().split()
+        h.require(len(raw) == 1 and re.fullmatch('[a-f0-9]{64}', raw[0]))
+        container = raw[0]
+        def inspect():
+            raw = h.command(h.DOCKER + ['inspect', '--type', 'container', container], timeout=10)
+            h.require(len(raw) <= 65536)
+            items = json.loads(raw)
+            h.require(type(items) is list and len(items) == 1)
+            item = items[0]
+            h.require(item['Id'] == container and item['Image'] == image and item['State']['Running'] is True)
+            labels = item['Config']['Labels']
+            h.require(all(labels.get(key) == value for key, value in {
+                'com.docker.compose.project': operation.project, 'com.docker.compose.service': service,
+                'sdlc.task': TASK, 'sdlc.purpose': PURPOSE}.items()))
+            limits = item['HostConfig']
+            h.require(type(limits.get('NanoCpus')) is int and limits['NanoCpus'] == cpu * 10**9
+                      and type(limits.get('Memory')) is int and limits['Memory'] == memory
+                      and limits.get('CgroupnsMode') == 'private')
+            if pids is not None:
+                h.require(type(limits.get('PidsLimit')) is int and limits['PidsLimit'] == pids)
+            return {key: limits.get(key) for key in ('NanoCpus', 'Memory', 'PidsLimit', 'CgroupnsMode')}
+        before = inspect()
+        # Fixed read-only script, bounded per-file reads, bound to inspected ID not service alias.
+        script = 'set -eu; for f in cpu.max memory.max pids.max; do v="$(head -c 129 /sys/fs/cgroup/$f)"; printf "%s\\n" "$v"; done'
+        raw = h.command(h.DOCKER + ['exec', container, 'sh', '-c', script], timeout=10)
+        h.require(len(raw) <= 390)
+        lines = raw.decode('ascii').splitlines()
+        h.require(len(lines) == 3 and re.fullmatch('[1-9][0-9]{0,9} [1-9][0-9]{0,9}', lines[0]))
+        quota, period = map(int, lines[0].split())
+        h.require(quota == cpu * period and 1000 <= period <= 1000000 and lines[1] == str(memory))
+        if pids is not None:
+            h.require(lines[2] == str(pids))
+        else:
+            h.require(lines[2] == 'max' or re.fullmatch('[1-9][0-9]{0,9}', lines[2]))
+        h.require(inspect() == before)
+        proof[service] = {'cpu_count': cpu, 'memory_bytes': memory, 'pids_limit': pids}
+    return proof
 
 
 def fill_cache(root, sdk, q, parent, images, token, cache_operations):
@@ -386,6 +586,7 @@ def run_stage(stage, root, config, images, admission, q, sdk, parent, catalogues
             server, thread = q.serve(bridge, root / 'children/maintenance.sock')
             h.command(operation.command + ['up', '-d', '--pull', 'never', '--wait', '--wait-timeout', '90'],
                 timeout=180, log=root / ('private/' + stage + '-up.log'))
+            proof['resource_enforcement'] = resource_enforcement(operation, images)
             inner_id = h.command(operation.command + ['exec', '-T', 'qa', 'docker', 'info', '--format', '{{.ID}}']).decode().strip()
             h.require(inner_id == admission['daemon']['id'])
         path = root / ('private/' + stage + '.log')
@@ -539,7 +740,7 @@ def cleanup_disposable(root, config, ownership, q, parent, admission, proofs):
 
 def public_stage(proof):
     keys = ('stage', 'status', 'timeout_seconds', 'tests_passed', 'negative_count', 'binaries',
-            'export_sha256', 'contract_sha256', 'error', 'cleanup_complete', 'source_parity', 'journal_proofs', 'remaining')
+            'export_sha256', 'contract_sha256', 'error', 'cleanup_complete', 'source_parity', 'journal_proofs', 'remaining', 'resource_enforcement')
     return {key: proof[key] for key in keys if key in proof}
 
 
@@ -707,9 +908,10 @@ def run_job(job):
             try:
                 with h.wall_budget(220):
                     cleanup['daemon_stopped'] = stop_daemon(root)['stopped']
+                    cleanup['delegation_removed'] = cleanup_delegation(root)
             except BaseException as error:
                 cleanup['daemon_error'] = h.safe_error('cleanup', error)
-            cleanup['complete'] = cleanup['complete'] and cleanup['daemon_stopped']
+            cleanup['complete'] = cleanup['complete'] and cleanup['daemon_stopped'] and cleanup.get('delegation_removed') is True
             report['cleanup'] = cleanup
             if not cleanup['complete']:
                 report['status'] = 'FAIL'
@@ -760,6 +962,7 @@ def aggregate(a, b, c, expected_a, expected_b):
         h.require(all(re.fullmatch('[a-f0-9]{64}', report[key]) for key in ('admission_sha256', 'execution_sha256')))
         h.require(report['source_parity'] and report['checkout_parity'] and report['cleanup']['complete'])
         h.require(report['cleanup']['exact_inventory_matches_new_baseline'] and report['cleanup']['disposable_complete'] and report['cleanup']['daemon_stopped'])
+        h.require(report['cleanup'].get('delegation_removed') is True)
         h.require(report['cleanup']['inventory_after'] == report['baseline'])
         h.require(set(report['baseline']) == {'container', 'network', 'volume'})
         h.require(report['baseline']['container']['count'] == report['baseline']['volume']['count'] == 0)
@@ -782,6 +985,9 @@ def aggregate(a, b, c, expected_a, expected_b):
         h.require([proof['stage'] for proof in report['stages']] == list(JOBS[job]))
         for proof in report['stages']:
             h.require(proof['status'] == 'PASS' and proof['cleanup_complete'] and proof['source_parity'])
+            h.require(proof.get('resource_enforcement') == {
+                'qa': {'cpu_count': 2, 'memory_bytes': 5 * 2**30, 'pids_limit': 512},
+                'postgres': {'cpu_count': 1, 'memory_bytes': 2**30, 'pids_limit': None}})
             h.require(proof['timeout_seconds'] == BUDGETS[proof['stage']])
             h.require(set(proof['remaining']) == set(projects.values()))
             for remaining in proof['remaining'].values():

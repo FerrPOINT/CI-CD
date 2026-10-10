@@ -467,9 +467,11 @@ class BootstrapDiagnosticTests(unittest.TestCase):
 
     def test_closed_source_attested_step_inventory(self):
         # The old combined label remains readback-compatible, but is no longer emitted.
-        steps = tuple(step for step in h.BOOTSTRAP_STEPS if step != 'identity_cgroup_warnings')
+        steps = tuple(step for step in h.BOOTSTRAP_STEPS if step not in ('identity_cgroup_warnings', 'manager'))
         self.assertEqual(set(h.BOOTSTRAP_STEPS), set(self.STEPS) | {
-            'identity_cgroup_version', 'identity_cgroup_driver', 'identity_cgroup_resources'})
+            'identity_cgroup_version', 'identity_cgroup_driver', 'identity_cgroup_resources',
+            'manager_dropin', 'manager_reload', 'manager_linger', 'manager_start',
+            'manager_readback', 'manager_controllers'})
         tree = ast.parse((h.HERE / 'run.py').read_bytes())
         seen = {}
         for node in ast.walk(tree):
@@ -484,7 +486,10 @@ class BootstrapDiagnosticTests(unittest.TestCase):
         self.assertEqual(set(seen), set(steps))
         for step, operation in (
             ('tools_download', 'h.download_tools(root)'), ('dependencies', "'apt-get'"),
-            ('user_namespace', "'usermod'"), ('manager', "'loginctl'"),
+            ('user_namespace', "'usermod'"), ('manager_linger', "'loginctl'"),
+            ('manager_dropin', 'install_delegation(root)'), ('manager_reload', "'daemon-reload'"),
+            ('manager_start', "'start'"), ('manager_readback', 'verify_delegation(root)'),
+            ('manager_controllers', "'cpu', 'memory', 'pids'"),
             ('rootless_launch', "'systemd-run'"), ('context', "'create', 'rootless'"),
             ('socket_ready', 'time.monotonic() + 90'), ('identity_decode', "'info'"),
             ('identity_version', "'29.8.2'"), ('identity_compose_rootless', "'name=rootless'"),
@@ -680,8 +685,12 @@ class BootstrapDiagnosticTests(unittest.TestCase):
         calls = []
         def command(argv, **kwargs):
             calls.append((argv, kwargs))
-            if 'set-property' in argv and failure is not None:
+            if argv[:4] == ['sudo', '-n', 'python3', '-c'] and argv[-3] == 'install' and failure is not None:
                 raise failure
+            if argv[:2] == ['systemctl', 'show']:
+                return ('Delegate=yes\nDelegateControllers=cpu memory pids\n'
+                        'ControlGroup=/user.slice/user-1001.slice/user@1001.service\n'
+                        'DropInPaths=/run/systemd/system/user@1001.service.d/90-forge-full12-' + 'a' * 32 + '.conf\n').encode()
             return b'runner' if argv == ['id', '-un'] else b''
         def read_text(path, *args, **kwargs):
             if str(path).replace('\\', '/') in ('/etc/subuid', '/etc/subgid'):
@@ -695,6 +704,7 @@ class BootstrapDiagnosticTests(unittest.TestCase):
             with patch.object(h, 'download_tools', return_value=root / 'bin'), \
                     patch.object(h, 'command', side_effect=command), patch.object(gate, 'identity', return_value={'id': 'fixture'}), \
                     patch.object(gate.os, 'getuid', return_value=1001, create=True), patch.object(Path, 'read_text', read_text), \
+                    patch.object(h, 'hosted_guard'), patch.object(gate.uuid, 'uuid4', return_value=SimpleNamespace(hex='a' * 32)), \
                     patch.dict(os.environ), patch.object(h, 'BOOTSTRAP_DEADLINE', 1):
                 result = gate.start_daemon(root)
         return result, calls
@@ -703,27 +713,30 @@ class BootstrapDiagnosticTests(unittest.TestCase):
         result, calls = self.daemon_fixture('io pids cpu memory cpuset')
         self.assertEqual(result, {'id': 'fixture'})
         argv = [args for args, _ in calls]
-        delegation = ['sudo', '-n', 'systemctl', 'set-property', '--runtime', 'user@1001.service', 'Delegate=cpu memory pids']
+        delegation = ['sudo', '-n', 'python3', '-c', gate.DELEGATION_PROGRAM, 'install', '1001', 'a' * 32]
         self.assertIn(delegation, argv)
         self.assertLess(argv.index(delegation), next(index for index, args in enumerate(argv) if args[0] == 'systemd-run'))
         self.assertEqual(calls[argv.index(delegation)][1], {'timeout': 90})
+        reload = ['sudo', '-n', 'systemctl', 'daemon-reload']
+        start = ['sudo', '-n', 'systemctl', 'start', 'user@1001.service']
+        self.assertLess(argv.index(delegation), argv.index(reload))
+        self.assertLess(argv.index(reload), argv.index(start))
+        self.assertFalse(any('set-property' in args for args in argv))
         self.assertFalse(any('restart' in args or 'revert' in args for args in argv))
 
     def test_hosted_delegation_missing_controllers_prevents_daemon_launch(self):
         for controllers in ('memory pids', 'cpu pids', 'cpu memory', '', 'PRIVATE_SENTINEL'):
-            with self.subTest(controllers=controllers), patch.object(h, 'atomic') as atomic:
+            with self.subTest(controllers=controllers):
                 with self.assertRaises(h.BootstrapFailure) as caught:
                     self.daemon_fixture(controllers)
-                self.assertEqual(caught.exception.step, 'manager')
+                self.assertEqual(caught.exception.step, 'manager_controllers')
                 self.assertNotIn('PRIVATE_SENTINEL', json.dumps(h.safe_error('bootstrap', caught.exception)))
-                atomic.assert_not_called()
 
     def test_hosted_delegation_command_failure_has_no_fallback(self):
-        with patch.object(h, 'atomic') as atomic, self.assertRaises(h.BootstrapFailure) as caught:
+        with self.assertRaises(h.BootstrapFailure) as caught:
             self.daemon_fixture(failure=h.CommandFailure(1))
-        self.assertEqual(caught.exception.step, 'manager')
+        self.assertEqual(caught.exception.step, 'manager_dropin')
         self.assertEqual(h.safe_error('bootstrap', caught.exception)['exit_code'], 1)
-        atomic.assert_not_called()
 
     def test_retained_failure_hint_does_not_turn_failure_into_acceptance(self):
         report = {'status': 'FAIL', 'full12_pass': False, 'stages': []}
@@ -736,6 +749,299 @@ class BootstrapDiagnosticTests(unittest.TestCase):
         h.validate_safe_error(report['error'])
         self.assertEqual(report['error']['bootstrap_step'], 'socket_ready')
         self.assertNotIn('PRIVATE_SENTINEL', output.getvalue())
+
+
+class DelegationDropinTests(unittest.TestCase):
+    TOKEN = 'a' * 32
+
+    def owner(self, root):
+        owner = {'uid': '1001', 'token': self.TOKEN, 'owner_pid': os.getpid(), 'root': str(root)}
+        h.atomic(root / 'delegation-owner.json', owner, exclusive=True)
+        return owner
+
+    def test_cleanup_before_daemon_marker_still_removes_owned_dropin(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.owner(root)
+            with patch.object(h, 'hosted_guard'), patch.object(gate.os, 'getuid', return_value=1001, create=True), \
+                    patch.object(h, 'command') as command:
+                self.assertEqual(gate.stop_daemon(root), {'started': False, 'stopped': True})
+                self.assertTrue(gate.cleanup_delegation(root))
+            self.assertEqual(command.call_args_list[0].args[0][-3:], ['cleanup', '1001', self.TOKEN])
+            self.assertEqual(command.call_args_list[1].args[0], ['sudo', '-n', 'systemctl', 'daemon-reload'])
+            self.assertEqual([call.kwargs['timeout'] for call in command.call_args_list], [20, 20])
+
+    def test_cleanup_no_intent_has_no_privileged_effect(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(h, 'command') as command:
+            self.assertTrue(gate.cleanup_delegation(Path(temp)))
+        command.assert_not_called()
+
+    def test_cleanup_foreign_owner_marker_has_no_privileged_effect(self):
+        for field, value in [('uid', '1002'), ('owner_pid', -1), ('root', '/foreign'), ('token', '../foreign')]:
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                owner = self.owner(root)
+                owner[field] = value
+                h.atomic(root / 'delegation-owner.json', owner)
+                with patch.object(h, 'hosted_guard'), patch.object(gate.os, 'getuid', return_value=1001, create=True), \
+                        patch.object(h, 'command') as command:
+                    with self.assertRaises(ValueError):
+                        gate.cleanup_delegation(root)
+                command.assert_not_called()
+
+    def test_readback_requires_loaded_owned_dropin_and_runtime_controllers(self):
+        good = {'Delegate': 'yes', 'DelegateControllers': 'cpu memory pids',
+                'DropInPaths': '/run/systemd/system/user@1001.service.d/90-forge-full12-' + self.TOKEN + '.conf',
+                'ControlGroup': '/user.slice/user-1001.slice/user@1001.service'}
+        variants = [good]
+        variants += [{**good, key: value} for key, value in (
+            ('Delegate', 'no'), ('DelegateControllers', 'memory pids'),
+            ('DropInPaths', '/foreign.conf'), ('ControlGroup', '/foreign'))]
+        variants += [{key: value for key, value in good.items() if key != 'Delegate'}, {**good, 'foreign': 'private'}]
+        for index, values in enumerate(variants):
+            with self.subTest(index=index), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                self.owner(root)
+                raw = ''.join(key + '=' + value + '\n' for key, value in values.items()).encode()
+                with patch.object(gate.os, 'getuid', return_value=1001, create=True), patch.object(h, 'command', return_value=raw):
+                    if index == 0:
+                        path = gate.verify_delegation(root)
+                        self.assertEqual(path.as_posix(), '/sys/fs/cgroup/user.slice/user-1001.slice/user@1001.service/cgroup.controllers')
+                    else:
+                        with self.assertRaises(ValueError):
+                            gate.verify_delegation(root)
+
+    def test_duplicate_or_malformed_manager_readback_rejected(self):
+        for raw in (b'Delegate=yes\n' * 4, b'private\n', b''):
+            with tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                self.owner(root)
+                with patch.object(gate.os, 'getuid', return_value=1001, create=True), patch.object(h, 'command', return_value=raw):
+                    with self.assertRaises(ValueError):
+                        gate.verify_delegation(root)
+
+    def test_outer_finally_requires_cleanup_including_bootstrap_failure(self):
+        tree = ast.parse((h.HERE / 'run.py').read_bytes())
+        run = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'run_job')
+        final = ast.unparse(run)
+        self.assertIn("cleanup['delegation_removed'] = cleanup_delegation(root)", final)
+        self.assertLess(final.index("cleanup['daemon_stopped'] = stop_daemon(root)"),
+                        final.index("cleanup['delegation_removed'] = cleanup_delegation(root)"))
+        self.assertIn("cleanup.get('delegation_removed') is True", final)
+        aggregate = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'aggregate')
+        self.assertIn("report['cleanup'].get('delegation_removed') is True", ast.unparse(aggregate))
+
+    @staticmethod
+    def program(base):
+        namespace = {'__name__': 'pure_test_not_main'}
+        exec(compile(gate.DELEGATION_PROGRAM, '<delegation-program>', 'exec'), namespace)
+        namespace['BASE'] = base
+        return namespace
+
+    @unittest.skipUnless(os.name == 'posix', 'real dir_fd/nofollow hard-link semantics require Linux')
+    def test_real_files_atomic_no_overwrite_and_exact_inode_cleanup(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            program = self.program(base)
+            fstat = os.fstat
+            def root_stat(fd):
+                values = list(fstat(fd))
+                values[4] = 0
+                return os.stat_result(values)
+            with patch.object(os, 'geteuid', return_value=0), patch.object(os, 'fstat', side_effect=root_stat):
+                program['apply']('install', '1001', self.TOKEN)
+                parent = base / 'user@1001.service.d'
+                target = parent / ('90-forge-full12-' + self.TOKEN + '.conf')
+                owned = parent / ('.forge-full12-' + self.TOKEN) / 'delegate'
+                self.assertEqual(target.stat().st_ino, owned.stat().st_ino)
+                original = target.read_bytes()
+                with self.assertRaises(FileExistsError):
+                    program['apply']('install', '1001', self.TOKEN)
+                self.assertEqual(target.read_bytes(), original)
+                program['apply']('cleanup', '1001', self.TOKEN)
+                self.assertEqual(list(parent.iterdir()), [])
+
+    @unittest.skipUnless(os.name == 'posix', 'real dir_fd/nofollow hard-link semantics require Linux')
+    def test_real_foreign_same_bytes_different_inode_never_removed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            program = self.program(base)
+            fstat = os.fstat
+            def root_stat(fd):
+                values = list(fstat(fd))
+                values[4] = 0
+                return os.stat_result(values)
+            with patch.object(os, 'geteuid', return_value=0), patch.object(os, 'fstat', side_effect=root_stat):
+                program['apply']('install', '1001', self.TOKEN)
+                parent = base / 'user@1001.service.d'
+                target = parent / ('90-forge-full12-' + self.TOKEN + '.conf')
+                raw = target.read_bytes()
+                target.unlink()
+                target.write_bytes(raw)
+                inode = target.stat().st_ino
+                program['apply']('cleanup', '1001', self.TOKEN)
+                self.assertEqual(target.stat().st_ino, inode)
+                self.assertEqual(target.read_bytes(), raw)
+
+    def test_root_helper_closed_identity_and_no_transient_setter(self):
+        program = self.program(Path('/not-used'))
+        for action, uid, token in [('install', '../1001', self.TOKEN), ('install', '0', self.TOKEN),
+                                   ('install', '1001', '../foreign'), ('private', '1001', self.TOKEN)]:
+            with patch.object(os, 'geteuid', return_value=0, create=True), self.assertRaises(ValueError):
+                program['apply'](action, uid, token)
+        source = (h.HERE / 'run.py').read_text()
+        self.assertNotIn("'set-property'", source)
+        self.assertNotIn('/etc/systemd', source)
+        self.assertNotIn("'restart'", source)
+
+    @unittest.skipUnless(os.name == 'posix', 'real dir_fd/nofollow FIFO semantics require Linux')
+    def test_real_fifo_corrupt_missing_or_symlink_source_is_held_without_unlink(self):
+        for fault in ('fifo', 'corrupt', 'missing', 'symlink'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temp:
+                base = Path(temp)
+                program = self.program(base)
+                fstat = os.fstat
+                def root_stat(fd):
+                    values = list(fstat(fd))
+                    values[4] = 0
+                    return os.stat_result(values)
+                with patch.object(os, 'geteuid', return_value=0), patch.object(os, 'fstat', side_effect=root_stat):
+                    program['apply']('install', '1001', self.TOKEN)
+                    parent = base / 'user@1001.service.d'
+                    target = parent / ('90-forge-full12-' + self.TOKEN + '.conf')
+                    owned = parent / ('.forge-full12-' + self.TOKEN) / 'delegate'
+                    owned.unlink()
+                    if fault == 'fifo':
+                        os.mkfifo(owned)
+                    elif fault == 'corrupt':
+                        owned.write_bytes(b'foreign')
+                    elif fault == 'symlink':
+                        owned.symlink_to(target)
+                    before = target.read_bytes()
+                    with self.assertRaises((ValueError, OSError)):
+                        program['apply']('cleanup', '1001', self.TOKEN)
+                    self.assertEqual(target.read_bytes(), before)
+
+    @unittest.skipUnless(os.name == 'posix', 'real nofollow/no-overwrite semantics require Linux')
+    def test_real_foreign_publication_collision_and_parent_symlink_never_overwritten(self):
+        for fault in ('collision', 'symlink'):
+            with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temp:
+                base = Path(temp)
+                program = self.program(base)
+                parent = base / 'user@1001.service.d'
+                if fault == 'collision':
+                    parent.mkdir()
+                else:
+                    (base / 'foreign').mkdir()
+                    parent.symlink_to(base / 'foreign', target_is_directory=True)
+                target = parent / ('90-forge-full12-' + self.TOKEN + '.conf')
+                target.write_bytes(b'foreign')
+                fstat = os.fstat
+                def root_stat(fd):
+                    values = list(fstat(fd))
+                    values[4] = 0
+                    return os.stat_result(values)
+                with patch.object(os, 'geteuid', return_value=0), patch.object(os, 'fstat', side_effect=root_stat):
+                    with self.assertRaises(OSError):
+                        program['apply']('install', '1001', self.TOKEN)
+                self.assertEqual(target.read_bytes(), b'foreign')
+                self.assertEqual(list(parent.iterdir()), [target])
+
+    @unittest.skipUnless(os.name == 'posix', 'real dir_fd/fsync failure cleanup requires Linux')
+    def test_real_install_fsync_failure_removes_only_new_unpublished_entries(self):
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            program = self.program(base)
+            fstat, fsync = os.fstat, os.fsync
+            def root_stat(fd):
+                values = list(fstat(fd))
+                values[4] = 0
+                return os.stat_result(values)
+            calls = []
+            def sync(fd):
+                calls.append(fd)
+                if len(calls) == 2:
+                    raise OSError(errno.ENOSPC, 'private')
+                fsync(fd)
+            with patch.object(os, 'geteuid', return_value=0), patch.object(os, 'fstat', side_effect=root_stat), patch.object(os, 'fsync', side_effect=sync):
+                with self.assertRaises(OSError):
+                    program['apply']('install', '1001', self.TOKEN)
+            self.assertEqual(list((base / 'user@1001.service.d').iterdir()), [])
+
+
+class PhysicalResourceTests(unittest.TestCase):
+    def run_readback(self, change=None, raw_change=None):
+        images = {'tools': 'sha256:' + 'a' * 64, 'postgres': 'sha256:' + 'b' * 64}
+        operation = SimpleNamespace(command=['owned-compose'], project='owned-project')
+        calls = []
+        inspections = {}
+        def command(argv, **kwargs):
+            calls.append(argv)
+            self.assertEqual(kwargs, {'timeout': 10})
+            if argv[:1] == operation.command:
+                return (('c' if argv[-1] == 'qa' else 'd') * 64 + '\n').encode()
+            container = argv[-1] if 'inspect' in argv else argv[argv.index('exec') + 1]
+            service = 'qa' if container == 'c' * 64 else 'postgres'
+            cpu, memory, pids = (2, 5 * 2**30, 512) if service == 'qa' else (1, 2**30, 0)
+            if 'inspect' in argv:
+                inspections[service] = inspections.get(service, 0) + 1
+                value = {'Id': container, 'Image': images['tools' if service == 'qa' else 'postgres'],
+                    'State': {'Running': True}, 'Config': {'Labels': {
+                        'com.docker.compose.project': operation.project, 'com.docker.compose.service': service,
+                        'sdlc.task': gate.TASK, 'sdlc.purpose': gate.PURPOSE}},
+                    'HostConfig': {'NanoCpus': cpu * 10**9, 'Memory': memory, 'PidsLimit': pids, 'CgroupnsMode': 'private'}}
+                if change:
+                    change(service, inspections[service], value)
+                return json.dumps([value]).encode()
+            value = f'{cpu * 100000} 100000\n{memory}\n{pids if service == "qa" else "max"}\n'.encode()
+            return raw_change(service, value) if raw_change else value
+        with patch.object(h, 'command', side_effect=command):
+            result = gate.resource_enforcement(operation, images)
+        return result, calls
+
+    def test_actual_hostconfig_and_cgroup_readback_both_existing_services(self):
+        result, calls = self.run_readback()
+        self.assertEqual(result, {'qa': {'cpu_count': 2, 'memory_bytes': 5 * 2**30, 'pids_limit': 512},
+                                  'postgres': {'cpu_count': 1, 'memory_bytes': 2**30, 'pids_limit': None}})
+        self.assertEqual(len(calls), 8)
+        self.assertNotIn('sha256:', json.dumps(result))
+        self.assertNotIn('owned-project', json.dumps(result))
+
+    def test_missing_false_malformed_unlimited_or_wrong_hostconfig_refused(self):
+        for field, value in [('NanoCpus', 0), ('NanoCpus', '2000000000'), ('Memory', True), ('Memory', 0),
+                             ('PidsLimit', -1), ('PidsLimit', None), ('CgroupnsMode', 'host')]:
+            def change(service, count, item):
+                if service == 'qa':
+                    item['HostConfig'][field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                self.run_readback(change=change)
+
+    def test_unlimited_missing_malformed_and_wrong_runtime_limits_refused(self):
+        for raw in (b'max 100000\n5368709120\n512\n', b'100000 100000\n5368709120\n512\n',
+                    b'200000 100000\nmax\n512\n', b'200000 100000\n5368709120\nmax\n',
+                    b'200000 100000\n5368709120\n', b'PRIVATE_SENTINEL\n', b'1' * 391):
+            with self.subTest(raw=raw[:16]), self.assertRaises(ValueError):
+                self.run_readback(raw_change=lambda service, original: raw if service == 'qa' else original)
+
+    def test_foreign_owner_stopped_container_or_postreadback_mutation_refused(self):
+        changes = [lambda item: item['Config']['Labels'].update({'sdlc.task': 'foreign'}),
+                   lambda item: item['State'].update({'Running': False}),
+                   lambda item: item.update(Image='sha256:' + 'f' * 64),
+                   lambda item: item['Config']['Labels'].update({'com.docker.compose.service': 'foreign'})]
+        for modify in changes:
+            for at in (1, 2):
+                with self.subTest(at=at), self.assertRaises(ValueError):
+                    self.run_readback(change=lambda service, count, item: modify(item) if service == 'qa' and count == at else None)
+
+    def test_entry_readback_precedes_work_and_aggregate_requires_proof(self):
+        source = (h.HERE / 'run.py').read_text()
+        stage = source.split('def run_stage(', 1)[1].split('def check_runtime_seals', 1)[0]
+        self.assertLess(stage.index("['up', '-d'"), stage.index("proof['resource_enforcement']"))
+        self.assertLess(stage.index("proof['resource_enforcement']"), stage.index("path = root / ('private/' + stage + '.log')"))
+        with self.assertRaises(ValueError):
+            AggregationTests().check(lambda a, b, c: a['stages'][0].pop('resource_enforcement'))
+        with self.assertRaises(ValueError):
+            AggregationTests().check(lambda a, b, c: c['cleanup'].pop('delegation_removed'))
 
 
 class NativePolicyTests(unittest.TestCase):
@@ -810,6 +1116,8 @@ def report_fixture(job):
                'source_parity': True, 'cleanup_complete': True, **({'tests_passed': counts[stage]} if stage in counts else {})}
               for stage in gate.JOBS[job]]
     for stage in stages:
+        stage['resource_enforcement'] = {'qa': {'cpu_count': 2, 'memory_bytes': 5 * 2**30, 'pids_limit': 512},
+                                         'postgres': {'cpu_count': 1, 'memory_bytes': 2**30, 'pids_limit': None}}
         if stage['stage'] == 'postgres':
             stage['negative_count'] = 24
         if stage['stage'] == 'release':
@@ -846,7 +1154,7 @@ def report_fixture(job):
         'daemon_id': 'independent-' + job,
         'daemon_versions': {'server': '29.8.2', 'client': '29.8.2', 'compose': 'Docker Compose version v5.5.1'},
         'projects': projects, 'baseline': baseline,
-        'cleanup': {'complete': True, 'exact_inventory_matches_new_baseline': True, 'disposable_complete': True, 'daemon_stopped': True,
+        'cleanup': {'complete': True, 'exact_inventory_matches_new_baseline': True, 'disposable_complete': True, 'daemon_stopped': True, 'delegation_removed': True,
             'inventory_after': baseline, 'baseline_images_preserved': True, 'own_images_preserved': True},
         'stages': stages}
 

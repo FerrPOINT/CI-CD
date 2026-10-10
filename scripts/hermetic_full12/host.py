@@ -23,8 +23,9 @@ PUBLIC_CONTROLS = '1dbedf85242c3540b70005ce5f0c20badb682c41'
 QUALIFICATION_CONTROLS = '632ea8347602fe4af22e7369790ed9c75e53f76a'
 SAFETY_CONTROLS = '4d97c54f35b485224a8229495763658fcbbd40e9'
 MAINTENANCE_CONTROLS = 'b9375dc4b4f070b0f6cff1733228f1a6865b1368'
-CONTROLS_PARENT = '1310958a4b5cf68642a6ce8d4466ef5ff1e64f31'
-BRANCH = 'build-only/forge-resource-full12-20261010'
+DIAGNOSTIC_CONTROLS = '1310958a4b5cf68642a6ce8d4466ef5ff1e64f31'
+CONTROLS_PARENT = 'eb91d4f1a3f3e0f3731c38a861db68ae8a0d952a'
+BRANCH = 'build-only/forge-delegation-full12-20261010'
 CONSUMER_PATHS = {
     '.github/workflows/forge-hermetic-full12.yml',
     *('scripts/hermetic_full12/' + name for name in (
@@ -40,6 +41,8 @@ DOCKER = ['docker', '--context', 'rootless']
 ERROR_STAGES = ('python', 'row-smoke', 'smoke', 'check', 'clippy', 'postgres', 'oci',
                 'workspace', 'integration', 'cli', 'openapi', 'release')
 BOOTSTRAP_STEPS = ('tools_download', 'dependencies', 'user_namespace', 'manager',
+                   'manager_dropin', 'manager_reload', 'manager_linger', 'manager_start',
+                   'manager_readback', 'manager_controllers',
                    'rootless_launch', 'context', 'socket_ready', 'identity_decode',
                    'identity_version', 'identity_compose_rootless', 'identity_endpoint',
                    'identity_cgroup_warnings', 'identity_cgroup_version',
@@ -368,7 +371,8 @@ def bind_maintenance(module, proof):
 
 def controls_history(controls):
     require(git(controls, 'rev-parse', '--is-shallow-repository').strip() == b'false')
-    for revision, parent in (('HEAD', CONTROLS_PARENT), (CONTROLS_PARENT, MAINTENANCE_CONTROLS),
+    for revision, parent in (('HEAD', CONTROLS_PARENT), (CONTROLS_PARENT, DIAGNOSTIC_CONTROLS),
+                             (DIAGNOSTIC_CONTROLS, MAINTENANCE_CONTROLS),
                              (MAINTENANCE_CONTROLS, SAFETY_CONTROLS),
                              (SAFETY_CONTROLS, QUALIFICATION_CONTROLS),
                              (QUALIFICATION_CONTROLS, PUBLIC_CONTROLS),
