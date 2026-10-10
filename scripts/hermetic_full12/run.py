@@ -432,17 +432,19 @@ def resource_enforcement(operation, images):
 
 def fill_cache(root, sdk, q, parent, images, token, cache_operations):
     with h.bootstrap_step('cache_prepare'):
-        operation = parent.parent_class(sdk, q)(project='sdlc-build-forge-cache-' + token, task=TASK,
-            purpose='locked-dependency-fetch-only', docker=h.DOCKER, directory=root / 'cache-fetch', daemon_id=q.DAEMON_ID,
-            resource_policy='isolated-ci-v1')
-        cache_operations.append(operation)
-        service = {'image': images['tools'], 'init': True, 'user': '0:0', 'cap_drop': ['ALL'], 'networks': ['fetch'],
-            'entrypoint': ['cargo'], 'command': ['fetch', '--locked', '--target', 'x86_64-unknown-linux-gnu'],
-            'working_dir': '/work/CI-CD/backend', 'environment': {'CARGO_HOME': '/cache/cargo', 'RUSTUP_TOOLCHAIN': '1.88.0',
-                'CARGO_TARGET_DIR': '/tmp/fetch-target', 'CARGO_NET_RETRY': '2', 'CARGO_HTTP_TIMEOUT': '60'},
-            'volumes': [bind(root / 'sources/CI-CD', '/work/CI-CD', True),
-                bind(root / 'sources/services-base', '/work/services-base', True), bind(root / 'cache', '/cache')]}
-        operation.write({'fetch': service}, networks={'fetch': {}})
+        with h.bootstrap_step('cache_allocate'):
+            operation = parent.parent_class(sdk, q)(project='sdlc-build-forge-cache-' + token, task=TASK,
+                purpose='locked-dependency-fetch-only', docker=h.DOCKER, directory=root / 'cache-fetch', daemon_id=q.DAEMON_ID,
+                resource_policy='isolated-ci-v1')
+            cache_operations.append(operation)
+        with h.bootstrap_step('cache_manifest'):
+            service = {'image': images['tools'], 'init': True, 'user': '0:0', 'cap_drop': ['ALL'], 'networks': ['fetch'],
+                'entrypoint': ['cargo'], 'command': ['fetch', '--locked', '--target', 'x86_64-unknown-linux-gnu'],
+                'working_dir': '/work/CI-CD/backend', 'environment': {'CARGO_HOME': '/cache/cargo', 'RUSTUP_TOOLCHAIN': '1.88.0',
+                    'CARGO_TARGET_DIR': '/tmp/fetch-target', 'CARGO_NET_RETRY': '2', 'CARGO_HTTP_TIMEOUT': '60'},
+                'volumes': [bind(root / 'sources/CI-CD', '/work/CI-CD', True),
+                    bind(root / 'sources/services-base', '/work/services-base', True), bind(root / 'cache', '/cache')]}
+            operation.write({'fetch': service}, networks={'fetch': {}})
     with h.bootstrap_step('cache_fetch'):
         h.command(operation.command + ['up', '--pull', 'never', '--abort-on-container-exit', '--exit-code-from', 'fetch'],
             timeout=2400, log=root / 'private/cache-fetch.log')

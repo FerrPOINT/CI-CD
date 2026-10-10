@@ -473,7 +473,7 @@ class BootstrapDiagnosticTests(unittest.TestCase):
             'manager_dropin', 'manager_reload', 'manager_linger', 'manager_start',
             'manager_readback', 'manager_controllers', 'project_ownership', 'disposable_prepare',
             'image_pull', 'image_readback', 'tools_build', 'tools_readback',
-            'cache_prepare', 'cache_fetch', 'cache_cleanup', 'cache_seal'})
+            'cache_prepare', 'cache_allocate', 'cache_manifest', 'cache_fetch', 'cache_cleanup', 'cache_seal'})
         tree = ast.parse((h.HERE / 'run.py').read_bytes())
         seen = {}
         for node in ast.walk(tree):
@@ -503,7 +503,10 @@ class BootstrapDiagnosticTests(unittest.TestCase):
             ('project_ownership', "'ownership.json'"), ('disposable_prepare', 'parent.create_disposable(q, config)'),
             ('image_pull', "'pull'"), ('image_readback', "item['Architecture'] == 'amd64'"),
             ('tools_build', "'build', '--pull=false'"), ('tools_readback', "'sha256:[a-f0-9]{64}'"),
-            ('cache_prepare', "resource_policy='isolated-ci-v1'"), ('cache_fetch', "'--exit-code-from', 'fetch'"),
+            ('cache_prepare', "h.bootstrap_step('cache_allocate')"),
+            ('cache_allocate', "resource_policy='isolated-ci-v1'"),
+            ('cache_manifest', "operation.write({'fetch': service}, networks={'fetch': {}})"),
+            ('cache_fetch', "'--exit-code-from', 'fetch'"),
             ('cache_cleanup', 'close_operation(operation)'), ('cache_seal', "'cache-source-tree.json'"),
         ):
             self.assertIn(operation, seen[step])
@@ -811,7 +814,7 @@ class CacheBoundaryTests(unittest.TestCase):
             h.validate_safe_error(safe)
             self.assertNotIn('PRIVATE_SENTINEL', json.dumps(safe))
 
-    def cache_fixture(self, failure=None):
+    def cache_fixture(self, failure=None, error=None):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             registry = root / 'cache/cargo/registry'
@@ -821,9 +824,11 @@ class CacheBoundaryTests(unittest.TestCase):
             h.atomic(journal, {'phase': 'cleaned'})
             operation = SimpleNamespace(command=['synthetic-compose'], project='synthetic-project',
                 journal=journal, write=Mock())
-            if failure == 'cache_prepare':
-                operation.write.side_effect = ValueError('PRIVATE_SENTINEL')
+            if failure in ('cache_prepare', 'cache_manifest'):
+                operation.write.side_effect = error if error is not None else ValueError('PRIVATE_SENTINEL')
             factory = Mock(return_value=operation)
+            if failure == 'cache_allocate':
+                factory.side_effect = error if error is not None else ValueError('PRIVATE_SENTINEL')
             parent = SimpleNamespace(parent_class=lambda *_: factory)
             pending = []
             command = Mock(return_value=b'PRIVATE_SENTINEL')
@@ -843,10 +848,14 @@ class CacheBoundaryTests(unittest.TestCase):
                     result = gate.fill_cache(root, None, SimpleNamespace(DAEMON_ID='admitted'), parent,
                         {'tools': 'sha256:' + 'a' * 64}, 'a' * 20, pending)
                 finally:
-                    self.assertEqual(pending, [operation])
-                    if failure in ('cache_prepare', 'cache_fetch'):
+                    self.assertEqual(pending, [] if failure == 'cache_allocate' else [operation])
+                    if failure in ('cache_prepare', 'cache_allocate', 'cache_manifest', 'cache_fetch'):
                         close.assert_not_called()
                         self.assertFalse((root / 'cache-source-tree.json').exists())
+                    if failure in ('cache_prepare', 'cache_allocate', 'cache_manifest'):
+                        command.assert_not_called()
+                    if failure == 'cache_allocate':
+                        operation.write.assert_not_called()
             self.assertEqual(result['initial_tree_sha256'], h.sha(root / 'cache-source-tree.json'))
             return result, factory, operation, command, close
 
@@ -866,11 +875,12 @@ class CacheBoundaryTests(unittest.TestCase):
         close.assert_called_once_with(operation)
 
     def test_cache_failure_cuts_never_emit_success_or_private_values(self):
-        for cut in ('cache_prepare', 'cache_fetch', 'cache_cleanup', 'cache_inventory', 'cache_seal'):
+        for cut in ('cache_prepare', 'cache_allocate', 'cache_manifest', 'cache_fetch', 'cache_cleanup', 'cache_inventory', 'cache_seal'):
             with self.subTest(cut=cut), self.assertRaises(h.BootstrapFailure) as caught:
                 self.cache_fixture(cut)
             safe = h.safe_error('bootstrap', caught.exception)
-            self.assertEqual(safe['bootstrap_step'], 'cache_cleanup' if cut == 'cache_inventory' else cut)
+            expected = {'cache_prepare': 'cache_manifest', 'cache_inventory': 'cache_cleanup'}.get(cut, cut)
+            self.assertEqual(safe['bootstrap_step'], expected)
             h.validate_safe_error(safe)
             self.assertNotIn('PRIVATE_SENTINEL', json.dumps(safe))
             report = {'status': 'FAIL', 'full12_pass': False, 'stages': []}
@@ -878,6 +888,22 @@ class CacheBoundaryTests(unittest.TestCase):
                 gate.retain_failure(report, 'bootstrap', caught.exception, Path('/unused'), 'A', [])
             self.assertEqual(report['status'], 'FAIL')
             self.assertFalse(report['full12_pass'])
+
+    def test_cache_nested_prepare_boundaries_preserve_safe_error_and_custody(self):
+        for step in ('cache_allocate', 'cache_manifest'):
+            for error in (ValueError('PRIVATE_SENTINEL'), OSError(28, 'PRIVATE_SENTINEL'), h.CommandFailure(7)):
+                with self.subTest(step=step, error=type(error).__name__), self.assertRaises(h.BootstrapFailure) as caught:
+                    self.cache_fixture(step, error)
+                self.assertEqual(h.safe_error('bootstrap', caught.exception),
+                    {**h.safe_error('bootstrap', error), 'bootstrap_step': step})
+                self.assertNotIn('PRIVATE_SENTINEL', json.dumps(h.safe_error('bootstrap', caught.exception)))
+
+    def test_cache_nested_prepare_boundaries_do_not_reclassify_capacity_failure(self):
+        for step in ('cache_allocate', 'cache_manifest'):
+            error = h.CapacityFailure({'synthetic': True})
+            with self.subTest(step=step), self.assertRaises(h.CapacityFailure) as caught:
+                self.cache_fixture(step, error)
+            self.assertIs(caught.exception, error)
 
 
 class DelegationDropinTests(unittest.TestCase):
