@@ -100,8 +100,24 @@ class ControlsTests(unittest.TestCase):
         self.assertEqual(sum(isinstance(node, ast.Assert) for node in ast.walk(ast.parse((h.HERE / 'row_smoke.py').read_bytes()))), 16)
 
     def test_source_and_base_exact(self):
-        self.assertEqual(h.SOURCE, '25be2e82d4d42673897c8a16070eb8a9519244f0')
+        self.assertEqual(h.SOURCE, 'd7443f8dffdd7f5d921c5758bed4e5a35423c0ff')
         self.assertEqual(h.BASE, '19a7a381ae6dbea61a643bb96189e483fa64df5c')
+
+    def test_checkpoint_source_catalogue_and_all_three_checkout_bindings(self):
+        catalogue = h.read(h.HERE / 'source-catalogue.json')
+        self.assertEqual(catalogue['source_sha'], h.SOURCE)
+        self.assertEqual(catalogue['product_base_sha'], h.BASE)
+        self.assertEqual(h.read(h.HERE / 'coverage.json')['source_sha'], h.SOURCE)
+        workflow = (h.HERE.parents[1] / '.github/workflows/forge-hermetic-full12.yml').read_text()
+        self.assertEqual(workflow.count('ref: ' + h.SOURCE + '\n'), 3)
+        self.assertNotIn('ref: ' + h.SOURCE_PARENT, workflow)
+        expected = {
+            'backend/tests/support/oci_delivery.rs': (32887, '0dbdf84bf39a9ee9577e79867b67210cb211959eb5e26a9f0aaadca043466034'),
+            'scripts/tests/test_oci_offline_fixture.py': (34897, '23bb580979acda0e0a10c71b6e76bb80cc4b7ef4780388be51890d0cfa8533f3'),
+        }
+        files = {item['path']: item for item in catalogue['catalogues']['forge']['files']}
+        for name, (size, digest) in expected.items():
+            self.assertEqual((files[name]['size'], files[name]['sha256']), (size, digest))
 
     def test_no_old_cache_or_native_workspace_path_in_new_executor(self):
         for name in ('host.py', 'run.py', 'tools.Dockerfile'):
@@ -1906,6 +1922,75 @@ class OciCliDiagnosticTests(unittest.TestCase):
         manifest = (h.HERE / 'run.py').read_text()
         self.assertIn("bind(root / 'output', '/output')", manifest)
         self.assertIn("n / 'sources', n / 'output'", (h.HERE / 'parent.py').read_text())
+
+    def test_checkpoint_producer_states_and_legacy_observations(self):
+        import re
+        source = (h.HERE.parents[1] / 'backend/tests/support/oci_delivery.rs').read_text()
+        script = source.split('const OCI_CLI_FAILURE_DIAGNOSTIC: &str = r#"', 1)[1].split('"#;', 1)[0]
+        tree = ast.parse(script)
+        node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'checkpoint')
+        namespace = {'Path': Path, 're': re, 'stat': stat}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), '<closed_checkpoint_producer>', 'exec'), namespace)
+        checkpoint = namespace['checkpoint']
+        entries = []
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            command = 'a' * 64
+            operation, compose = root / 'operations' / command, root / 'compose-requests'
+            paths = (root / 'owner.json', operation / 'intent.json', operation / 'compose.json',
+                     compose / (command + '.json'), operation / 'child.json', operation / 'result.json')
+            for index, state in enumerate(('none', 'owner', 'intent', 'compose', 'request', 'child', 'result')):
+                if index:
+                    paths[index - 1].parent.mkdir(parents=True, exist_ok=True)
+                    paths[index - 1].write_bytes(b'PRIVATE SQL TOKEN (not read)')
+                self.assertEqual(checkpoint(str(root), command, str(compose)), state)
+                entries.append(self.observation(checkpoint=state))
+            self.assertEqual(checkpoint(str(root), 'PRIVATE', str(compose)), 'unavailable')
+            entries.append(self.observation(checkpoint='unavailable'))
+        with self.fixture(entries) as (root, _, _):
+            diagnostic = h.oci_failure_diagnostics(root)
+            self.assertEqual(diagnostic['cli'], entries)
+            h.validate_safe_error(OciDiagnosticTests.error(diagnostic))
+            self.assertNotIn('PRIVATE', json.dumps(diagnostic))
+        h.validate_safe_error(self.error([self.observation(), entries[0]]))
+        with self.assertRaises(ValueError):
+            h.validate_safe_error(self.error(entries + [self.observation()]))
+        with self.assertRaises(ValueError):
+            h.validate_safe_error(self.error([entries[0], entries[0]]))
+
+    def test_checkpoint_unknown_types_extras_and_duplicate_keys_remain_private(self):
+        bad = [self.observation(checkpoint=value) for value in
+               (None, True, False, 0, 1.0, [], {}, 'Owner', 'unknown', 'PRIVATE SQL TOKEN')]
+        good = self.observation(checkpoint='owner')
+        bad.extend({**good, key: 'PRIVATE SQL TOKEN'} for key in ('message', 'contents', 'path', 'argv', 'env'))
+        for entry in bad:
+            with self.subTest(entry=entry), self.assertRaises(ValueError):
+                h.validate_safe_error(self.error([entry]))
+            with self.fixture([entry], OciDiagnosticTests.compiler()) as (root, _, _):
+                diagnostic = h.oci_failure_diagnostics(root)
+                self.assertNotIn('cli', diagnostic)
+                self.assertEqual(len(diagnostic['compiler']), 1)
+                self.assertNotIn('PRIVATE', json.dumps(diagnostic))
+        duplicate = json.dumps(good).encode()[:-1] + b',"checkpoint":"PRIVATE SQL TOKEN"}'
+        with self.fixture([duplicate], OciDiagnosticTests.compiler()) as (root, _, _):
+            diagnostic = h.oci_failure_diagnostics(root)
+            self.assertNotIn('cli', diagnostic)
+            self.assertEqual(len(diagnostic['compiler']), 1)
+
+    def test_checkpoint_does_not_relax_existing_payload_contract(self):
+        for kind in ('oversized', 'empty', 'invalid_json', 'other_document', 'invalid_rejection'):
+            h.validate_safe_error(self.error([self.observation(payloadKind=kind, checkpoint='unavailable')]))
+            with self.assertRaises(ValueError):
+                h.validate_safe_error(self.error([self.observation(payloadKind=kind, checkpoint='owner', status='blocked')]))
+        for status, reason in (('blocked', 'unsupported_mutable_data_or_migration'),
+                               ('blocked', 'owner_data_snapshot_drift'),
+                               ('blocked', 'actual_data_schema_incompatible'),
+                               ('unknown_or_rejected', 'oci_command_rejected_or_unavailable')):
+            good = self.observation(payloadKind='rejection', checkpoint='result', status=status, reason=reason)
+            h.validate_safe_error(self.error([good]))
+            for changes in ({'exitCode': True}, {'acceptanceVerified': True}, {'reason': 'PRIVATE'}):
+                with self.assertRaises(ValueError):
+                    h.validate_safe_error(self.error([{**good, **changes}]))
 
     def test_direct_structured_projection_not_marker_or_raw_log(self):
         entry = self.observation(payloadKind='rejection', status='blocked', reason='owner_data_snapshot_drift')

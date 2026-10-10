@@ -18,7 +18,8 @@ import urllib.request
 import maintenance_git as m
 
 HERE = Path(__file__).resolve().parent
-SOURCE = '25be2e82d4d42673897c8a16070eb8a9519244f0'
+SOURCE = 'd7443f8dffdd7f5d921c5758bed4e5a35423c0ff'
+SOURCE_PARENT = '25be2e82d4d42673897c8a16070eb8a9519244f0'
 BASE = '19a7a381ae6dbea61a643bb96189e483fa64df5c'
 PUBLIC_CONTROLS = '1dbedf85242c3540b70005ce5f0c20badb682c41'
 QUALIFICATION_CONTROLS = '632ea8347602fe4af22e7369790ed9c75e53f76a'
@@ -34,14 +35,16 @@ PRE_CACHE_CAPACITY_CONTROLS = 'ab623f1ea7f47c0afa182ab4b913c89f981d305b'
 CUMULATIVE_RECLAIM_CONTROLS = 'dcad6522c9dc313bf6f8113deb9ecb885e6710ad'
 IMMUTABLE_MAINTENANCE_CONTROLS = '9e3241ef9b83536600ee1a7660a53f588cf232a0'
 OCI_LOCATION_CONTROLS = '0527882c371ccc4247e2d2f3d74a9a8e8f74ef78'
-CONTROLS_PARENT = '80ff3ddd686dba907f1f22b27c64abddb60e352a'
+OCI_CLI_PARENT = '80ff3ddd686dba907f1f22b27c64abddb60e352a'
+OCI_CLI_CONTROLS = '876784219c3b2751b4351c81a90fc4971c797fde'
+CONTROLS_PARENT = '667d1be736c8834deb1a20602b95bb0d6c815157'
 BRANCH = 'build-only/forge-delegation-full12-20261010'
 CONSUMER_PATHS = {
     '.github/workflows/forge-hermetic-full12.yml',
     *('scripts/hermetic_full12/' + name for name in (
         'host.py', 'maintenance_git.py', 'maintenance-pin.json', 'test_maintenance_git.py',
         'test_gate.py', 'test_deadline_boundaries.py', 'run.py', 'private_bridge_proofs.py',
-        'README.md', 'components.json')),
+        'README.md', 'components.json', 'source-catalogue.json', 'coverage.json')),
 }
 HOST_BYTES = 108279229428
 DATA_BYTES = 71319483898
@@ -261,6 +264,10 @@ def validate_safe_error(result):
                 require(type(entry.get('payloadKind')) is str and entry['payloadKind'] in {
                     'oversized', 'empty', 'invalid_json', 'other_document', 'invalid_rejection', 'rejection'})
                 keys = {'schema', 'scope', 'acceptanceVerified', 'exitCode', 'payloadKind'}
+                if 'checkpoint' in entry:
+                    keys.add('checkpoint')
+                    require(type(entry['checkpoint']) is str and entry['checkpoint'] in (
+                        'none', 'owner', 'intent', 'compose', 'request', 'child', 'result', 'unavailable'))
                 if entry['payloadKind'] == 'rejection':
                     keys |= {'status', 'reason'}
                     require((entry.get('status'), entry.get('reason')) in (
@@ -536,7 +543,10 @@ def bind_maintenance(module, proof):
 
 def controls_history(controls):
     require(git(controls, 'rev-parse', '--is-shallow-repository').strip() == b'false')
-    for revision, parent in (('HEAD', CONTROLS_PARENT), (CONTROLS_PARENT, OCI_LOCATION_CONTROLS),
+    row = git(controls, 'rev-list', '--parents', '-n', '1', CONTROLS_PARENT).decode().split()
+    require(row == [CONTROLS_PARENT, OCI_CLI_CONTROLS, SOURCE])
+    for revision, parent in (('HEAD', CONTROLS_PARENT), (SOURCE, SOURCE_PARENT),
+                             (OCI_CLI_CONTROLS, OCI_CLI_PARENT), (OCI_CLI_PARENT, OCI_LOCATION_CONTROLS),
                              (OCI_LOCATION_CONTROLS, IMMUTABLE_MAINTENANCE_CONTROLS),
                              (IMMUTABLE_MAINTENANCE_CONTROLS, CUMULATIVE_RECLAIM_CONTROLS),
                              (CUMULATIVE_RECLAIM_CONTROLS, PRE_CACHE_CAPACITY_CONTROLS),
@@ -550,9 +560,12 @@ def controls_history(controls):
                              (MAINTENANCE_CONTROLS, SAFETY_CONTROLS),
                              (SAFETY_CONTROLS, QUALIFICATION_CONTROLS),
                              (QUALIFICATION_CONTROLS, PUBLIC_CONTROLS),
-                             (PUBLIC_CONTROLS, SOURCE)):
+                             (PUBLIC_CONTROLS, SOURCE_PARENT)):
         row = git(controls, 'rev-list', '--parents', '-n', '1', revision).decode().split()
         require(len(row) == 2 and row[1] == parent)
+    changes = git(controls, 'diff', '--name-status', OCI_CLI_CONTROLS, CONTROLS_PARENT).decode().splitlines()
+    require(changes == ['M\tbackend/tests/support/oci_delivery.rs',
+                        'M\tscripts/tests/test_oci_offline_fixture.py'])
     changes = git(controls, 'diff', '--name-status', CONTROLS_PARENT, 'HEAD').decode().splitlines()
     require(changes and all(line.startswith('M\t') and line[2:] in CONSUMER_PATHS for line in changes))
     changes = git(controls, 'diff', '--name-status', SOURCE, 'HEAD').decode().splitlines()

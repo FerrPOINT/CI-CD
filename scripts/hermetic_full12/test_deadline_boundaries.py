@@ -26,7 +26,10 @@ def git_response(argv):
         return b'false\n'
     if args[0] == 'rev-list':
         chain = {'HEAD': (os.environ['GITHUB_SHA'], h.CONTROLS_PARENT),
-                 h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.OCI_LOCATION_CONTROLS),
+                 h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.OCI_CLI_CONTROLS, h.SOURCE),
+                 h.SOURCE: (h.SOURCE, h.SOURCE_PARENT),
+                 h.OCI_CLI_CONTROLS: (h.OCI_CLI_CONTROLS, h.OCI_CLI_PARENT),
+                 h.OCI_CLI_PARENT: (h.OCI_CLI_PARENT, h.OCI_LOCATION_CONTROLS),
                  h.OCI_LOCATION_CONTROLS: (h.OCI_LOCATION_CONTROLS, h.IMMUTABLE_MAINTENANCE_CONTROLS),
                  h.IMMUTABLE_MAINTENANCE_CONTROLS: (h.IMMUTABLE_MAINTENANCE_CONTROLS, h.CUMULATIVE_RECLAIM_CONTROLS),
                  h.CUMULATIVE_RECLAIM_CONTROLS: (h.CUMULATIVE_RECLAIM_CONTROLS, h.PRE_CACHE_CAPACITY_CONTROLS),
@@ -40,9 +43,11 @@ def git_response(argv):
                  h.MAINTENANCE_CONTROLS: (h.MAINTENANCE_CONTROLS, h.SAFETY_CONTROLS),
                  h.SAFETY_CONTROLS: (h.SAFETY_CONTROLS, h.QUALIFICATION_CONTROLS),
                  h.QUALIFICATION_CONTROLS: (h.QUALIFICATION_CONTROLS, h.PUBLIC_CONTROLS),
-                 h.PUBLIC_CONTROLS: (h.PUBLIC_CONTROLS, h.SOURCE)}
+                 h.PUBLIC_CONTROLS: (h.PUBLIC_CONTROLS, h.SOURCE_PARENT)}
         return (' '.join(chain[args[-1]]) + '\n').encode()
     if args[0] == 'diff':
+        if args[2:] == [h.OCI_CLI_CONTROLS, h.CONTROLS_PARENT]:
+            return b'M\tbackend/tests/support/oci_delivery.rs\nM\tscripts/tests/test_oci_offline_fixture.py\n'
         return (b'M' if args[2] == h.CONTROLS_PARENT else b'A') + b'\tscripts/hermetic_full12/run.py\n'
     if args[0] == 'show':
         return (h.BASE + '\n').encode()
@@ -122,8 +127,8 @@ class DeadlineBoundaryTests(unittest.TestCase):
                    'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_SHA': 'a' * 40}
             with patch.dict(os.environ, env), patch.object(h.m, 'preflight'), patch.object(h.m, 'read_payloads', return_value=({}, {})), patch.object(h, 'hosted_guard'), patch.object(h, 'verify_components', return_value={}), patch.object(h, 'wall_budget', side_effect=wall), patch.object(h.time, 'monotonic', side_effect=lambda: clock[0]), patch.object(h, 'command', side_effect=command), patch.object(h, 'reclaim', side_effect=h.CapacityFailure({'host_free_bytes': 0})), patch.object(gate, 'start_daemon') as start, patch.object(gate, 'stop_daemon', return_value={'stopped': True}):
                 self.assertEqual(gate.run_job('C'), 1)
-            self.assertEqual(envelopes[:2], [5400, 3780])  # Twenty-seven successful Git calls consume1620.
-            self.assertEqual(len(git_calls), 54)  # Initial + final parity proof, private qualification separately tested.
+            self.assertEqual(envelopes[:2], [5400, 3540])  # Thirty-one successful Git calls consume1860.
+            self.assertEqual(len(git_calls), 62)  # Initial + final parity proof, private qualification separately tested.
             start.assert_not_called()
             self.assertIsNone(h.BOOTSTRAP_DEADLINE)
 

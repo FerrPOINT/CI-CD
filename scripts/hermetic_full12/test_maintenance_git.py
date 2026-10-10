@@ -414,7 +414,10 @@ class ConsumerHistoryTests(unittest.TestCase):
         if args == ('rev-parse', '--is-shallow-repository'):
             return b'false\n'
         parents = {'HEAD': ('a' * 40, h.CONTROLS_PARENT),
-                   h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.OCI_LOCATION_CONTROLS),
+                   h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.OCI_CLI_CONTROLS, h.SOURCE),
+                   h.SOURCE: (h.SOURCE, h.SOURCE_PARENT),
+                   h.OCI_CLI_CONTROLS: (h.OCI_CLI_CONTROLS, h.OCI_CLI_PARENT),
+                   h.OCI_CLI_PARENT: (h.OCI_CLI_PARENT, h.OCI_LOCATION_CONTROLS),
                    h.OCI_LOCATION_CONTROLS: (h.OCI_LOCATION_CONTROLS, h.IMMUTABLE_MAINTENANCE_CONTROLS),
                    h.IMMUTABLE_MAINTENANCE_CONTROLS: (h.IMMUTABLE_MAINTENANCE_CONTROLS, h.CUMULATIVE_RECLAIM_CONTROLS),
                    h.CUMULATIVE_RECLAIM_CONTROLS: (h.CUMULATIVE_RECLAIM_CONTROLS, h.PRE_CACHE_CAPACITY_CONTROLS),
@@ -428,11 +431,13 @@ class ConsumerHistoryTests(unittest.TestCase):
                    h.MAINTENANCE_CONTROLS: (h.MAINTENANCE_CONTROLS, h.SAFETY_CONTROLS),
                    h.SAFETY_CONTROLS: (h.SAFETY_CONTROLS, h.QUALIFICATION_CONTROLS),
                    h.QUALIFICATION_CONTROLS: (h.QUALIFICATION_CONTROLS, h.PUBLIC_CONTROLS),
-                   h.PUBLIC_CONTROLS: (h.PUBLIC_CONTROLS, h.SOURCE)}
+                   h.PUBLIC_CONTROLS: (h.PUBLIC_CONTROLS, h.SOURCE_PARENT)}
         if args[:4] == ('rev-list', '--parents', '-n', '1'):
             return (' '.join(parents[args[4]]) + '\n').encode()
         if args == ('diff', '--name-status', h.CONTROLS_PARENT, 'HEAD'):
             return b'M\tscripts/hermetic_full12/maintenance-pin.json\n'
+        if args == ('diff', '--name-status', h.OCI_CLI_CONTROLS, h.CONTROLS_PARENT):
+            return b'M\tbackend/tests/support/oci_delivery.rs\nM\tscripts/tests/test_oci_offline_fixture.py\n'
         if args == ('diff', '--name-status', h.SOURCE, 'HEAD'):
             return b'A\tscripts/hermetic_full12/maintenance-pin.json\n'
         raise AssertionError('unexpected synthetic Git invocation')
@@ -440,7 +445,11 @@ class ConsumerHistoryTests(unittest.TestCase):
     def test_exact_normal_successor_history_admitted(self):
         with patch.object(h, 'git', side_effect=self.git):
             h.controls_history(Path('controls'))
-        self.assertEqual(h.CONTROLS_PARENT, '80ff3ddd686dba907f1f22b27c64abddb60e352a')
+        self.assertEqual(h.CONTROLS_PARENT, '667d1be736c8834deb1a20602b95bb0d6c815157')
+        self.assertEqual(h.SOURCE, 'd7443f8dffdd7f5d921c5758bed4e5a35423c0ff')
+        self.assertEqual(h.SOURCE_PARENT, '25be2e82d4d42673897c8a16070eb8a9519244f0')
+        self.assertEqual(h.OCI_CLI_CONTROLS, '876784219c3b2751b4351c81a90fc4971c797fde')
+        self.assertEqual(h.OCI_CLI_PARENT, '80ff3ddd686dba907f1f22b27c64abddb60e352a')
         self.assertEqual(h.OCI_LOCATION_CONTROLS, '0527882c371ccc4247e2d2f3d74a9a8e8f74ef78')
         self.assertEqual(h.IMMUTABLE_MAINTENANCE_CONTROLS, '9e3241ef9b83536600ee1a7660a53f588cf232a0')
         self.assertEqual(h.CUMULATIVE_RECLAIM_CONTROLS, 'dcad6522c9dc313bf6f8113deb9ecb885e6710ad')
@@ -462,6 +471,9 @@ class ConsumerHistoryTests(unittest.TestCase):
                 (('rev-list', '--parents', '-n', '1', 'HEAD'), ('a' * 40 + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', 'HEAD'), ('a' * 40 + ' ' + h.CONTROLS_PARENT + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.CONTROLS_PARENT), (h.CONTROLS_PARENT + ' ' + h.SOURCE).encode()),
+                (('rev-list', '--parents', '-n', '1', h.SOURCE), (h.SOURCE + ' ' + h.OCI_CLI_CONTROLS).encode()),
+                (('rev-list', '--parents', '-n', '1', h.OCI_CLI_CONTROLS), (h.OCI_CLI_CONTROLS + ' ' + h.SOURCE).encode()),
+                (('rev-list', '--parents', '-n', '1', h.OCI_CLI_PARENT), (h.OCI_CLI_PARENT + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.OCI_LOCATION_CONTROLS), (h.OCI_LOCATION_CONTROLS + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.IMMUTABLE_MAINTENANCE_CONTROLS), (h.IMMUTABLE_MAINTENANCE_CONTROLS + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.CUMULATIVE_RECLAIM_CONTROLS), (h.CUMULATIVE_RECLAIM_CONTROLS + ' ' + h.SOURCE).encode()),
@@ -497,6 +509,22 @@ class ConsumerHistoryTests(unittest.TestCase):
         self.assertIn('branches: [' + h.BRANCH + ']', workflow)
         self.assertEqual(workflow.count("github.ref == 'refs/heads/" + h.BRANCH + "'"), 3)
         self.assertNotIn('forge-public-safe-full12-25be-20261009', workflow)
+
+    def test_exact_two_parent_merge_and_fixture_delta_only(self):
+        selector = ('rev-list', '--parents', '-n', '1', h.CONTROLS_PARENT)
+        for parents in ((h.SOURCE, h.OCI_CLI_CONTROLS), (h.OCI_CLI_CONTROLS, h.SOURCE_PARENT),
+                        (h.OCI_CLI_CONTROLS, h.SOURCE, h.SOURCE_PARENT), (h.OCI_CLI_CONTROLS,)):
+            raw = ' '.join((h.CONTROLS_PARENT, *parents)).encode()
+            with self.subTest(parents=parents), patch.object(h, 'git', side_effect=lambda root, *a:
+                    raw if a == selector else self.git(root, *a)), self.assertRaises(ValueError):
+                h.controls_history(Path('controls'))
+        selector = ('diff', '--name-status', h.OCI_CLI_CONTROLS, h.CONTROLS_PARENT)
+        good = self.git(None, *selector)
+        for raw in (b'', good.splitlines()[0] + b'\n', good.replace(b'M\t', b'A\t', 1),
+                    good + b'M\tbackend/src/main.rs\n'):
+            with self.subTest(delta=raw), patch.object(h, 'git', side_effect=lambda root, *a:
+                    raw if a == selector else self.git(root, *a)), self.assertRaises(ValueError):
+                h.controls_history(Path('controls'))
 
     def test_git_does_not_apply_replacement_objects(self):
         with patch.object(h, 'command', return_value=b'') as command:

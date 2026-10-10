@@ -1,15 +1,19 @@
 # Public-safe exact-source full12 controls
 
-Этот source-only successor имеет непосредственный parent
-`80ff3ddd686dba907f1f22b27c64abddb60e352a`; все exact parent edges предыдущих
-controls сохранены в `host.controls_history`, включая maintenance controls
+Этот controls successor имеет непосредственный parent
+`667d1be736c8834deb1a20602b95bb0d6c815157`: normal merge с exact ordered parents
+`876784219c3b2751b4351c81a90fc4971c797fde` и approved fixture source
+`d7443f8dffdd7f5d921c5758bed4e5a35423c0ff`. Product checkout, catalogue и coverage
+привязаны именно к d744, не к merge commit. Его sole parent — original product25be.
+Все exact parent edges предыдущих controls сохранены в `host.controls_history`, включая maintenance controls
 `b9375dc4b4f070b0f6cff1733228f1a6865b1368`, safety controls
 `4d97c54f35b485224a8229495763658fcbbd40e9`, qualification controls
 `632ea8347602fe4af22e7369790ed9c75e53f76a`, original public-safe controls
 `1dbedf85242c3540b70005ce5f0c20badb682c41` и product source
 `25be2e82d4d42673897c8a16070eb8a9519244f0`. Это normal history, не импорт
 retired/private controls. Product SDK остаётся
-`19a7a381ae6dbea61a643bb96189e483fa64df5c`; product265, locks и schema неизменны.
+`19a7a381ae6dbea61a643bb96189e483fa64df5c`; product catalogue по-прежнему265,
+locks и schema неизменны. d744 меняет только существующий OCI fixture и его pure tests.
 
 ## Closed Dependency
 
@@ -59,8 +63,10 @@ tip во время qualification readback запрещено. После approv
 закрывает runtime без fallback на новый tip. Приватный код
 и credentials не входят в публичный checkout или artifacts.
 
-Текущий checkout guard требует exact normal chain из `host.controls_history`,
-full history, task-owned modifications относительно9e и add-only controls относительно25be.
+Текущий checkout guard требует exact normal history из `host.controls_history`,
+full history, task-owned modifications относительно exact merge667 и add-only controls
+относительно source d744. Merge876/d744 имеет ровно два ordered parents и ровно
+две fixture modifications относительно876; старые sole-parent edges не ослаблены.
 Предыдущий workflow/host branch: `build-only/forge-bootstrap-full12-20261010`.
 Изменение родителя в следующем reviewed commit требует сохранить всю chain,
 не заменить проверку на произвольный ancestor. Candidate JSON и installed bytes
@@ -131,8 +137,8 @@ workflow здесь не реализованы.
 
 ### Существующая structured CLI диагностика
 
-Normal child от80ff добавляет только optional `error.oci_diagnostics.cli`: существующий
-source25be producer `OCI_CLI_FAILURE_DIAGNOSTIC` уже пишет закрытый JSON в
+Controls876 добавили optional `error.oci_diagnostics.cli`: существующий
+producer `OCI_CLI_FAILURE_DIAGNOSTIC` уже пишет закрытый JSON в
 `/output/oci-cli-diagnostics`. Existing QA manifest bind-mounts `root/output`
 в `/output`, а cleanup защищает этот каталог. Поэтому читаются retained JSON,
 не marker/stdout; нового log parser, artifact, job или диагностического mode нет.
@@ -149,14 +155,25 @@ Strict validator требует exact schema `forge/oci-cli-failure-diagnostic/v
 scope `fixture_observation_only`, actual boolean `acceptanceVerified=false`,
 `exitCode=null` либо actual int0..255 и один из шести existing `payloadKind`.
 Только kind=`rejection` имеет `status`/`reason`, строго одну из четырёх existing
-пар producer; все остальные поля запрещены. Duplicate JSON keys, unknown enum,
+пар producer. Source d744 добавляет только optional `checkpoint` со значениями
+`none`, `owner`, `intent`, `compose`, `request`, `child`, `result`, `unavailable`;
+legacy entries без этого поля валидны. Все остальные поля запрещены. Duplicate JSON keys, unknown enum,
 wrong bool/int/range, duplicate/empty/unbounded lists отвергаются. CLI code не
 подменяется cargo101. Existing C/oci/CommandFailure101 guard неизменен.
 
+Checkpoint — только наблюдение metadata presence prefix существующих command-bound
+owner/intent/compose/request/child/result records. Содержимое не читается; paths,
+command hashes и records не входят в projection. `unavailable` означает неизвестное
+наблюдение, включая stat failure, неподходящий file type/link или prefix gap.
+Ни prefix, ни `result` не доказывают record validity, owner authority, coherent
+snapshot, bridge arrival, successful child effect или acceptance. Source size/hash
+attestation по d744 catalogue не подписывает происхождение observation.
+
 Записи не содержат messages, stdout, SQL, paths или tokens. Неизвестная CLI-причина
-run38065153549 не объявляется установленной; ни новый successor, ни исторические
-A/B receipts не имеют нового native/full12 acceptance. Product265, all12 guards,
-pins, workflow, gates, cleanup и budgets неизменны; C-only не реализован.
+run38070539544 не объявляется установленной; ни новый successor, ни исторические
+A/B receipts не имеют нового native/full12 acceptance. Product count265, all12 guards,
+SDK/maintenance pins, workflow wiring, gates, cleanup и budgets неизменны;
+в workflow изменены только три exact product source refs. C-only не реализован.
 
 ### Безопасная bootstrap диагностика
 

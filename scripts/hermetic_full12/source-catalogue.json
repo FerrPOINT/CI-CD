@@ -1,5 +1,5 @@
 {
-  "source_sha": "25be2e82d4d42673897c8a16070eb8a9519244f0",
+  "source_sha": "d7443f8dffdd7f5d921c5758bed4e5a35423c0ff",
   "product_base_sha": "19a7a381ae6dbea61a643bb96189e483fa64df5c",
   "catalogues": {
     "base": {
@@ -1093,8 +1093,8 @@
         },
         {
           "path": "backend/tests/support/oci_delivery.rs",
-          "sha256": "18e4005e5625a91525e053d345f746c10186ba738afadd84226af34b6f7ff4d0",
-          "size": 30552
+          "sha256": "0dbdf84bf39a9ee9577e79867b67210cb211959eb5e26a9f0aaadca043466034",
+          "size": 32887
         },
         {
           "path": "backend/tests/support/postgres_delivery.rs",
@@ -1298,8 +1298,8 @@
         },
         {
           "path": "scripts/tests/test_oci_offline_fixture.py",
-          "sha256": "1216cb1ab010836c1de0231e6d9896b1a06c7f1b6306f9d4dd5fb09abd1bc16d",
-          "size": 28041
+          "sha256": "23bb580979acda0e0a10c71b6e76bb80cc4b7ef4780388be51890d0cfa8533f3",
+          "size": 34897
         },
         {
           "path": "scripts/tests/test_postgres_delivery.py",
@@ -1337,7 +1337,7 @@
           "size": 35571
         }
       ],
-      "sha256": "3dbd6419c2e5c7beb4364354d20f50205fb7b773c84ae3546793cafa8405d620"
+      "sha256": "66a446fb0f25809e58f460b61eb41169d77e3229d5fea579889fe3c29e0ea230"
     }
   },
   "image_ids": {
