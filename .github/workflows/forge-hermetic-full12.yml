@@ -43,7 +43,7 @@ jobs:
         timeout-minutes: 2
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: d7443f8dffdd7f5d921c5758bed4e5a35423c0ff
+          ref: 5f973b33e758a4d60e86fc8ff4eda99c6d4496c1
           path: source
           persist-credentials: false
       - name: Exact authenticated product SDK
@@ -106,7 +106,7 @@ jobs:
         timeout-minutes: 2
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: d7443f8dffdd7f5d921c5758bed4e5a35423c0ff
+          ref: 5f973b33e758a4d60e86fc8ff4eda99c6d4496c1
           path: source
           persist-credentials: false
       - name: Exact authenticated product SDK
@@ -167,7 +167,7 @@ jobs:
         timeout-minutes: 2
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: d7443f8dffdd7f5d921c5758bed4e5a35423c0ff
+          ref: 5f973b33e758a4d60e86fc8ff4eda99c6d4496c1
           path: source
           persist-credentials: false
       - name: Exact authenticated product SDK

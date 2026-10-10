@@ -18,8 +18,9 @@ import urllib.request
 import maintenance_git as m
 
 HERE = Path(__file__).resolve().parent
-SOURCE = 'd7443f8dffdd7f5d921c5758bed4e5a35423c0ff'
-SOURCE_PARENT = '25be2e82d4d42673897c8a16070eb8a9519244f0'
+SOURCE = '5f973b33e758a4d60e86fc8ff4eda99c6d4496c1'
+SOURCE_PARENT = 'd7443f8dffdd7f5d921c5758bed4e5a35423c0ff'
+ORIGINAL_SOURCE = '25be2e82d4d42673897c8a16070eb8a9519244f0'
 BASE = '19a7a381ae6dbea61a643bb96189e483fa64df5c'
 PUBLIC_CONTROLS = '1dbedf85242c3540b70005ce5f0c20badb682c41'
 QUALIFICATION_CONTROLS = '632ea8347602fe4af22e7369790ed9c75e53f76a'
@@ -37,7 +38,9 @@ IMMUTABLE_MAINTENANCE_CONTROLS = '9e3241ef9b83536600ee1a7660a53f588cf232a0'
 OCI_LOCATION_CONTROLS = '0527882c371ccc4247e2d2f3d74a9a8e8f74ef78'
 OCI_CLI_PARENT = '80ff3ddd686dba907f1f22b27c64abddb60e352a'
 OCI_CLI_CONTROLS = '876784219c3b2751b4351c81a90fc4971c797fde'
-CONTROLS_PARENT = '667d1be736c8834deb1a20602b95bb0d6c815157'
+CHECKPOINT_MERGE = '667d1be736c8834deb1a20602b95bb0d6c815157'
+CHECKPOINT_CONTROLS = 'abf62e7d310249a3abd74ebbdd53c626f6312f55'
+CONTROLS_PARENT = '27bc299b995ff98e6ad4d6a53870af0e7890752b'
 BRANCH = 'build-only/forge-delegation-full12-20261010'
 CONSUMER_PATHS = {
     '.github/workflows/forge-hermetic-full12.yml',
@@ -275,6 +278,16 @@ def validate_safe_error(result):
                         ('blocked', 'owner_data_snapshot_drift'),
                         ('blocked', 'actual_data_schema_incompatible'),
                         ('unknown_or_rejected', 'oci_command_rejected_or_unavailable')))
+                if 'childErrorClass' in entry:
+                    keys.add('childErrorClass')
+                    require(entry['payloadKind'] == 'rejection'
+                            and (entry.get('status'), entry.get('reason')) == (
+                                'unknown_or_rejected', 'oci_command_rejected_or_unavailable')
+                            and type(entry.get('exitCode')) is int and 1 <= entry['exitCode'] <= 255
+                            and type(entry['childErrorClass']) is str and entry['childErrorClass'] in (
+                                'ValueError', 'RuntimeError', 'OSError', 'TimeoutError', 'FileNotFoundError',
+                                'PermissionError', 'AssertionError', 'JSONDecodeError', 'KeyError',
+                                'TypeError', 'TimeoutExpired', 'unknown'))
                 require(set(entry) == keys)
                 identity = json.dumps(entry, sort_keys=True)
                 require(identity not in seen)
@@ -544,8 +557,11 @@ def bind_maintenance(module, proof):
 def controls_history(controls):
     require(git(controls, 'rev-parse', '--is-shallow-repository').strip() == b'false')
     row = git(controls, 'rev-list', '--parents', '-n', '1', CONTROLS_PARENT).decode().split()
-    require(row == [CONTROLS_PARENT, OCI_CLI_CONTROLS, SOURCE])
+    require(row == [CONTROLS_PARENT, CHECKPOINT_CONTROLS, SOURCE])
+    row = git(controls, 'rev-list', '--parents', '-n', '1', CHECKPOINT_MERGE).decode().split()
+    require(row == [CHECKPOINT_MERGE, OCI_CLI_CONTROLS, SOURCE_PARENT])
     for revision, parent in (('HEAD', CONTROLS_PARENT), (SOURCE, SOURCE_PARENT),
+                             (SOURCE_PARENT, ORIGINAL_SOURCE), (CHECKPOINT_CONTROLS, CHECKPOINT_MERGE),
                              (OCI_CLI_CONTROLS, OCI_CLI_PARENT), (OCI_CLI_PARENT, OCI_LOCATION_CONTROLS),
                              (OCI_LOCATION_CONTROLS, IMMUTABLE_MAINTENANCE_CONTROLS),
                              (IMMUTABLE_MAINTENANCE_CONTROLS, CUMULATIVE_RECLAIM_CONTROLS),
@@ -560,12 +576,15 @@ def controls_history(controls):
                              (MAINTENANCE_CONTROLS, SAFETY_CONTROLS),
                              (SAFETY_CONTROLS, QUALIFICATION_CONTROLS),
                              (QUALIFICATION_CONTROLS, PUBLIC_CONTROLS),
-                             (PUBLIC_CONTROLS, SOURCE_PARENT)):
+                             (PUBLIC_CONTROLS, ORIGINAL_SOURCE)):
         row = git(controls, 'rev-list', '--parents', '-n', '1', revision).decode().split()
         require(len(row) == 2 and row[1] == parent)
-    changes = git(controls, 'diff', '--name-status', OCI_CLI_CONTROLS, CONTROLS_PARENT).decode().splitlines()
+    changes = git(controls, 'diff', '--name-status', OCI_CLI_CONTROLS, CHECKPOINT_MERGE).decode().splitlines()
     require(changes == ['M\tbackend/tests/support/oci_delivery.rs',
                         'M\tscripts/tests/test_oci_offline_fixture.py'])
+    changes = git(controls, 'diff', '--name-status', CHECKPOINT_CONTROLS, CONTROLS_PARENT).decode().splitlines()
+    require(changes == ['M\tbackend/src/bin/forge-delivery.rs', 'M\tbackend/src/task_delivery/oci.rs',
+                        'M\tbackend/tests/support/oci_delivery.rs', 'M\tscripts/tests/test_oci_offline_fixture.py'])
     changes = git(controls, 'diff', '--name-status', CONTROLS_PARENT, 'HEAD').decode().splitlines()
     require(changes and all(line.startswith('M\t') and line[2:] in CONSUMER_PATHS for line in changes))
     changes = git(controls, 'diff', '--name-status', SOURCE, 'HEAD').decode().splitlines()

@@ -1,10 +1,10 @@
 # Public-safe exact-source full12 controls
 
 Этот controls successor имеет непосредственный parent
-`667d1be736c8834deb1a20602b95bb0d6c815157`: normal merge с exact ordered parents
-`876784219c3b2751b4351c81a90fc4971c797fde` и approved fixture source
-`d7443f8dffdd7f5d921c5758bed4e5a35423c0ff`. Product checkout, catalogue и coverage
-привязаны именно к d744, не к merge commit. Его sole parent — original product25be.
+`27bc299b995ff98e6ad4d6a53870af0e7890752b`: normal merge с exact ordered parents
+`abf62e7d310249a3abd74ebbdd53c626f6312f55` и approved source
+`5f973b33e758a4d60e86fc8ff4eda99c6d4496c1`. Product checkout, catalogue и coverage
+привязаны именно к5f973b33, не к merge commit. Его sole parent — d744, затем original25be.
 Все exact parent edges предыдущих controls сохранены в `host.controls_history`, включая maintenance controls
 `b9375dc4b4f070b0f6cff1733228f1a6865b1368`, safety controls
 `4d97c54f35b485224a8229495763658fcbbd40e9`, qualification controls
@@ -13,7 +13,12 @@
 `25be2e82d4d42673897c8a16070eb8a9519244f0`. Это normal history, не импорт
 retired/private controls. Product SDK остаётся
 `19a7a381ae6dbea61a643bb96189e483fa64df5c`; product catalogue по-прежнему265,
-locks и schema неизменны. d744 меняет только существующий OCI fixture и его pure tests.
+locks и schema неизменны. Source5f добавляет только закрытый failed-child class,
+feature-only CLI projection, существующий fixture diagnostic и focused tests.
+Исходные Python75 сохранены; фактический набор теперь78 (PG47+OCI31).
+Workspace guard225 вместо221 отражает четыре новых default-feature Rust tests;
+это source-derived count, не утверждение compile/native PASS. Все12 команд,
+timeouts, бюджеты, limits и остальные count guards прежние.
 
 ## Closed Dependency
 
@@ -64,9 +69,10 @@ tip во время qualification readback запрещено. После approv
 и credentials не входят в публичный checkout или artifacts.
 
 Текущий checkout guard требует exact normal history из `host.controls_history`,
-full history, task-owned modifications относительно exact merge667 и add-only controls
-относительно source d744. Merge876/d744 имеет ровно два ordered parents и ровно
-две fixture modifications относительно876; старые sole-parent edges не ослаблены.
+full history, task-owned modifications относительно exact merge27bc и add-only controls
+относительно source5f. Merge abf/5f имеет ровно два ordered parents и ровно четыре
+approved source modifications относительноabf. Предыдущий merge667 сохраняет
+exact ordered876/d744 и ровно две fixture modifications; все прежние edges сохранены.
 Предыдущий workflow/host branch: `build-only/forge-bootstrap-full12-20261010`.
 Изменение родителя в следующем reviewed commit требует сохранить всю chain,
 не заменить проверку на произвольный ancestor. Candidate JSON и installed bytes
@@ -157,7 +163,13 @@ scope `fixture_observation_only`, actual boolean `acceptanceVerified=false`,
 Только kind=`rejection` имеет `status`/`reason`, строго одну из четырёх existing
 пар producer. Source d744 добавляет только optional `checkpoint` со значениями
 `none`, `owner`, `intent`, `compose`, `request`, `child`, `result`, `unavailable`;
-legacy entries без этого поля валидны. Все остальные поля запрещены. Duplicate JSON keys, unknown enum,
+legacy entries без этого поля валидны. Source5f добавляет optional `childErrorClass`:
+только kind=`rejection`, пара `unknown_or_rejected`/`oci_command_rejected_or_unavailable`
+и actual integer `exitCode`1..255. Фиксированный allowlist: `ValueError`, `RuntimeError`,
+`OSError`, `TimeoutError`, `FileNotFoundError`, `PermissionError`, `AssertionError`,
+`JSONDecodeError`, `KeyError`, `TypeError`, `TimeoutExpired`, `unknown`.
+Blocked pairs, zero/null/bool exit и другие payload kinds не могут иметь этот ключ.
+Legacy entries без class остаются прежними. Все остальные поля запрещены. Duplicate JSON keys, unknown enum,
 wrong bool/int/range, duplicate/empty/unbounded lists отвергаются. CLI code не
 подменяется cargo101. Existing C/oci/CommandFailure101 guard неизменен.
 
@@ -167,7 +179,18 @@ command hashes и records не входят в projection. `unavailable` озн�
 наблюдение, включая stat failure, неподходящий file type/link или prefix gap.
 Ни prefix, ни `result` не доказывают record validity, owner authority, coherent
 snapshot, bridge arrival, successful child effect или acceptance. Source size/hash
-attestation по d744 catalogue не подписывает происхождение observation.
+attestation по exact5f catalogue не подписывает происхождение observation.
+
+Class возникает только после completed bounded stderr/read/wait и failed effect
+child в source. Приватный typed error сохраняет лишь enum, с прежним static Display;
+ordinary CLI rejection и HTTP/API неизменны. Только existing `oci-integration`
+добавляет optional class в CLI stdout JSON, откуда его берёт существующий fixture
+producer. Controls читают прежние retained JSON, не stderr/marker/log content.
+Whole stderr должен быть одним exact existing client marker; mixed, duplicate,
+truncated или oversized marker не распознаётся. Source class `unknown` не является
+диагнозом. Read/wait/deadline failures до classification не получают class.
+Client marker одинаков для локальных и bridge-returned ошибок: class не доказывает
+bridge arrival, подписанный origin, owner authority, successful effect или root cause.
 
 Записи не содержат messages, stdout, SQL, paths или tokens. Неизвестная CLI-причина
 run38070539544 не объявляется установленной; ни новый successor, ни исторические

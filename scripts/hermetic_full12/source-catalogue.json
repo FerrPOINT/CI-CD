@@ -1,5 +1,5 @@
 {
-  "source_sha": "d7443f8dffdd7f5d921c5758bed4e5a35423c0ff",
+  "source_sha": "5f973b33e758a4d60e86fc8ff4eda99c6d4496c1",
   "product_base_sha": "19a7a381ae6dbea61a643bb96189e483fa64df5c",
   "catalogues": {
     "base": {
@@ -883,8 +883,8 @@
         },
         {
           "path": "backend/src/bin/forge-delivery.rs",
-          "sha256": "789409666fd6ef836a6b9dbc6722cb68f8d3acb018c02afb8b27b446bb255509",
-          "size": 4212
+          "sha256": "61fe2874c3bd32564c66232c91a113f771c09b6b5660ed026b89c0e183d7af59",
+          "size": 4919
         },
         {
           "path": "backend/src/bin/forge-pg-migrate.rs",
@@ -1023,8 +1023,8 @@
         },
         {
           "path": "backend/src/task_delivery/oci.rs",
-          "sha256": "1a8fd8cfac8e5d39f386f57042b611acd3b9a26049a074b9d65cc1ff37be6930",
-          "size": 55238
+          "sha256": "599561c37e29ed0059d77e61d30c46be9c0a3a25c1362b0af395980dcfe9aae7",
+          "size": 64079
         },
         {
           "path": "backend/src/task_delivery/postgres.rs",
@@ -1093,8 +1093,8 @@
         },
         {
           "path": "backend/tests/support/oci_delivery.rs",
-          "sha256": "0dbdf84bf39a9ee9577e79867b67210cb211959eb5e26a9f0aaadca043466034",
-          "size": 32887
+          "sha256": "855a78015c51938d00b1feecd5851578fac44fb234b33981cca71915e46f0def",
+          "size": 33640
         },
         {
           "path": "backend/tests/support/postgres_delivery.rs",
@@ -1298,8 +1298,8 @@
         },
         {
           "path": "scripts/tests/test_oci_offline_fixture.py",
-          "sha256": "23bb580979acda0e0a10c71b6e76bb80cc4b7ef4780388be51890d0cfa8533f3",
-          "size": 34897
+          "sha256": "45a411cb1704096ec1d9a87c6ea7cefdfcfb876cb040739e57148a11ea70ad03",
+          "size": 41731
         },
         {
           "path": "scripts/tests/test_postgres_delivery.py",
@@ -1337,7 +1337,7 @@
           "size": 35571
         }
       ],
-      "sha256": "66a446fb0f25809e58f460b61eb41169d77e3229d5fea579889fe3c29e0ea230"
+      "sha256": "23108dd67430d19f62ed33f17339a08e9f6ae426d6a007dcbcc337339d1aea05"
     }
   },
   "image_ids": {

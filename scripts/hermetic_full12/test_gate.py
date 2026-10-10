@@ -100,7 +100,7 @@ class ControlsTests(unittest.TestCase):
         self.assertEqual(sum(isinstance(node, ast.Assert) for node in ast.walk(ast.parse((h.HERE / 'row_smoke.py').read_bytes()))), 16)
 
     def test_source_and_base_exact(self):
-        self.assertEqual(h.SOURCE, 'd7443f8dffdd7f5d921c5758bed4e5a35423c0ff')
+        self.assertEqual(h.SOURCE, '5f973b33e758a4d60e86fc8ff4eda99c6d4496c1')
         self.assertEqual(h.BASE, '19a7a381ae6dbea61a643bb96189e483fa64df5c')
 
     def test_checkpoint_source_catalogue_and_all_three_checkout_bindings(self):
@@ -112,8 +112,10 @@ class ControlsTests(unittest.TestCase):
         self.assertEqual(workflow.count('ref: ' + h.SOURCE + '\n'), 3)
         self.assertNotIn('ref: ' + h.SOURCE_PARENT, workflow)
         expected = {
-            'backend/tests/support/oci_delivery.rs': (32887, '0dbdf84bf39a9ee9577e79867b67210cb211959eb5e26a9f0aaadca043466034'),
-            'scripts/tests/test_oci_offline_fixture.py': (34897, '23bb580979acda0e0a10c71b6e76bb80cc4b7ef4780388be51890d0cfa8533f3'),
+            'backend/src/bin/forge-delivery.rs': (4919, '61fe2874c3bd32564c66232c91a113f771c09b6b5660ed026b89c0e183d7af59'),
+            'backend/src/task_delivery/oci.rs': (64079, '599561c37e29ed0059d77e61d30c46be9c0a3a25c1362b0af395980dcfe9aae7'),
+            'backend/tests/support/oci_delivery.rs': (33640, '855a78015c51938d00b1feecd5851578fac44fb234b33981cca71915e46f0def'),
+            'scripts/tests/test_oci_offline_fixture.py': (41731, '45a411cb1704096ec1d9a87c6ea7cefdfcfb876cb040739e57148a11ea70ad03'),
         }
         files = {item['path']: item for item in catalogue['catalogues']['forge']['files']}
         for name, (size, digest) in expected.items():
@@ -169,6 +171,37 @@ class ControlsTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 h.reclaim(Path('.'))
         command.assert_not_called()
+
+
+    def test_child_source_counts_preserve_old_tests_and_raise_exact_count_guards(self):
+        root = h.HERE.parents[1]
+        counts = {}
+        for name in ('test_postgres_delivery', 'test_oci_offline_fixture'):
+            tree = ast.parse((root / ('scripts/tests/' + name + '.py')).read_text(encoding='utf-8'))
+            counts[name] = sum(isinstance(node, ast.FunctionDef) and node.name.startswith('test_')
+                               for node in ast.walk(tree))
+        self.assertEqual(counts, {'test_postgres_delivery': 47, 'test_oci_offline_fixture': 31})
+        for raw in (b'Ran 75 tests\nFROZEN_LINUX_PYTHON_UNITS:PASS',
+                    b'Ran 77 tests\nFROZEN_LINUX_PYTHON_UNITS:PASS'):
+            with self.assertRaises(ValueError):
+                gate.assertions('python', raw, Path('.'))
+        for count in (221, 224, 226):
+            raw = (f'test result: ok. {count} passed; 0 failed;\n'
+                   'FROZEN_WORKSPACE_RUSTFMT:PASS\nFROZEN_WORKSPACE_UMASK=0022').encode()
+            with self.assertRaises(ValueError):
+                gate.assertions('workspace', raw, Path('.'))
+        coverage = h.read(h.HERE / 'coverage.json')
+        self.assertFalse(coverage['executed'])
+        self.assertFalse(coverage['inherited_gate_results'])
+        self.assertIn('Ran 78 tests', coverage['stages'][0]['assertions'])
+        tests = (root / 'backend/src/task_delivery/oci.rs').read_text(encoding='utf-8').split('mod child_diagnostic_tests {', 1)[1]
+        self.assertIn('fn child_outcome_preserves_failure_and_rejection_contract()', tests)
+        self.assertIn('fn ordinary_feature_excludes_child_observation()', tests)
+        self.assertEqual(tests.count('#[cfg(feature = "oci-integration")]'), 2)
+        self.assertEqual(tests.count('#[cfg(not(feature = "oci-integration"))]'), 1)
+        cli_tests = (root / 'backend/src/bin/forge-delivery.rs').read_text(encoding='utf-8').split('#[cfg(test)]', 1)[1]
+        self.assertEqual(cli_tests.count('#[test]'), 2)
+        self.assertIn('#[cfg(not(feature = "oci-integration"))]', cli_tests)
 
 
 class ReclaimTests(unittest.TestCase):
@@ -556,7 +589,7 @@ class GateAssertionTests(unittest.TestCase):
             gate.assertions('python', b'Ran 74 tests\nFROZEN_LINUX_PYTHON_UNITS:PASS', Path('.'))
 
     def test_python75(self):
-        self.assertEqual(gate.assertions('python', b'Ran 75 tests\nFROZEN_LINUX_PYTHON_UNITS:PASS', Path('.'))['tests_passed'], 75)
+        self.assertEqual(gate.assertions('python', b'Ran 78 tests\nFROZEN_LINUX_PYTHON_UNITS:PASS', Path('.'))['tests_passed'], 78)
 
     def test_workspace219_rejected(self):
         raw = b'test result: ok. 219 passed; 0 failed;\nFROZEN_WORKSPACE_RUSTFMT:PASS\nFROZEN_WORKSPACE_UMASK=0022'
@@ -564,8 +597,8 @@ class GateAssertionTests(unittest.TestCase):
             gate.assertions('workspace', raw, Path('.'))
 
     def test_workspace221(self):
-        raw = b'test result: ok. 221 passed; 0 failed;\nFROZEN_WORKSPACE_RUSTFMT:PASS\nFROZEN_WORKSPACE_UMASK=0022'
-        self.assertEqual(gate.assertions('workspace', raw, Path('.'))['tests_passed'], 221)
+        raw = b'test result: ok. 225 passed; 0 failed;\nFROZEN_WORKSPACE_RUSTFMT:PASS\nFROZEN_WORKSPACE_UMASK=0022'
+        self.assertEqual(gate.assertions('workspace', raw, Path('.'))['tests_passed'], 225)
 
     def test_oci_partial_marker_rejected(self):
         with self.assertRaises(ValueError):
@@ -1579,7 +1612,7 @@ MAINTENANCE_TEST_FILES = {name: {'blob': 'd' * 40, 'sha256': 'c' * 64} for name 
 
 def report_fixture(job):
     catalogue = h.read(h.HERE / 'source-catalogue.json')['catalogues']
-    counts = {'python': 75, 'postgres': 3, 'oci': 1, 'workspace': 221, 'integration': 80, 'cli': 2}
+    counts = {'python': 78, 'postgres': 3, 'oci': 1, 'workspace': 225, 'integration': 80, 'cli': 2}
     stages = [{'stage': stage, 'status': 'PASS', 'timeout_seconds': gate.BUDGETS[stage],
                'source_parity': True, 'cleanup_complete': True, **({'tests_passed': counts[stage]} if stage in counts else {})}
               for stage in gate.JOBS[job]]
@@ -1922,6 +1955,88 @@ class OciCliDiagnosticTests(unittest.TestCase):
         manifest = (h.HERE / 'run.py').read_text()
         self.assertIn("bind(root / 'output', '/output')", manifest)
         self.assertIn("n / 'sources', n / 'output'", (h.HERE / 'parent.py').read_text())
+
+    def test_child_class_actual_producer_to_existing_strict_retained_projection(self):
+        source = (h.HERE.parents[1] / 'backend/tests/support/oci_delivery.rs').read_text()
+        script = source.split('const OCI_CLI_FAILURE_DIAGNOSTIC: &str = r#"', 1)[1].split('"#;', 1)[0]
+        tree = ast.parse(script)
+        nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef)
+                 and node.name in {'project', 'unique_object'} or isinstance(node, ast.Assign)
+                 and any(isinstance(target, ast.Name) and target.id in {
+                     'LIMIT', 'REJECTIONS', 'CHILD_ERROR_CLASSES'} for target in node.targets)]
+        namespace = {'json': json}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), '<existing_child_producer>', 'exec'), namespace)
+        classes = namespace['CHILD_ERROR_CLASSES']
+        self.assertEqual(classes, ('ValueError', 'RuntimeError', 'OSError', 'TimeoutError', 'FileNotFoundError',
+                                  'PermissionError', 'AssertionError', 'JSONDecodeError', 'KeyError',
+                                  'TypeError', 'TimeoutExpired', 'unknown'))
+        for child_class in classes:
+            payload = {'schema': 'forge/local-oci-rejection/v1', 'status': 'unknown_or_rejected',
+                       'reason': 'oci_command_rejected_or_unavailable', 'dispatchAllowed': False,
+                       'sdlcAcceptanceVerified': False, 'childErrorClass': child_class,
+                       'private': 'PRIVATE SQL ARGS ENV TOKEN'}
+            entry = namespace['project'](json.dumps(payload).encode(), 1)
+            entry['checkpoint'] = 'child'
+            with self.subTest(child_class=child_class), self.fixture([entry]) as (root, _, _):
+                diagnostic = h.oci_failure_diagnostics(root)
+                self.assertEqual(diagnostic['cli'], [entry])
+                h.validate_safe_error(self.error([entry]))
+                self.assertFalse(entry['acceptanceVerified'])
+                self.assertEqual((entry['status'], entry['reason']), namespace['REJECTIONS'][-1])
+                self.assertNotIn('PRIVATE', json.dumps(diagnostic))
+
+    def test_child_class_wrong_types_context_extras_and_duplicate_keys_are_denied(self):
+        good = self.observation(payloadKind='rejection', status='unknown_or_rejected',
+                                reason='oci_command_rejected_or_unavailable', childErrorClass='ValueError')
+        bad = [{**good, 'childErrorClass': value} for value in
+               (None, True, 0, 1.0, [], {}, 'None', 'valueerror', 'ValueError\n', 'PRIVATE SQL TOKEN')]
+        bad.extend({**good, 'exitCode': value} for value in (None, True, 0, -1, 256, '1'))
+        bad.extend({key: value for key, value in good.items() if key != missing}
+                   for missing in good if missing != 'childErrorClass')
+        bad.extend({**good, 'payloadKind': kind} for kind in
+                   ('oversized', 'empty', 'invalid_json', 'other_document', 'invalid_rejection'))
+        bad.extend({**good, 'status': 'blocked', 'reason': reason} for reason in
+                   ('unsupported_mutable_data_or_migration', 'owner_data_snapshot_drift',
+                    'actual_data_schema_incompatible'))
+        bad.extend({**good, name: 'PRIVATE SQL TOKEN'} for name in
+                   ('message', 'stderr', 'path', 'env', 'argv', 'bridgeArrival', 'effectSuccess'))
+        for entry in bad:
+            with self.subTest(entry=entry), self.assertRaises(ValueError):
+                h.validate_safe_error(self.error([entry]))
+            with self.fixture([entry], OciDiagnosticTests.compiler()) as (root, _, _):
+                diagnostic = h.oci_failure_diagnostics(root)
+                self.assertNotIn('cli', diagnostic)
+                self.assertEqual(len(diagnostic['compiler']), 1)
+                self.assertNotIn('PRIVATE', json.dumps(diagnostic))
+        duplicate = json.dumps(good).encode()[:-1] + b',"childErrorClass":"PRIVATE SQL TOKEN"}'
+        with self.fixture([duplicate], OciDiagnosticTests.compiler()) as (root, _, _):
+            diagnostic = h.oci_failure_diagnostics(root)
+            self.assertNotIn('cli', diagnostic)
+            self.assertEqual(len(diagnostic['compiler']), 1)
+
+    def test_child_class_keeps_max_eight_identity_and_original_failure_guards(self):
+        entries = [self.observation(payloadKind='rejection', status='unknown_or_rejected',
+                                   reason='oci_command_rejected_or_unavailable', childErrorClass=name)
+                   for name in ('ValueError', 'RuntimeError', 'OSError', 'TimeoutError',
+                                'FileNotFoundError', 'PermissionError', 'AssertionError', 'unknown')]
+        with self.fixture(entries) as (root, _, _):
+            diagnostic = h.oci_failure_diagnostics(root)
+            self.assertEqual(diagnostic['cli'], entries)
+            h.validate_safe_error(self.error(entries))
+            report = {'status': 'FAIL', 'full12_pass': False, 'stages': [{'stage': 'oci'}]}
+            with patch('sys.stdout', new_callable=io.StringIO):
+                gate.retain_failure(report, 'oci', h.CommandFailure(101), root, 'C', [])
+            self.assertEqual(report['error']['oci_diagnostics']['cli'], entries)
+            self.assertFalse(report['full12_pass'])
+            self.assertEqual(report['error']['exit_code'], 101)
+        for values in (entries + [self.observation()], [entries[0], entries[0]]):
+            with self.assertRaises(ValueError):
+                h.validate_safe_error(self.error(values))
+        with self.fixture([entries[0], entries[0]]) as (root, _, _):
+            self.assertEqual(h.oci_failure_diagnostics(root)['cli'], [entries[0]])
+        with self.fixture([entries[0]]) as (root, _, _):
+            with patch.object(h.json, 'loads', side_effect=h.OverheadTimeout('PRIVATE', 1)), self.assertRaises(h.OverheadTimeout):
+                h.oci_failure_diagnostics(root)
 
     def test_checkpoint_producer_states_and_legacy_observations(self):
         import re

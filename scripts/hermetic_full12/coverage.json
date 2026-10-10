@@ -1,6 +1,6 @@
 {
   "kind": "hermetic_full12_three_job_coverage",
-  "source_sha": "d7443f8dffdd7f5d921c5758bed4e5a35423c0ff",
+  "source_sha": "5f973b33e758a4d60e86fc8ff4eda99c6d4496c1",
   "inherited_gate_results": false,
   "executed": false,
   "all_stages_required": true,
@@ -35,7 +35,7 @@
         ]
       ],
       "assertions": [
-        "Ran 75 tests",
+        "Ran 78 tests",
         "FROZEN_LINUX_PYTHON_UNITS:PASS"
       ],
       "execution": "REQUIRED_FRESH",
@@ -233,13 +233,13 @@
         ]
       ],
       "assertions": [
-        "221 passed; 0 failed; source-derived +2 main safety tests, native unverified",
+        "225 passed; 0 failed; source-derived +4 default-feature child diagnostic tests over221, native unverified",
         "FROZEN_WORKSPACE_RUSTFMT:PASS",
         "FROZEN_WORKSPACE_UMASK=0022"
       ],
       "execution": "REQUIRED_FRESH",
       "unchanged_source_parity_and_exact_cleanup_required": true,
-      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace219->221 only"
+      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace221->225 source-derived only"
     },
     {
       "stage": "integration",
@@ -267,7 +267,7 @@
       ],
       "execution": "REQUIRED_FRESH",
       "unchanged_source_parity_and_exact_cleanup_required": true,
-      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace219->221 only"
+      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace221->225 source-derived only"
     },
     {
       "stage": "cli",
@@ -310,7 +310,7 @@
       ],
       "execution": "REQUIRED_FRESH",
       "unchanged_source_parity_and_exact_cleanup_required": true,
-      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace219->221 only"
+      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace221->225 source-derived only"
     },
     {
       "stage": "openapi",
@@ -339,7 +339,7 @@
       ],
       "execution": "REQUIRED_FRESH",
       "unchanged_source_parity_and_exact_cleanup_required": true,
-      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace219->221 only"
+      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace221->225 source-derived only"
     },
     {
       "stage": "release",
@@ -361,7 +361,7 @@
       ],
       "execution": "REQUIRED_FRESH",
       "unchanged_source_parity_and_exact_cleanup_required": true,
-      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace219->221 only"
+      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace221->225 source-derived only"
     }
   ],
   "original_components_sha256": {

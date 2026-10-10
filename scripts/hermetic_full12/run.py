@@ -496,7 +496,7 @@ def assertions(stage, raw, root):
     content = raw.decode('utf-8', errors='replace')
     proof = {}
     markers = {
-        'python': ('FROZEN_LINUX_PYTHON_UNITS:PASS', 'Ran 75 tests'),
+        'python': ('FROZEN_LINUX_PYTHON_UNITS:PASS', 'Ran 78 tests'),
         'row-smoke': ('ACTUAL_PG17_RECORD_TEXT_SMOKE:PASS',),
         'smoke': ('ACTUAL_PG17_SQL_SMOKE:PASS',),
         'check': ('LOCKED_INTEGRATION_FEATURES_CHECK:PASS',),
@@ -511,7 +511,7 @@ def assertions(stage, raw, root):
     if stage in ('workspace', 'integration', 'cli'):
         counts = re.findall(r'test result: ok\. (\d+) passed; 0 failed;', content)
         total = sum(map(int, counts))
-        h.require(counts and total == {'workspace': 221, 'integration': 80, 'cli': 2}[stage])
+        h.require(counts and total == {'workspace': 225, 'integration': 80, 'cli': 2}[stage])
         proof['tests_passed'] = total
     if stage == 'postgres':
         matches = re.findall(r'^ACTUAL_PG_RESTORE_NEGATIVES=([^:\n]+):', content, re.M)
@@ -526,7 +526,7 @@ def assertions(stage, raw, root):
     if stage == 'oci':
         proof['tests_passed'] = 1
     if stage == 'python':
-        proof['tests_passed'] = 75
+        proof['tests_passed'] = 78
     if stage == 'release':
         proof['binaries'] = {name: h.sha(root / 'disposable/target/rust-gates/release' / name) for name in BINARIES}
     if stage == 'openapi':
@@ -1028,7 +1028,7 @@ def aggregate(a, b, c, expected_a, expected_b):
             if proof['stage'] in ('postgres', 'oci'):
                 key = 'pg_project' if proof['stage'] == 'postgres' else 'oci_project'
                 h.require(any(item['project'] == projects[key] for item in proof['journal_proofs']))
-            expected = {'python': 75, 'postgres': 3, 'oci': 1, 'workspace': 221, 'integration': 80, 'cli': 2}.get(proof['stage'])
+            expected = {'python': 78, 'postgres': 3, 'oci': 1, 'workspace': 225, 'integration': 80, 'cli': 2}.get(proof['stage'])
             if expected is not None:
                 h.require(proof.get('tests_passed') == expected)
             if proof['stage'] == 'postgres':
