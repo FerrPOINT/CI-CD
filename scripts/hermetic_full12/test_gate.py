@@ -143,6 +143,26 @@ class ControlsTests(unittest.TestCase):
         self.assertIn('sdlc_pg_delivery -- --test-threads=1 --nocapture', text)
         self.assertIn('sdlc_oci_delivery -- --test-threads=1 --nocapture', text)
 
+    def test_python_admission_counts_actual_source_and_rejects_missing_or_extra_test(self):
+        expected = {'test_postgres_delivery.py': 47, 'test_oci_offline_fixture.py': 31}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tests = root / 'sources/CI-CD/scripts/tests'
+            tests.mkdir(parents=True)
+            for name in expected:
+                (tests / name).write_bytes((h.HERE.parents[1] / 'scripts/tests' / name).read_bytes())
+            self.assertEqual(gate.python_counts(root), expected)
+            for name, count in expected.items():
+                original = (tests / name).read_bytes()
+                for delta in (-1, 1):
+                    with self.subTest(name=name, delta=delta):
+                        source = 'class TestCounts:\n' + ''.join(
+                            f'    def test_{index}(self): pass\n' for index in range(count + delta))
+                        (tests / name).write_text(source, encoding='utf-8')
+                        with self.assertRaises(ValueError):
+                            gate.python_counts(root)
+                (tests / name).write_bytes(original)
+
     def test_followups_not_downscoped(self):
         text = (h.HERE / 'followups.sh').read_text()
         self.assertIn('cargo test --locked --offline --workspace -- --test-threads=1', text)
@@ -1644,7 +1664,7 @@ def report_fixture(job):
         'source_hashes': {key: value['sha256'] for key, value in catalogue.items()},
         'maintenance_sha256': 'c' * 64,
         'maintenance_git': {'repository': h.m.REPOSITORY, 'commit': 'f' * 40, 'ref': h.m.CANDIDATE_REF, 'files': MAINTENANCE_TEST_FILES},
-        'python_methods': {'test_postgres_delivery.py': 47, 'test_oci_offline_fixture.py': 28},
+        'python_methods': {'test_postgres_delivery.py': 47, 'test_oci_offline_fixture.py': 31},
         'admission_sha256': 'b' * 64, 'execution_sha256': 'c' * 64,
         'cache': {'new_locked_cache': True, 'private_cache_imported': False,
             'journal': {**journal, 'project': 'sdlc-build-forge-cache-' + token, 'purpose': 'locked-dependency-fetch-only'}},
@@ -1683,6 +1703,15 @@ class AggregationTests(unittest.TestCase):
 
     def test_all12_combined_only(self):
         self.assertEqual(self.check()['stage_count'], 12)
+
+    def test_stale_python_method_counts_rejected_in_each_partition(self):
+        for index in range(3):
+            for stale_count in (28, 30, 32):
+                with self.subTest(partition=index, count=stale_count):
+                    def modify(*reports):
+                        reports[index]['python_methods']['test_oci_offline_fixture.py'] = stale_count
+                    with self.assertRaises(ValueError):
+                        self.check(modify)
 
     def test_missing_stage_rejected(self):
         with self.assertRaises(ValueError):

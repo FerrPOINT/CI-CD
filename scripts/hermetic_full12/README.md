@@ -1,6 +1,16 @@
 # Public-safe exact-source full12 controls
 
-Этот controls successor имеет непосредственный parent
+Этот count-correction successor имеет непосредственный parent
+`29447047bc1eb5a63bea3048c2706a865a363d85`. На его actual run38083675365
+предварительная проверка остановилась до первого stage: старый guard ожидал
+OCI28 вместо фактических31. Второй stale guard находился в aggregate и ещё не
+выполнялся. Admission, Python stage и aggregate теперь используют один exact
+набор PG47+OCI31; coverage и независимые test fixtures сохраняют явные78.
+Регрессионные тесты вызывают настоящую python_counts на текущих source bytes,
+отвергают недостающий/лишний тест и старые counts в каждом partition.
+Это исправление controls, не подтверждение native/full12 или SDLC acceptance.
+
+Предыдущий controls294 имеет непосредственный parent
 `27bc299b995ff98e6ad4d6a53870af0e7890752b`: normal merge с exact ordered parents
 `abf62e7d310249a3abd74ebbdd53c626f6312f55` и approved source
 `5f973b33e758a4d60e86fc8ff4eda99c6d4496c1`. Product checkout, catalogue и coverage

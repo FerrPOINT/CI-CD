@@ -29,6 +29,7 @@ POSTGRES = 'postgres:17-bookworm@sha256:3645570cccdfa447589da9f57dd740faa29b3093
 PYTHON = 'python:3.12-bookworm@sha256:e91fec3d1ac69f04e4eddcd29c327e630ce34658cf31075bfa7e8b0e052bafea'
 RUST = 'rust:1.88.0@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0'
 BINARIES = ('cicd-server', 'forge-runner', 'forge-delivery', 'forge-pg-migrate', 'openapi-dump', 'cicd-cli', 'cicd-migrate')
+PYTHON_METHOD_COUNTS = {'test_postgres_delivery.py': 47, 'test_oci_offline_fixture.py': 31}
 
 # Root-only filesystem operation; no shell, environment, private input or unit restart.
 DELEGATION_PROGRAM = r'''
@@ -496,7 +497,7 @@ def assertions(stage, raw, root):
     content = raw.decode('utf-8', errors='replace')
     proof = {}
     markers = {
-        'python': ('FROZEN_LINUX_PYTHON_UNITS:PASS', 'Ran 78 tests'),
+        'python': ('FROZEN_LINUX_PYTHON_UNITS:PASS', f'Ran {sum(PYTHON_METHOD_COUNTS.values())} tests'),
         'row-smoke': ('ACTUAL_PG17_RECORD_TEXT_SMOKE:PASS',),
         'smoke': ('ACTUAL_PG17_SQL_SMOKE:PASS',),
         'check': ('LOCKED_INTEGRATION_FEATURES_CHECK:PASS',),
@@ -526,7 +527,7 @@ def assertions(stage, raw, root):
     if stage == 'oci':
         proof['tests_passed'] = 1
     if stage == 'python':
-        proof['tests_passed'] = 78
+        proof['tests_passed'] = sum(PYTHON_METHOD_COUNTS.values())
     if stage == 'release':
         proof['binaries'] = {name: h.sha(root / 'disposable/target/rust-gates/release' / name) for name in BINARIES}
     if stage == 'openapi':
@@ -700,7 +701,7 @@ def check_runtime_seals(root, expected):
 
 def python_counts(root):
     counts = {}
-    for name, expected in (('test_postgres_delivery.py', 47), ('test_oci_offline_fixture.py', 28)):
+    for name, expected in PYTHON_METHOD_COUNTS.items():
         tree = ast.parse((root / 'sources/CI-CD/scripts/tests' / name).read_bytes())
         methods = [node for cls in tree.body if isinstance(cls, ast.ClassDef) for node in cls.body
                    if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')]
@@ -976,7 +977,7 @@ def aggregate(a, b, c, expected_a, expected_b):
         h.require(report['components'] == components and report['source_count'] == 265)
         h.require(report['maintenance_sha256'] == h.m.EXPECTED_FILES['scripts/compose_helpers.py']['sha256'])
         h.m.proof_matches(report['maintenance_git'])
-        h.require(report['python_methods'] == {'test_postgres_delivery.py': 47, 'test_oci_offline_fixture.py': 28})
+        h.require(report['python_methods'] == PYTHON_METHOD_COUNTS)
         h.require(report['cache']['new_locked_cache'] is True and report['cache']['private_cache_imported'] is False)
         h.require(report['cache_preserved'] is True)
         for key in ('capacity_before', 'capacity_execution'):
@@ -1028,7 +1029,7 @@ def aggregate(a, b, c, expected_a, expected_b):
             if proof['stage'] in ('postgres', 'oci'):
                 key = 'pg_project' if proof['stage'] == 'postgres' else 'oci_project'
                 h.require(any(item['project'] == projects[key] for item in proof['journal_proofs']))
-            expected = {'python': 78, 'postgres': 3, 'oci': 1, 'workspace': 225, 'integration': 80, 'cli': 2}.get(proof['stage'])
+            expected = {'python': sum(PYTHON_METHOD_COUNTS.values()), 'postgres': 3, 'oci': 1, 'workspace': 225, 'integration': 80, 'cli': 2}.get(proof['stage'])
             if expected is not None:
                 h.require(proof.get('tests_passed') == expected)
             if proof['stage'] == 'postgres':

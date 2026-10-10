@@ -41,6 +41,7 @@ OCI_CLI_CONTROLS = '876784219c3b2751b4351c81a90fc4971c797fde'
 CHECKPOINT_MERGE = '667d1be736c8834deb1a20602b95bb0d6c815157'
 CHECKPOINT_CONTROLS = 'abf62e7d310249a3abd74ebbdd53c626f6312f55'
 CONTROLS_PARENT = '27bc299b995ff98e6ad4d6a53870af0e7890752b'
+CHILD_CLASS_CONTROLS = '29447047bc1eb5a63bea3048c2706a865a363d85'
 BRANCH = 'build-only/forge-delegation-full12-20261010'
 CONSUMER_PATHS = {
     '.github/workflows/forge-hermetic-full12.yml',
@@ -560,7 +561,8 @@ def controls_history(controls):
     require(row == [CONTROLS_PARENT, CHECKPOINT_CONTROLS, SOURCE])
     row = git(controls, 'rev-list', '--parents', '-n', '1', CHECKPOINT_MERGE).decode().split()
     require(row == [CHECKPOINT_MERGE, OCI_CLI_CONTROLS, SOURCE_PARENT])
-    for revision, parent in (('HEAD', CONTROLS_PARENT), (SOURCE, SOURCE_PARENT),
+    for revision, parent in (('HEAD', CHILD_CLASS_CONTROLS), (CHILD_CLASS_CONTROLS, CONTROLS_PARENT),
+                             (SOURCE, SOURCE_PARENT),
                              (SOURCE_PARENT, ORIGINAL_SOURCE), (CHECKPOINT_CONTROLS, CHECKPOINT_MERGE),
                              (OCI_CLI_CONTROLS, OCI_CLI_PARENT), (OCI_CLI_PARENT, OCI_LOCATION_CONTROLS),
                              (OCI_LOCATION_CONTROLS, IMMUTABLE_MAINTENANCE_CONTROLS),

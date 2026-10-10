@@ -25,7 +25,8 @@ def git_response(argv):
     if args == ['rev-parse', '--is-shallow-repository']:
         return b'false\n'
     if args[0] == 'rev-list':
-        chain = {'HEAD': (os.environ['GITHUB_SHA'], h.CONTROLS_PARENT),
+        chain = {'HEAD': (os.environ['GITHUB_SHA'], h.CHILD_CLASS_CONTROLS),
+                 h.CHILD_CLASS_CONTROLS: (h.CHILD_CLASS_CONTROLS, h.CONTROLS_PARENT),
                  h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.CHECKPOINT_CONTROLS, h.SOURCE),
                  h.CHECKPOINT_MERGE: (h.CHECKPOINT_MERGE, h.OCI_CLI_CONTROLS, h.SOURCE_PARENT),
                  h.CHECKPOINT_CONTROLS: (h.CHECKPOINT_CONTROLS, h.CHECKPOINT_MERGE),
@@ -133,8 +134,8 @@ class DeadlineBoundaryTests(unittest.TestCase):
                    'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_SHA': 'a' * 40}
             with patch.dict(os.environ, env), patch.object(h.m, 'preflight'), patch.object(h.m, 'read_payloads', return_value=({}, {})), patch.object(h, 'hosted_guard'), patch.object(h, 'verify_components', return_value={}), patch.object(h, 'wall_budget', side_effect=wall), patch.object(h.time, 'monotonic', side_effect=lambda: clock[0]), patch.object(h, 'command', side_effect=command), patch.object(h, 'reclaim', side_effect=h.CapacityFailure({'host_free_bytes': 0})), patch.object(gate, 'start_daemon') as start, patch.object(gate, 'stop_daemon', return_value={'stopped': True}):
                 self.assertEqual(gate.run_job('C'), 1)
-            self.assertEqual(envelopes[:2], [5400, 3300])  # Thirty-five successful Git calls consume2100.
-            self.assertEqual(len(git_calls), 70)  # Initial + final parity proof, private qualification separately tested.
+            self.assertEqual(envelopes[:2], [5400, 3240])  # Thirty-six successful Git calls consume2160.
+            self.assertEqual(len(git_calls), 72)  # Initial + final parity proof, private qualification separately tested.
             start.assert_not_called()
             self.assertIsNone(h.BOOTSTRAP_DEADLINE)
 

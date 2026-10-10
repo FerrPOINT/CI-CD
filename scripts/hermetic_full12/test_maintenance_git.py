@@ -413,7 +413,8 @@ class ConsumerHistoryTests(unittest.TestCase):
     def git(_, *args):
         if args == ('rev-parse', '--is-shallow-repository'):
             return b'false\n'
-        parents = {'HEAD': ('a' * 40, h.CONTROLS_PARENT),
+        parents = {'HEAD': ('a' * 40, h.CHILD_CLASS_CONTROLS),
+                   h.CHILD_CLASS_CONTROLS: (h.CHILD_CLASS_CONTROLS, h.CONTROLS_PARENT),
                    h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.CHECKPOINT_CONTROLS, h.SOURCE),
                    h.CHECKPOINT_MERGE: (h.CHECKPOINT_MERGE, h.OCI_CLI_CONTROLS, h.SOURCE_PARENT),
                    h.CHECKPOINT_CONTROLS: (h.CHECKPOINT_CONTROLS, h.CHECKPOINT_MERGE),
@@ -451,6 +452,7 @@ class ConsumerHistoryTests(unittest.TestCase):
     def test_exact_normal_successor_history_admitted(self):
         with patch.object(h, 'git', side_effect=self.git):
             h.controls_history(Path('controls'))
+        self.assertEqual(h.CHILD_CLASS_CONTROLS, '29447047bc1eb5a63bea3048c2706a865a363d85')
         self.assertEqual(h.CONTROLS_PARENT, '27bc299b995ff98e6ad4d6a53870af0e7890752b')
         self.assertEqual(h.CHECKPOINT_CONTROLS, 'abf62e7d310249a3abd74ebbdd53c626f6312f55')
         self.assertEqual(h.CHECKPOINT_MERGE, '667d1be736c8834deb1a20602b95bb0d6c815157')
@@ -479,6 +481,7 @@ class ConsumerHistoryTests(unittest.TestCase):
                 (('rev-parse', '--is-shallow-repository'), b'true\n'),
                 (('rev-list', '--parents', '-n', '1', 'HEAD'), ('a' * 40 + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', 'HEAD'), ('a' * 40 + ' ' + h.CONTROLS_PARENT + ' ' + h.SOURCE).encode()),
+                (('rev-list', '--parents', '-n', '1', h.CHILD_CLASS_CONTROLS), (h.CHILD_CLASS_CONTROLS + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.CONTROLS_PARENT), (h.CONTROLS_PARENT + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.SOURCE), (h.SOURCE + ' ' + h.OCI_CLI_CONTROLS).encode()),
                 (('rev-list', '--parents', '-n', '1', h.OCI_CLI_CONTROLS), (h.OCI_CLI_CONTROLS + ' ' + h.SOURCE).encode()),
