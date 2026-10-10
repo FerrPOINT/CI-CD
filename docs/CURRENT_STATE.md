@@ -1,9 +1,108 @@
 # CURRENT STATE — Forge CI/CD
 
-> **Производный снимок текущего состояния.** Сгенерирован из кода; authority — код и коммит, не этот файл. Обновлять при каждом изменении capability.
-> Снято: `2026-09-22`, ветка `main`; visual evidence перечислено в `docs/assets/screens/manifest.md`.
+> **Производный снимок текущего состояния.** Сверяется с кодом и evidence; authority — код и коммит, не этот файл. Обновлять при каждом изменении capability.
+> Снято: `2026-10-08`, candidate `feat/task-delivery-evidence-20261007`, не установленный runtime; visual evidence перечислено в `docs/assets/screens/manifest.md`.
 
 ## Что работает сейчас (Current verified)
+
+### Непринятое hardening reader fence и OCI recovery, 2026-10-08
+
+Последний завершённый frozen packet `0f560932eb2b`: PG3 PASS/0 FAIL
+(все пять SIGKILL checkpoints), OCI0 PASS/1 FAIL на исходном runner completion
+timeout.37 Python cases, row/SQL safety smoke, locked check и strict Clippy прошли;
+259-input source parity и exact own cleanup подтверждены. Full follow-ups не
+запускались. DNS/BuildKit session ошибки в том же окне требуют проверки offline
+preloaded-image path, не увеличения таймаутов. Старый failed8f596 packet сохранён:
+его backup rehearsal subprocess cause остаётся неизвестным. Подробности и hashes:
+[latest packet](TASK_DELIVERY_VERIFICATION.md#latest-frozen-native-packet-8-октября).
+
+После56f1217 найдены gaps PostgreSQL reader grants/snapshot inventory и OCI
+reconciliation после immutable checks. Source исправления и новые regressions
+описаны в [verification](TASK_DELIVERY_VERIFICATION.md#hardening-reader-fence-и-oci-recovery-2026-10-08).
+Первый packet прошёл10 Windows/WSL pure Python cases; свежий WSL/rootless Rust1.88 gate
+прошёл fmt/all-targets/all-features check/Clippy и219 workspace tests, включая4
+OCI recovery units. Scoped259 source hashes повторно сверены, cleanup complete.
+Последующее review исправляет writer history-view/rewrite/inheritance/FK routes,
+проверку historical PG proof и допустимые released writer sessions. Historical
+Windows26 pure cases и aggregate32 docs/tests PASS; native tests расширены.
+Свежий immutable epoch d92019b98cb3 проходит22 Linux pure cases, actual PG17.11
+SQL smoke и locked/offline feature check/strict Clippy; parent сверил259 hashes,
+0 mismatches. Исторический epoch4e95ebcac21f завершился PG2/3 FAILED на Compose
+stop timeout, а не успешным drain; explicit5s stop grace не увеличивает20s deadline
+и не повторяет Unknown. Отдельный d920 epoch завершился PG3/3 PASS2795.37s и OCI1/1
+PASS90.73s, но workspace FAILED137/1 на stat-cache regression; error route ещё
+не диагностирован. Exact own cleanup complete,20 baseline volumes сохранены.
+Последующий counter-review доказал numeric row hash collision. Current source
+использует lossless PostgreSQL record-text/strings, а не jsonb/float normalization;
+чистый production fingerprint RED repro стал GREEN. Новый native/normal/release
+gate для этого source ещё не принят. Прежние runtime PASS ниже не подтверждают
+lossless fix. PR88 Draft и full SDLC blocked.
+Documentation-only publication не включает локальные hardening source edits;
+новый docs head не заменяет code/native acceptance.
+Последующий local OCI fixture guard проходит11 pure cases и fresh locked
+check/Clippy на260 inputs, но separate diagnostic4a94b411e888 падает на
+preparation до build (0/1). Его причина ещё неизвестна, cleanup/parity complete;
+PostgreSQL/full gates в нём не выполнялись. Guard остаётся unpublished,
+documentation headd51c260 имеет четыре CI SUCCESS, не native guard acceptance.
+Свежий diagnostic e6e304554e4d проходит offline preparation, locked check и
+strict Clippy, но actual OCI0/1 снова падает на исходном runner completion
+timeout. Current/frozen260 parity и exact own cleanup подтверждены; PG/full
+gates в нём не выполнялись. Причина pipeline ещё не доказана;
+[отдельная запись](TASK_DELIVERY_VERIFICATION.md#offline-oci-runner-diagnostic-e6e304554e4d).
+Следующий exact-source diagnostic a7c3dc379a3c проходит actual OCI1/1,
+включая real runner/artifact/image/data/rollback и оба SIGKILL recovery cases,
+при неизменных deadlines.260-input parity и exact cleanup подтверждены.
+Это scoped owner-local acceptance, не полный native/SDLC gate; PG и full
+follow-ups в нём не выполнялись.20 pure OCI tests PASS Windows/Linux.
+[Текущая OCI-приёмка](TASK_DELIVERY_VERIFICATION.md#offline-oci-actual-acceptance-a7c3dc379a3c)
+не объясняет однозначно исторические failed packets и не разрешает source rollout.
+
+### PostgreSQL shadow delivery source continuation, 2026-10-08
+
+`forge-delivery --postgres` добавляет отдельный privileged isolated protocol:
+exact artifact/image/schema/catalog, enforced writer drain/fence, verified backup
+restore drill, fresh shadow migration и отдельные application checks перед release.
+Known pre-release failure допускает verified snapshot + previous image restore в
+fresh DB с сохранением rows/sequences. После release old snapshot restore запрещён.
+Original-key replay не повторяет commands; partial Unknown удерживает target,
+completed-release reconcile сохраняет post-release writes и container identity.
+Исторические source gates опубликованного56f1217: PG suite3/3 и OCI1/1 PASS;
+они не подтверждают последующий hardening. Evidence и пределы:
+[task verification](TASK_DELIVERY_VERIFICATION.md), [ADR-0022](adr/0022-owner-local-postgres-shadow-delivery.md).
+RPO=0 только для acknowledged pre-drain writes. Production/native SDLC admission
+и full business acceptance недоступны; HTTP dispatch503/оба SDLC flags false.
+Новый Forge SQL migration не добавлен,0039/0040 и Base pin сохранены.
+PR87 ещё OPEN: текущий PR88 diff к main включает prerequisite0039 и own0040.
+До release-ready нужен merge PR87 и повторный final diff/gate, где единственная
+новая Forge migration —0040. Удаление prerequisite или force push не допускаются;
+owner-local verification и исторические CI не закрывают этот release gate.
+
+### OCI/read-only data source continuation, 2026-10-08
+
+`forge-delivery --oci` добавляет bounded temporary Compose deployment preloaded
+image и read-only data snapshot, actual image/commit/container/served identity,
+application compatibility/acceptance и rollback без изменения snapshot. Mutable
+DB/migration/restore и authoritative SDLC admission закрыты. Source/gates и пределы:
+[task verification](TASK_DELIVERY_VERIFICATION.md), [ADR-0021](adr/0021-owner-local-oci-readonly-data.md).
+
+### Owner-local manifest delivery source, 2026-10-08
+
+`forge-delivery` добавляет bounded static-artifact publication в отдельный Unix
+target: immutable intent, original-key replay, actual served manifest/bytes,
+health/acceptance checks, last-confirmed rollback и crash reconciliation без
+повторной publication. Это privileged local verification, не production install
+или SDLC admission. HTTP SDLC POST остаётся503; machine-authenticated GET читает
+history. Evidence и ограничения: [task verification](TASK_DELIVERY_VERIFICATION.md),
+[ADR-0020](adr/0020-owner-local-manifest-delivery.md). Новый SQL migration не нужен.
+
+### Task workspace и candidate evidence source, 2026-10-07
+
+Отдельный source cut поверх PR87 добавляет blocked task operation ledger40,
+physical preparation и readback candidate Git/pipeline/artifact evidence.
+Readback не разблокирует dispatch, scoped Git write, deployment, acceptance или
+rollback; authoritative Tracker counterpart отсутствует. Evidence и границы:
+[task verification](TASK_DELIVERY_VERIFICATION.md). Исторический runner release
+ниже принадлежит PR87; его SQL39 и source сохраняются без изменений.
 
 ### Release candidate 2026-10-07: runner workspace recovery
 
@@ -104,7 +203,7 @@ completion. Component failure injection не является OS process-tree st
 | Notifications | ✅ MVP | `in_app`/`sse` каналы создают durable local outbox event на terminal pipeline events; история доступна через `/notification-events`, live stream — через `/notifications/stream`; email/Slack adapters и inbound provider handlers остаются target |
 | Login UI | ✅ | `/login` запускает Central Auth Authorization Code + PKCE, `/sso/callback` завершает обмен, access token хранится только в памяти; hard reload повторно использует центральную HttpOnly browser session без локальной password form |
 | Project membership RBAC | ✅ MVP | `project_memberships`, фильтрация списка проектов, deny-before-load для project-owned API и name-based repo API; `admin` bypass, tenant isolation/SAT ещё target |
-| Git auth/RBAC | ✅ conditional MVP | public repo read открыт; private read и receive-pack требуют legacy `CICD_GIT_TOKEN` либо JWT/PAT + `project_memberships` + `git:*` PAT scope при `CICD_AUTH_SECRET`; без секрета и Git token остаётся trusted local mode |
+| Git auth/RBAC | ✅ conditional MVP | public read открыт; legacy resources сохраняют project membership policy. Подтверждённые Namespace repositories доступны доверенным людям по service/global role и scopes, без team ACL. Project-scoped PAT остаётся в своём delivery project; machines не получают human-доступ. Archive блокирует receive-pack до admin/legacy-token bypass. Без auth secret и Git token сохраняется только trusted local mode |
 | Central human auth | ✅ | Central Auth владеет users, browser sessions и scoped personal tokens; backend проверяет ES256/JWKS, issuer/audience/expiry и live session, связывает profile только по `central_sub`, закрывает local login/user/PAT mutations и не использует local fallback при ошибке central service. Machine runner/service-account tokens остаются отдельными. |
 | Runtime configuration | ✅ | Backend server загружает `RuntimeConfig` из `CICD_` один раз при старте/app construction: Database/Http/Git/Artifacts/Runner/Auth/Secrets. Startup/router validation покрывает bool, runner mode, CORS allowlist, artifact TTL, queue timeout и secrets key; AppState/supervisors используют config без повторного прямого чтения env. CLI и `forge-runner` остаются отдельными process-boundary tools на `clap`/env |
 | Secret injection | ✅ MVP | embedded runner передаёт в env только `jobs.required_secrets`; external runner получает declared secrets через lease-scoped `secrets:resolve` после ack; stdout/stderr masking best-effort |
@@ -184,6 +283,10 @@ bash scripts/scan_container_images.sh forge-cicd-backend:ci forge-cicd-frontend:
 python3 scripts/verify_docs.py --canonical --links --current-state
 ```
 
-## Frontend: 23 маршрута / 21 рабочая страница + /login + /sso/callback
+## Frontend: 29 маршрутов
+
+Маршруты включают новые candidate-экраны сквозного проекта и CI-конфигураций.
+Этот счётчик отражает router, а не завершённую визуальную или runtime-приёмку;
+статусы новых экранов перечислены в визуальном реестре.
 
 Полный список базовых страниц — `docs/architecture/frontend-boundaries.md`; визуальный реестр — `docs/assets/screens/manifest.md`. Исполняемый route smoke — `frontend/src/app/router.test.tsx`: production `appRoutes` поднимаются в memory router, а рабочие Dashboard-страницы, `/login` и технический `/sso/callback` проверяются на первый рендер с mocked API DTO. `scripts/verify_docs.py --all` дополнительно сверяет, что visual manifest покрывает каждый production route. Real-browser baseline — `frontend/e2e/critical-flows.spec.ts` и all-route `frontend/e2e/accessibility.spec.ts` против собранного Compose stack с deterministic seed.

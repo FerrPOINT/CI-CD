@@ -11,6 +11,8 @@ ENV CI=true
 ENV SPEC=/workspace/openapi/openapi.yaml
 RUN corepack enable && corepack prepare pnpm@10.28.1 --activate && pnpm install --frozen-lockfile
 COPY CI-CD/frontend/ ./
+ARG VITE_NAMESPACE_ENABLED="false"
+ENV VITE_NAMESPACE_ENABLED=${VITE_NAMESPACE_ENABLED}
 ARG VITE_PLATFORM_BRANDING_URL=""
 ENV VITE_PLATFORM_BRANDING_URL=${VITE_PLATFORM_BRANDING_URL}
 ARG VITE_PLATFORM_SERVICES_URL=""
@@ -22,6 +24,8 @@ ENV VITE_ADMIN_UI_URL=${VITE_ADMIN_UI_URL}
 RUN pnpm build
 
 FROM nginx:1.31.4-alpine
+ARG VITE_NAMESPACE_ENABLED="false"
+LABEL io.pdlc.namespace-ui.enabled=${VITE_NAMESPACE_ENABLED}
 COPY CI-CD/frontend/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80

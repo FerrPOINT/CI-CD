@@ -1,147 +1,69 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { api } from '@/api/client'
 import { DashboardPage } from './index'
-
-const mocks = vi.hoisted(() => ({
-  useProjects: vi.fn(),
-  useRunners: vi.fn(),
-  useProjectPipelines: vi.fn(),
-  refetchProjects: vi.fn(),
-  refetchRunners: vi.fn(),
-  refetchPipelines: vi.fn(),
-}))
-
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    i18n: { language: 'ru' },
-    t: (key: string, options?: { count?: number }) => options?.count === undefined ? key : `${key} ${options.count}`,
-  }),
-}))
-
-vi.mock('@/api/hooks', () => ({
-  useProjects: mocks.useProjects,
-  useRunners: mocks.useRunners,
-}))
-
-vi.mock('@/shared/lib/use-project-pipelines', () => ({
-  useProjectPipelines: mocks.useProjectPipelines,
-}))
-
-const projects = [
-  {
-    id: 'project-1',
-    name: 'Platform API',
-    repository_url: 'https://example.test/platform-api.git',
-    default_branch: 'main',
-    created_at: '2026-09-23T00:00:00Z',
-  },
-  {
-    id: 'project-2',
-    name: 'Web Console',
-    repository_url: 'https://example.test/web-console.git',
-    default_branch: 'main',
-    created_at: '2026-09-23T00:00:00Z',
-  },
-]
-
-function renderPage() {
-  render(
-    <MemoryRouter>
-      <DashboardPage />
-    </MemoryRouter>,
+vi.mock('@/api/client', () => ({ api: vi.fn() }))
+function mount() {
+  return render(
+    <QueryClientProvider
+      client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
+    >
+      <MemoryRouter>
+        <DashboardPage />
+      </MemoryRouter>
+    </QueryClientProvider>,
   )
 }
-
-function defaultQueries() {
-  mocks.useProjects.mockReturnValue({
-    data: projects,
-    isLoading: false,
-    error: null,
-    refetch: mocks.refetchProjects,
-  })
-  mocks.useRunners.mockReturnValue({
-    data: [],
-    isLoading: false,
-    error: null,
-    refetch: mocks.refetchRunners,
-  })
-  mocks.useProjectPipelines.mockReturnValue({
-    runs: [],
-    isLoading: false,
-    error: null,
-    failedCount: 0,
-    hasData: true,
-    refetch: mocks.refetchPipelines,
-  })
-}
-
 afterEach(() => {
-  vi.clearAllMocks()
+  cleanup()
+  vi.resetAllMocks()
 })
-
-describe('DashboardPage recovery states', () => {
-  it('keeps successful runs visible when another project request fails', () => {
-    defaultQueries()
-    mocks.useProjectPipelines.mockReturnValue({
-      runs: [{
-        id: 'run-1',
-        project_id: 'project-1',
-        git_ref: 'main',
-        commit_sha: 'a'.repeat(40),
-        status: 'failed',
-        created_at: '2026-09-23T01:00:00Z',
-        updated_at: '2026-09-23T01:01:00Z',
-      }],
-      isLoading: false,
-      error: new Error('Service Unavailable'),
-      failedCount: 1,
-      hasData: true,
-      refetch: mocks.refetchPipelines,
-    })
-    renderPage()
-
-    const recentRuns = screen.getByRole('heading', { name: 'dashboard.recentRuns' }).closest('section')
-    expect(recentRuns).not.toBeNull()
-    expect(within(recentRuns!).getByText('Platform API')).toBeInTheDocument()
-    const alert = within(recentRuns!).getByRole('alert')
-    expect(alert).toHaveTextContent('dashboard.runsPartialError 1')
-    fireEvent.click(within(alert).getByRole('button', { name: 'common.retry' }))
-    expect(mocks.refetchPipelines).toHaveBeenCalledOnce()
+describe('workspace dashboard', () => {
+  it('separately counts projects, repositories and configurations without per-config requests', async () => {
+    vi.mocked(api).mockImplementation(async (path) =>
+      path === '/runners'
+        ? []
+        : path === '/workspace-summary'
+          ? { projects: 2, repositories: 3, configurations: 4, queued: 5, running: 6, failed: 7 }
+          : path.startsWith('/catalog')
+            ? { items: [] }
+            : { items: [], total: 0 },
+    )
+    mount()
+    await screen.findByText('CI-конфигурации')
+    expect(screen.getByText('Проекты').parentElement).toHaveTextContent('2')
+    expect(screen.getByText('Репозитории').parentElement).toHaveTextContent('3')
+    expect(screen.getByText('CI-конфигурации').parentElement).toHaveTextContent('4')
+    expect(vi.mocked(api).mock.calls.some(([path]) => path.startsWith('/projects'))).toBe(false)
   })
-
-  it('offers a local retry when the project catalog is unavailable', () => {
-    defaultQueries()
-    mocks.useProjects.mockReturnValue({
-      data: undefined,
-      isLoading: false,
-      error: new Error('Service Unavailable'),
-      refetch: mocks.refetchProjects,
+  it('reports unavailable counters while keeping independently available execution history', async () => {
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path === '/runners') return []
+      if (path === '/workspace-summary') throw new Error('unavailable')
+      if (path.startsWith('/workspace-pipelines'))
+        return {
+          total: 1,
+          items: [
+            {
+              id: 'run',
+              repository_id: 'repo',
+              repository_name: 'group/api',
+              configuration_id: 'config',
+              configuration_name: 'Build',
+              git_ref: 'main',
+              status: 'success',
+              created_at: '2026-10-09T00:00:00Z',
+              pipeline_id: 'run',
+            },
+          ],
+        }
+      return { items: [], total: 0 }
     })
-    renderPage()
-
-    const alert = screen.getByRole('alert')
-    expect(alert).toHaveTextContent('dashboard.projectsError')
-    fireEvent.click(within(alert).getByRole('button', { name: 'common.retry' }))
-    expect(mocks.refetchProjects).toHaveBeenCalledOnce()
-  })
-
-  it('retries runner status without hiding the rest of the dashboard', () => {
-    defaultQueries()
-    mocks.useRunners.mockReturnValue({
-      data: undefined,
-      isLoading: false,
-      error: new Error('Service Unavailable'),
-      refetch: mocks.refetchRunners,
-    })
-    renderPage()
-
-    expect(screen.getByText('Platform API')).toBeInTheDocument()
-    const runners = screen.getByRole('heading', { name: 'navigation.runners' }).closest('section')
-    expect(runners).not.toBeNull()
-    const alert = within(runners!).getByRole('alert')
-    expect(alert).toHaveTextContent('dashboard.runnersError')
-    fireEvent.click(within(alert).getByRole('button', { name: 'common.retry' }))
-    expect(mocks.refetchRunners).toHaveBeenCalledOnce()
+    mount()
+    expect(await screen.findByRole('alert')).toHaveTextContent('Сводка недоступна')
+    expect(await screen.findByText('group/api')).toBeInTheDocument()
+    expect(screen.queryByText('Проекты')).toBeNull()
   })
 })

@@ -43,6 +43,9 @@ No SDLC task/assignment identity или новый scheduler этим не вв�
 Embedded runner также требует успешный `child.wait()` до terminal write и cleanup.
 Ошибка ожидания, включая timeout/kill path, оставляет process identity, lease и
 каталог для reconciliation; она не преобразуется в доказанный failed outcome.
+Этот исход передаётся внешнему lifecycle handler отдельно от успешного завершения:
+PID и резервирование job в `RunningJobs` сохраняются, поэтому отмена продолжает
+адресовать исходный процесс, а повторный embedded запуск не допускается.
 Fallible timeout logging идёт после подтверждённой остановки. Это не process-tree
 sandbox и не автоматическое доказательство отсутствия дочерних процессов.
 

@@ -64,6 +64,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ADR-0006: outbox delivery + scheduler worker.
     if roles.is_empty() || has_role("worker") {
+        let catalog_pool = pool.clone();
+        tokio::spawn(async move {
+            cicd::workspace_projects::supervisor(catalog_pool).await;
+        });
         let outbox_pool = pool.clone();
         let outbox_git_root = config.git.root.clone();
         tokio::spawn(async move {

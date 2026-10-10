@@ -21,6 +21,11 @@ use sqlx::postgres::PgPoolOptions;
 use std::str::FromStr;
 use tower::ServiceExt;
 use uuid::Uuid;
+#[path = "support/fixture_cleanup.rs"]
+mod fixture_cleanup;
+
+#[path = "support/sdlc_workspace.rs"]
+mod sdlc_workspace;
 
 type CanceledExternalLeaseState = (
     String,
@@ -475,11 +480,7 @@ async fn job_log_append_serializes_concurrent_attempt_writes() {
             .expect("fetch log sequences");
     assert_eq!(sequences, vec![1, 2]);
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -1090,6 +1091,28 @@ async fn scoped_api_tokens_limit_project_routes_and_soft_revoke() {
     .await
     .expect("insert scoped token projects");
 
+    // Historical URL tails no longer establish repository ownership. Register
+    // exact catalog identities so this remains a foreign-project PAT test.
+    let repository_a = Uuid::new_v4();
+    let repository_b = Uuid::new_v4();
+    for (project, repository, name) in [
+        (project_a, repository_a, &repo_a),
+        (project_b, repository_b, &repo_b),
+    ] {
+        sqlx::query("INSERT INTO repositories(id,name) VALUES($1,$2)")
+            .bind(repository)
+            .bind(name)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE projects SET repository_id=$2 WHERE id=$1")
+            .bind(project)
+            .bind(repository)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
     let app = cicd::api::app_with_auth_secret(
         Some(pool.clone()),
         Some(format!("scoped-token-secret-{namespace}")),
@@ -1223,20 +1246,32 @@ async fn scoped_api_tokens_limit_project_routes_and_soft_revoke() {
         .execute(&pool)
         .await
         .expect("cleanup token admin");
-    sqlx::query("DELETE FROM projects WHERE id = ANY($1)")
-        .bind([project_a, project_b])
+    fixture_cleanup::projects(&pool).await;
+    for table in ["repository_aliases", "repository_pr_counters"] {
+        sqlx::query(&format!(
+            "DELETE FROM {table} WHERE repository_id = ANY($1)"
+        ))
+        .bind([repository_a, repository_b])
         .execute(&pool)
         .await
-        .expect("cleanup scoped token projects");
+        .unwrap();
+    }
+    sqlx::query("DELETE FROM repository_catalog WHERE id = ANY($1)")
+        .bind([repository_a, repository_b])
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM repositories WHERE id = ANY($1)")
+        .bind([repository_a, repository_b])
+        .execute(&pool)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
 async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job() {
     let pool = test_pool().await;
-    sqlx::query("DELETE FROM projects WHERE name LIKE 'it-runner-protocol-%'")
-        .execute(&pool)
-        .await
-        .expect("cleanup stale runner protocol projects");
+    fixture_cleanup::projects(&pool).await;
 
     let namespace = Uuid::new_v4();
     let registration_token = format!("registration-{}", namespace.simple());
@@ -1966,11 +2001,7 @@ async fn external_runner_protocol_claims_acknowledges_renews_and_completes_job()
         .unwrap();
     assert_eq!(response.status(), StatusCode::CONFLICT);
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup protocol project");
+    fixture_cleanup::projects(&pool).await;
     sqlx::query("DELETE FROM runners WHERE id = $1")
         .bind(runner_id)
         .execute(&pool)
@@ -2426,11 +2457,7 @@ async fn external_runner_long_poll_wakes_when_work_is_enqueued() {
     assert_eq!(offer["attempt"]["id"], attempt_id.to_string());
     assert_eq!(offer["attempt"]["jobId"], job_id.to_string());
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup long poll project");
+    fixture_cleanup::projects(&pool).await;
     sqlx::query("DELETE FROM runners WHERE id = $1")
         .bind(runner_id)
         .execute(&pool)
@@ -2592,11 +2619,7 @@ async fn external_runner_long_poll_wakes_from_postgres_notify() {
     listener.abort();
     let _ = listener.await;
     notify_pool.close().await;
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup pg notify project");
+    fixture_cleanup::projects(&pool).await;
     sqlx::query("DELETE FROM runners WHERE id = $1")
         .bind(runner_id)
         .execute(&pool)
@@ -2625,11 +2648,12 @@ async fn git_smart_http_uses_project_membership_when_auth_enabled() {
         assert!(status.success());
     }
 
+    let private_repository_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO repositories (id, name, visibility) VALUES \
          ($1, $2, 'private'), ($3, $4, 'public')",
     )
-    .bind(Uuid::new_v4())
+    .bind(private_repository_id)
     .bind(&private_repo)
     .bind(Uuid::new_v4())
     .bind(&public_repo)
@@ -2637,13 +2661,16 @@ async fn git_smart_http_uses_project_membership_when_auth_enabled() {
     .await
     .expect("insert repositories");
     let project_id = Uuid::new_v4();
-    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
-        .bind(project_id)
-        .bind(format!("it-git-project-{}", namespace.simple()))
-        .bind(format!("http://127.0.0.1:22802/git/{private_repo}.git"))
-        .execute(&pool)
-        .await
-        .expect("insert project");
+    sqlx::query(
+        "INSERT INTO projects (id, name, repository_url, repository_id) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(project_id)
+    .bind(format!("it-git-project-{}", namespace.simple()))
+    .bind(format!("http://127.0.0.1:22802/git/{private_repo}.git"))
+    .bind(private_repository_id)
+    .execute(&pool)
+    .await
+    .expect("insert project");
     let lookalike_project_id = Uuid::new_v4();
     sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
         .bind(lookalike_project_id)
@@ -2936,11 +2963,18 @@ async fn git_smart_http_uses_project_membership_when_auth_enabled() {
         .execute(&pool)
         .await
         .expect("cleanup git users");
-    sqlx::query("DELETE FROM projects WHERE id = ANY($1)")
-        .bind([project_id, lookalike_project_id])
-        .execute(&pool)
-        .await
-        .expect("cleanup git projects");
+    fixture_cleanup::projects(&pool).await;
+    for statement in [
+        "DELETE FROM repository_aliases WHERE repository_id IN (SELECT id FROM repository_catalog WHERE storage_name=ANY($1))",
+        "DELETE FROM repository_pr_counters WHERE repository_id IN (SELECT id FROM repository_catalog WHERE storage_name=ANY($1))",
+        "DELETE FROM repository_catalog WHERE storage_name=ANY($1)",
+    ] {
+        sqlx::query(statement)
+            .bind(&[private_repo.clone(), public_repo.clone()])
+            .execute(&pool)
+            .await
+            .expect("cleanup standalone Git identity fixtures");
+    }
     sqlx::query("DELETE FROM repositories WHERE name = ANY($1)")
         .bind(&[private_repo, public_repo])
         .execute(&pool)
@@ -3084,11 +3118,7 @@ async fn pipeline_trigger_replays_same_idempotency_key() {
         .await
         .expect("rollback immutability check");
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -3202,14 +3232,25 @@ jobs:
     )
     .await;
 
-    let project_id = Uuid::new_v4();
-    sqlx::query("INSERT INTO projects (id, name, repository_url) VALUES ($1, $2, $3)")
-        .bind(project_id)
-        .bind(format!("it-v1-dag-{}", namespace.simple()))
-        .bind(format!("http://127.0.0.1/git/{repo_name}.git"))
+    let repository_id = Uuid::new_v4();
+    sqlx::query("INSERT INTO repositories (id, name) VALUES ($1, $2)")
+        .bind(repository_id)
+        .bind(&repo_name)
         .execute(&pool)
         .await
-        .expect("insert project");
+        .expect("register existing bare repository identity");
+
+    let project_id = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO projects (id, name, repository_url, repository_id) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(project_id)
+    .bind(format!("it-v1-dag-{}", namespace.simple()))
+    .bind(format!("http://127.0.0.1/git/{repo_name}.git"))
+    .bind(repository_id)
+    .execute(&pool)
+    .await
+    .expect("insert project");
 
     let app = authenticated_app_with_git(
         pool.clone(),
@@ -3335,11 +3376,7 @@ jobs:
         "set -e\ncargo test\ncargo clippy --all-targets"
     );
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup v1 project");
+    fixture_cleanup::projects(&pool).await;
     let _ = tokio::fs::remove_dir_all(&root).await;
 }
 
@@ -3525,11 +3562,7 @@ async fn artifact_download_rejects_storage_paths_outside_artifact_root() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
     let _ = std::fs::remove_dir_all(&artifact_root);
     let _ = std::fs::remove_file(&outside_path);
 }
@@ -3687,11 +3720,7 @@ async fn artifact_retention_expires_download_and_purges_file() {
     assert_eq!(listed[0]["id"].as_str(), Some(artifact_id_text.as_str()));
     assert!(listed[0]["purged_at"].as_str().is_some());
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
     let _ = std::fs::remove_dir_all(&artifact_root);
     unsafe {
         match previous_artifacts_dir {
@@ -3941,11 +3970,7 @@ async fn job_retry_preserves_attempt_logs_and_appends_to_new_attempt() {
             .any(|(id, count)| *id == second_attempt_id && *count == 1)
     );
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -4040,11 +4065,7 @@ async fn manual_job_start_materializes_queue_row() {
     assert_eq!(queue_state, "queued");
     assert!(queue_completed_at.is_none());
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -4225,11 +4246,7 @@ async fn job_log_page_is_bounded_and_searchable() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -4416,11 +4433,7 @@ async fn cancel_pipeline_marks_open_attempts_canceled() {
     .expect("count canceled queue rows");
     assert_eq!(canceled_queue_rows, 2);
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -4707,11 +4720,7 @@ async fn cancel_pipeline_signals_external_runner_until_confirmed() {
     assert_eq!(latest_attempt_status, "queued");
     assert_eq!(queue_state, "queued");
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -4841,11 +4850,7 @@ async fn embedded_runner_closes_lease_when_prepare_fails() {
     assert_eq!(queue_state, "completed");
     assert!(queue_completed_at.is_some());
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -5126,11 +5131,7 @@ async fn expired_job_lease_is_reconciled_to_failed_attempt() {
     assert_eq!(queue_state, "completed");
     assert!(queue_completed_at.is_some());
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -5302,11 +5303,7 @@ async fn unacknowledged_external_lease_is_requeued_after_ack_deadline() {
     .expect("count active leases after requeue poll");
     assert_eq!(active_leases, 1);
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
     sqlx::query("DELETE FROM runners WHERE id = $1")
         .bind(runner_id)
         .execute(&pool)
@@ -5416,11 +5413,7 @@ async fn queued_job_without_compatible_runner_fails_after_queue_timeout() {
     assert_eq!(pipeline_status, "failed");
     assert_eq!(queue_state, "completed");
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup timed out project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -5609,11 +5602,7 @@ async fn queue_timeout_keeps_old_work_when_compatible_protocol_runner_exists() {
     assert_eq!(pipeline_status, "queued");
     assert_eq!(queue_state, "queued");
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup compatible project");
+    fixture_cleanup::projects(&pool).await;
     sqlx::query("DELETE FROM runners WHERE id = $1")
         .bind(runner_id)
         .execute(&pool)
@@ -5788,11 +5777,7 @@ async fn stale_runner_with_active_unexpired_lease_is_not_marked_offline() {
     assert_eq!(status, "offline");
     assert_eq!(busy_slots, Some(0));
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
     sqlx::query("DELETE FROM runners WHERE id = $1")
         .bind(runner_id)
         .execute(&pool)
@@ -5920,11 +5905,7 @@ async fn cron_schedule_materializes_unique_fire_slots() {
             .expect("count project pipelines");
     assert_eq!(pipeline_count, 1);
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -5999,11 +5980,7 @@ async fn outbox_retention_sweeps_old_delivered_messages() {
             .expect("count old attempts");
     assert_eq!(old_attempts, 0, "attempt history cascades with the message");
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -6066,11 +6043,7 @@ async fn egress_allowlist_blocks_disallowed_webhook_host() {
         "unexpected error: {error}"
     );
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -6176,11 +6149,7 @@ async fn parallel_delivery_claims_message_exactly_once() {
             .unwrap_or(0);
     assert_eq!(history, 1, "exactly one delivery history row");
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -6244,11 +6213,7 @@ async fn notification_aggregation_collapses_repeats() {
     .expect("agg count");
     assert_eq!(agg, 2, "two repeats must be counted");
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -6342,11 +6307,7 @@ async fn quiet_drop_skips_delivery_unless_bypass_status() {
     .expect("fail delivered");
     assert_eq!(fail_delivered, 1, "failed must bypass quiet hours");
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -6448,11 +6409,7 @@ async fn notification_rules_filter_and_templates_render() {
         "CUSTOM pipeline.failed -> failed"
     );
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -6639,11 +6596,7 @@ async fn in_app_notification_events_are_fanned_out_and_delivered() {
     assert!(events[0]["delivered_at"].is_string());
     assert!(events[0]["last_error"].is_null());
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -6718,11 +6671,7 @@ async fn email_notification_channel_fans_out_and_delivers_when_smtp_disabled() {
         "disabled smtp still marks email delivered"
     );
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -6829,11 +6778,7 @@ async fn external_notification_channels_fan_out_to_outbox_webhook_delivery() {
     .expect("count disabled rows");
     assert_eq!(rows2, 0, "disabled configs do not fan out");
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -7119,11 +7064,7 @@ async fn failed_outbox_delivery_records_attempt_and_can_be_requeued() {
         .execute(&pool)
         .await
         .expect("cleanup domain event");
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -7226,11 +7167,7 @@ async fn protected_environment_deployment_requires_approval_before_pipeline() {
             .expect("fetch authenticated approver");
     assert_eq!(approvals[0]["actor"], authenticated_actor.to_string());
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -7306,20 +7243,13 @@ async fn deployment_rollback_creates_separate_traceable_pipeline_record() {
     assert_eq!(source_after.0, "success");
     assert_eq!(source_after.1, None);
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
 async fn artifact_upload_sessions_resume_and_complete() {
     let pool = test_pool().await;
-    sqlx::query("DELETE FROM projects WHERE name LIKE 'it-artifact-sessions-%'")
-        .execute(&pool)
-        .await
-        .expect("cleanup stale artifact session projects");
+    fixture_cleanup::projects(&pool).await;
 
     let namespace = Uuid::new_v4();
     let registration_token = format!("registration-{}", namespace.simple());
@@ -7742,11 +7672,7 @@ async fn artifact_upload_sessions_resume_and_complete() {
         }
         std::env::remove_var("CICD_RUNNER_REGISTRATION_TOKEN");
     }
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
     let _ = std::fs::remove_dir_all(&artifact_root);
 }
 
@@ -7785,10 +7711,7 @@ async fn project_patch_null_max_running_jobs_clears_dispatch_cap() {
 #[tokio::test]
 async fn project_dispatch_limit_defers_work_beyond_cap() {
     let pool = test_pool().await;
-    sqlx::query("DELETE FROM projects WHERE name LIKE 'it-dispatch-limit-%'")
-        .execute(&pool)
-        .await
-        .expect("cleanup stale dispatch-limit projects");
+    fixture_cleanup::projects(&pool).await;
 
     let namespace = Uuid::new_v4();
     let project_id = Uuid::new_v4();
@@ -8039,11 +7962,7 @@ async fn project_dispatch_limit_defers_work_beyond_cap() {
         }
         std::env::remove_var("CICD_RUNNER_REGISTRATION_TOKEN");
     }
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup project");
+    fixture_cleanup::projects(&pool).await;
     let _ = queue_ids;
 }
 
@@ -8908,7 +8827,7 @@ async fn migration_catalog_contains_exact_historical_36_and_37() {
     let catalog = cicd::migrations().await.unwrap();
     assert_eq!(
         catalog.iter().map(|m| m.version).collect::<Vec<_>>(),
-        (1..=39).collect::<Vec<_>>()
+        (1..=40).chain([90, 91]).collect::<Vec<_>>()
     );
     for (version, description, sql, checksum) in HISTORICAL_DEPLOYMENT_MIGRATIONS {
         let migration = catalog
@@ -8927,7 +8846,7 @@ async fn migration_catalog_contains_exact_historical_36_and_37() {
 #[tokio::test]
 async fn migration_catalog_fresh_and_prior_35_or_37_upgrade() {
     let catalog = cicd::migrations().await.unwrap();
-    for prior_schema in [None, Some(35), Some(37), Some(38)] {
+    for prior_schema in [None, Some(35), Some(37), Some(38), Some(39)] {
         let (pool, admin, schema) = migration_catalog_empty_pool().await;
         if let Some(version) = prior_schema {
             migration_catalog_subset(&catalog, version)
@@ -8941,7 +8860,7 @@ async fn migration_catalog_fresh_and_prior_35_or_37_upgrade() {
                 .fetch_all(&pool)
                 .await
                 .unwrap();
-        assert_eq!(versions, (1..=39).collect::<Vec<_>>());
+        assert_eq!(versions, (1..=40).chain([90, 91]).collect::<Vec<_>>());
         let history = migration_catalog_history(&pool).await;
         catalog.run(&pool).await.unwrap();
         assert_eq!(migration_catalog_history(&pool).await, history);
@@ -9056,7 +8975,7 @@ async fn migration_catalog_checksum_mismatch_does_not_change_history() {
     let (pool, admin, schema) = migration_catalog_empty_pool().await;
     catalog.run(&pool).await.unwrap();
     let history = migration_catalog_history(&pool).await;
-    let mut changed = migration_catalog_subset(&catalog, 39);
+    let mut changed = catalog;
     let migration = changed
         .migrations
         .to_mut()
@@ -9142,7 +9061,7 @@ async fn migration_catalog_accepts_historical_38_and_preserves_outbox() {
         .find(|m| m.version == 38)
         .expect("version 38");
     assert_eq!(migration.sql, historical_sql);
-    let mut changed = migration_catalog_subset(&catalog, 39);
+    let mut changed = catalog;
     changed
         .migrations
         .to_mut()
@@ -9262,4 +9181,1086 @@ async fn migration_catalog_39_does_not_backfill_historical_terminal_authority() 
     assert_eq!(receipt["terminalStatus"], "success");
     assert_eq!(receipt["terminalAcknowledged"], false);
     migration_catalog_cleanup(pool, admin, schema).await;
+}
+
+#[tokio::test]
+async fn namespace_git_shares_human_access_without_project_memberships() {
+    use sdlc_shared::resource_context::{NamespaceRef, OwnerCommand, ResourceKind, ResourceRef};
+    let pool = test_pool().await;
+    let group = Uuid::new_v4();
+    let repository = Uuid::new_v4();
+    let project = Uuid::new_v4();
+    let foreign = Uuid::new_v4();
+    let name = format!("shared_{}", repository.simple());
+    let root = std::env::temp_dir().join(format!("forge-namespace-human-{repository}"));
+    tokio::fs::create_dir_all(&root).await.unwrap();
+    run_git(
+        &["init", "--bare", "--quiet"],
+        Some(&root.join(format!("{name}.git"))),
+    )
+    .await;
+    let command = OwnerCommand {
+        schema_version: 1,
+        namespace: NamespaceRef {
+            registry_instance_id: std::env::var("CICD_NAMESPACE__REGISTRY_INSTANCE_ID")
+                .expect("explicit namespace test registry")
+                .parse()
+                .unwrap(),
+            namespace_id: Uuid::new_v4(),
+        },
+        resource: ResourceRef {
+            kind: ResourceKind::GitGroup,
+            instance_id: std::env::var("CICD_NAMESPACE__INSTANCE_ID")
+                .expect("explicit namespace test instance")
+                .parse()
+                .unwrap(),
+            resource_id: group,
+        },
+        operation_id: Uuid::new_v4(),
+        generation: 1,
+        state: "active".into(),
+        create_spec: None,
+    };
+    sqlx::query("INSERT INTO git_groups(id,slug,name) VALUES($1,$2,'Shared')")
+        .bind(group)
+        .bind(format!("shared-{}", group.simple()))
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO forge_namespace_bindings(resource_id,registry_instance_id,namespace_id,generation,state,command) VALUES($1,$2,$3,1,'active',$4)")
+        .bind(group).bind(command.namespace.registry_instance_id).bind(command.namespace.namespace_id).bind(serde_json::to_value(&command).unwrap()).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO repositories(id,name,visibility) VALUES($1,$2,'private')")
+        .bind(repository)
+        .bind(&name)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE repository_catalog SET group_id=$2 WHERE id=$1")
+        .bind(repository)
+        .bind(group)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO projects(id,name,repository_url,repository_id) VALUES($1,'Shared delivery','https://example.invalid/unrelated-tail.git',$2)")
+        .bind(project).bind(repository).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO projects(id,name,repository_url) VALUES($1,'Foreign','https://example.invalid/foreign.git')")
+        .bind(foreign).execute(&pool).await.unwrap();
+    let developer = Uuid::new_v4();
+    let viewer = Uuid::new_v4();
+    for (id, role) in [(developer, "developer"), (viewer, "viewer")] {
+        sqlx::query("INSERT INTO users(id,username,role) VALUES($1,$2,$3)")
+            .bind(id)
+            .bind(format!("shared-{}", id.simple()))
+            .bind(role)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO user_credentials(user_id,password_hash) VALUES($1,$2)")
+            .bind(id)
+            .bind(cicd::auth::hash_password("SharedPass1!").unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM project_memberships WHERE project_id=$1"
+        )
+        .bind(project)
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        0
+    );
+    let app = cicd::api::app_with_git_and_auth_secret(
+        Some(pool.clone()),
+        cicd::git_host::GitConfig {
+            root: root.clone(),
+            token: None,
+            internal_token: None,
+        },
+        Some(format!("shared-secret-{repository}")),
+    );
+    let developer_access = login_access_token(
+        app.clone(),
+        &format!("shared-{}", developer.simple()),
+        "SharedPass1!",
+    )
+    .await;
+    let viewer_access = login_access_token(
+        app.clone(),
+        &format!("shared-{}", viewer.simple()),
+        "SharedPass1!",
+    )
+    .await;
+    for (access, service, status) in [
+        (&developer_access, "git-upload-pack", StatusCode::OK),
+        (&viewer_access, "git-upload-pack", StatusCode::OK),
+        (&developer_access, "git-receive-pack", StatusCode::OK),
+        (&viewer_access, "git-receive-pack", StatusCode::FORBIDDEN),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/git/{name}.git/info/refs?service={service}"))
+                    .header("authorization", format!("Bearer {access}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            status,
+            "human role must apply without a team ACL"
+        );
+    }
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/api/v1/projects/{project}"))
+                .header("authorization", format!("Bearer {viewer_access}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/projects")
+                .header("authorization", format!("Bearer {viewer_access}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response_json(response)
+            .await
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["id"] == project.to_string())
+    );
+    for (scope, scoped_project) in [
+        (vec!["git:read"], None),
+        (vec!["git:read", "git:write"], Some(foreign)),
+    ] {
+        let token = format!(
+            "cicd_{}{}",
+            Uuid::new_v4().simple(),
+            Uuid::new_v4().simple()
+        );
+        sqlx::query("INSERT INTO api_tokens(id,name,token_hash,token_hint,user_id,project_id,scopes,expires_at) VALUES($1,'shared-test',$2,'test',$3,$4,$5,now()+interval '1 day')")
+            .bind(Uuid::new_v4()).bind(cicd::auth::hash_token(&token)).bind(developer).bind(scoped_project).bind(scope).execute(&pool).await.unwrap();
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "/git/{name}.git/info/refs?service=git-receive-pack"
+                ))
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::FORBIDDEN,
+            "read-only and foreign-scoped credentials remain fenced"
+        );
+    }
+    let schedule_input = serde_json::json!({"cron":"0 0 * * *","git_ref":"main","enabled":false});
+    let response = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/api/v1/projects/{project}/schedules"))
+                .header("authorization", format!("Bearer {developer_access}"))
+                .header("content-type", "application/json")
+                .body(Body::from(schedule_input.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "active namespace schedule remains writable"
+    );
+    let schedule = response_json(response).await;
+    let schedule_id = schedule["id"].as_str().unwrap();
+    let archived = OwnerCommand {
+        generation: 2,
+        operation_id: Uuid::new_v4(),
+        state: "archived".into(),
+        ..command
+    };
+    sqlx::query("UPDATE forge_namespace_bindings SET generation=2,state='archived',command=$2 WHERE resource_id=$1")
+        .bind(group).bind(serde_json::to_value(archived).unwrap()).execute(&pool).await.unwrap();
+    for (method, path) in [
+        ("POST", format!("/api/v1/projects/{project}/schedules")),
+        ("PATCH", format!("/api/v1/schedules/{schedule_id}")),
+        ("DELETE", format!("/api/v1/schedules/{schedule_id}")),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .header("authorization", format!("Bearer {developer_access}"))
+                    .header("content-type", "application/json")
+                    .body(Body::from(schedule_input.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::CONFLICT,
+            "archived schedule use case: {method}"
+        );
+    }
+    let row: (bool, String) = sqlx::query_as("SELECT enabled,git_ref FROM schedules WHERE id=$1")
+        .bind(schedule_id.parse::<Uuid>().unwrap())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        row,
+        (false, "main".into()),
+        "archived schedule row is preserved"
+    );
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "/git/{name}.git/info/refs?service=git-receive-pack"
+            ))
+            .header("authorization", format!("Bearer {developer_access}"))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let response = app
+        .oneshot(
+            Request::get(format!("/git/{name}.git/info/refs?service=git-upload-pack"))
+                .header("authorization", format!("Bearer {viewer_access}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "archive retains history reads"
+    );
+    tokio::fs::remove_dir_all(root).await.unwrap();
+}
+
+async fn workspace_fixture(
+    pool: &sqlx::PgPool,
+    namespace: Uuid,
+    slug: &str,
+) -> (Uuid, Uuid, sdlc_shared::resource_context::OwnerCommand) {
+    use sdlc_shared::resource_context::{NamespaceRef, OwnerCommand, ResourceKind, ResourceRef};
+    let group = Uuid::new_v4();
+    let repository = Uuid::new_v4();
+    let registry: Uuid = std::env::var("CICD_NAMESPACE__REGISTRY_INSTANCE_ID")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let instance: Uuid = std::env::var("CICD_NAMESPACE__INSTANCE_ID")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let command = OwnerCommand {
+        schema_version: 1,
+        namespace: NamespaceRef {
+            registry_instance_id: registry,
+            namespace_id: namespace,
+        },
+        resource: ResourceRef {
+            instance_id: instance,
+            kind: ResourceKind::GitGroup,
+            resource_id: group,
+        },
+        operation_id: Uuid::new_v4(),
+        generation: 1,
+        state: "active".into(),
+        create_spec: None,
+    };
+    sqlx::query("INSERT INTO git_groups(id,slug,name) VALUES($1,$2,'Same project')")
+        .bind(group)
+        .bind(slug)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO forge_namespace_bindings(resource_id,registry_instance_id,namespace_id,generation,state,command) VALUES($1,$2,$3,1,'active',$4)").bind(group).bind(registry).bind(namespace).bind(serde_json::to_value(&command).unwrap()).execute(pool).await.unwrap();
+    sqlx::query("UPDATE git_groups SET namespace_managed=true WHERE id=$1")
+        .bind(group)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO repositories(id,name,visibility) VALUES($1,$2,'private')")
+        .bind(repository)
+        .bind(format!("external_{}", repository.simple()))
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE repository_catalog SET group_id=$2,slug='api',kind='external',storage_name=NULL,ready=true,external_url='https://example.test/api.git' WHERE id=$1").bind(repository).bind(group).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO forge_workspace_projects(registry_instance_id,namespace_id,tracker_instance_id,tracker_project_id,generation,name,project_key,state,observed_at) VALUES($1,$2,$3,$4,1,'Same project','SAME','active',now())").bind(registry).bind(namespace).bind(Uuid::new_v4()).bind(Uuid::new_v4()).execute(pool).await.unwrap();
+    sqlx::query(
+        "INSERT INTO forge_workspace_catalog_sync(id,observed_at) VALUES(true,now()) ON CONFLICT DO NOTHING",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    (group, repository, command)
+}
+
+#[tokio::test]
+async fn workspace_catalog_and_execution_pages_use_identities_beyond_first_page() {
+    let pool = test_pool().await;
+    let first = Uuid::new_v4();
+    let second = Uuid::new_v4();
+    let (_, repo_a, command) = workspace_fixture(&pool, first, "group-a").await;
+    let (_, repo_b, _) = workspace_fixture(&pool, second, "group-b").await;
+    let config_a = Uuid::new_v4();
+    let config_b = Uuid::new_v4();
+    for (configuration, repository) in [(config_a, repo_a), (config_b, repo_b)] {
+        sqlx::query("INSERT INTO projects(id,name,repository_id,repository_url) VALUES($1,'Build',$2,'https://example.test/api.git')").bind(configuration).bind(repository).execute(&pool).await.unwrap();
+    }
+    for index in 0..55 {
+        sqlx::query(
+            "INSERT INTO pipelines(id,project_id,git_ref,status) VALUES($1,$2,'release', $3)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(config_a)
+        .bind(if index % 2 == 0 { "success" } else { "failed" })
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO pipelines(id,project_id,git_ref,status) VALUES($1,$2,'foreign','success')",
+    )
+    .bind(Uuid::new_v4())
+    .bind(config_b)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let environment = Uuid::new_v4();
+    sqlx::query("INSERT INTO environments(id,project_id,name,url) VALUES($1,$2,'Production','https://example.test')")
+        .bind(environment).bind(config_a).execute(&pool).await.unwrap();
+    for _ in 0..55 {
+        sqlx::query("INSERT INTO deployments(id,environment_id,git_ref,status) VALUES($1,$2,'release','success')")
+            .bind(Uuid::new_v4()).bind(environment).execute(&pool).await.unwrap();
+    }
+    let app = authenticated_app(pool.clone()).await;
+    let request = |path: String| Request::get(path).body(Body::empty()).unwrap();
+    let page = app
+        .clone()
+        .oneshot(request(
+            "/api/v1/workspace-projects?limit=1&offset=1".into(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(page.status(), StatusCode::OK);
+    let page = response_json(page).await;
+    assert_eq!(page["total"], 2);
+    assert_eq!(page["items"].as_array().unwrap().len(), 1);
+    let base = format!(
+        "/api/v1/workspace-projects/{}/{}",
+        command.namespace.registry_instance_id, first
+    );
+    let page = app
+        .clone()
+        .oneshot(request(format!("{base}/pipelines?limit=50&offset=50")))
+        .await
+        .unwrap();
+    assert_eq!(page.status(), StatusCode::OK);
+    let page = response_json(page).await;
+    assert_eq!(page["total"], 55);
+    assert_eq!(page["items"].as_array().unwrap().len(), 5);
+    assert!(
+        page["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["repository_id"] == repo_a.to_string()
+                && row["configuration_id"] == config_a.to_string())
+    );
+    let page = app
+        .clone()
+        .oneshot(request(format!(
+            "{base}/pipelines?status=success&git_ref=release"
+        )))
+        .await
+        .unwrap();
+    assert_eq!(response_json(page).await["total"], 28);
+    let summary = app
+        .clone()
+        .oneshot(request(format!("{base}/summary")))
+        .await
+        .unwrap();
+    let summary = response_json(summary).await;
+    assert_eq!(summary["repositories"], 1);
+    assert_eq!(summary["configurations"], 1);
+    assert_eq!(summary["failed"], 27);
+    let deployments = app
+        .clone()
+        .oneshot(request(format!(
+            "{base}/deployments?limit=50&offset=50&status=success&git_ref=release"
+        )))
+        .await
+        .unwrap();
+    assert_eq!(deployments.status(), StatusCode::OK);
+    let deployments = response_json(deployments).await;
+    assert_eq!(deployments["total"], 55);
+    assert_eq!(deployments["items"].as_array().unwrap().len(), 5);
+    assert!(
+        deployments["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["repository_id"] == repo_a.to_string()
+                && row["environment_id"] == environment.to_string())
+    );
+    for path in [
+        format!("{base}/pipelines?repository_id={repo_b}"),
+        format!("{base}/pipelines?configuration_id={config_b}"),
+        format!("/api/v1/catalog/repositories/{repo_a}/pipelines?repository_id={repo_b}"),
+    ] {
+        assert_eq!(
+            app.clone().oneshot(request(path)).await.unwrap().status(),
+            StatusCode::CONFLICT
+        );
+    }
+    sqlx::query("UPDATE forge_workspace_projects SET observed_at=now()-interval '1 hour',name='Renamed' WHERE namespace_id=$1").bind(first).execute(&pool).await.unwrap();
+    let renamed = response_json(app.oneshot(request(base)).await.unwrap()).await;
+    assert_eq!(renamed["name"], "Renamed");
+    assert_eq!(renamed["stale"], true);
+    assert_eq!(
+        renamed["group_id"],
+        command.resource.resource_id.to_string()
+    );
+}
+
+#[tokio::test]
+async fn workspace_deployment_approval_states_match_environment_history() {
+    let pool = test_pool().await;
+    let namespace = Uuid::new_v4();
+    let (_, repository, command) = workspace_fixture(&pool, namespace, "approval-states").await;
+    let configuration = Uuid::new_v4();
+    sqlx::query("INSERT INTO projects(id,name,repository_id,repository_url) VALUES($1,'Deploy',$2,'https://example.test/api.git')")
+        .bind(configuration).bind(repository).execute(&pool).await.unwrap();
+    let unprotected = Uuid::new_v4();
+    let protected = Uuid::new_v4();
+    for (id, name, guarded, required) in [
+        (unprotected, "Development", false, 0_i32),
+        (protected, "Production", true, 2_i32),
+    ] {
+        sqlx::query("INSERT INTO environments(id,project_id,name,protected,required_approvals) VALUES($1,$2,$3,$4,$5)")
+            .bind(id).bind(configuration).bind(name).bind(guarded).bind(required)
+            .execute(&pool).await.unwrap();
+    }
+    let cases: [(Uuid, &str, &[&str]); 4] = [
+        (unprotected, "not_required", &[]),
+        (protected, "pending", &[]),
+        (protected, "approved", &["approved", "approved"]),
+        (protected, "rejected", &["approved", "approved", "rejected"]),
+    ];
+    let mut expected = std::collections::BTreeMap::new();
+    for (environment, state, decisions) in cases {
+        let id = Uuid::new_v4();
+        sqlx::query("INSERT INTO deployments(id,environment_id,git_ref,status) VALUES($1,$2,'main','success')")
+            .bind(id).bind(environment).execute(&pool).await.unwrap();
+        for (index, decision) in decisions.iter().enumerate() {
+            sqlx::query("INSERT INTO deployment_approvals(id,deployment_id,decision,actor) VALUES($1,$2,$3,$4)")
+                .bind(Uuid::new_v4()).bind(id).bind(*decision).bind(format!("reviewer-{index}"))
+                .execute(&pool).await.unwrap();
+        }
+        expected.insert(id.to_string(), state.to_owned());
+    }
+    let app = authenticated_app(pool).await;
+    let mut canonical = std::collections::BTreeMap::new();
+    for environment in [unprotected, protected] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/environments/{environment}/deployments"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let rows = response_json(response).await;
+        for row in rows.as_array().unwrap() {
+            canonical.insert(
+                row["id"].as_str().unwrap().to_owned(),
+                row["approval_state"].as_str().unwrap().to_owned(),
+            );
+        }
+    }
+    assert_eq!(canonical, expected);
+    for path in [
+        format!(
+            "/api/v1/workspace-projects/{}/{namespace}/deployments?limit=100",
+            command.namespace.registry_instance_id
+        ),
+        format!("/api/v1/catalog/repositories/{repository}/deployments?limit=100"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let page = response_json(response).await;
+        assert_eq!(page["total"], 4);
+        let actual: std::collections::BTreeMap<_, _> = page["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| {
+                (
+                    row["id"].as_str().unwrap().to_owned(),
+                    row["approval_state"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect();
+        assert_eq!(actual, canonical);
+    }
+}
+
+#[tokio::test]
+async fn deployment_maintenance_follows_owned_execution_and_preserves_manual_history() {
+    let pool = test_pool().await;
+    let project = Uuid::new_v4();
+    let foreign = Uuid::new_v4();
+    for (id, name) in [
+        (project, "Deployment owner"),
+        (foreign, "Foreign configuration"),
+    ] {
+        sqlx::query("INSERT INTO projects(id,name,repository_url) VALUES($1,$2,'https://example.test/api.git')")
+            .bind(id).bind(name).execute(&pool).await.unwrap();
+    }
+    let environment = Uuid::new_v4();
+    sqlx::query("INSERT INTO environments(id,project_id,name) VALUES($1,$2,'Test')")
+        .bind(environment)
+        .bind(project)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut expected = std::collections::BTreeMap::new();
+    for (pipeline_status, previous, next, source, owner_vars, same_project) in [
+        (
+            "queued",
+            "pending",
+            "pending",
+            "deployment-approval",
+            true,
+            true,
+        ),
+        (
+            "running",
+            "pending",
+            "running",
+            "deployment-approval",
+            true,
+            true,
+        ),
+        (
+            "success",
+            "running",
+            "success",
+            "deployment-approval",
+            true,
+            true,
+        ),
+        (
+            "failed",
+            "pending",
+            "failed",
+            "deployment-rollback",
+            true,
+            true,
+        ),
+        (
+            "canceled",
+            "running",
+            "failed",
+            "deployment-approval",
+            true,
+            true,
+        ),
+        (
+            "failed",
+            "success",
+            "success",
+            "deployment-approval",
+            true,
+            true,
+        ),
+        ("success", "pending", "pending", "manual", true, true),
+        (
+            "success",
+            "pending",
+            "pending",
+            "deployment-approval",
+            false,
+            true,
+        ),
+        (
+            "success",
+            "pending",
+            "pending",
+            "deployment-approval",
+            true,
+            false,
+        ),
+    ] {
+        let deployment = Uuid::new_v4();
+        let pipeline = Uuid::new_v4();
+        let configuration = if same_project { project } else { foreign };
+        let variables = if owner_vars {
+            serde_json::json!({"deployment_id":deployment.to_string()})
+        } else {
+            serde_json::json!({})
+        };
+        sqlx::query("INSERT INTO pipelines(id,project_id,git_ref,status,variables) VALUES($1,$2,'main',$3,$4)")
+            .bind(pipeline).bind(configuration).bind(pipeline_status).bind(variables).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO pipeline_triggers(id,project_id,source,idempotency_key,request_fingerprint,pipeline_id) VALUES($1,$2,$3,$4,$5,$6)")
+            .bind(Uuid::new_v4()).bind(configuration).bind(source).bind(deployment.to_string()).bind("a".repeat(64)).bind(pipeline).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO deployments(id,environment_id,pipeline_id,git_ref,status) VALUES($1,$2,$3,'main',$4)")
+            .bind(deployment).bind(environment).bind(pipeline).bind(previous).execute(&pool).await.unwrap();
+        expected.insert(deployment.to_string(), next.to_owned());
+    }
+    let mut config = cicd::runner::RuntimeRunnerConfig::from_config(
+        &cicd::config::RuntimeConfig::from_env_source(|_| None, false).unwrap(),
+    );
+    config.mode = cicd::config::RunnerMode::HostShell;
+    let maintenance = tokio::spawn(cicd::runner::maintenance_loop_with_config(
+        pool.clone(),
+        config,
+    ));
+    let mut actual = std::collections::BTreeMap::new();
+    for _ in 0..50 {
+        actual = sqlx::query_as::<_, (Uuid, String)>(
+            "SELECT id,status FROM deployments WHERE environment_id=$1",
+        )
+        .bind(environment)
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|(id, status)| (id.to_string(), status))
+        .collect();
+        if actual == expected {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    maintenance.abort();
+    let _ = maintenance.await;
+    assert_eq!(actual, expected);
+    let app = authenticated_app(pool).await;
+    let response = app
+        .oneshot(
+            Request::get(format!("/api/v1/environments/{environment}/deployments"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let rows = response_json(response).await;
+    assert_eq!(rows.as_array().unwrap().len(), expected.len());
+    for row in rows.as_array().unwrap() {
+        assert_eq!(
+            row["status"].as_str().unwrap(),
+            expected[row["id"].as_str().unwrap()]
+        );
+    }
+}
+
+#[tokio::test]
+async fn delivery_configurations_replay_and_archive_preserve_identity_and_history() {
+    let pool = test_pool().await;
+    let namespace = Uuid::new_v4();
+    let (group, repository, mut command) =
+        workspace_fixture(&pool, namespace, "delivery-group").await;
+    let app = authenticated_app(pool.clone()).await;
+    let operation = Uuid::new_v4();
+    let input =
+        serde_json::json!({"operation_id":operation,"name":"Build","default_branch":"main"});
+    let create = || {
+        Request::post(format!(
+            "/api/v1/catalog/repositories/{repository}/delivery-configs"
+        ))
+        .header("content-type", "application/json")
+        .body(Body::from(input.to_string()))
+        .unwrap()
+    };
+    let (a, b) = tokio::join!(app.clone().oneshot(create()), app.clone().oneshot(create()));
+    let a = a.unwrap();
+    let b = b.unwrap();
+    assert_eq!(a.status(), StatusCode::OK);
+    assert_eq!(b.status(), StatusCode::OK);
+    let a = response_json(a).await;
+    assert_eq!(a, response_json(b).await);
+    let id = a["id"].as_str().unwrap();
+    let get = |path: String| Request::get(path).body(Body::empty()).unwrap();
+    let push = response_json(
+        app.clone()
+            .oneshot(get(format!(
+                "/api/v1/catalog/repositories/{repository}/push-config"
+            )))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        push["configuration_id"].is_null(),
+        "new repositories never select a first configuration"
+    );
+    let select = Request::put(format!(
+        "/api/v1/catalog/repositories/{repository}/push-config"
+    ))
+    .header("content-type", "application/json")
+    .body(Body::from(
+        serde_json::json!({"configuration_id":id}).to_string(),
+    ))
+    .unwrap();
+    assert_eq!(
+        app.clone().oneshot(select).await.unwrap().status(),
+        StatusCode::OK
+    );
+    let update = Request::patch(format!("/api/v1/projects/{id}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            r#"{"repository_url":"https://example.test/foreign.git"}"#,
+        ))
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(update).await.unwrap().status(),
+        StatusCode::CONFLICT
+    );
+    sqlx::query(
+        "INSERT INTO pipelines(id,project_id,git_ref,status) VALUES($1,$2,'main','success')",
+    )
+    .bind(Uuid::new_v4())
+    .bind(id.parse::<Uuid>().unwrap())
+    .execute(&pool)
+    .await
+    .unwrap();
+    let delete = Request::delete(format!("/api/v1/projects/{id}"))
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(
+        app.clone().oneshot(delete).await.unwrap().status(),
+        StatusCode::CONFLICT
+    );
+    command.generation = 2;
+    command.operation_id = Uuid::new_v4();
+    command.state = "archived".into();
+    sqlx::query("UPDATE forge_namespace_bindings SET state='archived',generation=2,command=$2 WHERE resource_id=$1").bind(group).bind(serde_json::to_value(&command).unwrap()).execute(&pool).await.unwrap();
+    assert_eq!(
+        response_json(app.clone().oneshot(create()).await.unwrap()).await,
+        a,
+        "original replay remains readable after archive"
+    );
+    let fresh =
+        serde_json::json!({"operation_id":Uuid::new_v4(),"name":"Second","default_branch":"main"});
+    let request = Request::post(format!(
+        "/api/v1/catalog/repositories/{repository}/delivery-configs"
+    ))
+    .header("content-type", "application/json")
+    .body(Body::from(fresh.to_string()))
+    .unwrap();
+    assert_eq!(
+        app.clone().oneshot(request).await.unwrap().status(),
+        StatusCode::CONFLICT
+    );
+    let replay = response_json(
+        app.oneshot(get(format!(
+            "/api/v1/catalog/repositories/{repository}/delivery-config-operations/{operation}"
+        )))
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(replay, a);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM pipelines WHERE project_id=$1")
+            .bind(id.parse::<Uuid>().unwrap())
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn workspace_push_decision_survives_policy_changes_and_disabled_replays() {
+    let pool = test_pool().await;
+    let (_, repository, _) = workspace_fixture(&pool, Uuid::new_v4(), "push-choice").await;
+    let first = Uuid::new_v4();
+    let second = Uuid::new_v4();
+    for (id, name) in [(first, "First"), (second, "Second")] {
+        sqlx::query("INSERT INTO projects(id,name,repository_id,repository_url) VALUES($1,$2,$3,'https://example.test/api.git')").bind(id).bind(name).bind(repository).execute(&pool).await.unwrap();
+    }
+    assert_eq!(
+        cicd::delivery_configs::push_decision(&pool, repository, Some("disabled-event"))
+            .await
+            .unwrap(),
+        None
+    );
+    sqlx::query(
+        "INSERT INTO repository_push_configs(repository_id,configuration_id) VALUES($1,$2)",
+    )
+    .bind(repository)
+    .bind(first)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (a, b) = tokio::join!(
+        cicd::delivery_configs::push_decision(&pool, repository, Some("first-event")),
+        cicd::delivery_configs::push_decision(&pool, repository, Some("first-event"))
+    );
+    assert_eq!(a.unwrap(), Some(first));
+    assert_eq!(b.unwrap(), Some(first));
+    sqlx::query("UPDATE repository_push_configs SET configuration_id=$2 WHERE repository_id=$1")
+        .bind(repository)
+        .bind(second)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        cicd::delivery_configs::push_decision(&pool, repository, Some("first-event"))
+            .await
+            .unwrap(),
+        Some(first)
+    );
+    assert_eq!(
+        cicd::delivery_configs::push_decision(&pool, repository, Some("disabled-event"))
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        cicd::delivery_configs::push_decision(&pool, repository, Some("second-event"))
+            .await
+            .unwrap(),
+        Some(second)
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM repository_push_operations WHERE repository_id=$1"
+        )
+        .bind(repository)
+        .fetch_one(&pool)
+        .await
+        .unwrap(),
+        3
+    );
+}
+
+#[tokio::test]
+async fn workspace_corrupted_binding_rejects_catalog_and_repository_writes() {
+    let pool = test_pool().await;
+    let (group, repository, command) =
+        workspace_fixture(&pool, Uuid::new_v4(), "corrupt-binding").await;
+    let app = authenticated_app(pool.clone()).await;
+    let mut corrupt = serde_json::to_value(&command).unwrap();
+    corrupt["resource"]["instance_id"] = serde_json::json!(Uuid::new_v4());
+    sqlx::query("UPDATE forge_namespace_bindings SET command=$2 WHERE resource_id=$1")
+        .bind(group)
+        .bind(corrupt)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/workspace-projects")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let create = Request::post(format!(
+        "/api/v1/catalog/repositories/{repository}/delivery-configs"
+    ))
+    .header("content-type", "application/json")
+    .body(Body::from(
+        serde_json::json!({"operation_id":Uuid::new_v4(),"name":"Build","default_branch":"main"})
+            .to_string(),
+    ))
+    .unwrap();
+    assert_eq!(
+        app.clone().oneshot(create).await.unwrap().status(),
+        StatusCode::SERVICE_UNAVAILABLE
+    );
+    sqlx::query("UPDATE forge_namespace_bindings SET command=$2 WHERE resource_id=$1")
+        .bind(group)
+        .bind(serde_json::to_value(&command).unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        app.oneshot(
+            Request::get("/api/v1/workspace-projects")
+                .body(Body::empty())
+                .unwrap()
+        )
+        .await
+        .unwrap()
+        .status(),
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn workspace_first_refresh_unavailable_is_distinct_from_verified_empty_catalog() {
+    let pool = test_pool().await;
+    let app = authenticated_app(pool.clone()).await;
+    for path in [
+        "/api/v1/workspace-projects",
+        "/api/v1/workspace-summary",
+        "/api/v1/workspace-pipelines",
+    ] {
+        assert_eq!(
+            app.clone()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+    sqlx::query("INSERT INTO forge_workspace_catalog_sync(id,observed_at) VALUES(true,now())")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for path in [
+        "/api/v1/workspace-projects",
+        "/api/v1/workspace-summary",
+        "/api/v1/workspace-pipelines",
+    ] {
+        assert_eq!(
+            app.clone()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+    }
+}
+
+#[tokio::test]
+async fn workspace_failed_reader_preserves_identity_and_marks_retained_metadata_stale() {
+    let pool = test_pool().await;
+    let namespace = Uuid::new_v4();
+    let (_, repository, command) = workspace_fixture(&pool, namespace, "reader-outage").await;
+    assert!(
+        cicd::workspace_projects::refresh_checked(&pool)
+            .await
+            .is_err()
+    );
+    let context = cicd::workspace_projects::ensure_context(
+        &pool,
+        command.namespace.registry_instance_id,
+        namespace,
+    )
+    .await
+    .unwrap();
+    assert!(context.stale);
+    assert_eq!(context.name, "Same project");
+    let app = authenticated_app(pool.clone()).await;
+    let response=app.oneshot(Request::post(format!("/api/v1/catalog/repositories/{repository}/delivery-configs"))
+        .header("content-type","application/json")
+        .body(Body::from(serde_json::json!({"operation_id":Uuid::new_v4(),"name":"Retained CI","default_branch":"main"}).to_string())).unwrap()).await.unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "Metadata outage does not close valid local active admission"
+    );
+    assert_eq!(
+        response_json(response).await["repository_id"],
+        repository.to_string()
+    );
+}
+
+#[tokio::test]
+async fn legacy_configuration_delete_preserves_history_and_allows_empty_configuration() {
+    let pool = test_pool().await;
+    let retained = Uuid::new_v4();
+    let empty = Uuid::new_v4();
+    let pipeline = Uuid::new_v4();
+    for (id, name) in [(retained, "Retained legacy"), (empty, "Empty legacy")] {
+        sqlx::query("INSERT INTO projects(id,name,repository_url) VALUES($1,$2,'https://example.test/api.git')").bind(id).bind(name).execute(&pool).await.unwrap();
+    }
+    sqlx::query(
+        "INSERT INTO pipelines(id,project_id,status,git_ref) VALUES($1,$2,'success','main')",
+    )
+    .bind(pipeline)
+    .bind(retained)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let app = authenticated_app(pool.clone()).await;
+    let response = app
+        .clone()
+        .oneshot(
+            Request::delete(format!("/api/v1/projects/{retained}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        sqlx::query_scalar::<_, Uuid>("SELECT id FROM pipelines WHERE id=$1")
+            .bind(pipeline)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        pipeline
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, Uuid>("SELECT id FROM projects WHERE id=$1")
+            .bind(retained)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        retained
+    );
+    let response = app
+        .oneshot(
+            Request::delete(format!("/api/v1/projects/{empty}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        !sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM projects WHERE id=$1)")
+            .bind(empty)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    );
 }

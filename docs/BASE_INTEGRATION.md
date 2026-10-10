@@ -1,11 +1,15 @@
 # Интеграция CI-CD с Base
 
-Base SHA закреплён в [`.base-revision`](../.base-revision); `main` Base не является
-воспроизводимой зависимостью. Checkout Base должен лежать соседним каталогом
+Активный Base SHA закреплён в [`.namespace-base-revision`](../.namespace-base-revision).
+При отсутствии этого файла CI и `scripts/build.py` используют legacy
+[`.base-revision`](../.base-revision). `main` Base не является воспроизводимой
+зависимостью. Checkout Base должен лежать соседним каталогом
 `services-base`. Перед standalone build выполнить из корня продукта:
 
 ```sh
-python3 ../services-base/scripts/verify_base_revision.py --base ../services-base --revision .base-revision
+pin=.base-revision
+if [ -f .namespace-base-revision ]; then pin=.namespace-base-revision; fi
+python3 ../services-base/scripts/verify_base_revision.py --base ../services-base --revision "$pin"
 python3 scripts/build.py
 ```
 
@@ -32,3 +36,10 @@ guard сохраняет неинтерактивный вызов. `isSsoNaviga
 снимает блокировку кнопки при завершении или отмене promise. Identity, PKCE,
 state, nonce, API и машинная авторизация не меняются. Source-регрессии покрыты
 login-тестами; локальные fixture-проверки не заменяют живую SSO-приёмку.
+
+Закреплённый Base сохраняет focus внутри общего `ConfirmDialog`, когда запрос
+переводит все действия в pending: Tab/Shift+Tab остаются в диалоге, Escape не
+закрывает незавершённую операцию. После её завершения действуют прежние правила
+закрытия и возврата focus. Продуктовые операции и HTTP-контракты не меняются.
+Обновление pin требует повторных frontend/package/theme и живых UI-проверок;
+исторические результаты прежнего Base не подтверждают эту приёмку.

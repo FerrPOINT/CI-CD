@@ -160,6 +160,8 @@ pub(crate) async fn require_auth(
             crate::authz::RouteAccess::Public
             | crate::authz::RouteAccess::Runner
             | crate::authz::RouteAccess::System
+            | crate::authz::RouteAccess::NamespaceOwner
+            | crate::authz::RouteAccess::NamespaceReader
             | crate::authz::RouteAccess::Git { .. },
         ) => return Ok(next.run(req).await),
         Some(crate::authz::RouteAccess::User { .. }) => {}
@@ -194,6 +196,15 @@ pub(crate) async fn require_auth(
     // developer class; token scopes still constrain every route.
     let role = crate::authz::Role::parse(&claims.role).ok_or_else(ApiError::unauthorized)?;
     let path = req.uri().path().to_string();
+    if claims.role == "service_account"
+        && (path.starts_with("/api/v1/git-groups/")
+            || path.starts_with("/api/v1/catalog/repositories")
+            || path.starts_with("/api/v1/namespace-contexts")
+            || path.starts_with("/api/v1/workspace-")
+            || path.starts_with("/api/v1/delivery-configurations"))
+    {
+        return Err(ApiError::forbidden());
+    }
     let (mut parts, body) = req.into_parts();
     parts.extensions.insert(claims.clone());
     let req = axum::extract::Request::from_parts(parts, body);
@@ -285,6 +296,26 @@ async fn project_scope_allows(
         return Ok(true);
     }
     let (_, min_role) = crate::authz::required_role(method, path);
+    let storage: Option<String> = sqlx::query_scalar(
+        "SELECT r.storage_name FROM projects p JOIN repository_catalog r ON r.id=p.repository_id WHERE p.id=$1",
+    )
+    .bind(project_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?
+    .flatten();
+    if let Some(storage) = storage {
+        if global_role >= min_role
+            && crate::repository_catalog::shared_human_repository(
+                pool,
+                &storage,
+                claims.token_project_id,
+            )
+            .await?
+        {
+            return Ok(true);
+        }
+    }
     let Some(project_role) = project_membership_role(pool, claims.sub, project_id).await? else {
         return Ok(false);
     };
@@ -351,26 +382,22 @@ async fn repository_scope_allows(
     min_role: crate::authz::Role,
     token_project_id: Option<Uuid>,
 ) -> Result<bool, ApiError> {
-    let name = crate::git_host::validate_repo_name(repo).map_err(ApiError::bad_request)?;
+    let name = crate::repository_catalog::resolve_storage(pool, repo).await?;
+    if global_role >= min_role
+        && crate::repository_catalog::shared_human_repository(pool, &name, token_project_id).await?
+    {
+        return Ok(true);
+    }
     if global_role == crate::authz::Role::Admin {
         return match token_project_id {
             Some(project_id) => repository_linked_to_project(pool, &name, project_id).await,
             None => Ok(true),
         };
     }
-    let patterns = crate::git_host::repository_url_like_patterns(&name);
     let roles = sqlx::query_scalar::<_, String>(
-        "SELECT m.role FROM projects p \
-         JOIN project_memberships m ON m.project_id = p.id \
-         WHERE (p.repository_url ILIKE $1 ESCAPE '\\' \
-             OR p.repository_url ILIKE $2 ESCAPE '\\' \
-             OR p.repository_url ILIKE $3 ESCAPE '\\') \
-           AND m.user_id = $4 \
-           AND ($5::uuid IS NULL OR p.id = $5)",
+        "SELECT m.role FROM projects p JOIN project_memberships m ON m.project_id=p.id JOIN repository_catalog r ON r.id=p.repository_id WHERE r.storage_name=$1 AND m.user_id=$2 AND ($3::uuid IS NULL OR p.id=$3)",
     )
-    .bind(&patterns.path)
-    .bind(&patterns.scp)
-    .bind(&patterns.exact)
+    .bind(&name)
     .bind(user_id)
     .bind(token_project_id)
     .fetch_all(pool)
@@ -387,17 +414,11 @@ async fn repository_linked_to_project(
     repo: &str,
     project_id: Uuid,
 ) -> Result<bool, ApiError> {
-    let patterns = crate::git_host::repository_url_like_patterns(repo);
     sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM projects \
-         WHERE id = $1 AND (repository_url ILIKE $2 ESCAPE '\\' \
-             OR repository_url ILIKE $3 ESCAPE '\\' \
-             OR repository_url ILIKE $4 ESCAPE '\\'))",
+        "SELECT EXISTS(SELECT 1 FROM projects p JOIN repository_catalog r ON r.id=p.repository_id WHERE p.id=$1 AND r.storage_name=$2)",
     )
     .bind(project_id)
-    .bind(&patterns.path)
-    .bind(&patterns.scp)
-    .bind(&patterns.exact)
+    .bind(repo)
     .fetch_one(pool)
     .await
     .map_err(ApiError::internal)
@@ -448,8 +469,8 @@ pub(crate) async fn list_projects_for_claims(
         (_, Some(project_id)) => sqlx::query_as::<_, Project>(
             "SELECT p.id, p.name, p.repository_url, p.default_branch, p.max_running_jobs, p.created_at \
                  FROM projects p \
-                 JOIN project_memberships m ON m.project_id = p.id \
-                 WHERE m.user_id = $3 AND p.id = $4 \
+                 LEFT JOIN project_memberships m ON m.project_id = p.id AND m.user_id = $3 \
+                 WHERE p.id = $4 AND (m.user_id = $3 OR EXISTS(SELECT 1 FROM repository_catalog r JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE r.id=p.repository_id)) \
                  ORDER BY p.created_at DESC LIMIT $1 OFFSET $2",
         )
         .bind(limit)
@@ -470,6 +491,7 @@ pub(crate) async fn list_projects_for_claims(
                  LEFT JOIN tenants t ON t.id = p.tenant_id \
                  WHERE m.user_id = $3 \
                     OR (p.tenant_id IS NOT NULL AND tm.user_id = $3 AND t.status = 'active') \
+                    OR EXISTS(SELECT 1 FROM repository_catalog r JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE r.id=p.repository_id) \
                  ORDER BY p.created_at DESC LIMIT $1 OFFSET $2",
         )
         .bind(limit)
@@ -613,6 +635,11 @@ pub(crate) async fn identity_for_bearer_token(
     // Central fleet auth-server first (ES256 via JWKS); legacy session JWTs
     // and cicd_ PATs remain valid during the migration window.
     if let Some(central) = crate::central_auth::try_central(token).await? {
+        if crate::namespace::registered_machine(&central.user_id)
+            || central.role.as_deref() == Some("service_account")
+        {
+            return Err(ApiError::forbidden());
+        }
         return crate::central_auth::link_central_user(pool, &central).await;
     }
     if token.starts_with("forge_sat_") {

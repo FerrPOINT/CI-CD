@@ -5,6 +5,7 @@ export type Session = {
   access_token: string
   expires_at: number
   username?: string
+  subject?: string
 }
 
 let session: Session | null = null
@@ -26,14 +27,23 @@ export function currentSession(): Session | null {
 export function clearSession(): void {
   session = null
   purgeLegacyRefreshToken()
-  if (typeof document !== 'undefined') {
-    document.cookie = 'forge_csrf=; Path=/; Max-Age=0; SameSite=Lax'
-  }
+  // Central SSO owns only the in-memory session. A host-wide legacy cookie
+  // may still belong to another deployment on this hostname.
 }
 
-export function acceptSso(accessToken: string, expiresAt: number, username: string): Session {
+export function acceptSso(
+  accessToken: string,
+  expiresAt: number,
+  username: string,
+  subject?: string,
+): Session {
   clearSession()
-  session = { access_token: accessToken, expires_at: Math.floor(expiresAt / 1000), username }
+  session = {
+    access_token: accessToken,
+    expires_at: Math.floor(expiresAt / 1000),
+    username,
+    subject,
+  }
   return session
 }
 

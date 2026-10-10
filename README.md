@@ -193,6 +193,10 @@ flowchart TD
 - Локальные artifacts получают SHA-256 metadata и дефолтную 30-дневную expiry через `CICD_ARTIFACT_RETENTION_DAYS`; expired/purged artifacts не скачиваются, retention worker чистит локальные файлы. Object storage, legal hold и tenant/object isolation — target hardening.
 - Protected environments создают pending deployment records, хранят append-only approval decisions и запускают linked deployment pipeline только после `required_approvals`; rollback создаёт отдельную `rollback_of_id` запись.
 - Schedules, outgoing webhooks и `in_app`/`sse` notifications работают как MVP local delivery.
+- `forge-delivery` выполняет privileged owner-local static-artifact publication,
+  actual HTTP identity/health/acceptance checks и last-confirmed rollback.
+  [Evidence и ограничения](docs/TASK_DELIVERY_VERIFICATION.md): это локальный
+  компонент, authoritative SDLC dispatch остаётся закрытым.
 - Outbox delivery history, attempt log и failed-delivery requeue — bounded MVP; inbound provider webhooks, external notification adapters и crash-safe distributed delivery guarantees не завершены.
 
 Полный current-state срез: [docs/CURRENT_STATE.md](docs/CURRENT_STATE.md). Security policy: [SECURITY.md](SECURITY.md).
@@ -227,6 +231,9 @@ CI-CD/
 ```
 
 ## Документы
+
+Штатная регистрация, изоляция и восстановление локальных jobs описаны в
+[Compose runner](docs/COMPOSE_RUNNER.md).
 
 | Аудитория | Документы |
 |---|---|

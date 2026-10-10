@@ -9,6 +9,62 @@
 
 ## [Unreleased]
 
+- Отдельные списки пайплайнов и деплоев репозитория передают проверенный
+  NamespaceRef в ключи запросов и фильтры CI-конфигураций.
+
+- Автоматические деплои получают итог связанного исполнения через общий reconcile;
+  ручные записи и завершённая история сохраняются. Каталог и общие списки
+  используют существующие переводы статусов и корректные подписи счётчиков.
+
+- Base обновлён для удержания focus в `ConfirmDialog` во время pending.
+
+- Активный Base pin обновлён до согласованного кандидата SDK/UI/workspace;
+  документация standalone build использует тот же порядок выбора pin, что CI.
+
+- Production Docker-сборки создают временные исходники всех объявленных
+  исполняемых целей, включая forge-delivery/forge-pg-migrate, до кеширования зависимостей.
+  После package cleanup собираются настоящие исходники; необходимые
+  compile-time delivery script witnesses берутся из закреплённого комплекта.
+
+- Workspace и repository deployments вычисляют approval state по тем же решениям
+  и правилам environment, что и основной API; исправлен ответ 500 при чтении истории.
+  Миграционные регрессии учитывают версию 91, сохраняя проверку historical checksums.
+
+- Ошибка ожидания embedded-процесса сохраняет PID и резервирование job во внешнем
+  lifecycle handler; неподтверждённое завершение не разрешает повторный запуск
+  и не лишает отмену адреса исходного процесса.
+- Сквозной каталог проектов использует подтверждённые Namespace и имя/ключ Tracker.
+  Репозитории имеют несколько CI-конфигураций; общие и отдельные списки запусков
+  используют серверные фильтры и пагинацию. Автозапуск выбирается явно; старые
+  маршруты и история конфигураций сохранены, удаление истории защищено.
+
+- Backup wrapper явно передаёт владельца операции в Base, определяет layout
+  по профилю и отклоняет лишние аргументы. POSIX-регрессии проверяют обязательные
+  переменные и отказ до вызова Base при неполной конфигурации.
+
+- Namespace cohort: стабильные refs, локальные binding projections и lifecycle guards; аддитивные migrations, совместимый rollback и отдельные execution v2 gates. Runtime-приёмка ещё не завершена.
+- Добавлен отдельный privileged owner-local PostgreSQL shadow executor: immutable
+  source/target catalog, bounded drain/fence/lease, dump с реальным restore drill,
+  forward migration в fresh DB и отдельные image/database/health/acceptance checks.
+  Pre-release failure допускает проверенный backup + previous image restore;
+  post-release snapshot restore запрещён, partial Unknown удерживает target.
+  Production/SDLC admission остаётся закрыт; OCI read-only путь сохранён.
+
+- Добавлен owner-local OCI CLI для immutable local image/read-only data snapshot:
+  actual container/commit/data/compatibility/acceptance, last-confirmed image
+  rollback и unknown recovery. Mutable DB/migration/restore блокируются; runtime
+  не устанавливается и SDLC admission не открывается.
+
+- Добавлена privileged owner-local manifest delivery одного verified static
+  artifact с served identity/bytes, health/acceptance probes, last-confirmed
+  rollback, immutable replay и crash reconciliation. HTTP SDLC dispatch остаётся
+  закрыт без Tracker admission; permanent runtime не обновляется.
+
+- Добавлены immutable blocked task workspace operations с original-key readback,
+  owner-local pinned preparation и bounded candidate evidence из actual Git,
+  pipeline completion и artifact bytes. Admission/write/deployment/acceptance
+  остаются закрытыми до совместимых producer contracts; migration40 следует PR87.
+
 - После отмены удаления проекта focus возвращается к его меню действий; после успешного удаления — к кнопке создания проекта.
 
 - Документирована принятая поставка трёх CLI на sdlc1: backup/restore/rollback, live-проверки, Linux/WSL установка и сохранённые ограничения.
@@ -170,11 +226,17 @@
 
 ## [Unreleased]
 
+- Namespace cohort: стабильные refs, локальные binding projections и lifecycle guards; аддитивные migrations, совместимый rollback и отдельные execution v2 gates. Runtime-приёмка ещё не завершена.
+
+
 ### Added
 - Notification rules / preferences / template catalog (stage 4 item 1): миграция 0032, fan-out фильтрация, per-user mute/verbosity, `{{var}}`-шаблоны с воспроизводимым рендерингом.
 - Aggregation + quiet hours + destination alerts (stage 4 items 3+5): миграция 0033 — collapse повторов со счётчиком, quiet окна hold/drop с bypass-статусами, авто-алерты на dead-letter с acknowledge/авто-resolve.
 
 ## [Unreleased]
+
+- Namespace cohort: стабильные refs, локальные binding projections и lifecycle guards; аддитивные migrations, совместимый rollback и отдельные execution v2 gates. Runtime-приёмка ещё не завершена.
+
 
 ### Added
 - Email-канал уведомлений (AUTOMATION_ARCHITECTURE §9 этап 4): SMTP-доставка через outbox (lettre, `CICD_SMTP_*`), при disabled SMTP — локальная пометка delivered; миграция 0031 расширяет CHECK канала `email`; fail-closed валидация адреса.

@@ -6,6 +6,43 @@
 
 ## 1. Методология и допущения
 
+OCI local verification (ADR-0021) добавляет privileged Docker socket boundary.
+Daemon/network/volume/project owner и existing container inventory проверяются;
+arbitrary Compose/commands/volumes/tags не являются API input. Actual retained
+runner descriptor связывает image ID/commit label; label не signed/native
+provenance. Read-only root/data, non-root/cap-drop и internal QA network ограничивают
+snapshot contract, но не заменяют production runner-zone/tenant isolation.
+Durable intent и Linux parent-death/child-exit держат unknown; recovery только
+наблюдает desired container. Actual mounts/network/container/image/HTTP/data SHA
+сверяются до/после. Mutable DB/migration/restore и full business coverage отдельно;
+неподдерживаемые операции блокируются до effect.
+
+Owner-local delivery (ADR-0020) вводит privileged filesystem/HTTP boundary:
+configured isolated root, credential-free owner origin и fixed probe paths/body
+digests. Caller не задаёт URLs, shell, готовые receipts или rollback artifact.
+Существующий machine/project credential проверяется и блокируется в DB на время
+effect; candidate создаётся из actual owner Git/runner/artifact readback. SHA256,
+CAS и immutable journal предотвращают подмену identity и replay publication;
+Unix process-lifetime lock, bounded no-proxy/no-redirect HTTP probes и unknown
+hold ограничивают неопределённый результат. Reconciliation наблюдает published
+manifest, не повторяя effect. Root, origin и filesystem доверены владельцу:
+privileged directory replacement, malicious serving endpoint и power-loss вне
+storage guarantees не покрываются native attestation. Health/acceptance policy
+не доказывает полную business coverage; OCI rollout/data migrations и SDLC
+admission не реализованы. HTTP delivery POST fail-closed независимо от local env.
+
+Source workspace operation ledger (ADR-0018) имеет отдельную machine boundary:
+configured dedicated Forge service-account UUID, project-bound `api:read/write`,
+fresh credential checks/locks; human/admin/Central PAT не substitutable. Caller
+task/assignment refs не authoritative admission. Strict request/body limits,
+owner-local paths без links, bounded Git readback, original key/hash и immutable
+blocked receipt предотвращают caller-proof substitution и повтор effects.
+Все missing Tracker prerequisites остаются blockers; физическая metadata не
+native attestation, workspace marker не sandbox. Shell/job с доступом к своему
+checkout остаётся недоверенным; этот API не запускает команды и не выдаёт
+capabilities/credentials. Ledger history удерживается FK RESTRICT; authorized
+retention и cross-owner admission ещё требуют отдельного протокола.
+
 Модель применяет STRIDE к каждому переходу между зонами доверия:
 
 | Категория | Вопрос для Forge |
