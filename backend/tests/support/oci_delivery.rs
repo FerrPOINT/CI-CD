@@ -59,6 +59,8 @@ fn oci_build_timeout_diagnostic(temp: &std::path::Path) {
 const OCI_CLI_FAILURE_DIAGNOSTIC: &str = r#"
 import json
 import os
+from pathlib import Path
+import re
 import stat
 import sys
 import uuid
@@ -78,6 +80,43 @@ def unique_object(pairs):
             raise ValueError('duplicate key')
         result[key] = value
     return result
+
+def checkpoint(root, command_hash, compose_root):
+    # Metadata presence only: neither record validity nor a coherent execution snapshot.
+    try:
+        root, compose_root = Path(root), Path(compose_root)
+        if (not re.fullmatch('[a-f0-9]{64}', command_hash)
+                or any(not path.is_absolute() or '..' in path.parts
+                       or len(str(path)) > 4096 for path in (root, compose_root))):
+            return 'unavailable'
+        operation = root / 'operations' / command_hash
+        paths = (root / 'owner.json', operation / 'intent.json', operation / 'compose.json',
+                 compose_root / (command_hash + '.json'), operation / 'child.json',
+                 operation / 'result.json')
+        def present(path):
+            for parent in reversed(path.parents):
+                try:
+                    metadata = parent.lstat()
+                except FileNotFoundError:
+                    return False
+                if (not stat.S_ISDIR(metadata.st_mode)
+                        or getattr(metadata, 'st_file_attributes', 0) & 1024):
+                    raise ValueError('unavailable')
+            try:
+                metadata = path.lstat()
+            except FileNotFoundError:
+                return False
+            if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+                    or getattr(metadata, 'st_file_attributes', 0) & 1024):
+                raise ValueError('unavailable')
+            return True
+        observed = [present(path) for path in paths]
+        count = sum(observed)
+        if observed != [True] * count + [False] * (len(paths) - count):
+            return 'unavailable'
+        return ('none', 'owner', 'intent', 'compose', 'request', 'child', 'result')[count]
+    except (OSError, ValueError, TypeError):
+        return 'unavailable'
 
 def project(payload, exit_code):
     result = {'schema': 'forge/oci-cli-failure-diagnostic/v1',
@@ -130,6 +169,7 @@ if __name__ == '__main__':
     try:
         code = None if sys.argv[1] == 'signal' else int(sys.argv[1])
         diagnostic = project(sys.stdin.buffer.read(LIMIT + 1), code)
+        diagnostic['checkpoint'] = checkpoint(*sys.argv[2:]) if len(sys.argv) == 5 else 'unavailable'
         print('OCI_CLI_FAILURE_DIAGNOSTIC:' + json.dumps(diagnostic, separators=(',', ':')),
               file=sys.stderr)
         retain('/output/oci-cli-diagnostics', diagnostic)
@@ -137,7 +177,12 @@ if __name__ == '__main__':
         print('OCI_CLI_FAILURE_DIAGNOSTIC_UNAVAILABLE', file=sys.stderr)
 "#;
 
-fn oci_cli_failure_diagnostic(output: &std::process::Output) {
+fn oci_cli_failure_diagnostic(
+    output: &std::process::Output,
+    root: &std::path::Path,
+    command: &DeliveryCommand,
+    compose_root: &std::path::Path,
+) {
     let retained = (|| -> std::io::Result<()> {
         let mut child = std::process::Command::new("python3")
             .args(["-I", "-B", "-c", OCI_CLI_FAILURE_DIAGNOSTIC])
@@ -147,6 +192,9 @@ fn oci_cli_failure_diagnostic(output: &std::process::Output) {
                     .code()
                     .map_or_else(|| "signal".to_owned(), |code| code.to_string()),
             )
+            .arg(root)
+            .arg(hash(command.operation_key.as_bytes()))
+            .arg(compose_root)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::null())
             .spawn()?;
@@ -389,6 +437,7 @@ struct Oci {
     root: PathBuf,
     data: PathBuf,
     policy: PathBuf,
+    compose_root: PathBuf,
     project: String,
     base_guard: PathBuf,
     base_layout: PathBuf,
@@ -458,12 +507,14 @@ impl Oci {
             .unwrap();
         assert!(prepared.success(), "offline OCI base preparation failed");
         let policy = t.temp.join("oci-policy.json");
-        std::fs::write(&policy,serde_json::to_vec(&serde_json::json!({"projectName":project,"networkName":std::env::var("CICD_TEST_OCI_NETWORK").unwrap(),"daemonId":daemon,"dockerBin":"/usr/local/bin/docker","composeBin":"/usr/local/bin/docker-compose","composeRoot":std::env::var("CICD_TEST_OCI_COMPOSE_ROOT").unwrap(),"volumeName":std::env::var("CICD_TEST_OCI_VOLUME").unwrap(),"volumeRoot":"/delivery-qa","dataFile":data,"dataSha256":hash(&std::fs::read(&data).unwrap()),"checks":{"origin":"http://127.0.0.1:8000","healthPath":"/health","healthBodySha256":hash(b"ok\n"),"acceptancePath":"/acceptance","acceptanceBodySha256":hash(b"accepted:task-1:queued\n")}})).unwrap()).unwrap();
+        let compose_root = PathBuf::from(std::env::var("CICD_TEST_OCI_COMPOSE_ROOT").unwrap());
+        std::fs::write(&policy,serde_json::to_vec(&serde_json::json!({"projectName":project,"networkName":std::env::var("CICD_TEST_OCI_NETWORK").unwrap(),"daemonId":daemon,"dockerBin":"/usr/local/bin/docker","composeBin":"/usr/local/bin/docker-compose","composeRoot":compose_root,"volumeName":std::env::var("CICD_TEST_OCI_VOLUME").unwrap(),"volumeRoot":"/delivery-qa","dataFile":data,"dataSha256":hash(&std::fs::read(&data).unwrap()),"checks":{"origin":"http://127.0.0.1:8000","healthPath":"/health","healthBodySha256":hash(b"ok\n"),"acceptancePath":"/acceptance","acceptanceBodySha256":hash(b"accepted:task-1:queued\n")}})).unwrap()).unwrap();
         Self {
             t,
             root,
             data,
             policy,
+            compose_root,
             project,
             base_guard,
             base_layout,
@@ -522,7 +573,7 @@ impl Oci {
             .unwrap();
         if !output.status.success() {
             eprintln!("OCI_CLI_EXIT={:?}", output.status.code());
-            oci_cli_failure_diagnostic(&output);
+            oci_cli_failure_diagnostic(&output, &self.root, command, &self.compose_root);
         }
         (
             output.status.code().unwrap(),

@@ -7,12 +7,14 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import tarfile
 import tempfile
 import unittest
 from contextlib import redirect_stderr
 from unittest.mock import patch
+from types import SimpleNamespace
 
 
 SOURCE = (Path(__file__).resolve().parents[2] /
@@ -28,6 +30,18 @@ class CliFailureDiagnosticTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name) / "diagnostics"
+        self.root = Path(self.temp.name) / "private-root-secret"
+        self.compose_root = Path(self.temp.name) / "private-compose-secret"
+        self.command_hash = hashlib.sha256(b"bound-command").hexdigest()
+
+    def checkpoint_records(self):
+        operation = self.root / "operations" / self.command_hash
+        return (self.root / "owner.json", operation / "intent.json", operation / "compose.json",
+                self.compose_root / (self.command_hash + ".json"), operation / "child.json",
+                operation / "result.json")
+
+    def observe_checkpoint(self):
+        return self.guard["checkpoint"](self.root, self.command_hash, self.compose_root)
 
     def payload(self, **changes):
         value = {"schema": "forge/local-oci-rejection/v1", "status": "unknown_or_rejected",
@@ -47,6 +61,24 @@ class CliFailureDiagnosticTests(unittest.TestCase):
                 self.assertEqual(set(value), {"schema", "scope", "acceptanceVerified", "exitCode",
                                              "payloadKind", "status", "reason"})
                 self.assertNotIn("secret", json.dumps(value))
+        states = ("none", "owner", "intent", "compose", "request", "child", "result")
+        for count, state in enumerate(states):
+            with self.subTest(checkpoint=state):
+                if count:
+                    path = self.checkpoint_records()[count - 1]
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(b"private-token-sql-env-secret-not-json")
+                before = {p: p.stat() for p in self.checkpoint_records() if p.exists()}
+                with patch("builtins.open", side_effect=AssertionError("no contents")), \
+                        patch.object(Path, "read_bytes", side_effect=AssertionError("no contents")), \
+                        patch.object(self.guard["os"], "open", side_effect=AssertionError("no opens")), \
+                        patch.object(self.guard["os"], "mkdir", side_effect=AssertionError("no writes")), \
+                        patch.object(self.guard["os"], "unlink", side_effect=AssertionError("no writes")), \
+                        patch.object(self.guard["os"], "replace", side_effect=AssertionError("no writes")):
+                    self.assertEqual(self.observe_checkpoint(), state)
+                self.assertEqual({p: p.stat() for p in before}, before)
+                self.assertTrue(all(p.read_bytes() == b"private-token-sql-env-secret-not-json"
+                                    for p in before))
 
     def test_unknown_categories_and_acceptance_flags_fail_closed(self):
         for changes in ({"reason": "private-secret"}, {"status": "private-secret"},
@@ -57,6 +89,25 @@ class CliFailureDiagnosticTests(unittest.TestCase):
                 self.assertEqual(value["payloadKind"], "invalid_rejection")
                 self.assertNotIn("reason", value)
                 self.assertNotIn("status", value)
+        for command_hash in ("secret", "../secret", "A" * 64, True, None):
+            with self.subTest(command_hash=command_hash):
+                self.assertEqual(self.guard["checkpoint"](
+                    self.root, command_hash, self.compose_root), "unavailable")
+        for root in (Path("relative-secret"), self.root / ".." / "secret", "x" * 4097):
+            with self.subTest(root=root):
+                self.assertEqual(self.guard["checkpoint"](
+                    root, self.command_hash, self.compose_root), "unavailable")
+        for error in (PermissionError("private-token-env-secret"), OSError("private-SQL-secret")):
+            with self.subTest(error=type(error).__name__), patch.object(Path, "lstat", side_effect=error):
+                self.assertEqual(self.observe_checkpoint(), "unavailable")
+        for path in self.checkpoint_records():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"secret")
+        for missing in self.checkpoint_records()[:-1]:
+            with self.subTest(missing=missing.name):
+                missing.unlink()
+                self.assertEqual(self.observe_checkpoint(), "unavailable")
+                missing.write_bytes(b"secret")
 
     def test_invalid_oversized_empty_and_other_documents_are_bounded(self):
         for payload, kind in ((b"", "empty"), (b"secret" * 3000, "oversized"),
@@ -69,6 +120,25 @@ class CliFailureDiagnosticTests(unittest.TestCase):
                 self.assertEqual(value["payloadKind"], kind)
                 self.assertNotIn("secret", json.dumps(value))
                 self.assertLess(len(json.dumps(value)), 512)
+        owner = self.checkpoint_records()[0]
+        owner.parent.mkdir(parents=True)
+        owner.mkdir()
+        self.assertEqual(self.observe_checkpoint(), "unavailable")
+        owner.rmdir()
+        original_lstat = Path.lstat
+        for mode, links, attributes in ((stat.S_IFLNK, 1, 0), (stat.S_IFIFO, 1, 0),
+                                         (stat.S_IFREG, 2, 0), (stat.S_IFREG, 1, 1024)):
+            def metadata(path):
+                return (SimpleNamespace(st_mode=mode, st_nlink=links, st_file_attributes=attributes)
+                        if path == owner else original_lstat(path))
+            with self.subTest(mode=mode, links=links, attributes=attributes), \
+                    patch.object(Path, "lstat", metadata):
+                self.assertEqual(self.observe_checkpoint(), "unavailable")
+        def linked_parent(path):
+            return (SimpleNamespace(st_mode=stat.S_IFLNK, st_file_attributes=0)
+                    if path == self.root else original_lstat(path))
+        with patch.object(Path, "lstat", linked_parent):
+            self.assertEqual(self.observe_checkpoint(), "unavailable")
 
     def test_exit_code_cannot_carry_arbitrary_data(self):
         for code in (None, -1, 256, True, "secret"):
@@ -121,13 +191,41 @@ class CliFailureDiagnosticTests(unittest.TestCase):
         self.assertEqual(lines[1], "OCI_CLI_FAILURE_DIAGNOSTIC_UNAVAILABLE")
         value = json.loads(lines[0].split(":", 1)[1])
         self.assertEqual(value["payloadKind"], "rejection")
+        self.assertEqual(value["checkpoint"], "unavailable")
         self.assertNotIn("secret", output.getvalue())
+        for path in self.checkpoint_records():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"private-body-SQL-token-env-secret")
+        for unreadable in (False, True):
+            retained = []
+            output = io.StringIO()
+            original_lstat = Path.lstat
+            def metadata(path):
+                if unreadable:
+                    raise PermissionError("private-path-token-secret")
+                return original_lstat(path)
+            with patch("sys.argv", ["diagnostic", "1", str(self.root), self.command_hash,
+                                    str(self.compose_root)]), \
+                    patch("sys.stdin", io.TextIOWrapper(io.BytesIO(self.payload()))), \
+                    patch.dict(self.guard, __name__="__main__",
+                               retain=lambda directory, value: retained.append(value)), \
+                    patch.object(Path, "lstat", metadata), redirect_stderr(output):
+                exec(compile(main, "oci-cli-diagnostic.py", "exec"), self.guard)
+            value = json.loads(output.getvalue().split(":", 1)[1])
+            self.assertEqual(value, retained[0])
+            self.assertEqual(value["checkpoint"], "unavailable" if unreadable else "result")
+            self.assertFalse(value["acceptanceVerified"])
+            self.assertEqual(set(value), {"schema", "scope", "acceptanceVerified", "exitCode",
+                                         "payloadKind", "status", "reason", "checkpoint"})
+            self.assertNotIn("secret", output.getvalue())
+            self.assertNotIn(str(self.root), output.getvalue())
+            self.assertNotIn(self.command_hash, output.getvalue())
 
     def test_hook_keeps_original_deadline_exit_and_receipt_assertions(self):
         execute = SOURCE.split("    async fn execute(", 1)[1].split("#[tokio::test]", 1)[0]
         self.assertIn("Duration::from_secs(50)", execute)
         self.assertIn("if !output.status.success()", execute)
-        self.assertIn("oci_cli_failure_diagnostic(&output);", execute)
+        self.assertIn("oci_cli_failure_diagnostic(&output, &self.root, command, &self.compose_root);", execute)
         self.assertIn("output.status.code().unwrap()", execute)
         self.assertIn("serde_json::from_slice(&output.stdout).ok()", execute)
         self.assertIn("assert_eq!(code, 0);", SOURCE)
@@ -136,6 +234,14 @@ class CliFailureDiagnosticTests(unittest.TestCase):
             "const OCI_OFFLINE_BASE_GUARD", 1)[0]
         self.assertIn("output.stdout.len().min(16385)", hook)
         self.assertNotIn("output.stderr", hook)
+        self.assertIn(".arg(hash(command.operation_key.as_bytes()))", hook)
+        self.assertIn(".arg(root)", hook)
+        self.assertIn(".arg(compose_root)", hook)
+        execution = (Path(__file__).resolve().parents[2] / "backend/src/task_delivery/oci.rs").read_text()
+        for record in ("owner.json", "intent.json", "compose.json", "child.json", "result.json"):
+            self.assertIn(record, execution)
+            self.assertIn(record, DIAGNOSTIC)
+        self.assertIn('format!("{}.json", sha(command.operation_key.as_bytes()))', execution)
         self.assertIn("sys.stdin.buffer.read(LIMIT + 1)", DIAGNOSTIC)
         self.assertNotIn("subprocess", DIAGNOSTIC)
 
