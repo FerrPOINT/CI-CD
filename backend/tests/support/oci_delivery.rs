@@ -72,6 +72,11 @@ REJECTIONS = (
     ('blocked', 'actual_data_schema_incompatible'),
     ('unknown_or_rejected', 'oci_command_rejected_or_unavailable'),
 )
+CHILD_ERROR_CLASSES = (
+    'ValueError', 'RuntimeError', 'OSError', 'TimeoutError', 'FileNotFoundError',
+    'PermissionError', 'AssertionError', 'JSONDecodeError', 'KeyError', 'TypeError',
+    'TimeoutExpired', 'unknown',
+)
 
 def unique_object(pairs):
     result = {}
@@ -141,6 +146,13 @@ def project(payload, exit_code):
             else:
                 kind = 'rejection'
                 result.update(status=value['status'], reason=value['reason'])
+                # Optional QA observation; never promote it to reason, authority or success.
+                if ((value['status'], value['reason']) == REJECTIONS[-1]
+                        and type(exit_code) is int and 1 <= exit_code <= 255
+                        and 'childErrorClass' in value):
+                    child_class = value['childErrorClass']
+                    result['childErrorClass'] = (child_class if type(child_class) is str
+                        and child_class in CHILD_ERROR_CLASSES else 'unknown')
     result['payloadKind'] = kind
     return result
 

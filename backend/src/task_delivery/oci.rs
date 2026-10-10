@@ -123,6 +123,108 @@ pub fn rejection_status(error: &anyhow::Error) -> &'static str {
     }
 }
 
+pub fn rejection_document(error: &anyhow::Error) -> serde_json::Value {
+    let rejection = serde_json::json!({"schema":"forge/local-oci-rejection/v1","status":rejection_status(error),"reason":rejection_code(error),"dispatchAllowed":false,"sdlcAcceptanceVerified":false});
+    #[cfg(feature = "oci-integration")]
+    let rejection = {
+        let mut rejection = rejection;
+        if let Some(class) = child_error_class(error) {
+            rejection["childErrorClass"] = class.into();
+        }
+        rejection
+    };
+    rejection
+}
+
+#[cfg(feature = "oci-integration")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ChildErrorClass {
+    ValueError,
+    RuntimeError,
+    OSError,
+    TimeoutError,
+    FileNotFoundError,
+    PermissionError,
+    AssertionError,
+    JSONDecodeError,
+    KeyError,
+    TypeError,
+    TimeoutExpired,
+    Unknown,
+}
+
+#[cfg(feature = "oci-integration")]
+impl ChildErrorClass {
+    fn from_stderr(stderr: &[u8]) -> Self {
+        // Whole completed stderr only; this is an observation, not bridge authority.
+        if stderr.len() > 128 {
+            return Self::Unknown;
+        }
+        match stderr {
+            b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:ValueError\n" => Self::ValueError,
+            b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:RuntimeError\n" => Self::RuntimeError,
+            b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:OSError\n" => Self::OSError,
+            b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:TimeoutError\n" => Self::TimeoutError,
+            b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:FileNotFoundError\n" => Self::FileNotFoundError,
+            b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:PermissionError\n" => Self::PermissionError,
+            b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:AssertionError\n" => Self::AssertionError,
+            b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:JSONDecodeError\n" => Self::JSONDecodeError,
+            b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:KeyError\n" => Self::KeyError,
+            b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:TypeError\n" => Self::TypeError,
+            b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:TimeoutExpired\n" => Self::TimeoutExpired,
+            _ => Self::Unknown,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::ValueError => "ValueError",
+            Self::RuntimeError => "RuntimeError",
+            Self::OSError => "OSError",
+            Self::TimeoutError => "TimeoutError",
+            Self::FileNotFoundError => "FileNotFoundError",
+            Self::PermissionError => "PermissionError",
+            Self::AssertionError => "AssertionError",
+            Self::JSONDecodeError => "JSONDecodeError",
+            Self::KeyError => "KeyError",
+            Self::TypeError => "TypeError",
+            Self::TimeoutExpired => "TimeoutExpired",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ChildFailure {
+    #[cfg(feature = "oci-integration")]
+    class: ChildErrorClass,
+}
+impl std::fmt::Display for ChildFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("owner engine command failed")
+    }
+}
+impl std::error::Error for ChildFailure {}
+
+#[cfg(feature = "oci-integration")]
+fn child_error_class(error: &anyhow::Error) -> Option<&'static str> {
+    error
+        .downcast_ref::<ChildFailure>()
+        .map(|e| e.class.as_str())
+}
+
+fn child_outcome(success: bool, effect: bool, _stderr: &[u8]) -> anyhow::Result<()> {
+    if !success && effect {
+        return Err(ChildFailure {
+            #[cfg(feature = "oci-integration")]
+            class: ChildErrorClass::from_stderr(_stderr),
+        }
+        .into());
+    }
+    ensure!(success, "owner engine command failed");
+    Ok(())
+}
+
 fn child_start(pid: u32) -> anyhow::Result<String> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"))?;
     Ok(stat
@@ -304,12 +406,12 @@ impl Owner {
                 ensure!(bytes.len() <= 1024 * 1024, "engine output exceeds bound");
                 Ok::<_, anyhow::Error>(bytes)
             };
-            let (status, out, _err) = tokio::try_join!(
+            let (status, out, err) = tokio::try_join!(
                 async { Ok::<_, anyhow::Error>(child.wait().await?) },
                 read(Box::new(stdout)),
                 read(Box::new(stderr))
             )?;
-            ensure!(status.success(), "owner engine command failed");
+            child_outcome(status.success(), effect.is_some(), &err)?;
             Ok::<_, anyhow::Error>(out)
         };
         let result = tokio::time::timeout(Duration::from_secs(20), task).await;
@@ -1345,5 +1447,126 @@ mod tests {
         assert!(!fixture.dir.join("compose.json").exists());
         assert!(!fixture.dir.join("child.json").exists());
         assert_eq!(std::fs::read(&path).unwrap(), historical_bytes);
+    }
+}
+
+#[cfg(test)]
+mod child_diagnostic_tests {
+    use super::*;
+
+    #[test]
+    fn child_outcome_preserves_failure_and_rejection_contract() {
+        for effect in [false, true] {
+            assert!(child_outcome(true, effect, b"private-token-sql-path").is_ok());
+            let error = child_outcome(false, effect, b"private-token-sql-path")
+                .unwrap_err()
+                .context("owner engine deadline; outcome requires readback");
+            assert_eq!(rejection_status(&error), "unknown_or_rejected");
+            assert_eq!(
+                rejection_code(&error),
+                "oci_command_rejected_or_unavailable"
+            );
+            assert_eq!(
+                error.root_cause().to_string(),
+                "owner engine command failed"
+            );
+            assert_eq!(error.downcast_ref::<ChildFailure>().is_some(), effect);
+            assert!(!format!("{error:?}").contains("private"));
+        }
+        for reason in [
+            "unsupported_mutable_data_or_migration",
+            "owner_data_snapshot_drift",
+            "actual_data_schema_incompatible",
+        ] {
+            let error = anyhow::Error::new(Blocked(reason));
+            let document = rejection_document(&error);
+            assert_eq!(document["status"], "blocked");
+            assert_eq!(document["reason"], reason);
+            assert!(document.get("childErrorClass").is_none());
+        }
+    }
+
+    #[cfg(not(feature = "oci-integration"))]
+    #[test]
+    fn ordinary_feature_excludes_child_observation() {
+        let error = child_outcome(false, true, b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:ValueError\n")
+            .unwrap_err();
+        assert_eq!(
+            rejection_document(&error),
+            serde_json::json!({
+            "schema":"forge/local-oci-rejection/v1", "status":"unknown_or_rejected",
+            "reason":"oci_command_rejected_or_unavailable", "dispatchAllowed":false,
+            "sdlcAcceptanceVerified":false})
+        );
+        assert!(!format!("{:?}", error.root_cause()).contains("ValueError"));
+    }
+
+    #[cfg(feature = "oci-integration")]
+    #[test]
+    fn all_closed_child_classes_reach_cli_document_without_authority() {
+        for class in [
+            "ValueError",
+            "RuntimeError",
+            "OSError",
+            "TimeoutError",
+            "FileNotFoundError",
+            "PermissionError",
+            "AssertionError",
+            "JSONDecodeError",
+            "KeyError",
+            "TypeError",
+            "TimeoutExpired",
+        ] {
+            let stderr = format!("NATIVE_QA_COMPOSE_BRIDGE_FAILED:{class}\n");
+            let error = child_outcome(false, true, stderr.as_bytes())
+                .unwrap_err()
+                .context("owner engine deadline; outcome requires readback");
+            assert_eq!(child_error_class(&error), Some(class));
+            let document = rejection_document(&error);
+            assert_eq!(
+                document,
+                serde_json::json!({"schema":"forge/local-oci-rejection/v1",
+                "status":"unknown_or_rejected", "reason":"oci_command_rejected_or_unavailable",
+                "dispatchAllowed":false, "sdlcAcceptanceVerified":false, "childErrorClass":class})
+            );
+            assert_eq!(
+                error.root_cause().to_string(),
+                "owner engine command failed"
+            );
+            assert!(
+                child_error_class(&child_outcome(false, false, stderr.as_bytes()).unwrap_err())
+                    .is_none()
+            );
+            assert!(child_error_class(&anyhow::anyhow!("{stderr}")).is_none());
+            assert!(child_outcome(true, true, stderr.as_bytes()).is_ok());
+        }
+    }
+
+    #[cfg(feature = "oci-integration")]
+    #[test]
+    fn malformed_mixed_duplicate_truncated_oversized_stderr_is_unknown() {
+        let marker = b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:ValueError\n";
+        let mut inputs = vec![
+            Vec::new(),
+            b"private-token-sql-path".to_vec(),
+            b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:None\n".to_vec(),
+            b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:private-token-sql-path\n".to_vec(),
+            b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:ValueError\r\n".to_vec(),
+            b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:ValueError\xff\n".to_vec(),
+            [marker.as_slice(), marker.as_slice()].concat(),
+            [b"private-prefix".as_slice(), marker.as_slice()].concat(),
+            [marker.as_slice(), b"private-suffix".as_slice()].concat(),
+            vec![b'x'; 129],
+            vec![b'x'; 1024 * 1024 + 1],
+        ];
+        inputs.extend((0..marker.len()).map(|length| marker[..length].to_vec()));
+        for stderr in inputs {
+            let error = child_outcome(false, true, &stderr).unwrap_err();
+            assert_eq!(child_error_class(&error), Some("unknown"));
+            assert_eq!(rejection_document(&error)["childErrorClass"], "unknown");
+            assert_eq!(rejection_status(&error), "unknown_or_rejected");
+            assert!(!format!("{error:?}").contains("private"));
+            assert!(!rejection_document(&error).to_string().contains("private"));
+        }
     }
 }

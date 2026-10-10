@@ -1,5 +1,6 @@
 """Pure fixture guard regressions; no Docker commands or native acceptance."""
 
+import ast
 import copy
 import hashlib
 import io
@@ -144,6 +145,95 @@ class CliFailureDiagnosticTests(unittest.TestCase):
         for code in (None, -1, 256, True, "secret"):
             self.assertIsNone(self.guard["project"](b"", code)["exitCode"])
         self.assertEqual(self.guard["project"](b"", 1)["exitCode"], 1)
+
+    def test_child_class_whitelist_matches_existing_client_and_typed_rust_projection(self):
+        root = Path(__file__).resolve().parents[2]
+        client = ast.parse((root / "scripts/native_qa_compose_client.py").read_text(encoding="utf-8"))
+        allowed = next(ast.literal_eval(node.comparators[0]) for node in ast.walk(client)
+                       if isinstance(node, ast.Compare) and isinstance(node.left, ast.Subscript)
+                       and isinstance(node.left.slice, ast.Constant)
+                       and node.left.slice.value == "error_class" and len(node.ops) == 1
+                       and isinstance(node.ops[0], ast.NotIn))
+        self.assertEqual(set(self.guard["CHILD_ERROR_CLASSES"]), set(allowed) - {None} | {"unknown"})
+        owner = (root / "backend/src/task_delivery/oci.rs").read_text(encoding="utf-8")
+        implementation = owner.split("impl ChildErrorClass {", 1)[1].split("#[derive(Debug)]", 1)[0]
+        markers = re.findall(r'b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:([A-Za-z]+)\\n"\s*=>\s*Self::([A-Za-z]+)',
+                             implementation)
+        wires = dict(re.findall(r'Self::([A-Za-z]+) => "([A-Za-z_]+)"', implementation))
+        self.assertEqual(set(wires.values()), set(self.guard["CHILD_ERROR_CLASSES"]))
+        self.assertEqual(set(markers), {(name, name) for name in allowed if name is not None})
+        for class_name, variant in markers:
+            self.assertEqual(wires[variant], class_name)
+            value = self.guard["project"](self.payload(childErrorClass=wires[variant]), 1)
+            self.assertEqual(value["childErrorClass"], class_name)
+            self.assertEqual((value["status"], value["reason"]), self.guard["REJECTIONS"][-1])
+            self.assertFalse(value["acceptanceVerified"])
+        self.assertIn("if stderr.len() > 128", implementation)
+        self.assertIn("_ => Self::Unknown", implementation)
+        self.assertRegex(owner, r'#\[cfg\(feature = "oci-integration"\)\]\s*#\[derive[^\n]+\]\s*enum ChildErrorClass')
+        failure = owner.split("struct ChildFailure {", 1)[1].split("impl std::error::Error for ChildFailure {}", 1)[0]
+        self.assertRegex(failure, r'#\[cfg\(feature = "oci-integration"\)\]\s*class: ChildErrorClass')
+        self.assertNotRegex(failure, r'Vec|String|\[u8\]|stderr|source:')
+        document = owner.split("pub fn rejection_document", 1)[1].split("enum ChildErrorClass", 1)[0]
+        self.assertRegex(document, r'#\[cfg\(feature = "oci-integration"\)\]\s*let rejection =')
+        self.assertIn('rejection["childErrorClass"] = class.into();', document)
+        self.assertIn('downcast_ref::<ChildFailure>()', owner)
+        run = owner.split("    async fn run(", 1)[1].split("    async fn docker(", 1)[0]
+        self.assertIn("pipe.take(1024 * 1024 + 1)", run)
+        self.assertIn("bytes.len() <= 1024 * 1024", run)
+        self.assertRegex(run, r'tokio::try_join![\s\S]+read\(Box::new\(stderr\)\)[\s\S]+\)\?;\s*child_outcome\(status.success\(\), effect.is_some\(\), &err\)\?;')
+        self.assertIn("Duration::from_secs(20)", run)
+        cli = (root / "backend/src/bin/forge-delivery.rs").read_text(encoding="utf-8")
+        self.assertIn('println!("{}", cicd::task_delivery::oci::rejection_document(&error));', cli)
+        self.assertNotIn("childErrorClass", cli.split("#[cfg(test)]", 1)[0])
+
+    def test_optional_child_class_is_closed_and_legacy_rejections_are_preserved(self):
+        for class_name in (*self.guard["CHILD_ERROR_CLASSES"], None, True, 1, [], {},
+                           "private-token-sql-path", "ValueError\n", ""):
+            with self.subTest(class_name=class_name):
+                value = self.guard["project"](self.payload(childErrorClass=class_name), 1)
+                expected = (class_name if type(class_name) is str
+                            and class_name in self.guard["CHILD_ERROR_CLASSES"] else "unknown")
+                self.assertEqual(value["childErrorClass"], expected)
+                self.assertNotIn("private", json.dumps(value))
+                self.assertFalse(value["acceptanceVerified"])
+        for status, reason in self.guard["REJECTIONS"]:
+            for code in (None, True, 0, 1, 255, 256, -1):
+                value = self.guard["project"](self.payload(status=status, reason=reason,
+                                                          childErrorClass="RuntimeError"), code)
+                if ((status, reason) == self.guard["REJECTIONS"][-1]
+                        and type(code) is int and 1 <= code <= 255):
+                    self.assertEqual(value["childErrorClass"], "RuntimeError")
+                else:
+                    self.assertNotIn("childErrorClass", value)
+                self.assertEqual((value["status"], value["reason"]), (status, reason))
+                legacy = self.guard["project"](self.payload(status=status, reason=reason), code)
+                self.assertNotIn("childErrorClass", legacy)
+        payload = self.payload(childErrorClass="ValueError")
+        duplicate = payload[:-1] + b',"childErrorClass":"RuntimeError"}'
+        self.assertEqual(self.guard["project"](duplicate, 1)["payloadKind"], "invalid_json")
+        self.assertNotIn("childErrorClass", self.guard["project"](duplicate, 1))
+        self.assertNotIn("childErrorClass", self.guard["project"](payload + b" " * 16384, 1))
+
+    def test_child_class_fixture_emission_and_retention_chain_exports_no_private_bytes(self):
+        main = DIAGNOSTIC[DIAGNOSTIC.index("if __name__ == '__main__':"):]
+        for class_name in self.guard["CHILD_ERROR_CLASSES"]:
+            retained, output = [], io.StringIO()
+            with self.subTest(class_name=class_name), \
+                    patch("sys.argv", ["diagnostic", "1", str(self.root), self.command_hash,
+                                       str(self.compose_root)]), \
+                    patch("sys.stdin", io.TextIOWrapper(io.BytesIO(self.payload(childErrorClass=class_name)))), \
+                    patch.dict(self.guard, __name__="__main__",
+                               retain=lambda directory, value: retained.append(value)), redirect_stderr(output):
+                exec(compile(main, "oci-cli-diagnostic.py", "exec"), self.guard)
+            value = json.loads(output.getvalue().split(":", 1)[1])
+            self.assertEqual(retained, [value])
+            self.assertEqual(value["childErrorClass"], class_name)
+            self.assertEqual(value["checkpoint"], "none")
+            self.assertEqual(set(value), {"schema", "scope", "acceptanceVerified", "exitCode",
+                                         "payloadKind", "status", "reason", "checkpoint", "childErrorClass"})
+            for secret in ("private", "secret", str(self.root), self.command_hash, str(self.compose_root)):
+                self.assertNotIn(secret, output.getvalue())
 
     def test_private_retention_is_unique_and_survives_fixture_temp_removal(self):
         value = self.guard["project"](self.payload(), 1)
