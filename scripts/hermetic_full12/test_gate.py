@@ -1865,5 +1865,166 @@ class OciDiagnosticTests(unittest.TestCase):
             project.assert_not_called()
 
 
+class OciCliDiagnosticTests(unittest.TestCase):
+    @staticmethod
+    def observation(**changes):
+        return {'schema': 'forge/oci-cli-failure-diagnostic/v1', 'scope': 'fixture_observation_only',
+                'acceptanceVerified': False, 'exitCode': 1, 'payloadKind': 'empty', **changes}
+
+    @staticmethod
+    def error(entries):
+        return OciDiagnosticTests.error({'compiler': [], 'panics': [], 'cli': entries})
+
+    @contextmanager
+    def fixture(self, documents, log=b'ignored private log\n'):
+        with OciDiagnosticTests.fixture(self, log) as (root, source, name):
+            directory = root / 'output/oci-cli-diagnostics'
+            directory.mkdir(parents=True)
+            for index, value in enumerate(documents):
+                raw = value if isinstance(value, bytes) else json.dumps(value).encode()
+                (directory / (f'{index:032x}.json')).write_bytes(raw)
+            yield root, source, directory
+
+    def test_existing_producer_contract_and_output_mount(self):
+        source = (h.HERE.parents[1] / 'backend/tests/support/oci_delivery.rs').read_text()
+        script = source.split('const OCI_CLI_FAILURE_DIAGNOSTIC: &str = r#"', 1)[1].split('"#;', 1)[0]
+        tree = ast.parse(script)
+        nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in {'project', 'unique_object'}
+                 or isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id in {'LIMIT', 'REJECTIONS'} for t in n.targets)]
+        namespace = {'json': json}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), '<existing_closed_producer>', 'exec'), namespace)
+        project = namespace['project']
+        payloads = [b'', b'x' * 16385, b'{', b'{}', b'{"schema":"forge/local-oci-rejection/v1"}']
+        for status, reason in namespace['REJECTIONS']:
+            payloads.append(json.dumps({'schema': 'forge/local-oci-rejection/v1', 'dispatchAllowed': False,
+                                       'sdlcAcceptanceVerified': False, 'status': status, 'reason': reason}).encode())
+        for payload in payloads:
+            for code in (None, 0, 1, 255):
+                h.validate_safe_error(self.error([project(payload, code)]))
+        self.assertEqual(len(namespace['REJECTIONS']), 4)
+        self.assertIn("retain('/output/oci-cli-diagnostics', diagnostic)", script)
+        manifest = (h.HERE / 'run.py').read_text()
+        self.assertIn("bind(root / 'output', '/output')", manifest)
+        self.assertIn("n / 'sources', n / 'output'", (h.HERE / 'parent.py').read_text())
+
+    def test_direct_structured_projection_not_marker_or_raw_log(self):
+        entry = self.observation(payloadKind='rejection', status='blocked', reason='owner_data_snapshot_drift')
+        log = OciDiagnosticTests.compiler() + b'OCI_CLI_FAILURE_DIAGNOSTIC:{"raw":"PRIVATE SQL TOKEN"}\n'
+        with self.fixture([entry], log) as (root, _, _):
+            diagnostic = h.oci_failure_diagnostics(root)
+            self.assertEqual(diagnostic['cli'], [entry])
+            self.assertEqual(len(diagnostic['compiler']), 1)
+            h.validate_safe_error(OciDiagnosticTests.error(diagnostic))
+            self.assertNotIn('PRIVATE', json.dumps(diagnostic))
+            self.assertNotIn('SQL', json.dumps(diagnostic))
+        with self.fixture([], b'OCI_CLI_FAILURE_DIAGNOSTIC:' + json.dumps(entry).encode() + b'\n') as (root, _, _):
+            self.assertIsNone(h.oci_failure_diagnostics(root))
+
+    def test_closed_schema_types_enums_ranges_and_rejection_pairs(self):
+        base = self.observation()
+        cases = [None, [], {}, {k: v for k, v in base.items() if k != 'exitCode'}]
+        for key, values in {'schema': ('PRIVATE', None), 'scope': ('PRIVATE', None),
+                            'acceptanceVerified': (True, 0, 1, 'false', None),
+                            'exitCode': (True, False, -1, 256, 1.0, '1', [], {}),
+                            'payloadKind': ('PRIVATE', None, [], 'Rejection')}.items():
+            cases.extend({**base, key: value} for value in values)
+        cases.extend(({**base, key: 'PRIVATE SQL TOKEN'} for key in ('message', 'stdout', 'path', 'reason', 'status')))
+        cases.extend((self.observation(payloadKind='rejection'),
+                      self.observation(payloadKind='rejection', status='blocked', reason='oci_command_rejected_or_unavailable'),
+                      self.observation(payloadKind='rejection', status='unknown_or_rejected', reason='owner_data_snapshot_drift'),
+                      self.observation(payloadKind='rejection', status='PRIVATE', reason='owner_data_snapshot_drift'),
+                      self.observation(payloadKind='rejection', status='blocked', reason='PRIVATE SQL TOKEN'),
+                      self.observation(payloadKind='rejection', status=False, reason=[])))
+        for entry in cases:
+            with self.subTest(entry=entry), self.assertRaises(ValueError):
+                h.validate_safe_error(self.error([entry]))
+        for entries in ([], [base] * 2, [self.observation(exitCode=i) for i in range(9)], 'PRIVATE'):
+            with self.subTest(entries=entries), self.assertRaises(ValueError):
+                h.validate_safe_error(self.error(entries))
+        for stage, code in (('bootstrap', 101), ('oci', 1), ('oci', True)):
+            error = self.error([base]); error.update(stage=stage, exit_code=code)
+            with self.assertRaises(ValueError): h.validate_safe_error(error)
+
+    def test_duplicate_keys_malformed_oversized_and_unknown_filename_omitted(self):
+        good = json.dumps(self.observation()).encode()
+        bad = (good[:-1] + b',"exitCode":2}', good[:-1] + b',"message":"PRIVATE"}',
+               b'{', b'\xff', good.replace(b'"exitCode": 1', b'"exitCode": NaN'), b'x' * 1025)
+        for raw in bad:
+            with self.subTest(raw=raw[:20]), self.fixture([raw], OciDiagnosticTests.compiler()) as (root, _, _):
+                diagnostic = h.oci_failure_diagnostics(root)
+                self.assertNotIn('cli', diagnostic)
+                self.assertEqual(len(diagnostic['compiler']), 1)
+        with self.fixture([self.observation()]) as (root, _, directory):
+            next(directory.iterdir()).rename(directory / 'PRIVATE.json')
+            self.assertIsNone(h.oci_failure_diagnostics(root))
+
+    def test_bounded_eight_files_and_unique_observations(self):
+        for values in ([self.observation()] * 8, [self.observation(exitCode=i) for i in range(8)]):
+            with self.fixture(values) as (root, _, _):
+                diagnostic = h.oci_failure_diagnostics(root)
+                self.assertEqual(len(diagnostic['cli']), 1 if values[0] == values[1] else 8)
+                h.validate_safe_error(OciDiagnosticTests.error(diagnostic))
+        with self.fixture([self.observation()] * 9) as (root, _, _):
+            self.assertIsNone(h.oci_failure_diagnostics(root))
+
+    def test_producer_source_size_hash_or_missing_rejects_cli(self):
+        for change in ('hash', 'size', 'missing'):
+            with self.subTest(change=change), self.fixture([self.observation()]) as (root, source, _):
+                if change == 'missing': source.unlink()
+                elif change == 'size': source.write_bytes(b'changed')
+                else: source.write_bytes(b'x' * source.stat().st_size)
+                self.assertIsNone(h.oci_failure_diagnostics(root))
+
+    def test_symlink_hardlink_foreign_or_changed_retained_file_rejected(self):
+        for target in ('directory', 'file'):
+            with self.subTest(target=target), self.fixture([self.observation()]) as (root, _, directory):
+                path = directory if target == 'directory' else next(directory.iterdir())
+                original = root / 'owned-original'
+                path.rename(original)
+                try: path.symlink_to(original, target_is_directory=target == 'directory')
+                except OSError: self.skipTest('symlink creation unavailable')
+                self.assertIsNone(h.oci_failure_diagnostics(root))
+        with self.fixture([self.observation()]) as (root, _, directory):
+            os.link(next(directory.iterdir()), root / 'second-link')
+            self.assertIsNone(h.oci_failure_diagnostics(root))
+        for field in ('st_uid', 'st_dev', 'st_mtime_ns', 'st_mode'):
+            with self.subTest(field=field), self.fixture([self.observation()]) as (root, source, directory):
+                metadata = next(directory.iterdir()).stat()
+                values = {key: getattr(metadata, key) for key in ('st_mode', 'st_nlink', 'st_dev', 'st_uid', 'st_size', 'st_ino', 'st_mtime_ns')}
+                values[field] = stat.S_IFIFO if field == 'st_mode' else values[field] + 1
+                with patch.object(h.os, 'fstat', side_effect=[(root / 'private/oci.log').stat(), source.stat(), SimpleNamespace(**values)]):
+                    self.assertIsNone(h.oci_failure_diagnostics(root))
+        for change in ('foreign_directory', 'directory_changed'):
+            with self.subTest(change=change), self.fixture([self.observation()]) as (root, _, directory):
+                original = Path.stat
+                calls = []
+                def metadata(path, *args, **kwargs):
+                    value = original(path, *args, **kwargs)
+                    if path == directory and kwargs.get('follow_symlinks', True):
+                        calls.append(path)
+                        if change == 'foreign_directory' or len(calls) == 2:
+                            keys = ('st_mode', 'st_dev', 'st_uid', 'st_ino', 'st_mtime_ns')
+                            fields = {key: getattr(value, key) for key in keys}
+                            key = 'st_uid' if change == 'foreign_directory' else 'st_ino'
+                            fields[key] += 1
+                            return SimpleNamespace(**fields)
+                    return value
+                with patch.object(Path, 'stat', metadata):
+                    self.assertIsNone(h.oci_failure_diagnostics(root))
+
+    def test_existing_oci101_failure_path_and_deadline_propagation(self):
+        with self.fixture([self.observation()]) as (root, _, _):
+            report = {'status': 'FAIL', 'full12_pass': False, 'stages': [{'stage': 'oci'}]}
+            with patch('sys.stdout', new_callable=io.StringIO) as output:
+                gate.retain_failure(report, 'oci', h.CommandFailure(101), root, 'C', [])
+            self.assertEqual(report['error']['oci_diagnostics']['cli'], [self.observation()])
+            self.assertFalse(report['full12_pass'])
+            self.assertEqual(report['status'], 'FAIL')
+            self.assertNotIn('PRIVATE', output.getvalue())
+        with self.fixture([self.observation()]) as (root, _, _):
+            with patch.object(h.json, 'loads', side_effect=h.OverheadTimeout('PRIVATE', 1)), self.assertRaises(h.OverheadTimeout):
+                h.oci_failure_diagnostics(root)
+
+
 if __name__ == '__main__':
     unittest.main()

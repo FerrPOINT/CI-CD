@@ -1,7 +1,7 @@
 # Public-safe exact-source full12 controls
 
 Этот source-only successor имеет непосредственный parent
-`0527882c371ccc4247e2d2f3d74a9a8e8f74ef78`; все exact parent edges предыдущих
+`80ff3ddd686dba907f1f22b27c64abddb60e352a`; все exact parent edges предыдущих
 controls сохранены в `host.controls_history`, включая maintenance controls
 `b9375dc4b4f070b0f6cff1733228f1a6865b1368`, safety controls
 `4d97c54f35b485224a8229495763658fcbbd40e9`, qualification controls
@@ -98,7 +98,7 @@ Private bridge proof использует ту же привязку. Его pur
 Только job C, stage `oci` и исходный `CommandFailure(101)` могут добавить optional
 `error.oci_diagnostics` в существующий report. Нового artifact нет. Strict reader
 должен использовать frozen `host.validate_safe_error`: вложенные ключи только
-`compiler` и `panics`, каждый содержит до восьми уникальных записей. Compiler
+`compiler`, `panics` и optional `cli`, каждый содержит до восьми уникальных записей. Compiler
 record содержит только `code`, `file`, `line`, `column`; panic record вместо
 `code` содержит exact `host.OCI_TEST` в `test`. Legacy errors остаются валидными;
 неизвестные ключи, типы, пути и identities отвергаются.
@@ -128,6 +128,35 @@ SHA невозможен без отдельно reviewed workflow change. Ми�
 38058842111 не квалифицируют successor. Будущая явно разрешённая C-only
 диагностика не будет full12 acceptance. C-only input, job, rerun или изменение
 workflow здесь не реализованы.
+
+### Существующая structured CLI диагностика
+
+Normal child от80ff добавляет только optional `error.oci_diagnostics.cli`: существующий
+source25be producer `OCI_CLI_FAILURE_DIAGNOSTIC` уже пишет закрытый JSON в
+`/output/oci-cli-diagnostics`. Existing QA manifest bind-mounts `root/output`
+в `/output`, а cleanup защищает этот каталог. Поэтому читаются retained JSON,
+не marker/stdout; нового log parser, artifact, job или диагностического mode нет.
+
+Тот же bounded/stable reader ограничивает каждый JSON до1024 bytes. Каталог
+должен быть owned/same-device и не symlink; его identity/mtime проверяются
+повторно. Разрешены максимум восемь файлов с existing UUID32hex `.json` именами;
+лишний/неизвестный файл или invalid document опускает всю optional `cli`
+projection, сохраняя legacy compiler/panics. Наблюдения deduplicated, максимум8.
+Producer Rust source обязан совпасть с frozen catalogue size/SHA256. Это доказывает
+наличие exact producer source, не происхождение каждого retained observation.
+
+Strict validator требует exact schema `forge/oci-cli-failure-diagnostic/v1`,
+scope `fixture_observation_only`, actual boolean `acceptanceVerified=false`,
+`exitCode=null` либо actual int0..255 и один из шести existing `payloadKind`.
+Только kind=`rejection` имеет `status`/`reason`, строго одну из четырёх existing
+пар producer; все остальные поля запрещены. Duplicate JSON keys, unknown enum,
+wrong bool/int/range, duplicate/empty/unbounded lists отвергаются. CLI code не
+подменяется cargo101. Existing C/oci/CommandFailure101 guard неизменен.
+
+Записи не содержат messages, stdout, SQL, paths или tokens. Неизвестная CLI-причина
+run38065153549 не объявляется установленной; ни новый successor, ни исторические
+A/B receipts не имеют нового native/full12 acceptance. Product265, all12 guards,
+pins, workflow, gates, cleanup и budgets неизменны; C-only не реализован.
 
 ### Безопасная bootstrap диагностика
 

@@ -33,7 +33,8 @@ CACHE_ALLOCATE_CONTROLS = '6241d2b381a22302f6fd8fae4ee14e0d200c1282'
 PRE_CACHE_CAPACITY_CONTROLS = 'ab623f1ea7f47c0afa182ab4b913c89f981d305b'
 CUMULATIVE_RECLAIM_CONTROLS = 'dcad6522c9dc313bf6f8113deb9ecb885e6710ad'
 IMMUTABLE_MAINTENANCE_CONTROLS = '9e3241ef9b83536600ee1a7660a53f588cf232a0'
-CONTROLS_PARENT = '0527882c371ccc4247e2d2f3d74a9a8e8f74ef78'
+OCI_LOCATION_CONTROLS = '0527882c371ccc4247e2d2f3d74a9a8e8f74ef78'
+CONTROLS_PARENT = '80ff3ddd686dba907f1f22b27c64abddb60e352a'
 BRANCH = 'build-only/forge-delegation-full12-20261010'
 CONSUMER_PATHS = {
     '.github/workflows/forge-hermetic-full12.yml',
@@ -230,7 +231,8 @@ def validate_safe_error(result):
         require(result['stage'] == 'oci' and result['category'] == 'closed_failure'
                 and type(result.get('exit_code')) is int and result['exit_code'] == 101)
         diagnostic = result['oci_diagnostics']
-        require(type(diagnostic) is dict and set(diagnostic) == {'compiler', 'panics'})
+        require(type(diagnostic) is dict and {'compiler', 'panics'} <= set(diagnostic)
+                and set(diagnostic) <= {'compiler', 'panics', 'cli'})
         sources = diagnostic_sources()
         for kind, label in (('compiler', 'code'), ('panics', 'test')):
             entries = diagnostic[kind]
@@ -246,7 +248,31 @@ def validate_safe_error(result):
                 identity = tuple(entry[key] for key in (label, 'file', 'line', 'column'))
                 require(identity not in seen)
                 seen.add(identity)
-        require(diagnostic['compiler'] or diagnostic['panics'])
+        if 'cli' in diagnostic:
+            entries = diagnostic['cli']
+            require(type(entries) is list and 0 < len(entries) <= 8)
+            seen = set()
+            for entry in entries:
+                require(type(entry) is dict and entry.get('schema') == 'forge/oci-cli-failure-diagnostic/v1'
+                        and entry.get('scope') == 'fixture_observation_only'
+                        and entry.get('acceptanceVerified') is False)
+                require(entry.get('exitCode') is None or type(entry['exitCode']) is int
+                        and 0 <= entry['exitCode'] <= 255)
+                require(type(entry.get('payloadKind')) is str and entry['payloadKind'] in {
+                    'oversized', 'empty', 'invalid_json', 'other_document', 'invalid_rejection', 'rejection'})
+                keys = {'schema', 'scope', 'acceptanceVerified', 'exitCode', 'payloadKind'}
+                if entry['payloadKind'] == 'rejection':
+                    keys |= {'status', 'reason'}
+                    require((entry.get('status'), entry.get('reason')) in (
+                        ('blocked', 'unsupported_mutable_data_or_migration'),
+                        ('blocked', 'owner_data_snapshot_drift'),
+                        ('blocked', 'actual_data_schema_incompatible'),
+                        ('unknown_or_rejected', 'oci_command_rejected_or_unavailable')))
+                require(set(entry) == keys)
+                identity = json.dumps(entry, sort_keys=True)
+                require(identity not in seen)
+                seen.add(identity)
+        require(diagnostic['compiler'] or diagnostic['panics'] or diagnostic.get('cli'))
 
 
 def diagnostic_sources():
@@ -259,7 +285,7 @@ def oci_failure_diagnostics(root):
     """Project observed locations only; source attestation is not proof of log producer identity."""
     root = Path(root)
     owner = root.stat()
-    def bounded_file(path):
+    def bounded_file(path, limit=2**20):
         check_deadline()
         require(not any(p.is_symlink() for p in (path, *path.parents)))
         fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0))
@@ -267,9 +293,9 @@ def oci_failure_diagnostics(root):
             before = os.fstat(fd)
             require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1
                     and (before.st_dev, before.st_uid) == (owner.st_dev, owner.st_uid)
-                    and 0 < before.st_size <= 2**20)
+                    and 0 < before.st_size <= limit)
             with os.fdopen(fd, 'rb', closefd=False) as stream:
-                raw = stream.read(2**20 + 1)
+                raw = stream.read(limit + 1)
             require(len(raw) == before.st_size)
             after = path.stat()
             require((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
@@ -290,14 +316,17 @@ def oci_failure_diagnostics(root):
         elif name.startswith('services-base/'):
             aliases['../../' + name] = name
     result, contents = {'compiler': [], 'panics': []}, {}
-    def append(kind, label, location):
-        name = aliases.get(location[0])
-        if name is None or len(result[kind]) == 8:
-            return
+    def source_lines(name):
         if name not in contents:
             raw = bounded_file(root / 'sources' / name)
             require(len(raw) == sources[name]['size'] and hashlib.sha256(raw).hexdigest() == sources[name]['sha256'])
             contents[name] = raw.splitlines()
+        return contents[name]
+    def append(kind, label, location):
+        name = aliases.get(location[0])
+        if name is None or len(result[kind]) == 8:
+            return
+        source_lines(name)
         line, column = map(int, location[1:])
         if not (0 < line <= len(contents[name]) and 0 < column <= len(contents[name][line - 1]) + 1):
             return
@@ -316,7 +345,39 @@ def oci_failure_diagnostics(root):
                             + r"' panicked at (.+):([1-9][0-9]{0,6}):([1-9][0-9]{0,6}):", text)
         if panic:
             append('panics', OCI_TEST, panic.groups())
-    return result if result['compiler'] or result['panics'] else None
+    # The existing producer already retains closed JSON on the protected /output bind.
+    def unique_object(pairs):
+        value = {}
+        for key, item in pairs:
+            require(key not in value)
+            value[key] = item
+        return value
+    directory = root / 'output/oci-cli-diagnostics'
+    try:
+        require(not any(p.is_symlink() for p in (directory, *directory.parents)))
+        before = directory.stat()
+        require(stat.S_ISDIR(before.st_mode) and (before.st_dev, before.st_uid) == (owner.st_dev, owner.st_uid))
+        source_lines('CI-CD/backend/tests/support/oci_delivery.rs')
+        files, entries = [], []
+        with os.scandir(directory) as children:
+            for child in children:
+                check_deadline()
+                require(len(files) < 8 and re.fullmatch('[a-f0-9]{32}\\.json', child.name))
+                files.append(directory / child.name)
+        for path in sorted(files):
+            entry = json.loads(bounded_file(path, 1024), object_pairs_hook=unique_object)
+            validate_safe_error({'stage': 'oci', 'category': 'closed_failure', 'errno': None, 'exit_code': 101,
+                                 'oci_diagnostics': {'compiler': [], 'panics': [], 'cli': [entry]}})
+            if entry not in entries:
+                entries.append(entry)
+        after = directory.stat()
+        require((before.st_dev, before.st_ino, before.st_mtime_ns)
+                == (after.st_dev, after.st_ino, after.st_mtime_ns))
+        if entries:
+            result['cli'] = entries
+    except (OSError, ValueError, UnicodeError, RecursionError):
+        pass
+    return result if result['compiler'] or result['panics'] or result.get('cli') else None
 
 
 def leader_status(process):
@@ -475,7 +536,8 @@ def bind_maintenance(module, proof):
 
 def controls_history(controls):
     require(git(controls, 'rev-parse', '--is-shallow-repository').strip() == b'false')
-    for revision, parent in (('HEAD', CONTROLS_PARENT), (CONTROLS_PARENT, IMMUTABLE_MAINTENANCE_CONTROLS),
+    for revision, parent in (('HEAD', CONTROLS_PARENT), (CONTROLS_PARENT, OCI_LOCATION_CONTROLS),
+                             (OCI_LOCATION_CONTROLS, IMMUTABLE_MAINTENANCE_CONTROLS),
                              (IMMUTABLE_MAINTENANCE_CONTROLS, CUMULATIVE_RECLAIM_CONTROLS),
                              (CUMULATIVE_RECLAIM_CONTROLS, PRE_CACHE_CAPACITY_CONTROLS),
                              (PRE_CACHE_CAPACITY_CONTROLS, CACHE_ALLOCATE_CONTROLS),
