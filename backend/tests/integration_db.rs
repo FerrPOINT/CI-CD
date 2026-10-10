@@ -9743,6 +9743,157 @@ async fn workspace_deployment_approval_states_match_environment_history() {
 }
 
 #[tokio::test]
+async fn deployment_maintenance_follows_owned_execution_and_preserves_manual_history() {
+    let pool = test_pool().await;
+    let project = Uuid::new_v4();
+    let foreign = Uuid::new_v4();
+    for (id, name) in [
+        (project, "Deployment owner"),
+        (foreign, "Foreign configuration"),
+    ] {
+        sqlx::query("INSERT INTO projects(id,name,repository_url) VALUES($1,$2,'https://example.test/api.git')")
+            .bind(id).bind(name).execute(&pool).await.unwrap();
+    }
+    let environment = Uuid::new_v4();
+    sqlx::query("INSERT INTO environments(id,project_id,name) VALUES($1,$2,'Test')")
+        .bind(environment)
+        .bind(project)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut expected = std::collections::BTreeMap::new();
+    for (pipeline_status, previous, next, source, owner_vars, same_project) in [
+        (
+            "queued",
+            "pending",
+            "pending",
+            "deployment-approval",
+            true,
+            true,
+        ),
+        (
+            "running",
+            "pending",
+            "running",
+            "deployment-approval",
+            true,
+            true,
+        ),
+        (
+            "success",
+            "running",
+            "success",
+            "deployment-approval",
+            true,
+            true,
+        ),
+        (
+            "failed",
+            "pending",
+            "failed",
+            "deployment-rollback",
+            true,
+            true,
+        ),
+        (
+            "canceled",
+            "running",
+            "failed",
+            "deployment-approval",
+            true,
+            true,
+        ),
+        (
+            "failed",
+            "success",
+            "success",
+            "deployment-approval",
+            true,
+            true,
+        ),
+        ("success", "pending", "pending", "manual", true, true),
+        (
+            "success",
+            "pending",
+            "pending",
+            "deployment-approval",
+            false,
+            true,
+        ),
+        (
+            "success",
+            "pending",
+            "pending",
+            "deployment-approval",
+            true,
+            false,
+        ),
+    ] {
+        let deployment = Uuid::new_v4();
+        let pipeline = Uuid::new_v4();
+        let configuration = if same_project { project } else { foreign };
+        let variables = if owner_vars {
+            serde_json::json!({"deployment_id":deployment.to_string()})
+        } else {
+            serde_json::json!({})
+        };
+        sqlx::query("INSERT INTO pipelines(id,project_id,git_ref,status,variables) VALUES($1,$2,'main',$3,$4)")
+            .bind(pipeline).bind(configuration).bind(pipeline_status).bind(variables).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO pipeline_triggers(id,project_id,source,idempotency_key,request_fingerprint,pipeline_id) VALUES($1,$2,$3,$4,$5,$6)")
+            .bind(Uuid::new_v4()).bind(configuration).bind(source).bind(deployment.to_string()).bind("a".repeat(64)).bind(pipeline).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO deployments(id,environment_id,pipeline_id,git_ref,status) VALUES($1,$2,$3,'main',$4)")
+            .bind(deployment).bind(environment).bind(pipeline).bind(previous).execute(&pool).await.unwrap();
+        expected.insert(deployment.to_string(), next.to_owned());
+    }
+    let mut config = cicd::runner::RuntimeRunnerConfig::from_config(
+        &cicd::config::RuntimeConfig::from_env_source(|_| None, false).unwrap(),
+    );
+    config.mode = cicd::config::RunnerMode::HostShell;
+    let maintenance = tokio::spawn(cicd::runner::maintenance_loop_with_config(
+        pool.clone(),
+        config,
+    ));
+    let mut actual = std::collections::BTreeMap::new();
+    for _ in 0..50 {
+        actual = sqlx::query_as::<_, (Uuid, String)>(
+            "SELECT id,status FROM deployments WHERE environment_id=$1",
+        )
+        .bind(environment)
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|(id, status)| (id.to_string(), status))
+        .collect();
+        if actual == expected {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    maintenance.abort();
+    let _ = maintenance.await;
+    assert_eq!(actual, expected);
+    let app = authenticated_app(pool).await;
+    let response = app
+        .oneshot(
+            Request::get(format!("/api/v1/environments/{environment}/deployments"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let rows = response_json(response).await;
+    assert_eq!(rows.as_array().unwrap().len(), expected.len());
+    for row in rows.as_array().unwrap() {
+        assert_eq!(
+            row["status"].as_str().unwrap(),
+            expected[row["id"].as_str().unwrap()]
+        );
+    }
+}
+
+#[tokio::test]
 async fn delivery_configurations_replay_and_archive_preserve_identity_and_history() {
     let pool = test_pool().await;
     let namespace = Uuid::new_v4();

@@ -1208,6 +1208,33 @@ fn deployment_status_from_pipeline(status: &str) -> &'static str {
     }
 }
 
+/// Reconcile only owner-triggered, unfinished deployments. Manual records and
+/// terminal deployment history do not follow later pipeline retries.
+pub(crate) async fn reconcile_deployment_results(db: &PgPool) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        "WITH candidates AS ( \
+           SELECT d.id, m.deployment_status FROM deployments d \
+           JOIN environments e ON e.id=d.environment_id \
+           JOIN pipelines p ON p.id=d.pipeline_id AND p.project_id=e.project_id \
+           JOIN (VALUES ('queued',$1::text),('running',$2),('success',$3),('failed',$4),('canceled',$5)) \
+             AS m(pipeline_status,deployment_status) ON m.pipeline_status=p.status \
+           WHERE d.status IN ('pending','running') AND d.status<>m.deployment_status \
+             AND p.variables->>'deployment_id'=d.id::text \
+             AND EXISTS (SELECT 1 FROM pipeline_triggers t WHERE t.pipeline_id=p.id \
+               AND t.project_id=p.project_id AND t.source IN ('deployment-approval','deployment-rollback')) \
+           ORDER BY d.created_at,d.id LIMIT 100 FOR UPDATE OF d SKIP LOCKED \
+         ) UPDATE deployments d SET status=c.deployment_status FROM candidates c WHERE d.id=c.id",
+    )
+    .bind(deployment_status_from_pipeline("queued"))
+    .bind(deployment_status_from_pipeline("running"))
+    .bind(deployment_status_from_pipeline("success"))
+    .bind(deployment_status_from_pipeline("failed"))
+    .bind(deployment_status_from_pipeline("canceled"))
+    .execute(db)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 fn normalize_approval_decision(raw: &str) -> Result<String, ApiError> {
     match raw.trim().to_ascii_lowercase().as_str() {
         "approved" | "approve" => Ok("approved".to_owned()),

@@ -1866,6 +1866,7 @@ async fn reconcile_runtime_state_with_config(
     }
 
     cancel_jobs_for_canceled_pipelines(pool).await?;
+    crate::platform::reconcile_deployment_results(pool).await?;
     Ok(())
 }
 

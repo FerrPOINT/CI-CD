@@ -1339,6 +1339,12 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 
 `Environment` содержит `protected` и `required_approvals`. Для protected environment deployment нельзя сразу создать как terminal `success`/`failed` или связать с уже запущенным pipeline: запись стартует как `pending`, а `POST /deployments/{deployment_id}/approvals` сохраняет immutable decision. При включённой auth-схеме actor берётся из JWT/PAT subject; body `actor` используется только в trusted-network режиме. Когда набрано `required_approvals`, backend запускает pipeline через тот же idempotent trigger helper и связывает его с deployment. Rollback не переписывает исходный deployment: создаётся новая запись с `rollback_of_id`; для обычного окружения pipeline стартует сразу, для protected окружения rollback также ждёт approval.
 
+Общий runner reconcile обновляет только незавершённые автоматические деплои,
+для которых сохранены owner trigger receipt, `deployment_id` и связь с pipeline
+той же CI-конфигурации. Обработка ограничена 100 изменениями за проход и работает
+после restart, включая гонку завершения pipeline до сохранения связи. Ручные
+записи, чужие конфигурации и terminal history не изменяются при последующих retry.
+
 ### Schedules
 
 | Метод | Путь | Назначение |
