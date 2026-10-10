@@ -22,8 +22,9 @@ BASE = '19a7a381ae6dbea61a643bb96189e483fa64df5c'
 PUBLIC_CONTROLS = '1dbedf85242c3540b70005ce5f0c20badb682c41'
 QUALIFICATION_CONTROLS = '632ea8347602fe4af22e7369790ed9c75e53f76a'
 SAFETY_CONTROLS = '4d97c54f35b485224a8229495763658fcbbd40e9'
-CONTROLS_PARENT = 'b9375dc4b4f070b0f6cff1733228f1a6865b1368'
-BRANCH = 'build-only/forge-bootstrap-full12-20261010'
+MAINTENANCE_CONTROLS = 'b9375dc4b4f070b0f6cff1733228f1a6865b1368'
+CONTROLS_PARENT = '1310958a4b5cf68642a6ce8d4466ef5ff1e64f31'
+BRANCH = 'build-only/forge-resource-full12-20261010'
 CONSUMER_PATHS = {
     '.github/workflows/forge-hermetic-full12.yml',
     *('scripts/hermetic_full12/' + name for name in (
@@ -41,7 +42,8 @@ ERROR_STAGES = ('python', 'row-smoke', 'smoke', 'check', 'clippy', 'postgres', '
 BOOTSTRAP_STEPS = ('tools_download', 'dependencies', 'user_namespace', 'manager',
                    'rootless_launch', 'context', 'socket_ready', 'identity_decode',
                    'identity_version', 'identity_compose_rootless', 'identity_endpoint',
-                   'identity_cgroup_warnings', 'baseline', 'admission_seal')
+                   'identity_cgroup_warnings', 'identity_cgroup_version',
+                   'identity_cgroup_driver', 'identity_cgroup_resources', 'baseline', 'admission_seal')
 BOOTSTRAP_DEADLINE = None
 PHASE_DEADLINE = None
 TOOLS = {
@@ -366,7 +368,8 @@ def bind_maintenance(module, proof):
 
 def controls_history(controls):
     require(git(controls, 'rev-parse', '--is-shallow-repository').strip() == b'false')
-    for revision, parent in (('HEAD', CONTROLS_PARENT), (CONTROLS_PARENT, SAFETY_CONTROLS),
+    for revision, parent in (('HEAD', CONTROLS_PARENT), (CONTROLS_PARENT, MAINTENANCE_CONTROLS),
+                             (MAINTENANCE_CONTROLS, SAFETY_CONTROLS),
                              (SAFETY_CONTROLS, QUALIFICATION_CONTROLS),
                              (QUALIFICATION_CONTROLS, PUBLIC_CONTROLS),
                              (PUBLIC_CONTROLS, SOURCE)):

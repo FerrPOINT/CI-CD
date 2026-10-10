@@ -93,15 +93,19 @@ def identity(root, admission=None):
         result = {'id': info['ID'], 'endpoint': endpoint, 'root': info['DockerRootDir'],
                   'server': info['ServerVersion'], 'client': docker('version', '--format', '{{.Client.Version}}').decode().strip(),
                   'compose': docker('compose', 'version').decode().strip(), 'security': sorted(info['SecurityOptions']),
-                  'storage_driver': info['Driver'], 'cgroup_driver': info['CgroupDriver']}
+                  'storage_driver': info['Driver'], 'cgroup_driver': info.get('CgroupDriver')}
     with h.bootstrap_step('identity_version'):
         h.require(result['id'] and result['server'] == result['client'] == '29.8.2')
     with h.bootstrap_step('identity_compose_rootless'):
         h.require(result['compose'] == 'Docker Compose version v5.5.1' and 'name=rootless' in result['security'])
     with h.bootstrap_step('identity_endpoint'):
         h.require(result['endpoint'] == 'unix://' + str(root / 'docker.sock') and Path(result['root']) == root / 'daemon-data')
-    with h.bootstrap_step('identity_cgroup_warnings'):
-        h.require(info['CgroupVersion'] == '2' and info['CgroupDriver'] == 'systemd' and not info.get('Warnings'))
+    with h.bootstrap_step('identity_cgroup_version'):
+        h.require(info.get('CgroupVersion') == '2')
+    with h.bootstrap_step('identity_cgroup_driver'):
+        h.require(info.get('CgroupDriver') == 'systemd')
+    with h.bootstrap_step('identity_cgroup_resources'):
+        h.require(all(info.get(key) is True for key in ('MemoryLimit', 'CpuCfsQuota', 'CpuCfsPeriod', 'PidsLimit')))
     if admission is not None:
         h.require(result == admission['daemon'])
     return result
@@ -128,6 +132,11 @@ def start_daemon(root):
     with h.bootstrap_step('manager'):
         h.command(['sudo', '-n', 'loginctl', 'enable-linger', user])
         h.command(['sudo', '-n', 'systemctl', 'start', 'user@' + uid + '.service'])
+        # Runtime-only on the disposable hosted VM; never restart the user manager.
+        h.command(['sudo', '-n', 'systemctl', 'set-property', '--runtime', 'user@' + uid + '.service',
+                   'Delegate=cpu memory pids'], timeout=90)
+        controllers = Path('/sys/fs/cgroup/user.slice/user-' + uid + '.slice/user@' + uid + '.service/cgroup.controllers')
+        h.require({'cpu', 'memory', 'pids'} <= set(controllers.read_text().split()))
         os.environ.update(XDG_RUNTIME_DIR='/run/user/' + uid, DBUS_SESSION_BUS_ADDRESS='unix:path=/run/user/' + uid + '/bus')
     with h.bootstrap_step('rootless_launch'):
         unit = 'forge-full12-' + root.name

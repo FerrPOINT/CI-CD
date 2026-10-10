@@ -50,9 +50,9 @@ tip во время readback запрещено; ref сохраняется ка
 а не вместо immutable commit. Приватный код
 и credentials не входят в публичный checkout или artifacts.
 
-Текущий checkout guard требует ровно HEAD ->b937->4d97->632->1db->25be, full history,
-task-owned modifications относительноb937 и add-only controls относительно25be.
-Новый workflow/host branch: `build-only/forge-bootstrap-full12-20261010`.
+Текущий checkout guard требует ровно HEAD ->131->b937->4d97->632->1db->25be,
+full history, task-owned modifications относительно131 и add-only controls относительно25be.
+Предыдущий workflow/host branch: `build-only/forge-bootstrap-full12-20261010`.
 Изменение родителя в следующем reviewed commit требует сохранить всю chain,
 не заменить проверку на произвольный ancestor. Candidate JSON и installed bytes
 не доказывают native/SDLC acceptance. Source guards больше не блокируют из-за
@@ -100,6 +100,42 @@ structured capacity report без нового hint. При post-bootstrap ош�
 Команды, их порядок, guards, socket90s и остальные deadlines/resources неизменны.
 Новых Docker/systemd/journal inspection, retries/fallback или запуска gates нет.
 Historical b937 failure не переписывается и не объявляется исправленным.
+
+## Resource Admission Successor
+
+Normal child `1310958` использует отдельный hosted-only branch
+`build-only/forge-resource-full12-20261010`. Product25be, SDK19a, maintenance43,
+265 source inputs, 12 stages, manifests, budgets и cleanup неизменны.
+`Warnings` больше не является blanket admission predicate: это информационный
+нестабильный текст Docker, он не парсится и не экспортируется.
+
+Обязательны cgroup version `2`, driver `systemd` и exact boolean `True` для
+`MemoryLimit`, `CpuCfsQuota`, `CpuCfsPeriod`, `PidsLimit`. Missing/null/false/числа/
+строки не принимаются. Отказы имеют отдельные fixed hints
+`identity_cgroup_version`, `identity_cgroup_driver`, `identity_cgroup_resources`.
+Старый `identity_cgroup_warnings` остаётся допустимым только для readback старых
+receipts; новый код его не выдаёт. Stage entry/exit сохраняет повторный admission.
+
+До rootless launch existing hosted bootstrap выполняет для exact current UID:
+`sudo -n systemctl set-property --runtime user@<uid>.service 'Delegate=cpu memory pids'`.
+Затем требует наличие всех трёх controllers в exact user-manager
+`cgroup.controllers`. Нет restart/reboot/fallback или persistent `/etc` изменения;
+неподдерживаемая команда/отсутствующий CPU закрывает bootstrap в `manager`.
+Это только disposable GitHub-hosted VM после existing host/source qualification,
+не инструкция менять локальный daemon. Systemd поддерживает runtime controller
+delegation; Docker rootless требует v2/systemd и отдельного CPU delegation:
+[Docker](https://docs.docker.com/engine/security/rootless/tips/#limiting-resources),
+[systemctl255](https://github.com/systemd/systemd/blob/v255/man/systemctl.xml),
+[Delegate setter255](https://github.com/systemd/systemd/blob/v255/src/core/dbus-cgroup.c).
+
+Это source/pure fix, не native enforcement proof и не доказанная причина run38035575536.
+Его safe receipt различает только прежний combined boundary. Existing stage entry
+проверяет daemon ID, но не actual `HostConfig`/cgroup limits. Bounded follow-up перед
+workload: после owned Compose-up проверить exact QA/Postgres container IDs и
+`HostConfig` против unchanged manifest; в тех же контейнерах прочитать bounded
+`cpu.max`/`memory.max` и QA `pids.max`, отклонить missing/unlimited/mismatch и
+сохранить лишь fixed checks/numeric limits, не raw inspect. Это отдельный reviewable
+patch; в данном successor он не реализован. Full12/native acceptance остаётся pending.
 
 Three independent jobs: A python/row-smoke/smoke/check/clippy; B postgres;
 C oci/workspace/integration/cli/openapi/release. Each admits a fresh rootless

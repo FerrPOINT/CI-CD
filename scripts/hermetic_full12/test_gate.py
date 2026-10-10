@@ -466,7 +466,10 @@ class BootstrapDiagnosticTests(unittest.TestCase):
              'identity_cgroup_warnings', 'baseline', 'admission_seal')
 
     def test_closed_source_attested_step_inventory(self):
-        self.assertEqual(h.BOOTSTRAP_STEPS, self.STEPS)
+        # The old combined label remains readback-compatible, but is no longer emitted.
+        steps = tuple(step for step in h.BOOTSTRAP_STEPS if step != 'identity_cgroup_warnings')
+        self.assertEqual(set(h.BOOTSTRAP_STEPS), set(self.STEPS) | {
+            'identity_cgroup_version', 'identity_cgroup_driver', 'identity_cgroup_resources'})
         tree = ast.parse((h.HERE / 'run.py').read_bytes())
         seen = {}
         for node in ast.walk(tree):
@@ -478,14 +481,16 @@ class BootstrapDiagnosticTests(unittest.TestCase):
                     step = ast.literal_eval(call.args[0])
                     self.assertNotIn(step, seen)
                     seen[step] = ast.unparse(ast.Module(body=node.body, type_ignores=[]))
-        self.assertEqual(set(seen), set(self.STEPS))
+        self.assertEqual(set(seen), set(steps))
         for step, operation in (
             ('tools_download', 'h.download_tools(root)'), ('dependencies', "'apt-get'"),
             ('user_namespace', "'usermod'"), ('manager', "'loginctl'"),
             ('rootless_launch', "'systemd-run'"), ('context', "'create', 'rootless'"),
             ('socket_ready', 'time.monotonic() + 90'), ('identity_decode', "'info'"),
             ('identity_version', "'29.8.2'"), ('identity_compose_rootless', "'name=rootless'"),
-            ('identity_endpoint', "'daemon-data'"), ('identity_cgroup_warnings', "info.get('Warnings')"),
+            ('identity_endpoint', "'daemon-data'"), ('identity_cgroup_version', "info.get('CgroupVersion') == '2'"),
+            ('identity_cgroup_driver', "info.get('CgroupDriver') == 'systemd'"),
+            ('identity_cgroup_resources', 'info.get(key) is True'),
             ('baseline', "not baseline['container'] and (not baseline['volume'])"),
             ('admission_seal', "'admission-seal.json'"),
         ):
@@ -497,7 +502,7 @@ class BootstrapDiagnosticTests(unittest.TestCase):
         errors = (ValueError('PRIVATE_SENTINEL'), OSError(28, 'PRIVATE_SENTINEL'),
                   h.CommandFailure(7), subprocess.TimeoutExpired('PRIVATE_SENTINEL', 90),
                   AssertionError('PRIVATE_SENTINEL'))
-        for step in self.STEPS:
+        for step in h.BOOTSTRAP_STEPS:
             for error in errors:
                 with self.subTest(step=step, error_type=type(error).__name__):
                     original = h.safe_error('bootstrap', error)
@@ -580,40 +585,145 @@ class BootstrapDiagnosticTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             h.safe_error('bootstrap', wrapped)
 
-    def test_identity_guards_have_exact_safe_hints_without_private_warnings(self):
+    @staticmethod
+    def identity_info():
         root = Path('/synthetic-owned-f12')
-        original = {'ID': 'synthetic', 'DockerRootDir': str(root / 'daemon-data'),
-                    'ServerVersion': '29.8.2', 'SecurityOptions': ['name=rootless'],
-                    'Driver': 'overlay2', 'CgroupDriver': 'systemd', 'CgroupVersion': '2', 'Warnings': None}
+        return {'ID': 'synthetic', 'DockerRootDir': str(root / 'daemon-data'),
+                'ServerVersion': '29.8.2', 'SecurityOptions': ['name=rootless'],
+                'Driver': 'overlay2', 'CgroupDriver': 'systemd', 'CgroupVersion': '2', 'Warnings': None,
+                'MemoryLimit': True, 'CpuCfsQuota': True, 'CpuCfsPeriod': True, 'PidsLimit': True}
+
+    @staticmethod
+    def call_identity(info, compose='Docker Compose version v5.5.1', admission=None):
+        root = Path('/synthetic-owned-f12')
+        def docker(*args):
+            if args == ('info', '--format', '{{json .}}'):
+                return json.dumps(info).encode()
+            if args == ('context', 'inspect', 'rootless', '--format', '{{.Endpoints.docker.Host}}'):
+                return ('unix://' + str(root / 'docker.sock')).encode()
+            if args == ('version', '--format', '{{.Client.Version}}'):
+                return b'29.8.2'
+            if args == ('compose', 'version'):
+                return compose.encode()
+            raise AssertionError('unexpected synthetic command')
+        with patch.object(gate, 'docker', side_effect=docker), patch.object(h, 'BOOTSTRAP_DEADLINE', 1):
+            return gate.identity(root, admission)
+
+    def test_identity_guards_have_exact_safe_hints_without_private_warnings(self):
+        original = self.identity_info()
         cases = (({}, 'Docker Compose version v5.5.1', None),
                  ({'ServerVersion': 'wrong'}, 'Docker Compose version v5.5.1', 'identity_version'),
                  ({}, 'wrong', 'identity_compose_rootless'),
                  ({'SecurityOptions': []}, 'Docker Compose version v5.5.1', 'identity_compose_rootless'),
                  ({'DockerRootDir': '/wrong'}, 'Docker Compose version v5.5.1', 'identity_endpoint'),
-                 ({'CgroupVersion': '1'}, 'Docker Compose version v5.5.1', 'identity_cgroup_warnings'),
-                 ({'Warnings': ['PRIVATE_SENTINEL']}, 'Docker Compose version v5.5.1', 'identity_cgroup_warnings'))
+                 ({'CgroupVersion': '1'}, 'Docker Compose version v5.5.1', 'identity_cgroup_version'),
+                 ({'CgroupDriver': 'none'}, 'Docker Compose version v5.5.1', 'identity_cgroup_driver'),
+                 ({'Warnings': ['PRIVATE_SENTINEL']}, 'Docker Compose version v5.5.1', None))
         for change, compose, expected in cases:
             info = {**original, **change}
-            def docker(*args):
-                if args == ('info', '--format', '{{json .}}'):
-                    return json.dumps(info).encode()
-                if args == ('context', 'inspect', 'rootless', '--format', '{{.Endpoints.docker.Host}}'):
-                    return ('unix://' + str(root / 'docker.sock')).encode()
-                if args == ('version', '--format', '{{.Client.Version}}'):
-                    return b'29.8.2'
-                if args == ('compose', 'version'):
-                    return compose.encode()
-                raise AssertionError('unexpected synthetic command')
-            with patch.object(gate, 'docker', side_effect=docker), patch.object(h, 'BOOTSTRAP_DEADLINE', 1):
+            with self.subTest(change=change, compose=compose):
                 if expected is None:
-                    self.assertEqual(gate.identity(root)['id'], 'synthetic')
+                    result = self.call_identity(info, compose)
+                    self.assertEqual(result['id'], 'synthetic')
+                    self.assertNotIn('PRIVATE_SENTINEL', json.dumps(result))
                 else:
                     with self.assertRaises(h.BootstrapFailure) as caught:
-                        gate.identity(root)
+                        self.call_identity(info, compose)
                     safe = h.safe_error('bootstrap', caught.exception)
                     self.assertEqual(safe['bootstrap_step'], expected)
                     self.assertNotIn('PRIVATE_SENTINEL', json.dumps(safe))
                     h.validate_safe_error(safe)
+
+    def test_resource_capabilities_require_exact_true_even_without_warnings(self):
+        for key in ('MemoryLimit', 'CpuCfsQuota', 'CpuCfsPeriod', 'PidsLimit'):
+            for value in (False, None, 0, 1, 'true', 'PRIVATE_SENTINEL', [], {}):
+                with self.subTest(key=key, value=value):
+                    info = self.identity_info()
+                    info[key] = value
+                    with self.assertRaises(h.BootstrapFailure) as caught:
+                        self.call_identity(info)
+                    safe = h.safe_error('bootstrap', caught.exception)
+                    self.assertEqual(safe['bootstrap_step'], 'identity_cgroup_resources')
+                    self.assertNotIn('PRIVATE_SENTINEL', json.dumps(safe))
+                    h.validate_safe_error(safe)
+            info = self.identity_info()
+            del info[key]
+            with self.assertRaises(h.BootstrapFailure) as caught:
+                self.call_identity(info)
+            self.assertEqual(caught.exception.step, 'identity_cgroup_resources')
+
+    def test_missing_or_malformed_cgroup_identity_fail_closed(self):
+        for key, expected in (('CgroupVersion', 'identity_cgroup_version'), ('CgroupDriver', 'identity_cgroup_driver')):
+            for value in (None, False, 2, [], {}, 'PRIVATE_SENTINEL'):
+                info = self.identity_info()
+                info[key] = value
+                with self.subTest(key=key, value=value), self.assertRaises(h.BootstrapFailure) as caught:
+                    self.call_identity(info)
+                self.assertEqual(caught.exception.step, expected)
+                self.assertNotIn('PRIVATE_SENTINEL', json.dumps(h.safe_error('bootstrap', caught.exception)))
+            info = self.identity_info()
+            del info[key]
+            with self.assertRaises(h.BootstrapFailure) as caught:
+                self.call_identity(info)
+            self.assertEqual(caught.exception.step, expected)
+
+    def test_stage_recheck_rejects_lost_cpu_capability_with_same_daemon(self):
+        info = self.identity_info()
+        admission = {'daemon': self.call_identity(info)}
+        info['CpuCfsQuota'] = False
+        with self.assertRaises(h.BootstrapFailure) as caught:
+            self.call_identity(info, admission=admission)
+        self.assertEqual(caught.exception.step, 'identity_cgroup_resources')
+
+    @staticmethod
+    def daemon_fixture(controllers='cpu memory pids', failure=None):
+        calls = []
+        def command(argv, **kwargs):
+            calls.append((argv, kwargs))
+            if 'set-property' in argv and failure is not None:
+                raise failure
+            return b'runner' if argv == ['id', '-un'] else b''
+        def read_text(path, *args, **kwargs):
+            if str(path).replace('\\', '/') in ('/etc/subuid', '/etc/subgid'):
+                return 'runner:100000:65536\n'
+            if path.name == 'cgroup.controllers':
+                return controllers
+            raise AssertionError('unexpected synthetic filesystem read')
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'docker.sock').touch()
+            with patch.object(h, 'download_tools', return_value=root / 'bin'), \
+                    patch.object(h, 'command', side_effect=command), patch.object(gate, 'identity', return_value={'id': 'fixture'}), \
+                    patch.object(gate.os, 'getuid', return_value=1001, create=True), patch.object(Path, 'read_text', read_text), \
+                    patch.dict(os.environ), patch.object(h, 'BOOTSTRAP_DEADLINE', 1):
+                result = gate.start_daemon(root)
+        return result, calls
+
+    def test_hosted_delegation_runtime_only_before_rootless_launch(self):
+        result, calls = self.daemon_fixture('io pids cpu memory cpuset')
+        self.assertEqual(result, {'id': 'fixture'})
+        argv = [args for args, _ in calls]
+        delegation = ['sudo', '-n', 'systemctl', 'set-property', '--runtime', 'user@1001.service', 'Delegate=cpu memory pids']
+        self.assertIn(delegation, argv)
+        self.assertLess(argv.index(delegation), next(index for index, args in enumerate(argv) if args[0] == 'systemd-run'))
+        self.assertEqual(calls[argv.index(delegation)][1], {'timeout': 90})
+        self.assertFalse(any('restart' in args or 'revert' in args for args in argv))
+
+    def test_hosted_delegation_missing_controllers_prevents_daemon_launch(self):
+        for controllers in ('memory pids', 'cpu pids', 'cpu memory', '', 'PRIVATE_SENTINEL'):
+            with self.subTest(controllers=controllers), patch.object(h, 'atomic') as atomic:
+                with self.assertRaises(h.BootstrapFailure) as caught:
+                    self.daemon_fixture(controllers)
+                self.assertEqual(caught.exception.step, 'manager')
+                self.assertNotIn('PRIVATE_SENTINEL', json.dumps(h.safe_error('bootstrap', caught.exception)))
+                atomic.assert_not_called()
+
+    def test_hosted_delegation_command_failure_has_no_fallback(self):
+        with patch.object(h, 'atomic') as atomic, self.assertRaises(h.BootstrapFailure) as caught:
+            self.daemon_fixture(failure=h.CommandFailure(1))
+        self.assertEqual(caught.exception.step, 'manager')
+        self.assertEqual(h.safe_error('bootstrap', caught.exception)['exit_code'], 1)
+        atomic.assert_not_called()
 
     def test_retained_failure_hint_does_not_turn_failure_into_acceptance(self):
         report = {'status': 'FAIL', 'full12_pass': False, 'stages': []}

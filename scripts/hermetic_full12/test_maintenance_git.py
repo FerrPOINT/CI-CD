@@ -398,7 +398,8 @@ class ConsumerHistoryTests(unittest.TestCase):
         if args == ('rev-parse', '--is-shallow-repository'):
             return b'false\n'
         parents = {'HEAD': ('a' * 40, h.CONTROLS_PARENT),
-                   h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.SAFETY_CONTROLS),
+                   h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.MAINTENANCE_CONTROLS),
+                   h.MAINTENANCE_CONTROLS: (h.MAINTENANCE_CONTROLS, h.SAFETY_CONTROLS),
                    h.SAFETY_CONTROLS: (h.SAFETY_CONTROLS, h.QUALIFICATION_CONTROLS),
                    h.QUALIFICATION_CONTROLS: (h.QUALIFICATION_CONTROLS, h.PUBLIC_CONTROLS),
                    h.PUBLIC_CONTROLS: (h.PUBLIC_CONTROLS, h.SOURCE)}
@@ -413,7 +414,8 @@ class ConsumerHistoryTests(unittest.TestCase):
     def test_exact_normal_successor_history_admitted(self):
         with patch.object(h, 'git', side_effect=self.git):
             h.controls_history(Path('controls'))
-        self.assertEqual(h.CONTROLS_PARENT, 'b9375dc4b4f070b0f6cff1733228f1a6865b1368')
+        self.assertEqual(h.CONTROLS_PARENT, '1310958a4b5cf68642a6ce8d4466ef5ff1e64f31')
+        self.assertEqual(h.MAINTENANCE_CONTROLS, 'b9375dc4b4f070b0f6cff1733228f1a6865b1368')
         self.assertEqual(h.SAFETY_CONTROLS, '4d97c54f35b485224a8229495763658fcbbd40e9')
         self.assertEqual(h.QUALIFICATION_CONTROLS, '632ea8347602fe4af22e7369790ed9c75e53f76a')
         self.assertEqual(h.PUBLIC_CONTROLS, '1dbedf85242c3540b70005ce5f0c20badb682c41')
@@ -424,6 +426,7 @@ class ConsumerHistoryTests(unittest.TestCase):
                 (('rev-list', '--parents', '-n', '1', 'HEAD'), ('a' * 40 + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', 'HEAD'), ('a' * 40 + ' ' + h.CONTROLS_PARENT + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.CONTROLS_PARENT), (h.CONTROLS_PARENT + ' ' + h.SOURCE).encode()),
+                (('rev-list', '--parents', '-n', '1', h.MAINTENANCE_CONTROLS), (h.MAINTENANCE_CONTROLS + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.SAFETY_CONTROLS), (h.SAFETY_CONTROLS + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.QUALIFICATION_CONTROLS), (h.QUALIFICATION_CONTROLS + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.PUBLIC_CONTROLS), (h.PUBLIC_CONTROLS + ' ' + h.CONTROLS_PARENT).encode())):
@@ -447,7 +450,7 @@ class ConsumerHistoryTests(unittest.TestCase):
 
     def test_workflow_and_host_bind_only_new_branch(self):
         workflow = (h.HERE.parents[1] / '.github/workflows/forge-hermetic-full12.yml').read_text()
-        self.assertEqual(h.BRANCH, 'build-only/forge-bootstrap-full12-20261010')
+        self.assertEqual(h.BRANCH, 'build-only/forge-resource-full12-20261010')
         self.assertIn('branches: [' + h.BRANCH + ']', workflow)
         self.assertEqual(workflow.count("github.ref == 'refs/heads/" + h.BRANCH + "'"), 3)
         self.assertNotIn('forge-public-safe-full12-25be-20261009', workflow)
