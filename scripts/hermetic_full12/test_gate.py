@@ -879,9 +879,11 @@ class DelegationDropinTests(unittest.TestCase):
                 target.unlink()
                 target.write_bytes(raw)
                 inode = target.stat().st_ino
-                program['apply']('cleanup', '1001', self.TOKEN)
+                with self.assertRaises(ValueError):
+                    program['apply']('cleanup', '1001', self.TOKEN)
                 self.assertEqual(target.stat().st_ino, inode)
                 self.assertEqual(target.read_bytes(), raw)
+                self.assertTrue((parent / ('.forge-full12-' + self.TOKEN) / 'delegate').exists())
 
     def test_root_helper_closed_identity_and_no_transient_setter(self):
         program = self.program(Path('/not-used'))

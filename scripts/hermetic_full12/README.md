@@ -103,7 +103,7 @@ Historical b937 failure не переписывается и не объявля
 
 ## Resource Admission Successor
 
-Normal child `eb91d4f` использует отдельный hosted-only branch
+Normal history `eb91d4f` -> `3a9bbaf` -> inode-guard follow-up использует hosted-only branch
 `build-only/forge-delegation-full12-20261010`. Product25be, SDK19a, maintenance43,
 265 source inputs, 12 stages, manifests, budgets и cleanup неизменны.
 `Warnings` больше не является blanket admission predicate: это информационный
@@ -136,7 +136,7 @@ user@ service; это source-proven defect eb91. Исторический manage
 Independent finally после остановки own daemon удаляет только published inode,
 совпадающий с completed owned source и exact bytes/token, затем own source/directory
 и daemon-reload. Он работает и без daemon-owner marker (ошибка bootstrap до launch).
-Foreign replacement inode сохраняется; corrupt/missing ownership proof закрывает
+Foreign replacement inode сохраняется и закрывает cleanup; corrupt/missing ownership proof закрывает
 cleanup, не создаёт PASS. Cleanup result delegation_removed обязателен в aggregate.
 Это только disposable GitHub-hosted VM после existing host/source qualification,
 не инструкция менять локальный daemon. Docker rootless требует v2/systemd и CPU:

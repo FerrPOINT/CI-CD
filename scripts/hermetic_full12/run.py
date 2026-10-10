@@ -106,10 +106,11 @@ def apply(action, uid, token):
                 published = os.stat(name, dir_fd=parent, follow_symlinks=False)
             except FileNotFoundError:
                 published = None
-            if published is not None and (published.st_dev, published.st_ino) == (info.st_dev, info.st_ino):
+            if published is not None:
+                if (published.st_dev, published.st_ino) != (info.st_dev, info.st_ino):
+                    raise ValueError('foreign_delegation_inode')
                 os.unlink(name, dir_fd=parent)
                 os.fsync(parent)
-            # If publication collided with a foreign inode, preserve that inode.
             os.unlink('delegate', dir_fd=owner)
             os.fsync(owner)
             os.close(owner)
