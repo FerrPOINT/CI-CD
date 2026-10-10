@@ -62,7 +62,7 @@ describe('shared workspace catalog', () => {
       total: 51,
     }))
     mount()
-    await screen.findByText('3 репозиториев · Git-группа git-group')
+    await screen.findByText('Репозитории: 3 · Git-группа git-group')
     fireEvent.click(screen.getByRole('button', { name: 'Далее' }))
     await screen.findByText('Git не подключён')
     expect(vi.mocked(api).mock.calls.some(([path]) => path.includes('offset=50'))).toBe(true)

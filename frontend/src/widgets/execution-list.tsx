@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router'
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button, Input, NamespaceLink as Link } from '@sdlc/ui/ui'
 import { type NamespaceLocation, withNamespaceLocation } from '@sdlc/ui/lib'
 import type { components } from '@/api/schema'
@@ -17,6 +18,14 @@ export function ExecutionList({
   repositoryId?: string
   deployment?: boolean
 }) {
+  const { t } = useTranslation()
+  const statusLabel = (status: string) =>
+    t(
+      deployment
+        ? `deployments.status${status.charAt(0).toUpperCase()}${status.slice(1)}`
+        : `pipelines.${status}`,
+      { defaultValue: status },
+    )
   const [params, setParams] = useSearchParams()
   const workspace = useWorkspace(namespace ?? null)
   const [repositorySearch, setRepositorySearch] = useState('')
@@ -182,7 +191,9 @@ export function ExecutionList({
               ? ['pending', 'running', 'success', 'failed']
               : ['queued', 'running', 'success', 'failed', 'canceled']
             ).map((status) => (
-              <option key={status}>{status}</option>
+              <option key={status} value={status}>
+                {statusLabel(status)}
+              </option>
             ))}
           </select>
         </label>
@@ -260,8 +271,10 @@ export function ExecutionList({
                   )}
                   className="text-accent"
                 >
-                  {row.status}
-                  {row.approval_state ? ` · ${row.approval_state}` : ''}
+                  {statusLabel(row.status)}
+                  {row.approval_state
+                    ? ` · ${t(`deployments.${row.approval_state === 'not_required' ? 'approvalNotRequired' : row.approval_state === 'pending' ? 'approvalPending' : row.approval_state}`, { defaultValue: row.approval_state })}`
+                    : ''}
                 </Link>
               </li>
             ))}

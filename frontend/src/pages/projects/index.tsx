@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useQuery } from '@tanstack/react-query'
 import { Button, Input, ProjectAvatar, NamespaceLink as Link } from '@sdlc/ui/ui'
 import { withNamespaceLocation } from '@sdlc/ui/lib'
@@ -7,6 +8,7 @@ import type { components } from '@/api/schema'
 import { workspacePath } from '@/api/workspaces'
 import { WorkspaceLinks } from '@/widgets/workspace-links'
 export function ProjectsPage() {
+  const { t } = useTranslation()
   const [search, setSearch] = useState('')
   const [offset, setOffset] = useState(0)
   const catalog = useQuery({
@@ -59,10 +61,16 @@ export function ProjectsPage() {
                   </div>
                   <span className="text-sm text-text-muted">
                     {project.group_id
-                      ? `${project.repositories} репозиториев · Git-группа ${project.group_slug}`
+                      ? `Репозитории: ${project.repositories} · Git-группа ${project.group_slug}`
                       : 'Git не подключён'}
                   </span>
-                  <span className="text-sm">{project.latest_status ?? 'Нет запусков'}</span>
+                  <span className="text-sm">
+                    {project.latest_status
+                      ? t(`pipelines.${project.latest_status}`, {
+                          defaultValue: project.latest_status,
+                        })
+                      : 'Нет запусков'}
+                  </span>
                 </Link>
               </li>
             ))}
