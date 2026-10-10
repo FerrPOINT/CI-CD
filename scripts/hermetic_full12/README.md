@@ -1,6 +1,25 @@
 # Public-safe exact-source full12 controls
 
-Текущий successor имеет sole parent `e281bd1f8da4bfc74baa76e84db95daa4dd610db`:
+Текущий smoke-pin successor имеет sole parent
+`b9a25bf5fb944175f8da053f3fdd82f4e970386d`. Existing history guard сохраняет
+его exact edge к mergee281, consumer-only deltas и add-only product closure;
+старые edges и HEAD guards не заменены ancestor-проверкой.
+
+На actual b9 run38092492744 Python81 и row-smoke прошли, smoke отказал с
+`closed_failure`, `errno=null`; B/C skipped. Safe receipt не сохранил конкретный
+observer reason. Независимый source readback обнаружил deterministic binding defect:
+original observer ожидает raw executor hash5f `3cb62f6e...73c56f`, тогда как
+exact e781 Git export/catalogue имеет `0ad5fb510626516f2f8b8d7254c9147b0b1fad99c8d185ca27e35c7d64eec299`.
+Consumer `run.smoke` теперь после existing maintenance admission проверяет original
+observer pin и привязывает только этот reviewed e781 hash до real `validate_inputs`.
+Не используется hash рабочих CRLF bytes или автоматически принятых runtime bytes.
+Observer/transport/SQL template, journal guards,30 assertions,13 markers и300/30/10
+budgets неизменны. Pure regression использует raw Git bytes и real validation;
+старый/replaced/CRLF executor, чужой observer pin и invalid admission отвергаются.
+Это исправление source-confirmed consumer defect, не ретроспективное доказательство
+единственной причины b9 и не новый native/full12 PASS.
+
+Предыдущий e781 controls successor имеет sole parent `e281bd1f8da4bfc74baa76e84db95daa4dd610db`:
 normal merge с ordered parents controls `20e4f4fd12230ed87d01f05b18d3417a11e052a8`
 и product `e781b533bfb25fa669d5a5c65f8fa7094de7af02`. Product e781 сохраняет ordered
 parents `f05d4796160f1ebd14cb60ddc14da9e3eb78c36d` и foreign PR88

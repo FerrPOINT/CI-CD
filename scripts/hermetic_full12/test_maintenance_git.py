@@ -411,10 +411,11 @@ class MaintenanceGitTests(unittest.TestCase):
 class ConsumerHistoryTests(unittest.TestCase):
     def test_approved_pg_merge_and_old_source_edges_are_not_relabelled(self):
         self.assertEqual(h.SOURCE_MERGE, 'e281bd1f8da4bfc74baa76e84db95daa4dd610db')
+        self.assertEqual(h.PG_CONTROLS, 'b9a25bf5fb944175f8da053f3fdd82f4e970386d')
         self.assertEqual(h.COUNT_CONTROLS, '20e4f4fd12230ed87d01f05b18d3417a11e052a8')
         self.assertEqual(h.LITERAL_CLASS_SOURCE, 'f05d4796160f1ebd14cb60ddc14da9e3eb78c36d')
         self.assertEqual(h.PG_MERGE_PARENT, '903db592f17beb761ed82a20cb8f4645f11ed200')
-        for revision in (h.SOURCE_MERGE, h.SOURCE, h.COUNT_CONTROLS, h.LITERAL_CLASS_SOURCE,
+        for revision in (h.PG_CONTROLS, h.SOURCE_MERGE, h.SOURCE, h.COUNT_CONTROLS, h.LITERAL_CLASS_SOURCE,
                          h.CHILD_CLASS_SOURCE, h.CONTROLS_PARENT):
             selector = ('rev-list', '--parents', '-n', '1', revision)
             good = self.git(None, *selector).decode().split()
@@ -430,7 +431,10 @@ class ConsumerHistoryTests(unittest.TestCase):
 
     def test_merge_prefix_has_exact_product_and_successor_only_consumer_changes(self):
         for selector in (('diff', '--name-status', h.SOURCE, h.SOURCE_MERGE),
+                         ('diff', '--name-status', h.SOURCE, h.PG_CONTROLS),
                          ('diff', '--name-status', h.CONTROLS_PARENT, h.COUNT_CONTROLS),
+                         ('diff', '--name-status', h.SOURCE_MERGE, h.PG_CONTROLS),
+                         ('diff', '--name-status', h.PG_CONTROLS, 'HEAD'),
                          ('diff', '--name-status', h.SOURCE_MERGE, 'HEAD')):
             for raw in (b'', b'M\tbackend/src/task_delivery/oci.rs\n',
                         b'A\t.local/private.py\n', b'D\tscripts/hermetic_full12/run.py\n'):
@@ -442,7 +446,8 @@ class ConsumerHistoryTests(unittest.TestCase):
     def git(_, *args):
         if args == ('rev-parse', '--is-shallow-repository'):
             return b'false\n'
-        parents = {'HEAD': ('a' * 40, h.SOURCE_MERGE),
+        parents = {'HEAD': ('a' * 40, h.PG_CONTROLS),
+                   h.PG_CONTROLS: (h.PG_CONTROLS, h.SOURCE_MERGE),
                    h.SOURCE_MERGE: (h.SOURCE_MERGE, h.COUNT_CONTROLS, h.SOURCE),
                    h.COUNT_CONTROLS: (h.COUNT_CONTROLS, h.CHILD_CLASS_CONTROLS),
                    h.LITERAL_CLASS_SOURCE: (h.LITERAL_CLASS_SOURCE, h.CHILD_CLASS_SOURCE),
@@ -472,6 +477,8 @@ class ConsumerHistoryTests(unittest.TestCase):
         if args[:4] == ('rev-list', '--parents', '-n', '1'):
             return (' '.join(parents[args[4]]) + '\n').encode()
         if args in (('diff', '--name-status', h.CONTROLS_PARENT, h.COUNT_CONTROLS),
+                    ('diff', '--name-status', h.SOURCE_MERGE, h.PG_CONTROLS),
+                    ('diff', '--name-status', h.PG_CONTROLS, 'HEAD'),
                     ('diff', '--name-status', h.SOURCE_MERGE, 'HEAD')):
             return b'M\tscripts/hermetic_full12/maintenance-pin.json\n'
         if args == ('diff', '--name-status', h.OCI_CLI_CONTROLS, h.CHECKPOINT_MERGE):
@@ -480,6 +487,7 @@ class ConsumerHistoryTests(unittest.TestCase):
             return (b'M\tbackend/src/bin/forge-delivery.rs\nM\tbackend/src/task_delivery/oci.rs\n'
                     b'M\tbackend/tests/support/oci_delivery.rs\nM\tscripts/tests/test_oci_offline_fixture.py\n')
         if args in (('diff', '--name-status', h.SOURCE, 'HEAD'),
+                    ('diff', '--name-status', h.SOURCE, h.PG_CONTROLS),
                     ('diff', '--name-status', h.SOURCE, h.SOURCE_MERGE)):
             return b'A\tscripts/hermetic_full12/maintenance-pin.json\n'
         raise AssertionError('unexpected synthetic Git invocation')

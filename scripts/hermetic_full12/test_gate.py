@@ -673,6 +673,94 @@ class GateAssertionTests(unittest.TestCase):
             gate.assertions('cli', b'test result: ok. 2 passed; 0 failed;', Path('.'))
 
 
+class SmokeExecutorBindingTests(unittest.TestCase):
+    CURRENT = '0ad5fb510626516f2f8b8d7254c9147b0b1fad99c8d185ca27e35c7d64eec299'
+
+    class Validated(Exception):
+        pass
+
+    @staticmethod
+    def raw_executor(revision):
+        return subprocess.run(['git', 'show', revision + ':scripts/postgres-delivery.py'],
+            cwd=h.HERE.parents[1], capture_output=True, check=True, timeout=10).stdout
+
+    @contextmanager
+    def inputs(self, raw, *, observer_pin=None, invalid_admission=False):
+        base = h.load('pure_executor_observer', h.HERE / 'observer.py')
+        transport = h.load('pure_executor_transport', h.HERE / 'transport.py')
+        if observer_pin is not None:
+            base.EXECUTOR_SHA256 = observer_pin
+        pin = h.m.preflight()
+        proof = {key: pin[key] for key in ('repository', 'commit', 'ref', 'files')}
+        sdk = pin['files']['scripts/compose_helpers.py']['sha256']
+        if invalid_admission:
+            proof['commit'] = '0' * 40
+        admission = {'maintenance_git': proof, 'daemon': {'id': 'owned', 'endpoint': 'owned', 'root': 'owned'}}
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            executor = root / 'sources/CI-CD/scripts/postgres-delivery.py'
+            executor.parent.mkdir(parents=True)
+            executor.write_bytes(raw)
+            manifest = root / 'stages/smoke/compose.json'
+            manifest.parent.mkdir(parents=True)
+            manifest.write_bytes(b'{}')
+            project = 'sdlc-qa-forge-delivery-' + 'a' * 20
+            (manifest.parent / 'journal.json').write_text(json.dumps({
+                'version': 2, 'phase': 'manifest-validated', 'project': project,
+                'task': gate.TASK, 'purpose': gate.PURPOSE, 'daemon_id': 'owned',
+                'sdk_sha256': sdk, 'manifest': str(manifest), 'manifest_sha256': h.sha(manifest),
+                'docker': h.DOCKER, 'owner_pid': os.getpid()}))
+            kill = Mock()
+            with patch.object(base, 'os', SimpleNamespace(name='posix', kill=kill)), \
+                    patch.object(base, 'signal', SimpleNamespace(SIGTERM=15, SIGKILL=9)), \
+                    patch.object(h, 'load', side_effect=[base, transport]), \
+                    patch.object(transport.BoundExec, 'bind', side_effect=self.Validated) as bind, \
+                    patch('sys.stdout', io.StringIO()):
+                yield base, bind, kill, lambda: gate.smoke(root,
+                    SimpleNamespace(project=project, path=manifest), SimpleNamespace(SDK_SHA256=sdk),
+                    admission, {'postgres': 'sha256:' + 'a' * 64})
+
+    def test_real_validate_inputs_accepts_reviewed_raw_git_executor(self):
+        raw = self.raw_executor(h.SOURCE)
+        row, = [item for item in h.read(h.HERE / 'source-catalogue.json')['catalogues']['forge']['files']
+                if item['path'] == 'scripts/postgres-delivery.py']
+        self.assertEqual((len(raw), hashlib.sha256(raw).hexdigest()), (row['size'], self.CURRENT))
+        self.assertEqual(row['sha256'], self.CURRENT)
+        with self.inputs(raw) as (base, bind, kill, invoke):
+            with self.assertRaises(self.Validated):
+                invoke()
+            self.assertEqual(base.EXECUTOR_SHA256, self.CURRENT)
+            bind.assert_called_once_with()
+            kill.assert_called_once_with(os.getpid(), 0)
+
+    def test_real_validate_inputs_rejects_old_replaced_and_crlf_executor(self):
+        current = self.raw_executor(h.SOURCE)
+        for raw in (self.raw_executor(h.CHILD_CLASS_SOURCE), current + b'\n', current.replace(b'\n', b'\r\n')):
+            with self.subTest(digest=hashlib.sha256(raw).hexdigest()), self.inputs(raw) as (base, bind, kill, invoke):
+                with self.assertRaises(base.ClosedFailure) as error:
+                    invoke()
+                self.assertEqual(error.exception.reason, 'input_rejected')
+                bind.assert_not_called()
+                kill.assert_not_called()
+
+    def test_unreviewed_observer_pin_or_admission_cannot_rebind(self):
+        raw = self.raw_executor(h.SOURCE)
+        for pin in (self.CURRENT, '0' * 64, '', True):
+            with self.subTest(pin=pin), self.inputs(raw, observer_pin=pin) as (base, bind, kill, invoke):
+                with self.assertRaises(ValueError):
+                    invoke()
+                self.assertEqual(base.EXECUTOR_SHA256, pin)
+                bind.assert_not_called()
+                kill.assert_not_called()
+        with self.inputs(raw, invalid_admission=True) as (base, bind, kill, invoke):
+            before = base.EXECUTOR_SHA256
+            with self.assertRaises(h.m.QualificationFailure):
+                invoke()
+            self.assertEqual(base.EXECUTOR_SHA256, before)
+            bind.assert_not_called()
+            kill.assert_not_called()
+
+
 class SmokeAndCleanupTests(unittest.TestCase):
     def setUp(self):
         self.observer = h.load('pure_smoke_observer', h.HERE / 'observer.py')

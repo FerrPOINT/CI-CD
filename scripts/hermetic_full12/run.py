@@ -470,9 +470,11 @@ def fill_cache(root, sdk, q, parent, images, token, cache_operations):
 def smoke(root, operation, q, admission, images):
     base = h.load('hosted_smoke_observer', HERE / 'observer.py')
     transport = h.load('hosted_smoke_transport', HERE / 'transport.py')
-    # Admission adaptation only: assertions and transport/observer bodies stay byte-identical.
+    # Reviewed identity adaptation only; observer assertions and source bytes stay unchanged.
     h.bind_maintenance(base, admission['maintenance_git'])
     h.require(base.SDK_SHA256 == q.SDK_SHA256)
+    h.require(base.EXECUTOR_SHA256 == '3cb62f6ed3dbfd641eb540eb2cdd603ee6ff7ba9a6ce81702c6f47444673c56f')
+    base.EXECUTOR_SHA256 = '0ad5fb510626516f2f8b8d7254c9147b0b1fad99c8d185ca27e35c7d64eec299'
     base.DAEMON_ID = transport.DAEMON_ID = admission['daemon']['id']
     transport.ENDPOINT, transport.DAEMON_ROOT = admission['daemon']['endpoint'], admission['daemon']['root']
     transport.PG_IMAGE = images['postgres']
