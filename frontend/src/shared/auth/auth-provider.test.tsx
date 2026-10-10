@@ -6,6 +6,7 @@ import { ProtectedRoute } from './protected-route'
 
 const authMod = vi.hoisted(() => ({
   currentSession: vi.fn<() => unknown>(() => null),
+  acceptSso: vi.fn<(token: string, expiresAt: number, username: string) => unknown>(),
   refresh: vi.fn(),
   authRequired: vi.fn(),
   login: vi.fn(),
@@ -13,8 +14,8 @@ const authMod = vi.hoisted(() => ({
 }))
 
 vi.mock('@/api/auth', () => authMod)
-const sso = vi.hoisted(() => ({ endSso: vi.fn() }))
-vi.mock('@sdlc/ui/sso', () => ({ endSso: sso.endSso }))
+const sso = vi.hoisted(() => ({ endSso: vi.fn(), restoreSso: vi.fn() }))
+vi.mock('@sdlc/ui/sso', async importOriginal => ({ ...await importOriginal<typeof import('@sdlc/ui/sso')>(), ...sso }))
 
 function Probe() {
   const { status, logout } = useAuth()
@@ -25,6 +26,8 @@ describe('AuthProvider', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     authMod.currentSession.mockReturnValue(null)
+    authMod.acceptSso.mockImplementation((token, expiresAt, username) => ({ access_token: token, expires_at: expiresAt / 1000, username }))
+    sso.restoreSso.mockRejectedValue(Object.assign(new Error('Login required'), { name: 'SsoLoginRequiredError' }))
   })
 
   it('keeps an in-memory central session', async () => {
@@ -44,6 +47,17 @@ describe('AuthProvider', () => {
       </AuthProvider>,
     )
     await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('anonymous'))
+  })
+
+  it('keeps checking while silent SSO is unresolved and accepts its verified result', async () => {
+    let complete!: (value: unknown) => void
+    sso.restoreSso.mockReturnValueOnce(new Promise(resolve => { complete = resolve }))
+    render(<AuthProvider><Probe /></AuthProvider>)
+    expect(screen.getByTestId('probe')).toHaveTextContent('checking')
+    const session = { accessToken: 'fresh-fixture', expiresAt: Date.now() + 60000, subject: 'fixture', email: 'fixture@example.test', name: 'Fixture', returnTo: '/' }
+    complete(session)
+    await waitFor(() => expect(screen.getByTestId('probe')).toHaveTextContent('authenticated'))
+    expect(authMod.acceptSso).toHaveBeenCalledWith(session.accessToken, session.expiresAt, session.name)
   })
 
   it('redirects to central logout without rendering the local login route', async () => {
@@ -69,12 +83,13 @@ describe('AuthProvider', () => {
   })
 
   it('does not enter open mode when central auth is unavailable', async () => {
+    sso.restoreSso.mockRejectedValueOnce(new Error('Auth unavailable'))
     render(
       <AuthProvider>
         <Probe />
       </AuthProvider>,
     )
-    await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('anonymous'))
+    await waitFor(() => expect(screen.getByTestId('probe').textContent).toBe('unavailable'))
   })
 })
 

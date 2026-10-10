@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router'
 import { completeSso } from '@sdlc/ui/sso'
 import { Button } from '@sdlc/ui/ui'
 import { ssoConfig, useAuth } from '@/shared/auth/auth-provider'
+import { finishPlatformLogin } from '@sdlc/ui/platform'
 
 let pending: ReturnType<typeof completeSso> | null = null
 function completion() {
@@ -22,7 +23,7 @@ export function SsoCallbackPage() {
     void completion().then((session) => {
       if (!active) return
       acceptSso(session)
-      navigate(session.returnTo, { replace: true })
+      if (!finishPlatformLogin(import.meta.env.VITE_PLATFORM_ORIGIN)) navigate(session.returnTo, { replace: true })
     }).catch((caught) => {
       if (active) setError(caught instanceof Error ? caught.message : 'Не удалось завершить вход')
     })

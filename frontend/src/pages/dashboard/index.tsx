@@ -7,6 +7,7 @@ import { QueryState } from '@/shared/ui/query-state'
 import { Button } from '@sdlc/ui/ui'
 import { ArrowRight, Clock3, FolderGit2, Play, Server } from 'lucide-react'
 import { summarizePipelines } from './model'
+import { usePlatformReadiness } from '@sdlc/ui/platform'
 
 function RetryNotice({ message, onRetry }: { message: string; onRetry: () => void }) {
   const { t } = useTranslation()
@@ -41,6 +42,7 @@ export function DashboardPage() {
   const hasRunnerData = runnersData !== undefined
   const pipelineQuery = useProjectPipelines(projects)
   const summary = summarizePipelines(pipelineQuery.runs)
+  usePlatformReadiness({ pending: projectsLoading || runnersLoading || pipelineQuery.isLoading, error: projectsError || runnersError || pipelineQuery.error ? 'Не удалось загрузить дашборд CI/CD.' : null })
   const projectNames = new Map(projects.map(project => [project.id, project.name]))
   const unavailableRunners = runners.filter(runner => runner.status !== 'online').length
   const runsReady = !projectsLoading

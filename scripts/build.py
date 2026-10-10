@@ -6,8 +6,9 @@ import sys
 
 root = Path(__file__).resolve().parents[1]
 base = root.parent / 'services-base'
+revision = '.base-ui-revision' if sys.argv[1:] == ['frontend'] else '.base-revision'
 subprocess.run([sys.executable, str(base / 'scripts/verify_base_revision.py'),
-                '--base', str(base), '--revision', str(root / '.base-revision')], check=True)
+                '--base', str(base), '--revision', str(root / revision)], check=True)
 compose = ['docker', 'compose']
 if (root / 'docker-compose.dev.yml').exists() and not (root / 'docker-compose.yml').exists():
     compose += ['-f', 'docker-compose.dev.yml']
