@@ -26,7 +26,8 @@ def git_response(argv):
         return b'false\n'
     if args[0] == 'rev-list':
         chain = {'HEAD': (os.environ['GITHUB_SHA'], h.CONTROLS_PARENT),
-                 h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.CACHE_PREPARE_CONTROLS),
+                 h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.CACHE_ALLOCATE_CONTROLS),
+                 h.CACHE_ALLOCATE_CONTROLS: (h.CACHE_ALLOCATE_CONTROLS, h.CACHE_PREPARE_CONTROLS),
                  h.CACHE_PREPARE_CONTROLS: (h.CACHE_PREPARE_CONTROLS, h.CACHE_BOUNDARY_CONTROLS),
                  h.CACHE_BOUNDARY_CONTROLS: (h.CACHE_BOUNDARY_CONTROLS, h.DELEGATION_CONTROLS),
                  h.DELEGATION_CONTROLS: (h.DELEGATION_CONTROLS, h.RESOURCE_CONTROLS),
@@ -117,8 +118,8 @@ class DeadlineBoundaryTests(unittest.TestCase):
                    'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_SHA': 'a' * 40}
             with patch.dict(os.environ, env), patch.object(h.m, 'preflight'), patch.object(h.m, 'read_payloads', return_value=({}, {})), patch.object(h, 'hosted_guard'), patch.object(h, 'verify_components', return_value={}), patch.object(h, 'wall_budget', side_effect=wall), patch.object(h.time, 'monotonic', side_effect=lambda: clock[0]), patch.object(h, 'command', side_effect=command), patch.object(h, 'reclaim', side_effect=h.CapacityFailure({'host_free_bytes': 0})), patch.object(gate, 'start_daemon') as start, patch.object(gate, 'stop_daemon', return_value={'stopped': True}):
                 self.assertEqual(gate.run_job('C'), 1)
-            self.assertEqual(envelopes[:2], [5400, 4080])  # Twenty-two successful Git calls consume1320.
-            self.assertEqual(len(git_calls), 44)  # Initial + final parity proof, private qualification separately tested.
+            self.assertEqual(envelopes[:2], [5400, 4020])  # Twenty-three successful Git calls consume1380.
+            self.assertEqual(len(git_calls), 46)  # Initial + final parity proof, private qualification separately tested.
             start.assert_not_called()
             self.assertIsNone(h.BOOTSTRAP_DEADLINE)
 
@@ -151,7 +152,7 @@ class DeadlineBoundaryTests(unittest.TestCase):
         operation = SimpleNamespace(write=Mock(), close=Mock(), command=['not-executed'])
         parent = SimpleNamespace(parent_class=lambda *_: lambda **kwargs: operation)
         pending = []
-        with patch.object(h, 'capacity') as capacity, patch.object(h, 'command', side_effect=h.OverheadTimeout('bootstrap', 5400)):
+        with patch.object(h, 'reclaim') as capacity, patch.object(h, 'command', side_effect=h.OverheadTimeout('bootstrap', 5400)):
             with self.assertRaises(h.OverheadTimeout):
                 gate.fill_cache(Path('/fixture'), None, SimpleNamespace(DAEMON_ID='admitted'), parent,
                     {'tools': 'sha256:' + 'a' * 64}, 'a' * 20, pending)

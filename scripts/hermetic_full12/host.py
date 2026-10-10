@@ -9,6 +9,7 @@ import re
 import selectors
 import shutil
 import signal
+import stat
 import subprocess
 import tarfile
 import tempfile
@@ -28,7 +29,8 @@ RESOURCE_CONTROLS = 'eb91d4f1a3f3e0f3731c38a861db68ae8a0d952a'
 DELEGATION_CONTROLS = '3a9bbafd45c98b0458d1eddf98908275896476a0'
 CACHE_BOUNDARY_CONTROLS = '3f366b5c73c1386f3d710f4dd94dc1c0ac074bc6'
 CACHE_PREPARE_CONTROLS = '970f785cf05f72cf88f21adc2d0c5ee5012ecf9c'
-CONTROLS_PARENT = '6241d2b381a22302f6fd8fae4ee14e0d200c1282'
+CACHE_ALLOCATE_CONTROLS = '6241d2b381a22302f6fd8fae4ee14e0d200c1282'
+CONTROLS_PARENT = 'ab623f1ea7f47c0afa182ab4b913c89f981d305b'
 BRANCH = 'build-only/forge-delegation-full12-20261010'
 CONSUMER_PATHS = {
     '.github/workflows/forge-hermetic-full12.yml',
@@ -40,7 +42,7 @@ CONSUMER_PATHS = {
 HOST_BYTES = 108279229428
 DATA_BYTES = 71319483898
 INODES = 300000
-RECLAIM = ('/usr/share/dotnet', '/usr/local/lib/android', '/opt/ghc')
+RECLAIM = ('/usr/share/dotnet', '/usr/local/lib/android', '/opt/ghc', '/usr/local/.ghcup')
 DOCKER = ['docker', '--context', 'rootless']
 ERROR_STAGES = ('python', 'row-smoke', 'smoke', 'check', 'clippy', 'postgres', 'oci',
                 'workspace', 'integration', 'cli', 'openapi', 'release')
@@ -378,7 +380,8 @@ def bind_maintenance(module, proof):
 
 def controls_history(controls):
     require(git(controls, 'rev-parse', '--is-shallow-repository').strip() == b'false')
-    for revision, parent in (('HEAD', CONTROLS_PARENT), (CONTROLS_PARENT, CACHE_PREPARE_CONTROLS),
+    for revision, parent in (('HEAD', CONTROLS_PARENT), (CONTROLS_PARENT, CACHE_ALLOCATE_CONTROLS),
+                             (CACHE_ALLOCATE_CONTROLS, CACHE_PREPARE_CONTROLS),
                              (CACHE_PREPARE_CONTROLS, CACHE_BOUNDARY_CONTROLS),
                              (CACHE_BOUNDARY_CONTROLS, DELEGATION_CONTROLS),
                              (DELEGATION_CONTROLS, RESOURCE_CONTROLS),
@@ -454,26 +457,78 @@ def capacity(root):
     return measurement
 
 
-def reclaim(root):
+def reclaim_receipt(root):
     hosted_guard()
+    root = Path(root)
+    require(not any(p.is_symlink() for p in (root, *root.parents)))
+    root = root.resolve()
+    host = Path(os.environ['RUNNER_TEMP']).resolve()
+    require(root.is_relative_to(host) and root.is_dir())
+    root_stat, host_stat = root.stat(), host.stat()
+    identity = {'workflow_run': os.environ['GITHUB_RUN_ID'], 'workflow_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+                'host_device': host_stat.st_dev, 'data_device': root_stat.st_dev, 'data_inode': root_stat.st_ino}
+    require(all(re.fullmatch('[1-9][0-9]*', identity[key]) for key in ('workflow_run', 'workflow_attempt')))
+    receipt = root / 'reclaim.json'
+    require(not receipt.is_symlink())
     result = []
+    if receipt.exists():
+        metadata = receipt.lstat()
+        require(stat.S_ISREG(metadata.st_mode) and metadata.st_dev == root_stat.st_dev
+                and metadata.st_nlink == 1 and metadata.st_size <= 65536)
+        result = read(receipt)
+        current = receipt.lstat()
+        require((current.st_dev, current.st_ino, current.st_size, current.st_mtime_ns)
+                == (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns))
+    require(type(result) is list and len(result) <= len(RECLAIM))
+    seen = set()
+    numeric = ('measured_bytes', 'free_before', 'free_after', 'path_device', 'path_inode')
+    for entry in result:
+        require(type(entry) is dict and set(entry) == {'allowlisted_path', *identity, *numeric})
+        require(all(type(entry[key]) is type(value) and entry[key] == value for key, value in identity.items()))
+        literal = entry['allowlisted_path']
+        require(literal in RECLAIM and literal not in seen)
+        require(all(type(entry[key]) is int and entry[key] >= 0 for key in numeric))
+        require(entry['path_device'] == identity['host_device'] == identity['data_device'] and entry['path_inode'] > 0)
+        require(not Path(literal).exists() and not Path(literal).is_symlink())
+        seen.add(literal)
+    return identity, result
+
+
+def reclaim(root):
+    identity, result = reclaim_receipt(root)
+    root = Path(root).resolve()
+    host = Path(os.environ['RUNNER_TEMP']).resolve()
+    receipt = root / 'reclaim.json'
     for literal in RECLAIM:
         if shutil.disk_usage(os.environ['RUNNER_TEMP']).free >= HOST_BYTES:
             break
         path = Path(literal)
+        require(not path.is_symlink())
         if not path.exists():
             continue
         require(path.resolve() == path and not any(p.is_symlink() for p in (path, *path.parents)))
+        metadata = path.lstat()
+        require(stat.S_ISDIR(metadata.st_mode)
+                and metadata.st_dev == identity['host_device'] == identity['data_device'])
         # Never recurse across a mount boundary, including bind mounts.
-        mounts = [line.split()[4].replace('\\040', ' ') for line in Path('/proc/self/mountinfo').read_text().splitlines()]
+        mountinfo = Path('/proc/self/mountinfo').read_text()
+        mounts = [line.split()[4].replace('\\040', ' ') for line in mountinfo.splitlines()]
         require(not any(Path(m).is_relative_to(path) for m in mounts))
         measured = int(command(['du', '-sb', '--', literal], timeout=120).split()[0])
         before = shutil.disk_usage(os.environ['RUNNER_TEMP']).free
+        current = path.lstat()
+        require(measured >= 0 and stat.S_ISDIR(current.st_mode)
+                and (current.st_dev, current.st_ino) == (metadata.st_dev, metadata.st_ino))
+        require(Path('/proc/self/mountinfo').read_text() == mountinfo)
+        require((root.stat().st_dev, root.stat().st_ino, host.stat().st_dev)
+                == (identity['data_device'], identity['data_inode'], identity['host_device']))
         command(['sudo', '-n', 'rm', '-rf', '--one-file-system', '--', literal], timeout=300)
-        require(not path.exists())
+        require(not path.exists() and not path.is_symlink())
         after = shutil.disk_usage(os.environ['RUNNER_TEMP']).free
-        result.append({'allowlisted_path': literal, 'measured_bytes': measured, 'free_before': before, 'free_after': after})
-        atomic(root / 'reclaim.json', result)
+        result.append({**identity, 'allowlisted_path': literal, 'measured_bytes': measured,
+                       'free_before': before, 'free_after': after,
+                       'path_device': metadata.st_dev, 'path_inode': metadata.st_ino})
+        atomic(receipt, result)
     capacity(root)
     return result
 

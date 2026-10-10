@@ -1,14 +1,15 @@
 """Pure regressions only; Docker, WSL, Cargo and hosted dispatch are never invoked."""
 import ast
 import copy
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 import errno
 import hashlib
 import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import stat
 import subprocess
 import tempfile
 from types import SimpleNamespace
@@ -143,7 +144,7 @@ class ControlsTests(unittest.TestCase):
             self.assertEqual(h.capacity(Path('.'))['host_min_bytes'], h.HOST_BYTES)
 
     def test_reclaim_high_capacity_does_not_remove_anything(self):
-        with patch.dict(os.environ, RUNNER_TEMP='.'), patch.object(h, 'hosted_guard'), patch.object(h.shutil, 'disk_usage', return_value=SimpleNamespace(free=h.HOST_BYTES)), patch.object(h, 'capacity'), patch.object(h, 'command') as command:
+        with patch.dict(os.environ, RUNNER_TEMP='.', GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1'), patch.object(h, 'hosted_guard'), patch.object(h.shutil, 'disk_usage', return_value=SimpleNamespace(free=h.HOST_BYTES)), patch.object(h, 'capacity'), patch.object(h, 'command') as command:
             self.assertEqual(h.reclaim(Path('.')), [])
         command.assert_not_called()
 
@@ -152,6 +153,246 @@ class ControlsTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 h.reclaim(Path('.'))
         command.assert_not_called()
+
+
+class ReclaimTests(unittest.TestCase):
+    @contextmanager
+    def fixture(self, *, free=None, present=(), gains=None, devices=None, symlinks=(), mounts=()):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            device = root.stat().st_dev
+            state = {'free': h.HOST_BYTES if free is None else free, 'present': set(present),
+                     'gains': gains or {}, 'symlinks': set(symlinks), 'events': [], 'swap_on_du': False,
+                     'mounts': list(mounts), 'mount_on_du': False}
+            metadata = {path: SimpleNamespace(st_mode=stat.S_IFDIR | 0o755,
+                        st_dev=(devices or {}).get(path, device), st_ino=100 + index)
+                        for index, path in enumerate(h.RECLAIM)}
+
+            class Candidate(PurePosixPath):
+                def exists(self):
+                    return str(self) in state['present']
+
+                def is_symlink(self):
+                    return str(self) in state['symlinks']
+
+                def resolve(self):
+                    return self
+
+                def lstat(self):
+                    return metadata[str(self)]
+
+                def read_text(self):
+                    assert str(self) == '/proc/self/mountinfo'
+                    return '\n'.join('1 0 0:1 / ' + path + ' rw - ext4 none rw' for path in state['mounts'])
+
+            def path(value):
+                if type(value) is str and value.startswith('/') and not Path(value).is_relative_to(root):
+                    return Candidate(value)
+                return Path(value)
+
+            def command(argv, **kwargs):
+                state['events'].append(argv)
+                literal = argv[-1]
+                self.assertIn(literal, h.RECLAIM)
+                if argv[0] == 'du':
+                    self.assertEqual(argv, ['du', '-sb', '--', literal])
+                    self.assertEqual(kwargs, {'timeout': 120})
+                    if state['swap_on_du']:
+                        metadata[literal] = SimpleNamespace(**{**vars(metadata[literal]), 'st_ino': 999})
+                    if state['mount_on_du']:
+                        state['mounts'].append(literal + '/new-bind')
+                    return str(state['gains'].get(literal, 0)).encode() + b'\tunused'
+                self.assertEqual(argv, ['sudo', '-n', 'rm', '-rf', '--one-file-system', '--', literal])
+                self.assertEqual(kwargs, {'timeout': 300})
+                state['present'].remove(literal)
+                state['free'] += state['gains'].get(literal, 0)
+                return b''
+
+            with patch.dict(os.environ, RUNNER_TEMP=str(root), GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1'), \
+                    patch.object(h, 'hosted_guard'), patch.object(h, 'Path', side_effect=path), \
+                    patch.object(h.shutil, 'disk_usage', side_effect=lambda _: SimpleNamespace(free=state['free'])), \
+                    patch.object(h.os, 'statvfs', return_value=SimpleNamespace(f_favail=h.INODES), create=True), \
+                    patch.object(h, 'command', side_effect=command) as execute:
+                yield root, state, execute
+
+    def test_exact_image_haskell_path_and_legacy_allowlist_only(self):
+        self.assertEqual(h.RECLAIM, ('/usr/share/dotnet', '/usr/local/lib/android', '/opt/ghc', '/usr/local/.ghcup'))
+
+    def test_noop_missing_candidates_and_insufficient_preserve_original_floor(self):
+        with self.fixture() as (root, state, command):
+            self.assertEqual(h.reclaim(root), [])
+            command.assert_not_called()
+            self.assertFalse((root / 'reclaim.json').exists())
+            state['free'] -= 1
+            with self.assertRaises(h.CapacityFailure) as caught:
+                h.reclaim(root)
+            self.assertEqual(caught.exception.measurement['host_min_bytes'], h.HOST_BYTES)
+            command.assert_not_called()
+        candidate = '/usr/local/.ghcup'
+        with self.fixture(free=h.HOST_BYTES - 10, present=(candidate,), gains={candidate: 1}) as (root, _, _):
+            with self.assertRaises(h.CapacityFailure):
+                h.reclaim(root)
+            self.assertEqual(h.read(root / 'reclaim.json')[0]['free_after'], h.HOST_BYTES - 9)
+
+    def test_foreign_or_missing_device_symlink_and_mount_refuse_before_commands(self):
+        candidate = '/usr/local/.ghcup'
+        for options in ({'devices': {candidate: None}}, {'devices': {candidate: -1}},
+                        {'symlinks': (candidate,)}, {'symlinks': ('/usr/local',)},
+                        {'mounts': (candidate,)}, {'mounts': (candidate + '/nested',)}):
+            with self.subTest(options=options), self.fixture(free=h.HOST_BYTES - 1,
+                    present=(candidate,), **options) as (root, _, command):
+                with self.assertRaises(ValueError):
+                    h.reclaim(root)
+                command.assert_not_called()
+                self.assertFalse((root / 'reclaim.json').exists())
+        with self.fixture(free=h.HOST_BYTES - 1, symlinks=(candidate,)) as (root, _, command):
+            with self.assertRaises(ValueError):
+                h.reclaim(root)
+            command.assert_not_called()
+
+    def test_candidate_identity_swap_after_measurement_refuses_delete(self):
+        candidate = '/usr/local/.ghcup'
+        for change in ('swap_on_du', 'mount_on_du'):
+            with self.subTest(change=change), self.fixture(free=h.HOST_BYTES - 1,
+                    present=(candidate,)) as (root, state, _):
+                state[change] = True
+                with self.assertRaises(ValueError):
+                    h.reclaim(root)
+                self.assertEqual([argv[0] for argv in state['events']], ['du'])
+
+    def test_two_phase_receipt_accumulates_actual_devices_and_is_idempotent(self):
+        paths = ('/usr/share/dotnet', '/usr/local/lib/android', '/usr/local/.ghcup')
+        gains = dict(zip(paths, (30, 40, 100)))
+        with self.fixture(free=h.HOST_BYTES - 70, present=paths, gains=gains) as (root, state, command):
+            first = h.reclaim(root)
+            self.assertEqual([row['allowlisted_path'] for row in first], list(paths[:2]))
+            state['free'] -= 90
+            second = h.reclaim(root)
+            self.assertEqual(second[:2], first)
+            self.assertEqual([row['allowlisted_path'] for row in second], list(paths))
+            self.assertEqual(h.read(root / 'reclaim.json'), second)
+            for row in second:
+                self.assertEqual((row['host_device'], row['data_device'], row['path_device']),
+                                 (root.stat().st_dev,) * 3)
+                self.assertEqual(row['data_inode'], root.stat().st_ino)
+                self.assertEqual((row['workflow_run'], row['workflow_attempt']), ('123', '1'))
+                self.assertGreater(row['path_inode'], 0)
+            raw = (root / 'reclaim.json').read_bytes()
+            command.reset_mock()
+            identity, recorded = h.reclaim_receipt(root)
+            self.assertEqual(recorded, second)
+            self.assertEqual(identity['data_inode'], root.stat().st_ino)
+            self.assertEqual(h.reclaim(root), second)
+            self.assertEqual((root / 'reclaim.json').read_bytes(), raw)
+            command.assert_not_called()
+
+    def test_final_safe_report_refreshes_validated_cumulative_receipt_before_public_write(self):
+        tree = ast.parse((h.HERE / 'run.py').read_bytes())
+        job = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'run_job')
+        reads = [node for node in ast.walk(job) if isinstance(node, ast.Call)
+                 and ast.unparse(node.func) == 'h.reclaim_receipt']
+        self.assertEqual(len(reads), 1)
+        self.assertEqual(ast.unparse(reads[0]), 'h.reclaim_receipt(root)')
+        assignment = next(node for node in ast.walk(job) if isinstance(node, ast.Assign)
+                          and node.value is reads[0])
+        self.assertEqual(ast.unparse(assignment.targets[0]), "(_, report['reclaim'])")
+        public = next(node for node in ast.walk(job) if isinstance(node, ast.Call)
+                      and ast.unparse(node).startswith("h.atomic(root / 'public/report.json'"))
+        self.assertLess(assignment.lineno, public.lineno)
+
+    def test_malformed_missing_mismatched_foreign_and_reappeared_receipt_fail_closed(self):
+        candidate = '/usr/local/.ghcup'
+        mutations = (lambda rows: {}, lambda rows: rows * 2,
+                     lambda rows: [{k: v for k, v in rows[0].items() if k != 'data_inode'}],
+                     lambda rows: [{**rows[0], 'data_inode': rows[0]['data_inode'] + 1}],
+                     lambda rows: [{**rows[0], 'workflow_run': '124'}],
+                     lambda rows: [{**rows[0], 'path_device': -1}],
+                     lambda rows: [{**rows[0], 'allowlisted_path': '/foreign'}],
+                     lambda rows: [{**rows[0], 'measured_bytes': True}],
+                     lambda rows: [{**rows[0], 'extra': 1}])
+        for index, mutate in enumerate(mutations):
+            with self.subTest(index=index), self.fixture(free=h.HOST_BYTES - 1, present=(candidate,),
+                    gains={candidate: 1}) as (root, _, command):
+                rows = h.reclaim(root)
+                h.atomic(root / 'reclaim.json', mutate(rows))
+                raw = (root / 'reclaim.json').read_bytes()
+                command.reset_mock()
+                with self.assertRaises(ValueError):
+                    h.reclaim(root)
+                self.assertEqual((root / 'reclaim.json').read_bytes(), raw)
+                command.assert_not_called()
+        with self.fixture(free=h.HOST_BYTES - 1, present=(candidate,), gains={candidate: 1}) as (root, state, command):
+            h.reclaim(root)
+            state['present'].add(candidate)
+            command.reset_mock()
+            with self.assertRaises(ValueError):
+                h.reclaim(root)
+            command.assert_not_called()
+
+    def test_symlink_receipt_refuses_even_when_capacity_is_sufficient(self):
+        with self.fixture() as (root, _, command):
+            original = Path.is_symlink
+            with patch.object(Path, 'is_symlink', autospec=True,
+                    side_effect=lambda path: path == root / 'reclaim.json' or original(path)):
+                with self.assertRaises(ValueError):
+                    h.reclaim(root)
+            command.assert_not_called()
+
+    def test_foreign_root_and_nonregular_or_foreign_receipt_file_refuse(self):
+        with self.fixture() as (root, _, command):
+            with patch.dict(os.environ, RUNNER_TEMP=str(root / 'foreign')):
+                with self.assertRaises(ValueError):
+                    h.reclaim(root)
+            command.assert_not_called()
+            h.atomic(root / 'reclaim.json', [])
+            original = Path.lstat
+            for change in ({'st_dev': -1}, {'st_nlink': 2}, {'st_mode': stat.S_IFDIR}, {'st_size': 65537}):
+                def lstat(path):
+                    value = original(path)
+                    if path == root / 'reclaim.json':
+                        return SimpleNamespace(**{**{key: getattr(value, key) for key in (
+                            'st_mode', 'st_dev', 'st_nlink', 'st_size')}, **change})
+                    return value
+                with self.subTest(change=change), patch.object(Path, 'lstat', autospec=True, side_effect=lstat):
+                    with self.assertRaises(ValueError):
+                        h.reclaim(root)
+                command.assert_not_called()
+
+    def test_second_phase_reclaim_closes_before_original_cache_constructor_and_fetch(self):
+        first, later = '/usr/share/dotnet', '/usr/local/.ghcup'
+        with self.fixture(free=h.HOST_BYTES - 10, present=(first, later),
+                gains={first: 10, later: 20}) as (root, state, execute):
+            original = h.reclaim(root)
+            state['free'] -= 20
+            state['events'].clear()
+            registry = root / 'cache/cargo/registry'
+            registry.mkdir(parents=True)
+            journal = root / 'journal.json'
+            h.atomic(journal, {'phase': 'cleaned'})
+            operation = SimpleNamespace(command=['synthetic-compose'], project='synthetic-project',
+                journal=journal, write=Mock(side_effect=lambda *_a, **_k: state['events'].append(['manifest'])))
+            def constructor(**kwargs):
+                state['events'].append(['constructor'])
+                rows = h.read(root / 'reclaim.json')
+                self.assertEqual(rows[:1], original)
+                self.assertEqual([row['allowlisted_path'] for row in rows], [first, later])
+                self.assertEqual(h.capacity(root)['host_free_bytes'], h.HOST_BYTES)
+                return operation
+            def command(argv, **kwargs):
+                if argv[0] == 'synthetic-compose':
+                    state['events'].append(['fetch'])
+                    return b''
+                return execute(argv, **kwargs)
+            pending = []
+            with patch.object(h, 'command', side_effect=command), \
+                    patch.object(gate, 'close_operation', side_effect=lambda _: state['events'].append(['close'])), \
+                    patch.object(gate, 'inventory', return_value={'container': [], 'network': [], 'volume': []}):
+                result = gate.fill_cache(root, None, SimpleNamespace(DAEMON_ID='admitted'),
+                    SimpleNamespace(parent_class=lambda *_: constructor), {'tools': 'sha256:' + 'a' * 64},
+                    'a' * 20, pending)
+            self.assertEqual([argv[0] for argv in state['events']], ['du', 'sudo', 'constructor', 'manifest', 'fetch', 'close'])
+            self.assertEqual(pending, [operation])
+            self.assertTrue(result['new_locked_cache'])
 
 
 class AtomicAndFailureTests(unittest.TestCase):
@@ -845,7 +1086,7 @@ class CacheBoundaryTests(unittest.TestCase):
                 (root / 'cache/target').mkdir()
             with patch.object(h, 'command', command), patch.object(gate, 'close_operation', close), \
                     patch.object(gate, 'inventory', inventory), patch.object(h, 'BOOTSTRAP_DEADLINE', 1), \
-                    patch.object(h, 'capacity', capacity_check):
+                    patch.object(h, 'reclaim', capacity_check):
                 try:
                     result = gate.fill_cache(root, None, SimpleNamespace(DAEMON_ID='admitted'), parent,
                         {'tools': 'sha256:' + 'a' * 64}, 'a' * 20, pending)
@@ -920,7 +1161,7 @@ class CacheBoundaryTests(unittest.TestCase):
         self.assertEqual(ast.unparse(prepare.items[0].context_expr), "h.bootstrap_step('cache_prepare')")
         self.assertEqual(ast.unparse(allocate.items[0].context_expr), "h.bootstrap_step('cache_allocate')")
         self.assertEqual(len(allocate.body), 3)
-        self.assertEqual(ast.unparse(allocate.body[0]), 'h.capacity(root)')
+        self.assertEqual(ast.unparse(allocate.body[0]), 'h.reclaim(root)')
         constructor = allocate.body[1]
         self.assertEqual(ast.unparse(constructor.targets[0]), 'operation')
         self.assertEqual(ast.unparse(constructor.value.func), 'parent.parent_class(sdk, q)')

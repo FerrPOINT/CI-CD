@@ -1,7 +1,7 @@
 {
   "schema": "forge/private-maintenance-pin/v2",
   "repository": "FerrPOINT/services-base",
-  "commit": "43d02057d96b326b4ea077388277e6064602ef61",
+  "commit": "6602c63a9719142c3b5aafbe6bc61ff0bb3b6e4f",
   "ref": "refs/heads/fix/maintenance-admission-and-installer-20261010",
   "qualification": "published_exact_commit",
   "files": {

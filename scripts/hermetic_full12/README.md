@@ -1,7 +1,9 @@
 # Public-safe exact-source full12 controls
 
 Этот source-only successor имеет непосредственный parent
-`b9375dc4b4f070b0f6cff1733228f1a6865b1368`, затем safety controls
+`ab623f1ea7f47c0afa182ab4b913c89f981d305b`; все exact parent edges предыдущих
+controls сохранены в `host.controls_history`, включая maintenance controls
+`b9375dc4b4f070b0f6cff1733228f1a6865b1368`, safety controls
 `4d97c54f35b485224a8229495763658fcbbd40e9`, qualification controls
 `632ea8347602fe4af22e7369790ed9c75e53f76a`, original public-safe controls
 `1dbedf85242c3540b70005ce5f0c20badb682c41` и product source
@@ -12,13 +14,20 @@ retired/private controls. Product SDK остаётся
 ## Closed Dependency
 
 `maintenance-pin.json` v2 связывает parent-reviewed safety successor
-`43d02057d96b326b4ea077388277e6064602ef61` и explicit published ref
+`6602c63a9719142c3b5aafbe6bc61ff0bb3b6e4f` и explicit published ref
 `refs/heads/fix/maintenance-admission-and-installer-20261010` в private
 `FerrPOINT/services-base` (Draft PR183). Parent publication ACK и отдельный actual
 read-only qualification подтверждают точный tip до/после, fetched ref, три Git
 blobs и raw SHA256. `published_exact_commit` относится только к этой dependency,
 не к native/full12 acceptance. Private717, installed packet, рабочие файлы,
 SDK19a и старые helper hashes не являются fallback.
+
+Exact660 прошёл существующий Linux CLI qualifier в уже работающем Ubuntu WSL:
+fresh authenticated ref до/после, отдельный fetched full-history Git checkout,
+три regular-file blob и raw SHA256. Три helper bytes идентичны прежнему43;
+опубликованные43 и63 больше не являются текущим advertised tip и отвергаются.
+Product SDK19a и installed packet не менялись. Эта metadata qualification не
+означает успешный hosted run, recovery capacity или native/full12 acceptance.
 
 Новый Base contract сохраняет local-v1 default30GiB. Только reviewed disposable
 hosted callers передают explicit `isolated-ci-v1`: parent/cache напрямую, native
@@ -34,7 +43,7 @@ Canonical absolute registry/output и original owner/cleanup semantics сохр�
 
 ```sh
 python3 -B scripts/hermetic_full12/maintenance_git.py qualify \
-  /absolute/private/services-base 43d02057d96b326b4ea077388277e6064602ef61 \
+  /absolute/private/services-base 6602c63a9719142c3b5aafbe6bc61ff0bb3b6e4f \
   refs/heads/fix/maintenance-admission-and-installer-20261010
 ```
 
@@ -50,8 +59,8 @@ tip во время readback запрещено; ref сохраняется ка
 а не вместо immutable commit. Приватный код
 и credentials не входят в публичный checkout или artifacts.
 
-Текущий checkout guard требует ровно HEAD ->131->b937->4d97->632->1db->25be,
-full history, task-owned modifications относительно131 и add-only controls относительно25be.
+Текущий checkout guard требует exact normal chain из `host.controls_history`,
+full history, task-owned modifications относительно ab623 и add-only controls относительно25be.
 Предыдущий workflow/host branch: `build-only/forge-bootstrap-full12-20261010`.
 Изменение родителя в следующем reviewed commit требует сохранить всю chain,
 не заменить проверку на произвольный ancestor. Candidate JSON и installed bytes
@@ -186,6 +195,33 @@ independent teardown. Finally has1500+220+60s. Action/upload reserves and comman
 cleanup tails yield A20232/B14350/C21570s, all below21600s. No budgets increased.
 Host reserve108279229428 bytes, data reserve71319483898 bytes and300000 inodes
 remain enforced. Reclaim is only measured allowlisted disposable hosted paths.
+
+### Повторный reclaim перед cache allocation
+
+Initial admission и существующий `cache_allocate` вызывают один guarded reclaim:
+после image pulls/tools build он может удалить оставшийся неиспользуемый hosted
+SDK до original Base constructor. Floors,5400s bootstrap deadline, все12 stages,
+product/SDK pins и protected images/caches не изменены. Недостаточный free-after
+по-прежнему закрывает allocation; восстановление7.68GB или live PASS не заявлены.
+
+Allowlist содержит только dotnet, Android, legacy `/opt/ghc` и актуальный
+`/usr/local/.ghcup`. Legacy path сохранён для прежних image layouts; exact image
+`ubuntu24/20261004.327` устанавливает Haskell в `/usr/local/.ghcup`:
+[official installer](https://github.com/actions/runner-images/blob/ubuntu24/20261004.327/images/ubuntu/scripts/build/install-haskell.sh).
+Отсутствующие кандидаты не заменяются поиском других директорий.
+
+Существующий `reclaim.json` остаётся bounded списком удалений и накапливается
+между фазами. Записи проверяются по exact keys, allowlist/unique path, numeric
+types, run/attempt и actual host/data devices + root inode. Foreign/malformed,
+symlink/nonregular/hardlinked receipt или повторно появившийся удалённый path
+закрывают effects; старый receipt без identity не принимается за новый proof.
+Каждое удаление сохраняет actual candidate device/inode и free-before/after.
+Final safe report повторно читает тот же проверенный cumulative receipt, включая
+поздние удаления, без нового storage или экспорта непроверенных данных.
+Candidate должен быть canonical directory без symlink ancestors, на том же
+device, что host и data root, без mount at/below; identity и mountinfo повторно
+проверяются после `du`. Удаление использует только точный literal и прежний
+`--one-file-system`; это не atomic reservation или защита от всех filesystem races.
 
 Cleanup retains WNOWAIT leader custody and absolute deadline checks through
 actual native bridge close/record boundaries. Parent/nested Compose use v2

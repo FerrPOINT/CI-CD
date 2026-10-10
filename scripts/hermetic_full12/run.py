@@ -433,7 +433,7 @@ def resource_enforcement(operation, images):
 def fill_cache(root, sdk, q, parent, images, token, cache_operations):
     with h.bootstrap_step('cache_prepare'):
         with h.bootstrap_step('cache_allocate'):
-            h.capacity(root)
+            h.reclaim(root)
             operation = parent.parent_class(sdk, q)(project='sdlc-build-forge-cache-' + token, task=TASK,
                 purpose='locked-dependency-fetch-only', docker=h.DOCKER, directory=root / 'cache-fetch', daemon_id=q.DAEMON_ID,
                 resource_policy='isolated-ci-v1')
@@ -913,6 +913,8 @@ def run_job(job):
                 h.require(h.verify_components() == components)
                 h.checkout_proof(workspace)
                 report['checkout_parity'] = True
+                if (root / 'reclaim.json').exists():
+                    _, report['reclaim'] = h.reclaim_receipt(root)
                 report['cache_preserved'] = (root / 'cache').is_dir()
                 cleanup['complete'] = cleanup['disposable_complete']
         except BaseException as error:

@@ -8,7 +8,7 @@ import time
 
 PIN = Path(__file__).with_name('maintenance-pin.json')
 REPOSITORY = 'FerrPOINT/services-base'
-CANDIDATE_COMMIT = '43d02057d96b326b4ea077388277e6064602ef61'
+CANDIDATE_COMMIT = '6602c63a9719142c3b5aafbe6bc61ff0bb3b6e4f'
 CANDIDATE_REF = 'refs/heads/fix/maintenance-admission-and-installer-20261010'
 EXPECTED_FILES = {
     'scripts/compose_helpers.py': {

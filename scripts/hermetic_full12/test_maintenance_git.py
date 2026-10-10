@@ -182,7 +182,7 @@ class MaintenanceGitTests(unittest.TestCase):
 
     def test_current_pin_exact_reviewed_safety_successor(self):
         pin = json.loads(m.PIN.read_bytes())
-        self.assertEqual(pin['commit'], '43d02057d96b326b4ea077388277e6064602ef61')
+        self.assertEqual(pin['commit'], '6602c63a9719142c3b5aafbe6bc61ff0bb3b6e4f')
         self.assertEqual(pin['ref'], 'refs/heads/fix/maintenance-admission-and-installer-20261010')
         self.assertEqual(pin['qualification'], 'published_exact_commit')
         self.assertEqual(m.CANDIDATE_COMMIT, pin['commit'])
@@ -292,6 +292,16 @@ class MaintenanceGitTests(unittest.TestCase):
             m.qualify(Path('.'), '7170d3cc412fc3788a242be4470819fda26f56fc', m.CANDIDATE_REF, git)
         git.assert_not_called()
 
+    def test_superseded_published_tips_cannot_qualify_or_preflight(self):
+        for commit in ('43d02057d96b326b4ea077388277e6064602ef61',
+                       '63e7a77688b5bae49f9673de5031294c5b7cb77a'):
+            with self.subTest(commit=commit):
+                git = Mock()
+                with self.assertRaises(m.QualificationFailure):
+                    m.qualify(Path('.'), commit, m.CANDIDATE_REF, git)
+                git.assert_not_called()
+                self.reject_pin(lambda pin: pin.update(commit=commit))
+
     def test_incomplete_reviewed_packet_cannot_qualify_or_preflight(self):
         for field in ('blob', 'sha256'):
             with self.subTest(field=field), fixture() as (root, _, _, git):
@@ -398,7 +408,8 @@ class ConsumerHistoryTests(unittest.TestCase):
         if args == ('rev-parse', '--is-shallow-repository'):
             return b'false\n'
         parents = {'HEAD': ('a' * 40, h.CONTROLS_PARENT),
-                   h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.CACHE_PREPARE_CONTROLS),
+                   h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.CACHE_ALLOCATE_CONTROLS),
+                   h.CACHE_ALLOCATE_CONTROLS: (h.CACHE_ALLOCATE_CONTROLS, h.CACHE_PREPARE_CONTROLS),
                    h.CACHE_PREPARE_CONTROLS: (h.CACHE_PREPARE_CONTROLS, h.CACHE_BOUNDARY_CONTROLS),
                    h.CACHE_BOUNDARY_CONTROLS: (h.CACHE_BOUNDARY_CONTROLS, h.DELEGATION_CONTROLS),
                    h.DELEGATION_CONTROLS: (h.DELEGATION_CONTROLS, h.RESOURCE_CONTROLS),
@@ -419,7 +430,8 @@ class ConsumerHistoryTests(unittest.TestCase):
     def test_exact_normal_successor_history_admitted(self):
         with patch.object(h, 'git', side_effect=self.git):
             h.controls_history(Path('controls'))
-        self.assertEqual(h.CONTROLS_PARENT, '6241d2b381a22302f6fd8fae4ee14e0d200c1282')
+        self.assertEqual(h.CONTROLS_PARENT, 'ab623f1ea7f47c0afa182ab4b913c89f981d305b')
+        self.assertEqual(h.CACHE_ALLOCATE_CONTROLS, '6241d2b381a22302f6fd8fae4ee14e0d200c1282')
         self.assertEqual(h.CACHE_PREPARE_CONTROLS, '970f785cf05f72cf88f21adc2d0c5ee5012ecf9c')
         self.assertEqual(h.CACHE_BOUNDARY_CONTROLS, '3f366b5c73c1386f3d710f4dd94dc1c0ac074bc6')
         self.assertEqual(h.DELEGATION_CONTROLS, '3a9bbafd45c98b0458d1eddf98908275896476a0')
@@ -436,6 +448,7 @@ class ConsumerHistoryTests(unittest.TestCase):
                 (('rev-list', '--parents', '-n', '1', 'HEAD'), ('a' * 40 + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', 'HEAD'), ('a' * 40 + ' ' + h.CONTROLS_PARENT + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.CONTROLS_PARENT), (h.CONTROLS_PARENT + ' ' + h.SOURCE).encode()),
+                (('rev-list', '--parents', '-n', '1', h.CACHE_ALLOCATE_CONTROLS), (h.CACHE_ALLOCATE_CONTROLS + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.CACHE_PREPARE_CONTROLS), (h.CACHE_PREPARE_CONTROLS + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.CACHE_BOUNDARY_CONTROLS), (h.CACHE_BOUNDARY_CONTROLS + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.MAINTENANCE_CONTROLS), (h.MAINTENANCE_CONTROLS + ' ' + h.SOURCE).encode()),
