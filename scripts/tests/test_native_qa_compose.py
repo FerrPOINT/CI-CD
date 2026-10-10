@@ -546,6 +546,82 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(json.loads(response), {'exit': 1, 'stdout': '', 'error_class': 'RuntimeError'})
         self.assertNotIn(b'PRIVATE_SQL', response)
 
+    def test_rpc_classifies_only_three_exact_sdk_runtime_literals(self):
+        literals = (
+            ('Insufficient host disk space for new QA; cleanup first', 'DiskSpaceGuard'),
+            ('Daemon identity mismatch; no fallback is allowed', 'DaemonIdentityGuard'),
+            ('Temporary project already has resources; no adoption is allowed', 'ExistingResourcesGuard'),
+        )
+        for message, label in literals:
+            with self.subTest(label=label):
+                def execute(_):
+                    raise RuntimeError(message)
+                response = self.handler_response(['--version'], execute)
+                self.assertEqual(json.loads(response), {'exit': 1, 'stdout': '', 'error_class': label})
+                self.assertNotIn(message.encode(), response)
+
+    def test_rpc_guard_literal_classification_does_not_format_or_export_errors(self):
+        class PrivateRuntimeError(RuntimeError):
+            def __str__(self):
+                raise AssertionError('exception formatting forbidden')
+
+        class PrivateText(str):
+            def __str__(self):
+                raise AssertionError('argument formatting forbidden')
+
+            def __eq__(self, other):
+                raise AssertionError('nonliteral comparison forbidden')
+
+            def __hash__(self):
+                raise AssertionError('nonliteral hashing forbidden')
+
+        for message in (
+                'Insufficient host disk space for new QA; cleanup first',
+                'Daemon identity mismatch; no fallback is allowed',
+                'Temporary project already has resources; no adoption is allowed'):
+            cases = (
+                (RuntimeError(), 'RuntimeError'),
+                (RuntimeError(message, 'PRIVATE_SQL_TOKEN'), 'RuntimeError'),
+                (RuntimeError(None), 'RuntimeError'),
+                (RuntimeError({'PRIVATE_SQL_TOKEN': message}), 'RuntimeError'),
+                (RuntimeError(PrivateText(message)), 'RuntimeError'),
+                (PrivateRuntimeError(message), 'PrivateRuntimeError'),
+                (ValueError(message), 'ValueError'),
+            ) + tuple((RuntimeError(value), 'RuntimeError') for value in (
+                message + '\n', ' ' + message, message + ' PRIVATE_SQL_TOKEN',
+                'PRIVATE_SQL_TOKEN ' + message, message.lower(), message + 'x' * 16384))
+            for error, expected in cases:
+                def execute(_):
+                    raise error
+                response = self.handler_response(['--version'], execute)
+                self.assertEqual(json.loads(response), {'exit': 1, 'stdout': '', 'error_class': expected})
+                self.assertNotIn(b'PRIVATE_SQL_TOKEN', response)
+                self.assertNotIn(message.encode(), response)
+
+    def test_client_preserves_closed_guard_labels_and_rejects_unknown_labels(self):
+        for label in ('DiskSpaceGuard', 'DaemonIdentityGuard', 'ExistingResourcesGuard', 'RuntimeError'):
+            with self.subTest(label=label):
+                connection = unittest.mock.MagicMock()
+                connection.__enter__.return_value = connection
+                connection.makefile.return_value.__enter__.return_value.readline.return_value = (
+                    json.dumps({'exit': 1, 'stdout': '', 'error_class': label}) + '\n').encode()
+                with patch.object(client.socket, 'socket', return_value=connection), \
+                        patch.object(sys, 'argv', ['docker-compose', '--version']), \
+                        patch.object(sys.stderr, 'write') as output:
+                    self.assertEqual(client.main(), 1)
+                output.assert_called_once_with('NATIVE_QA_COMPOSE_BRIDGE_FAILED:' + label + '\n')
+                connection.connect.assert_called_once()
+                connection.sendall.assert_called_once()
+        for label in ('DiskSpaceGuard\n', 'diskspaceguard', 'PRIVATE_SQL_TOKEN', 'DiskSpaceGuard:secret'):
+            connection = unittest.mock.MagicMock()
+            connection.__enter__.return_value = connection
+            connection.makefile.return_value.__enter__.return_value.readline.return_value = (
+                json.dumps({'exit': 1, 'stdout': '', 'error_class': label}) + '\n').encode()
+            with patch.object(client.socket, 'socket', return_value=connection), \
+                    patch.object(sys.stderr, 'write') as output, self.assertRaises(ValueError):
+                client.main()
+            output.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -150,6 +150,9 @@ enum ChildErrorClass {
     KeyError,
     TypeError,
     TimeoutExpired,
+    DiskSpaceGuard,
+    DaemonIdentityGuard,
+    ExistingResourcesGuard,
     Unknown,
 }
 
@@ -172,6 +175,11 @@ impl ChildErrorClass {
             b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:KeyError\n" => Self::KeyError,
             b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:TypeError\n" => Self::TypeError,
             b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:TimeoutExpired\n" => Self::TimeoutExpired,
+            b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:DiskSpaceGuard\n" => Self::DiskSpaceGuard,
+            b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:DaemonIdentityGuard\n" => Self::DaemonIdentityGuard,
+            b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:ExistingResourcesGuard\n" => {
+                Self::ExistingResourcesGuard
+            }
             _ => Self::Unknown,
         }
     }
@@ -189,6 +197,9 @@ impl ChildErrorClass {
             Self::KeyError => "KeyError",
             Self::TypeError => "TypeError",
             Self::TimeoutExpired => "TimeoutExpired",
+            Self::DiskSpaceGuard => "DiskSpaceGuard",
+            Self::DaemonIdentityGuard => "DaemonIdentityGuard",
+            Self::ExistingResourcesGuard => "ExistingResourcesGuard",
             Self::Unknown => "unknown",
         }
     }
@@ -1516,6 +1527,9 @@ mod child_diagnostic_tests {
             "KeyError",
             "TypeError",
             "TimeoutExpired",
+            "DiskSpaceGuard",
+            "DaemonIdentityGuard",
+            "ExistingResourcesGuard",
         ] {
             let stderr = format!("NATIVE_QA_COMPOSE_BRIDGE_FAILED:{class}\n");
             let error = child_outcome(false, true, stderr.as_bytes())
@@ -1560,6 +1574,19 @@ mod child_diagnostic_tests {
             vec![b'x'; 1024 * 1024 + 1],
         ];
         inputs.extend((0..marker.len()).map(|length| marker[..length].to_vec()));
+        for class in [
+            "DiskSpaceGuard",
+            "DaemonIdentityGuard",
+            "ExistingResourcesGuard",
+        ] {
+            let marker = format!("NATIVE_QA_COMPOSE_BRIDGE_FAILED:{class}\n").into_bytes();
+            inputs.extend((0..marker.len()).map(|length| marker[..length].to_vec()));
+            inputs.extend([
+                [marker.as_slice(), marker.as_slice()].concat(),
+                [b"private-prefix".as_slice(), marker.as_slice()].concat(),
+                [marker.as_slice(), b"private-suffix".as_slice()].concat(),
+            ]);
+        }
         for stderr in inputs {
             let error = child_outcome(false, true, &stderr).unwrap_err();
             assert_eq!(child_error_class(&error), Some("unknown"));

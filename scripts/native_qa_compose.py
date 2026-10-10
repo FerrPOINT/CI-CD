@@ -498,7 +498,15 @@ class BridgeHandler(socketserver.StreamRequestHandler):
                 raise ValueError('Oversized native QA response')
             response = {'exit': 0, 'stdout': output.decode('utf-8'), 'error_class': None}
         except BaseException as error:
-            response = {'exit': 1, 'stdout': '', 'error_class': type(error).__name__}
+            error_class = type(error).__name__
+            if type(error) is RuntimeError and len(error.args) == 1 and type(error.args[0]) is str:
+                # Fixed SDK literal observation only, not proof of origin or authority.
+                error_class = {
+                    'Insufficient host disk space for new QA; cleanup first': 'DiskSpaceGuard',
+                    'Daemon identity mismatch; no fallback is allowed': 'DaemonIdentityGuard',
+                    'Temporary project already has resources; no adoption is allowed': 'ExistingResourcesGuard',
+                }.get(error.args[0], error_class)
+            response = {'exit': 1, 'stdout': '', 'error_class': error_class}
         finally:
             if token is not None:
                 REQUEST.reset(token)

@@ -157,7 +157,7 @@ class CliFailureDiagnosticTests(unittest.TestCase):
         self.assertEqual(set(self.guard["CHILD_ERROR_CLASSES"]), set(allowed) - {None} | {"unknown"})
         owner = (root / "backend/src/task_delivery/oci.rs").read_text(encoding="utf-8")
         implementation = owner.split("impl ChildErrorClass {", 1)[1].split("#[derive(Debug)]", 1)[0]
-        markers = re.findall(r'b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:([A-Za-z]+)\\n"\s*=>\s*Self::([A-Za-z]+)',
+        markers = re.findall(r'b"NATIVE_QA_COMPOSE_BRIDGE_FAILED:([A-Za-z]+)\\n"\s*=>\s*(?:\{\s*)?Self::([A-Za-z]+)',
                              implementation)
         wires = dict(re.findall(r'Self::([A-Za-z]+) => "([A-Za-z_]+)"', implementation))
         self.assertEqual(set(wires.values()), set(self.guard["CHILD_ERROR_CLASSES"]))
@@ -186,6 +186,17 @@ class CliFailureDiagnosticTests(unittest.TestCase):
         cli = (root / "backend/src/bin/forge-delivery.rs").read_text(encoding="utf-8")
         self.assertIn('println!("{}", cicd::task_delivery::oci::rejection_document(&error));', cli)
         self.assertNotIn("childErrorClass", cli.split("#[cfg(test)]", 1)[0])
+
+    def test_three_sdk_literal_labels_remain_observations_in_existing_projection(self):
+        for label in ('DiskSpaceGuard', 'DaemonIdentityGuard', 'ExistingResourcesGuard'):
+            with self.subTest(label=label):
+                self.assertIn(label, self.guard["CHILD_ERROR_CLASSES"])
+                value = self.guard["project"](self.payload(childErrorClass=label), 1)
+                self.assertEqual(value["childErrorClass"], label)
+                self.assertEqual((value["status"], value["reason"]), self.guard["REJECTIONS"][-1])
+                self.assertFalse(value["acceptanceVerified"])
+                self.assertEqual(set(value), {"schema", "scope", "acceptanceVerified", "exitCode",
+                                             "payloadKind", "status", "reason", "childErrorClass"})
 
     def test_optional_child_class_is_closed_and_legacy_rejections_are_preserved(self):
         for class_name in (*self.guard["CHILD_ERROR_CLASSES"], None, True, 1, [], {},
