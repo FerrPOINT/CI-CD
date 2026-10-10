@@ -1,4 +1,5 @@
 import { currentSession } from './auth'
+import { getPlatformProduct } from '@sdlc/ui/platform'
 
 const BASE = '/api/v1'
 
@@ -86,7 +87,11 @@ export function saveDownloadedArtifact(artifact: DownloadedArtifact): void {
 
 export async function authenticatedFetch(path: string, init?: RequestInit): Promise<Response> {
   const response = await request(path, init)
-  if (response.status === 401) terminalAuthHandler?.()
+  if (response.status === 401) {
+    const product = getPlatformProduct()
+    if (product) product.recheckAuthorization()
+    else terminalAuthHandler?.()
+  }
   return response
 }
 

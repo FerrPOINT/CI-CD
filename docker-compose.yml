@@ -85,6 +85,8 @@ services:
     build:
       context: ..
       dockerfile: CI-CD/frontend/Dockerfile.umbrella
+      args:
+        VITE_PLATFORM_ORIGIN: ${VITE_PLATFORM_ORIGIN:-}
     ports:
       - "${CICD_WEB_PORT:-22802}:80"
     depends_on:

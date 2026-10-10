@@ -32,3 +32,16 @@ guard сохраняет неинтерактивный вызов. `isSsoNaviga
 снимает блокировку кнопки при завершении или отмене promise. Identity, PKCE,
 state, nonce, API и машинная авторизация не меняются. Source-регрессии покрыты
 login-тестами; локальные fixture-проверки не заменяют живую SSO-приёмку.
+## Отдельный UI pin и размещение в Base
+
+`.base-ui-revision` закрепляет frontend Base; `.base-revision` остаётся SDK pin.
+Frontend job CI проверяет UI checkout независимо от backend jobs. Для frontend
+сборки используйте `python scripts/build.py frontend` и соседний UI checkout
+на точном SHA. Совместную пересборку backend и UI с разными pins выполняйте
+отдельно, сохраняя исходный SDK checkout.
+
+`VITE_PLATFORM_ORIGIN` передаётся как Docker build argument. Пустое значение
+сохраняет standalone; настроенное включает memory router, silent SSO и общий
+bridge. Продукт сохраняет собственные API, профиль, permissions и формы.
+[Оболочка Base](../../services-base/frontend/platform/README.md) описывает
+конфигурацию, подготовку кадра и отдельную runtime-приёмку.

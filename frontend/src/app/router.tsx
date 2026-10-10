@@ -2,7 +2,8 @@ import { CatalogRepositoryPage } from '@/pages/catalog-repository'
 import { CatalogPullPage } from '@/pages/catalog-pull'
 import { NamespacePage } from '@/pages/namespace'
 import { lazy, Suspense, type ReactElement } from 'react'
-import { createBrowserRouter, Navigate, Outlet } from 'react-router'
+import { Navigate, Outlet } from 'react-router'
+import { createProductRouter, PlatformRoute } from '@sdlc/ui/platform'
 import { AppShell } from '@/widgets/app-shell'
 import { AuthProvider } from '@/shared/auth/auth-provider'
 import { ProtectedRoute } from '@/shared/auth/protected-route'
@@ -76,7 +77,7 @@ function PageLoader() {
   )
 }
 
-const withSuspense = (el: ReactElement) => <Suspense fallback={<PageLoader />}>{el}</Suspense>
+const withSuspense = (el: ReactElement) => <Suspense fallback={<PageLoader />}><PlatformRoute>{el}</PlatformRoute></Suspense>
 
 export const appRoutes = [
   {
@@ -176,4 +177,4 @@ export const appRoutes = [
   { path: '*', element: <Navigate to="/" replace /> },
 ]
 
-export const router = createBrowserRouter(appRoutes)
+export const router = createProductRouter(appRoutes, { serviceKey: 'ci-cd', portalOrigin: import.meta.env.VITE_PLATFORM_ORIGIN })
