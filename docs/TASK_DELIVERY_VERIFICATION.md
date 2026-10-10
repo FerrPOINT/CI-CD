@@ -3,6 +3,11 @@
 **Статус 2026-10-08:** bounded source implementation и local component verification;
 полного SDLC acceptance нет.
 
+`oci` и `postgres` QA gates используют отдельный immutable Docker CLI/Compose
+image, поскольку закреплённый Rust image содержит компилятор, но не клиент
+Docker. Tool binaries копируются в одноразовый QA volume; source/runtime images
+проверяемых компонентов не меняются.
+
 ## Latest Frozen Native Packet: 8 Октября
 
 Epoch `20261008T172750Z-0f560932eb2b` завершился FAILED/unknown в OCI,

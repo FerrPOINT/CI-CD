@@ -685,7 +685,7 @@ class Owner:
             pass
         return observed
 
-    def observe(self, manifest, manifest_sha, receipt):
+    def observe(self, manifest, manifest_sha, receipt, check_published_fingerprint=True):
         try:
             self.engine()
             actual = self.docker('container', 'inspect', self.project + '-application-1')[0]
@@ -701,6 +701,8 @@ class Owner:
             ip = actual['NetworkSettings']['Networks'][self.policy['networkName']]['IPAddress']
             origin = 'http://' + ip + ':8000'
             before = self.fingerprint(manifest['database'])
+            if check_published_fingerprint:
+                require(before == manifest['databaseFingerprint'], 'serving_database_fingerprint_mismatch')
             require(before['schema'] == manifest['descriptor']['targetSchema'], 'serving_database_schema_mismatch')
             identity = digest(canonical({'database': manifest['database'], 'schemaVersion': before['schema']['version']}))
             probes = {}
@@ -729,8 +731,9 @@ class Owner:
                 receipt.update(status='unavailable', reason='application_check_unavailable')
             else:
                 receipt.update(status='verified', reason='isolated_image_database_application_checks_verified')
-        except BaseException:
-            receipt.update(status='unknown', reason='database_or_engine_outcome_unknown')
+        except BaseException as error:
+            receipt.update(status='unknown', reason=str(error) if isinstance(error, Blocked)
+                           else 'database_or_engine_outcome_unknown')
         return receipt
 
     def release(self, manifest, manifest_sha, receipt):
@@ -838,7 +841,7 @@ class Owner:
         self.connection_scope(manifest['database'], True)
         self.sessions(manifest['database'])
         self.reader_permissions(manifest['database'])
-        receipt = self.observe(manifest, manifest_sha, dict(intent['receipt']))
+        receipt = self.observe(manifest, manifest_sha, dict(intent['receipt']), check_published_fingerprint=False)
         if receipt['status'] == 'verified':
             receipt['manifestSha256'] = manifest_sha
             immutable(self.dir / 'reconciled.json', receipt)
