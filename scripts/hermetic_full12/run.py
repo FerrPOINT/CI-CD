@@ -87,54 +87,66 @@ def journal_proof(path):
 
 
 def identity(root, admission=None):
-    info = json.loads(docker('info', '--format', '{{json .}}'))
-    endpoint = docker('context', 'inspect', 'rootless', '--format', '{{.Endpoints.docker.Host}}').decode().strip()
-    result = {'id': info['ID'], 'endpoint': endpoint, 'root': info['DockerRootDir'],
-              'server': info['ServerVersion'], 'client': docker('version', '--format', '{{.Client.Version}}').decode().strip(),
-              'compose': docker('compose', 'version').decode().strip(), 'security': sorted(info['SecurityOptions']),
-              'storage_driver': info['Driver'], 'cgroup_driver': info['CgroupDriver']}
-    h.require(result['id'] and result['server'] == result['client'] == '29.8.2')
-    h.require(result['compose'] == 'Docker Compose version v5.5.1' and 'name=rootless' in result['security'])
-    h.require(result['endpoint'] == 'unix://' + str(root / 'docker.sock') and Path(result['root']) == root / 'daemon-data')
-    h.require(info['CgroupVersion'] == '2' and info['CgroupDriver'] == 'systemd' and not info.get('Warnings'))
+    with h.bootstrap_step('identity_decode'):
+        info = json.loads(docker('info', '--format', '{{json .}}'))
+        endpoint = docker('context', 'inspect', 'rootless', '--format', '{{.Endpoints.docker.Host}}').decode().strip()
+        result = {'id': info['ID'], 'endpoint': endpoint, 'root': info['DockerRootDir'],
+                  'server': info['ServerVersion'], 'client': docker('version', '--format', '{{.Client.Version}}').decode().strip(),
+                  'compose': docker('compose', 'version').decode().strip(), 'security': sorted(info['SecurityOptions']),
+                  'storage_driver': info['Driver'], 'cgroup_driver': info['CgroupDriver']}
+    with h.bootstrap_step('identity_version'):
+        h.require(result['id'] and result['server'] == result['client'] == '29.8.2')
+    with h.bootstrap_step('identity_compose_rootless'):
+        h.require(result['compose'] == 'Docker Compose version v5.5.1' and 'name=rootless' in result['security'])
+    with h.bootstrap_step('identity_endpoint'):
+        h.require(result['endpoint'] == 'unix://' + str(root / 'docker.sock') and Path(result['root']) == root / 'daemon-data')
+    with h.bootstrap_step('identity_cgroup_warnings'):
+        h.require(info['CgroupVersion'] == '2' and info['CgroupDriver'] == 'systemd' and not info.get('Warnings'))
     if admission is not None:
         h.require(result == admission['daemon'])
     return result
 
 
 def start_daemon(root):
-    binary = h.download_tools(root)
+    with h.bootstrap_step('tools_download'):
+        binary = h.download_tools(root)
     uid = str(os.getuid())
     # These changes are confined to the disposable hosted VM, never a local daemon.
-    h.command(['sudo', '-n', 'apt-get', 'update'], timeout=300, log=root / 'private/apt-update.log')
-    h.command(['sudo', '-n', 'apt-get', 'install', '-y', '--no-install-recommends',
-               'uidmap', 'slirp4netns', 'dbus-user-session'], timeout=300, log=root / 'private/apt-install.log')
-    if Path('/proc/sys/kernel/apparmor_restrict_unprivileged_userns').exists():
-        h.command(['sudo', '-n', 'sysctl', '-w', 'kernel.apparmor_restrict_unprivileged_userns=0'])
-    user = h.command(['id', '-un']).decode().strip()
-    for file in ('subuid', 'subgid'):
-        ranges = [line.split(':') for line in Path('/etc/' + file).read_text().splitlines()]
-        if not any(parts[0] == user and int(parts[2]) >= 65536 for parts in ranges):
-            h.require(not any(int(parts[1]) < 165536 and int(parts[1]) + int(parts[2]) > 100000 for parts in ranges))
-            h.command(['sudo', '-n', 'usermod', '--add-' + file + 's', '100000-165535', user])
-    h.command(['sudo', '-n', 'loginctl', 'enable-linger', user])
-    h.command(['sudo', '-n', 'systemctl', 'start', 'user@' + uid + '.service'])
-    os.environ.update(XDG_RUNTIME_DIR='/run/user/' + uid, DBUS_SESSION_BUS_ADDRESS='unix:path=/run/user/' + uid + '/bus')
-    unit = 'forge-full12-' + root.name
-    h.atomic(root / 'daemon-owner.json', {'unit': unit, 'root': str(root), 'owner_pid': os.getpid()}, exclusive=True)
-    h.command(['systemd-run', '--user', '--unit=' + unit, '--property=Delegate=yes',
-        '--property=TimeoutStopSec=90',
-        '--setenv=PATH=' + os.environ['PATH'], '--setenv=XDG_RUNTIME_DIR=' + os.environ['XDG_RUNTIME_DIR'],
-        '--setenv=DBUS_SESSION_BUS_ADDRESS=' + os.environ['DBUS_SESSION_BUS_ADDRESS'],
-        '--setenv=DOCKERD_ROOTLESS_ROOTLESSKIT_NET=slirp4netns',
-        str(binary / 'dockerd-rootless.sh'), '--host=unix://' + str(root / 'docker.sock'),
-        '--data-root=' + str(root / 'daemon-data'), '--exec-root=' + str(root / 'daemon-exec'),
-        '--pidfile=' + str(root / 'dockerd.pid')], timeout=90)
-    h.command(['docker', 'context', 'create', 'rootless', '--docker', 'host=unix://' + str(root / 'docker.sock')])
-    deadline = time.monotonic() + 90
-    while not (root / 'docker.sock').exists():
-        h.require(time.monotonic() < deadline)
-        time.sleep(0.25)
+    with h.bootstrap_step('dependencies'):
+        h.command(['sudo', '-n', 'apt-get', 'update'], timeout=300, log=root / 'private/apt-update.log')
+        h.command(['sudo', '-n', 'apt-get', 'install', '-y', '--no-install-recommends',
+                   'uidmap', 'slirp4netns', 'dbus-user-session'], timeout=300, log=root / 'private/apt-install.log')
+    with h.bootstrap_step('user_namespace'):
+        if Path('/proc/sys/kernel/apparmor_restrict_unprivileged_userns').exists():
+            h.command(['sudo', '-n', 'sysctl', '-w', 'kernel.apparmor_restrict_unprivileged_userns=0'])
+        user = h.command(['id', '-un']).decode().strip()
+        for file in ('subuid', 'subgid'):
+            ranges = [line.split(':') for line in Path('/etc/' + file).read_text().splitlines()]
+            if not any(parts[0] == user and int(parts[2]) >= 65536 for parts in ranges):
+                h.require(not any(int(parts[1]) < 165536 and int(parts[1]) + int(parts[2]) > 100000 for parts in ranges))
+                h.command(['sudo', '-n', 'usermod', '--add-' + file + 's', '100000-165535', user])
+    with h.bootstrap_step('manager'):
+        h.command(['sudo', '-n', 'loginctl', 'enable-linger', user])
+        h.command(['sudo', '-n', 'systemctl', 'start', 'user@' + uid + '.service'])
+        os.environ.update(XDG_RUNTIME_DIR='/run/user/' + uid, DBUS_SESSION_BUS_ADDRESS='unix:path=/run/user/' + uid + '/bus')
+    with h.bootstrap_step('rootless_launch'):
+        unit = 'forge-full12-' + root.name
+        h.atomic(root / 'daemon-owner.json', {'unit': unit, 'root': str(root), 'owner_pid': os.getpid()}, exclusive=True)
+        h.command(['systemd-run', '--user', '--unit=' + unit, '--property=Delegate=yes',
+            '--property=TimeoutStopSec=90',
+            '--setenv=PATH=' + os.environ['PATH'], '--setenv=XDG_RUNTIME_DIR=' + os.environ['XDG_RUNTIME_DIR'],
+            '--setenv=DBUS_SESSION_BUS_ADDRESS=' + os.environ['DBUS_SESSION_BUS_ADDRESS'],
+            '--setenv=DOCKERD_ROOTLESS_ROOTLESSKIT_NET=slirp4netns',
+            str(binary / 'dockerd-rootless.sh'), '--host=unix://' + str(root / 'docker.sock'),
+            '--data-root=' + str(root / 'daemon-data'), '--exec-root=' + str(root / 'daemon-exec'),
+            '--pidfile=' + str(root / 'dockerd.pid')], timeout=90)
+    with h.bootstrap_step('context'):
+        h.command(['docker', 'context', 'create', 'rootless', '--docker', 'host=unix://' + str(root / 'docker.sock')])
+    with h.bootstrap_step('socket_ready'):
+        deadline = time.monotonic() + 90
+        while not (root / 'docker.sock').exists():
+            h.require(time.monotonic() < deadline)
+            time.sleep(0.25)
     # A failed info is an actual admission failure, not a fallback to the host daemon.
     return identity(root)
 
@@ -583,15 +595,17 @@ def run_job(job):
             report['python_methods'] = python_counts(root)
             phase = 'bootstrap'
             daemon = start_daemon(root)
-            baseline = inventory()
-            h.require(not baseline['container'] and not baseline['volume'])
-            baseline_images = sorted(docker('image', 'ls', '-q', '--no-trunc').decode().split())
-            admission = {'daemon': daemon, 'baseline': baseline, 'baseline_images': baseline_images,
-                'checkout': checkout, 'components': components, 'source_hashes': report['source_hashes'],
-                'maintenance_git': maintenance_proof,
-                'capacity': h.capacity(root), 'new_independent_environment': True}
-            h.atomic(root / 'admission-seal.json', admission, exclusive=True)
-            report['admission_sha256'] = h.sha(root / 'admission-seal.json')
+            with h.bootstrap_step('baseline'):
+                baseline = inventory()
+                h.require(not baseline['container'] and not baseline['volume'])
+                baseline_images = sorted(docker('image', 'ls', '-q', '--no-trunc').decode().split())
+            with h.bootstrap_step('admission_seal'):
+                admission = {'daemon': daemon, 'baseline': baseline, 'baseline_images': baseline_images,
+                    'checkout': checkout, 'components': components, 'source_hashes': report['source_hashes'],
+                    'maintenance_git': maintenance_proof,
+                    'capacity': h.capacity(root), 'new_independent_environment': True}
+                h.atomic(root / 'admission-seal.json', admission, exclusive=True)
+                report['admission_sha256'] = h.sha(root / 'admission-seal.json')
             report['daemon_id'] = daemon['id']
             report['baseline'] = inventory_proof(baseline)
             report['daemon_versions'] = {key: daemon[key] for key in ('server', 'client', 'compose')}

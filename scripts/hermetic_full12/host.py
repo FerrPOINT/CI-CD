@@ -21,8 +21,9 @@ SOURCE = '25be2e82d4d42673897c8a16070eb8a9519244f0'
 BASE = '19a7a381ae6dbea61a643bb96189e483fa64df5c'
 PUBLIC_CONTROLS = '1dbedf85242c3540b70005ce5f0c20badb682c41'
 QUALIFICATION_CONTROLS = '632ea8347602fe4af22e7369790ed9c75e53f76a'
-CONTROLS_PARENT = '4d97c54f35b485224a8229495763658fcbbd40e9'
-BRANCH = 'build-only/forge-safe-maintenance-full12-20261010'
+SAFETY_CONTROLS = '4d97c54f35b485224a8229495763658fcbbd40e9'
+CONTROLS_PARENT = 'b9375dc4b4f070b0f6cff1733228f1a6865b1368'
+BRANCH = 'build-only/forge-bootstrap-full12-20261010'
 CONSUMER_PATHS = {
     '.github/workflows/forge-hermetic-full12.yml',
     *('scripts/hermetic_full12/' + name for name in (
@@ -37,6 +38,10 @@ RECLAIM = ('/usr/share/dotnet', '/usr/local/lib/android', '/opt/ghc')
 DOCKER = ['docker', '--context', 'rootless']
 ERROR_STAGES = ('python', 'row-smoke', 'smoke', 'check', 'clippy', 'postgres', 'oci',
                 'workspace', 'integration', 'cli', 'openapi', 'release')
+BOOTSTRAP_STEPS = ('tools_download', 'dependencies', 'user_namespace', 'manager',
+                   'rootless_launch', 'context', 'socket_ready', 'identity_decode',
+                   'identity_version', 'identity_compose_rootless', 'identity_endpoint',
+                   'identity_cgroup_warnings', 'baseline', 'admission_seal')
 BOOTSTRAP_DEADLINE = None
 PHASE_DEADLINE = None
 TOOLS = {
@@ -66,6 +71,27 @@ class CommandFailure(RuntimeError):
     def __init__(self, code):
         self.code = code
         super().__init__('command_nonzero')
+
+
+class BootstrapFailure(RuntimeError):
+    def __init__(self, step, error):
+        require(type(step) is str and step in BOOTSTRAP_STEPS)
+        self.step = step
+        self.safe = safe_error('bootstrap', error)
+        super().__init__('bootstrap_boundary_failed')
+
+
+@contextmanager
+def bootstrap_step(step):
+    require(type(step) is str and step in BOOTSTRAP_STEPS)
+    try:
+        yield
+    except (BootstrapFailure, CapacityFailure):
+        raise
+    except Exception as error:
+        if BOOTSTRAP_DEADLINE is None:
+            raise
+        raise BootstrapFailure(step, error) from None
 
 
 class OverheadTimeout(subprocess.TimeoutExpired):
@@ -149,6 +175,13 @@ def atomic(path, value, exclusive=False):
 
 def safe_error(stage, error):
     allowed = {'admission', 'bootstrap', 'cleanup', 'aggregate', 'parity', *ERROR_STAGES}
+    if isinstance(error, BootstrapFailure):
+        result = dict(error.safe)
+        result['stage'] = stage if stage in allowed else 'admission'
+        if stage == 'bootstrap':
+            result['bootstrap_step'] = error.step
+        validate_safe_error(result)
+        return result
     category = ('os_error' if isinstance(error, OSError) else 'timeout' if isinstance(error, subprocess.TimeoutExpired)
                 else 'assertion' if isinstance(error, AssertionError) else 'closed_failure')
     number = getattr(error, 'errno', None)
@@ -159,6 +192,22 @@ def safe_error(stage, error):
     if isinstance(error, m.QualificationFailure):
         result['dependency'] = 'maintenance_pin_unqualified'
     return result
+
+
+def validate_safe_error(result):
+    require(type(result) is dict and {'stage', 'category', 'errno'} <= set(result)
+            and set(result) <= {'stage', 'category', 'errno', 'exit_code', 'dependency', 'bootstrap_step'})
+    require(type(result['stage']) is str and type(result['category']) is str
+            and result['stage'] in {'admission', 'bootstrap', 'cleanup', 'aggregate', 'parity', *ERROR_STAGES}
+            and result['category'] in {'os_error', 'timeout', 'assertion', 'closed_failure'})
+    require(result['errno'] is None or type(result['errno']) is int and 0 <= result['errno'] <= 4095)
+    if 'exit_code' in result:
+        require(result['exit_code'] is None or type(result['exit_code']) is int and -255 <= result['exit_code'] <= 255)
+    if 'dependency' in result:
+        require(result['dependency'] == 'maintenance_pin_unqualified')
+    if 'bootstrap_step' in result:
+        require(result['stage'] == 'bootstrap' and type(result['bootstrap_step']) is str
+                and result['bootstrap_step'] in BOOTSTRAP_STEPS)
 
 
 def leader_status(process):
@@ -317,7 +366,8 @@ def bind_maintenance(module, proof):
 
 def controls_history(controls):
     require(git(controls, 'rev-parse', '--is-shallow-repository').strip() == b'false')
-    for revision, parent in (('HEAD', CONTROLS_PARENT), (CONTROLS_PARENT, QUALIFICATION_CONTROLS),
+    for revision, parent in (('HEAD', CONTROLS_PARENT), (CONTROLS_PARENT, SAFETY_CONTROLS),
+                             (SAFETY_CONTROLS, QUALIFICATION_CONTROLS),
                              (QUALIFICATION_CONTROLS, PUBLIC_CONTROLS),
                              (PUBLIC_CONTROLS, SOURCE)):
         row = git(controls, 'rev-list', '--parents', '-n', '1', revision).decode().split()

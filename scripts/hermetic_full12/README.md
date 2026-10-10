@@ -1,7 +1,8 @@
 # Public-safe exact-source full12 controls
 
 Этот source-only successor имеет непосредственный parent
-`4d97c54f35b485224a8229495763658fcbbd40e9`, затем qualification controls
+`b9375dc4b4f070b0f6cff1733228f1a6865b1368`, затем safety controls
+`4d97c54f35b485224a8229495763658fcbbd40e9`, qualification controls
 `632ea8347602fe4af22e7369790ed9c75e53f76a`, original public-safe controls
 `1dbedf85242c3540b70005ce5f0c20badb682c41` и product source
 `25be2e82d4d42673897c8a16070eb8a9519244f0`. Это normal history, не импорт
@@ -49,9 +50,9 @@ tip во время readback запрещено; ref сохраняется ка
 а не вместо immutable commit. Приватный код
 и credentials не входят в публичный checkout или artifacts.
 
-Текущий checkout guard требует ровно HEAD ->4d97->632->1db->25be, full history,
-task-owned modifications относительно4d97 и add-only controls относительно25be.
-Новый workflow/host branch: `build-only/forge-safe-maintenance-full12-20261010`.
+Текущий checkout guard требует ровно HEAD ->b937->4d97->632->1db->25be, full history,
+task-owned modifications относительноb937 и add-only controls относительно25be.
+Новый workflow/host branch: `build-only/forge-bootstrap-full12-20261010`.
 Изменение родителя в следующем reviewed commit требует сохранить всю chain,
 не заменить проверку на произвольный ancestor. Candidate JSON и installed bytes
 не доказывают native/SDLC acceptance. Source guards больше не блокируют из-за
@@ -80,6 +81,25 @@ Private bridge proof использует ту же привязку. Его pur
 запускают Docker и не заменяют full12 execution.
 
 ## Execution Contract
+
+### Безопасная bootstrap диагностика
+
+Новый normal successor добавляет только optional `error.bootstrap_step` из закрытого
+`host.BOOTSTRAP_STEPS`: download, dependencies, user namespace/manager, rootless
+launch/context/socket readiness, identity guards, baseline и admission seal.
+Это граница отказа, не доказательство root cause. Legacy error без hint остаётся
+валидным; `host.validate_safe_error` отвергает unknown hint, лишние поля и hint вне
+stage=bootstrap. Strict external readback должен вызвать этот validator, не принимать
+произвольный exception attribute или текст как категорию.
+
+Hint оборачивает только existing bootstrap operations. Исходные category/errno и
+bounded exit_code сохраняются; SQL, warnings, paths, IDs, stdout/stderr и private
+journals не копируются. Existing `CapacityFailure` сохраняет исходный exception и
+structured capacity report без нового hint. При post-bootstrap ошибках также
+сохраняется исходный exception.
+Команды, их порядок, guards, socket90s и остальные deadlines/resources неизменны.
+Новых Docker/systemd/journal inspection, retries/fallback или запуска gates нет.
+Historical b937 failure не переписывается и не объявляется исправленным.
 
 Three independent jobs: A python/row-smoke/smoke/check/clippy; B postgres;
 C oci/workspace/integration/cli/openapi/release. Each admits a fresh rootless

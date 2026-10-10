@@ -459,6 +459,175 @@ class SmokeAndCleanupTests(unittest.TestCase):
         request.checked.assert_not_called()
 
 
+class BootstrapDiagnosticTests(unittest.TestCase):
+    STEPS = ('tools_download', 'dependencies', 'user_namespace', 'manager',
+             'rootless_launch', 'context', 'socket_ready', 'identity_decode',
+             'identity_version', 'identity_compose_rootless', 'identity_endpoint',
+             'identity_cgroup_warnings', 'baseline', 'admission_seal')
+
+    def test_closed_source_attested_step_inventory(self):
+        self.assertEqual(h.BOOTSTRAP_STEPS, self.STEPS)
+        tree = ast.parse((h.HERE / 'run.py').read_bytes())
+        seen = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.With):
+                call = node.items[0].context_expr
+                if isinstance(call, ast.Call) and ast.unparse(call.func) == 'h.bootstrap_step':
+                    self.assertEqual(len(call.args), 1)
+                    self.assertEqual(call.keywords, [])
+                    step = ast.literal_eval(call.args[0])
+                    self.assertNotIn(step, seen)
+                    seen[step] = ast.unparse(ast.Module(body=node.body, type_ignores=[]))
+        self.assertEqual(set(seen), set(self.STEPS))
+        for step, operation in (
+            ('tools_download', 'h.download_tools(root)'), ('dependencies', "'apt-get'"),
+            ('user_namespace', "'usermod'"), ('manager', "'loginctl'"),
+            ('rootless_launch', "'systemd-run'"), ('context', "'create', 'rootless'"),
+            ('socket_ready', 'time.monotonic() + 90'), ('identity_decode', "'info'"),
+            ('identity_version', "'29.8.2'"), ('identity_compose_rootless', "'name=rootless'"),
+            ('identity_endpoint', "'daemon-data'"), ('identity_cgroup_warnings', "info.get('Warnings')"),
+            ('baseline', "not baseline['container'] and (not baseline['volume'])"),
+            ('admission_seal', "'admission-seal.json'"),
+        ):
+            self.assertIn(operation, seen[step])
+        self.assertIn('h.require(time.monotonic() < deadline)', seen['socket_ready'])
+        self.assertIn('time.sleep(0.25)', seen['socket_ready'])
+
+    def test_fixed_hints_preserve_original_safe_category_and_bounds(self):
+        errors = (ValueError('PRIVATE_SENTINEL'), OSError(28, 'PRIVATE_SENTINEL'),
+                  h.CommandFailure(7), subprocess.TimeoutExpired('PRIVATE_SENTINEL', 90),
+                  AssertionError('PRIVATE_SENTINEL'))
+        for step in self.STEPS:
+            for error in errors:
+                with self.subTest(step=step, error_type=type(error).__name__):
+                    original = h.safe_error('bootstrap', error)
+                    with patch.object(h, 'BOOTSTRAP_DEADLINE', 1):
+                        with self.assertRaises(h.BootstrapFailure) as caught:
+                            with h.bootstrap_step(step):
+                                raise error
+                    safe = h.safe_error('bootstrap', caught.exception)
+                    self.assertEqual(safe, {**original, 'bootstrap_step': step})
+                    h.validate_safe_error(safe)
+                    self.assertNotIn('PRIVATE_SENTINEL', json.dumps(safe))
+                    self.assertEqual(str(caught.exception), 'bootstrap_boundary_failed')
+
+    def test_nested_boundary_preserves_innermost_fixed_step(self):
+        with patch.object(h, 'BOOTSTRAP_DEADLINE', 1):
+            with self.assertRaises(h.BootstrapFailure) as caught:
+                with h.bootstrap_step('rootless_launch'):
+                    with h.bootstrap_step('socket_ready'):
+                        raise ValueError('PRIVATE_SENTINEL')
+        self.assertEqual(h.safe_error('bootstrap', caught.exception)['bootstrap_step'], 'socket_ready')
+
+    def test_postbootstrap_preserves_original_exception(self):
+        error = h.CommandFailure(7)
+        with patch.object(h, 'BOOTSTRAP_DEADLINE', None):
+            with self.assertRaises(h.CommandFailure) as caught:
+                with h.bootstrap_step('identity_decode'):
+                    raise error
+        self.assertIs(caught.exception, error)
+
+    def test_capacity_failure_preserves_existing_structured_report(self):
+        error = h.CapacityFailure({'host_free_bytes': 0})
+        with patch.object(h, 'BOOTSTRAP_DEADLINE', 1):
+            with self.assertRaises(h.CapacityFailure) as caught:
+                with h.bootstrap_step('admission_seal'):
+                    raise error
+        self.assertIs(caught.exception, error)
+        self.assertEqual(caught.exception.measurement, {'host_free_bytes': 0})
+        self.assertNotIn('bootstrap_step', h.safe_error('bootstrap', caught.exception))
+
+    def test_unknown_boundary_refused_before_body(self):
+        for step in ('PRIVATE_SENTINEL', 'socket_ready_suffix', '', None, [], True):
+            reached = []
+            with self.subTest(step_type=type(step).__name__), self.assertRaises(ValueError):
+                with h.bootstrap_step(step):
+                    reached.append(True)
+            self.assertEqual(reached, [])
+
+    def test_previous_safe_error_schema_remains_valid(self):
+        for error in (ValueError('private'), OSError(28, 'private'), h.CommandFailure(7),
+                      h.m.QualificationFailure()):
+            safe = h.safe_error('bootstrap', error)
+            self.assertNotIn('bootstrap_step', safe)
+            h.validate_safe_error(safe)
+
+    def test_strict_error_schema_rejects_unsafe_unknown_and_out_of_bounds(self):
+        base = {'stage': 'bootstrap', 'category': 'closed_failure', 'errno': None}
+        changes = ({'bootstrap_step': 'PRIVATE_SENTINEL'}, {'bootstrap_step': 'socket_ready_suffix'},
+                   {'bootstrap_step': ['socket_ready']}, {'error': 'PRIVATE_SENTINEL'},
+                   {'stdout': 'PRIVATE_SENTINEL'}, {'stage': []}, {'category': 'PRIVATE_SENTINEL'},
+                   {'errno': -1}, {'errno': 4096}, {'errno': True}, {'exit_code': 256},
+                   {'exit_code': -256}, {'exit_code': True}, {'dependency': 'PRIVATE_SENTINEL'},
+                   {'stage': 'cleanup', 'bootstrap_step': 'socket_ready'})
+        for change in changes:
+            with self.subTest(keys=tuple(change)), self.assertRaises(ValueError):
+                h.validate_safe_error({**base, **change})
+        for missing in base:
+            with self.assertRaises(ValueError):
+                h.validate_safe_error({key: value for key, value in base.items() if key != missing})
+
+    def test_foreign_exception_attribute_and_tampered_wrapper_not_trusted(self):
+        error = ValueError('PRIVATE_SENTINEL')
+        error.bootstrap_step = 'socket_ready'
+        self.assertNotIn('bootstrap_step', h.safe_error('bootstrap', error))
+        wrapped = h.BootstrapFailure('socket_ready', error)
+        wrapped.step = 'PRIVATE_SENTINEL'
+        with self.assertRaises(ValueError):
+            h.safe_error('bootstrap', wrapped)
+        wrapped.step = 'socket_ready'
+        wrapped.safe['stdout'] = 'PRIVATE_SENTINEL'
+        with self.assertRaises(ValueError):
+            h.safe_error('bootstrap', wrapped)
+
+    def test_identity_guards_have_exact_safe_hints_without_private_warnings(self):
+        root = Path('/synthetic-owned-f12')
+        original = {'ID': 'synthetic', 'DockerRootDir': str(root / 'daemon-data'),
+                    'ServerVersion': '29.8.2', 'SecurityOptions': ['name=rootless'],
+                    'Driver': 'overlay2', 'CgroupDriver': 'systemd', 'CgroupVersion': '2', 'Warnings': None}
+        cases = (({}, 'Docker Compose version v5.5.1', None),
+                 ({'ServerVersion': 'wrong'}, 'Docker Compose version v5.5.1', 'identity_version'),
+                 ({}, 'wrong', 'identity_compose_rootless'),
+                 ({'SecurityOptions': []}, 'Docker Compose version v5.5.1', 'identity_compose_rootless'),
+                 ({'DockerRootDir': '/wrong'}, 'Docker Compose version v5.5.1', 'identity_endpoint'),
+                 ({'CgroupVersion': '1'}, 'Docker Compose version v5.5.1', 'identity_cgroup_warnings'),
+                 ({'Warnings': ['PRIVATE_SENTINEL']}, 'Docker Compose version v5.5.1', 'identity_cgroup_warnings'))
+        for change, compose, expected in cases:
+            info = {**original, **change}
+            def docker(*args):
+                if args == ('info', '--format', '{{json .}}'):
+                    return json.dumps(info).encode()
+                if args == ('context', 'inspect', 'rootless', '--format', '{{.Endpoints.docker.Host}}'):
+                    return ('unix://' + str(root / 'docker.sock')).encode()
+                if args == ('version', '--format', '{{.Client.Version}}'):
+                    return b'29.8.2'
+                if args == ('compose', 'version'):
+                    return compose.encode()
+                raise AssertionError('unexpected synthetic command')
+            with patch.object(gate, 'docker', side_effect=docker), patch.object(h, 'BOOTSTRAP_DEADLINE', 1):
+                if expected is None:
+                    self.assertEqual(gate.identity(root)['id'], 'synthetic')
+                else:
+                    with self.assertRaises(h.BootstrapFailure) as caught:
+                        gate.identity(root)
+                    safe = h.safe_error('bootstrap', caught.exception)
+                    self.assertEqual(safe['bootstrap_step'], expected)
+                    self.assertNotIn('PRIVATE_SENTINEL', json.dumps(safe))
+                    h.validate_safe_error(safe)
+
+    def test_retained_failure_hint_does_not_turn_failure_into_acceptance(self):
+        report = {'status': 'FAIL', 'full12_pass': False, 'stages': []}
+        error = h.BootstrapFailure('socket_ready', ValueError('PRIVATE_SENTINEL'))
+        output = io.StringIO()
+        with patch('sys.stdout', output):
+            gate.retain_failure(report, 'bootstrap', error, Path('/unused'), 'A', [])
+        self.assertEqual(report['status'], 'FAIL')
+        self.assertFalse(report['full12_pass'])
+        h.validate_safe_error(report['error'])
+        self.assertEqual(report['error']['bootstrap_step'], 'socket_ready')
+        self.assertNotIn('PRIVATE_SENTINEL', output.getvalue())
+
+
 class NativePolicyTests(unittest.TestCase):
     @staticmethod
     def fixture():
