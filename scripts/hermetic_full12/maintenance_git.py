@@ -8,15 +8,18 @@ import time
 
 PIN = Path(__file__).with_name('maintenance-pin.json')
 REPOSITORY = 'FerrPOINT/services-base'
-CANDIDATE_COMMIT = None  # Await the independently reviewed Base safety successor, not 717.
-CANDIDATE_REF = 'refs/heads/feat/maintenance-packet-v2-20261010'
+CANDIDATE_COMMIT = '43d02057d96b326b4ea077388277e6064602ef61'
+CANDIDATE_REF = 'refs/heads/fix/maintenance-admission-and-installer-20261010'
 EXPECTED_FILES = {
     'scripts/compose_helpers.py': {
-        'blob': None, 'sha256': None},
+        'blob': '1ec8803af11c1cb99d59f58dd89019b04cd07cc0',
+        'sha256': '5e74856ecbaf2bf3c21a614479ec400c8437398d0111c02397983cc9c0a6bfe6'},
     'scripts/local_resource_cleanup.py': {
-        'blob': None, 'sha256': None},
+        'blob': 'aed6edc8ab5af6ec656ae8c591b034a2663eec76',
+        'sha256': 'babc3fbba5094608b03a34a27fecf512fa917950b1ae55636277dd33741031e1'},
     'scripts/install_resource_cleanup.ps1': {
-        'blob': None, 'sha256': None},
+        'blob': 'c2505242c76c199190499c9408b1f8db0522a856',
+        'sha256': '659649d8389e8017f8116e73c0da71576e0c3a0b3a9310d4dc7f30f7e931773f'},
 }
 
 

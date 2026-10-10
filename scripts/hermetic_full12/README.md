@@ -1,7 +1,8 @@
 # Public-safe exact-source full12 controls
 
 Этот source-only successor имеет непосредственный parent
-`632ea8347602fe4af22e7369790ed9c75e53f76a`, затем original public-safe controls
+`4d97c54f35b485224a8229495763658fcbbd40e9`, затем qualification controls
+`632ea8347602fe4af22e7369790ed9c75e53f76a`, original public-safe controls
 `1dbedf85242c3540b70005ce5f0c20badb682c41` и product source
 `25be2e82d4d42673897c8a16070eb8a9519244f0`. Это normal history, не импорт
 retired/private controls. Product SDK остаётся
@@ -9,31 +10,31 @@ retired/private controls. Product SDK остаётся
 
 ## Closed Dependency
 
-`maintenance-pin.json` v2 явно хранит `pending_reviewed_safety_successor`, null
-commit и null blob/SHA256 для трёх файлов. Private candidate
-`7170d3cc412fc3788a242be4470819fda26f56fc` НЕ одобрен: требуется safety successor
-для Windows argv, canonical registry/output CWD и local30GiB/CI5GiB policy.
-Старые raw hashes не являются совместимым fallback и удалены из active contract.
-Explicit intended ref: `refs/heads/feat/maintenance-packet-v2-20261010` в private
-`FerrPOINT/services-base`. Это имя само по себе не доказывает публикацию.
+`maintenance-pin.json` v2 связывает parent-reviewed safety successor
+`43d02057d96b326b4ea077388277e6064602ef61` и explicit published ref
+`refs/heads/fix/maintenance-admission-and-installer-20261010` в private
+`FerrPOINT/services-base` (Draft PR183). Parent publication ACK и отдельный actual
+read-only qualification подтверждают точный tip до/после, fetched ref, три Git
+blobs и raw SHA256. `published_exact_commit` относится только к этой dependency,
+не к native/full12 acceptance. Private717, installed packet, рабочие файлы,
+SDK19a и старые helper hashes не являются fallback.
 
-До reviewed нового commit/трёх hashes и parent publication readback preflight,
-qualify и consumer binding закрыты. Workflow останавливается до private checkout;
-direct job — до Git, материализации и resource effects. SDK19a, installed packet,
-working files, encoded payload и произвольные commit/ref не заменяют dependency.
+Новый Base contract сохраняет local-v1 default30GiB. Только reviewed disposable
+hosted callers передают explicit `isolated-ci-v1`: parent/cache напрямую, native
+sessions через узкий hosted adapter. Native adapter повторно проверяет hosted
+admission/task/daemon/context до original constructor; Base defaults не меняются.
+Реальный host reserve108279229428 и `SDLC_MIN_FREE_GIB` не снижены до5GiB.
+Canonical absolute registry/output и original owner/cleanup semantics сохранены.
 
 ### Проверка candidate без записи
 
-ТОЛЬКО после review safety successor и parent published-ref readback отдельным
-reviewed normal successor внести его точный commit и три blob/raw SHA256 в
-`maintenance_git.py` и `maintenance-pin.json`. Сначала оставить qualification
-pending. Из аутентифицированного full-history checkout с актуальным fetched
-`refs/remotes/origin/feat/maintenance-packet-v2-20261010` проверить:
+Из аутентифицированного full-history checkout с актуальным fetched
+`refs/remotes/origin/fix/maintenance-admission-and-installer-20261010` проверить:
 
 ```sh
 python3 -B scripts/hermetic_full12/maintenance_git.py qualify \
-  /absolute/private/services-base <reviewed-safety-commit> \
-  refs/heads/feat/maintenance-packet-v2-20261010
+  /absolute/private/services-base 43d02057d96b326b4ea077388277e6064602ef61 \
+  refs/heads/fix/maintenance-admission-and-installer-20261010
 ```
 
 Команда использует существующий Linux owned-process helper, включая WNOWAIT и
@@ -48,14 +49,14 @@ tip во время readback запрещено; ref сохраняется ка
 а не вместо immutable commit. Приватный код
 и credentials не входят в публичный checkout или artifacts.
 
-После независимого сравнения metadata отдельный normal successor может поставить
-`published_exact_commit`, обновить explicit normal parent chain и component lock.
-Текущий checkout guard требует ровно HEAD ->632->1db->25be, full history,
-task-owned modifications относительно632 и add-only controls относительно25be.
-Новый workflow/host branch: `build-only/forge-maintenance-full12-20261010`.
+Текущий checkout guard требует ровно HEAD ->4d97->632->1db->25be, full history,
+task-owned modifications относительно4d97 и add-only controls относительно25be.
+Новый workflow/host branch: `build-only/forge-safe-maintenance-full12-20261010`.
 Изменение родителя в следующем reviewed commit требует сохранить всю chain,
 не заменить проверку на произвольный ancestor. Candidate JSON и installed bytes
-не доказывают native/SDLC acceptance. Сейчас full12 НЕ runnable/qualified.
+не доказывают native/SDLC acceptance. Source guards больше не блокируют из-за
+старого branch/parent/null pin. Hosted execution остаётся отдельным разрешением
+после review/publish controls, private checkout access и фактического admission.
 
 Три hash связывают v2 helper с cleanup/installer. Политика Base сохраняется: exact
 owned Compose down в finally, v2 daemon/manifest/owner проверки до удаления
@@ -75,7 +76,8 @@ Private bytes остаются в памяти/ephemeral VM, не в public Git/
 Оригинальные native QA и observer source bytes не переписаны. Перед original
 `load_sdk`/smoke binding адаптируется только expected `SDK_SHA256` из квалифицированного
 Git proof; original loader, journal guards и assertions остаются строгими.
-Private bridge proof использует ту же привязку и остаётся pending actual execution.
+Private bridge proof использует ту же привязку. Его pure private-SDK cases не
+запускают Docker и не заменяют full12 execution.
 
 ## Execution Contract
 
@@ -111,9 +113,10 @@ python3 -B -m unittest test_gate test_deadline_boundaries test_bridge_deadlines 
 ```
 
 `test_process_groups` is a bounded Linux subprocess-only proof suite.
-`private_bridge_proofs.py` separately exercises the actual private SDK boundary:
-it fails closed until the qualified pin is available in the sibling authenticated
-services-base checkout. Its results and the full12 execution are PENDING, not
-replaced by synthetic pure fixture tests or inherited historical acceptance.
+`private_bridge_proofs.py` отдельно проверяет actual private SDK с fake engine,
+temp filesystem и bounded Python subprocesses. Он требует qualified exact packet
+в sibling authenticated services-base checkout и не использует installed SDK.
+Full12 execution остаётся PENDING и не заменяется этими pure fixtures или
+унаследованной исторической acceptance.
 
 No push, dispatch, Docker/Cargo/native execution is authorized by this packet.

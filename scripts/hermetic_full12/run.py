@@ -49,6 +49,22 @@ def install_process_adapter(sdk, q):
     sdk.checked = checked
 
 
+def install_native_ci_policy(q):
+    """Select CI policy only at this hosted bridge, never change Base's local default."""
+    session_class = q.session_class
+
+    def hosted_session_class(sdk):
+        class HostedNativeSession(session_class(sdk)):
+            def __init__(self, **kwargs):
+                h.hosted_guard()
+                h.require('resource_policy' not in kwargs and kwargs.get('task') == TASK
+                          and kwargs.get('docker') == h.DOCKER and kwargs.get('daemon_id') == q.DAEMON_ID)
+                super().__init__(resource_policy='isolated-ci-v1', **kwargs)
+        return HostedNativeSession
+
+    q.session_class = hosted_session_class
+
+
 def docker(*args):
     return h.command(h.DOCKER + list(args))
 
@@ -190,7 +206,8 @@ def manifest(root, config, images):
 
 def fill_cache(root, sdk, q, parent, images, token, cache_operations):
     operation = parent.parent_class(sdk, q)(project='sdlc-build-forge-cache-' + token, task=TASK,
-        purpose='locked-dependency-fetch-only', docker=h.DOCKER, directory=root / 'cache-fetch', daemon_id=q.DAEMON_ID)
+        purpose='locked-dependency-fetch-only', docker=h.DOCKER, directory=root / 'cache-fetch', daemon_id=q.DAEMON_ID,
+        resource_policy='isolated-ci-v1')
     cache_operations.append(operation)
     service = {'image': images['tools'], 'init': True, 'user': '0:0', 'cap_drop': ['ALL'], 'networks': ['fetch'],
         'entrypoint': ['cargo'], 'command': ['fetch', '--locked', '--target', 'x86_64-unknown-linux-gnu'],
@@ -340,7 +357,8 @@ def run_stage(stage, root, config, images, admission, q, sdk, parent, catalogues
             h.parity(root / 'sources', catalogues)
             h.require(not any(any(inventory(config[key]).values()) for key in ('project', 'pg_project', 'oci_project')))
             operation = parent.parent_class(sdk, q)(project=config['project'], task=TASK, purpose=PURPOSE,
-                docker=h.DOCKER, directory=root / 'stages' / stage, daemon_id=q.DAEMON_ID)
+                docker=h.DOCKER, directory=root / 'stages' / stage, daemon_id=q.DAEMON_ID,
+                resource_policy='isolated-ci-v1')
             bridge = q.NativeComposeBridge(sdk=sdk, children=root / 'children', pg_project=config['pg_project'],
                                           oci_project=config['oci_project'], registry=root / 'registry')
             operation.write_reviewed(parent.parent_manifest(q, manifest(root, config, images), config))
@@ -586,6 +604,7 @@ def run_job(job):
             os.environ['SDLC_MIN_FREE_GIB'] = str(h.HOST_BYTES / 2**30)
             sdk = q.load_sdk(maintenance)
             install_process_adapter(sdk, q)
+            install_native_ci_policy(q)
             parent = h.load('reviewed_hosted_parent', HERE / 'parent.py')
             token = uuid.uuid4().hex[:20]
             config = {'native_root': str(root), 'cache_root': str(root / 'cache'), 'forge_git_sha': h.SOURCE,

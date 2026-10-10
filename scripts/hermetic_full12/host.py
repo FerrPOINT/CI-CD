@@ -20,8 +20,9 @@ HERE = Path(__file__).resolve().parent
 SOURCE = '25be2e82d4d42673897c8a16070eb8a9519244f0'
 BASE = '19a7a381ae6dbea61a643bb96189e483fa64df5c'
 PUBLIC_CONTROLS = '1dbedf85242c3540b70005ce5f0c20badb682c41'
-CONTROLS_PARENT = '632ea8347602fe4af22e7369790ed9c75e53f76a'
-BRANCH = 'build-only/forge-maintenance-full12-20261010'
+QUALIFICATION_CONTROLS = '632ea8347602fe4af22e7369790ed9c75e53f76a'
+CONTROLS_PARENT = '4d97c54f35b485224a8229495763658fcbbd40e9'
+BRANCH = 'build-only/forge-safe-maintenance-full12-20261010'
 CONSUMER_PATHS = {
     '.github/workflows/forge-hermetic-full12.yml',
     *('scripts/hermetic_full12/' + name for name in (
@@ -316,7 +317,8 @@ def bind_maintenance(module, proof):
 
 def controls_history(controls):
     require(git(controls, 'rev-parse', '--is-shallow-repository').strip() == b'false')
-    for revision, parent in (('HEAD', CONTROLS_PARENT), (CONTROLS_PARENT, PUBLIC_CONTROLS),
+    for revision, parent in (('HEAD', CONTROLS_PARENT), (CONTROLS_PARENT, QUALIFICATION_CONTROLS),
+                             (QUALIFICATION_CONTROLS, PUBLIC_CONTROLS),
                              (PUBLIC_CONTROLS, SOURCE)):
         row = git(controls, 'rev-list', '--parents', '-n', '1', revision).decode().split()
         require(len(row) == 2 and row[1] == parent)

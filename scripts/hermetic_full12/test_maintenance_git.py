@@ -18,14 +18,14 @@ import run as gate
 
 
 @contextmanager
-def fixture():
+def fixture(qualification='published_exact_commit'):
     # These are public test strings, not implementations or encoded private source.
     payloads = {name: ('public-unit-fixture:' + name + '\r\n').encode() for name in m.EXPECTED_FILES}
     files = {name: {'blob': hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest(),
                     'sha256': hashlib.sha256(raw).hexdigest()} for name, raw in payloads.items()}
     pin = {'schema': 'forge/private-maintenance-pin/v2', 'repository': m.REPOSITORY,
            'commit': 'a' * 40, 'ref': 'refs/heads/maintenance-reviewed',
-           'qualification': 'published_exact_commit', 'files': files}
+           'qualification': qualification, 'files': files}
     def git(_, *args):
         if args == ('remote', 'get-url', 'origin'):
             return ('https://github.com/' + m.REPOSITORY + '.git\n').encode()
@@ -180,27 +180,24 @@ class MaintenanceGitTests(unittest.TestCase):
                 with self.assertRaises(m.QualificationFailure):
                     m.qualification_git(20)(Path('.'), 'remote', 'get-url', 'origin')
 
-    def test_current_pin_explicitly_unqualified_candidate(self):
+    def test_current_pin_exact_reviewed_safety_successor(self):
         pin = json.loads(m.PIN.read_bytes())
-        self.assertIsNone(pin['commit'])
-        self.assertEqual(pin['ref'], 'refs/heads/feat/maintenance-packet-v2-20261010')
-        self.assertEqual(pin['qualification'], 'pending_reviewed_safety_successor')
-        self.assertIsNone(m.CANDIDATE_COMMIT)
+        self.assertEqual(pin['commit'], '43d02057d96b326b4ea077388277e6064602ef61')
+        self.assertEqual(pin['ref'], 'refs/heads/fix/maintenance-admission-and-installer-20261010')
+        self.assertEqual(pin['qualification'], 'published_exact_commit')
+        self.assertEqual(m.CANDIDATE_COMMIT, pin['commit'])
         self.assertEqual(pin['files'], m.EXPECTED_FILES)
-        self.assertTrue(all(set(item) == {'blob', 'sha256'} and all(value is None for value in item.values())
-                            for item in pin['files'].values()))
-        with self.assertRaises(m.QualificationFailure):
-            m.preflight()
+        self.assertEqual(m.preflight(), pin)
 
     def test_missing_pin_no_git_no_materialization(self):
-        with tempfile.TemporaryDirectory() as directory, patch.object(h, 'git') as git:
+        with fixture(qualification='pending_reviewed_safety_successor'), tempfile.TemporaryDirectory() as directory, patch.object(h, 'git') as git:
             with self.assertRaises(m.QualificationFailure):
                 h.maintenance(Path(directory), Path(directory) / 'private', {})
             git.assert_not_called()
             self.assertEqual(list(Path(directory).iterdir()), [])
 
     def test_job_missing_pin_before_guard_checkout_resource_effects(self):
-        with patch.object(h, 'hosted_guard') as guard, patch.object(h, 'checkout_proof') as checkout, patch.object(h, 'reclaim') as reclaim, patch.object(gate, 'start_daemon') as daemon, patch.object(h, 'wall_budget'):
+        with fixture(qualification='pending_reviewed_safety_successor'), patch.object(h, 'hosted_guard') as guard, patch.object(h, 'checkout_proof') as checkout, patch.object(h, 'reclaim') as reclaim, patch.object(gate, 'start_daemon') as daemon, patch.object(h, 'wall_budget'):
             with self.assertRaises(m.QualificationFailure):
                 gate.run_job('A')
         for operation in (guard, checkout, reclaim, daemon):
@@ -209,7 +206,7 @@ class MaintenanceGitTests(unittest.TestCase):
 
     def test_preflight_stdout_fixed_no_private_payload(self):
         output = io.StringIO()
-        with patch('sys.argv', ['maintenance_git.py', 'preflight']), patch('sys.stdout', output):
+        with fixture(qualification='pending_reviewed_safety_successor'), patch('sys.argv', ['maintenance_git.py', 'preflight']), patch('sys.stdout', output):
             self.assertEqual(m.main(), 1)
         self.assertEqual(output.getvalue(), 'MAINTENANCE_PIN_UNQUALIFIED\n')
 
@@ -321,8 +318,9 @@ class MaintenanceGitTests(unittest.TestCase):
 
     def test_pending_safety_packet_cannot_rebind_consumer(self):
         module = SimpleNamespace(SDK_SHA256='unchanged')
-        with self.assertRaises(m.QualificationFailure):
-            h.bind_maintenance(module, {})
+        with fixture(qualification='pending_reviewed_safety_successor'):
+            with self.assertRaises(m.QualificationFailure):
+                h.bind_maintenance(module, {})
         self.assertEqual(module.SDK_SHA256, 'unchanged')
 
     def test_rebinding_is_before_original_load_sdk_and_smoke_binding(self):
@@ -400,7 +398,8 @@ class ConsumerHistoryTests(unittest.TestCase):
         if args == ('rev-parse', '--is-shallow-repository'):
             return b'false\n'
         parents = {'HEAD': ('a' * 40, h.CONTROLS_PARENT),
-                   h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.PUBLIC_CONTROLS),
+                   h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.QUALIFICATION_CONTROLS),
+                   h.QUALIFICATION_CONTROLS: (h.QUALIFICATION_CONTROLS, h.PUBLIC_CONTROLS),
                    h.PUBLIC_CONTROLS: (h.PUBLIC_CONTROLS, h.SOURCE)}
         if args[:4] == ('rev-list', '--parents', '-n', '1'):
             return (' '.join(parents[args[4]]) + '\n').encode()
@@ -413,7 +412,8 @@ class ConsumerHistoryTests(unittest.TestCase):
     def test_exact_normal_successor_history_admitted(self):
         with patch.object(h, 'git', side_effect=self.git):
             h.controls_history(Path('controls'))
-        self.assertEqual(h.CONTROLS_PARENT, '632ea8347602fe4af22e7369790ed9c75e53f76a')
+        self.assertEqual(h.CONTROLS_PARENT, '4d97c54f35b485224a8229495763658fcbbd40e9')
+        self.assertEqual(h.QUALIFICATION_CONTROLS, '632ea8347602fe4af22e7369790ed9c75e53f76a')
         self.assertEqual(h.PUBLIC_CONTROLS, '1dbedf85242c3540b70005ce5f0c20badb682c41')
 
     def test_shallow_wrong_parent_or_extra_merge_parent_rejected(self):
@@ -422,6 +422,7 @@ class ConsumerHistoryTests(unittest.TestCase):
                 (('rev-list', '--parents', '-n', '1', 'HEAD'), ('a' * 40 + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', 'HEAD'), ('a' * 40 + ' ' + h.CONTROLS_PARENT + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.CONTROLS_PARENT), (h.CONTROLS_PARENT + ' ' + h.SOURCE).encode()),
+                (('rev-list', '--parents', '-n', '1', h.QUALIFICATION_CONTROLS), (h.QUALIFICATION_CONTROLS + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.PUBLIC_CONTROLS), (h.PUBLIC_CONTROLS + ' ' + h.CONTROLS_PARENT).encode())):
             with self.subTest(selector=selector), patch.object(h, 'git', side_effect=lambda root, *a:
                     raw if a == selector else self.git(root, *a)):
@@ -443,7 +444,7 @@ class ConsumerHistoryTests(unittest.TestCase):
 
     def test_workflow_and_host_bind_only_new_branch(self):
         workflow = (h.HERE.parents[1] / '.github/workflows/forge-hermetic-full12.yml').read_text()
-        self.assertEqual(h.BRANCH, 'build-only/forge-maintenance-full12-20261010')
+        self.assertEqual(h.BRANCH, 'build-only/forge-safe-maintenance-full12-20261010')
         self.assertIn('branches: [' + h.BRANCH + ']', workflow)
         self.assertEqual(workflow.count("github.ref == 'refs/heads/" + h.BRANCH + "'"), 3)
         self.assertNotIn('forge-public-safe-full12-25be-20261009', workflow)

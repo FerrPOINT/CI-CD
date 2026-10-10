@@ -17,9 +17,8 @@ import run as gate
 from test_deadline_boundaries import stage_fixture
 
 
-@contextmanager
-def native_fixture(count, checked):
-    # Private-dependent proof: unavailable until an owner publishes the exact qualified commit.
+def qualified_modules():
+    # Private-dependent proof; no installed packet or unqualified local byte fallback.
     proof, payloads = h.m.read_payloads(h.HERE.parents[2] / 'services-base', h.git)
     source = h.HERE.parent / 'native_qa_compose.py'
     raw = source.read_bytes().replace(b'\r\n', b'\n')
@@ -34,6 +33,12 @@ def native_fixture(count, checked):
     h.require(hashlib.sha256(sdk_raw).hexdigest() == q.SDK_SHA256)
     sdk = ModuleType('deadline_actual_maintenance')
     exec(compile(sdk_raw, 'exact_maintenance_sdk', 'exec'), sdk.__dict__)
+    return q, sdk
+
+
+@contextmanager
+def native_fixture(count, checked):
+    q, sdk = qualified_modules()
     sdk.checked = checked
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -72,6 +77,54 @@ class ActualCleanupFailureTests(unittest.TestCase):
             self.assertEqual(bridge.closed, [str(sessions[1].journal)])
             sessions[0].record.assert_called_once_with('cleanup-required')
             sessions[1].record.assert_called_once_with('cleaned')
+
+
+class ActualResourcePolicyTests(unittest.TestCase):
+    def test_actual_sdk_local_default_refuses_five_before_effects(self):
+        _, sdk = qualified_modules()
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, SDLC_MIN_FREE_GIB='5'), patch.object(sdk, 'checked') as checked:
+            root = Path(directory) / 'session'
+            with self.assertRaises(ValueError):
+                sdk.ComposeHelper(project='sdlc-qa-forge-policy-local', task=gate.TASK, purpose='pure-policy',
+                                  docker=h.DOCKER, directory=root)
+            self.assertFalse(root.exists())
+            checked.assert_not_called()
+
+    def test_actual_sdk_local_default_refuses_twenty_nine(self):
+        _, sdk = qualified_modules()
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, SDLC_MIN_FREE_GIB='29'), patch.object(sdk, 'checked') as checked:
+            with self.assertRaises(ValueError):
+                sdk.ComposeHelper(project='sdlc-qa-forge-policy-local', task=gate.TASK, purpose='pure-policy',
+                                  docker=h.DOCKER, directory=Path(directory) / 'session')
+            checked.assert_not_called()
+
+    def test_actual_native_constructor_ci_policy_and_v2_journal_with_fake_engine(self):
+        q, sdk = qualified_modules()
+        q.DAEMON_ID = 'policy-fixture-daemon'
+        gate.install_native_ci_policy(q)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {'SDLC_MIN_FREE_GIB': '5', 'SDLC_RESOURCE_REGISTRY': str(root / 'registry')}
+            def checked(argv, **kwargs):
+                if argv == h.DOCKER + ['info', '--format', '{{.ID}}']:
+                    return q.DAEMON_ID
+                if argv[:4] == h.DOCKER + ['container'] or argv[:4] == h.DOCKER + ['network'] or argv[:4] == h.DOCKER + ['volume']:
+                    self.assertEqual(argv[4:6], ['ls', '-aq'] if argv[3] == 'container' else ['ls', '-q'])
+                    self.assertEqual(argv[6:], ['--filter', 'label=com.docker.compose.project=sdlc-qa-forge-policy-ci'])
+                    return ''
+                raise AssertionError('unexpected fake engine command')
+            with patch.dict(os.environ, env), patch.object(h, 'hosted_guard') as guard, patch.object(sdk, 'checked', side_effect=checked), patch.object(sdk.shutil, 'disk_usage', return_value=SimpleNamespace(free=5 * 2**30)):
+                operation = q.session_class(sdk)(kind='oci', source_root=root / 'sources',
+                    project='sdlc-qa-forge-policy-ci', task=gate.TASK, docker=h.DOCKER,
+                    directory=root / 'session', daemon_id=q.DAEMON_ID)
+            guard.assert_called_once_with()
+            journal = h.read(operation.journal)
+            self.assertEqual(journal['version'], 2)
+            self.assertEqual(journal['phase'], 'prepared')
+            self.assertEqual(journal['sdk_sha256'], h.m.EXPECTED_FILES['scripts/compose_helpers.py']['sha256'])
+            self.assertEqual(journal['daemon_id'], q.DAEMON_ID)
+            self.assertEqual(journal['task'], gate.TASK)
+            self.assertTrue((root / 'registry').is_dir())
 
 
 @unittest.skipUnless(sys.platform == 'linux', 'actual Linux timers required')

@@ -257,7 +257,7 @@ class AtomicAndFailureTests(unittest.TestCase):
 
     def test_unqualified_sdk_delivery_fails_before_writes(self):
         with tempfile.TemporaryDirectory() as temp:
-            with self.assertRaises(h.m.QualificationFailure), patch.object(h, 'git') as git:
+            with self.assertRaises(h.m.QualificationFailure), patch.object(h, 'git') as git, patch.object(h.m, 'CANDIDATE_COMMIT', None):
                 h.maintenance(Path(temp), Path(temp) / 'private-checkout', {})
             git.assert_not_called()
             self.assertEqual(list(Path(temp).iterdir()), [])
@@ -457,6 +457,68 @@ class SmokeAndCleanupTests(unittest.TestCase):
         finally:
             context.reset(token)
         request.checked.assert_not_called()
+
+
+class NativePolicyTests(unittest.TestCase):
+    @staticmethod
+    def fixture():
+        calls = []
+        class Helper:
+            def __init__(self, *, resource_policy='local-v1', **kwargs):
+                calls.append((resource_policy, kwargs))
+        sdk = SimpleNamespace(ComposeHelper=Helper)
+        def session_class(sdk):
+            class Session(sdk.ComposeHelper):
+                pass
+            return Session
+        q = SimpleNamespace(session_class=session_class, DAEMON_ID='owned-daemon')
+        gate.install_native_ci_policy(q)
+        kwargs = {'task': gate.TASK, 'docker': h.DOCKER[:], 'daemon_id': q.DAEMON_ID,
+                  'kind': 'pg', 'project': 'owned-project', 'directory': 'owned-directory'}
+        return q, sdk, calls, kwargs
+
+    def test_hosted_native_policy_is_explicit_without_changing_sdk_default(self):
+        q, sdk, calls, kwargs = self.fixture()
+        with patch.object(h, 'hosted_guard') as guard:
+            q.session_class(sdk)(**kwargs)
+        guard.assert_called_once_with()
+        self.assertEqual(calls, [('isolated-ci-v1', kwargs)])
+        sdk.ComposeHelper()
+        self.assertEqual(calls[-1], ('local-v1', {}))
+
+    def test_nonhosted_policy_selection_refused_before_constructor(self):
+        q, sdk, calls, kwargs = self.fixture()
+        with patch.object(h, 'hosted_guard', side_effect=ValueError('closed_guard')):
+            with self.assertRaises(ValueError):
+                q.session_class(sdk)(**kwargs)
+        self.assertEqual(calls, [])
+
+    def test_foreign_owner_daemon_endpoint_or_policy_refused_before_constructor(self):
+        for change in ({'task': 'foreign'}, {'daemon_id': 'foreign'},
+                       {'docker': ['docker', '--context', 'foreign']},
+                       {'resource_policy': 'local-v1'}, {'resource_policy': 'isolated-ci-v1'}):
+            with self.subTest(change=change):
+                q, sdk, calls, kwargs = self.fixture()
+                kwargs.update(change)
+                with patch.object(h, 'hosted_guard'), self.assertRaises(ValueError):
+                    q.session_class(sdk)(**kwargs)
+                self.assertEqual(calls, [])
+
+    def test_parent_and_cache_explicit_ci_policy_call_sites(self):
+        tree = ast.parse((h.HERE / 'run.py').read_bytes())
+        for function in ('fill_cache', 'run_stage'):
+            node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == function)
+            policies = [keyword.value for call in ast.walk(node) if isinstance(call, ast.Call)
+                        for keyword in call.keywords if keyword.arg == 'resource_policy']
+            self.assertEqual(len(policies), 1)
+            self.assertEqual(ast.literal_eval(policies[0]), 'isolated-ci-v1')
+
+    def test_native_policy_install_after_qualification_and_hosted_admission(self):
+        tree = ast.parse((h.HERE / 'run.py').read_bytes())
+        job = ast.unparse(next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'run_job'))
+        for preceding in ('h.hosted_guard()', 'h.m.read_payloads(', 'h.bind_maintenance(q, maintenance_proof)',
+                          'q.load_sdk(maintenance)'):
+            self.assertLess(job.index(preceding), job.index('install_native_ci_policy(q)'))
 
 
 MAINTENANCE_TEST_FILES = {name: {'blob': 'd' * 40, 'sha256': 'c' * 64} for name in h.m.EXPECTED_FILES}
