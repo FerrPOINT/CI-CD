@@ -1,7 +1,7 @@
 # Public-safe exact-source full12 controls
 
 Этот source-only successor имеет непосредственный parent
-`ab623f1ea7f47c0afa182ab4b913c89f981d305b`; все exact parent edges предыдущих
+`dcad6522c9dc313bf6f8113deb9ecb885e6710ad`; все exact parent edges предыдущих
 controls сохранены в `host.controls_history`, включая maintenance controls
 `b9375dc4b4f070b0f6cff1733228f1a6865b1368`, safety controls
 `4d97c54f35b485224a8229495763658fcbbd40e9`, qualification controls
@@ -60,7 +60,7 @@ tip во время readback запрещено; ref сохраняется ка
 и credentials не входят в публичный checkout или artifacts.
 
 Текущий checkout guard требует exact normal chain из `host.controls_history`,
-full history, task-owned modifications относительно ab623 и add-only controls относительно25be.
+full history, task-owned modifications относительно dcad и add-only controls относительно25be.
 Предыдущий workflow/host branch: `build-only/forge-bootstrap-full12-20261010`.
 Изменение родителя в следующем reviewed commit требует сохранить всю chain,
 не заменить проверку на произвольный ancestor. Candidate JSON и installed bytes
@@ -204,8 +204,8 @@ SDK до original Base constructor. Floors,5400s bootstrap deadline, все12 st
 product/SDK pins и protected images/caches не изменены. Недостаточный free-after
 по-прежнему закрывает allocation; восстановление7.68GB или live PASS не заявлены.
 
-Allowlist содержит только dotnet, Android, legacy `/opt/ghc` и актуальный
-`/usr/local/.ghcup`. Legacy path сохранён для прежних image layouts; exact image
+Allowlist содержит только dotnet, Android, legacy `/opt/ghc`, актуальный
+`/usr/local/.ghcup` и `/opt/hostedtoolcache`. Legacy path сохранён для прежних image layouts; exact image
 `ubuntu24/20261004.327` устанавливает Haskell в `/usr/local/.ghcup`:
 [official installer](https://github.com/actions/runner-images/blob/ubuntu24/20261004.327/images/ubuntu/scripts/build/install-haskell.sh).
 Отсутствующие кандидаты не заменяются поиском других директорий.
@@ -222,6 +222,37 @@ Candidate должен быть canonical directory без symlink ancestors, н
 device, что host и data root, без mount at/below; identity и mountinfo повторно
 проверяются после `du`. Удаление использует только точный literal и прежний
 `--one-file-system`; это не atomic reservation или защита от всех filesystem races.
+
+### Source qualification одного toolcache path
+
+Добавлен только literal `/opt/hostedtoolcache`, не `/opt` или другие SDK paths.
+Exact image `ubuntu24/20261004.327` создаёт этот каталог как
+`AGENT_TOOLSDIRECTORY`/`RUNNER_TOOL_CACHE`; это preinstalled SDK cache disposable
+hosted VM, не protected Docker images или наш locked dependency cache:
+[environment recipe](https://github.com/actions/runner-images/blob/ubuntu24/20261004.327/images/ubuntu/scripts/build/configure-environment.sh#L34-L39),
+[toolset](https://github.com/actions/runner-images/blob/ubuntu24/20261004.327/images/ubuntu/toolsets/toolset-2404.json#L1-L67).
+Measured size/free gain и покрытие оставшегося дефицита3754814452 bytes UNKNOWN;
+source qualification не означает live capacity PASS. Final capacity gate неизменён.
+
+Complete A/B/C workflow не вызывает setup-python/node/go, CodeQL или toolcache
+executables. Host Python3 и Git устанавливаются через apt, отдельно от cache:
+[Python recipe](https://github.com/actions/runner-images/blob/ubuntu24/20261004.327/images/ubuntu/scripts/build/install-python.sh#L10-L11),
+[Git recipe](https://github.com/actions/runner-images/blob/ubuntu24/20261004.327/images/ubuntu/scripts/build/install-git.sh#L23-L31).
+`Configure-Toolset.ps1` создаёт внешние aliases только для Go; Go здесь не вызывается:
+[exact configuration](https://github.com/actions/runner-images/blob/ubuntu24/20261004.327/images/ubuntu/scripts/build/Configure-Toolset.ps1#L44-L74).
+Три pinned checkout/upload/download actions используют Node24 из runner
+`externals`, не cached Node или PATH Node:
+[runner handler](https://github.com/actions/runner/blob/v2.337.0/src/Runner.Worker/Handlers/NodeScriptActionHandler.cs#L116-L118).
+Checkout post steps используют тот же runner Node и system Git; artifact steps
+читают только job/workspace receipts. `/opt/actionarchivecache` не затрагивается.
+
+Host helpers, exact product NativeCompose adapter и три hash-verified maintenance660
+helper blobs не потребляют toolcache path/env references. Host Docker/rootless,
+Compose и Buildx скачиваются с прежними hashes в owned `root/bin` и config;
+apt dependencies/systemd/utilities остаются вне toolcache. Все12 workload stages
+используют pinned container tools или system Python observer, не hosted SDKs.
+Existing mounted-path/device/symlink/receipt guards применяются без изменений;
+локально никакой SDK cache не удаляется и новый hosted run не запускался.
 
 Cleanup retains WNOWAIT leader custody and absolute deadline checks through
 actual native bridge close/record boundaries. Parent/nested Compose use v2

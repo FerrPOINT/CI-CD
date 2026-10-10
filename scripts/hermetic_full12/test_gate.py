@@ -216,7 +216,7 @@ class ReclaimTests(unittest.TestCase):
                 yield root, state, execute
 
     def test_exact_image_haskell_path_and_legacy_allowlist_only(self):
-        self.assertEqual(h.RECLAIM, ('/usr/share/dotnet', '/usr/local/lib/android', '/opt/ghc', '/usr/local/.ghcup'))
+        self.assertEqual(h.RECLAIM, ('/usr/share/dotnet', '/usr/local/lib/android', '/opt/ghc', '/usr/local/.ghcup', '/opt/hostedtoolcache'))
 
     def test_noop_missing_candidates_and_insufficient_preserve_original_floor(self):
         with self.fixture() as (root, state, command):
@@ -228,41 +228,42 @@ class ReclaimTests(unittest.TestCase):
                 h.reclaim(root)
             self.assertEqual(caught.exception.measurement['host_min_bytes'], h.HOST_BYTES)
             command.assert_not_called()
-        candidate = '/usr/local/.ghcup'
-        with self.fixture(free=h.HOST_BYTES - 10, present=(candidate,), gains={candidate: 1}) as (root, _, _):
-            with self.assertRaises(h.CapacityFailure):
-                h.reclaim(root)
-            self.assertEqual(h.read(root / 'reclaim.json')[0]['free_after'], h.HOST_BYTES - 9)
+        for candidate in ('/usr/local/.ghcup', '/opt/hostedtoolcache'):
+            with self.subTest(candidate=candidate), self.fixture(free=h.HOST_BYTES - 10,
+                    present=(candidate,), gains={candidate: 1}) as (root, _, _):
+                with self.assertRaises(h.CapacityFailure):
+                    h.reclaim(root)
+                self.assertEqual(h.read(root / 'reclaim.json')[0]['free_after'], h.HOST_BYTES - 9)
 
     def test_foreign_or_missing_device_symlink_and_mount_refuse_before_commands(self):
-        candidate = '/usr/local/.ghcup'
-        for options in ({'devices': {candidate: None}}, {'devices': {candidate: -1}},
-                        {'symlinks': (candidate,)}, {'symlinks': ('/usr/local',)},
-                        {'mounts': (candidate,)}, {'mounts': (candidate + '/nested',)}):
-            with self.subTest(options=options), self.fixture(free=h.HOST_BYTES - 1,
-                    present=(candidate,), **options) as (root, _, command):
+        for candidate in ('/usr/local/.ghcup', '/opt/hostedtoolcache'):
+            for options in ({'devices': {candidate: None}}, {'devices': {candidate: -1}},
+                            {'symlinks': (candidate,)}, {'symlinks': (str(PurePosixPath(candidate).parent),)},
+                            {'mounts': (candidate,)}, {'mounts': (candidate + '/nested',)}):
+                with self.subTest(candidate=candidate, options=options), self.fixture(free=h.HOST_BYTES - 1,
+                        present=(candidate,), **options) as (root, _, command):
+                    with self.assertRaises(ValueError):
+                        h.reclaim(root)
+                    command.assert_not_called()
+                    self.assertFalse((root / 'reclaim.json').exists())
+            with self.fixture(free=h.HOST_BYTES - 1, symlinks=(candidate,)) as (root, _, command):
                 with self.assertRaises(ValueError):
                     h.reclaim(root)
                 command.assert_not_called()
-                self.assertFalse((root / 'reclaim.json').exists())
-        with self.fixture(free=h.HOST_BYTES - 1, symlinks=(candidate,)) as (root, _, command):
-            with self.assertRaises(ValueError):
-                h.reclaim(root)
-            command.assert_not_called()
 
     def test_candidate_identity_swap_after_measurement_refuses_delete(self):
-        candidate = '/usr/local/.ghcup'
-        for change in ('swap_on_du', 'mount_on_du'):
-            with self.subTest(change=change), self.fixture(free=h.HOST_BYTES - 1,
-                    present=(candidate,)) as (root, state, _):
-                state[change] = True
-                with self.assertRaises(ValueError):
-                    h.reclaim(root)
-                self.assertEqual([argv[0] for argv in state['events']], ['du'])
+        for candidate in ('/usr/local/.ghcup', '/opt/hostedtoolcache'):
+            for change in ('swap_on_du', 'mount_on_du'):
+                with self.subTest(candidate=candidate, change=change), self.fixture(free=h.HOST_BYTES - 1,
+                        present=(candidate,)) as (root, state, _):
+                    state[change] = True
+                    with self.assertRaises(ValueError):
+                        h.reclaim(root)
+                    self.assertEqual([argv[0] for argv in state['events']], ['du'])
 
     def test_two_phase_receipt_accumulates_actual_devices_and_is_idempotent(self):
-        paths = ('/usr/share/dotnet', '/usr/local/lib/android', '/usr/local/.ghcup')
-        gains = dict(zip(paths, (30, 40, 100)))
+        paths = ('/usr/share/dotnet', '/usr/local/lib/android', '/usr/local/.ghcup', '/opt/hostedtoolcache')
+        gains = dict(zip(paths, (30, 40, 40, 100)))
         with self.fixture(free=h.HOST_BYTES - 70, present=paths, gains=gains) as (root, state, command):
             first = h.reclaim(root)
             self.assertEqual([row['allowlisted_path'] for row in first], list(paths[:2]))
@@ -301,7 +302,7 @@ class ReclaimTests(unittest.TestCase):
         self.assertLess(assignment.lineno, public.lineno)
 
     def test_malformed_missing_mismatched_foreign_and_reappeared_receipt_fail_closed(self):
-        candidate = '/usr/local/.ghcup'
+        candidate = '/opt/hostedtoolcache'
         mutations = (lambda rows: {}, lambda rows: rows * 2,
                      lambda rows: [{k: v for k, v in rows[0].items() if k != 'data_inode'}],
                      lambda rows: [{**rows[0], 'data_inode': rows[0]['data_inode'] + 1}],
@@ -359,7 +360,7 @@ class ReclaimTests(unittest.TestCase):
                 command.assert_not_called()
 
     def test_second_phase_reclaim_closes_before_original_cache_constructor_and_fetch(self):
-        first, later = '/usr/share/dotnet', '/usr/local/.ghcup'
+        first, later = '/usr/share/dotnet', '/opt/hostedtoolcache'
         with self.fixture(free=h.HOST_BYTES - 10, present=(first, later),
                 gains={first: 10, later: 20}) as (root, state, execute):
             original = h.reclaim(root)
