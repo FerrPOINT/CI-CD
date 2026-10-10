@@ -2,7 +2,7 @@ name: Forge Exact25be Hermetic Full12
 
 on:
   push:
-    branches: [build-only/forge-public-safe-full12-25be-20261009]
+    branches: [build-only/forge-maintenance-full12-20261010]
 
 permissions:
   contents: read
@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   A:
-    if: github.repository == 'FerrPOINT/CI-CD' && github.event_name == 'push' && github.ref == 'refs/heads/build-only/forge-public-safe-full12-25be-20261009' && github.event.deleted == false
+    if: github.repository == 'FerrPOINT/CI-CD' && github.event_name == 'push' && github.ref == 'refs/heads/build-only/forge-maintenance-full12-20261010' && github.event.deleted == false
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     defaults:
@@ -76,7 +76,7 @@ jobs:
           include-hidden-files: false
   B:
     needs: A
-    if: github.repository == 'FerrPOINT/CI-CD' && github.event_name == 'push' && github.ref == 'refs/heads/build-only/forge-public-safe-full12-25be-20261009' && github.event.deleted == false
+    if: github.repository == 'FerrPOINT/CI-CD' && github.event_name == 'push' && github.ref == 'refs/heads/build-only/forge-maintenance-full12-20261010' && github.event.deleted == false
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     defaults:
@@ -139,6 +139,7 @@ jobs:
           include-hidden-files: false
   C:
     needs: [A, B]
+    if: github.repository == 'FerrPOINT/CI-CD' && github.event_name == 'push' && github.ref == 'refs/heads/build-only/forge-maintenance-full12-20261010' && github.event.deleted == false
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     defaults:

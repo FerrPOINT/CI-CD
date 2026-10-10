@@ -15,15 +15,22 @@ import run as gate
 
 
 def git_response(argv):
-    folder, args = Path(argv[2]).name, argv[4:]
+    if argv[:3] != ['git', '--no-replace-objects', '-C'] or argv[4] != '--no-optional-locks':
+        raise AssertionError('unexpected Git prefix')
+    folder, args = Path(argv[3]).name, argv[5:]
     if args == ['rev-parse', 'HEAD']:
         return ({'controls': os.environ['GITHUB_SHA'], 'source': h.SOURCE, 'services-base': h.BASE}[folder] + '\n').encode()
     if args[0] == 'status':
         return b''
+    if args == ['rev-parse', '--is-shallow-repository']:
+        return b'false\n'
     if args[0] == 'rev-list':
-        return (os.environ['GITHUB_SHA'] + ' ' + h.SOURCE + '\n').encode()
+        chain = {'HEAD': (os.environ['GITHUB_SHA'], h.CONTROLS_PARENT),
+                 h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.PUBLIC_CONTROLS),
+                 h.PUBLIC_CONTROLS: (h.PUBLIC_CONTROLS, h.SOURCE)}
+        return (' '.join(chain[args[-1]]) + '\n').encode()
     if args[0] == 'diff':
-        return b'A\tscripts/hermetic_full12/run.py\n'
+        return (b'M' if args[2] == h.CONTROLS_PARENT else b'A') + b'\tscripts/hermetic_full12/run.py\n'
     if args[0] == 'show':
         return (h.BASE + '\n').encode()
     if args == ['rev-parse', 'HEAD^{tree}']:
@@ -101,8 +108,8 @@ class DeadlineBoundaryTests(unittest.TestCase):
                    'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_SHA': 'a' * 40}
             with patch.dict(os.environ, env), patch.object(h.m, 'preflight'), patch.object(h.m, 'read_payloads', return_value=({}, {})), patch.object(h, 'hosted_guard'), patch.object(h, 'verify_components', return_value={}), patch.object(h, 'wall_budget', side_effect=wall), patch.object(h.time, 'monotonic', side_effect=lambda: clock[0]), patch.object(h, 'command', side_effect=command), patch.object(h, 'reclaim', side_effect=h.CapacityFailure({'host_free_bytes': 0})), patch.object(gate, 'start_daemon') as start, patch.object(gate, 'stop_daemon', return_value={'stopped': True}):
                 self.assertEqual(gate.run_job('C'), 1)
-            self.assertEqual(envelopes[:2], [5400, 4800])  # Ten successful Git calls consume600.
-            self.assertEqual(len(git_calls), 20)  # Initial + final parity proof, private qualification separately tested.
+            self.assertEqual(envelopes[:2], [5400, 4560])  # Fourteen successful Git calls consume840.
+            self.assertEqual(len(git_calls), 28)  # Initial + final parity proof, private qualification separately tested.
             start.assert_not_called()
             self.assertIsNone(h.BOOTSTRAP_DEADLINE)
 

@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -22,8 +23,9 @@ def fixture():
     payloads = {name: ('public-unit-fixture:' + name + '\r\n').encode() for name in m.EXPECTED_FILES}
     files = {name: {'blob': hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest(),
                     'sha256': hashlib.sha256(raw).hexdigest()} for name, raw in payloads.items()}
-    pin = {'schema': 'forge/private-maintenance-pin/v1', 'repository': m.REPOSITORY,
-           'commit': 'a' * 40, 'qualification': 'published_exact_commit', 'files': files}
+    pin = {'schema': 'forge/private-maintenance-pin/v2', 'repository': m.REPOSITORY,
+           'commit': 'a' * 40, 'ref': 'refs/heads/maintenance-reviewed',
+           'qualification': 'published_exact_commit', 'files': files}
     def git(_, *args):
         if args == ('remote', 'get-url', 'origin'):
             return ('https://github.com/' + m.REPOSITORY + '.git\n').encode()
@@ -31,6 +33,8 @@ def fixture():
             return ('a' * 40 + '\n').encode()
         if args == ('rev-parse', '--is-shallow-repository'):
             return b'false\n'
+        if args == ('rev-parse', '--verify', 'refs/remotes/origin/maintenance-reviewed^{commit}'):
+            return ('a' * 40 + '\n').encode()
         if args == ('ls-tree', '-z', 'a' * 40, '--', *sorted(files)):
             return b''.join(('100644 blob ' + files[name]['blob'] + '\t' + name + '\0').encode() for name in sorted(files))
         if args[:2] == ('cat-file', 'blob'):
@@ -39,7 +43,8 @@ def fixture():
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / 'pin.json'
         path.write_text(json.dumps(pin), encoding='ascii')
-        with patch.object(m, 'PIN', path), patch.object(m, 'EXPECTED_FILES', copy.deepcopy(files)):
+        with (patch.object(m, 'PIN', path), patch.object(m, 'EXPECTED_FILES', copy.deepcopy(files)),
+              patch.object(m, 'CANDIDATE_COMMIT', pin['commit']), patch.object(m, 'CANDIDATE_REF', pin['ref'])):
             yield Path(directory), pin, payloads, git
 
 
@@ -147,8 +152,8 @@ class MaintenanceGitTests(unittest.TestCase):
     def test_candidate_cli_failure_never_prints_private_error(self):
         with (patch.object(m, 'qualification_git', return_value=Mock(side_effect=RuntimeError(
                 'TOKEN SQL PRIVATE PATH'))), patch('sys.stdout', new_callable=io.StringIO) as output,
-                patch('sys.argv', ['maintenance_git.py', 'qualify', '.', 'a' * 40,
-                                   'refs/heads/maintenance-reviewed'])):
+                patch('sys.argv', ['maintenance_git.py', 'qualify', '.', m.CANDIDATE_COMMIT,
+                                   m.CANDIDATE_REF])):
             self.assertEqual(m.main(), 1)
         self.assertEqual(output.getvalue(), 'MAINTENANCE_PIN_UNQUALIFIED\n')
 
@@ -175,10 +180,15 @@ class MaintenanceGitTests(unittest.TestCase):
                 with self.assertRaises(m.QualificationFailure):
                     m.qualification_git(20)(Path('.'), 'remote', 'get-url', 'origin')
 
-    def test_current_pin_explicitly_missing(self):
+    def test_current_pin_explicitly_unqualified_candidate(self):
         pin = json.loads(m.PIN.read_bytes())
         self.assertIsNone(pin['commit'])
-        self.assertEqual(pin['qualification'], 'missing_published_exact_commit')
+        self.assertEqual(pin['ref'], 'refs/heads/feat/maintenance-packet-v2-20261010')
+        self.assertEqual(pin['qualification'], 'pending_reviewed_safety_successor')
+        self.assertIsNone(m.CANDIDATE_COMMIT)
+        self.assertEqual(pin['files'], m.EXPECTED_FILES)
+        self.assertTrue(all(set(item) == {'blob', 'sha256'} and all(value is None for value in item.values())
+                            for item in pin['files'].values()))
         with self.assertRaises(m.QualificationFailure):
             m.preflight()
 
@@ -207,7 +217,7 @@ class MaintenanceGitTests(unittest.TestCase):
         with fixture() as (root, pin, raw, git):
             proof, payloads = m.read_payloads(root, git)
             self.assertEqual(payloads, raw)
-            self.assertEqual(proof, {key: pin[key] for key in ('repository', 'commit', 'files')})
+            self.assertEqual(proof, {key: pin[key] for key in ('repository', 'commit', 'ref', 'files')})
             m.proof_matches(proof)
 
     def test_exact_bytes_materialized_distinct_from_product_sdk(self):
@@ -241,6 +251,87 @@ class MaintenanceGitTests(unittest.TestCase):
 
     def test_unknown_policy_rejected(self):
         self.reject_pin(lambda p: p.update(qualification='task_changes'))
+
+    def test_wrong_candidate_commit_or_ref_rejected_before_git(self):
+        for changed in ({'commit': 'b' * 40}, {'ref': 'refs/heads/other'},
+                        {'ref': 'refs/tags/maintenance-reviewed'}, {'ref': None}):
+            with self.subTest(changed=changed):
+                self.reject_pin(lambda p: p.update(changed))
+
+    def test_closed_v2_schema_rejected_before_git(self):
+        for changed in ({'schema': 'forge/private-maintenance-pin/v1'}, {'extra': True},
+                        {'qualification': 'pending_published_ref_readback'}):
+            with self.subTest(changed=changed):
+                self.reject_pin(lambda p: p.update(changed))
+
+    def test_qualify_other_candidate_with_same_files_never_calls_git(self):
+        with fixture():
+            for commit, ref in (('b' * 40, 'refs/heads/maintenance-reviewed'),
+                                ('a' * 40, 'refs/heads/other')):
+                with self.subTest(commit=commit, ref=ref):
+                    git = Mock()
+                    with self.assertRaises(m.QualificationFailure):
+                        m.qualify(Path('.'), commit, ref, git)
+                    git.assert_not_called()
+
+    def test_fetched_branch_mismatch_or_missing_before_payload_read(self):
+        for failure in (b'b' * 40 + b'\n', RuntimeError('PRIVATE REF ERROR')):
+            with self.subTest(failure=type(failure).__name__), fixture() as (root, _, _, original):
+                def changed(checkout, *args):
+                    if args == ('rev-parse', '--verify', 'refs/remotes/origin/maintenance-reviewed^{commit}'):
+                        if isinstance(failure, Exception):
+                            raise failure
+                        return failure
+                    return original(checkout, *args)
+                git = Mock(side_effect=changed)
+                with self.assertRaises(m.QualificationFailure):
+                    m.read_payloads(root, git)
+                self.assertFalse(any(c.args[1] in ('cat-file', 'ls-tree') for c in git.call_args_list))
+                self.assertEqual(list(root.iterdir()), [m.PIN])
+
+    def test_unapproved_717_cannot_qualify_before_git(self):
+        git = Mock()
+        with self.assertRaises(m.QualificationFailure):
+            m.qualify(Path('.'), '7170d3cc412fc3788a242be4470819fda26f56fc', m.CANDIDATE_REF, git)
+        git.assert_not_called()
+
+    def test_incomplete_reviewed_packet_cannot_qualify_or_preflight(self):
+        for field in ('blob', 'sha256'):
+            with self.subTest(field=field), fixture() as (root, _, _, git):
+                m.EXPECTED_FILES['scripts/compose_helpers.py'][field] = None
+                call = Mock(side_effect=git)
+                with self.assertRaises(m.QualificationFailure):
+                    m.qualify(root, 'a' * 40, 'refs/heads/maintenance-reviewed', call)
+                with self.assertRaises(m.QualificationFailure):
+                    m.preflight()
+                call.assert_not_called()
+
+    def test_reviewed_safety_digest_binds_unchanged_consumers_without_fallback(self):
+        with fixture() as (root, pin, _, git):
+            proof, _ = m.read_payloads(root, git)
+            for consumer in ('native', 'observer'):
+                module = SimpleNamespace(SDK_SHA256='old-unqualified-hash', consumer=consumer)
+                h.bind_maintenance(module, proof)
+                self.assertEqual(module.SDK_SHA256, pin['files']['scripts/compose_helpers.py']['sha256'])
+                changed = copy.deepcopy(proof)
+                changed['ref'] = 'refs/heads/other'
+                with self.assertRaises(m.QualificationFailure):
+                    h.bind_maintenance(module, changed)
+                self.assertEqual(module.SDK_SHA256, pin['files']['scripts/compose_helpers.py']['sha256'])
+
+    def test_pending_safety_packet_cannot_rebind_consumer(self):
+        module = SimpleNamespace(SDK_SHA256='unchanged')
+        with self.assertRaises(m.QualificationFailure):
+            h.bind_maintenance(module, {})
+        self.assertEqual(module.SDK_SHA256, 'unchanged')
+
+    def test_rebinding_is_before_original_load_sdk_and_smoke_binding(self):
+        tree = ast.parse((h.HERE / 'run.py').read_bytes())
+        job = ast.unparse(next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'run_job'))
+        smoke = ast.unparse(next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'smoke'))
+        self.assertLess(job.index('h.bind_maintenance(q, maintenance_proof)'), job.index('q.load_sdk(maintenance)'))
+        self.assertLess(smoke.index("h.bind_maintenance(base, admission['maintenance_git'])"), smoke.index('binding.bind()'))
+        self.assertIn('h.require(base.SDK_SHA256 == q.SDK_SHA256)', smoke)
 
     def reject_git(self, predicate, replacement):
         with fixture() as (root, _, _, git):
@@ -301,6 +392,66 @@ class MaintenanceGitTests(unittest.TestCase):
         self.assertLess(source.index('h.m.read_payloads('), source.index('root.mkdir('))
         self.assertLess(source.index('h.m.read_payloads('), source.index('daemon = start_daemon('))
         self.assertIn("'maintenance_git': maintenance_proof", source)
+
+
+class ConsumerHistoryTests(unittest.TestCase):
+    @staticmethod
+    def git(_, *args):
+        if args == ('rev-parse', '--is-shallow-repository'):
+            return b'false\n'
+        parents = {'HEAD': ('a' * 40, h.CONTROLS_PARENT),
+                   h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.PUBLIC_CONTROLS),
+                   h.PUBLIC_CONTROLS: (h.PUBLIC_CONTROLS, h.SOURCE)}
+        if args[:4] == ('rev-list', '--parents', '-n', '1'):
+            return (' '.join(parents[args[4]]) + '\n').encode()
+        if args == ('diff', '--name-status', h.CONTROLS_PARENT, 'HEAD'):
+            return b'M\tscripts/hermetic_full12/maintenance-pin.json\n'
+        if args == ('diff', '--name-status', h.SOURCE, 'HEAD'):
+            return b'A\tscripts/hermetic_full12/maintenance-pin.json\n'
+        raise AssertionError('unexpected synthetic Git invocation')
+
+    def test_exact_normal_successor_history_admitted(self):
+        with patch.object(h, 'git', side_effect=self.git):
+            h.controls_history(Path('controls'))
+        self.assertEqual(h.CONTROLS_PARENT, '632ea8347602fe4af22e7369790ed9c75e53f76a')
+        self.assertEqual(h.PUBLIC_CONTROLS, '1dbedf85242c3540b70005ce5f0c20badb682c41')
+
+    def test_shallow_wrong_parent_or_extra_merge_parent_rejected(self):
+        for selector, raw in (
+                (('rev-parse', '--is-shallow-repository'), b'true\n'),
+                (('rev-list', '--parents', '-n', '1', 'HEAD'), ('a' * 40 + ' ' + h.SOURCE).encode()),
+                (('rev-list', '--parents', '-n', '1', 'HEAD'), ('a' * 40 + ' ' + h.CONTROLS_PARENT + ' ' + h.SOURCE).encode()),
+                (('rev-list', '--parents', '-n', '1', h.CONTROLS_PARENT), (h.CONTROLS_PARENT + ' ' + h.SOURCE).encode()),
+                (('rev-list', '--parents', '-n', '1', h.PUBLIC_CONTROLS), (h.PUBLIC_CONTROLS + ' ' + h.CONTROLS_PARENT).encode())):
+            with self.subTest(selector=selector), patch.object(h, 'git', side_effect=lambda root, *a:
+                    raw if a == selector else self.git(root, *a)):
+                with self.assertRaises(ValueError):
+                    h.controls_history(Path('controls'))
+
+    def test_consumer_delta_and_public_history_path_guards(self):
+        for baseline, raw in ((h.CONTROLS_PARENT, b''),
+                              (h.CONTROLS_PARENT, b'M\tbackend/src/main.rs\n'),
+                              (h.CONTROLS_PARENT, b'M\tscripts/hermetic_full12/tools.Dockerfile\n'),
+                              (h.CONTROLS_PARENT, b'D\tscripts/hermetic_full12/maintenance-pin.json\n'),
+                              (h.CONTROLS_PARENT, b'A\tscripts/hermetic_full12/private.py\n'),
+                              (h.SOURCE, b'M\tbackend/Cargo.lock\n'),
+                              (h.SOURCE, b'A\t.local/private.py\n')):
+            with self.subTest(baseline=baseline, raw=raw), patch.object(h, 'git', side_effect=lambda root, *a:
+                    raw if a == ('diff', '--name-status', baseline, 'HEAD') else self.git(root, *a)):
+                with self.assertRaises(ValueError):
+                    h.controls_history(Path('controls'))
+
+    def test_workflow_and_host_bind_only_new_branch(self):
+        workflow = (h.HERE.parents[1] / '.github/workflows/forge-hermetic-full12.yml').read_text()
+        self.assertEqual(h.BRANCH, 'build-only/forge-maintenance-full12-20261010')
+        self.assertIn('branches: [' + h.BRANCH + ']', workflow)
+        self.assertEqual(workflow.count("github.ref == 'refs/heads/" + h.BRANCH + "'"), 3)
+        self.assertNotIn('forge-public-safe-full12-25be-20261009', workflow)
+
+    def test_git_does_not_apply_replacement_objects(self):
+        with patch.object(h, 'command', return_value=b'') as command:
+            h.git(Path('controls'), 'rev-parse', 'HEAD')
+        self.assertIn('--no-replace-objects', command.call_args.args[0])
 
 
 if __name__ == '__main__':

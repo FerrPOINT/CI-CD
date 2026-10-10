@@ -1,53 +1,61 @@
 # Public-safe exact-source full12 controls
 
-This build-only successor adds public controls to product
-`25be2e82d4d42673897c8a16070eb8a9519244f0` with that commit as its sole parent.
-It does not merge the retired controls chain or vendor private maintenance source.
-Product SDK stays `19a7a381ae6dbea61a643bb96189e483fa64df5c`.
+Этот source-only successor имеет непосредственный parent
+`632ea8347602fe4af22e7369790ed9c75e53f76a`, затем original public-safe controls
+`1dbedf85242c3540b70005ce5f0c20badb682c41` и product source
+`25be2e82d4d42673897c8a16070eb8a9519244f0`. Это normal history, не импорт
+retired/private controls. Product SDK остаётся
+`19a7a381ae6dbea61a643bb96189e483fa64df5c`; product265, locks и schema неизменны.
 
 ## Closed Dependency
 
-`maintenance-pin.json` deliberately has `commit: null`. No published immutable
-private commit was qualified for the three exact required Git blobs. Metadata
-hashes are requirements, not proof of publication. The controls therefore stop
-before private checkout in the workflow, and before any materialization/resource
-effects in direct job invocation. No fallback to product SDK, task working files,
-encoded payloads, moving refs or local installed SDK is allowed.
+`maintenance-pin.json` v2 явно хранит `pending_reviewed_safety_successor`, null
+commit и null blob/SHA256 для трёх файлов. Private candidate
+`7170d3cc412fc3788a242be4470819fda26f56fc` НЕ одобрен: требуется safety successor
+для Windows argv, canonical registry/output CWD и local30GiB/CI5GiB policy.
+Старые raw hashes не являются совместимым fallback и удалены из active contract.
+Explicit intended ref: `refs/heads/feat/maintenance-packet-v2-20261010` в private
+`FerrPOINT/services-base`. Это имя само по себе не доказывает публикацию.
 
-The dependency owner must publish the exact three files in the private
-`FerrPOINT/services-base` repository. A reviewed successor can then replace the
-null pin with the verified commit and `published_exact_commit`, regenerate the
-component lock and repeat validation. Raw Git bytes, including line endings,
-must match both blob IDs and SHA256. Current private main's older helper and
-missing two companion paths do not qualify.
+До reviewed нового commit/трёх hashes и parent publication readback preflight,
+qualify и consumer binding закрыты. Workflow останавливается до private checkout;
+direct job — до Git, материализации и resource effects. SDK19a, installed packet,
+working files, encoded payload и произвольные commit/ref не заменяют dependency.
 
 ### Проверка candidate без записи
 
-После публикации и review точного maintenance packet владельцем Base проверить
-commit опубликованной ветки из аутентифицированного full-history checkout на Linux:
+ТОЛЬКО после review safety successor и parent published-ref readback отдельным
+reviewed normal successor внести его точный commit и три blob/raw SHA256 в
+`maintenance_git.py` и `maintenance-pin.json`. Сначала оставить qualification
+pending. Из аутентифицированного full-history checkout с актуальным fetched
+`refs/remotes/origin/feat/maintenance-packet-v2-20261010` проверить:
 
 ```sh
 python3 -B scripts/hermetic_full12/maintenance_git.py qualify \
-  /absolute/private/services-base <exact-40-lowercase-commit> refs/heads/<reviewed-owner-branch>
+  /absolute/private/services-base <reviewed-safety-commit> \
+  refs/heads/feat/maintenance-packet-v2-20261010
 ```
 
 Команда использует существующий Linux owned-process helper, включая WNOWAIT и
 group cleanup: общий Git work budget 60 секунд и неизменный teardown tail.
-Проверяются canonical origin до сетевого запроса, опубликованный branch tip до и
-после raw-Git readback, full history, commit, три regular-file blob и raw SHA256.
+Проверяются canonical origin до сетевого запроса, exact configured commit/ref,
+опубликованный branch tip до и после readback, fetched tracking tip, full history,
+commit, три regular-file blob и raw SHA256 (без EOL normalization).
 Вывод содержит только candidate pin JSON либо фиксированный отказ
 `MAINTENANCE_PIN_UNQUALIFIED` (exit1). Нет fetch, установки/import helper, записи
 pin, материализации private files, cleanup или допуска full12. Изменение branch
-tip во время readback запрещено; moving refs не сохраняются в pin. Приватный код
+tip во время readback запрещено; ref сохраняется как дополнительное ограничение,
+а не вместо immutable commit. Приватный код
 и credentials не входят в публичный checkout или artifacts.
 
-Отдельный reviewed follow-up должен независимо подтвердить metadata, заменить
-maintenance pin точным commit и обновить component lock. Исходный workflow всё
-ещё требует original build-only branch и exact single controls parent; этот
-qualification-only successor не меняет execution guards. Перед публикацией
-исполняемый successor требует отдельного review normal parent/branch binding.
-Candidate JSON и совпадение локальных installed bytes не доказывают native/SDLC
-acceptance.
+После независимого сравнения metadata отдельный normal successor может поставить
+`published_exact_commit`, обновить explicit normal parent chain и component lock.
+Текущий checkout guard требует ровно HEAD ->632->1db->25be, full history,
+task-owned modifications относительно632 и add-only controls относительно25be.
+Новый workflow/host branch: `build-only/forge-maintenance-full12-20261010`.
+Изменение родителя в следующем reviewed commit требует сохранить всю chain,
+не заменить проверку на произвольный ancestor. Candidate JSON и installed bytes
+не доказывают native/SDLC acceptance. Сейчас full12 НЕ runnable/qualified.
 
 Три hash связывают v2 helper с cleanup/installer. Политика Base сохраняется: exact
 owned Compose down в finally, v2 daemon/manifest/owner проверки до удаления
@@ -57,12 +65,17 @@ workspace контрактом Base (`scripts/audit_docker_groups.py`), а не 
 cleanup или копирования дополнительных private files в packet. Disk/RAM guards
 обязательны; native execution здесь не разрешён.
 
-The existing authenticated SDK checkout remains two minutes, now fetch-depth0.
-The same private object database delivers product SDK19a and the distinct
-maintenance commit. Qualification checks repository, full history, commit,
-allowlisted tree modes/paths/blob IDs and raw hashes. Only metadata enters public
-seals/provenance. Private bytes stay in memory/private ephemeral VM files and
-never in the public Git tree, output, logs or artifacts.
+Существующий authenticated SDK checkout сохраняет timeout2min/fetch-depth0;
+его object database содержит SDK19a и отдельный maintenance commit. При каждом
+raw readback проверяется exact fetched private branch tip, без дополнительного
+token, registry fallback или сетевого запроса из runtime. Seals/aggregate связывают
+repository/commit/ref/три hashes. Только metadata входит в public evidence.
+Private bytes остаются в памяти/ephemeral VM, не в public Git/logs/artifacts.
+
+Оригинальные native QA и observer source bytes не переписаны. Перед original
+`load_sdk`/smoke binding адаптируется только expected `SDK_SHA256` из квалифицированного
+Git proof; original loader, journal guards и assertions остаются строгими.
+Private bridge proof использует ту же привязку и остаётся pending actual execution.
 
 ## Execution Contract
 

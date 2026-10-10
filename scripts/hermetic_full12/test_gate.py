@@ -459,6 +459,9 @@ class SmokeAndCleanupTests(unittest.TestCase):
         request.checked.assert_not_called()
 
 
+MAINTENANCE_TEST_FILES = {name: {'blob': 'd' * 40, 'sha256': 'c' * 64} for name in h.m.EXPECTED_FILES}
+
+
 def report_fixture(job):
     catalogue = h.read(h.HERE / 'source-catalogue.json')['catalogues']
     counts = {'python': 75, 'postgres': 3, 'oci': 1, 'workspace': 221, 'integration': 80, 'cli': 2}
@@ -475,7 +478,7 @@ def report_fixture(job):
     token = job.lower() * 20
     projects = {'project': 'sdlc-qa-forge-delivery-' + token, 'pg_project': 'sdlc-qa-forge-pg-' + token, 'oci_project': 'sdlc-qa-forge-oci-' + token}
     journal = {'version': 2, 'phase': 'cleaned', 'task': gate.TASK, 'daemon_id': 'independent-' + job,
-        'sdk_sha256': '2569882c3bb6a8b86ebb42367254720c5f802d5423bc98ef02c6fe3283e0874f',
+        'sdk_sha256': 'c' * 64,
         'cleanup_id': 'd' * 32, 'journal_sha256': 'a' * 64, 'manifest_sha256': 'b' * 64}
     for stage in stages:
         stage['remaining'] = {project: gate.inventory_proof({'container': [], 'network': [], 'volume': []}) for project in projects.values()}
@@ -489,8 +492,8 @@ def report_fixture(job):
         'checkout': {'controls': 'a' * 40, 'source': h.SOURCE, 'base': h.BASE}, 'components': {'fixture': 'a' * 64},
         'job_budget_seconds': gate.job_budget(job), 'source_count': 265, 'source_parity': True, 'checkout_parity': True,
         'source_hashes': {key: value['sha256'] for key, value in catalogue.items()},
-        'maintenance_sha256': '2569882c3bb6a8b86ebb42367254720c5f802d5423bc98ef02c6fe3283e0874f',
-        'maintenance_git': {'repository': h.m.REPOSITORY, 'commit': 'f' * 40, 'files': h.m.EXPECTED_FILES},
+        'maintenance_sha256': 'c' * 64,
+        'maintenance_git': {'repository': h.m.REPOSITORY, 'commit': 'f' * 40, 'ref': h.m.CANDIDATE_REF, 'files': MAINTENANCE_TEST_FILES},
         'python_methods': {'test_postgres_delivery.py': 47, 'test_oci_offline_fixture.py': 28},
         'admission_sha256': 'b' * 64, 'execution_sha256': 'c' * 64,
         'cache': {'new_locked_cache': True, 'private_cache_imported': False,
@@ -517,12 +520,16 @@ class AggregationTests(unittest.TestCase):
             h.atomic(paths[0], a)
             h.atomic(paths[1], b)
             h.atomic(paths[2], c)
-            with patch.dict(os.environ, GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1', GITHUB_SHA='a' * 40), patch.object(h.m, 'preflight', return_value={'commit': 'f' * 40, 'files': h.m.EXPECTED_FILES}), patch.object(h, 'verify_components', return_value={'fixture': 'a' * 64}):
+            with patch.dict(os.environ, GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1', GITHUB_SHA='a' * 40), patch.object(h.m, 'preflight', return_value={'commit': 'f' * 40, 'ref': h.m.CANDIDATE_REF, 'files': MAINTENANCE_TEST_FILES}), patch.object(h.m, 'EXPECTED_FILES', MAINTENANCE_TEST_FILES), patch.object(h, 'verify_components', return_value={'fixture': 'a' * 64}):
                 return gate.aggregate(*paths, h.sha(paths[0]), h.sha(paths[1]))
 
     def test_other_maintenance_commit_rejected(self):
         with self.assertRaises(ValueError):
             self.check(lambda a, b, c: b['maintenance_git'].update(commit='e' * 40))
+
+    def test_other_maintenance_ref_rejected(self):
+        with self.assertRaises(ValueError):
+            self.check(lambda a, b, c: b['maintenance_git'].update(ref='refs/heads/other'))
 
     def test_all12_combined_only(self):
         self.assertEqual(self.check()['stage_count'], 12)

@@ -220,6 +220,8 @@ def smoke(root, operation, q, admission, images):
     base = h.load('hosted_smoke_observer', HERE / 'observer.py')
     transport = h.load('hosted_smoke_transport', HERE / 'transport.py')
     # Admission adaptation only: assertions and transport/observer bodies stay byte-identical.
+    h.bind_maintenance(base, admission['maintenance_git'])
+    h.require(base.SDK_SHA256 == q.SDK_SHA256)
     base.DAEMON_ID = transport.DAEMON_ID = admission['daemon']['id']
     transport.ENDPOINT, transport.DAEMON_ROOT = admission['daemon']['endpoint'], admission['daemon']['root']
     transport.PG_IMAGE = images['postgres']
@@ -577,6 +579,7 @@ def run_job(job):
             report['daemon_versions'] = {key: daemon[key] for key in ('server', 'client', 'compose')}
             q = h.load('exact_product_native_qa', root / 'sources/CI-CD/scripts/native_qa_compose.py')
             q.DAEMON_ID = daemon['id']
+            h.bind_maintenance(q, maintenance_proof)
             maintenance = h.maintenance(root, workspace / 'services-base', maintenance_proof)
             os.environ['SDLC_MAINTENANCE_BASE'] = str(maintenance)
             os.environ['SDLC_RESOURCE_REGISTRY'] = str(root / 'registry')

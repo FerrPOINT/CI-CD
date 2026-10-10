@@ -19,8 +19,16 @@ import maintenance_git as m
 HERE = Path(__file__).resolve().parent
 SOURCE = '25be2e82d4d42673897c8a16070eb8a9519244f0'
 BASE = '19a7a381ae6dbea61a643bb96189e483fa64df5c'
-CONTROLS_PARENT = SOURCE
-BRANCH = 'build-only/forge-public-safe-full12-25be-20261009'
+PUBLIC_CONTROLS = '1dbedf85242c3540b70005ce5f0c20badb682c41'
+CONTROLS_PARENT = '632ea8347602fe4af22e7369790ed9c75e53f76a'
+BRANCH = 'build-only/forge-maintenance-full12-20261010'
+CONSUMER_PATHS = {
+    '.github/workflows/forge-hermetic-full12.yml',
+    *('scripts/hermetic_full12/' + name for name in (
+        'host.py', 'maintenance_git.py', 'maintenance-pin.json', 'test_maintenance_git.py',
+        'test_gate.py', 'test_deadline_boundaries.py', 'run.py', 'private_bridge_proofs.py',
+        'README.md', 'components.json')),
+}
 HOST_BYTES = 108279229428
 DATA_BYTES = 71319483898
 INODES = 300000
@@ -245,7 +253,7 @@ def command(argv, timeout=90, log=None, env=None, check=None):
 
 
 def git(root, *args):
-    return command(['git', '-C', str(root), '--no-optional-locks', *args])
+    return command(['git', '--no-replace-objects', '-C', str(root), '--no-optional-locks', *args])
 
 
 def clean(root, revision):
@@ -300,15 +308,31 @@ def maintenance(root, checkout, expected):
     return destination.parent
 
 
+def bind_maintenance(module, proof):
+    # Adapt only the expected identity, after exact private Git proof; never change source bytes.
+    m.proof_matches(proof)
+    module.SDK_SHA256 = proof['files']['scripts/compose_helpers.py']['sha256']
+
+
+def controls_history(controls):
+    require(git(controls, 'rev-parse', '--is-shallow-repository').strip() == b'false')
+    for revision, parent in (('HEAD', CONTROLS_PARENT), (CONTROLS_PARENT, PUBLIC_CONTROLS),
+                             (PUBLIC_CONTROLS, SOURCE)):
+        row = git(controls, 'rev-list', '--parents', '-n', '1', revision).decode().split()
+        require(len(row) == 2 and row[1] == parent)
+    changes = git(controls, 'diff', '--name-status', CONTROLS_PARENT, 'HEAD').decode().splitlines()
+    require(changes and all(line.startswith('M\t') and line[2:] in CONSUMER_PATHS for line in changes))
+    changes = git(controls, 'diff', '--name-status', SOURCE, 'HEAD').decode().splitlines()
+    require(changes and all(line.startswith('A\t') and
+        (line[2:].startswith('scripts/hermetic_full12/') or line[2:] == '.github/workflows/forge-hermetic-full12.yml') for line in changes))
+
+
 def checkout_proof(workspace):
     controls, source, base = [workspace / name for name in ('controls', 'source', 'services-base')]
     clean(controls, os.environ['GITHUB_SHA'])
     clean(source, SOURCE)
     clean(base, BASE)
-    require(git(controls, 'rev-list', '--parents', '-n', '1', 'HEAD').decode().split()[1:] == [CONTROLS_PARENT])
-    changes = git(controls, 'diff', '--name-status', SOURCE, 'HEAD').decode().splitlines()
-    require(changes and all(line.startswith('A\t') and
-        (line[2:].startswith('scripts/hermetic_full12/') or line[2:] == '.github/workflows/forge-hermetic-full12.yml') for line in changes))
+    controls_history(controls)
     require(git(source, 'show', 'HEAD:.base-revision').decode().strip() == BASE)
     return {'source': SOURCE, 'base': BASE, 'controls': os.environ['GITHUB_SHA'],
             'source_tree': git(source, 'rev-parse', 'HEAD^{tree}').decode().strip()}

@@ -20,7 +20,7 @@ from test_deadline_boundaries import stage_fixture
 @contextmanager
 def native_fixture(count, checked):
     # Private-dependent proof: unavailable until an owner publishes the exact qualified commit.
-    _, payloads = h.m.read_payloads(h.HERE.parents[2] / 'services-base', h.git)
+    proof, payloads = h.m.read_payloads(h.HERE.parents[2] / 'services-base', h.git)
     source = h.HERE.parent / 'native_qa_compose.py'
     raw = source.read_bytes().replace(b'\r\n', b'\n')
     entry = next(item for item in h.read(h.HERE / 'source-catalogue.json')['catalogues']['forge']['files']
@@ -29,6 +29,7 @@ def native_fixture(count, checked):
     q = ModuleType('deadline_product_native')
     q.__file__ = str(source)
     exec(compile(raw, str(source), 'exec'), q.__dict__)
+    h.bind_maintenance(q, proof)
     sdk_raw = payloads['scripts/compose_helpers.py']
     h.require(hashlib.sha256(sdk_raw).hexdigest() == q.SDK_SHA256)
     sdk = ModuleType('deadline_actual_maintenance')
