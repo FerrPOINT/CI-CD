@@ -101,6 +101,16 @@ structured capacity report без нового hint. При post-bootstrap ош�
 Новых Docker/systemd/journal inspection, retries/fallback или запуска gates нет.
 Historical b937 failure не переписывается и не объявляется исправленным.
 
+Normal child frozen3f добавляет fixed bootstrap hints только между сохранением
+projects и cache: `project_ownership`, `disposable_prepare`, `image_pull`,
+`image_readback`, `tools_build`, `tools_readback`, `cache_prepare`, `cache_fetch`,
+`cache_cleanup`, `cache_seal`. Labels не содержат image refs, private paths,
+command output или exception text; pull/readback labels общие для трёх pinned
+images. Commands, порядок, timeouts, cleanup/finally и cache assertions прежние.
+Receipt38039120713 доказывает admission/daemon/projects, но не cache/execution
+seal, конкретную причину отказа или physical stage resource proof. Новый child
+локализует следующую ошибку; он не выдаёт неизвестную причину за исправленную.
+
 ## Resource Admission Successor
 
 Normal history `eb91d4f` -> `3a9bbaf` -> inode-guard follow-up использует hosted-only branch

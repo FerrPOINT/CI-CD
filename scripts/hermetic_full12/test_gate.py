@@ -471,7 +471,9 @@ class BootstrapDiagnosticTests(unittest.TestCase):
         self.assertEqual(set(h.BOOTSTRAP_STEPS), set(self.STEPS) | {
             'identity_cgroup_version', 'identity_cgroup_driver', 'identity_cgroup_resources',
             'manager_dropin', 'manager_reload', 'manager_linger', 'manager_start',
-            'manager_readback', 'manager_controllers'})
+            'manager_readback', 'manager_controllers', 'project_ownership', 'disposable_prepare',
+            'image_pull', 'image_readback', 'tools_build', 'tools_readback',
+            'cache_prepare', 'cache_fetch', 'cache_cleanup', 'cache_seal'})
         tree = ast.parse((h.HERE / 'run.py').read_bytes())
         seen = {}
         for node in ast.walk(tree):
@@ -498,6 +500,11 @@ class BootstrapDiagnosticTests(unittest.TestCase):
             ('identity_cgroup_resources', 'info.get(key) is True'),
             ('baseline', "not baseline['container'] and (not baseline['volume'])"),
             ('admission_seal', "'admission-seal.json'"),
+            ('project_ownership', "'ownership.json'"), ('disposable_prepare', 'parent.create_disposable(q, config)'),
+            ('image_pull', "'pull'"), ('image_readback', "item['Architecture'] == 'amd64'"),
+            ('tools_build', "'build', '--pull=false'"), ('tools_readback', "'sha256:[a-f0-9]{64}'"),
+            ('cache_prepare', "resource_policy='isolated-ci-v1'"), ('cache_fetch', "'--exit-code-from', 'fetch'"),
+            ('cache_cleanup', 'close_operation(operation)'), ('cache_seal', "'cache-source-tree.json'"),
         ):
             self.assertIn(operation, seen[step])
         self.assertIn('h.require(time.monotonic() < deadline)', seen['socket_ready'])
@@ -576,6 +583,10 @@ class BootstrapDiagnosticTests(unittest.TestCase):
         for missing in base:
             with self.assertRaises(ValueError):
                 h.validate_safe_error({key: value for key, value in base.items() if key != missing})
+        for step in h.BOOTSTRAP_STEPS:
+            for unknown in ('PRIVATE_SENTINEL_' + step, step + '_PRIVATE_SENTINEL'):
+                with self.assertRaises(ValueError):
+                    h.validate_safe_error({**base, 'bootstrap_step': unknown})
 
     def test_foreign_exception_attribute_and_tampered_wrapper_not_trusted(self):
         error = ValueError('PRIVATE_SENTINEL')
@@ -749,6 +760,124 @@ class BootstrapDiagnosticTests(unittest.TestCase):
         h.validate_safe_error(report['error'])
         self.assertEqual(report['error']['bootstrap_step'], 'socket_ready')
         self.assertNotIn('PRIVATE_SENTINEL', output.getvalue())
+
+
+class CacheBoundaryTests(unittest.TestCase):
+    def tools_fixture(self, failure=None):
+        calls = []
+        def command(argv, **kwargs):
+            calls.append((argv, kwargs))
+            if failure == 'image_pull' and 'pull' in argv or failure == 'tools_build' and 'build' in argv:
+                raise h.CommandFailure(7)
+            return b''
+        def docker(*args):
+            calls.append((list(args), {}))
+            step = 'tools_readback' if args[-1].startswith('sdlc-build-forge-tools:') else 'image_readback'
+            if failure == step:
+                return b'PRIVATE_SENTINEL'
+            return json.dumps([{'Os': 'linux', 'Architecture': 'amd64', 'Id': 'sha256:' + 'a' * 64}]).encode()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'bin').mkdir()
+            for name in ('docker', 'docker-compose', 'docker-buildx'):
+                (root / 'bin' / name).write_bytes(b'synthetic-not-executable')
+            with patch.object(h, 'command', side_effect=command), patch.object(gate, 'docker', side_effect=docker), \
+                    patch.object(h, 'BOOTSTRAP_DEADLINE', 1):
+                result = gate.build_tools(root)
+            self.assertEqual((root / 'build/Dockerfile').read_bytes(), (h.HERE / 'tools.Dockerfile').read_bytes())
+        return result, calls
+
+    def test_tools_commands_pins_order_and_timeouts_unchanged(self):
+        result, calls = self.tools_fixture()
+        self.assertEqual(set(result), {'postgres', 'python', 'rust', 'tools'})
+        for index, reference in enumerate((gate.POSTGRES, gate.PYTHON, gate.RUST)):
+            argv, kwargs = calls[index * 2]
+            self.assertEqual(argv, h.DOCKER + ['pull', '--platform', 'linux/amd64', reference])
+            self.assertEqual(kwargs['timeout'], 1200)
+            self.assertEqual(calls[index * 2 + 1], (['image', 'inspect', reference], {}))
+        self.assertEqual(calls[6][0][:5], h.DOCKER + ['build', '--pull=false'])
+        self.assertEqual(calls[6][1]['timeout'], 1800)
+        self.assertEqual(calls[7][0][:2], ['image', 'inspect'])
+
+    def test_tools_failures_are_fixed_source_boundaries_not_raw_output(self):
+        for step in ('image_pull', 'image_readback', 'tools_build', 'tools_readback'):
+            with self.subTest(step=step), self.assertRaises(h.BootstrapFailure) as caught:
+                self.tools_fixture(step)
+            safe = h.safe_error('bootstrap', caught.exception)
+            self.assertEqual(safe['bootstrap_step'], step)
+            self.assertEqual(safe['category'], 'closed_failure')
+            if step in ('image_pull', 'tools_build'):
+                self.assertEqual(safe['exit_code'], 7)
+            h.validate_safe_error(safe)
+            self.assertNotIn('PRIVATE_SENTINEL', json.dumps(safe))
+
+    def cache_fixture(self, failure=None):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            registry = root / 'cache/cargo/registry'
+            registry.mkdir(parents=True)
+            (registry / 'synthetic').write_bytes(b'cache-bytes')
+            journal = root / 'journal.json'
+            h.atomic(journal, {'phase': 'cleaned'})
+            operation = SimpleNamespace(command=['synthetic-compose'], project='synthetic-project',
+                journal=journal, write=Mock())
+            if failure == 'cache_prepare':
+                operation.write.side_effect = ValueError('PRIVATE_SENTINEL')
+            factory = Mock(return_value=operation)
+            parent = SimpleNamespace(parent_class=lambda *_: factory)
+            pending = []
+            command = Mock(return_value=b'PRIVATE_SENTINEL')
+            close = Mock()
+            inventory = Mock(return_value={'container': [], 'network': [], 'volume': []})
+            if failure == 'cache_fetch':
+                command.side_effect = h.CommandFailure(7)
+            elif failure == 'cache_cleanup':
+                close.side_effect = ValueError('PRIVATE_SENTINEL')
+            elif failure == 'cache_inventory':
+                inventory.return_value['container'] = ['PRIVATE_SENTINEL']
+            elif failure == 'cache_seal':
+                (root / 'cache/target').mkdir()
+            with patch.object(h, 'command', command), patch.object(gate, 'close_operation', close), \
+                    patch.object(gate, 'inventory', inventory), patch.object(h, 'BOOTSTRAP_DEADLINE', 1):
+                try:
+                    result = gate.fill_cache(root, None, SimpleNamespace(DAEMON_ID='admitted'), parent,
+                        {'tools': 'sha256:' + 'a' * 64}, 'a' * 20, pending)
+                finally:
+                    self.assertEqual(pending, [operation])
+                    if failure in ('cache_prepare', 'cache_fetch'):
+                        close.assert_not_called()
+                        self.assertFalse((root / 'cache-source-tree.json').exists())
+            self.assertEqual(result['initial_tree_sha256'], h.sha(root / 'cache-source-tree.json'))
+            return result, factory, operation, command, close
+
+    def test_cache_original_compose_manifest_seal_and_pending_custody(self):
+        result, factory, operation, command, close = self.cache_fixture()
+        self.assertTrue(result['new_locked_cache'])
+        self.assertFalse(result['private_cache_imported'])
+        self.assertEqual((result['initial_file_count'], result['initial_bytes']), (1, 11))
+        self.assertEqual(factory.call_args.kwargs['resource_policy'], 'isolated-ci-v1')
+        service = operation.write.call_args.args[0]['fetch']
+        self.assertEqual(service['command'], ['fetch', '--locked', '--target', 'x86_64-unknown-linux-gnu'])
+        self.assertEqual(service['cap_drop'], ['ALL'])
+        self.assertEqual(service['user'], '0:0')
+        self.assertEqual(command.call_args.args[0], operation.command + [
+            'up', '--pull', 'never', '--abort-on-container-exit', '--exit-code-from', 'fetch'])
+        self.assertEqual(command.call_args.kwargs['timeout'], 2400)
+        close.assert_called_once_with(operation)
+
+    def test_cache_failure_cuts_never_emit_success_or_private_values(self):
+        for cut in ('cache_prepare', 'cache_fetch', 'cache_cleanup', 'cache_inventory', 'cache_seal'):
+            with self.subTest(cut=cut), self.assertRaises(h.BootstrapFailure) as caught:
+                self.cache_fixture(cut)
+            safe = h.safe_error('bootstrap', caught.exception)
+            self.assertEqual(safe['bootstrap_step'], 'cache_cleanup' if cut == 'cache_inventory' else cut)
+            h.validate_safe_error(safe)
+            self.assertNotIn('PRIVATE_SENTINEL', json.dumps(safe))
+            report = {'status': 'FAIL', 'full12_pass': False, 'stages': []}
+            with patch('sys.stdout', io.StringIO()):
+                gate.retain_failure(report, 'bootstrap', caught.exception, Path('/unused'), 'A', [])
+            self.assertEqual(report['status'], 'FAIL')
+            self.assertFalse(report['full12_pass'])
 
 
 class DelegationDropinTests(unittest.TestCase):

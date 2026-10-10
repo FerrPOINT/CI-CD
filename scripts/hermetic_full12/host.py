@@ -25,7 +25,8 @@ SAFETY_CONTROLS = '4d97c54f35b485224a8229495763658fcbbd40e9'
 MAINTENANCE_CONTROLS = 'b9375dc4b4f070b0f6cff1733228f1a6865b1368'
 DIAGNOSTIC_CONTROLS = '1310958a4b5cf68642a6ce8d4466ef5ff1e64f31'
 RESOURCE_CONTROLS = 'eb91d4f1a3f3e0f3731c38a861db68ae8a0d952a'
-CONTROLS_PARENT = '3a9bbafd45c98b0458d1eddf98908275896476a0'
+DELEGATION_CONTROLS = '3a9bbafd45c98b0458d1eddf98908275896476a0'
+CONTROLS_PARENT = '3f366b5c73c1386f3d710f4dd94dc1c0ac074bc6'
 BRANCH = 'build-only/forge-delegation-full12-20261010'
 CONSUMER_PATHS = {
     '.github/workflows/forge-hermetic-full12.yml',
@@ -47,7 +48,9 @@ BOOTSTRAP_STEPS = ('tools_download', 'dependencies', 'user_namespace', 'manager'
                    'rootless_launch', 'context', 'socket_ready', 'identity_decode',
                    'identity_version', 'identity_compose_rootless', 'identity_endpoint',
                    'identity_cgroup_warnings', 'identity_cgroup_version',
-                   'identity_cgroup_driver', 'identity_cgroup_resources', 'baseline', 'admission_seal')
+                   'identity_cgroup_driver', 'identity_cgroup_resources', 'baseline', 'admission_seal',
+                   'project_ownership', 'disposable_prepare', 'image_pull', 'image_readback',
+                   'tools_build', 'tools_readback', 'cache_prepare', 'cache_fetch', 'cache_cleanup', 'cache_seal')
 BOOTSTRAP_DEADLINE = None
 PHASE_DEADLINE = None
 TOOLS = {
@@ -372,7 +375,8 @@ def bind_maintenance(module, proof):
 
 def controls_history(controls):
     require(git(controls, 'rev-parse', '--is-shallow-repository').strip() == b'false')
-    for revision, parent in (('HEAD', CONTROLS_PARENT), (CONTROLS_PARENT, RESOURCE_CONTROLS),
+    for revision, parent in (('HEAD', CONTROLS_PARENT), (CONTROLS_PARENT, DELEGATION_CONTROLS),
+                             (DELEGATION_CONTROLS, RESOURCE_CONTROLS),
                              (RESOURCE_CONTROLS, DIAGNOSTIC_CONTROLS),
                              (DIAGNOSTIC_CONTROLS, MAINTENANCE_CONTROLS),
                              (MAINTENANCE_CONTROLS, SAFETY_CONTROLS),

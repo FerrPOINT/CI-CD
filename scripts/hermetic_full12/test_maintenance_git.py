@@ -398,7 +398,8 @@ class ConsumerHistoryTests(unittest.TestCase):
         if args == ('rev-parse', '--is-shallow-repository'):
             return b'false\n'
         parents = {'HEAD': ('a' * 40, h.CONTROLS_PARENT),
-                   h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.RESOURCE_CONTROLS),
+                   h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.DELEGATION_CONTROLS),
+                   h.DELEGATION_CONTROLS: (h.DELEGATION_CONTROLS, h.RESOURCE_CONTROLS),
                    h.RESOURCE_CONTROLS: (h.RESOURCE_CONTROLS, h.DIAGNOSTIC_CONTROLS),
                    h.DIAGNOSTIC_CONTROLS: (h.DIAGNOSTIC_CONTROLS, h.MAINTENANCE_CONTROLS),
                    h.MAINTENANCE_CONTROLS: (h.MAINTENANCE_CONTROLS, h.SAFETY_CONTROLS),
@@ -416,7 +417,8 @@ class ConsumerHistoryTests(unittest.TestCase):
     def test_exact_normal_successor_history_admitted(self):
         with patch.object(h, 'git', side_effect=self.git):
             h.controls_history(Path('controls'))
-        self.assertEqual(h.CONTROLS_PARENT, '3a9bbafd45c98b0458d1eddf98908275896476a0')
+        self.assertEqual(h.CONTROLS_PARENT, '3f366b5c73c1386f3d710f4dd94dc1c0ac074bc6')
+        self.assertEqual(h.DELEGATION_CONTROLS, '3a9bbafd45c98b0458d1eddf98908275896476a0')
         self.assertEqual(h.RESOURCE_CONTROLS, 'eb91d4f1a3f3e0f3731c38a861db68ae8a0d952a')
         self.assertEqual(h.DIAGNOSTIC_CONTROLS, '1310958a4b5cf68642a6ce8d4466ef5ff1e64f31')
         self.assertEqual(h.MAINTENANCE_CONTROLS, 'b9375dc4b4f070b0f6cff1733228f1a6865b1368')

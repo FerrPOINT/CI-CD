@@ -332,20 +332,24 @@ def stop_daemon(root):
 def build_tools(root):
     result = {}
     for label, reference in (('postgres', POSTGRES), ('python', PYTHON), ('rust', RUST)):
-        h.command(h.DOCKER + ['pull', '--platform', 'linux/amd64', reference], timeout=1200, log=root / ('private/pull-' + label + '.log'))
-        item = json.loads(docker('image', 'inspect', reference))[0]
-        h.require(item['Os'] == 'linux' and item['Architecture'] == 'amd64')
-        result[label] = item['Id']
-    build = root / 'build'
-    build.mkdir()
-    for name in ('docker', 'docker-compose', 'docker-buildx'):
-        shutil.copyfile(root / 'bin' / name, build / name)
-        (build / name).chmod(0o555)
-    shutil.copyfile(HERE / 'tools.Dockerfile', build / 'Dockerfile')
-    tag = 'sdlc-build-forge-tools:' + root.name
-    h.command(h.DOCKER + ['build', '--pull=false', '-t', tag, str(build)], timeout=1800, log=root / 'private/build-tools.log')
-    result['tools'] = json.loads(docker('image', 'inspect', tag))[0]['Id']
-    h.require(all(re.fullmatch('sha256:[a-f0-9]{64}', value) for value in result.values()))
+        with h.bootstrap_step('image_pull'):
+            h.command(h.DOCKER + ['pull', '--platform', 'linux/amd64', reference], timeout=1200, log=root / ('private/pull-' + label + '.log'))
+        with h.bootstrap_step('image_readback'):
+            item = json.loads(docker('image', 'inspect', reference))[0]
+            h.require(item['Os'] == 'linux' and item['Architecture'] == 'amd64')
+            result[label] = item['Id']
+    with h.bootstrap_step('tools_build'):
+        build = root / 'build'
+        build.mkdir()
+        for name in ('docker', 'docker-compose', 'docker-buildx'):
+            shutil.copyfile(root / 'bin' / name, build / name)
+            (build / name).chmod(0o555)
+        shutil.copyfile(HERE / 'tools.Dockerfile', build / 'Dockerfile')
+        tag = 'sdlc-build-forge-tools:' + root.name
+        h.command(h.DOCKER + ['build', '--pull=false', '-t', tag, str(build)], timeout=1800, log=root / 'private/build-tools.log')
+    with h.bootstrap_step('tools_readback'):
+        result['tools'] = json.loads(docker('image', 'inspect', tag))[0]['Id']
+        h.require(all(re.fullmatch('sha256:[a-f0-9]{64}', value) for value in result.values()))
     return result
 
 
@@ -427,32 +431,36 @@ def resource_enforcement(operation, images):
 
 
 def fill_cache(root, sdk, q, parent, images, token, cache_operations):
-    operation = parent.parent_class(sdk, q)(project='sdlc-build-forge-cache-' + token, task=TASK,
-        purpose='locked-dependency-fetch-only', docker=h.DOCKER, directory=root / 'cache-fetch', daemon_id=q.DAEMON_ID,
-        resource_policy='isolated-ci-v1')
-    cache_operations.append(operation)
-    service = {'image': images['tools'], 'init': True, 'user': '0:0', 'cap_drop': ['ALL'], 'networks': ['fetch'],
-        'entrypoint': ['cargo'], 'command': ['fetch', '--locked', '--target', 'x86_64-unknown-linux-gnu'],
-        'working_dir': '/work/CI-CD/backend', 'environment': {'CARGO_HOME': '/cache/cargo', 'RUSTUP_TOOLCHAIN': '1.88.0',
-            'CARGO_TARGET_DIR': '/tmp/fetch-target', 'CARGO_NET_RETRY': '2', 'CARGO_HTTP_TIMEOUT': '60'},
-        'volumes': [bind(root / 'sources/CI-CD', '/work/CI-CD', True),
-            bind(root / 'sources/services-base', '/work/services-base', True), bind(root / 'cache', '/cache')]}
-    operation.write({'fetch': service}, networks={'fetch': {}})
-    h.command(operation.command + ['up', '--pull', 'never', '--abort-on-container-exit', '--exit-code-from', 'fetch'],
-        timeout=2400, log=root / 'private/cache-fetch.log')
-    close_operation(operation)
-    h.require(not any(inventory(operation.project).values()))
-    h.require((root / 'cache/cargo/registry').is_dir() and not (root / 'cache/target').exists())
-    files = []
-    for path in sorted((root / 'cache/cargo').rglob('*')):
-        h.require(not path.is_symlink())
-        if path.is_file():
-            files.append({'path': path.relative_to(root / 'cache/cargo').as_posix(), 'sha256': h.sha(path), 'size': path.stat().st_size})
-    h.atomic(root / 'cache-source-tree.json', files, exclusive=True)
-    return {'new_locked_cache': True, 'private_cache_imported': False, 'journal_sha256': h.sha(operation.journal),
-            'journal': journal_proof(operation.journal),
-            'initial_tree_sha256': h.sha(root / 'cache-source-tree.json'), 'initial_file_count': len(files),
-            'initial_bytes': sum(item['size'] for item in files)}
+    with h.bootstrap_step('cache_prepare'):
+        operation = parent.parent_class(sdk, q)(project='sdlc-build-forge-cache-' + token, task=TASK,
+            purpose='locked-dependency-fetch-only', docker=h.DOCKER, directory=root / 'cache-fetch', daemon_id=q.DAEMON_ID,
+            resource_policy='isolated-ci-v1')
+        cache_operations.append(operation)
+        service = {'image': images['tools'], 'init': True, 'user': '0:0', 'cap_drop': ['ALL'], 'networks': ['fetch'],
+            'entrypoint': ['cargo'], 'command': ['fetch', '--locked', '--target', 'x86_64-unknown-linux-gnu'],
+            'working_dir': '/work/CI-CD/backend', 'environment': {'CARGO_HOME': '/cache/cargo', 'RUSTUP_TOOLCHAIN': '1.88.0',
+                'CARGO_TARGET_DIR': '/tmp/fetch-target', 'CARGO_NET_RETRY': '2', 'CARGO_HTTP_TIMEOUT': '60'},
+            'volumes': [bind(root / 'sources/CI-CD', '/work/CI-CD', True),
+                bind(root / 'sources/services-base', '/work/services-base', True), bind(root / 'cache', '/cache')]}
+        operation.write({'fetch': service}, networks={'fetch': {}})
+    with h.bootstrap_step('cache_fetch'):
+        h.command(operation.command + ['up', '--pull', 'never', '--abort-on-container-exit', '--exit-code-from', 'fetch'],
+            timeout=2400, log=root / 'private/cache-fetch.log')
+    with h.bootstrap_step('cache_cleanup'):
+        close_operation(operation)
+        h.require(not any(inventory(operation.project).values()))
+    with h.bootstrap_step('cache_seal'):
+        h.require((root / 'cache/cargo/registry').is_dir() and not (root / 'cache/target').exists())
+        files = []
+        for path in sorted((root / 'cache/cargo').rglob('*')):
+            h.require(not path.is_symlink())
+            if path.is_file():
+                files.append({'path': path.relative_to(root / 'cache/cargo').as_posix(), 'sha256': h.sha(path), 'size': path.stat().st_size})
+        h.atomic(root / 'cache-source-tree.json', files, exclusive=True)
+        return {'new_locked_cache': True, 'private_cache_imported': False, 'journal_sha256': h.sha(operation.journal),
+                'journal': journal_proof(operation.journal),
+                'initial_tree_sha256': h.sha(root / 'cache-source-tree.json'), 'initial_file_count': len(files),
+                'initial_bytes': sum(item['size'] for item in files)}
 
 
 def smoke(root, operation, q, admission, images):
@@ -836,8 +844,10 @@ def run_job(job):
                 'base_git_sha': h.BASE, 'project': 'sdlc-qa-forge-delivery-' + token,
                 'pg_project': 'sdlc-qa-forge-pg-' + token, 'oci_project': 'sdlc-qa-forge-oci-' + token}
             report['projects'] = {key: config[key] for key in ('project', 'pg_project', 'oci_project')}
-            h.atomic(root / 'ownership.json', config, exclusive=True)
-            ownership = parent.create_disposable(q, config)
+            with h.bootstrap_step('project_ownership'):
+                h.atomic(root / 'ownership.json', config, exclusive=True)
+            with h.bootstrap_step('disposable_prepare'):
+                ownership = parent.create_disposable(q, config)
             images = build_tools(root)
             report['cache'] = fill_cache(root, sdk, q, parent, images, token, cache_operations)
             for name in ('gates.sh', 'followups.sh'):
