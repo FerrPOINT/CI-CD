@@ -75,7 +75,7 @@ REJECTIONS = (
 CHILD_ERROR_CLASSES = (
     'ValueError', 'RuntimeError', 'OSError', 'TimeoutError', 'FileNotFoundError',
     'PermissionError', 'AssertionError', 'JSONDecodeError', 'KeyError', 'TypeError',
-    'TimeoutExpired', 'unknown',
+    'TimeoutExpired', 'DiskSpaceGuard', 'DaemonIdentityGuard', 'ExistingResourcesGuard', 'unknown',
 )
 
 def unique_object(pairs):

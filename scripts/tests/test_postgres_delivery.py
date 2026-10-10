@@ -820,6 +820,83 @@ class HistoricalEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(DELIVERY.Blocked, "verified_evidence_incomplete"):
             self.value.readback()
 
+    def test_merged_reconciliation_keeps_release_guards_and_historical_fingerprint(self):
+        value = self.value
+        manifest = DELIVERY.read(value.root / "manifests" / (self.manifest_sha + ".json"))
+        fresh = copy.deepcopy(manifest["databaseFingerprint"])
+        fresh["dataSha256"] = "3" * 64
+        value.engine = Mock()
+        value.project = "project"
+        value.policy.update(networkName="qa")
+        value.policy["checks"].update(healthPath="/health", acceptancePath="/acceptance")
+        value.host_path = str
+        actual = {"Id": "f" * 64, "Image": manifest["descriptor"]["imageId"],
+                  "State": {"Running": True},
+                  "Config": {"Labels": {"sdlc.purpose": "disposable-postgres-application"}},
+                  "HostConfig": {"ReadonlyRootfs": True, "Privileged": False},
+                  "Mounts": [{"RW": False, "Destination": destination,
+                              "Source": str(value.root / directory / (self.manifest_sha + ".json"))}
+                             for destination, directory in (("/forge/manifest.json", "manifests"),
+                                                            ("/forge/connection.json", "connections"))],
+                  "NetworkSettings": {"Networks": {"qa": {"IPAddress": "127.0.0.1"}}}}
+        value.docker = Mock(return_value=[actual])
+        value.fingerprint = Mock(return_value=fresh)
+        value.probe = Mock(side_effect=lambda origin, path, expected:
+                           {"status": "verified", "httpStatus": 200, "bodySha256": expected, "observedAt": 2.0})
+        before_release = value.observe(manifest, self.manifest_sha, dict(self.intent["receipt"]))
+        self.assertEqual((before_release["status"], before_release["reason"]),
+                         ("unknown", "serving_database_fingerprint_mismatch"))
+        value.probe.assert_not_called()
+
+        proof_path = value.dir / "verified-checks.json"
+        self.write(proof_path, self.proof)
+        saved = proof_path.read_bytes()
+        checkpoint = {"phase": "release-intent", "generation": 1,
+                      "evidence": {"database": "candidate", "restorePreviousSnapshotAllowed": False}}
+        self.write(value.dir / "release-intent.json", {**checkpoint, "generation": 2})
+        value.point = lambda name: self.manifest_sha
+        value.roles = Mock(return_value={"forge_writer": {"login": True}})
+        value.sql = Mock(return_value="t")
+        value.connection_scope = Mock()
+        value.sessions = Mock()
+        value.reader_permissions = Mock()
+        with self.assertRaisesRegex(DELIVERY.Blocked, "release_checkpoint_binding_mismatch"):
+            value.reconcile()
+        self.write(value.dir / "release-intent.json", checkpoint)
+        for guard in ("connection_scope", "sessions", "reader_permissions"):
+            with self.subTest(guard=guard), patch.object(value, guard,
+                    side_effect=DELIVERY.Blocked("merge_guard_preserved")):
+                with self.assertRaisesRegex(DELIVERY.Blocked, "merge_guard_preserved"):
+                    value.reconcile()
+                self.assertFalse((value.dir / "reconciled.json").exists())
+        with patch.object(DELIVERY, "sync_directory"):
+            result = value.reconcile()
+        self.assertEqual(result["reconciledReceipt"]["status"], "verified")
+        self.assertEqual(result["reconciledReceipt"]["databaseFingerprint"], fresh)
+        self.assertFalse(result["reconciliationNeeded"])
+        value.connection_scope.assert_called_with("candidate", True)
+        value.sessions.assert_called_with("candidate")
+        value.reader_permissions.assert_called_with("candidate")
+        self.assertEqual(proof_path.read_bytes(), saved)
+
+
+class FixtureInterpreterTests(unittest.TestCase):
+    def test_optional_fixture_python_is_absolute_before_qa_and_not_a_production_fallback(self):
+        root = PATH.parents[1]
+        fixture = (root / "backend/tests/support/postgres_delivery.rs").read_text(encoding="utf-8")
+        setup = fixture.split("    async fn new() -> Self {", 1)[1].split("        let case =", 1)[0]
+        self.assertIn('match std::env::var("CICD_TEST_PG_PYTHON")', setup)
+        self.assertIn('Ok(path) => PathBuf::from(path)', setup)
+        self.assertIn('Err(std::env::VarError::NotPresent) => PathBuf::from("/usr/bin/python3.11")', setup)
+        self.assertIn('Err(std::env::VarError::NotUnicode(_)) => panic!', setup)
+        self.assertLess(setup.index('python_bin.is_absolute()'), setup.index('ActualDelivery::new()'))
+        self.assertIn('"pythonBin":python_bin', fixture)
+        production = (root / "backend/src/task_delivery/postgres.rs").read_text(encoding="utf-8")
+        self.assertIn('&policy.python_bin', production)
+        self.assertIn('plain(path)?;', production)
+        self.assertIn('Command::new(&policy.python_bin)', production)
+        self.assertNotIn('CICD_TEST_PG_PYTHON', production)
+
 
 if __name__ == "__main__":
     unittest.main()

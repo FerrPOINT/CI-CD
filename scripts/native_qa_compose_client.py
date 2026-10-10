@@ -36,7 +36,8 @@ def main():
             or value['exit'] not in (0, 1) or not isinstance(value['stdout'], str)
             or value['error_class'] not in (None, 'ValueError', 'RuntimeError', 'OSError',
                 'TimeoutError', 'FileNotFoundError', 'PermissionError', 'AssertionError',
-                'JSONDecodeError', 'KeyError', 'TypeError', 'TimeoutExpired')):
+                'JSONDecodeError', 'KeyError', 'TypeError', 'TimeoutExpired',
+                'DiskSpaceGuard', 'DaemonIdentityGuard', 'ExistingResourcesGuard')):
         raise ValueError('Invalid native QA response')
     if value['exit']:
         sys.stderr.write('NATIVE_QA_COMPOSE_BRIDGE_FAILED:' + str(value['error_class']) + '\n')
