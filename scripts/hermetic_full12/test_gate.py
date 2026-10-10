@@ -1700,5 +1700,170 @@ class AggregationTests(unittest.TestCase):
             self.check(lambda a, b, c: c.update(status='NOT_RUN'))
 
 
+class OciDiagnosticTests(unittest.TestCase):
+    @contextmanager
+    def fixture(self, log):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'private').mkdir()
+            (root / 'private/oci.log').write_bytes(log)
+            name = 'CI-CD/backend/tests/support/oci_delivery.rs'
+            source = root / 'sources' / name
+            source.parent.mkdir(parents=True)
+            raw = b'// public synthetic source\nfn synthetic_fixture() {}\n'
+            source.write_bytes(raw)
+            sources = {name: {'size': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()}}
+            with patch.object(h, 'diagnostic_sources', return_value=sources):
+                yield root, source, name
+
+    @staticmethod
+    def compiler(code='E0308', path='tests/support/oci_delivery.rs', line=2, column=4):
+        return f'error[{code}]: PRIVATE_MESSAGE SQL TOKEN\n  --> {path}:{line}:{column}\n'.encode()
+
+    @staticmethod
+    def error(diagnostic):
+        return {'stage': 'oci', 'category': 'closed_failure', 'errno': None, 'exit_code': 101,
+                'oci_diagnostics': diagnostic}
+
+    def test_compiler_and_known_panic_locations_only_no_private_text(self):
+        log = self.compiler() + (f"thread '{h.OCI_TEST}' panicked at tests/support/oci_delivery.rs:2:4:\n"
+                                'PRIVATE_PANIC SQL ARGS ENV\n').encode()
+        with self.fixture(log) as (root, _, name):
+            diagnostic = h.oci_failure_diagnostics(root)
+            self.assertEqual(diagnostic, {
+                'compiler': [{'code': 'E0308', 'file': name, 'line': 2, 'column': 4}],
+                'panics': [{'test': h.OCI_TEST, 'file': name, 'line': 2, 'column': 4}]})
+            h.validate_safe_error(self.error(diagnostic))
+            self.assertNotIn('PRIVATE', json.dumps(diagnostic))
+            self.assertNotIn('SQL', json.dumps(diagnostic))
+
+    def test_only_exact_catalogue_aliases_and_no_arbitrary_path_normalization(self):
+        good = ('tests/support/oci_delivery.rs', 'backend/tests/support/oci_delivery.rs',
+                'CI-CD/backend/tests/support/oci_delivery.rs', '/work/CI-CD/backend/tests/support/oci_delivery.rs')
+        bad = ('/secret/TOKEN.rs', '../../secret.rs', './tests/support/oci_delivery.rs',
+               'tests/../tests/support/oci_delivery.rs', 'tests\\support\\oci_delivery.rs',
+               '/private/work/CI-CD/backend/tests/support/oci_delivery.rs')
+        for path in (*good, *bad):
+            with self.subTest(path=path), self.fixture(self.compiler(path=path)) as (root, _, _):
+                diagnostic = h.oci_failure_diagnostics(root)
+                self.assertEqual(diagnostic is not None, path in good)
+
+    def test_interleaving_unknown_identity_and_message_lines_are_not_frames(self):
+        logs = (b'warning[E0308]: PRIVATE\n --> tests/support/oci_delivery.rs:2:4\n',
+                b'error[E0308]: PRIVATE\nPRIVATE NOTE\n --> tests/support/oci_delivery.rs:2:4\n',
+                self.compiler(code='PRIVATE'), self.compiler(code='E0308PRIVATE'),
+                f"thread '{h.OCI_TEST}PRIVATE' panicked at tests/support/oci_delivery.rs:2:4:\n".encode(),
+                f"thread '{h.OCI_TEST}' panicked at tests/support/oci_delivery.rs:2:4:PRIVATE\n".encode(),
+                b'{"message":"PRIVATE","code":"E0308"}\n')
+        for log in logs:
+            with self.subTest(log=log[:20]), self.fixture(log) as (root, _, _):
+                self.assertIsNone(h.oci_failure_diagnostics(root))
+
+    def test_source_hash_and_actual_line_column_attestation(self):
+        for change in ('hash', 'line', 'column'):
+            log = self.compiler(line=50 if change == 'line' else 2, column=100 if change == 'column' else 4)
+            with self.subTest(change=change), self.fixture(log) as (root, source, _):
+                if change == 'hash':
+                    source.write_bytes(b'PRIVATE SOURCE REPLACEMENT')
+                    with self.assertRaises(ValueError):
+                        h.oci_failure_diagnostics(root)
+                else:
+                    self.assertIsNone(h.oci_failure_diagnostics(root))
+
+    def test_bounded_unique_results_and_no_deduplication_loophole(self):
+        codes = ('E0308', 'E0599', 'E0432', 'E0433', 'E0277', 'E0061', 'E0425', 'E0412', 'E0382', 'E0596')
+        log = self.compiler() * 20 + b''.join(self.compiler(code=code) for code in codes)
+        with self.fixture(log) as (root, _, _):
+            diagnostic = h.oci_failure_diagnostics(root)
+            self.assertEqual([entry['code'] for entry in diagnostic['compiler']], list(codes[:8]))
+            h.validate_safe_error(self.error(diagnostic))
+
+    def test_oversized_log_and_excessive_line_count_rejected(self):
+        for log in (b'x' * (2**20 + 1), b'\n' * 16385):
+            with self.fixture(log) as (root, _, _), self.assertRaises(ValueError):
+                h.oci_failure_diagnostics(root)
+
+    def test_symlink_log_or_source_rejected(self):
+        for target in ('log', 'source'):
+            with self.subTest(target=target), self.fixture(self.compiler()) as (root, source, _):
+                path = root / 'private/oci.log' if target == 'log' else source
+                original = path.with_name('owned-original')
+                path.rename(original)
+                try:
+                    path.symlink_to(original)
+                except OSError:
+                    self.skipTest('symlink creation unavailable')
+                with self.assertRaises(ValueError):
+                    h.oci_failure_diagnostics(root)
+
+    def test_hardlinked_or_foreign_owned_log_rejected(self):
+        with self.fixture(self.compiler()) as (root, _, _):
+            path = root / 'private/oci.log'
+            os.link(path, root / 'second-link')
+            with self.assertRaises(ValueError):
+                h.oci_failure_diagnostics(root)
+        with self.fixture(self.compiler()) as (root, _, _):
+            before = (root / 'private/oci.log').stat()
+            foreign = SimpleNamespace(st_mode=before.st_mode, st_nlink=1, st_dev=before.st_dev,
+                                      st_uid=root.stat().st_uid + 1, st_size=before.st_size)
+            with patch.object(h.os, 'fstat', return_value=foreign), self.assertRaises(ValueError):
+                h.oci_failure_diagnostics(root)
+
+    def test_strict_reader_rejects_extra_fields_types_paths_and_identities(self):
+        with self.fixture(self.compiler()) as (root, _, _):
+            base = self.error(h.oci_failure_diagnostics(root))
+            changes = (lambda e: e.update(stage='bootstrap'), lambda e: e.update(exit_code=1),
+                       lambda e: e.update(category='timeout'), lambda e: e.update(raw='PRIVATE'),
+                       lambda e: e['oci_diagnostics'].update(message='PRIVATE'),
+                       lambda e: e['oci_diagnostics']['compiler'][0].update(message='PRIVATE'),
+                       lambda e: e['oci_diagnostics']['compiler'][0].update(code='PRIVATE'),
+                       lambda e: e['oci_diagnostics']['compiler'][0].update(file='/secret/TOKEN.rs'),
+                       lambda e: e['oci_diagnostics']['compiler'][0].update(line=True),
+                       lambda e: e['oci_diagnostics']['compiler'][0].update(column=1000000),
+                       lambda e: e['oci_diagnostics'].update(compiler=[e['oci_diagnostics']['compiler'][0]] * 9),
+                       lambda e: e['oci_diagnostics'].update(compiler=[e['oci_diagnostics']['compiler'][0]] * 2),
+                       lambda e: e['oci_diagnostics'].update(compiler=[], panics=[]),
+                       lambda e: e['oci_diagnostics'].update(panics=[{'test': 'PRIVATE', 'file': '/secret', 'line': 1, 'column': 1}]))
+            for change in changes:
+                candidate = copy.deepcopy(base)
+                change(candidate)
+                with self.subTest(candidate=candidate), self.assertRaises(ValueError):
+                    h.validate_safe_error(candidate)
+
+    def test_existing_failure_path_preserves_failure_and_legacy_error(self):
+        with self.fixture(self.compiler()) as (root, _, _):
+            report = {'status': 'FAIL', 'full12_pass': False, 'stages': [{'stage': 'oci'}]}
+            with patch('sys.stdout', new_callable=io.StringIO) as output:
+                gate.retain_failure(report, 'oci', h.CommandFailure(101), root, 'C', [])
+            self.assertEqual(report['status'], 'FAIL')
+            self.assertFalse(report['full12_pass'])
+            h.validate_safe_error(report['error'])
+            self.assertIn('oci_diagnostics', report['error'])
+            self.assertNotIn('PRIVATE', output.getvalue())
+        legacy = h.safe_error('oci', h.CommandFailure(101))
+        h.validate_safe_error(legacy)
+        self.assertNotIn('oci_diagnostics', legacy)
+
+    def test_missing_invalid_projection_is_optional_but_deadline_not_absorbed(self):
+        for error in (FileNotFoundError('PRIVATE'), ValueError('PRIVATE')):
+            with patch.object(h, 'oci_failure_diagnostics', side_effect=error):
+                report = {'stages': [{'stage': 'oci'}]}
+                with patch('sys.stdout', new_callable=io.StringIO) as output:
+                    gate.retain_failure(report, 'oci', h.CommandFailure(101), Path('/unused'), 'C', [])
+                self.assertEqual(report['error'], h.safe_error('oci', h.CommandFailure(101)))
+                self.assertNotIn('PRIVATE', output.getvalue())
+        with patch.object(h, 'oci_failure_diagnostics', side_effect=h.OverheadTimeout('PRIVATE', 1)):
+            with self.assertRaises(h.OverheadTimeout):
+                gate.retain_failure({}, 'oci', h.CommandFailure(101), Path('/unused'), 'C', [])
+
+    def test_other_stages_or_exit_codes_never_read_private_oci_log(self):
+        for job, stage, error in (('C', 'oci', h.CommandFailure(1)), ('C', 'oci', ValueError()),
+                                  ('C', 'bootstrap', h.CommandFailure(101)), ('A', 'clippy', h.CommandFailure(101))):
+            with patch.object(h, 'oci_failure_diagnostics') as project, patch('sys.stdout', new_callable=io.StringIO):
+                report = {'stages': [{'stage': name} for name in gate.JOBS[job]]}
+                gate.retain_failure(report, stage, error, Path('/unused'), job, [])
+            project.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()

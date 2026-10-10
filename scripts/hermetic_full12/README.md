@@ -1,7 +1,7 @@
 # Public-safe exact-source full12 controls
 
 Этот source-only successor имеет непосредственный parent
-`9e3241ef9b83536600ee1a7660a53f588cf232a0`; все exact parent edges предыдущих
+`0527882c371ccc4247e2d2f3d74a9a8e8f74ef78`; все exact parent edges предыдущих
 controls сохранены в `host.controls_history`, включая maintenance controls
 `b9375dc4b4f070b0f6cff1733228f1a6865b1368`, safety controls
 `4d97c54f35b485224a8229495763658fcbbd40e9`, qualification controls
@@ -92,6 +92,42 @@ Private bridge proof использует ту же привязку. Его pur
 запускают Docker и не заменяют full12 execution.
 
 ## Execution Contract
+
+### Закрытая диагностика OCI
+
+Только job C, stage `oci` и исходный `CommandFailure(101)` могут добавить optional
+`error.oci_diagnostics` в существующий report. Нового artifact нет. Strict reader
+должен использовать frozen `host.validate_safe_error`: вложенные ключи только
+`compiler` и `panics`, каждый содержит до восьми уникальных записей. Compiler
+record содержит только `code`, `file`, `line`, `column`; panic record вместо
+`code` содержит exact `host.OCI_TEST` в `test`. Legacy errors остаются валидными;
+неизвестные ключи, типы, пути и identities отвергаются.
+
+Принимается только соседняя пара Rust `error[Edddd]` / source location или
+Rust 1.88 panic header exact известного теста. Имена исходников берутся из
+существующего frozen Rust source catalogue с exact workspace aliases.
+Перед projection размер и SHA256 исходника должны совпасть с catalogue,
+а location должна находиться в этом исходнике. Это attestation source/location,
+не личности производителя лога: test output может имитировать compiler syntax.
+Коды являются наблюдаемыми `E` плюс четыре ASCII-цифры, не независимо
+аутентифицированным диагнозом compiler. Произвольные stack frames и panic
+messages не сохраняются.
+
+Читается только existing private `oci.log`, в памяти, до 1 MiB / 16384 строк.
+Чтение лога и соответствующих исходников отвергает symlinks, hardlinks, чужого
+владельца или device, nonregular files и изменившиеся metadata. Отсутствующие,
+слишком большие, malformed или unattested observations не добавляют диагностику
+и не скрывают исходный отказ. Existing finalization deadline остаётся обязательным
+и propagates. Messages, snippets, panic bodies, SQL, args, env и raw log bytes
+не копируются в report, marker или artifacts. Cleanup, все двенадцать stage
+assertions, pins, resource floors и deadlines неизменны.
+
+Текущий push-only workflow требует fresh A и B перед C. Запуск только C на новом
+SHA невозможен без отдельно reviewed workflow change. Минимальный запуск без
+изменения workflow: fresh full12 attempt после approval; historical A/B receipts
+38058842111 не квалифицируют successor. Будущая явно разрешённая C-only
+диагностика не будет full12 acceptance. C-only input, job, rerun или изменение
+workflow здесь не реализованы.
 
 ### Безопасная bootstrap диагностика
 

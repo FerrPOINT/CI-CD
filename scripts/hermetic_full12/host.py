@@ -32,7 +32,8 @@ CACHE_PREPARE_CONTROLS = '970f785cf05f72cf88f21adc2d0c5ee5012ecf9c'
 CACHE_ALLOCATE_CONTROLS = '6241d2b381a22302f6fd8fae4ee14e0d200c1282'
 PRE_CACHE_CAPACITY_CONTROLS = 'ab623f1ea7f47c0afa182ab4b913c89f981d305b'
 CUMULATIVE_RECLAIM_CONTROLS = 'dcad6522c9dc313bf6f8113deb9ecb885e6710ad'
-CONTROLS_PARENT = '9e3241ef9b83536600ee1a7660a53f588cf232a0'
+IMMUTABLE_MAINTENANCE_CONTROLS = '9e3241ef9b83536600ee1a7660a53f588cf232a0'
+CONTROLS_PARENT = '0527882c371ccc4247e2d2f3d74a9a8e8f74ef78'
 BRANCH = 'build-only/forge-delegation-full12-20261010'
 CONSUMER_PATHS = {
     '.github/workflows/forge-hermetic-full12.yml',
@@ -48,6 +49,7 @@ RECLAIM = ('/usr/share/dotnet', '/usr/local/lib/android', '/opt/ghc', '/usr/loca
 DOCKER = ['docker', '--context', 'rootless']
 ERROR_STAGES = ('python', 'row-smoke', 'smoke', 'check', 'clippy', 'postgres', 'oci',
                 'workspace', 'integration', 'cli', 'openapi', 'release')
+OCI_TEST = 'sdlc_workspace::task_delivery::oci_delivery::sdlc_oci_delivery_actual_image_data_acceptance_rollback_and_unknown'
 BOOTSTRAP_STEPS = ('tools_download', 'dependencies', 'user_namespace', 'manager',
                    'manager_dropin', 'manager_reload', 'manager_linger', 'manager_start',
                    'manager_readback', 'manager_controllers',
@@ -212,7 +214,7 @@ def safe_error(stage, error):
 
 def validate_safe_error(result):
     require(type(result) is dict and {'stage', 'category', 'errno'} <= set(result)
-            and set(result) <= {'stage', 'category', 'errno', 'exit_code', 'dependency', 'bootstrap_step'})
+            and set(result) <= {'stage', 'category', 'errno', 'exit_code', 'dependency', 'bootstrap_step', 'oci_diagnostics'})
     require(type(result['stage']) is str and type(result['category']) is str
             and result['stage'] in {'admission', 'bootstrap', 'cleanup', 'aggregate', 'parity', *ERROR_STAGES}
             and result['category'] in {'os_error', 'timeout', 'assertion', 'closed_failure'})
@@ -224,6 +226,97 @@ def validate_safe_error(result):
     if 'bootstrap_step' in result:
         require(result['stage'] == 'bootstrap' and type(result['bootstrap_step']) is str
                 and result['bootstrap_step'] in BOOTSTRAP_STEPS)
+    if 'oci_diagnostics' in result:
+        require(result['stage'] == 'oci' and result['category'] == 'closed_failure'
+                and type(result.get('exit_code')) is int and result['exit_code'] == 101)
+        diagnostic = result['oci_diagnostics']
+        require(type(diagnostic) is dict and set(diagnostic) == {'compiler', 'panics'})
+        sources = diagnostic_sources()
+        for kind, label in (('compiler', 'code'), ('panics', 'test')):
+            entries = diagnostic[kind]
+            require(type(entries) is list and len(entries) <= 8)
+            seen = set()
+            for entry in entries:
+                require(type(entry) is dict and set(entry) == {label, 'file', 'line', 'column'})
+                require(type(entry[label]) is str and (re.fullmatch('E[0-9]{4}', entry[label])
+                        if kind == 'compiler' else entry[label] == OCI_TEST))
+                require(type(entry['file']) is str and entry['file'] in sources)
+                require(all(type(entry[key]) is int and 0 < entry[key] <= sources[entry['file']]['size']
+                            for key in ('line', 'column')))
+                identity = tuple(entry[key] for key in (label, 'file', 'line', 'column'))
+                require(identity not in seen)
+                seen.add(identity)
+        require(diagnostic['compiler'] or diagnostic['panics'])
+
+
+def diagnostic_sources():
+    catalogues = read(HERE / 'source-catalogue.json')['catalogues']
+    return {folder + '/' + item['path']: item for label, folder in (('forge', 'CI-CD'), ('base', 'services-base'))
+            for item in catalogues[label]['files'] if item['path'].endswith('.rs')}
+
+
+def oci_failure_diagnostics(root):
+    """Project observed locations only; source attestation is not proof of log producer identity."""
+    root = Path(root)
+    owner = root.stat()
+    def bounded_file(path):
+        check_deadline()
+        require(not any(p.is_symlink() for p in (path, *path.parents)))
+        fd = os.open(path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0))
+        try:
+            before = os.fstat(fd)
+            require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1
+                    and (before.st_dev, before.st_uid) == (owner.st_dev, owner.st_uid)
+                    and 0 < before.st_size <= 2**20)
+            with os.fdopen(fd, 'rb', closefd=False) as stream:
+                raw = stream.read(2**20 + 1)
+            require(len(raw) == before.st_size)
+            after = path.stat()
+            require((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
+                    == (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns))
+            check_deadline()
+            return raw
+        finally:
+            os.close(fd)
+    lines = bounded_file(root / 'private/oci.log').decode('utf-8', errors='replace').splitlines()
+    require(len(lines) <= 16384)
+    sources, aliases = diagnostic_sources(), {}
+    for name in sources:
+        aliases[name] = name
+        aliases['/work/' + name] = name
+        if name.startswith('CI-CD/backend/'):
+            aliases[name.removeprefix('CI-CD/backend/')] = name
+            aliases[name.removeprefix('CI-CD/')] = name
+        elif name.startswith('services-base/'):
+            aliases['../../' + name] = name
+    result, contents = {'compiler': [], 'panics': []}, {}
+    def append(kind, label, location):
+        name = aliases.get(location[0])
+        if name is None or len(result[kind]) == 8:
+            return
+        if name not in contents:
+            raw = bounded_file(root / 'sources' / name)
+            require(len(raw) == sources[name]['size'] and hashlib.sha256(raw).hexdigest() == sources[name]['sha256'])
+            contents[name] = raw.splitlines()
+        line, column = map(int, location[1:])
+        if not (0 < line <= len(contents[name]) and 0 < column <= len(contents[name][line - 1]) + 1):
+            return
+        entry = {'code' if kind == 'compiler' else 'test': label, 'file': name, 'line': line, 'column': column}
+        if entry not in result[kind]:
+            result[kind].append(entry)
+    previous = None
+    for text in lines:
+        check_deadline()
+        location = re.fullmatch(r'\s*--> (.+):([1-9][0-9]{0,6}):([1-9][0-9]{0,6})', text)
+        if previous and location:
+            append('compiler', previous, location.groups())
+        match = re.fullmatch(r'error\[(E[0-9]{4})\]:[^\r\n]*', text)
+        previous = match[1] if match else None
+        panic = re.fullmatch(r"thread '" + re.escape(OCI_TEST)
+                            + r"' panicked at (.+):([1-9][0-9]{0,6}):([1-9][0-9]{0,6}):", text)
+        if panic:
+            append('panics', OCI_TEST, panic.groups())
+    return result if result['compiler'] or result['panics'] else None
 
 
 def leader_status(process):
@@ -382,7 +475,8 @@ def bind_maintenance(module, proof):
 
 def controls_history(controls):
     require(git(controls, 'rev-parse', '--is-shallow-repository').strip() == b'false')
-    for revision, parent in (('HEAD', CONTROLS_PARENT), (CONTROLS_PARENT, CUMULATIVE_RECLAIM_CONTROLS),
+    for revision, parent in (('HEAD', CONTROLS_PARENT), (CONTROLS_PARENT, IMMUTABLE_MAINTENANCE_CONTROLS),
+                             (IMMUTABLE_MAINTENANCE_CONTROLS, CUMULATIVE_RECLAIM_CONTROLS),
                              (CUMULATIVE_RECLAIM_CONTROLS, PRE_CACHE_CAPACITY_CONTROLS),
                              (PRE_CACHE_CAPACITY_CONTROLS, CACHE_ALLOCATE_CONTROLS),
                              (CACHE_ALLOCATE_CONTROLS, CACHE_PREPARE_CONTROLS),

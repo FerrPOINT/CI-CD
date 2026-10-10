@@ -758,6 +758,16 @@ def public_stage(proof):
 
 def retain_failure(report, phase, error, root, job, proofs):
     report['error'] = h.safe_error(phase, error)
+    if job == 'C' and phase == 'oci' and isinstance(error, h.CommandFailure) and error.code == 101:
+        try:
+            diagnostic = h.oci_failure_diagnostics(root)
+            if diagnostic is not None:
+                candidate = {**report['error'], 'oci_diagnostics': diagnostic}
+                h.validate_safe_error(candidate)
+                report['error'] = candidate
+        except Exception as diagnostic_error:
+            if isinstance(diagnostic_error, h.OverheadTimeout):
+                raise
     if isinstance(error, h.CapacityFailure):
         report['capacity_failure'] = error.measurement
         if (root / 'reclaim.json').exists():

@@ -414,7 +414,8 @@ class ConsumerHistoryTests(unittest.TestCase):
         if args == ('rev-parse', '--is-shallow-repository'):
             return b'false\n'
         parents = {'HEAD': ('a' * 40, h.CONTROLS_PARENT),
-                   h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.CUMULATIVE_RECLAIM_CONTROLS),
+                   h.CONTROLS_PARENT: (h.CONTROLS_PARENT, h.IMMUTABLE_MAINTENANCE_CONTROLS),
+                   h.IMMUTABLE_MAINTENANCE_CONTROLS: (h.IMMUTABLE_MAINTENANCE_CONTROLS, h.CUMULATIVE_RECLAIM_CONTROLS),
                    h.CUMULATIVE_RECLAIM_CONTROLS: (h.CUMULATIVE_RECLAIM_CONTROLS, h.PRE_CACHE_CAPACITY_CONTROLS),
                    h.PRE_CACHE_CAPACITY_CONTROLS: (h.PRE_CACHE_CAPACITY_CONTROLS, h.CACHE_ALLOCATE_CONTROLS),
                    h.CACHE_ALLOCATE_CONTROLS: (h.CACHE_ALLOCATE_CONTROLS, h.CACHE_PREPARE_CONTROLS),
@@ -438,7 +439,8 @@ class ConsumerHistoryTests(unittest.TestCase):
     def test_exact_normal_successor_history_admitted(self):
         with patch.object(h, 'git', side_effect=self.git):
             h.controls_history(Path('controls'))
-        self.assertEqual(h.CONTROLS_PARENT, '9e3241ef9b83536600ee1a7660a53f588cf232a0')
+        self.assertEqual(h.CONTROLS_PARENT, '0527882c371ccc4247e2d2f3d74a9a8e8f74ef78')
+        self.assertEqual(h.IMMUTABLE_MAINTENANCE_CONTROLS, '9e3241ef9b83536600ee1a7660a53f588cf232a0')
         self.assertEqual(h.CUMULATIVE_RECLAIM_CONTROLS, 'dcad6522c9dc313bf6f8113deb9ecb885e6710ad')
         self.assertEqual(h.PRE_CACHE_CAPACITY_CONTROLS, 'ab623f1ea7f47c0afa182ab4b913c89f981d305b')
         self.assertEqual(h.CACHE_ALLOCATE_CONTROLS, '6241d2b381a22302f6fd8fae4ee14e0d200c1282')
@@ -458,6 +460,7 @@ class ConsumerHistoryTests(unittest.TestCase):
                 (('rev-list', '--parents', '-n', '1', 'HEAD'), ('a' * 40 + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', 'HEAD'), ('a' * 40 + ' ' + h.CONTROLS_PARENT + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.CONTROLS_PARENT), (h.CONTROLS_PARENT + ' ' + h.SOURCE).encode()),
+                (('rev-list', '--parents', '-n', '1', h.IMMUTABLE_MAINTENANCE_CONTROLS), (h.IMMUTABLE_MAINTENANCE_CONTROLS + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.CUMULATIVE_RECLAIM_CONTROLS), (h.CUMULATIVE_RECLAIM_CONTROLS + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.PRE_CACHE_CAPACITY_CONTROLS), (h.PRE_CACHE_CAPACITY_CONTROLS + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.CACHE_ALLOCATE_CONTROLS), (h.CACHE_ALLOCATE_CONTROLS + ' ' + h.SOURCE).encode()),
