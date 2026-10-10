@@ -9,6 +9,8 @@
 
 ## [Unreleased]
 
+- Base обновлён для удержания focus в `ConfirmDialog` во время pending.
+
 - Активный Base pin обновлён до согласованного кандидата SDK/UI/workspace;
   документация standalone build использует тот же порядок выбора pin, что CI.
 
