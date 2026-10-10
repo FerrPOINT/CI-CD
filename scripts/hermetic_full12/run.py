@@ -433,6 +433,7 @@ def resource_enforcement(operation, images):
 def fill_cache(root, sdk, q, parent, images, token, cache_operations):
     with h.bootstrap_step('cache_prepare'):
         with h.bootstrap_step('cache_allocate'):
+            h.capacity(root)
             operation = parent.parent_class(sdk, q)(project='sdlc-build-forge-cache-' + token, task=TASK,
                 purpose='locked-dependency-fetch-only', docker=h.DOCKER, directory=root / 'cache-fetch', daemon_id=q.DAEMON_ID,
                 resource_policy='isolated-ci-v1')

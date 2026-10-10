@@ -27,7 +27,8 @@ DIAGNOSTIC_CONTROLS = '1310958a4b5cf68642a6ce8d4466ef5ff1e64f31'
 RESOURCE_CONTROLS = 'eb91d4f1a3f3e0f3731c38a861db68ae8a0d952a'
 DELEGATION_CONTROLS = '3a9bbafd45c98b0458d1eddf98908275896476a0'
 CACHE_BOUNDARY_CONTROLS = '3f366b5c73c1386f3d710f4dd94dc1c0ac074bc6'
-CONTROLS_PARENT = '970f785cf05f72cf88f21adc2d0c5ee5012ecf9c'
+CACHE_PREPARE_CONTROLS = '970f785cf05f72cf88f21adc2d0c5ee5012ecf9c'
+CONTROLS_PARENT = '6241d2b381a22302f6fd8fae4ee14e0d200c1282'
 BRANCH = 'build-only/forge-delegation-full12-20261010'
 CONSUMER_PATHS = {
     '.github/workflows/forge-hermetic-full12.yml',
@@ -377,7 +378,8 @@ def bind_maintenance(module, proof):
 
 def controls_history(controls):
     require(git(controls, 'rev-parse', '--is-shallow-repository').strip() == b'false')
-    for revision, parent in (('HEAD', CONTROLS_PARENT), (CONTROLS_PARENT, CACHE_BOUNDARY_CONTROLS),
+    for revision, parent in (('HEAD', CONTROLS_PARENT), (CONTROLS_PARENT, CACHE_PREPARE_CONTROLS),
+                             (CACHE_PREPARE_CONTROLS, CACHE_BOUNDARY_CONTROLS),
                              (CACHE_BOUNDARY_CONTROLS, DELEGATION_CONTROLS),
                              (DELEGATION_CONTROLS, RESOURCE_CONTROLS),
                              (RESOURCE_CONTROLS, DIAGNOSTIC_CONTROLS),

@@ -814,7 +814,7 @@ class CacheBoundaryTests(unittest.TestCase):
             h.validate_safe_error(safe)
             self.assertNotIn('PRIVATE_SENTINEL', json.dumps(safe))
 
-    def cache_fixture(self, failure=None, error=None):
+    def cache_fixture(self, failure=None, error=None, capacity=None):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             registry = root / 'cache/cargo/registry'
@@ -831,6 +831,7 @@ class CacheBoundaryTests(unittest.TestCase):
                 factory.side_effect = error if error is not None else ValueError('PRIVATE_SENTINEL')
             parent = SimpleNamespace(parent_class=lambda *_: factory)
             pending = []
+            capacity_check = Mock(side_effect=capacity, return_value={})
             command = Mock(return_value=b'PRIVATE_SENTINEL')
             close = Mock()
             inventory = Mock(return_value={'container': [], 'network': [], 'volume': []})
@@ -843,19 +844,25 @@ class CacheBoundaryTests(unittest.TestCase):
             elif failure == 'cache_seal':
                 (root / 'cache/target').mkdir()
             with patch.object(h, 'command', command), patch.object(gate, 'close_operation', close), \
-                    patch.object(gate, 'inventory', inventory), patch.object(h, 'BOOTSTRAP_DEADLINE', 1):
+                    patch.object(gate, 'inventory', inventory), patch.object(h, 'BOOTSTRAP_DEADLINE', 1), \
+                    patch.object(h, 'capacity', capacity_check):
                 try:
                     result = gate.fill_cache(root, None, SimpleNamespace(DAEMON_ID='admitted'), parent,
                         {'tools': 'sha256:' + 'a' * 64}, 'a' * 20, pending)
                 finally:
-                    self.assertEqual(pending, [] if failure == 'cache_allocate' else [operation])
-                    if failure in ('cache_prepare', 'cache_allocate', 'cache_manifest', 'cache_fetch'):
+                    capacity_check.assert_called_once_with(root)
+                    self.assertEqual(pending, [] if failure in ('cache_capacity', 'cache_allocate') else [operation])
+                    if failure in ('cache_capacity', 'cache_prepare', 'cache_allocate', 'cache_manifest', 'cache_fetch'):
                         close.assert_not_called()
                         self.assertFalse((root / 'cache-source-tree.json').exists())
-                    if failure in ('cache_prepare', 'cache_allocate', 'cache_manifest'):
+                    if failure in ('cache_capacity', 'cache_prepare', 'cache_allocate', 'cache_manifest'):
                         command.assert_not_called()
-                    if failure == 'cache_allocate':
+                    if failure in ('cache_capacity', 'cache_allocate'):
                         operation.write.assert_not_called()
+                    if failure == 'cache_capacity':
+                        factory.assert_not_called()
+                    else:
+                        factory.assert_called_once()
             self.assertEqual(result['initial_tree_sha256'], h.sha(root / 'cache-source-tree.json'))
             return result, factory, operation, command, close
 
@@ -904,6 +911,52 @@ class CacheBoundaryTests(unittest.TestCase):
             with self.subTest(step=step), self.assertRaises(h.CapacityFailure) as caught:
                 self.cache_fixture(step, error)
             self.assertIs(caught.exception, error)
+
+    def test_pre_cache_capacity_is_immediately_before_original_constructor(self):
+        tree = ast.parse((h.HERE / 'run.py').read_bytes())
+        function = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'fill_cache')
+        prepare = function.body[0]
+        allocate = prepare.body[0]
+        self.assertEqual(ast.unparse(prepare.items[0].context_expr), "h.bootstrap_step('cache_prepare')")
+        self.assertEqual(ast.unparse(allocate.items[0].context_expr), "h.bootstrap_step('cache_allocate')")
+        self.assertEqual(len(allocate.body), 3)
+        self.assertEqual(ast.unparse(allocate.body[0]), 'h.capacity(root)')
+        constructor = allocate.body[1]
+        self.assertEqual(ast.unparse(constructor.targets[0]), 'operation')
+        self.assertEqual(ast.unparse(constructor.value.func), 'parent.parent_class(sdk, q)')
+        self.assertEqual(ast.unparse(allocate.body[2]), 'cache_operations.append(operation)')
+
+    def test_pre_cache_capacity_reuses_original_limits_and_structured_failure(self):
+        for cut in ('host', 'data', 'inodes', 'admitted'):
+            measurement = {'host_min_bytes': h.HOST_BYTES, 'data_min_bytes': h.DATA_BYTES,
+                'minimum_inodes': h.INODES, 'host_free_bytes': h.HOST_BYTES,
+                'data_free_bytes': h.DATA_BYTES, 'free_inodes': h.INODES}
+            key = {'host': 'host_free_bytes', 'data': 'data_free_bytes', 'inodes': 'free_inodes'}.get(cut)
+            if key:
+                measurement[key] -= 1
+            with self.subTest(cut=cut), tempfile.TemporaryDirectory() as temp, \
+                    patch.dict(os.environ, RUNNER_TEMP=temp), \
+                    patch.object(h.shutil, 'disk_usage', side_effect=[
+                        SimpleNamespace(free=measurement['host_free_bytes']),
+                        SimpleNamespace(free=measurement['data_free_bytes'])]) as disk, \
+                    patch.object(h.os, 'statvfs', return_value=SimpleNamespace(f_favail=measurement['free_inodes']), create=True) as inodes:
+                if cut == 'admitted':
+                    self.cache_fixture(capacity=h.capacity)
+                else:
+                    with self.assertRaises(h.CapacityFailure) as caught:
+                        self.cache_fixture('cache_capacity', capacity=h.capacity)
+                    self.assertEqual(caught.exception.measurement, measurement)
+                    report = {'status': 'FAIL', 'full12_pass': False, 'stages': []}
+                    with patch('sys.stdout', io.StringIO()) as output:
+                        gate.retain_failure(report, 'bootstrap', caught.exception, Path(temp), 'A', [])
+                    self.assertEqual(report['capacity_failure'], measurement)
+                    self.assertNotIn('bootstrap_step', report['error'])
+                    self.assertFalse(report['full12_pass'])
+                    self.assertEqual(report['status'], 'FAIL')
+                    h.validate_safe_error(report['error'])
+                    self.assertNotIn('PRIVATE_SENTINEL', output.getvalue())
+                self.assertEqual(disk.call_count, 2)
+                inodes.assert_called_once()
 
 
 class DelegationDropinTests(unittest.TestCase):
