@@ -759,6 +759,7 @@ class Owner:
 
 def main():
     packet = json.loads(sys.stdin.buffer.read(256 * 1024 + 1))
+    owner = None
     try:
         owner = Owner(packet)
         result = owner.execute()
@@ -766,6 +767,9 @@ def main():
         reason = str(error) if isinstance(error, Blocked) else 'owner_command_rejected_or_unavailable'
         result = {'schema': 'forge/local-postgres-rejection/v1', 'status': 'blocked', 'reason': reason,
                   'dispatchAllowed': False, 'sdlcAcceptanceVerified': False}
+        if owner is not None:
+            result.update(currentManifestSha256=owner.point('current'),
+                          confirmedManifestSha256=owner.point('confirmed'))
     sys.stdout.buffer.write(canonical(result) + b'\n')
 
 
