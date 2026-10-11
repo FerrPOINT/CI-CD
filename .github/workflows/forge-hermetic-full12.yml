@@ -47,7 +47,7 @@ jobs:
         timeout-minutes: 2
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: 84f0962ce14b95983a015e7d2303cd6f00ec59a7
+          ref: 7db4266f51069d0fda36904a194a1b578659121f
           path: source
           persist-credentials: false
       - name: Exact authenticated product SDK
@@ -55,7 +55,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: FerrPOINT/services-base
-          ref: 19a7a381ae6dbea61a643bb96189e483fa64df5c
+          ref: 0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce
           path: services-base
           fetch-depth: 0
           token: ${{ secrets.SERVICES_BASE_TOKEN }}
@@ -110,7 +110,7 @@ jobs:
         timeout-minutes: 2
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: 84f0962ce14b95983a015e7d2303cd6f00ec59a7
+          ref: 7db4266f51069d0fda36904a194a1b578659121f
           path: source
           persist-credentials: false
       - name: Exact authenticated product SDK
@@ -118,7 +118,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: FerrPOINT/services-base
-          ref: 19a7a381ae6dbea61a643bb96189e483fa64df5c
+          ref: 0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce
           path: services-base
           fetch-depth: 0
           token: ${{ secrets.SERVICES_BASE_TOKEN }}
@@ -171,7 +171,7 @@ jobs:
         timeout-minutes: 2
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: 84f0962ce14b95983a015e7d2303cd6f00ec59a7
+          ref: 7db4266f51069d0fda36904a194a1b578659121f
           path: source
           persist-credentials: false
       - name: Exact authenticated product SDK
@@ -179,7 +179,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: FerrPOINT/services-base
-          ref: 19a7a381ae6dbea61a643bb96189e483fa64df5c
+          ref: 0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce
           path: services-base
           fetch-depth: 0
           token: ${{ secrets.SERVICES_BASE_TOKEN }}

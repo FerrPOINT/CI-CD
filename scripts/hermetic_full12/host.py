@@ -18,7 +18,12 @@ import urllib.request
 import maintenance_git as m
 
 HERE = Path(__file__).resolve().parent
-SOURCE = '84f0962ce14b95983a015e7d2303cd6f00ec59a7'
+SOURCE = '7db4266f51069d0fda36904a194a1b578659121f'
+SOURCE_TREE = 'a7201b0c2cb552b871c0de84168246efaa9922e6'
+NAMESPACE_MERGE = '32a9615e42d15b8f057e0c858bcd47c3e0b2463f'
+NAMESPACE_MAIN = '56191baf973e973209be2223b902fc484b061a4f'
+PRE_MERGE_SOURCE = '84f0962ce14b95983a015e7d2303cd6f00ec59a7'
+PRE_MERGE_CONTROLS = 'c63330d837b036306c27f062c6063b48ffa8ef82'
 POLICY_SOURCE = '75659d8d0bb1415c0ad0ae183bb8cd762aeb9abb'
 PURE_CONTROLS = '030e676bff1653679999de093b9d61195f8430b6'
 PREVIOUS_SOURCE = 'e781b533bfb25fa669d5a5c65f8fa7094de7af02'
@@ -33,7 +38,8 @@ PG_CONTROLS = 'b9a25bf5fb944175f8da053f3fdd82f4e970386d'
 COUNT_CONTROLS = '20e4f4fd12230ed87d01f05b18d3417a11e052a8'
 SOURCE_PARENT = 'd7443f8dffdd7f5d921c5758bed4e5a35423c0ff'
 ORIGINAL_SOURCE = '25be2e82d4d42673897c8a16070eb8a9519244f0'
-BASE = '19a7a381ae6dbea61a643bb96189e483fa64df5c'
+BASE = '0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce'
+LEGACY_BASE = '19a7a381ae6dbea61a643bb96189e483fa64df5c'
 PUBLIC_CONTROLS = '1dbedf85242c3540b70005ce5f0c20badb682c41'
 QUALIFICATION_CONTROLS = '632ea8347602fe4af22e7369790ed9c75e53f76a'
 SAFETY_CONTROLS = '4d97c54f35b485224a8229495763658fcbbd40e9'
@@ -571,7 +577,13 @@ def bind_maintenance(module, proof):
 def controls_history(controls):
     require(git(controls, 'rev-parse', '--is-shallow-repository').strip() == b'false')
     row = git(controls, 'rev-list', '--parents', '-n', '1', 'HEAD').decode().split()
-    require(len(row) == 3 and row[1:] == [PURE_CONTROLS, SOURCE])
+    require(len(row) == 3 and row[1:] == [PRE_MERGE_CONTROLS, SOURCE])
+    row = git(controls, 'rev-list', '--parents', '-n', '1', PRE_MERGE_CONTROLS).decode().split()
+    require(row == [PRE_MERGE_CONTROLS, PURE_CONTROLS, PRE_MERGE_SOURCE])
+    row = git(controls, 'rev-list', '--parents', '-n', '1', NAMESPACE_MERGE).decode().split()
+    require(row == [NAMESPACE_MERGE, PRE_MERGE_SOURCE, NAMESPACE_MAIN])
+    row = git(controls, 'rev-list', '--parents', '-n', '1', SOURCE).decode().split()
+    require(row == [SOURCE, NAMESPACE_MERGE])
     row = git(controls, 'rev-list', '--parents', '-n', '1', POLICY_MERGE).decode().split()
     require(row == [POLICY_MERGE, SMOKE_CONTROLS, POLICY_SOURCE])
     row = git(controls, 'rev-list', '--parents', '-n', '1', SOURCE_MERGE).decode().split()
@@ -584,7 +596,7 @@ def controls_history(controls):
     require(row == [CHECKPOINT_MERGE, OCI_CLI_CONTROLS, SOURCE_PARENT])
     for revision, parent in ((PURE_CONTROLS, CHILD_POLICY_CONTROLS), (CHILD_POLICY_CONTROLS, POLICY_MERGE),
                              (SMOKE_CONTROLS, PG_CONTROLS),
-                             (SOURCE, POLICY_SOURCE), (POLICY_SOURCE, PREVIOUS_SOURCE), (PG_CONTROLS, SOURCE_MERGE),
+                             (PRE_MERGE_SOURCE, POLICY_SOURCE), (POLICY_SOURCE, PREVIOUS_SOURCE), (PG_CONTROLS, SOURCE_MERGE),
                              (COUNT_CONTROLS, CHILD_CLASS_CONTROLS),
                              (LITERAL_CLASS_SOURCE, CHILD_CLASS_SOURCE),
                              (CHILD_CLASS_CONTROLS, CONTROLS_PARENT), (CHILD_CLASS_SOURCE, SOURCE_PARENT),
@@ -627,11 +639,13 @@ def controls_history(controls):
     for baseline, revision in ((PREVIOUS_SOURCE, POLICY_SOURCE), (SMOKE_CONTROLS, POLICY_MERGE)):
         require(git(controls, 'diff', '--name-status', baseline, revision).decode().splitlines() == expected)
     expected += ['M\tscripts/native_qa_compose.py', 'M\tscripts/tests/test_native_qa_compose.py']
-    require(git(controls, 'diff', '--name-status', POLICY_SOURCE, SOURCE).decode().splitlines() == expected)
-    changes = git(controls, 'diff', '--name-status', PURE_CONTROLS, 'HEAD').decode().splitlines()
+    require(git(controls, 'diff', '--name-status', POLICY_SOURCE, PRE_MERGE_SOURCE).decode().splitlines() == expected)
+    changes = git(controls, 'diff', '--name-status', PURE_CONTROLS, PRE_MERGE_CONTROLS).decode().splitlines()
     require(changes and all(line.startswith('M\t') and
             (line[2:] in CONSUMER_PATHS or line in expected) for line in changes))
     require([line for line in changes if line[2:] not in CONSUMER_PATHS] == expected)
+    require(git(controls, 'diff', '--name-status', NAMESPACE_MERGE, SOURCE).decode().splitlines() ==
+            ['M\tdocs/CURRENT_STATE.md', 'M\tdocs/TASK_DELIVERY_VERIFICATION.md'])
 
 
 def checkout_proof(workspace):
@@ -640,14 +654,16 @@ def checkout_proof(workspace):
     clean(source, SOURCE)
     clean(base, BASE)
     controls_history(controls)
-    require(git(source, 'show', 'HEAD:.base-revision').decode().strip() == BASE)
+    require(git(source, 'show', 'HEAD:.base-revision').decode().strip() == LEGACY_BASE)
+    require(git(source, 'show', 'HEAD:.namespace-base-revision').decode().strip() == BASE)
+    require(git(source, 'rev-parse', 'HEAD^{tree}').decode().strip() == SOURCE_TREE)
     return {'source': SOURCE, 'base': BASE, 'controls': os.environ['GITHUB_SHA'],
             'source_tree': git(source, 'rev-parse', 'HEAD^{tree}').decode().strip()}
 
 
 def export_sources(checkouts, destination):
     catalogues = read(HERE / 'source-catalogue.json')['catalogues']
-    require(sum(x['count'] for x in catalogues.values()) == 266)
+    require(sum(x['count'] for x in catalogues.values()) == 278)
     for label, folder, revision in (('forge', 'CI-CD', SOURCE), ('base', 'services-base', BASE)):
         spec = catalogues[label]
         require(len(spec['files']) == spec['count'])

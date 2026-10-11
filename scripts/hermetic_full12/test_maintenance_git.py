@@ -441,7 +441,7 @@ class ConsumerHistoryTests(unittest.TestCase):
                          ('diff', '--name-status', h.CHILD_POLICY_CONTROLS, h.PURE_CONTROLS),
                          ('diff', '--name-status', h.POLICY_SOURCE, h.POLICY_MERGE),
                          ('diff', '--name-status', h.POLICY_SOURCE, h.PURE_CONTROLS),
-                         ('diff', '--name-status', h.PURE_CONTROLS, 'HEAD'),
+                         ('diff', '--name-status', h.PURE_CONTROLS, h.PRE_MERGE_CONTROLS),
                          ('diff', '--name-status', h.SOURCE, 'HEAD')):
             for raw in (b'', b'M\tbackend/src/task_delivery/oci.rs\n',
                         b'A\t.local/private.py\n', b'D\tscripts/hermetic_full12/run.py\n'):
@@ -453,12 +453,15 @@ class ConsumerHistoryTests(unittest.TestCase):
     def git(_, *args):
         if args == ('rev-parse', '--is-shallow-repository'):
             return b'false\n'
-        parents = {'HEAD': ('a' * 40, h.PURE_CONTROLS, h.SOURCE),
+        parents = {'HEAD': ('a' * 40, h.PRE_MERGE_CONTROLS, h.SOURCE),
                    h.PURE_CONTROLS: (h.PURE_CONTROLS, h.CHILD_POLICY_CONTROLS),
                    h.CHILD_POLICY_CONTROLS: (h.CHILD_POLICY_CONTROLS, h.POLICY_MERGE),
                    h.POLICY_MERGE: (h.POLICY_MERGE, h.SMOKE_CONTROLS, h.POLICY_SOURCE),
                    h.SMOKE_CONTROLS: (h.SMOKE_CONTROLS, h.PG_CONTROLS),
-                   h.SOURCE: (h.SOURCE, h.POLICY_SOURCE),
+                   h.PRE_MERGE_SOURCE: (h.PRE_MERGE_SOURCE, h.POLICY_SOURCE),
+                   h.PRE_MERGE_CONTROLS: (h.PRE_MERGE_CONTROLS, h.PURE_CONTROLS, h.PRE_MERGE_SOURCE),
+                   h.NAMESPACE_MERGE: (h.NAMESPACE_MERGE, h.PRE_MERGE_SOURCE, h.NAMESPACE_MAIN),
+                   h.SOURCE: (h.SOURCE, h.NAMESPACE_MERGE),
                    h.POLICY_SOURCE: (h.POLICY_SOURCE, h.PREVIOUS_SOURCE),
                    h.PG_CONTROLS: (h.PG_CONTROLS, h.SOURCE_MERGE),
                    h.SOURCE_MERGE: (h.SOURCE_MERGE, h.COUNT_CONTROLS, h.PREVIOUS_SOURCE),
@@ -489,6 +492,8 @@ class ConsumerHistoryTests(unittest.TestCase):
                    h.PUBLIC_CONTROLS: (h.PUBLIC_CONTROLS, h.ORIGINAL_SOURCE)}
         if args[:4] == ('rev-list', '--parents', '-n', '1'):
             return (' '.join(parents[args[4]]) + '\n').encode()
+        if args == ('diff', '--name-status', h.NAMESPACE_MERGE, h.SOURCE):
+            return b'M\tdocs/CURRENT_STATE.md\nM\tdocs/TASK_DELIVERY_VERIFICATION.md\n'
         if args in (('diff', '--name-status', h.CONTROLS_PARENT, h.COUNT_CONTROLS),
                     ('diff', '--name-status', h.SOURCE_MERGE, h.PG_CONTROLS),
                     ('diff', '--name-status', h.PG_CONTROLS, h.SMOKE_CONTROLS),
@@ -501,11 +506,11 @@ class ConsumerHistoryTests(unittest.TestCase):
         if args == ('diff', '--name-status', h.CHECKPOINT_CONTROLS, h.CONTROLS_PARENT):
             return (b'M\tbackend/src/bin/forge-delivery.rs\nM\tbackend/src/task_delivery/oci.rs\n'
                     b'M\tbackend/tests/support/oci_delivery.rs\nM\tscripts/tests/test_oci_offline_fixture.py\n')
-        if args == ('diff', '--name-status', h.PURE_CONTROLS, 'HEAD'):
+        if args == ('diff', '--name-status', h.PURE_CONTROLS, h.PRE_MERGE_CONTROLS):
             return (b'M\tdocs/CURRENT_STATE.md\nM\tdocs/TASK_DELIVERY_VERIFICATION.md\n'
                     b'M\tscripts/hermetic_full12/host.py\nM\tscripts/native_qa_compose.py\n'
                     b'M\tscripts/tests/test_native_qa_compose.py\n')
-        if args == ('diff', '--name-status', h.POLICY_SOURCE, h.SOURCE):
+        if args == ('diff', '--name-status', h.POLICY_SOURCE, h.PRE_MERGE_SOURCE):
             return (b'M\tdocs/CURRENT_STATE.md\nM\tdocs/TASK_DELIVERY_VERIFICATION.md\n'
                     b'M\tscripts/native_qa_compose.py\nM\tscripts/tests/test_native_qa_compose.py\n')
         if args in (('diff', '--name-status', h.POLICY_SOURCE, h.PURE_CONTROLS),
@@ -528,7 +533,7 @@ class ConsumerHistoryTests(unittest.TestCase):
         self.assertEqual(h.CHECKPOINT_CONTROLS, 'abf62e7d310249a3abd74ebbdd53c626f6312f55')
         self.assertEqual(h.CHECKPOINT_MERGE, '667d1be736c8834deb1a20602b95bb0d6c815157')
         self.assertEqual(h.CHILD_CLASS_SOURCE, '5f973b33e758a4d60e86fc8ff4eda99c6d4496c1')
-        self.assertEqual(h.SOURCE, '84f0962ce14b95983a015e7d2303cd6f00ec59a7')
+        self.assertEqual(h.SOURCE, '7db4266f51069d0fda36904a194a1b578659121f')
         self.assertEqual(h.POLICY_SOURCE, '75659d8d0bb1415c0ad0ae183bb8cd762aeb9abb')
         self.assertEqual(h.PURE_CONTROLS, '030e676bff1653679999de093b9d61195f8430b6')
         self.assertEqual(h.PREVIOUS_SOURCE, 'e781b533bfb25fa669d5a5c65f8fa7094de7af02')
@@ -556,6 +561,10 @@ class ConsumerHistoryTests(unittest.TestCase):
 
     def test_shallow_wrong_parent_or_extra_merge_parent_rejected(self):
         for selector, raw in (
+                (('rev-list', '--parents', '-n', '1', h.NAMESPACE_MERGE),
+                 (h.NAMESPACE_MERGE + ' ' + h.NAMESPACE_MAIN + ' ' + h.PRE_MERGE_SOURCE).encode()),
+                (('rev-list', '--parents', '-n', '1', h.PRE_MERGE_CONTROLS),
+                 (h.PRE_MERGE_CONTROLS + ' ' + h.PURE_CONTROLS + ' ' + h.SOURCE).encode()),
                 (('rev-parse', '--is-shallow-repository'), b'true\n'),
                 (('rev-list', '--parents', '-n', '1', 'HEAD'), ('a' * 40 + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', 'HEAD'), ('a' * 40 + ' ' + h.CONTROLS_PARENT + ' ' + h.SOURCE).encode()),
@@ -581,7 +590,7 @@ class ConsumerHistoryTests(unittest.TestCase):
                     h.controls_history(Path('controls'))
 
     def test_consumer_delta_and_public_history_path_guards(self):
-        for baseline, revision in ((h.CHILD_POLICY_CONTROLS, h.PURE_CONTROLS), (h.PURE_CONTROLS, 'HEAD')):
+        for baseline, revision in ((h.CHILD_POLICY_CONTROLS, h.PURE_CONTROLS), (h.PURE_CONTROLS, h.PRE_MERGE_CONTROLS)):
             for raw in (b'', b'M\tbackend/src/main.rs\n', b'M\tscripts/hermetic_full12/tools.Dockerfile\n',
                         b'D\tscripts/hermetic_full12/maintenance-pin.json\n', b'A\tscripts/hermetic_full12/private.py\n'):
                 with self.subTest(baseline=baseline, revision=revision, raw=raw), patch.object(h, 'git', side_effect=lambda root, *a:
@@ -595,14 +604,15 @@ class ConsumerHistoryTests(unittest.TestCase):
 
     def test_policy_source_refresh_is_exact_docs_only_not_compiled_source(self):
         for selector in (('diff', '--name-status', h.PREVIOUS_SOURCE, h.POLICY_SOURCE),
-                         ('diff', '--name-status', h.SMOKE_CONTROLS, h.POLICY_MERGE)):
+                         ('diff', '--name-status', h.SMOKE_CONTROLS, h.POLICY_MERGE),
+                         ('diff', '--name-status', h.NAMESPACE_MERGE, h.SOURCE)):
             for raw in (b'', b'M\tdocs/CURRENT_STATE.md\n', b'M\tbackend/Cargo.lock\n',
                         b'M\tdocs/CURRENT_STATE.md\nM\tdocs/TASK_DELIVERY_VERIFICATION.md\nM\tscripts/native_qa_compose.py\n'):
                 with self.subTest(selector=selector, raw=raw), patch.object(h, 'git', side_effect=lambda root, *a:
                         raw if a == selector else self.git(root, *a)), self.assertRaises(ValueError):
                     h.controls_history(Path('controls'))
 
-        selector = ('diff', '--name-status', h.POLICY_SOURCE, h.SOURCE)
+        selector = ('diff', '--name-status', h.POLICY_SOURCE, h.PRE_MERGE_SOURCE)
         good = self.git(None, *selector)
         for raw in (b'', b'\n'.join(good.splitlines()[:-1]), good.replace(b'M\t', b'A\t', 1),
                     good + b'M\tbackend/src/main.rs\n'):

@@ -5,24 +5,23 @@
 
 ## Актуальная hosted qualification: 11 октября 2026
 
-[38109147644/1](https://github.com/FerrPOINT/CI-CD/actions/runs/38109147644),
-controls030/source756: terminal FAILURE. Strict readback подтверждает A5 PASS
-и B PG5/24 negatives/14 cleaned journals PASS. C OCI7: rollback assertion
-`oci_delivery.rs:625:5`, closed child `ValueError` и вторичная cleanup assertion
-`:477:17`; stages8–12 NOT_RUN, original aggregate REJECT. Во всех трёх partitions
-owned cleanup и zero remaining task inventory проверены.
-Reviewed QA-only fix различает новый OCI operation path и повтор прежнего Compose
-body при rollback A→B→A; same-path replay, PG same-body rejection и все custody
-guards сохранены. Linux Python81 и native adapter43 pure tests PASS; Docker/native
-acceptance исправления ещё нет. Closed class не объясняет любой `ValueError`.
-[Точный результат и границы](TASK_DELIVERY_VERIFICATION.md#hosted-full12-38109147644).
+[38114891349/1](https://github.com/FerrPOINT/CI-CD/actions/runs/38114891349),
+controlsc633/source84f: terminal FAILURE. Original strict A/B/C readback:
+A stages1–5 PASS; B PostgreSQL5/24 negatives/14 cleaned journals PASS;
+C OCI7 PASS1 и workspace8 PASS225, integration9 — HOST capacity refusal.
+Retained measurement:108209971200<108279229428 bytes, deficit69258228;
+DATA/inodes PASS. Seals/components пройдены; identity/parity/inventory
+и constructor integration9 не достигнуты. Stages10–12 NOT_RUN.
+Scoped cleanup/inventory проверены; original aggregate REJECT.
+Новый diagnostic и снижение guards не требуются для объяснения отказа.
 
-Исторический controls278/sourcee781 run38093642467 завершился отдельным
-OCI7 `DiskSpaceGuard` отказом; его receipts не квалифицируют текущий source.
-Начальные capacity checkpoints не доказывают late child capacity и не разрешают
-снижение floor. [Исторический provenance](TASK_DELIVERY_VERIFICATION.md#hosted-full12-38093642467).
-Full12/native SDLC acceptance нет.
-Исторические local packets ниже сохраняют только свой source/scope.
+Новый normal-merge candidate32a9615 (84f+main56191) ещё не qualified Rust/native.
+Подтверждены только fmt82/Python81/adapter43 PASS, не full12/native SDLC
+acceptance или runtime promotion. Receipt source84f не квалифицирует merged source.
+CI выбирает `.namespace-base-revision` (`0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce`)
+вместо legacy `.base-revision`19a; receipts84f/SDK19a не подтверждают parity
+или acceptance нового SDK.
+Исторические попытки ниже сохраняют только исходный source/scope.
 
 ## Что работает сейчас (Current verified)
 
@@ -224,7 +223,7 @@ completion. Component failure injection не является OS process-tree st
 | Notifications | ✅ MVP | `in_app`/`sse` каналы создают durable local outbox event на terminal pipeline events; история доступна через `/notification-events`, live stream — через `/notifications/stream`; email/Slack adapters и inbound provider handlers остаются target |
 | Login UI | ✅ | `/login` запускает Central Auth Authorization Code + PKCE, `/sso/callback` завершает обмен, access token хранится только в памяти; hard reload повторно использует центральную HttpOnly browser session без локальной password form |
 | Project membership RBAC | ✅ MVP | `project_memberships`, фильтрация списка проектов, deny-before-load для project-owned API и name-based repo API; `admin` bypass, tenant isolation/SAT ещё target |
-| Git auth/RBAC | ✅ conditional MVP | public repo read открыт; private read и receive-pack требуют legacy `CICD_GIT_TOKEN` либо JWT/PAT + `project_memberships` + `git:*` PAT scope при `CICD_AUTH_SECRET`; без секрета и Git token остаётся trusted local mode |
+| Git auth/RBAC | ✅ conditional MVP | public read открыт; legacy resources сохраняют project membership policy. Подтверждённые Namespace repositories доступны доверенным людям по service/global role и scopes, без team ACL. Project-scoped PAT остаётся в своём delivery project; machines не получают human-доступ. Archive блокирует receive-pack до admin/legacy-token bypass. Без auth secret и Git token сохраняется только trusted local mode |
 | Central human auth | ✅ | Central Auth владеет users, browser sessions и scoped personal tokens; backend проверяет ES256/JWKS, issuer/audience/expiry и live session, связывает profile только по `central_sub`, закрывает local login/user/PAT mutations и не использует local fallback при ошибке central service. Machine runner/service-account tokens остаются отдельными. |
 | Runtime configuration | ✅ | Backend server загружает `RuntimeConfig` из `CICD_` один раз при старте/app construction: Database/Http/Git/Artifacts/Runner/Auth/Secrets. Startup/router validation покрывает bool, runner mode, CORS allowlist, artifact TTL, queue timeout и secrets key; AppState/supervisors используют config без повторного прямого чтения env. CLI и `forge-runner` остаются отдельными process-boundary tools на `clap`/env |
 | Secret injection | ✅ MVP | embedded runner передаёт в env только `jobs.required_secrets`; external runner получает declared secrets через lease-scoped `secrets:resolve` после ack; stdout/stderr masking best-effort |
@@ -304,6 +303,10 @@ bash scripts/scan_container_images.sh forge-cicd-backend:ci forge-cicd-frontend:
 python3 scripts/verify_docs.py --canonical --links --current-state
 ```
 
-## Frontend: 23 маршрута / 21 рабочая страница + /login + /sso/callback
+## Frontend: 29 маршрутов
+
+Маршруты включают новые candidate-экраны сквозного проекта и CI-конфигураций.
+Этот счётчик отражает router, а не завершённую визуальную или runtime-приёмку;
+статусы новых экранов перечислены в визуальном реестре.
 
 Полный список базовых страниц — `docs/architecture/frontend-boundaries.md`; визуальный реестр — `docs/assets/screens/manifest.md`. Исполняемый route smoke — `frontend/src/app/router.test.tsx`: production `appRoutes` поднимаются в memory router, а рабочие Dashboard-страницы, `/login` и технический `/sso/callback` проверяются на первый рендер с mocked API DTO. `scripts/verify_docs.py --all` дополнительно сверяет, что visual manifest покрывает каждый production route. Real-browser baseline — `frontend/e2e/critical-flows.spec.ts` и all-route `frontend/e2e/accessibility.spec.ts` против собранного Compose stack с deterministic seed.

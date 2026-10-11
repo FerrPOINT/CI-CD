@@ -1,11 +1,11 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useParams } from 'react-router'
+import { useParams, useSearchParams } from 'react-router'
 import { AlertCircle, ChevronDown, Globe, Plus, RotateCcw, Search, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useCreateDeployment, useCreateEnvironment, useDeleteEnvironment, useDeployments, useEnvironments, useRecordDeploymentApproval, useRollbackDeployment } from '@/api/hooks'
 import type { Deployment, Environment, EnvironmentStatus } from '@/api/types'
-import { Button, Input, Label } from '@sdlc/ui/ui'
+import { Button, Input, Label, Select } from '@sdlc/ui/ui'
 import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
 import { QueryState } from '@/shared/ui/query-state'
 
@@ -16,6 +16,7 @@ type DeploymentAction = { deployment: Deployment; kind: 'approved' | 'rejected' 
 export function EnvironmentsPage() {
   const { t } = useTranslation()
   const { projectId } = useParams()
+  const [params, setParams] = useSearchParams()
   const { data: environments = [], isLoading, error, refetch } = useEnvironments(projectId)
   const createEnv = useCreateEnvironment(projectId)
   const deleteEnv = useDeleteEnvironment()
@@ -24,7 +25,16 @@ export function EnvironmentsPage() {
   const [formError, setFormError] = useState<string | null>(null)
   const [pendingEnv, setPendingEnv] = useState<Environment | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
-  const [selectedEnvId, setSelectedEnvId] = useState<string | null>(null)
+  const selectedEnvId = params.get('environment_id')
+  function setSelectedEnvId(value: string | null) {
+    setParams(current => {
+      const next = new URLSearchParams(current)
+      if (value) next.set('environment_id', value)
+      else next.delete('environment_id')
+      next.delete('deployment_id')
+      return next
+    })
+  }
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState<StatusFilter>('all')
   const [page, setPage] = useState(1)
@@ -36,7 +46,10 @@ export function EnvironmentsPage() {
   )
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
   const currentPage = Math.min(page, totalPages)
-  const visible = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  const visiblePage = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  const selectedEnvironment = environments.find(environment => environment.id === selectedEnvId)
+  const visible = selectedEnvironment && !visiblePage.some(environment => environment.id === selectedEnvId)
+    ? [selectedEnvironment, ...visiblePage] : visiblePage
 
   function createEnvironment(event: React.FormEvent) {
     event.preventDefault()
@@ -117,12 +130,12 @@ export function EnvironmentsPage() {
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" aria-hidden />
                 <Input type="search" aria-label={t('environments.search')} placeholder={t('environments.search')} className="min-h-10 pl-9" value={search} onChange={event => { setSearch(event.target.value); setPage(1) }} />
               </div>
-              <select aria-label={t('environments.statusFilter')} className="min-h-10 rounded-md border border-border-strong bg-surface px-3 text-sm text-text-primary" value={status} onChange={event => { setStatus(event.target.value as StatusFilter); setPage(1) }}>
+              <Select aria-label={t('environments.statusFilter')} className="w-auto" value={status} onChange={event => { setStatus(event.target.value as StatusFilter); setPage(1) }}>
                 <option value="all">{t('environments.all')}</option>
                 <option value="available">{t('environments.statusAvailable')}</option>
                 <option value="stopped">{t('environments.statusStopped')}</option>
                 <option value="degraded">{t('environments.statusDegraded')}</option>
-              </select>
+              </Select>
             </div>
             <p className="text-xs text-text-muted">{t('environments.shown', { count: visible.length, total: filtered.length })}</p>
             {filtered.length === 0 ? <p role="status" className="border-y border-border py-6 text-sm text-text-muted">{t('environments.noMatches')}</p> : (
@@ -160,6 +173,7 @@ export function EnvironmentsPage() {
         )}
       </QueryState>
 
+      {!isLoading && !error && selectedEnvId && !selectedEnvironment && <p role="alert" className="text-danger">Указанное окружение недоступно в этой CI-конфигурации.</p>}
       <ConfirmDialog open={pendingEnv !== null} title={pendingEnv ? t('environments.deleteConfirmFor', { name: pendingEnv.name }) : ''} description={t('environments.deleteWarning')} error={deleteError ?? undefined} closeOnConfirm={false} pending={deleteEnv.isPending} onCancel={() => { setPendingEnv(null); setDeleteError(null) }} onConfirm={deleteEnvironment} />
     </div>
   )
@@ -167,6 +181,9 @@ export function EnvironmentsPage() {
 
 function DeploymentsSection({ environmentId }: { environmentId: string }) {
   const { t } = useTranslation()
+  const [params] = useSearchParams()
+  const requestedDeployment = params.get('deployment_id')
+  const selectedRowRef = useRef<HTMLLIElement>(null)
   const { data: deployments = [], isLoading, error, refetch } = useDeployments(environmentId)
   const createDep = useCreateDeployment(environmentId)
   const recordApproval = useRecordDeploymentApproval(environmentId)
@@ -180,7 +197,17 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
   const filtered = deployments.filter(deployment => deployment.git_ref.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()))
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize))
   const currentPage = Math.min(page, totalPages)
-  const visible = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  const visiblePage = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+  const selectedDeployment = deployments.find(deployment => deployment.id === requestedDeployment)
+  const visible = selectedDeployment && !visiblePage.some(deployment => deployment.id === requestedDeployment)
+    ? [selectedDeployment, ...visiblePage] : visiblePage
+  const selectedId = selectedDeployment?.id
+  useEffect(() => {
+    if (selectedId) {
+      selectedRowRef.current?.focus({ preventScroll: true })
+      selectedRowRef.current?.scrollIntoView({ block: 'nearest' })
+    }
+  }, [selectedId])
   const actionPending = recordApproval.isPending || rollbackDeployment.isPending
 
   function createDeployment(event: React.FormEvent) {
@@ -207,6 +234,7 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
   return (
     <section aria-label={t('environments.deployments')} className="min-w-0 space-y-3">
       <h2 className="text-sm font-semibold">{t('environments.deployments')}</h2>
+      {!isLoading && !error && requestedDeployment && !selectedDeployment && <p role="alert">Указанный деплой не найден в выбранном окружении.</p>}
       <form onSubmit={createDeployment} className="flex flex-wrap items-end gap-2">
         <div className="min-w-0 flex-1 space-y-1 sm:max-w-xs">
           <Label htmlFor={`git-ref-${environmentId}`}>{t('deployments.gitRef')}</Label>
@@ -222,8 +250,11 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
             {filtered.length === 0 ? <p role="status" className="py-3 text-sm text-text-muted">{t('deployments.noMatches')}</p> : (
               <ul className="divide-y divide-border border-y border-border">
                 {visible.map(deployment => (
-                  <li key={deployment.id} className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 py-2 text-xs">
+                  <li key={deployment.id} ref={deployment.id === selectedId ? selectedRowRef : undefined} tabIndex={deployment.id === selectedId ? -1 : undefined}
+                    aria-current={deployment.id === selectedId ? 'true' : undefined}
+                    className={`flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 py-2 text-xs ${deployment.id === selectedId ? 'rounded-md bg-surface-raised px-2 outline-2 outline-accent' : ''}`}>
                     <div className="min-w-0 flex-1 basis-40">
+                      <p className="font-semibold">Деплой #{deployment.id.slice(0, 8)}{deployment.id === selectedId ? ' · Выбран' : ''}</p>
                       <p className="break-all font-mono text-sm font-medium text-text-primary">{deployment.git_ref}</p>
                       <p className="text-text-secondary">{t('deployments.status' + capitalize(deployment.status))} · {approvalLabel(deployment, t)}</p>
                       <p className="text-text-muted"><time dateTime={deployment.created_at} title={new Date(deployment.created_at).toLocaleString()}>{formatDate(deployment.created_at)}</time> · <span title={deployment.rollback_of_id ?? deployment.pipeline_id ?? undefined}>{traceLabel(deployment, t)}</span></p>

@@ -515,7 +515,7 @@ def assertions(stage, raw, root):
     if stage in ('workspace', 'integration', 'cli'):
         counts = re.findall(r'test result: ok\. (\d+) passed; 0 failed;', content)
         total = sum(map(int, counts))
-        h.require(counts and total == {'workspace': 225, 'integration': 80, 'cli': 2}[stage])
+        h.require(counts and total == {'workspace': 235, 'integration': 92, 'cli': 2}[stage])
         proof['tests_passed'] = total
     if stage == 'postgres':
         matches = re.findall(r'^ACTUAL_PG_RESTORE_NEGATIVES=([^:\n]+):PASS$', content, re.M)
@@ -808,7 +808,7 @@ def run_job(job):
                 'attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'owner_pid': os.getpid()}, exclusive=True)
             report = {'schema': 'forge/hermetic-full12-partition/v1', 'job': job, 'workflow_run': os.environ['GITHUB_RUN_ID'],
                 'workflow_attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'checkout': checkout, 'components': components,
-                'source_count': 266, 'inherited_gate_results': False, 'full12_pass': False, 'status': 'FAIL',
+                'source_count': 278, 'inherited_gate_results': False, 'full12_pass': False, 'status': 'FAIL',
                 'maintenance_sha256': h.m.EXPECTED_FILES['scripts/compose_helpers.py']['sha256'],
                 'maintenance_git': maintenance_proof,
                 'job_budget_seconds': job_budget(job),
@@ -978,7 +978,7 @@ def aggregate(a, b, c, expected_a, expected_b):
         h.require(report['job_budget_seconds'] == job_budget(job) < HOST_SECONDS)
         h.require(report['workflow_run'] == os.environ['GITHUB_RUN_ID'] and report['workflow_attempt'] == os.environ['GITHUB_RUN_ATTEMPT'])
         h.require(report['checkout']['controls'] == os.environ['GITHUB_SHA'] and report['checkout']['source'] == h.SOURCE and report['checkout']['base'] == h.BASE)
-        h.require(report['components'] == components and report['source_count'] == 266)
+        h.require(report['components'] == components and report['source_count'] == 278)
         h.require(report['maintenance_sha256'] == h.m.EXPECTED_FILES['scripts/compose_helpers.py']['sha256'])
         h.m.proof_matches(report['maintenance_git'])
         h.require(report['python_methods'] == PYTHON_METHOD_COUNTS)
@@ -1033,7 +1033,7 @@ def aggregate(a, b, c, expected_a, expected_b):
             if proof['stage'] in ('postgres', 'oci'):
                 key = 'pg_project' if proof['stage'] == 'postgres' else 'oci_project'
                 h.require(any(item['project'] == projects[key] for item in proof['journal_proofs']))
-            expected = {'python': sum(PYTHON_METHOD_COUNTS.values()), 'postgres': 5, 'oci': 1, 'workspace': 225, 'integration': 80, 'cli': 2}.get(proof['stage'])
+            expected = {'python': sum(PYTHON_METHOD_COUNTS.values()), 'postgres': 5, 'oci': 1, 'workspace': 235, 'integration': 92, 'cli': 2}.get(proof['stage'])
             if expected is not None:
                 h.require(proof.get('tests_passed') == expected)
             if proof['stage'] == 'postgres':
@@ -1052,7 +1052,7 @@ def aggregate(a, b, c, expected_a, expected_b):
     return {'schema': 'forge/hermetic-full12-acceptance/v1', 'status': 'PASS', 'source': h.SOURCE,
         'controls': os.environ['GITHUB_SHA'], 'workflow_run': os.environ['GITHUB_RUN_ID'],
         'workflow_attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'stage_count': 12,
-        'source_count': 266, 'source_hashes': reports[0]['source_hashes'], 'components': components,
+        'source_count': 278, 'source_hashes': reports[0]['source_hashes'], 'components': components,
         'partitions': {'A': expected_a, 'B': expected_b, 'C': h.sha(c)}, 'independent_daemons': True,
         'cleanup_all_complete': True, 'product_runtime_promoted': False}
 

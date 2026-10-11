@@ -1,18 +1,18 @@
 {
-  "source_sha": "84f0962ce14b95983a015e7d2303cd6f00ec59a7",
-  "product_base_sha": "19a7a381ae6dbea61a643bb96189e483fa64df5c",
+  "source_sha": "7db4266f51069d0fda36904a194a1b578659121f",
+  "product_base_sha": "0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce",
   "catalogues": {
     "base": {
-      "count": 88,
+      "count": 90,
       "files": [
         {
           "path": "Cargo.lock",
-          "sha256": "9712da389d3bdc3224fb5185011814b14993a5341250ffd93a6bd8d2cdc1c235",
-          "size": 89914
+          "sha256": "b6499b0b52a3feca76ae2e13a35eddd73b4d97b02b9bbfac30e67a5a5570a06f",
+          "size": 90454
         },
         {
           "path": "Cargo.toml",
-          "sha256": "37b7186c77cf29f89056bdb3c0da4b22427693203083c3631566393e73306c1a",
+          "sha256": "c87e4191e700fc29e431d18ef395bbd6fc522a6f4d167d9995392b28df1a7434",
           "size": 1723
         },
         {
@@ -27,8 +27,8 @@
         },
         {
           "path": "crates/auth-server/Dockerfile",
-          "sha256": "8244cccf9762d1ab000b7407da67d553f8283f29970382e402244306d93602e2",
-          "size": 1175
+          "sha256": "2fffec2faf70b06ee132b946fa472bd020b6a554bdaa621ac1cd74a24e9a3f99",
+          "size": 1366
         },
         {
           "path": "crates/auth-server/migrations/0001_users_sessions.sql",
@@ -97,8 +97,8 @@
         },
         {
           "path": "crates/auth-server/src/oidc_routes.rs",
-          "sha256": "fb511e2a3a31661c597e4e7bd605ff698d25cff6b756b5477d9196de2063ff42",
-          "size": 16180
+          "sha256": "8068c027ef3b143dea14025ba6b9f55ba69c58cd0973fbaeb9b3c3620dde9f4d",
+          "size": 18004
         },
         {
           "path": "crates/auth-server/src/oidc_store.rs",
@@ -117,13 +117,13 @@
         },
         {
           "path": "crates/auth-server/src/routes.rs",
-          "sha256": "a31ea9dab84b47653fb77f309d46da840f4cfc5d957df1b786de3a630eba3bc8",
-          "size": 25091
+          "sha256": "1331b8b9e920dcc95e71100f48a571b9c553cdae996f00c080619c6c9a64dd57",
+          "size": 25129
         },
         {
           "path": "crates/auth-server/src/store.rs",
-          "sha256": "cd031e340b8a3f592897a41d86b338a5f88b7c8511d69a8783f91604a82db6a8",
-          "size": 21574
+          "sha256": "588975ef0f8fe45107664dc01a767727dd734e2d48176df28996ad6406ebfeae",
+          "size": 21827
         },
         {
           "path": "crates/auth-server/src/theme-tokens.css",
@@ -136,9 +136,14 @@
           "size": 1642
         },
         {
+          "path": "crates/auth-server/tests/cookie_isolation.rs",
+          "sha256": "6f9c478500544dc380244e64beb03648a06e94912698980f0e3d99d652b078a1",
+          "size": 19709
+        },
+        {
           "path": "crates/auth-server/tests/integration.rs",
-          "sha256": "5b72859d3c1e564441a6f8a5ed71087b010767a76af1b08cf61b7e9d47a96a9d",
-          "size": 31924
+          "sha256": "ca42b891757acfff8cb0bcb7463a42a98484c145bfe8446a6739af40c21bd955",
+          "size": 35152
         },
         {
           "path": "crates/sdlc-auth-core/Cargo.toml",
@@ -382,8 +387,8 @@
         },
         {
           "path": "crates/sdlc-shared/Cargo.toml",
-          "sha256": "9a85646a433be54e7c3fd56514a5345aef18b9e2993dfc651b4534ca04b7d89b",
-          "size": 645
+          "sha256": "600b49f5bb656cfb7d1655061e75249e13ea4f20570ba9b09b840ab15f378255",
+          "size": 735
         },
         {
           "path": "crates/sdlc-shared/src/config.rs",
@@ -412,8 +417,13 @@
         },
         {
           "path": "crates/sdlc-shared/src/lib.rs",
-          "sha256": "642f43400871f1524fc7ff6e3a05f85fd9b4dfc2625322de93abdf3274a79387",
-          "size": 579
+          "sha256": "3ddb69c34c45abe507704f4215b41de17571424f067aede03c2e90ed4553d9d0",
+          "size": 605
+        },
+        {
+          "path": "crates/sdlc-shared/src/resource_context.rs",
+          "sha256": "1bb95e2bce79aeda2c71f29077e0e602d6f9ac9584cdf7ada39d387fc33356cb",
+          "size": 9905
         },
         {
           "path": "crates/sdlc-shared/tests/consumer.rs",
@@ -437,19 +447,19 @@
         },
         {
           "path": "scripts/platform_backup.py",
-          "sha256": "37364488ec9d2c105f21d85afd67369e39df9107b81d3cc56c30bac4d7d5a48c",
-          "size": 23560
+          "sha256": "8fa6b2ca91bd66ef607497d1ce80665bfa4a0a95f5404a2592fb5f12aa127c02",
+          "size": 36840
         },
         {
           "path": "scripts/platform_postgres.py",
-          "sha256": "1c7a4f7b3afb03f44f8c1e46fb12ab14330b0ee6102800274f3ee88b8ca67f92",
-          "size": 41303
+          "sha256": "0bccecc3917c78c46b5cc225ef3994b1c9637b4c00dcd62bf517f95ab3cd34a8",
+          "size": 42854
         }
       ],
-      "sha256": "21ce52a21237a01d2dadb67f5c05a78caa3898c9b14e57587031072760762dd0"
+      "sha256": "df4463b05d0bab2e60a13a25b50be31b3d808b2d1cb8674ad1c22c8571c0653d"
     },
     "forge": {
-      "count": 178,
+      "count": 188,
       "files": [
         {
           "path": ".base-revision",
@@ -457,24 +467,29 @@
           "size": 41
         },
         {
+          "path": ".namespace-base-revision",
+          "sha256": "8ec45644bccf17644b951d72f1de4196f4651e7041de4cad65898f8af78d56d6",
+          "size": 41
+        },
+        {
           "path": "backend/Cargo.lock",
-          "sha256": "5f44206ca7b84f819611184777d75bf244bd80e7aabae00904cffe3464929c9e",
-          "size": 87981
+          "sha256": "48cb8d11c34229f77dcb3171d786f538f5e1186e656184c0dc8acc2949eba0ec",
+          "size": 87992
         },
         {
           "path": "backend/Cargo.toml",
-          "sha256": "a6edb81e879037b8a8c2037ba3ceaa7ec3dfb9048052b900694e972e6256309e",
-          "size": 3353
+          "sha256": "2a466f05d09522d2531de03d6ecba9fcc8ce9519ebc5083b9aa6b093cba13212",
+          "size": 3377
         },
         {
           "path": "backend/Dockerfile",
-          "sha256": "1d9c458b960c783ac7ea12b6e61913cc99a61e2bd66e11660dc5807061f5ae77",
-          "size": 3420
+          "sha256": "362438d217b6e606c8525194efef4bf71cffbf3e796fb057f4c314547643dead",
+          "size": 4326
         },
         {
           "path": "backend/Dockerfile.umbrella",
-          "sha256": "1d9c458b960c783ac7ea12b6e61913cc99a61e2bd66e11660dc5807061f5ae77",
-          "size": 3420
+          "sha256": "362438d217b6e606c8525194efef4bf71cffbf3e796fb057f4c314547643dead",
+          "size": 4326
         },
         {
           "path": "backend/LICENSE",
@@ -503,8 +518,8 @@
         },
         {
           "path": "backend/app/src/lib.rs",
-          "sha256": "148a36961915c38c6f8e671bec133e268aa710290dd4cdf703547d1b7043e877",
-          "size": 21942
+          "sha256": "dce93f31efd107eeecabcdc57b86af29fcd9b210a54c5e3df7d262025d1f2e94",
+          "size": 27371
         },
         {
           "path": "backend/cli/Cargo.toml",
@@ -533,8 +548,8 @@
         },
         {
           "path": "backend/cli/tests/cli_real_api.rs",
-          "sha256": "fa9732e33bb810c74c54fdeecd1077a251dafd9538d3221a628b79b212aaf2be",
-          "size": 27745
+          "sha256": "bd536c5b687041d0728bdd3a9c97dd3782d5f9d0966146f1ab9525bc37af4ab9",
+          "size": 30119
         },
         {
           "path": "backend/cli/tests/download_transport.rs",
@@ -817,14 +832,24 @@
           "size": 4975
         },
         {
+          "path": "backend/migrations/0090_namespaces_and_repository_identity.sql",
+          "sha256": "1ccc5b0343b03e0b8af6a9189f5c0ad3cf5978483b916ce6f941e5d4a61837ff",
+          "size": 13082
+        },
+        {
+          "path": "backend/migrations/0091_workspace_projects.sql",
+          "sha256": "1b1cd78724aa7dfbb397ebaec76101c22b7308433116d04d082f62c7376caad8",
+          "size": 4126
+        },
+        {
           "path": "backend/src/api/auth_routes.rs",
           "sha256": "acc851e175c228b01aac433316933e14b207dede11d1500d33186b1783db5ed9",
           "size": 11046
         },
         {
           "path": "backend/src/api/authz_mw.rs",
-          "sha256": "12390dc19fd0d33f1c991b22dda9f9292b007999c3a0625faee91da22576b913",
-          "size": 25077
+          "sha256": "6c6b6d0e25c7782a4230cf05a90226d6057df9f9f770ce6c5b73f656d0d6a05b",
+          "size": 26360
         },
         {
           "path": "backend/src/api/dto.rs",
@@ -833,23 +858,23 @@
         },
         {
           "path": "backend/src/api/jobs_routes.rs",
-          "sha256": "4d7e159f09c5db10d1a8b3882f8e0a4290da4a5a2434b24d20700486bcb98513",
-          "size": 32801
+          "sha256": "5f47438639e5ef605fa0662506dc9ac8a6b72049724928c40b01749e6f04ab2a",
+          "size": 32950
         },
         {
           "path": "backend/src/api/mod.rs",
-          "sha256": "37526aaffa8b4336a924ce0d9627745a3541bcdb1af98c6344fb8b4d1c7ba2ff",
-          "size": 39603
+          "sha256": "65a39a38a1c54dd8f2450296fa6b76c9ffca7119f8b2c2e2c4a551cc466b94eb",
+          "size": 42321
         },
         {
           "path": "backend/src/api/pipelines_routes.rs",
-          "sha256": "97e7c7b2b132d067f61b376245ce70ce0cde2a259963db4be456f7a416da44a1",
-          "size": 65357
+          "sha256": "e24edabd379b2329d544ee77dccc1c2ccdce5f60ae3244eccb1539a3206c3e26",
+          "size": 65018
         },
         {
           "path": "backend/src/api/projects_routes.rs",
-          "sha256": "33ee1c60cabc9f8c31cbdb9eda5d2f40bc410e307a4ab3135ec90a3ef23dfbcb",
-          "size": 17031
+          "sha256": "69ced6712b3963a759b922205dd30033f49572ae6b152814eeafa4793744b7d0",
+          "size": 17079
         },
         {
           "path": "backend/src/api/readiness.rs",
@@ -858,13 +883,13 @@
         },
         {
           "path": "backend/src/api/router.rs",
-          "sha256": "fc016cb1cbc2e63b73e5cf2879128cb608cc4e077683da410f76da6b5cca6cee",
-          "size": 13167
+          "sha256": "814a28e4666bfd157d01329418f66b979f2369c425d98a1486967b089402503f",
+          "size": 18162
         },
         {
           "path": "backend/src/api/sdlc_workspace.rs",
-          "sha256": "3da74cdc6bb9c6c418ceb73ed16f6395da1d75512bf37d7eec110da8ddc000bb",
-          "size": 20755
+          "sha256": "9f57cb1bb937c30781ae37dfc8fb01f2565823517a5d0976e0e84c97d53b1f86",
+          "size": 20590
         },
         {
           "path": "backend/src/auth.rs",
@@ -878,13 +903,13 @@
         },
         {
           "path": "backend/src/authz_route_coverage.rs",
-          "sha256": "3c05d1b9bd88de989ab87e5a9be267a6a36684a7e7ca2af6ed0757e37d7fda13",
-          "size": 1096
+          "sha256": "28751c7e588240d7a2b92c3681460747ef536935583d1e5e0cf8d8e6980dcb71",
+          "size": 2692
         },
         {
           "path": "backend/src/bin/forge-delivery.rs",
-          "sha256": "61fe2874c3bd32564c66232c91a113f771c09b6b5660ed026b89c0e183d7af59",
-          "size": 4919
+          "sha256": "72b9bf9b5513a4f9207bff9a25b6a0f8e739cd5c62b394cb49b9fed21230b115",
+          "size": 5180
         },
         {
           "path": "backend/src/bin/forge-pg-migrate.rs",
@@ -922,6 +947,11 @@
           "size": 25991
         },
         {
+          "path": "backend/src/delivery_configs.rs",
+          "sha256": "79a1592bb0c4408889fce6ee2ee34cfdc609626d64ac4dfbedb53f305671ed7c",
+          "size": 15648
+        },
+        {
           "path": "backend/src/dispatch_signal.rs",
           "sha256": "1132ba3784df6faa89fa701387b141fd65b9d94af96c8ceae703dc85ce46ecef",
           "size": 3694
@@ -933,23 +963,28 @@
         },
         {
           "path": "backend/src/git_host.rs",
-          "sha256": "b4be1fffa12fadb817a2d01b765a913a9d4774f7dcbf41a9219062c385aff4a9",
-          "size": 32471
+          "sha256": "3d56f5c944afd6823ddb52e8054653fbfc0a8e1dc632ca961b57b099c38152e8",
+          "size": 36012
         },
         {
           "path": "backend/src/lib.rs",
-          "sha256": "5b760cc63926cb20ae89010b55dd6617ac6ba140a9d6937c54a456cbf8cb602c",
-          "size": 1180
+          "sha256": "5122d136430eb4c3a9d12f008ce61487ce1de47feeca7e1f0e3bed02bff8a643",
+          "size": 1331
         },
         {
           "path": "backend/src/main.rs",
-          "sha256": "63579ecea9e1a58318e934a60c4e9b3e75f9f7410a27c334c770603453e77da2",
-          "size": 4397
+          "sha256": "8abacd018c77b1529d766e5d82c835112b7eb7bc3279a696e2df0f4a8c1a0178",
+          "size": 4554
         },
         {
           "path": "backend/src/metrics.rs",
           "sha256": "da6177f736814c3ce39a3063a8e93ab82f77bf68f8fc9671c7ef089ae2b63c18",
           "size": 5787
+        },
+        {
+          "path": "backend/src/namespace.rs",
+          "sha256": "60165607174b73c8f5c4e464230188864327075add3e2fa49ef5e3da169720e8",
+          "size": 15896
         },
         {
           "path": "backend/src/outbox.rs",
@@ -958,13 +993,13 @@
         },
         {
           "path": "backend/src/platform.rs",
-          "sha256": "1347d19f31481f47658a5ec4efa1b6c9b569575f5398d67aa924bafff8e8bf3b",
-          "size": 134231
+          "sha256": "cacbc189d6b61e5207b5340cfd067bb8af8031da807eb3c419aa06f6014334ca",
+          "size": 136763
         },
         {
           "path": "backend/src/pulls.rs",
-          "sha256": "bb31635940e8501815a8d2c6bd6ae6df999d7dc352959eed7366f3d221a6bb3a",
-          "size": 67054
+          "sha256": "7002ba6f7b19783c1d3dfce93ac1e5c1debc157784087ff6180f42d7efa57428",
+          "size": 68118
         },
         {
           "path": "backend/src/rate_limit.rs",
@@ -972,14 +1007,24 @@
           "size": 1809
         },
         {
+          "path": "backend/src/repository_catalog.rs",
+          "sha256": "0886e91e3ed8aee01dbc5c2b9bee53291435a15113269956b6b68d16bdf0ae72",
+          "size": 41393
+        },
+        {
           "path": "backend/src/runner.rs",
-          "sha256": "24faa06f194e79468b8de1255adde872f8d497021e3fe2f420f72c482d002cd2",
-          "size": 77703
+          "sha256": "9160b113aeb8f86bcb3b2f62195ce7ca3ea9eb6e43c7ea3909a9376d1e870cda",
+          "size": 87475
+        },
+        {
+          "path": "backend/src/runner_docker.rs",
+          "sha256": "1152d75ae7cbde1d1f5df63f96213ab2e3c78af76a6edf6f808ee4500cd16802",
+          "size": 38827
         },
         {
           "path": "backend/src/runner_protocol.rs",
-          "sha256": "897e6490a26ff87348b7fa355a192bb20a520d2904beb89a02b926428982f343",
-          "size": 83578
+          "sha256": "2c9b1aa5f8aaa88e39a96000fbe4defa61b39779a960ce348d8faa99da48c6a1",
+          "size": 84855
         },
         {
           "path": "backend/src/runner_workspace.rs",
@@ -1037,6 +1082,16 @@
           "size": 4023
         },
         {
+          "path": "backend/src/task_links.rs",
+          "sha256": "84af6a452fa2be3e703db95c9bfda67888d3654fdba392a21878d4883f73d19a",
+          "size": 13311
+        },
+        {
+          "path": "backend/src/workspace_projects.rs",
+          "sha256": "fb3699f321ab9163752365b34c7533fcf0c46f134a012f063a492872e5faa467",
+          "size": 27451
+        },
+        {
           "path": "backend/tests/api_contract.rs",
           "sha256": "262ddceda084747010de4e7943dbed129a042774684ad830b7a1466164b089dd",
           "size": 5785
@@ -1068,13 +1123,13 @@
         },
         {
           "path": "backend/tests/integration_db.rs",
-          "sha256": "6684585c6315f1c34e93920c2d841d4e4401e9c3fd5ee797afa0378a1df35f44",
-          "size": 325355
+          "sha256": "47fe2eb242ae058f0d7ae19e0e58b35f47ca0575f3a252ff670436b8025438c8",
+          "size": 365588
         },
         {
           "path": "backend/tests/integration_target_policy.rs",
-          "sha256": "d0d3f3e48b46296495dc61d2e8a9cf8c13dccac94f7d86e8c8ac6c896a564a2f",
-          "size": 17266
+          "sha256": "bab5eae859581253e0af1126a3c7bfd2830f05d62ea0388a04346a1f0868a901",
+          "size": 17017
         },
         {
           "path": "backend/tests/runner_binary_contract.rs",
@@ -1088,8 +1143,13 @@
         },
         {
           "path": "backend/tests/support/candidate_evidence.rs",
-          "sha256": "5b585c30c4a84d4c3b7bb3d2ef054d26cd47c1065228023aac1a0eb223bff000",
-          "size": 14338
+          "sha256": "e81c37e5caa236ae91b903779df75a3426d6cf56e8205cf9402393806c16fef4",
+          "size": 14419
+        },
+        {
+          "path": "backend/tests/support/fixture_cleanup.rs",
+          "sha256": "0f5572f1446f37cdf38232003aa9055a50af3dd9bdce0e4b53a60b982838fd0a",
+          "size": 528
         },
         {
           "path": "backend/tests/support/oci_delivery.rs",
@@ -1103,13 +1163,13 @@
         },
         {
           "path": "backend/tests/support/sdlc_workspace.rs",
-          "sha256": "c2deb60c32d91a42ebb2ead89084e089a80d0d91bab648f565817ee9357eea88",
-          "size": 37387
+          "sha256": "0f0ffb2b4fe8676aa88a820f47ce37e5a6be6d821994455261b6ec8456e2d41a",
+          "size": 39553
         },
         {
           "path": "backend/tests/support/task_delivery.rs",
-          "sha256": "d2f5cd374c245fbf9176648f3dbe9d15e34f7398bea638bcf0a55affb0757a63",
-          "size": 32105
+          "sha256": "558b88a7ff80fe9bf30158ad784b208e2bf81e352fbac09aff8d9b4e9d7df2e3",
+          "size": 32190
         },
         {
           "path": "deploy/Caddyfile",
@@ -1198,13 +1258,13 @@
         },
         {
           "path": "openapi/openapi.yaml",
-          "sha256": "0f38baceeb951d6b30f65d1980b31cbb69e859d8e3eba50d9babc29302c243a3",
-          "size": 161059
+          "sha256": "22d0837938f180796156540a0be54e77da412549a127b4c1ace7ed143e2ea5a5",
+          "size": 212162
         },
         {
           "path": "scripts/backup-stand.sh",
-          "sha256": "1f561899f0aae3ba18c5a1c27bcd95cf915e817e39db09824ff749719b1ab7b3",
-          "size": 1920
+          "sha256": "626333462bd0f166bb8fdafdfdab20e5b0b64a137ed74a9d21caeb4d8a022220",
+          "size": 1003
         },
         {
           "path": "scripts/backup.sh",
@@ -1213,8 +1273,8 @@
         },
         {
           "path": "scripts/build.py",
-          "sha256": "7174a432db87fdccc48c44ca6123a713a90bd7756bab5c02dd6e78e23d08f3f6",
-          "size": 659
+          "sha256": "f8cb5f1e8c82a28bb15be75a1b224fd0b4d0c06f9ab01a7917feae0f8a7cc1a4",
+          "size": 741
         },
         {
           "path": "scripts/export-tls-ca.sh",
@@ -1253,8 +1313,8 @@
         },
         {
           "path": "scripts/scan_container_images.sh",
-          "sha256": "3b8d334c3495435707ca5a54e74335fa5af00d5614809477e5d792fa102fd331",
-          "size": 893
+          "sha256": "3a8bf6f4e25bb4906f4f57eac3ce095f3746d948a2bf241fc1280e71c5fa3d19",
+          "size": 1257
         },
         {
           "path": "scripts/scan_secrets.py",
@@ -1273,8 +1333,8 @@
         },
         {
           "path": "scripts/tests/test_base_stand_backup.py",
-          "sha256": "5881f68f7ae4bdf95400049e6f1a225f6998e3faded0990752898937b1587d69",
-          "size": 794
+          "sha256": "d46d4477c42aa7c6bcd730b47a148f55fe5939f1e4a72e527035877701f60bd9",
+          "size": 2760
         },
         {
           "path": "scripts/tests/test_ci_contract_checks.py",
@@ -1342,7 +1402,7 @@
           "size": 35571
         }
       ],
-      "sha256": "5263913dc01c64a7bb66f872a227f34f9b2d7d9511a411a3eb42b8cbaa591cd8"
+      "sha256": "7810345687bd895608c61fc114798006e6a657badf6b9765e946b305cf31e893"
     }
   },
   "image_ids": {
@@ -1355,11 +1415,11 @@
   "objects": {
     "base": {
       "Cargo.lock": {
-        "blob": "22312f084a04ca53cf511103a0beb55beb607baa",
+        "blob": "10dd6cb88365acacdc0d2da22bb1e31977ee0c4b",
         "mode": "100644"
       },
       "Cargo.toml": {
-        "blob": "30cc00f45810ef98d2dddd746663b916fad72863",
+        "blob": "eeb24926b4cb0a2be26468a19a7cc7ac6e3835cd",
         "mode": "100644"
       },
       "LICENSE": {
@@ -1371,7 +1431,7 @@
         "mode": "100644"
       },
       "crates/auth-server/Dockerfile": {
-        "blob": "3eb1a838338abe9f9e42ffeeaea24ef6c47b5c19",
+        "blob": "d7c45e082b2440acd44f6d9f9bd32f8efe3f89e4",
         "mode": "100644"
       },
       "crates/auth-server/migrations/0001_users_sessions.sql": {
@@ -1427,7 +1487,7 @@
         "mode": "100644"
       },
       "crates/auth-server/src/oidc_routes.rs": {
-        "blob": "efe5ba2d14cd49da62d6266ffa1e59509d89302b",
+        "blob": "c0917516c8e896003d784e5a609f068237991cbf",
         "mode": "100644"
       },
       "crates/auth-server/src/oidc_store.rs": {
@@ -1443,11 +1503,11 @@
         "mode": "100644"
       },
       "crates/auth-server/src/routes.rs": {
-        "blob": "a902f1702788ac18b8eab865d5b21a47aff9397d",
+        "blob": "032e1e2e46d8f0c3473753c78f59117fd2f0ee94",
         "mode": "100644"
       },
       "crates/auth-server/src/store.rs": {
-        "blob": "f78a109d091d203ada2524713f5747f496263787",
+        "blob": "3acf8626d564427094450e7cb3002176f4e90420",
         "mode": "100644"
       },
       "crates/auth-server/src/theme-tokens.css": {
@@ -1458,8 +1518,12 @@
         "blob": "c863e32ccdd3f81a25af425b49e6b9d0064cbc58",
         "mode": "100644"
       },
+      "crates/auth-server/tests/cookie_isolation.rs": {
+        "blob": "4142e68960113f25f84f8b6c074d73f3a847306a",
+        "mode": "100644"
+      },
       "crates/auth-server/tests/integration.rs": {
-        "blob": "29aec133d05d1aa7f66a6e896b8e4ece2384b452",
+        "blob": "3b620c4d7f991d92d0cbad7f63cd9afd700bd3a2",
         "mode": "100644"
       },
       "crates/sdlc-auth-core/Cargo.toml": {
@@ -1655,7 +1719,7 @@
         "mode": "100644"
       },
       "crates/sdlc-shared/Cargo.toml": {
-        "blob": "86ffceff8199391ac7b148c4990c72a580e9ea17",
+        "blob": "582ffe0b706be2033c256af051a07d3ddc605120",
         "mode": "100644"
       },
       "crates/sdlc-shared/src/config.rs": {
@@ -1679,7 +1743,11 @@
         "mode": "100644"
       },
       "crates/sdlc-shared/src/lib.rs": {
-        "blob": "c4c06df1c12813329e2856d949785a0496c90bf4",
+        "blob": "525443ffe86a63b42e299740872875aba305b44b",
+        "mode": "100644"
+      },
+      "crates/sdlc-shared/src/resource_context.rs": {
+        "blob": "8cd1128e742dcdcf9fd8ad8e93d4b29b1173f26d",
         "mode": "100644"
       },
       "crates/sdlc-shared/tests/consumer.rs": {
@@ -1699,11 +1767,11 @@
         "mode": "100644"
       },
       "scripts/platform_backup.py": {
-        "blob": "6a99e303a6cc21f3bc67a5e45c8c13b9be8e5044",
+        "blob": "5ebf1737cf2657c83863b6f8dd4550e697e75426",
         "mode": "100644"
       },
       "scripts/platform_postgres.py": {
-        "blob": "b781f733ebad44c87ce50110b037bca349491589",
+        "blob": "425419cc29b63bb2edd71c94fab0e5a22a8f1ac4",
         "mode": "100644"
       }
     },
@@ -1712,20 +1780,24 @@
         "blob": "1716308f859d23508a6ca0bae105434221c00419",
         "mode": "100644"
       },
+      ".namespace-base-revision": {
+        "blob": "a2554956f012ff1d7707f26396b4b7e0211b2a36",
+        "mode": "100644"
+      },
       "backend/Cargo.lock": {
-        "blob": "8c096b2de34e3d34903099a6b9263a65639a9318",
+        "blob": "4df9869614ca8852cd6d2df70b04044098bdf39e",
         "mode": "100644"
       },
       "backend/Cargo.toml": {
-        "blob": "32920efa2892d7ca81111be7cf84d739680d4ee5",
+        "blob": "5801427898d31c9d06e405610c3b48882e618f32",
         "mode": "100644"
       },
       "backend/Dockerfile": {
-        "blob": "bd0335e1e9e285fa5aefdc62803801337da4341e",
+        "blob": "18b33c45ee1449e3176377cf762a130b81f4cc18",
         "mode": "100644"
       },
       "backend/Dockerfile.umbrella": {
-        "blob": "bd0335e1e9e285fa5aefdc62803801337da4341e",
+        "blob": "18b33c45ee1449e3176377cf762a130b81f4cc18",
         "mode": "100644"
       },
       "backend/LICENSE": {
@@ -1749,7 +1821,7 @@
         "mode": "100644"
       },
       "backend/app/src/lib.rs": {
-        "blob": "5f319da9920175e5b2a5d13e53684a6db3a93aed",
+        "blob": "1f50329608965be046f18cd6824c8f93cde2c94f",
         "mode": "100644"
       },
       "backend/cli/Cargo.toml": {
@@ -1773,7 +1845,7 @@
         "mode": "100644"
       },
       "backend/cli/tests/cli_real_api.rs": {
-        "blob": "3d0be9ce2990da81c371184aa501e28b75162354",
+        "blob": "342b82d84e2f8f0adbddb716d7c23212ddd0f878",
         "mode": "100644"
       },
       "backend/cli/tests/download_transport.rs": {
@@ -2000,12 +2072,20 @@
         "blob": "9518b3f5fcbc16fe8a272daaa582ce00de09a815",
         "mode": "100644"
       },
+      "backend/migrations/0090_namespaces_and_repository_identity.sql": {
+        "blob": "5a8bacb534a5b63bd2f2c1a050ad150a39aadf0d",
+        "mode": "100644"
+      },
+      "backend/migrations/0091_workspace_projects.sql": {
+        "blob": "afb3627efb4c8f3cb7e00f8289c6d2a6ff4810de",
+        "mode": "100644"
+      },
       "backend/src/api/auth_routes.rs": {
         "blob": "7ee803521db15f7c934bc82bd95a591177d4ce83",
         "mode": "100644"
       },
       "backend/src/api/authz_mw.rs": {
-        "blob": "1889241c9dc6efaa35e24056b4b144ee038887f2",
+        "blob": "e0524a0b6608ca2c5d1de14779d8bf160bafc65e",
         "mode": "100644"
       },
       "backend/src/api/dto.rs": {
@@ -2013,19 +2093,19 @@
         "mode": "100644"
       },
       "backend/src/api/jobs_routes.rs": {
-        "blob": "b24fcb0dfc742f476068c90494450cf8260b373e",
+        "blob": "7540048de839c284ad2dcfab6a88fd91d48d6e6d",
         "mode": "100644"
       },
       "backend/src/api/mod.rs": {
-        "blob": "aa6035e4a61a3e44aece9ec0afdcd5ea241a32a9",
+        "blob": "89829c293d35286f0b4fece081f3f3de5b68261e",
         "mode": "100644"
       },
       "backend/src/api/pipelines_routes.rs": {
-        "blob": "af83fd2e1c62d0b6b1c1f4b8a98a06bf4490394f",
+        "blob": "bdb219f5f00b1d5a7e6ff7deb440c17d6c8891e2",
         "mode": "100644"
       },
       "backend/src/api/projects_routes.rs": {
-        "blob": "cbc80dc08d7b2589a247d251a144e8fcce6c2a54",
+        "blob": "a212ba87cb0af745054e03185f4db3ce6fbc941e",
         "mode": "100644"
       },
       "backend/src/api/readiness.rs": {
@@ -2033,11 +2113,11 @@
         "mode": "100644"
       },
       "backend/src/api/router.rs": {
-        "blob": "e7a582a5af45e55929a3ed589eeb11e1edb7da07",
+        "blob": "1c69b0199270cd4b1ca4b1ec354d282a33297d7e",
         "mode": "100644"
       },
       "backend/src/api/sdlc_workspace.rs": {
-        "blob": "367850010def48bfcc0e7091bc245ca767ce2f98",
+        "blob": "da0ca1ba232e3d3bb8cb636f6fc18171ed56d708",
         "mode": "100644"
       },
       "backend/src/auth.rs": {
@@ -2049,11 +2129,11 @@
         "mode": "100644"
       },
       "backend/src/authz_route_coverage.rs": {
-        "blob": "2e09fa28346fa19937d7f67b370fd4ff5d77abd7",
+        "blob": "222f58f3d561b4273e15aef25b1d0a2e7a7476d1",
         "mode": "100644"
       },
       "backend/src/bin/forge-delivery.rs": {
-        "blob": "4faf0547870cf8d92c955647f855cd4259d8bb35",
+        "blob": "3d2ed8f5f61e6e3929da5dbf613a0535a2237d2a",
         "mode": "100644"
       },
       "backend/src/bin/forge-pg-migrate.rs": {
@@ -2084,6 +2164,10 @@
         "blob": "e07c05200f50a71ff1cf2b10066385afe9cd8b48",
         "mode": "100644"
       },
+      "backend/src/delivery_configs.rs": {
+        "blob": "5cdee10587a94c4d3aea3164e372f1a757335949",
+        "mode": "100644"
+      },
       "backend/src/dispatch_signal.rs": {
         "blob": "370c7da1038ceafe78739717bd1e9207ca90185f",
         "mode": "100644"
@@ -2093,19 +2177,23 @@
         "mode": "100644"
       },
       "backend/src/git_host.rs": {
-        "blob": "4352b1d7e686ee705728a0d7aff49df70ea5cc01",
+        "blob": "09c94e14208178353ee5a2caff3bc4853c74564f",
         "mode": "100644"
       },
       "backend/src/lib.rs": {
-        "blob": "66fa3a20f84103a487d5f4ee9b3f1edf1a22fe9b",
+        "blob": "fc4cfe6104a94111a14036d1726ecb65feb80c88",
         "mode": "100644"
       },
       "backend/src/main.rs": {
-        "blob": "21d29907cbd6f586718a5f2b09b03b0221caf044",
+        "blob": "fdea3cca9a0a1a16f34206cfe46b75cc56a67db4",
         "mode": "100644"
       },
       "backend/src/metrics.rs": {
         "blob": "2ac2d526c53ed9cbaf2941a55a5edf6c2594db69",
+        "mode": "100644"
+      },
+      "backend/src/namespace.rs": {
+        "blob": "e2b81f0e89e4febcfcc008c8d428b2e6f6105658",
         "mode": "100644"
       },
       "backend/src/outbox.rs": {
@@ -2113,23 +2201,31 @@
         "mode": "100644"
       },
       "backend/src/platform.rs": {
-        "blob": "8c7b5de1b0caeb028d67cad900c8e3a3ec5c06a2",
+        "blob": "b363cee5aa027c2c60e5b42d7dd3ad3f007acb29",
         "mode": "100644"
       },
       "backend/src/pulls.rs": {
-        "blob": "b364bb698e00ac0e05db17ae4cf4c9df169cd8e4",
+        "blob": "47e6656076c8935f44e57be37bc70a71a2a03b81",
         "mode": "100644"
       },
       "backend/src/rate_limit.rs": {
         "blob": "1526968e075d7cff1896fa0210e9b15d2d603007",
         "mode": "100644"
       },
+      "backend/src/repository_catalog.rs": {
+        "blob": "09b5752c5ec920c49d108bf93983e0e370ec5fd4",
+        "mode": "100644"
+      },
       "backend/src/runner.rs": {
-        "blob": "ef2f93f45d155ab365b2b427fb52aaf77d21e99b",
+        "blob": "aae4ac9fffae2458dad00ff857fda676249b6624",
+        "mode": "100644"
+      },
+      "backend/src/runner_docker.rs": {
+        "blob": "b22b860fc9fb7f3e4111c3bfe8be0c9103410230",
         "mode": "100644"
       },
       "backend/src/runner_protocol.rs": {
-        "blob": "2dc88c7e1ca41997d88d115789908b0684959992",
+        "blob": "a37b645ee62bf9bb5a802d63d2c0a80f97494378",
         "mode": "100644"
       },
       "backend/src/runner_workspace.rs": {
@@ -2176,6 +2272,14 @@
         "blob": "296f9780dea83434a86a6ae71add3e226c3a1933",
         "mode": "100644"
       },
+      "backend/src/task_links.rs": {
+        "blob": "6bf7d102299ee5b9638abf27fa0d83aab31c9c1f",
+        "mode": "100644"
+      },
+      "backend/src/workspace_projects.rs": {
+        "blob": "cf80af9f45928f15b148daafa62f6eee2786e72c",
+        "mode": "100644"
+      },
       "backend/tests/api_contract.rs": {
         "blob": "cd95188cf06f08114913cdd877fd1b3b00df776e",
         "mode": "100644"
@@ -2201,11 +2305,11 @@
         "mode": "100644"
       },
       "backend/tests/integration_db.rs": {
-        "blob": "4b15b0deabafd9e486101755cc5fa19f3b24d427",
+        "blob": "bd170f675c3aabb88031b461b92fc0e36d930913",
         "mode": "100644"
       },
       "backend/tests/integration_target_policy.rs": {
-        "blob": "627f5c4c4dc9c2ebf4e9eef1ede5a8339b8ef4ee",
+        "blob": "2dc0dfe24cef48a83fd96ffb731090ea5ba6f8af",
         "mode": "100644"
       },
       "backend/tests/runner_binary_contract.rs": {
@@ -2217,7 +2321,11 @@
         "mode": "100644"
       },
       "backend/tests/support/candidate_evidence.rs": {
-        "blob": "ebb9f17b5ff6b32b4dbf7432105150ff386904d2",
+        "blob": "86cb781aab3bc8eedef3c9f53d5b5c5176770608",
+        "mode": "100644"
+      },
+      "backend/tests/support/fixture_cleanup.rs": {
+        "blob": "4edf5d01a3832a5f4c0a2fe8d580e30c79dcef6b",
         "mode": "100644"
       },
       "backend/tests/support/oci_delivery.rs": {
@@ -2229,11 +2337,11 @@
         "mode": "100644"
       },
       "backend/tests/support/sdlc_workspace.rs": {
-        "blob": "bfae997b18fb73c7883d8a41bfb9a41cc0fa6974",
+        "blob": "b8d3fbc37c13304fbda1e81b2c2aeb921e11440c",
         "mode": "100644"
       },
       "backend/tests/support/task_delivery.rs": {
-        "blob": "897d8b5551393511d20ee45e42c3782c9a1bd2cb",
+        "blob": "fcb2292807d3133466ca8a6c790d5f54a3b3fd96",
         "mode": "100644"
       },
       "deploy/Caddyfile": {
@@ -2305,11 +2413,11 @@
         "mode": "100644"
       },
       "openapi/openapi.yaml": {
-        "blob": "11959bd3eac59e49cb1cbccfe6a7bdc5fbc7b948",
+        "blob": "abafc4b9ddedab05ca7c7d035cb6b86e6072a811",
         "mode": "100644"
       },
       "scripts/backup-stand.sh": {
-        "blob": "e245e94902d2f135000227110b6e9fca4d7766fb",
+        "blob": "396715bf96faff6f220c03bca05d838ff6528383",
         "mode": "100755"
       },
       "scripts/backup.sh": {
@@ -2317,7 +2425,7 @@
         "mode": "100755"
       },
       "scripts/build.py": {
-        "blob": "9d45f63e3b4268d2f25e006d12288f703158322c",
+        "blob": "261dbdae338d43f78dd9be7ab0e5a100bad36ab6",
         "mode": "100644"
       },
       "scripts/export-tls-ca.sh": {
@@ -2349,7 +2457,7 @@
         "mode": "100755"
       },
       "scripts/scan_container_images.sh": {
-        "blob": "d38bd23ba6b49ddcf9ff657a177790099f26e92a",
+        "blob": "51a0836dbd53dbdbe71356f3ee8cf2c12aa76880",
         "mode": "100755"
       },
       "scripts/scan_secrets.py": {
@@ -2365,7 +2473,7 @@
         "mode": "100644"
       },
       "scripts/tests/test_base_stand_backup.py": {
-        "blob": "0251271ea537ce70b8048504e7c4d85f05cfe922",
+        "blob": "08b52b9e62e7031abb8c58c7f156b7ff5ef7f12b",
         "mode": "100644"
       },
       "scripts/tests/test_ci_contract_checks.py": {

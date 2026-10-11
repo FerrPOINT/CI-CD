@@ -1,6 +1,7 @@
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef } from 'react'
 import { api, apiRetry, authenticatedFetch } from './client'
+import { invalidateExecutionViews } from './execution-cache'
 import type {
   TreeEntry,
   BlobContent,
@@ -123,6 +124,7 @@ export function useCancelPipeline() {
     mutationFn: (pipelineId: string) =>
       api<{ canceled: string }>(`/pipelines/${pipelineId}/cancel`, { method: 'POST' }),
     onSuccess: (_result, pipelineId) => {
+      invalidateExecutionViews(qc)
       qc.invalidateQueries({ queryKey: ['pipelines'] })
       qc.invalidateQueries({ queryKey: KEYS.pipeline(pipelineId) })
     },
@@ -135,6 +137,7 @@ export function useRetryPipeline() {
     mutationFn: (pipelineId: string) =>
       api<{ retried: string }>(`/pipelines/${pipelineId}/retry`, { method: 'POST' }),
     onSuccess: (_result, pipelineId) => {
+      invalidateExecutionViews(qc)
       qc.invalidateQueries({ queryKey: ['pipelines'] })
       qc.invalidateQueries({ queryKey: KEYS.pipeline(pipelineId) })
     },
@@ -155,6 +158,7 @@ export function useTriggerPipeline(projectId: string | undefined) {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: KEYS.pipelines(projectId ?? '') })
+      invalidateExecutionViews(qc)
     },
     onSettled: () => {
       idempotencyKeyRef.current = null
@@ -579,7 +583,7 @@ export function useCreateDeployment(environmentId: string | undefined) {
   return useMutation({
     mutationFn: (input: { git_ref: string; status?: 'pending' | 'running' | 'success' | 'failed' }) =>
       api<Deployment>(`/environments/${environmentId}/deployments`, { method: 'POST', body: JSON.stringify(input) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: PLATFORM_KEYS.deployments(environmentId ?? '') }),
+    onSuccess: () => { invalidateExecutionViews(qc); void qc.invalidateQueries({ queryKey: PLATFORM_KEYS.deployments(environmentId ?? '') }) },
   })
 }
 
@@ -602,6 +606,7 @@ export function useRecordDeploymentApproval(environmentId: string | undefined) {
     onSuccess: (deployment) => {
       qc.invalidateQueries({ queryKey: PLATFORM_KEYS.deployments(environmentId ?? deployment.environment_id) })
       qc.invalidateQueries({ queryKey: PLATFORM_KEYS.deploymentApprovals(deployment.id) })
+      invalidateExecutionViews(qc)
     },
   })
 }
@@ -616,6 +621,7 @@ export function useRollbackDeployment(environmentId: string | undefined) {
       }),
     onSuccess: (deployment) => {
       qc.invalidateQueries({ queryKey: PLATFORM_KEYS.deployments(environmentId ?? deployment.environment_id) })
+      invalidateExecutionViews(qc)
     },
   })
 }

@@ -40,6 +40,9 @@ use router::{build_router_with_cors, cors_layer_from_allowed_origins};
 
 pub struct AppState {
     pub pool: Option<PgPool>,
+    /// Two bounded admission connections keep Git/hooks from exhausting the
+    /// primary pool while an archive fence is held across filesystem writes.
+    pub namespace_admission_pool: Option<PgPool>,
     pub auth_secret: Option<String>,
     pub git: crate::git_host::GitConfig,
     pub config: crate::config::RuntimeConfig,
@@ -89,6 +92,44 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         )
     ),
     paths(
+        crate::workspace_projects::all_pipelines,
+        crate::workspace_projects::all_summary,
+        crate::repository_catalog::all,
+        crate::delivery_configs::readback,
+        crate::workspace_projects::list,
+        crate::workspace_projects::get,
+        crate::workspace_projects::summary,
+        crate::workspace_projects::pipelines,
+        crate::workspace_projects::deployments,
+        crate::workspace_projects::repository_pipelines,
+        crate::workspace_projects::repository_deployments,
+        crate::delivery_configs::unbound,
+        crate::delivery_configs::get,
+        crate::delivery_configs::list,
+        crate::delivery_configs::create,
+        crate::delivery_configs::push_get,
+        crate::delivery_configs::push_put,
+        crate::namespace::apply,
+        crate::task_links::link,
+        crate::task_links::list,
+        crate::task_links::evidence,
+        crate::namespace::available_resources,
+        crate::namespace::stats,
+        crate::namespace::contexts,
+        crate::namespace::context,
+        crate::namespace::readback,
+        crate::repository_catalog::verified_repository,
+        crate::repository_catalog::verified_repositories,
+        crate::repository_catalog::list,
+        crate::repository_catalog::create,
+        crate::repository_catalog::connect_delivery,
+        crate::repository_catalog::get,
+        crate::repository_catalog::available,
+        crate::repository_catalog::attach,
+        crate::repository_catalog::pulls,
+        crate::repository_catalog::pull,
+        crate::repository_catalog::create_pull,
+        crate::repository_catalog::pull_action,
         sdlc_workspace::prepare_workspace_operation, sdlc_workspace::get_workspace_operation,
         sdlc_workspace::get_candidate_evidence,
         crate::task_delivery::reject_sdlc_delivery, crate::task_delivery::get_local_delivery,
@@ -410,6 +451,28 @@ impl ApiError {
         }
     }
     pub(crate) fn internal(error: sqlx::Error) -> Self {
+        if let Some(database) = error.as_database_error()
+            && database.code().as_deref() == Some("23505")
+            && matches!(
+                database.constraint(),
+                Some(
+                    "delivery_configuration_repository_name" | "legacy_unbound_configuration_name"
+                )
+            )
+        {
+            return Self::conflict("delivery_configuration_name_conflict");
+        }
+        if let Some(database) = error.as_database_error()
+            && database.code().as_deref() == Some("42501")
+            && matches!(
+                database.message(),
+                "namespace_resource_read_only"
+                    | "delivery_configuration_history_protected"
+                    | "delivery_checkout_identity_immutable"
+            )
+        {
+            return Self::conflict(database.message());
+        }
         tracing::error!(%error, "internal API error");
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,

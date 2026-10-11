@@ -14,15 +14,14 @@ import {
 } from 'react'
 import { onTerminalAuthError } from '@/api/client'
 import { endSso, type SsoSession } from '@sdlc/ui/sso'
-import {
-  acceptSso as acceptApiSso,
-  currentSession,
-  type Session,
-} from '@/api/auth'
+import { acceptSso as acceptApiSso, currentSession, type Session } from '@/api/auth'
 
 export type AuthStatus = 'checking' | 'authenticated' | 'anonymous'
 
-export const ssoConfig = { issuer: import.meta.env.VITE_AUTH_ISSUER ?? 'http://localhost:7701', clientId: 'ci-cd' }
+export const ssoConfig = {
+  issuer: import.meta.env.VITE_AUTH_ISSUER ?? 'http://localhost:7701',
+  clientId: 'ci-cd',
+}
 
 interface AuthContextValue {
   status: AuthStatus
@@ -54,7 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const acceptSso = useCallback((sso: SsoSession) => {
-    const next = acceptApiSso(sso.accessToken, sso.expiresAt, sso.name)
+    const next = acceptApiSso(sso.accessToken, sso.expiresAt, sso.name, sso.subject)
     setSession(next)
     setStatus('authenticated')
   }, [])

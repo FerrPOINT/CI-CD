@@ -1,8 +1,39 @@
 # Public-safe exact-source full12 controls
 
-## Reviewed OCI rollback source successor
+## Namespace main merge successor (prepared only)
 
-Текущий normal merge сохраняет ordered parents controls
+Новый source `7db4266f51069d0fda36904a194a1b578659121f`, tree
+`a7201b0c2cb552b871c0de84168246efaa9922e6`: docs-child normal merge
+`32a9615e42d15b8f057e0c858bcd47c3e0b2463f` с parents84f и main56191.
+Controls ожидают ordered parents `c63330d837b036306c27f062c6063b48ffa8ef82`
+и exact7db; все прежние history guards сохраняют исторические source/edges.
+
+Effective product Base теперь `.namespace-base-revision` =
+`0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce`, а `.base-revision` =19a
+проверяется отдельно как legacy. Base0e1 нужен для `resource_context`; старый19a
+не является compile-equivalent. Maintenance Git proof/pins не переключаются.
+Catalogue278 = Forge188 + Base90: добавлены девять backend paths,
+effective-pin file, Base resource_context и cookie_isolation test. Прежние inputs
+сохранены, все актуальные hashes пересчитаны из canonical Git blobs.
+`source_seal_sha256` остаётся историческим reference; текущая authority — exact
+catalogue hashes и component lock, не исторический reference.
+
+Source-derived selection: workspace235 (341 attributed Rust tests минус104
+feature-gated integration declarations и два OCI-only unit cases), integration92
+(76 direct +10 workspace +4 candidate +2 task-delivery), CLI2; PG5/24 и OCI1
+не изменены. Четыре `integration_target_policy` cases по-прежнему лишь
+компилируются all-targets check/Clippy, не выбраны integration_db command;
+это явная граница existing full12, а не объявление полного product test coverage.
+Pure suite247 сохраняет все245 прежних identities и добавляет две проверки
+namespace precedence/complete export и actual declaration selection.
+Все12 stages/команды, resources108GB/5GiB QA/1GiB PG, deadlines, cleanup и privacy
+не меняются. Новые locks требуют свежей locked/offline cache qualification.
+Git availability и pure проверки не означают Rust/PG/OCI/OpenAPI/native PASS.
+До отдельного review/approval публикация и workflow execution запрещены.
+
+## Historical reviewed OCI rollback source successor
+
+Исторический normal merge сохраняет ordered parents controls
 `030e676bff1653679999de093b9d61195f8430b6` и product
 `84f0962ce14b95983a015e7d2303cd6f00ec59a7` (tree
 `9dc257fe8af698dbd7689f566fc8ca85a3c17456`, sole parent756).

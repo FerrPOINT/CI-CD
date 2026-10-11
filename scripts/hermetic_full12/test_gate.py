@@ -84,7 +84,7 @@ class ControlsTests(unittest.TestCase):
 
     def test_source265_catalogues(self):
         catalogues = h.read(h.HERE / 'source-catalogue.json')['catalogues']
-        self.assertEqual({key: value['count'] for key, value in catalogues.items()}, {'forge': 178, 'base': 88})
+        self.assertEqual({key: value['count'] for key, value in catalogues.items()}, {'forge': 188, 'base': 90})
         for spec in catalogues.values():
             raw = json.dumps(spec['files'], sort_keys=True, separators=(',', ':')).encode()
             self.assertEqual(hashlib.sha256(raw).hexdigest(), spec['sha256'])
@@ -106,8 +106,70 @@ class ControlsTests(unittest.TestCase):
         self.assertEqual(sum(isinstance(node, ast.Assert) for node in ast.walk(ast.parse((h.HERE / 'row_smoke.py').read_bytes()))), 16)
 
     def test_source_and_base_exact(self):
-        self.assertEqual(h.SOURCE, '84f0962ce14b95983a015e7d2303cd6f00ec59a7')
-        self.assertEqual(h.BASE, '19a7a381ae6dbea61a643bb96189e483fa64df5c')
+        self.assertEqual(h.SOURCE, '7db4266f51069d0fda36904a194a1b578659121f')
+        self.assertEqual(h.BASE, '0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce')
+        self.assertEqual(h.LEGACY_BASE, '19a7a381ae6dbea61a643bb96189e483fa64df5c')
+
+    def test_namespace_pin_precedes_legacy_and_exports_complete_backend(self):
+        root = h.HERE.parents[1]
+        self.assertEqual((root / '.namespace-base-revision').read_text().strip(), h.BASE)
+        self.assertEqual((root / '.base-revision').read_text().strip(), h.LEGACY_BASE)
+        standard = (root / '.github/workflows/ci.yml').read_text()
+        self.assertEqual(standard.count('if [ -f .namespace-base-revision ]; then pin=.namespace-base-revision; fi'), 3)
+        self.assertIn('namespace-base-revision', (root / 'scripts/build.py').read_text())
+        self.assertIn('sdlc_shared::resource_context', (root / 'backend/src/namespace.rs').read_text())
+        catalogue = h.read(h.HERE / 'source-catalogue.json')
+        files = {item['path'] for item in catalogue['catalogues']['forge']['files']}
+        tracked = subprocess.check_output(['git', '--no-replace-objects', '-C', str(root),
+            'ls-tree', '-r', '--name-only', h.SOURCE, 'backend']).decode().splitlines()
+        required = {name for name in tracked if name.endswith(('.rs', '.sql')) or
+                    PurePosixPath(name).name in ('Cargo.toml', 'Cargo.lock')}
+        self.assertTrue(required <= files)
+        self.assertIn('.namespace-base-revision', files)
+        base_files = {item['path'] for item in catalogue['catalogues']['base']['files']}
+        self.assertTrue({'crates/sdlc-shared/src/resource_context.rs',
+                         'crates/auth-server/tests/cookie_isolation.rs'} <= base_files)
+        values = {('show', 'HEAD:.base-revision'): h.LEGACY_BASE,
+                  ('show', 'HEAD:.namespace-base-revision'): h.BASE,
+                  ('rev-parse', 'HEAD^{tree}'): h.SOURCE_TREE}
+        with patch.dict(os.environ, GITHUB_SHA='a' * 40), patch.object(h, 'clean'), patch.object(h, 'controls_history'):
+            for selector, expected in values.items():
+                for wrong in (h.PRE_MERGE_SOURCE, '', h.LEGACY_BASE if expected != h.LEGACY_BASE else h.BASE):
+                    with self.subTest(selector=selector, wrong=wrong), patch.object(h, 'git',
+                            side_effect=lambda _, *args: (wrong if args == selector else values[args]).encode()), \
+                            self.assertRaises(ValueError):
+                        h.checkout_proof(Path('workspace'))
+
+    def test_namespace_test_selection_counts_current_declarations(self):
+        import re
+        root = h.HERE.parents[1]
+        paths = [item['path'] for item in h.read(h.HERE / 'source-catalogue.json')['catalogues']['forge']['files']
+                 if item['path'].startswith('backend/') and item['path'].endswith('.rs')]
+        source = {name: (root / name).read_text(encoding='utf-8') for name in paths}
+        counts = {name: len(re.findall(r'#\[(?:tokio::)?test(?:\([^\n]*\))?\]', raw))
+                  for name, raw in source.items()}
+        self.assertFalse(any('#[ignore' in raw for raw in source.values()))
+        excluded = ('backend/tests/integration_db.rs', 'backend/tests/integration_target_policy.rs',
+                    'backend/cli/tests/cli_real_api.rs', 'backend/tests/support/candidate_evidence.rs',
+                    'backend/tests/support/oci_delivery.rs', 'backend/tests/support/postgres_delivery.rs',
+                    'backend/tests/support/sdlc_workspace.rs', 'backend/tests/support/task_delivery.rs')
+        self.assertEqual(sum(counts.values()), 341)
+        self.assertEqual(sum(counts[name] for name in excluded), 104)
+        # Only these two attributed tests are excluded by the default OCI feature set.
+        child = source['backend/src/task_delivery/oci.rs'].split('mod child_diagnostic_tests {', 1)[1]
+        self.assertEqual(child.count('#[cfg(feature = "oci-integration")]'), 2)
+        workspace = sum(counts.values()) - sum(counts[name] for name in excluded) - 2
+        integration = sum(counts[name] for name in ('backend/tests/integration_db.rs',
+            'backend/tests/support/sdlc_workspace.rs', 'backend/tests/support/candidate_evidence.rs',
+            'backend/tests/support/task_delivery.rs'))
+        self.assertEqual((workspace, integration, counts['backend/cli/tests/cli_real_api.rs']), (235, 92, 2))
+        for stage, count in (('workspace', workspace), ('integration', integration), ('cli', 2)):
+            markers = {'workspace': '\nFROZEN_WORKSPACE_RUSTFMT:PASS\nFROZEN_WORKSPACE_UMASK=0022',
+                       'integration': '', 'cli': '\nCLI_INTEGRATION_CLIPPY:PASS'}[stage]
+            self.assertEqual(gate.assertions(stage, f'test result: ok. {count} passed; 0 failed;{markers}'.encode(),
+                                             Path('.'))['tests_passed'], count)
+            with self.assertRaises(ValueError):
+                gate.assertions(stage, f'test result: ok. {count - 1} passed; 0 failed;{markers}'.encode(), Path('.'))
 
     def test_checkpoint_source_catalogue_and_all_three_checkout_bindings(self):
         catalogue = h.read(h.HERE / 'source-catalogue.json')
@@ -120,7 +182,7 @@ class ControlsTests(unittest.TestCase):
         expected = {
             'scripts/native_qa_compose.py': (30804, '7edd0161c7f327d8c5de3e94f3bfbf507f640d2ce41ac3ab2fd6b97b1d371f25'),
             'scripts/tests/test_native_qa_compose.py': (33670, '6a97734f544059ef807aebef66fb5d7aecfc4d2eef77013ab3f369a790dccd06'),
-            'backend/src/bin/forge-delivery.rs': (4919, '61fe2874c3bd32564c66232c91a113f771c09b6b5660ed026b89c0e183d7af59'),
+            'backend/src/bin/forge-delivery.rs': (5180, '72b9bf9b5513a4f9207bff9a25b6a0f8e739cd5c62b394cb49b9fed21230b115'),
             'backend/src/task_delivery/oci.rs': (65354, 'ccfdce2b67bc222ff7e81a6d8cb0fb1c23452e1fc8ac895b339b261492afcb44'),
             'backend/tests/support/oci_delivery.rs': (33707, 'f769f2cc3c8ba758fa202625e5c2cf52c0e67a157f0845a85e80580d6f1e6f72'),
             'scripts/tests/test_oci_offline_fixture.py': (42548, '382d4a91b88d54786a57b132d28d3c295199ea0da0146091cc41a894ae7a6514'),
@@ -662,8 +724,8 @@ class GateAssertionTests(unittest.TestCase):
             gate.assertions('workspace', raw, Path('.'))
 
     def test_workspace221(self):
-        raw = b'test result: ok. 225 passed; 0 failed;\nFROZEN_WORKSPACE_RUSTFMT:PASS\nFROZEN_WORKSPACE_UMASK=0022'
-        self.assertEqual(gate.assertions('workspace', raw, Path('.'))['tests_passed'], 225)
+        raw = b'test result: ok. 235 passed; 0 failed;\nFROZEN_WORKSPACE_RUSTFMT:PASS\nFROZEN_WORKSPACE_UMASK=0022'
+        self.assertEqual(gate.assertions('workspace', raw, Path('.'))['tests_passed'], 235)
 
     def test_oci_partial_marker_rejected(self):
         with self.assertRaises(ValueError):
@@ -674,7 +736,7 @@ class GateAssertionTests(unittest.TestCase):
             gate.assertions('smoke', b'PG17_HISTORY_FK_PASSIVE_ACTION_CONTRAST:PASS', Path('.'))
 
     def test_integration80(self):
-        self.assertEqual(gate.assertions('integration', b'test result: ok. 80 passed; 0 failed;', Path('.'))['tests_passed'], 80)
+        self.assertEqual(gate.assertions('integration', b'test result: ok. 92 passed; 0 failed;', Path('.'))['tests_passed'], 92)
 
     def test_cli_requires_clippy(self):
         with self.assertRaises(ValueError):
@@ -1791,7 +1853,7 @@ MAINTENANCE_TEST_FILES = {name: {'blob': 'd' * 40, 'sha256': 'c' * 64} for name 
 
 def report_fixture(job):
     catalogue = h.read(h.HERE / 'source-catalogue.json')['catalogues']
-    counts = {'python': 81, 'postgres': 5, 'oci': 1, 'workspace': 225, 'integration': 80, 'cli': 2}
+    counts = {'python': 81, 'postgres': 5, 'oci': 1, 'workspace': 235, 'integration': 92, 'cli': 2}
     stages = [{'stage': stage, 'status': 'PASS', 'timeout_seconds': gate.BUDGETS[stage],
                'source_parity': True, 'cleanup_complete': True, **({'tests_passed': counts[stage]} if stage in counts else {})}
               for stage in gate.JOBS[job]]
@@ -1819,7 +1881,7 @@ def report_fixture(job):
     return {'schema': 'forge/hermetic-full12-partition/v1', 'job': job, 'status': 'PARTITION_PASS',
         'inherited_gate_results': False, 'workflow_run': '123', 'workflow_attempt': '1',
         'checkout': {'controls': 'a' * 40, 'source': h.SOURCE, 'base': h.BASE}, 'components': {'fixture': 'a' * 64},
-        'job_budget_seconds': gate.job_budget(job), 'source_count': 266, 'source_parity': True, 'checkout_parity': True,
+        'job_budget_seconds': gate.job_budget(job), 'source_count': 278, 'source_parity': True, 'checkout_parity': True,
         'source_hashes': {key: value['sha256'] for key, value in catalogue.items()},
         'maintenance_sha256': 'c' * 64,
         'maintenance_git': {'repository': h.m.REPOSITORY, 'commit': 'f' * 40, 'ref': h.m.CANDIDATE_REF, 'files': MAINTENANCE_TEST_FILES},

@@ -67,7 +67,7 @@ postgres-integration = ["integration"]
 integration = []
 
 [dependencies]
-sdlc-shared = { path = "../../services-base/crates/sdlc-shared" }
+sdlc-shared = { path = "../../services-base/crates/sdlc-shared", features = ["openapi"] }
 cicd-app = { path = "app" }
 cicd-infra = { path = "infra" }
 cicd-api = { path = "api" }
