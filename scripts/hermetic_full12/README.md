@@ -1,6 +1,33 @@
 # Public-safe exact-source full12 controls
 
-Текущий smoke-pin successor имеет sole parent
+## Hosted child disk policy successor
+
+Текущий source `75659d8d0bb1415c0ad0ae183bb8cd762aeb9abb` имеет sole parent
+e781 и меняет только `docs/CURRENT_STATE.md` / `docs/TASK_DELIVERY_VERIFICATION.md`.
+Normal merge `b5bd585b41a3ccd3225d2a508b3e45974d5fd309` сохраняет ordered parents
+controls `278c7fb5863dd7b151a2c6bf0c202a274cc459f3` и exact source756.
+Все три product checkout, catalogue и coverage теперь привязаны к756;
+все266 input blobs (Forge178 + Base88), compiled sources, SDK/locks/pins неизменны.
+Исторические e781/278 edges и seals не переименованы в текущие receipts.
+
+Только существующий hosted consumer задаёт `SDLC_MIN_FREE_GIB=5` для explicit
+`isolated-ci-v1` parent/cache/native constructors. Root policy допускает этот
+disposable-CI floor; Base `local-v1` default30GiB и local rejection tests неизменны.
+Полные HOST108279229428 / DATA71319483898 bytes /300000 inodes admission checks
+сохранены до bootstrap, перед cache allocation, после cache и перед КАЖДЫМ stage.
+Child constructor отдельно измеряет actual remaining free disk с CI floor5GiB;
+это не физическая reservation и не повторное требование полного startup budget.
+Нет нового policy/override/helper, reclaim allowlist или cleanup mechanism.
+
+Actual278 run38093642467 прошёл A/B, но C остановился на OCI7 с `DiskSpaceGuard`;
+8-12 не выполнялись, aggregate REJECT. Late child measurement не сохранён.
+Эта explicit consumer-policy adaptation не доказывает late free>=5GiB, причину
+изменения free space или будущий full12 PASS. Все native predicates, commands,
+budgets/resources/source/cleanup/privacy validators сохранены; candidate unqualified.
+
+## Historical smoke-pin successor278
+
+Smoke-pin successor278 имеет sole parent
 `b9a25bf5fb944175f8da053f3fdd82f4e970386d`. Existing history guard сохраняет
 его exact edge к mergee281, consumer-only deltas и add-only product closure;
 старые edges и HEAD guards не заменены ancestor-проверкой.
@@ -102,7 +129,9 @@ Product SDK19a и installed packet не менялись. Эта metadata qualif
 hosted callers передают explicit `isolated-ci-v1`: parent/cache напрямую, native
 sessions через узкий hosted adapter. Native adapter повторно проверяет hosted
 admission/task/daemon/context до original constructor; Base defaults не меняются.
-Реальный host reserve108279229428 и `SDLC_MIN_FREE_GIB` не снижены до5GiB.
+Полный host admission108279229428 сохранён. Текущий hosted successor отдельно
+задаёт existing CI child floor `SDLC_MIN_FREE_GIB=5`, как описано выше;
+исторический278 задавал полный host threshold и для child constructors.
 Canonical absolute registry/output и original owner/cleanup semantics сохранены.
 
 ### Проверка candidate без записи

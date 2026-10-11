@@ -100,7 +100,7 @@ class ControlsTests(unittest.TestCase):
         self.assertEqual(sum(isinstance(node, ast.Assert) for node in ast.walk(ast.parse((h.HERE / 'row_smoke.py').read_bytes()))), 16)
 
     def test_source_and_base_exact(self):
-        self.assertEqual(h.SOURCE, 'e781b533bfb25fa669d5a5c65f8fa7094de7af02')
+        self.assertEqual(h.SOURCE, '75659d8d0bb1415c0ad0ae183bb8cd762aeb9abb')
         self.assertEqual(h.BASE, '19a7a381ae6dbea61a643bb96189e483fa64df5c')
 
     def test_checkpoint_source_catalogue_and_all_three_checkout_bindings(self):
@@ -1691,6 +1691,32 @@ class PhysicalResourceTests(unittest.TestCase):
 
 
 class NativePolicyTests(unittest.TestCase):
+    def test_child_floor_five_preserves_full_capacity_admission_at_every_boundary(self):
+        tree = ast.parse((h.HERE / 'run.py').read_bytes())
+        functions = {node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)}
+        job = functions['run_job']
+        assignments = [node for node in ast.walk(job) if isinstance(node, ast.Assign)
+                       and any(ast.unparse(target) == "os.environ['SDLC_MIN_FREE_GIB']" for target in node.targets)]
+        self.assertEqual(len(assignments), 1)
+        self.assertIsInstance(assignments[0].value, ast.Constant)
+        self.assertEqual(ast.literal_eval(assignments[0].value), '5')
+        text = ast.unparse(job)
+        self.assertLess(text.index('h.hosted_guard()'), text.index(ast.unparse(assignments[0])))
+        self.assertLess(text.index('h.m.read_payloads('), text.index(ast.unparse(assignments[0])))
+        self.assertEqual(text.count('h.capacity(root)'), 3)
+        self.assertLess(text.index('h.reclaim(root)'), text.index('start_daemon('))
+        self.assertLess(text.index('h.capacity(root)'), text.index('start_daemon('))
+        self.assertLess(text.index('report[\'cache\'] = fill_cache('), text.rindex('h.capacity(root)'))
+        cache = ast.unparse(functions['fill_cache'])
+        self.assertLess(cache.index('h.reclaim(root)'), cache.index('parent.parent_class(sdk, q)'))
+        stage = ast.unparse(functions['run_stage'])
+        self.assertEqual(stage.count('h.capacity(root)'), 1)
+        self.assertLess(stage.index('h.capacity(root)'), stage.index('parent.parent_class(sdk, q)'))
+        reclaim = ast.unparse(next(node for node in ast.parse((h.HERE / 'host.py').read_bytes()).body
+                                  if isinstance(node, ast.FunctionDef) and node.name == 'reclaim'))
+        self.assertIn('capacity(root)', reclaim)
+        self.assertEqual((h.HOST_BYTES, h.DATA_BYTES, h.INODES), (108279229428, 71319483898, 300000))
+
     @staticmethod
     def fixture():
         calls = []

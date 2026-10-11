@@ -852,7 +852,7 @@ def run_job(job):
             maintenance = h.maintenance(root, workspace / 'services-base', maintenance_proof)
             os.environ['SDLC_MAINTENANCE_BASE'] = str(maintenance)
             os.environ['SDLC_RESOURCE_REGISTRY'] = str(root / 'registry')
-            os.environ['SDLC_MIN_FREE_GIB'] = str(h.HOST_BYTES / 2**30)
+            os.environ['SDLC_MIN_FREE_GIB'] = '5'
             sdk = q.load_sdk(maintenance)
             install_process_adapter(sdk, q)
             install_native_ci_policy(q)
