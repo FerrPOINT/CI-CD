@@ -1,7 +1,46 @@
 # CURRENT STATE — Forge CI/CD
 
 > **Производный снимок текущего состояния.** Сверяется с кодом и evidence; authority — код и коммит, не этот файл. Обновлять при каждом изменении capability.
-> Снято: `2026-10-08`, candidate `feat/task-delivery-evidence-20261007`, не установленный runtime; visual evidence перечислено в `docs/assets/screens/manifest.md`.
+> Снято: `2026-10-11`, candidate `fix/forge-runtime-main-integration-20261011`, не установленный runtime; visual evidence перечислено в `docs/assets/screens/manifest.md`.
+
+## Актуальная hosted qualification: 11 октября 2026
+
+[38144495380/1](https://github.com/FerrPOINT/CI-CD/actions/runs/38144495380),
+controls378566c/source53e935: terminal FAILURE, original strict readback PASS,
+aggregate REJECT. A1-5, B PostgreSQL5/24 negatives, OCI1 и workspace235 PASS;
+integration9 завершилась exit101: fixed source callsite подтверждает HTTP409
+после fixture restoration. CLI/OpenAPI/release не выполнялись. Capacity и все
+три scoped cleanup/inventory прошли. HTTP body и guard reason не сохранялись.
+[Отчёт и границы доказательств](TASK_DELIVERY_VERIFICATION.md#hosted-full12-38144495380).
+
+Текущий candidate объединяет main/PR88 с сохранённым OCI hardening и новым
+test-only исправлением Git index mode. Для Unix permissions0600 прежняя
+фикстура пишет недопустимый index100600; восстановление bytes его не исправляет.
+Git-only reproduction подтверждает дефект, но не доказывает permissions
+исторического failed run. Новая фикстура явно проверяет0600, canonical100644,
+скрытые forged bytes и успешное последующее восстановление. Production guards,
+SQL migrations и их checksums не ослабляются. Итоговый source ещё не прошёл
+новые Rust/native gates; pin main Base0ddd38e сохранён, старые PASS его не принимают.
+
+## Исторический HOST capacity refusal
+
+[38114891349/1](https://github.com/FerrPOINT/CI-CD/actions/runs/38114891349),
+controlsc633/source84f: terminal FAILURE. Original strict A/B/C readback:
+A stages1–5 PASS; B PostgreSQL5/24 negatives/14 cleaned journals PASS;
+C OCI7 PASS1 и workspace8 PASS225, integration9 — HOST capacity refusal.
+Retained measurement:108209971200<108279229428 bytes, deficit69258228;
+DATA/inodes PASS. Seals/components пройдены; identity/parity/inventory
+и constructor integration9 не достигнуты. Stages10–12 NOT_RUN.
+Scoped cleanup/inventory проверены; original aggregate REJECT.
+Новый diagnostic и снижение guards не требуются для объяснения отказа.
+
+Новый normal-merge candidate32a9615 (84f+main56191) ещё не qualified Rust/native.
+Подтверждены только fmt82/Python81/adapter43 PASS, не full12/native SDLC
+acceptance или runtime promotion. Receipt source84f не квалифицирует merged source.
+CI выбирает `.namespace-base-revision` (`0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce`)
+вместо legacy `.base-revision`19a; receipts84f/SDK19a не подтверждают parity
+или acceptance нового SDK.
+Исторические попытки ниже сохраняют только исходный source/scope.
 
 ## Что работает сейчас (Current verified)
 
