@@ -62,7 +62,10 @@ jobs:
           persist-credentials: false
       - name: Fresh admission and original stages 1 through 5
         id: gates
-        run: python3 -B controls/scripts/hermetic_full12/run.py run A
+        run: |
+          timeout 30s git -C controls sparse-checkout set --no-cone --no-sparse-index '/*' '!/docs/' '!/frontend/'
+          timeout 30s git -C source sparse-checkout set --no-cone --no-sparse-index '/*' '!/docs/' '!/frontend/'
+          python3 -B controls/scripts/hermetic_full12/run.py run A
       - name: Safe partition receipts only
         timeout-minutes: 3
         if: always()
@@ -125,7 +128,10 @@ jobs:
           persist-credentials: false
       - name: Fresh admission and original stage 6
         id: gates
-        run: python3 -B controls/scripts/hermetic_full12/run.py run B
+        run: |
+          timeout 30s git -C controls sparse-checkout set --no-cone --no-sparse-index '/*' '!/docs/' '!/frontend/'
+          timeout 30s git -C source sparse-checkout set --no-cone --no-sparse-index '/*' '!/docs/' '!/frontend/'
+          python3 -B controls/scripts/hermetic_full12/run.py run B
       - name: Safe partition receipts only
         timeout-minutes: 3
         if: always()
@@ -185,7 +191,10 @@ jobs:
           token: ${{ secrets.SERVICES_BASE_TOKEN }}
           persist-credentials: false
       - name: Fresh admission and original stages 7 through 12
-        run: python3 -B controls/scripts/hermetic_full12/run.py run C
+        run: |
+          timeout 30s git -C controls sparse-checkout set --no-cone --no-sparse-index '/*' '!/docs/' '!/frontend/'
+          timeout 30s git -C source sparse-checkout set --no-cone --no-sparse-index '/*' '!/docs/' '!/frontend/'
+          python3 -B controls/scripts/hermetic_full12/run.py run C
       - name: Same-attempt safe A receipt, never runtime state
         timeout-minutes: 3
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333

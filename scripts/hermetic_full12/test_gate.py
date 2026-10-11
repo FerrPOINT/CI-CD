@@ -151,6 +151,16 @@ class ControlsTests(unittest.TestCase):
             declared = sum(int(value) * 60 for value in re.findall(r'^        timeout-minutes: (\d+)$', block, re.M))
             self.assertEqual(declared + 240, gate.ACTION_SECONDS[job])
             self.assertEqual(block.count('run.py run ' + job), 1)
+            sparse = """          timeout 30s git -C controls sparse-checkout set --no-cone --no-sparse-index '/*' '!/docs/' '!/frontend/'
+          timeout 30s git -C source sparse-checkout set --no-cone --no-sparse-index '/*' '!/docs/' '!/frontend/'
+          python3 -B controls/scripts/hermetic_full12/run.py run """ + job + '\n'
+            self.assertEqual(block.count(sparse), 1)
+            self.assertLess(block.index('name: Exact authenticated product SDK'), block.index(sparse))
+            self.assertEqual(block.count('uses: actions/checkout@'), 3)
+            self.assertEqual(block.count('fetch-depth: 0'), 2)
+            self.assertEqual(block.count('persist-credentials: false'), 3)
+            self.assertNotIn('sparse-checkout:', block)
+            self.assertNotIn('filter:', block)
             pure = "      - name: Pure controls regression tests\n        working-directory: controls/scripts/hermetic_full12\n        timeout-minutes: 2\n        run: python3 -B -m unittest discover -p 'test_*.py'\n"
             self.assertEqual(block.count(pure), int(job == 'A'))
             if job == 'A':
@@ -158,6 +168,84 @@ class ControlsTests(unittest.TestCase):
                 self.assertLess(block.index(pure), block.index('name: Read-only Base authorization availability'))
                 self.assertLess(block.index(pure), block.index('name: Exact authenticated product SDK'))
         self.assertNotIn('workflow_dispatch', workflow)
+
+    def test_sparse_worktree_preserves_blobs_history_and_rejects_retained_file_drift(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+
+            def git(*args):
+                return subprocess.check_output(['git', '-c', 'core.autocrlf=false', '-C', str(root),
+                    *args], stderr=subprocess.PIPE, timeout=15)
+
+            def clean():
+                with patch.object(h, 'git', side_effect=lambda checkout, *args: git(*args)):
+                    h.clean(root, revision)
+
+            git('init', '--template=', '--initial-branch=main')
+            files = {'.base-revision': b'legacy\n', '.namespace-base-revision': b'effective\n',
+                '.github/workflows/forge-hermetic-full12.yml': b'workflow\n',
+                'scripts/hermetic_full12/host.py': b'control\n', 'backend/src/lib.rs': b'export input\n',
+                'docs/screenshot.png': b'own screenshot\n', 'frontend/src/index.ts': b'own frontend\n'}
+            for name, raw in files.items():
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(raw)
+            git('add', '.')
+            git('-c', 'user.name=Pure Fixture', '-c', 'user.email=fixture@example.invalid',
+                '-c', 'commit.gpgsign=false', 'commit', '-qm', 'owned sparse fixture')
+            revision = git('rev-parse', 'HEAD').decode().strip()
+            tree = git('rev-parse', 'HEAD^{tree}')
+            entries = git('ls-files', '--stage')
+            history = git('rev-list', '--parents', 'HEAD')
+            objects = git('rev-list', '--objects', '--all')
+            git('sparse-checkout', 'set', '--no-cone', '--no-sparse-index',
+                '/*', '!/docs/', '!/frontend/')
+            clean()
+            self.assertEqual(git('rev-parse', 'HEAD^{tree}'), tree)
+            self.assertEqual(git('ls-files', '--stage'), entries)
+            self.assertEqual(git('rev-list', '--parents', 'HEAD'), history)
+            self.assertEqual(git('rev-list', '--objects', '--all'), objects)
+            self.assertEqual(git('rev-parse', '--is-shallow-repository').strip(), b'false')
+            self.assertNotIn(b'promisor', git('config', '--list'))
+            for name, raw in files.items():
+                self.assertEqual(git('cat-file', 'blob', revision + ':' + name), raw)
+                if name.startswith(('docs/', 'frontend/')):
+                    self.assertFalse((root / name).exists())
+                    self.assertTrue(git('ls-files', '-t', '--', name).startswith(b'S '))
+                else:
+                    self.assertEqual((root / name).read_bytes(), raw)
+            required = root / 'backend/src/lib.rs'
+            for mutation in ('changed', 'missing'):
+                with self.subTest(mutation=mutation):
+                    if mutation == 'changed':
+                        required.write_bytes(b'not the attested input\n')
+                    else:
+                        required.unlink()
+                    with self.assertRaises(ValueError):
+                        clean()
+                    self.assertEqual(git('cat-file', 'blob', revision + ':backend/src/lib.rs'),
+                                     files['backend/src/lib.rs'])
+                    required.write_bytes(files['backend/src/lib.rs'])
+                    clean()
+
+    def test_sparse_omitted_git_bytes_are_identical_and_outside_export_catalogue(self):
+        root = h.HERE.parents[1]
+        omitted = []
+        for revision in ('9a5a7d84acc03b54c48ad3b6e8e1ede9fd21ec44', h.SOURCE):
+            rows = subprocess.check_output(['git', '--no-replace-objects', '-C', str(root),
+                'ls-tree', '-r', '-l', '-z', revision, '--', 'docs', 'frontend'], timeout=15)
+            files = {}
+            for row in filter(None, rows.split(b'\0')):
+                metadata, path = row.split(b'\t', 1)
+                mode, kind, blob, size = metadata.split()
+                self.assertEqual((mode, kind), (b'100644', b'blob'))
+                files[path.decode()] = (blob.decode(), int(size))
+            self.assertEqual((len(files), sum(size for _, size in files.values())), (537, 26783372))
+            omitted.append(files)
+        self.assertEqual(omitted[0], omitted[1])
+        catalogue = h.read(h.HERE / 'source-catalogue.json')['catalogues']['forge']['files']
+        self.assertFalse(set(omitted[0]) & {item['path'] for item in catalogue})
+        self.assertGreater(2 * sum(size for _, size in omitted[0].values()), 34843636)
 
     def test_overhead_alarm_restored_on_failure(self):
         with patch.object(h, 'require'), patch.object(h.signal, 'ITIMER_REAL', 0, create=True), patch.object(h.signal, 'SIGALRM', 14, create=True), patch.object(h.signal, 'getitimer', return_value=(0.0, 0.0), create=True), patch.object(h.signal, 'setitimer', create=True) as timer, patch.object(h.signal, 'signal', return_value='previous') as handler:
