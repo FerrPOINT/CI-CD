@@ -9,6 +9,53 @@
 
 ## [Unreleased]
 
+- Страницы проекта и репозитория используют общую Base-навигацию; формы создания,
+  подключения и автозапуска открываются по запросу. Поиск выбора ресурсов
+  постраничный, названия выбранных ресурсов сохраняются вне текущей страницы.
+- Фильтры запусков применяются одной операцией и сохраняют историю URL,
+  Namespace и «Все проекты». Добавлены сброс, проверка периода, точные состояния
+  пустых результатов, обновление и отдельный переход к конкретному деплою.
+- Каталоги возвращают серверный total и qualified repository name конфигурации;
+  managed-поиск и фильтры окружения/подтверждений действуют до пагинации.
+  Пайплайны возвращают nullable started_at/finished_at для длительности.
+
+- Закреплён общий Base cursor policy для доступных кнопок, вкладок, меню
+  и селектов; текстовые поля и отключённые действия сохраняют свой курсор.
+
+- Отдельные списки пайплайнов и деплоев репозитория передают проверенный
+  NamespaceRef в ключи запросов и фильтры CI-конфигураций.
+
+- Автоматические деплои получают итог связанного исполнения через общий reconcile;
+  ручные записи и завершённая история сохраняются. Каталог и общие списки
+  используют существующие переводы статусов и корректные подписи счётчиков.
+
+- Base обновлён для удержания focus в `ConfirmDialog` во время pending.
+
+- Активный Base pin обновлён до согласованного кандидата SDK/UI/workspace;
+  документация standalone build использует тот же порядок выбора pin, что CI.
+
+- Production Docker-сборки создают временные исходники всех объявленных
+  исполняемых целей, включая forge-delivery/forge-pg-migrate, до кеширования зависимостей.
+  После package cleanup собираются настоящие исходники; необходимые
+  compile-time delivery script witnesses берутся из закреплённого комплекта.
+
+- Workspace и repository deployments вычисляют approval state по тем же решениям
+  и правилам environment, что и основной API; исправлен ответ 500 при чтении истории.
+  Миграционные регрессии учитывают версию 91, сохраняя проверку historical checksums.
+
+- Ошибка ожидания embedded-процесса сохраняет PID и резервирование job во внешнем
+  lifecycle handler; неподтверждённое завершение не разрешает повторный запуск
+  и не лишает отмену адреса исходного процесса.
+- Сквозной каталог проектов использует подтверждённые Namespace и имя/ключ Tracker.
+  Репозитории имеют несколько CI-конфигураций; общие и отдельные списки запусков
+  используют серверные фильтры и пагинацию. Автозапуск выбирается явно; старые
+  маршруты и история конфигураций сохранены, удаление истории защищено.
+
+- Backup wrapper явно передаёт владельца операции в Base, определяет layout
+  по профилю и отклоняет лишние аргументы. POSIX-регрессии проверяют обязательные
+  переменные и отказ до вызова Base при неполной конфигурации.
+
+- Namespace cohort: стабильные refs, локальные binding projections и lifecycle guards; аддитивные migrations, совместимый rollback и отдельные execution v2 gates. Runtime-приёмка ещё не завершена.
 - Добавлен отдельный privileged owner-local PostgreSQL shadow executor: immutable
   source/target catalog, bounded drain/fence/lease, dump с реальным restore drill,
   forward migration в fresh DB и отдельные image/database/health/acceptance checks.
@@ -192,11 +239,17 @@
 
 ## [Unreleased]
 
+- Namespace cohort: стабильные refs, локальные binding projections и lifecycle guards; аддитивные migrations, совместимый rollback и отдельные execution v2 gates. Runtime-приёмка ещё не завершена.
+
+
 ### Added
 - Notification rules / preferences / template catalog (stage 4 item 1): миграция 0032, fan-out фильтрация, per-user mute/verbosity, `{{var}}`-шаблоны с воспроизводимым рендерингом.
 - Aggregation + quiet hours + destination alerts (stage 4 items 3+5): миграция 0033 — collapse повторов со счётчиком, quiet окна hold/drop с bypass-статусами, авто-алерты на dead-letter с acknowledge/авто-resolve.
 
 ## [Unreleased]
+
+- Namespace cohort: стабильные refs, локальные binding projections и lifecycle guards; аддитивные migrations, совместимый rollback и отдельные execution v2 gates. Runtime-приёмка ещё не завершена.
+
 
 ### Added
 - Email-канал уведомлений (AUTOMATION_ARCHITECTURE §9 этап 4): SMTP-доставка через outbox (lettre, `CICD_SMTP_*`), при disabled SMTP — локальная пометка delivered; миграция 0031 расширяет CHECK канала `email`; fail-closed валидация адреса.

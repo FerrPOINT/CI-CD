@@ -75,19 +75,14 @@ pub(crate) async fn create_pipeline_with_vars_idempotent(
     idempotency_key: Option<&str>,
     git_root: &FsPath,
 ) -> Result<PipelineTriggerOutcome, ApiError> {
-    let repository_url: String =
-        sqlx::query_scalar("SELECT repository_url FROM projects WHERE id = $1")
-            .bind(project_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(ApiError::internal)?
-            .ok_or_else(ApiError::not_found)?;
+    crate::repository_catalog::require_project_writable(pool, project_id).await?;
+    let storage_name =
+        crate::repository_catalog::local_storage_for_project(pool, project_id).await?;
     // Never clone here: this path is called by post-receive and must return
     // before git-receive-pack finishes. Local config is read from the bare repo.
-    let commit_sha = resolve_commit_sha(Some(repository_url.as_str()), &git_ref, git_root).await;
+    let commit_sha = resolve_commit_sha(storage_name.as_deref(), &git_ref, git_root).await;
     let config_ref = commit_sha.as_deref().unwrap_or(&git_ref);
-    let config =
-        read_local_forge_ci_config(Some(repository_url.as_str()), config_ref, git_root).await;
+    let config = read_local_forge_ci_config(storage_name.as_deref(), config_ref, git_root).await;
     let (config_source, raw_config) = match config {
         Some(raw_config) => ("repository", raw_config),
         None => ("legacy_template", LEGACY_TEMPLATE_CONFIG.to_string()),
@@ -491,11 +486,11 @@ struct CiJob {
 /// External URLs deliberately use the template: cloning during post-receive
 /// could wait on the same Smart HTTP request that is still completing.
 async fn read_local_forge_ci_config(
-    repo_url: Option<&str>,
+    storage_name: Option<&str>,
     git_ref: &str,
     git_root: &FsPath,
 ) -> Option<String> {
-    let name = extract_repo_name_from_url(repo_url?)?;
+    let name = crate::git_host::validate_repo_name(storage_name?).ok()?;
     let bare_path = git_root.join(format!("{name}.git"));
     if !bare_path.is_dir() {
         return None;
@@ -515,11 +510,11 @@ async fn read_local_forge_ci_config(
 
 /// Resolves a ref to a commit sha in the local bare repo (best-effort).
 async fn resolve_commit_sha(
-    repo_url: Option<&str>,
+    storage_name: Option<&str>,
     git_ref: &str,
     git_root: &FsPath,
 ) -> Option<String> {
-    let name = extract_repo_name_from_url(repo_url?)?;
+    let name = crate::git_host::validate_repo_name(storage_name?).ok()?;
     let bare_path = git_root.join(format!("{name}.git"));
     if !bare_path.is_dir() {
         return None;
@@ -534,13 +529,6 @@ async fn resolve_commit_sha(
         .status
         .success()
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
-}
-
-/// Extracts the repository name from a URL like `http://host/git/name.git`.
-fn extract_repo_name_from_url(url: &str) -> Option<String> {
-    let path = url.split('/').next_back()?;
-    let name = path.strip_suffix(".git").unwrap_or(path);
-    Some(name.to_string())
 }
 
 /// Parses `.forge-ci.yml`:

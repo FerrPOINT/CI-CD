@@ -28,7 +28,7 @@ const DEFAULT_RUNNER_QUEUE_TIMEOUT_SECONDS: i64 =
 const MAX_RUNNER_QUEUE_TIMEOUT_SECONDS: i64 = crate::config::MAX_RUNNER_QUEUE_TIMEOUT_SECONDS;
 
 /// Job processes currently executed by the embedded runner.
-/// Maps job_id -> child process id so that cancel can kill it.
+/// Maps job_id -> child process id; zero reserves preparation/cleanup.
 pub type RunningJobs = Arc<Mutex<HashMap<Uuid, u32>>>;
 
 #[derive(Debug)]
@@ -112,14 +112,63 @@ pub async fn run_job_with_config(
     running: RunningJobs,
     config: RuntimeRunnerConfig,
 ) {
-    if let Err(error) = run_job_inner(pool.clone(), job_id, running.clone(), &config).await {
-        tracing::error!(%job_id, error = ?error, "runner job failed");
+    {
+        let mut guard = running.lock().await;
+        if guard.contains_key(&job_id) {
+            return;
+        }
+        guard.insert(job_id, 0);
+    }
+    let outcome = match run_job_inner(pool.clone(), job_id, running.clone(), &config).await {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            tracing::error!(%job_id, error = ?error, "runner job failed");
+            let outcome = execution_error_outcome(&running, job_id).await;
+            if outcome == ExecutionOutcome::Finished {
+                finish_job_after_runner_error(&pool, job_id, &error).await;
+            } else {
+                tracing::error!(%job_id, "post-spawn error has no completion authority; execution retained for reconciliation");
+            }
+            outcome
+        }
+    };
+    release_execution_reservation(&running, job_id, outcome).await;
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExecutionOutcome {
+    Finished,
+    Held,
+}
+
+async fn execution_error_outcome(running: &RunningJobs, job_id: Uuid) -> ExecutionOutcome {
+    if running
+        .lock()
+        .await
+        .get(&job_id)
+        .is_some_and(|pid| *pid != 0)
+    {
+        ExecutionOutcome::Held
+    } else {
+        ExecutionOutcome::Finished
+    }
+}
+
+async fn release_execution_reservation(
+    running: &RunningJobs,
+    job_id: Uuid,
+    outcome: ExecutionOutcome,
+) {
+    if outcome == ExecutionOutcome::Finished {
         running.lock().await.remove(&job_id);
-        finish_job_after_runner_error(&pool, job_id, &error).await;
     }
 }
 
 async fn finish_job_after_runner_error(pool: &PgPool, job_id: Uuid, error: &ApiError) {
+    // A canceled/superseded attempt must not fail a newly queued retry.
+    if !matches!(active_embedded_job_lease(pool, job_id).await, Ok(Some(_))) {
+        return;
+    }
     let message = truncate_error_tail(format!("runner: internal failure: {}", error.message));
     let status = match sqlx::query_scalar::<_, String>("SELECT status FROM jobs WHERE id = $1")
         .bind(job_id)
@@ -180,6 +229,13 @@ async fn claim_embedded_job_lease(
     crate::store::enqueue_missing_ready_jobs(pool)
         .await
         .map_err(ApiError::internal)?;
+    // Match remote leasing: the cap read and lease insertion must serialize.
+    // A conflict reserves no execution; the queued job can be claimed next tick.
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
     let row = sqlx::query_as::<_, (Uuid, Uuid, i64)>(
         r#"
         WITH queue_row AS (
@@ -194,6 +250,7 @@ async fn claim_embedded_job_lease(
             JOIN execution_attempts a ON a.id = q.attempt_id
             JOIN stages s ON s.id = j.stage_id
             JOIN pipelines p ON p.id = s.pipeline_id
+            JOIN projects pr ON pr.id = p.project_id
             WHERE j.id = $1
               AND q.state = 'queued'
               AND q.not_before <= now()
@@ -202,6 +259,12 @@ async fn claim_embedded_job_lease(
               AND a.status = 'queued'
               AND NOT j.manual
               AND p.status IN ('queued','running')
+              AND (pr.max_running_jobs IS NULL OR
+                  (SELECT count(*) FROM job_leases cl
+                   JOIN jobs cj ON cj.id=cl.job_id
+                   JOIN stages cs ON cs.id=cj.stage_id
+                   JOIN pipelines cp ON cp.id=cs.pipeline_id
+                   WHERE cl.lease_status='active' AND cp.project_id=pr.id) < pr.max_running_jobs)
               AND NOT EXISTS (
                   SELECT 1
                   FROM job_leases l
@@ -273,9 +336,24 @@ async fn claim_embedded_job_lease(
     )
     .bind(job_id)
     .bind(Uuid::new_v4())
-    .fetch_optional(pool)
-    .await
-    .map_err(ApiError::internal)?;
+    .fetch_optional(&mut *tx)
+    .await;
+    let row = match row {
+        Ok(row) => row,
+        Err(error)
+            if error.as_database_error().and_then(|e| e.code()).as_deref() == Some("40001") =>
+        {
+            let _ = tx.rollback().await;
+            return Ok(None);
+        }
+        Err(error) => return Err(ApiError::internal(error)),
+    };
+    if let Err(error) = tx.commit().await {
+        if error.as_database_error().and_then(|e| e.code()).as_deref() == Some("40001") {
+            return Ok(None);
+        }
+        return Err(ApiError::internal(error));
+    }
 
     Ok(row.map(|(id, attempt_id, generation)| EmbeddedJobLease {
         id,
@@ -846,7 +924,7 @@ async fn run_job_inner(
     job_id: Uuid,
     running: RunningJobs,
     config: &RuntimeRunnerConfig,
-) -> Result<(), ApiError> {
+) -> Result<ExecutionOutcome, ApiError> {
     let job = sqlx::query_as::<_, JobRow>(
         "SELECT j.id, j.stage_id, j.name, j.image, j.command, j.required_secrets, j.artifact_paths, j.status, \
                 s.pipeline_id, p.project_id, s.name AS stage_name, \
@@ -863,18 +941,18 @@ async fn run_job_inner(
     .ok_or_else(ApiError::not_found)?;
 
     if job.status != "queued" && job.status != "running" {
-        return Ok(()); // terminal already
+        return Ok(ExecutionOutcome::Finished); // terminal already
     }
 
     let lease = if job.status == "queued" {
         let Some(lease) = claim_embedded_job_lease(&pool, job_id).await? else {
-            return Ok(());
+            return Ok(ExecutionOutcome::Finished);
         };
         lease
     } else {
         let Some(lease) = active_embedded_job_lease(&pool, job_id).await? else {
             tracing::warn!(%job_id, "running job has no active lease; skipping embedded execution");
-            return Ok(());
+            return Ok(ExecutionOutcome::Finished);
         };
         lease
     };
@@ -973,6 +1051,34 @@ async fn run_job_inner(
     }
     envs.extend(secrets.iter().cloned());
 
+    let mut remote_job = if config.mode == RunnerMode::Docker {
+        Some(
+            crate::runner_docker::RemoteJob::prepare(job_id, attempt_id, &workspace)
+                .await
+                .map_err(|error| {
+                    ApiError::bad_request(mask_secrets(
+                        &format!("runner: isolated Docker preparation failed: {error}"),
+                        &masks,
+                    ))
+                })?,
+        )
+    } else {
+        None
+    };
+    if let Some(remote) = &mut remote_job {
+        remote
+            .stage_artifacts(&pipeline_artifacts)
+            .await
+            .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
+        for (key, value) in &mut envs {
+            if key == "CICD_ARTIFACTS_DIR" {
+                *value = "/workspace/artifacts".into();
+            }
+            if key == "CICD_PIPELINE_ARTIFACTS_DIR" {
+                *value = "/workspace/pipeline-artifacts".into();
+            }
+        }
+    }
     let mut child = if config.mode == RunnerMode::Docker {
         // Bind only this fresh attempt wrapper, never a reusable job directory.
         let workspace_subdir = workspace
@@ -980,8 +1086,7 @@ async fn run_job_inner(
             .and_then(|parent| parent.file_name())
             .map(|name| name.to_string_lossy().to_string())
             .unwrap_or_else(|| format!("forge-runner-{job_id}"));
-        let mut cmd = tokio::process::Command::new("docker");
-        cmd.args(docker_run_args(
+        let args = docker_run_args(
             &format!("forge-job-{job_id}"),
             &job.image,
             &command_shell,
@@ -989,10 +1094,13 @@ async fn run_job_inner(
             &config.docker_network,
             config.shared_sources_volume.as_deref(),
             &workspace_subdir,
-        ));
-        for (k, v) in &envs {
-            cmd.env(k, v);
-        }
+        );
+        let mut cmd = remote_job
+            .as_mut()
+            .expect("Docker preparation required")
+            .job_command(&args, &envs)
+            .await
+            .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
         cmd.current_dir(&workspace)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1012,13 +1120,37 @@ async fn run_job_inner(
         cmd
     };
 
+    let mut guard = running.lock().await;
+    let active: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM execution_attempts a JOIN job_leases l ON l.attempt_id=a.id \
+         JOIN jobs j ON j.id=a.job_id WHERE a.id=$1 AND l.id=$2 \
+         AND a.status='running' AND j.status='running' AND l.lease_status='active' \
+         AND l.cancel_requested_at IS NULL)",
+    )
+    .bind(attempt_id)
+    .bind(lease.id)
+    .fetch_one(&pool)
+    .await
+    .map_err(ApiError::internal)?;
+    if !active {
+        drop(guard);
+        return Ok(finish_workspace_retention(
+            &pool,
+            &lease,
+            owned_workspace,
+            remote_job.as_mut(),
+            config.keep_workspace,
+        )
+        .await);
+    }
     let mut child = child
         .spawn()
         .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
 
     if let Some(pid) = child.id() {
-        running.lock().await.insert(job_id, pid);
+        guard.insert(job_id, pid);
     }
+    drop(guard);
 
     let mut stdout_task = child.stdout.take().map(|stdout| {
         let pool = pool.clone();
@@ -1043,7 +1175,13 @@ async fn run_job_inner(
             let message = format!("runner: job timed out after {timeout_secs}s, killing");
             let _ = child.start_kill();
             if confirmed_process_exit(child.wait().await, job_id, attempt_id).is_none() {
-                return Ok(());
+                return Ok(ExecutionOutcome::Held);
+            }
+            if let Some(remote) = &mut remote_job {
+                if let Err(error) = remote.stop_execution().await {
+                    tracing::error!(%job_id, %attempt_id, %error, "Compose termination unconfirmed; resources retained");
+                    return Ok(ExecutionOutcome::Held);
+                }
             }
             append_attempt_log(&pool, job_id, attempt_id, &message).await?;
             if let Some(task) = stdout_task.take() {
@@ -1052,12 +1190,13 @@ async fn run_job_inner(
             if let Some(task) = stderr_task.take() {
                 let _ = await_stdout_task(task).await;
             }
-            running.lock().await.remove(&job_id);
             let updated = sqlx::query(
                 "UPDATE jobs SET status = 'failed', finished_at = now() \
-                 WHERE id = $1 AND status NOT IN ('canceled')",
+                 WHERE id = $1 AND status='running' \
+                 AND EXISTS(SELECT 1 FROM execution_attempts WHERE id=$2 AND status='running')",
             )
                 .bind(job_id)
+                .bind(attempt_id)
                 .execute(&pool)
                 .await
                 .map_err(ApiError::internal)?;
@@ -1076,22 +1215,24 @@ async fn run_job_inner(
                 )
                 .await?;
                 refresh_stage(pool.clone(), job.id).await?;
-                finish_workspace_retention(&pool, &lease, owned_workspace, config.keep_workspace).await;
-                return Ok(());
+                return Ok(finish_workspace_retention(&pool, &lease, owned_workspace, remote_job.as_mut(), config.keep_workspace).await);
             }
             mark_attempt_failed(&pool, attempt_id, &message).await?;
             complete_embedded_job_lease(&pool, lease.id, "failed", Some(&message)).await?;
             refresh_stage(pool.clone(), job.id).await?;
-            finish_workspace_retention(&pool, &lease, owned_workspace, config.keep_workspace).await;
-            return Ok(());
+            return Ok(finish_workspace_retention(&pool, &lease, owned_workspace, remote_job.as_mut(), config.keep_workspace).await);
         }
     };
 
     let Some(exit_status) = confirmed_process_exit(exit_status, job_id, attempt_id) else {
-        return Ok(());
+        return Ok(ExecutionOutcome::Held);
     };
-
-    running.lock().await.remove(&job_id);
+    if let Some(remote) = &mut remote_job {
+        if let Err(error) = remote.confirm_stopped().await {
+            tracing::error!(%job_id, %attempt_id, %error, "Compose process exit has no stopped-container readback; resources retained");
+            return Ok(ExecutionOutcome::Held);
+        }
+    }
 
     if let Some(task) = stdout_task {
         await_stdout_task(task).await?;
@@ -1111,6 +1252,19 @@ async fn run_job_inner(
     let mut final_status = final_status;
     let mut exit_code = exit_code;
     let mut error_tail = error_tail;
+    if let Some(remote) = &mut remote_job {
+        if let Err(error) = remote.copy_back(&workspace).await {
+            final_status = "failed";
+            error_tail = Some(format!("runner: remote artifact transfer failed: {error}"));
+        }
+        if let Err(error) = remote
+            .return_artifacts(&job_artifacts, &pipeline_artifacts)
+            .await
+        {
+            final_status = "failed";
+            error_tail = Some(format!("runner: remote artifact transfer failed: {error}"));
+        }
+    }
     let artifact_error = collect_declared_artifacts(
         &pool,
         &config.artifacts,
@@ -1134,10 +1288,12 @@ async fn run_job_inner(
 
     let updated = sqlx::query(
         "UPDATE jobs SET status = $2, finished_at = now() \
-         WHERE id = $1 AND status NOT IN ('canceled')",
+         WHERE id = $1 AND status='running' \
+         AND EXISTS(SELECT 1 FROM execution_attempts WHERE id=$3 AND status='running')",
     )
     .bind(job_id)
     .bind(final_status)
+    .bind(attempt_id)
     .execute(&pool)
     .await
     .map_err(ApiError::internal)?;
@@ -1156,8 +1312,14 @@ async fn run_job_inner(
         )
         .await?;
         refresh_stage(pool.clone(), job.id).await?;
-        finish_workspace_retention(&pool, &lease, owned_workspace, config.keep_workspace).await;
-        return Ok(());
+        return Ok(finish_workspace_retention(
+            &pool,
+            &lease,
+            owned_workspace,
+            remote_job.as_mut(),
+            config.keep_workspace,
+        )
+        .await);
     }
     sqlx::query(
         "UPDATE execution_attempts \
@@ -1173,8 +1335,14 @@ async fn run_job_inner(
     .map_err(ApiError::internal)?;
     complete_embedded_job_lease(&pool, lease.id, final_status, error_tail.as_deref()).await?;
     refresh_stage(pool.clone(), job.id).await?;
-    finish_workspace_retention(&pool, &lease, owned_workspace, config.keep_workspace).await;
-    Ok(())
+    Ok(finish_workspace_retention(
+        &pool,
+        &lease,
+        owned_workspace,
+        remote_job.as_mut(),
+        config.keep_workspace,
+    )
+    .await)
 }
 
 fn confirmed_process_exit(
@@ -1196,8 +1364,9 @@ async fn finish_workspace_retention(
     pool: &PgPool,
     lease: &EmbeddedJobLease,
     workspace: crate::runner_workspace::OwnedWorkspace,
+    remote_job: Option<&mut crate::runner_docker::RemoteJob>,
     keep_workspace: bool,
-) {
+) -> ExecutionOutcome {
     // A zero-row completion or a failed readback cannot authorize deletion.
     let acknowledged = sqlx::query_scalar::<_, String>(
         "SELECT l.terminal_status FROM job_leases l JOIN execution_attempts a ON a.id = l.attempt_id \
@@ -1218,13 +1387,22 @@ async fn finish_workspace_retention(
             .is_err()
         {
             tracing::warn!(attempt_id = %lease.attempt_id, "workspace completion journal unavailable; files retained");
-            return;
+            return ExecutionOutcome::Held;
+        }
+        if let Some(remote) = remote_job {
+            if let Err(error) = remote.cleanup(pool).await {
+                tracing::warn!(attempt_id = %lease.attempt_id, %error, "acknowledged Compose resources retained; dispatch held");
+                return ExecutionOutcome::Held;
+            }
         }
         if !keep_workspace && let Err(error) = workspace.cleanup_after_ack().await {
             tracing::warn!(attempt_id = %lease.attempt_id, %error, "acknowledged workspace retained");
+            return ExecutionOutcome::Held;
         }
+        ExecutionOutcome::Finished
     } else {
         tracing::warn!(attempt_id = %lease.attempt_id, "workspace retained: terminal lease acknowledgement missing");
+        ExecutionOutcome::Held
     }
 }
 
@@ -1428,11 +1606,8 @@ async fn prepare_workspace(
     lease: &EmbeddedJobLease,
     config: &RuntimeRunnerConfig,
 ) -> Result<crate::runner_workspace::OwnedWorkspace, ApiError> {
-    let repo_url: String = sqlx::query_scalar("SELECT repository_url FROM projects WHERE id = $1")
-        .bind(job.project_id)
-        .fetch_one(pool)
-        .await
-        .map_err(ApiError::internal)?;
+    let repo_url =
+        crate::repository_catalog::checkout_url_for_project(pool, job.project_id).await?;
 
     let git_ref: String = sqlx::query_scalar("SELECT git_ref FROM pipelines WHERE id = $1")
         .bind(job.pipeline_id)
@@ -1468,16 +1643,18 @@ async fn prepare_workspace(
 
     // Prefer local bare repo: avoid HTTP round-trips that can deadlock if the
     // repository_url points back at the same backend serving this runner.
-    let local_bare = extract_repo_name_from_url(&repo_url)
-        .filter(|name| {
-            !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\'])
-        })
-        .map(|name| config.git_root.join(format!("{name}.git")))
-        .filter(|path| path.is_dir());
-    let repository = local_bare
-        .as_ref()
-        .map(|path| path.to_string_lossy().into_owned())
-        .unwrap_or(repo_url);
+    let storage_name =
+        crate::repository_catalog::local_storage_for_project(pool, job.project_id).await?;
+    let repository = if let Some(storage) = storage_name {
+        let name = crate::git_host::validate_repo_name(&storage).map_err(ApiError::conflict)?;
+        let path = config.git_root.join(format!("{name}.git"));
+        if !path.is_dir() {
+            return Err(ApiError::conflict("hosted_repository_storage_unavailable"));
+        }
+        path.to_string_lossy().into_owned()
+    } else {
+        repo_url
+    };
     // Once a clone is attempted, an uncertain failure is not retried via another source.
     workspace
         .clone_checkout(&repository, job.commit_sha.as_deref(), &git_ref)
@@ -1486,12 +1663,6 @@ async fn prepare_workspace(
             ApiError::bad_request("Checkout verification failed; attempt workspace retained")
         })?;
     Ok(workspace)
-}
-
-fn extract_repo_name_from_url(url: &str) -> Option<String> {
-    let path = url.split('/').next_back()?;
-    let name = path.strip_suffix(".git").unwrap_or(path);
-    Some(name.to_string())
 }
 
 async fn refresh_stage(pool: PgPool, job_id: Uuid) -> Result<(), ApiError> {
@@ -1644,6 +1815,9 @@ async fn reconcile_runtime_state_with_config(
     pool: &PgPool,
     config: &RuntimeRunnerConfig,
 ) -> Result<(), sqlx::Error> {
+    if config.mode == RunnerMode::Docker {
+        crate::runner_docker::reconcile(pool).await?;
+    }
     let unacknowledged = reconcile_unacknowledged_leases(pool).await?;
     if unacknowledged > 0 {
         tracing::warn!(
@@ -1692,6 +1866,7 @@ async fn reconcile_runtime_state_with_config(
     }
 
     cancel_jobs_for_canceled_pipelines(pool).await?;
+    crate::platform::reconcile_deployment_results(pool).await?;
     Ok(())
 }
 
@@ -1955,6 +2130,89 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn unconfirmed_embedded_outcome_keeps_pid_and_blocks_duplicate_execution() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://qa:qa@127.0.0.1:1/unused")
+            .unwrap();
+        pool.close().await;
+        let job_id = Uuid::new_v4();
+        let running = RunningJobs::default();
+        running.lock().await.insert(job_id, 42);
+
+        release_execution_reservation(&running, job_id, ExecutionOutcome::Held).await;
+
+        assert_eq!(running.lock().await.get(&job_id).copied(), Some(42));
+        run_job_with_config(
+            pool,
+            job_id,
+            running.clone(),
+            RuntimeRunnerConfig::from_config(&RuntimeConfig::test_default()),
+        )
+        .await;
+        assert_eq!(running.lock().await.get(&job_id).copied(), Some(42));
+    }
+
+    #[tokio::test]
+    async fn finished_embedded_outcome_releases_only_its_own_reservation() {
+        let job_id = Uuid::new_v4();
+        let neighbor = Uuid::new_v4();
+        let running = RunningJobs::default();
+        running.lock().await.extend([(job_id, 42), (neighbor, 43)]);
+
+        release_execution_reservation(&running, job_id, ExecutionOutcome::Finished).await;
+
+        let guard = running.lock().await;
+        assert!(!guard.contains_key(&job_id));
+        assert_eq!(guard.get(&neighbor).copied(), Some(43));
+    }
+
+    #[tokio::test]
+    async fn failed_embedded_outcome_releases_reservation_after_error_handling() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://qa:qa@127.0.0.1:1/unused")
+            .unwrap();
+        pool.close().await;
+        let job_id = Uuid::new_v4();
+        let neighbor = Uuid::new_v4();
+        let running = RunningJobs::default();
+        running.lock().await.insert(neighbor, 43);
+
+        run_job_with_config(
+            pool,
+            job_id,
+            running.clone(),
+            RuntimeRunnerConfig::from_config(&RuntimeConfig::test_default()),
+        )
+        .await;
+
+        let guard = running.lock().await;
+        assert!(!guard.contains_key(&job_id));
+        assert_eq!(guard.get(&neighbor).copied(), Some(43));
+    }
+
+    #[tokio::test]
+    async fn held_execution_keeps_physical_identity_and_preparation_reservation() {
+        for pid in [0, 4242] {
+            let job = Uuid::new_v4();
+            let neighbor = Uuid::new_v4();
+            let running = Arc::new(Mutex::new(HashMap::from([(job, pid), (neighbor, 77)])));
+            assert_eq!(
+                execution_error_outcome(&running, job).await,
+                if pid == 0 {
+                    ExecutionOutcome::Finished
+                } else {
+                    ExecutionOutcome::Held
+                }
+            );
+            release_execution_reservation(&running, job, ExecutionOutcome::Held).await;
+            assert_eq!(running.lock().await.get(&job), Some(&pid));
+            release_execution_reservation(&running, job, ExecutionOutcome::Finished).await;
+            assert!(!running.lock().await.contains_key(&job));
+            assert_eq!(running.lock().await.get(&neighbor), Some(&77));
+        }
+    }
 
     #[test]
     fn embedded_wait_error_is_not_a_confirmed_terminal_exit() {

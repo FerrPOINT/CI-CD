@@ -31,8 +31,8 @@ function renderReport(value: ProjectReport, failOnce = false) {
 
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(<QueryClientProvider client={client}>
-    <MemoryRouter initialEntries={[`/projects/${projectId}/reports`]}>
-      <Routes><Route path="/projects/:projectId/reports" element={<ReportsPage />} /></Routes>
+    <MemoryRouter initialEntries={[`/delivery-configs/${projectId}/reports`]}>
+      <Routes><Route path="/delivery-configs/:projectId/reports" element={<ReportsPage />} /></Routes>
     </MemoryRouter>
   </QueryClientProvider>)
   return () => reads
@@ -55,7 +55,7 @@ describe('ReportsPage', () => {
     expect(screen.getByText('1,5 reports.minutes')).toBeInTheDocument()
     expect(screen.getByRole('img', { name: 'reports.distribution' })).toBeInTheDocument()
     expect(screen.getByText('reports.other').nextElementSibling).toHaveTextContent('2')
-    expect(screen.getByRole('link', { name: 'reports.openPipelines' })).toHaveAttribute('href', `/projects/${projectId}/pipelines`)
+    expect(screen.getByRole('link', { name: 'reports.openPipelines' })).toHaveAttribute('href', `/delivery-configs/${projectId}/pipelines`)
   })
 
   it('offers a route to the first pipeline when no runs exist', async () => {

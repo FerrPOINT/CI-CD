@@ -51,7 +51,7 @@ async fn sdlc_workspace_history_delete_returns_conflict_and_preserves_owner_reso
 #[cfg(unix)]
 #[tokio::test]
 async fn sdlc_candidate_actual_runner_pipeline_artifacts_and_blocked_delivery() {
-    let mut f = Fixture::new().await;
+    let mut f = Fixture::with_repository_binding(false).await;
     let temp = std::env::temp_dir().join(format!("forge-candidate-actual-{}", Uuid::new_v4()));
     let source = temp.join("source");
     let git_root = temp.join("git");
@@ -107,9 +107,10 @@ async fn sdlc_candidate_actual_runner_pipeline_artifacts_and_blocked_delivery() 
             bare.to_str().unwrap(),
         ],
     );
-    sqlx::query("UPDATE projects SET repository_url=$1 WHERE id=$2")
+    sqlx::query("UPDATE projects SET repository_url=$1,repository_id=$3 WHERE id=$2")
         .bind(format!("file://{}", bare.display()))
         .bind(f.project)
+        .bind(f.request.repository_id)
         .execute(&f.pool)
         .await
         .unwrap();

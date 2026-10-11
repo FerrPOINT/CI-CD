@@ -6,10 +6,7 @@ WORKDIR /app
 # backend/Cargo.toml: sdlc-auth-core = { path = "../../../services-base/..." }
 # /app/../../services-base == /services-base (WORKDIR is repo backend/).
 COPY services-base/Cargo.toml /services-base/Cargo.toml
-COPY services-base/crates/sdlc-shared /services-base/crates/sdlc-shared
-COPY services-base/crates/sdlc-auth-core /services-base/crates/sdlc-auth-core
-COPY services-base/crates/sdlc-cli-core /services-base/crates/sdlc-cli-core
-COPY services-base/crates/sdlc-telemetry /services-base/crates/sdlc-telemetry
+COPY services-base/crates /services-base/crates
 COPY CI-CD/backend/Cargo.toml CI-CD/backend/Cargo.lock* ./
 COPY CI-CD/backend/domain/Cargo.toml domain/Cargo.toml
 COPY CI-CD/backend/app/Cargo.toml app/Cargo.toml
@@ -19,7 +16,8 @@ COPY CI-CD/backend/cli/Cargo.toml cli/Cargo.toml
 COPY CI-CD/backend/migration/Cargo.toml migration/Cargo.toml
 RUN mkdir -p src/bin domain/src app/src infra/src api/src cli/src migration/src \
  && printf 'fn main() {}\n' > src/main.rs && printf '' > src/lib.rs \
- && printf 'fn main() {}\n' > src/bin/openapi-dump.rs && printf 'fn main() {}\n' > src/bin/forge-runner.rs && printf 'fn main() {}\n' > src/bin/dummy.rs \
+ && printf 'fn main() {}\n' > src/bin/openapi-dump.rs && printf 'fn main() {}\n' > src/bin/forge-runner.rs \
+ && printf 'fn main() {}\n' > src/bin/forge-delivery.rs && printf 'fn main() {}\n' > src/bin/forge-pg-migrate.rs \
  && printf '\n' > domain/src/lib.rs \
  && printf '\n' > app/src/lib.rs \
  && printf '\n' > infra/src/lib.rs \
@@ -36,6 +34,9 @@ COPY CI-CD/backend/api/src api/src
 COPY CI-CD/backend/cli/src cli/src
 COPY CI-CD/backend/migration/src migration/src
 COPY CI-CD/backend/migrations ./migrations
+# Compile-time delivery witnesses must come from the same pinned source set.
+COPY CI-CD/scripts/postgres-delivery.py /scripts/postgres-delivery.py
+COPY services-base/scripts/platform_backup.py services-base/scripts/platform_postgres.py services-base/scripts/compose_helpers.py /services-base/scripts/
 RUN find src domain app infra api cli migration -name '*.rs' -exec touch {} + \
  && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server -p cicd-cli
 
@@ -49,6 +50,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl git git-lf
  && curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_CLI_VERSION}.tgz \
   | tar -xz --strip-components=1 -C /usr/local/bin docker/docker \
  && useradd --create-home --uid 10001 cicd
+
+# Official Compose v5.5.1 release checksums (not downloaded mutable checksums).
+ARG TARGETARCH
+RUN case "${TARGETARCH:-amd64}" in \
+      amd64) compose_arch=x86_64; compose_sha=db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576 ;; \
+      arm64) compose_arch=aarch64; compose_sha=732e3a84c1a0f67256ce80bc2598a24546b10ca05f9faa97efceb1171ece2ef7 ;; \
+      *) exit 1 ;; esac \
+ && mkdir -p /usr/local/lib/docker/cli-plugins \
+ && curl -fsSL "https://github.com/docker/compose/releases/download/v5.5.1/docker-compose-linux-${compose_arch}" -o /tmp/docker-compose \
+ && echo "${compose_sha}  /tmp/docker-compose" | sha256sum -c - \
+ && install -m 0755 /tmp/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose \
+ && rm /tmp/docker-compose \
+ && docker compose version
 
 WORKDIR /app
 COPY --from=build /app/target/release/cicd-server /usr/local/bin/cicd-server

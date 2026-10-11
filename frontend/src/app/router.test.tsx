@@ -191,6 +191,12 @@ function mockFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Respon
 
   if (method !== 'GET') return json({})
 
+  if (path.startsWith('/delivery-configurations/')) return json({ ...project, repository_id: null })
+  if (path === '/workspace-projects') return json({ items: [{ ...project, registry_instance_id: userId, namespace_id: projectId, project_key: 'FORGE', state: 'active', group_id: userId, group_slug: 'platform', repositories: 1 }], total: 1 })
+  if (path === '/workspace-summary') return json({ projects: 1, repositories: 1, configurations: 1, queued: 0, running: 1, failed: 0 })
+  if (path === '/workspace-pipelines') return json({ items: [{ ...pipeline, repository_id: projectId, repository_name: repoName, configuration_id: projectId, configuration_name: project.name, pipeline_id: pipelineId }], total: 1 })
+  if (path === '/delivery-configurations') return json({ items: [], total: 0 })
+  if (path === '/catalog/repositories') return json({ items: [{ id: projectId, public_name: repoName, kind: 'external', ready: true, namespace: null }] })
   if (path === '/projects') return json([project])
   if (path === `/projects/${projectId}/pipelines`) return json([pipeline])
   if (path === `/pipelines/${pipelineId}`) {

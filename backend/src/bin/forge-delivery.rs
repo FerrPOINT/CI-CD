@@ -47,8 +47,15 @@ async fn run(args: Args) -> anyhow::Result<bool> {
         .acquire_timeout(std::time::Duration::from_secs(3))
         .connect(&config.database.url)
         .await?;
+    let namespace_admission_pool = pool
+        .options()
+        .clone()
+        .max_connections(2)
+        .min_connections(0)
+        .connect_lazy_with((*pool.connect_options()).clone());
     let state = Arc::new(AppState {
         pool: Some(pool),
+        namespace_admission_pool: Some(namespace_admission_pool),
         auth_secret: config.auth.secret.clone(),
         git: config.git.to_git_config(),
         config,
