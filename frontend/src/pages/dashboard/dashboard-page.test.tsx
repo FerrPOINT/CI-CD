@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import { DashboardPage } from './index'
-vi.mock('@/api/client', () => ({ api: vi.fn() }))
+vi.mock('@/api/client', async original => ({ ...await original<object>(), api: vi.fn() }))
 function mount() {
   return render(
     <QueryClientProvider

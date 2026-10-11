@@ -52,6 +52,7 @@ pub struct CatalogRepository {
 #[derive(Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CatalogPage {
     pub items: Vec<CatalogRepository>,
+    pub total: i64,
 }
 #[utoipa::path(get,operation_id="forge_repository_catalog_all",path="/api/v1/catalog/repositories",tag="namespaces",params(Page),responses((status=200,body=CatalogPage)))]
 pub async fn all(
@@ -59,7 +60,11 @@ pub async fn all(
     Query(page): Query<Page>,
 ) -> Result<Json<CatalogPage>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
-    let rows:Vec<serde_json::Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',r.id,'group_id',r.group_id,'slug',r.slug,'kind',r.kind,'ready',r.ready,'external_url',r.external_url,'provider_refs',r.provider_refs,'public_name',COALESCE(g.slug||'/'||r.slug,r.slug),'storage_name',r.storage_name,'visibility',s.visibility,'namespace',CASE WHEN b.resource_id IS NOT NULL THEN jsonb_build_object('registry_instance_id',b.registry_instance_id,'namespace_id',b.namespace_id) ELSE NULL END,'state',b.state) FROM repository_catalog r JOIN repositories s ON s.id=r.id LEFT JOIN git_groups g ON g.id=r.group_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=g.id WHERE ($3::uuid IS NULL OR r.group_id=$3) AND position(lower($4) in lower(COALESCE(g.slug||'/'||r.slug,r.slug)))>0 ORDER BY g.slug NULLS LAST,r.slug,r.id LIMIT $1 OFFSET $2").bind(page.limit.unwrap_or(50).clamp(1,100)).bind(page.offset.unwrap_or(0).max(0)).bind(page.group_id).bind(page.search.as_deref().unwrap_or("")) .fetch_all(pool).await.map_err(catalog_database_error)?;
+    let search = page.search.as_deref().unwrap_or("");
+    let managed = page.managed.unwrap_or(false);
+    let total: i64 = sqlx::query_scalar("SELECT count(*) FROM repository_catalog r JOIN repositories s ON s.id=r.id LEFT JOIN git_groups g ON g.id=r.group_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=g.id WHERE ($1::uuid IS NULL OR r.group_id=$1) AND position(lower($2) in lower(COALESCE(g.slug||'/'||r.slug,r.slug)))>0 AND (NOT $3 OR b.resource_id IS NOT NULL)")
+        .bind(page.group_id).bind(search).bind(managed).fetch_one(pool).await.map_err(catalog_database_error)?;
+    let rows:Vec<serde_json::Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',r.id,'group_id',r.group_id,'slug',r.slug,'kind',r.kind,'ready',r.ready,'external_url',r.external_url,'provider_refs',r.provider_refs,'public_name',COALESCE(g.slug||'/'||r.slug,r.slug),'storage_name',r.storage_name,'visibility',s.visibility,'namespace',CASE WHEN b.resource_id IS NOT NULL THEN jsonb_build_object('registry_instance_id',b.registry_instance_id,'namespace_id',b.namespace_id) ELSE NULL END,'state',b.state) FROM repository_catalog r JOIN repositories s ON s.id=r.id LEFT JOIN git_groups g ON g.id=r.group_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=g.id WHERE ($3::uuid IS NULL OR r.group_id=$3) AND position(lower($4) in lower(COALESCE(g.slug||'/'||r.slug,r.slug)))>0 AND (NOT $5 OR b.resource_id IS NOT NULL) ORDER BY g.slug NULLS LAST,r.slug,r.id LIMIT $1 OFFSET $2").bind(page.limit.unwrap_or(50).clamp(1,100)).bind(page.offset.unwrap_or(0).max(0)).bind(page.group_id).bind(search).bind(managed).fetch_all(pool).await.map_err(catalog_database_error)?;
     let mut items = Vec::new();
     for value in rows {
         let mut repo: CatalogRepository = serde_json::from_value(value)
@@ -70,7 +75,7 @@ pub async fn all(
         check_availability(&state, &mut repo).await;
         items.push(repo);
     }
-    Ok(Json(CatalogPage { items }))
+    Ok(Json(CatalogPage { items, total }))
 }
 #[derive(Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -92,6 +97,7 @@ pub struct Page {
     pub offset: Option<i64>,
     pub search: Option<String>,
     pub group_id: Option<Uuid>,
+    pub managed: Option<bool>,
 }
 #[derive(Deserialize, utoipa::IntoParams)]
 pub struct NamespaceQuery {
@@ -382,7 +388,9 @@ pub async fn list(
     for repository in &mut items {
         check_availability(&state, repository).await;
     }
-    Ok(Json(CatalogPage { items }))
+    let total: i64 = sqlx::query_scalar("SELECT count(*) FROM repository_catalog r JOIN repositories s ON s.id=r.id WHERE r.group_id=$1 AND position(lower($2) in lower(r.slug))>0")
+        .bind(id).bind(page.search.as_deref().unwrap_or("")).fetch_one(pool).await.map_err(catalog_database_error)?;
+    Ok(Json(CatalogPage { items, total }))
 }
 
 #[utoipa::path(get,operation_id="forge_unbound_repository_catalog",path="/api/v1/catalog/available-repositories",tag="namespaces",params(Page),responses((status=200,body=CatalogPage)))]
@@ -391,8 +399,11 @@ pub async fn available(
     Query(page): Query<Page>,
 ) -> Result<Json<CatalogPage>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
-    let values: Vec<serde_json::Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',r.id,'group_id',r.group_id,'slug',r.slug,'kind',r.kind,'ready',r.ready,'external_url',r.external_url,'provider_refs',r.provider_refs,'public_name',r.slug,'storage_name',r.storage_name,'visibility',s.visibility) FROM repository_catalog r JOIN repositories s ON s.id=r.id WHERE r.group_id IS NULL ORDER BY r.slug,r.id LIMIT $1 OFFSET $2").bind(page.limit.unwrap_or(50).clamp(1,100)).bind(page.offset.unwrap_or(0).max(0)).fetch_all(pool).await.map_err(catalog_database_error)?;
+    let search = page.search.as_deref().unwrap_or("");
+    let total: i64 = sqlx::query_scalar("SELECT count(*) FROM repository_catalog r JOIN repositories s ON s.id=r.id WHERE r.group_id IS NULL AND position(lower($1) in lower(r.slug))>0").bind(search).fetch_one(pool).await.map_err(catalog_database_error)?;
+    let values: Vec<serde_json::Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',r.id,'group_id',r.group_id,'slug',r.slug,'kind',r.kind,'ready',r.ready,'external_url',r.external_url,'provider_refs',r.provider_refs,'public_name',r.slug,'storage_name',r.storage_name,'visibility',s.visibility) FROM repository_catalog r JOIN repositories s ON s.id=r.id WHERE r.group_id IS NULL AND position(lower($3) in lower(r.slug))>0 ORDER BY r.slug,r.id LIMIT $1 OFFSET $2").bind(page.limit.unwrap_or(50).clamp(1,100)).bind(page.offset.unwrap_or(0).max(0)).bind(search).fetch_all(pool).await.map_err(catalog_database_error)?;
     Ok(Json(CatalogPage {
+        total,
         items: values
             .into_iter()
             .map(|value| {

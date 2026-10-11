@@ -433,6 +433,13 @@ paths:
           - string
           - 'null'
           format: uuid
+      - name: managed
+        in: query
+        required: false
+        schema:
+          type:
+          - boolean
+          - 'null'
       responses:
         '200':
           description: ''
@@ -477,6 +484,13 @@ paths:
           - string
           - 'null'
           format: uuid
+      - name: managed
+        in: query
+        required: false
+        schema:
+          type:
+          - boolean
+          - 'null'
       responses:
         '200':
           description: ''
@@ -566,6 +580,13 @@ paths:
           - string
           - 'null'
       - name: unbound
+        in: query
+        required: false
+        schema:
+          type:
+          - boolean
+          - 'null'
+      - name: managed
         in: query
         required: false
         schema:
@@ -723,6 +744,21 @@ paths:
           - string
           - 'null'
           format: date-time
+      - name: environment_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: approval_state
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
       responses:
         '200':
           description: ''
@@ -838,6 +874,21 @@ paths:
           - string
           - 'null'
           format: date-time
+      - name: environment_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: approval_state
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
       responses:
         '200':
           description: ''
@@ -995,6 +1046,13 @@ paths:
           - string
           - 'null'
           format: uuid
+      - name: managed
+        in: query
+        required: false
+        schema:
+          type:
+          - boolean
+          - 'null'
       responses:
         '200':
           description: ''
@@ -1107,6 +1165,13 @@ paths:
           - string
           - 'null'
       - name: unbound
+        in: query
+        required: false
+        schema:
+          type:
+          - boolean
+          - 'null'
+      - name: managed
         in: query
         required: false
         schema:
@@ -1393,6 +1458,13 @@ paths:
           - string
           - 'null'
           format: uuid
+      - name: managed
+        in: query
+        required: false
+        schema:
+          type:
+          - boolean
+          - 'null'
       responses:
         '200':
           description: ''
@@ -4887,6 +4959,21 @@ paths:
           - string
           - 'null'
           format: date-time
+      - name: environment_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: approval_state
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
       responses:
         '200':
           description: ''
@@ -4969,6 +5056,21 @@ paths:
           - string
           - 'null'
           format: date-time
+      - name: environment_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: approval_state
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
       responses:
         '200':
           description: ''
@@ -5090,6 +5192,21 @@ paths:
           - string
           - 'null'
           format: date-time
+      - name: environment_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: approval_state
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
       responses:
         '200':
           description: ''
@@ -5184,6 +5301,21 @@ paths:
           - string
           - 'null'
           format: date-time
+      - name: environment_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      - name: approval_state
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
       responses:
         '200':
           description: ''
@@ -5747,11 +5879,15 @@ components:
       type: object
       required:
       - items
+      - total
       properties:
         items:
           type: array
           items:
             $ref: '#/components/schemas/CatalogRepository'
+        total:
+          type: integer
+          format: int64
     CatalogRepository:
       type: object
       required:
@@ -6167,6 +6303,10 @@ components:
           - string
           - 'null'
           format: uuid
+        repository_name:
+          type:
+          - string
+          - 'null'
         repository_url:
           type: string
     DeliveryManifest:
@@ -6555,6 +6695,11 @@ components:
           type:
           - string
           - 'null'
+        finished_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
         git_ref:
           type: string
         id:
@@ -6572,6 +6717,11 @@ components:
           format: uuid
         repository_name:
           type: string
+        started_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
         status:
           type: string
     GitPushEvent:

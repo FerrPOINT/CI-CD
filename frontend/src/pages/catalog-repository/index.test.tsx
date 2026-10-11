@@ -1,11 +1,11 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { api } from '@/api/client'
 import { CatalogRepositoryPage } from './index'
 
-vi.mock('@/api/client', () => ({ api: vi.fn() }))
+vi.mock('@/api/client', async importOriginal => ({ ...await importOriginal<object>(), api: vi.fn() }))
 
 const registry = '11111111-1111-4111-8111-111111111111'
 const namespace = '22222222-2222-4222-8222-222222222222'
@@ -35,8 +35,8 @@ afterEach(() => {
   vi.resetAllMocks()
 })
 
-function mount(selectedNamespace: string, tab: string) {
-  const path = `/catalog/repositories/${repository}?tab=${tab}&registry_instance_id=${registry}&namespace_id=${selectedNamespace}`
+function mount(selectedNamespace: string, tab: string, suffix = '') {
+  const path = `/catalog/repositories/${repository}?tab=${tab}&registry_instance_id=${registry}&namespace_id=${selectedNamespace}${suffix}`
   render(
     <QueryClientProvider
       client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
@@ -55,9 +55,10 @@ it.each(['pipelines', 'deployments'])(
   async (tab) => {
     mount(namespace, tab)
     await screen.findByRole('heading', { name: 'project/api' })
+    fireEvent.click(screen.getByRole('button', { name: 'Фильтры' }))
     await waitFor(() =>
       expect(api).toHaveBeenCalledWith(
-        `/catalog/repositories/${repository}/delivery-configs?limit=100&search=&registry_instance_id=${registry}&namespace_id=${namespace}`,
+        `/catalog/repositories/${repository}/delivery-configs?limit=50&offset=0&search=&managed=true&registry_instance_id=${registry}&namespace_id=${namespace}`,
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
       ),
     )
@@ -78,4 +79,12 @@ it('rejects a foreign namespace before loading repository executions', async () 
       path.startsWith(`/catalog/repositories/${repository}/pipelines`),
     ),
   ).toBe(false)
+})
+
+it('drops deployment-only filters when navigating to repository pipelines', async () => {
+  mount(namespace, 'deployments', '&environment_id=env&approval_state=pending')
+  await screen.findByRole('heading', { name: 'project/api' })
+  fireEvent.click(screen.getByRole('link', { name: 'Пайплайны' }))
+  await waitFor(() => expect(api).toHaveBeenCalledWith(`/catalog/repositories/${repository}/pipelines?limit=50&offset=0`, expect.objectContaining({ signal: expect.any(AbortSignal) })))
+  expect(vi.mocked(api).mock.calls.filter(([path]) => path.includes('/pipelines?')).every(([path]) => !path.includes('environment_id') && !path.includes('approval_state'))).toBe(true)
 })

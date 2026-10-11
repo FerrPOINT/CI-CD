@@ -1,10 +1,20 @@
 import type { ReactNode } from 'react'
-import { useParams } from 'react-router'
+import { useParams, useLocation } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
-import { NamespaceLink as Link, ProjectAvatar } from '@sdlc/ui/ui'
+import {
+  NamespaceLink as Link,
+  ProjectAvatar,
+  SectionNavigation,
+  SectionNavigationItem,
+} from '@sdlc/ui/ui'
 import { withNamespaceLocation } from '@sdlc/ui/lib'
 import { api } from '@/api/client'
-import { useWorkspace, workspaceKey, workspacePath, type Configuration } from '@/api/workspaces'
+import {
+  useWorkspace,
+  workspaceKey,
+  workspacePath,
+  type Configuration,
+} from '@/api/workspaces'
 import { useNamespaceRef } from './namespace-context'
 import type { components } from '@/api/schema'
 export function ConfigurationContext({
@@ -17,10 +27,16 @@ export function ConfigurationContext({
   showSettings?: boolean
 }) {
   const { projectId: routeId } = useParams()
+  const location = useLocation()
   const projectId = configurationId ?? routeId
   const { ref, malformed } = useNamespaceRef()
   const config = useQuery({
-    queryKey: ['delivery-config', ref?.registry_instance_id, ref?.namespace_id, projectId],
+    queryKey: [
+      'delivery-config',
+      ref?.registry_instance_id,
+      ref?.namespace_id,
+      projectId,
+    ],
     queryFn: ({ signal }) =>
       api<Configuration>(`/delivery-configurations/${projectId}`, { signal }),
   })
@@ -42,7 +58,9 @@ export function ConfigurationContext({
   const project = useWorkspace(namespace)
   if (
     malformed ||
-    (ref && repository.data && (!namespace || workspaceKey(ref) !== workspaceKey(namespace)))
+    (ref &&
+      repository.data &&
+      (!namespace || workspaceKey(ref) !== workspaceKey(namespace)))
   )
     return (
       <p role="alert" className="text-danger">
@@ -68,7 +86,10 @@ export function ConfigurationContext({
             <ProjectAvatar projectKey={project.data.project_key} size="xs" />
             <Link
               className="text-accent"
-              to={withNamespaceLocation(workspacePath(project.data), project.data)}
+              to={withNamespaceLocation(
+                workspacePath(project.data),
+                project.data,
+              )}
             >
               {project.data.name} · {project.data.project_key}
             </Link>
@@ -79,7 +100,10 @@ export function ConfigurationContext({
           <>
             <Link
               className="text-accent"
-              to={withNamespaceLocation(`/catalog/repositories/${repository.data.id}`, namespace)}
+              to={withNamespaceLocation(
+                `/catalog/repositories/${repository.data.id}`,
+                namespace,
+              )}
             >
               {repository.data.public_name}
             </Link>
@@ -93,25 +117,36 @@ export function ConfigurationContext({
         <span>CI: {config.data.name}</span>
       </nav>
       {showSettings && (
-        <div className="flex flex-wrap gap-3 text-sm">
+        <SectionNavigation aria-label="Разделы CI-конфигурации">
           {[
             ['settings', 'Настройки'],
             ['pipelines', 'Запуски'],
-            ['secrets', 'Secrets'],
+            ['secrets', 'Секреты'],
             ['environments', 'Окружения'],
             ['schedules', 'Расписания'],
-            ['webhooks', 'Hooks'],
+            ['webhooks', 'Вебхуки'],
             ['reports', 'Отчёты'],
           ].map(([section, label]) => (
-            <Link
+            <SectionNavigationItem
+              asChild
               key={section}
-              className="text-accent"
-              to={withNamespaceLocation(`/delivery-configs/${projectId}/${section}`, namespace)}
+              active={
+                location.pathname ===
+                `/delivery-configs/${projectId}/${section}`
+              }
             >
-              {label}
-            </Link>
+              <Link
+                key={section}
+                to={withNamespaceLocation(
+                  `/delivery-configs/${projectId}/${section}`,
+                  namespace,
+                )}
+              >
+                {label}
+              </Link>
+            </SectionNavigationItem>
           ))}
-        </div>
+        </SectionNavigation>
       )}
       {children}
     </div>

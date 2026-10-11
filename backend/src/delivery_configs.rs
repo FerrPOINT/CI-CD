@@ -15,6 +15,9 @@ pub struct DeliveryConfig {
     pub id: Uuid,
     pub name: String,
     pub repository_id: Option<Uuid>,
+    #[sqlx(default)]
+    #[serde(default)]
+    pub repository_name: Option<String>,
     pub repository_url: String,
     pub default_branch: String,
     pub max_running_jobs: Option<i32>,
@@ -43,6 +46,7 @@ pub struct ConfigQuery {
     pub offset: Option<i64>,
     pub search: Option<String>,
     pub unbound: Option<bool>,
+    pub managed: Option<bool>,
     pub registry_instance_id: Option<Uuid>,
     pub namespace_id: Option<Uuid>,
 }
@@ -84,7 +88,7 @@ pub async fn get(
     if !configuration_visible(pool, id, &claims).await? {
         return Err(ApiError::not_found());
     }
-    sqlx::query_as("SELECT id,name,repository_id,repository_url,default_branch,max_running_jobs,created_at FROM projects WHERE id=$1")
+    sqlx::query_as("SELECT p.id,p.name,p.repository_id,p.repository_url,p.default_branch,p.max_running_jobs,p.created_at,COALESCE(g.slug||'/'||r.slug,r.slug) AS repository_name FROM projects p LEFT JOIN repository_catalog r ON r.id=p.repository_id LEFT JOIN git_groups g ON g.id=r.group_id WHERE p.id=$1")
         .bind(id).fetch_optional(pool).await.map_err(ApiError::internal)?.map(Json).ok_or_else(ApiError::not_found)
 }
 #[utoipa::path(get,operation_id="forge_delivery_readback",path="/api/v1/catalog/repositories/{id}/delivery-config-operations/{operation}",tag="delivery-configurations",params(("id"=Uuid,Path),("operation"=Uuid,Path)),responses((status=200,body=DeliveryConfig),(status=404,description="Original operation not found")))]
@@ -116,7 +120,7 @@ async fn read_configs(
     let search = query.search.unwrap_or_default();
     let unbound = query.unbound.unwrap_or(false);
     let filter = format!(
-        "{filter} AND ($6::uuid IS NULL OR EXISTS(SELECT 1 FROM repository_catalog rc JOIN forge_namespace_bindings nb ON nb.resource_id=rc.group_id WHERE rc.id=p.repository_id AND nb.registry_instance_id=$6 AND nb.namespace_id=$7))"
+        "{filter} AND ($6::uuid IS NULL OR EXISTS(SELECT 1 FROM repository_catalog rc JOIN forge_namespace_bindings nb ON nb.resource_id=rc.group_id WHERE rc.id=p.repository_id AND nb.registry_instance_id=$6 AND nb.namespace_id=$7)) AND (NOT $8 OR EXISTS(SELECT 1 FROM repository_catalog mr JOIN forge_namespace_bindings mb ON mb.resource_id=mr.group_id JOIN forge_workspace_projects mw ON mw.registry_instance_id=mb.registry_instance_id AND mw.namespace_id=mb.namespace_id WHERE mr.id=p.repository_id))"
     );
     let total = sqlx::query_scalar(&format!("SELECT count(*) FROM projects p{filter}"))
         .bind(repo)
@@ -126,11 +130,12 @@ async fn read_configs(
         .bind(user)
         .bind(query.registry_instance_id)
         .bind(query.namespace_id)
+        .bind(query.managed.unwrap_or(false))
         .fetch_one(pool)
         .await
         .map_err(ApiError::internal)?;
     let sql = format!(
-        "SELECT p.id,p.name,p.repository_id,p.repository_url,p.default_branch,p.max_running_jobs,p.created_at FROM projects p{filter} ORDER BY p.name,p.id LIMIT $8 OFFSET $9"
+        "SELECT p.id,p.name,p.repository_id,p.repository_url,p.default_branch,p.max_running_jobs,p.created_at,COALESCE(display_group.slug||'/'||display_repo.slug,display_repo.slug) AS repository_name FROM projects p LEFT JOIN repository_catalog display_repo ON display_repo.id=p.repository_id LEFT JOIN git_groups display_group ON display_group.id=display_repo.group_id{filter} ORDER BY p.name,p.id LIMIT $9 OFFSET $10"
     );
     let items = sqlx::query_as(&sql)
         .bind(repo)
@@ -140,6 +145,7 @@ async fn read_configs(
         .bind(user)
         .bind(query.registry_instance_id)
         .bind(query.namespace_id)
+        .bind(query.managed.unwrap_or(false))
         .bind(query.limit.unwrap_or(50).clamp(1, 100))
         .bind(query.offset.unwrap_or(0).max(0))
         .fetch_all(pool)

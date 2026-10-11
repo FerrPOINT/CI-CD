@@ -2428,6 +2428,8 @@ export interface components {
         };
         CatalogPage: {
             items: components["schemas"]["CatalogRepository"][];
+            /** Format: int64 */
+            total: number;
         };
         CatalogRepository: {
             availability?: string | null;
@@ -2594,6 +2596,7 @@ export interface components {
             name: string;
             /** Format: uuid */
             repository_id?: string | null;
+            repository_name?: string | null;
             repository_url: string;
         };
         DeliveryManifest: {
@@ -2740,6 +2743,8 @@ export interface components {
             /** Format: uuid */
             environment_id?: string | null;
             environment_name?: string | null;
+            /** Format: date-time */
+            finished_at?: string | null;
             git_ref: string;
             /** Format: uuid */
             id: string;
@@ -2749,6 +2754,8 @@ export interface components {
             /** Format: uuid */
             repository_id: string;
             repository_name: string;
+            /** Format: date-time */
+            started_at?: string | null;
             status: string;
         };
         GitPushEvent: {
@@ -4341,6 +4348,7 @@ export interface operations {
                 offset?: number | null;
                 search?: string | null;
                 group_id?: string | null;
+                managed?: boolean | null;
             };
             header?: never;
             path?: never;
@@ -4365,6 +4373,7 @@ export interface operations {
                 offset?: number | null;
                 search?: string | null;
                 group_id?: string | null;
+                managed?: boolean | null;
             };
             header?: never;
             path?: never;
@@ -4439,6 +4448,7 @@ export interface operations {
                 offset?: number | null;
                 search?: string | null;
                 unbound?: boolean | null;
+                managed?: boolean | null;
                 registry_instance_id?: string | null;
                 namespace_id?: string | null;
             };
@@ -4525,6 +4535,8 @@ export interface operations {
                 git_ref?: string | null;
                 since?: string | null;
                 until?: string | null;
+                environment_id?: string | null;
+                approval_state?: string | null;
             };
             header?: never;
             path: {
@@ -4588,6 +4600,8 @@ export interface operations {
                 git_ref?: string | null;
                 since?: string | null;
                 until?: string | null;
+                environment_id?: string | null;
+                approval_state?: string | null;
             };
             header?: never;
             path: {
@@ -4708,6 +4722,7 @@ export interface operations {
                 offset?: number | null;
                 search?: string | null;
                 group_id?: string | null;
+                managed?: boolean | null;
             };
             header?: never;
             path: {
@@ -4807,6 +4822,7 @@ export interface operations {
                 offset?: number | null;
                 search?: string | null;
                 unbound?: boolean | null;
+                managed?: boolean | null;
                 registry_instance_id?: string | null;
                 namespace_id?: string | null;
             };
@@ -5102,6 +5118,7 @@ export interface operations {
                 offset?: number | null;
                 search?: string | null;
                 group_id?: string | null;
+                managed?: boolean | null;
             };
             header?: never;
             path: {
@@ -8956,6 +8973,8 @@ export interface operations {
                 git_ref?: string | null;
                 since?: string | null;
                 until?: string | null;
+                environment_id?: string | null;
+                approval_state?: string | null;
             };
             header?: never;
             path?: never;
@@ -8985,6 +9004,8 @@ export interface operations {
                 git_ref?: string | null;
                 since?: string | null;
                 until?: string | null;
+                environment_id?: string | null;
+                approval_state?: string | null;
             };
             header?: never;
             path?: never;
@@ -9043,6 +9064,8 @@ export interface operations {
                 git_ref?: string | null;
                 since?: string | null;
                 until?: string | null;
+                environment_id?: string | null;
+                approval_state?: string | null;
             };
             header?: never;
             path: {
@@ -9075,6 +9098,8 @@ export interface operations {
                 git_ref?: string | null;
                 since?: string | null;
                 until?: string | null;
+                environment_id?: string | null;
+                approval_state?: string | null;
             };
             header?: never;
             path: {

@@ -1,7 +1,9 @@
 import { usePlatformServices } from '@sdlc/ui/ui'
 import { withNamespaceLocation, type NamespaceLocation } from '@sdlc/ui/lib'
+import { useLocation } from 'react-router'
 export function WorkspaceLinks({ namespace }: { namespace?: NamespaceLocation }) {
   const { services } = usePlatformServices()
+  const all = new URLSearchParams(useLocation().search).get('project_scope') === 'all'
   const links = namespace
     ? [
         ['task-tracker', 'Задачи', '/namespace'],
@@ -17,7 +19,7 @@ export function WorkspaceLinks({ namespace }: { namespace?: NamespaceLocation })
           <a
             key={key}
             className="text-accent"
-            href={withNamespaceLocation(origin + path, namespace ?? null)}
+            href={withNamespaceLocation(origin + path + (all ? '?project_scope=all' : ''), namespace ?? null)}
           >
             {label}
           </a>

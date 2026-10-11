@@ -67,6 +67,29 @@ REST API первой версии Forge CI/CD. Контрольная плос�
 
 ## Сквозной каталог и выполнение
 
+Каталоги репозиториев (`/catalog/repositories`, `/git-groups/{id}/repositories`,
+`/catalog/available-repositories`) возвращают `items` и серверный `total`;
+поиск и `limit`/`offset` применяются до выдачи страницы. `managed=true` в общем
+каталоге ограничивает выбор подтверждёнными Namespace bindings. Каталог
+доступных репозиториев ищет среди unbound записей, не подключает их автоматически.
+В `/delivery-configurations` `managed=true` ограничивает выдачу конфигурациями
+репозиториев сквозных проектов; без флага legacy/unbound semantics сохраняются.
+`DeliveryConfig.repository_name` — nullable display metadata, не идентичность.
+Старые сохранённые operation readbacks допускают отсутствие этого поля.
+
+Списки деплоев поддерживают `environment_id` и `approval_state` (`pending`,
+`approved`, `rejected`, `not_required`). Окружение проверяется на принадлежность
+проекту, репозиторию и выбранной конфигурации. Counters и страницы используют
+одинаковый фильтр. Эти параметры недопустимы для списка пайплайнов.
+`ExecutionRow.started_at`/`finished_at` nullable и описывают pipeline execution;
+для deployment timestamps не синтезируются из связанного пайплайна.
+
+UI применяет draft-фильтры после «Применить»/Enter, записывает одно состояние URL
+и сбрасывает offset. Deep link деплоя содержит `environment_id` и `deployment_id`
+в `/delivery-configs/{id}/environments`; он раскрывает и выделяет конкретную
+запись, не выполняя approval/rollback автоматически. Ни эти ссылки, ни managed
+catalog flags не расширяют права, lifecycle admission или service scopes.
+
 Новые human endpoints используют прежние scopes/roles и trusted-shared policy.
 Machine reader не получает доступа к human routes. Проект Tracker, репозиторий
 и CI-конфигурация имеют отдельные DTO; строгие SDLC owner envelopes не меняются.

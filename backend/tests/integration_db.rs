@@ -9566,6 +9566,38 @@ async fn workspace_catalog_and_execution_pages_use_identities_beyond_first_page(
     }
     let app = authenticated_app(pool.clone()).await;
     let request = |path: String| Request::get(path).body(Body::empty()).unwrap();
+    sqlx::query("INSERT INTO projects(id,name,repository_url) VALUES($1,'Unbound','https://example.test/legacy.git')").bind(Uuid::new_v4()).execute(&pool).await.unwrap();
+    for path in [
+        "/api/v1/catalog/repositories?managed=true&limit=1&offset=1",
+        "/api/v1/delivery-configurations?managed=true&limit=1&offset=1",
+    ] {
+        let response = app.clone().oneshot(request(path.to_owned())).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let page = response_json(response).await;
+        assert_eq!(page["total"], 2);
+        assert_eq!(page["items"].as_array().unwrap().len(), 1);
+        if path.contains("delivery-configurations") {
+            assert!(
+                page["items"][0]["repository_name"]
+                    .as_str()
+                    .unwrap()
+                    .contains("/api")
+            );
+        }
+    }
+    let all_configs = response_json(
+        app.clone()
+            .oneshot(request(
+                "/api/v1/delivery-configurations?limit=1".to_owned(),
+            ))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        all_configs["total"], 3,
+        "default legacy catalog keeps unbound configurations"
+    );
     let page = app
         .clone()
         .oneshot(request(
@@ -9712,6 +9744,64 @@ async fn workspace_deployment_approval_states_match_environment_history() {
         }
     }
     assert_eq!(canonical, expected);
+    let project_path = format!(
+        "/api/v1/workspace-projects/{}/{namespace}/deployments",
+        command.namespace.registry_instance_id
+    );
+    for (environment, approval, total) in [
+        (protected, "pending", 1),
+        (protected, "approved", 1),
+        (unprotected, "not_required", 1),
+        (unprotected, "approved", 0),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!(
+                    "{project_path}?environment_id={environment}&approval_state={approval}&limit=1"
+                ))
+                .body(Body::empty())
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let page = response_json(response).await;
+        assert_eq!(page["total"], total);
+        for row in page["items"].as_array().unwrap() {
+            assert_eq!(row["environment_id"], environment.to_string());
+            assert_eq!(row["approval_state"], approval);
+        }
+    }
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get(format!(
+                "{project_path}?environment_id={protected}&limit=1&offset=1"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+    let page = response_json(response).await;
+    assert_eq!(page["total"], 3);
+    assert_eq!(page["items"].as_array().unwrap().len(), 1);
+    for suffix in [
+        "approval_state=unknown".to_owned(),
+        format!("environment_id={}", Uuid::new_v4()),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::get(format!("{project_path}?{suffix}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(response.status().is_client_error());
+    }
     for path in [
         format!(
             "/api/v1/workspace-projects/{}/{namespace}/deployments?limit=100",

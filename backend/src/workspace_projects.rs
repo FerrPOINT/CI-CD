@@ -46,6 +46,8 @@ pub struct WorkspaceQuery {
     pub git_ref: Option<String>,
     pub since: Option<DateTime<Utc>>,
     pub until: Option<DateTime<Utc>>,
+    pub environment_id: Option<Uuid>,
+    pub approval_state: Option<String>,
 }
 impl WorkspaceQuery {
     fn bounds(&self) -> (i64, i64) {
@@ -83,6 +85,8 @@ pub struct ExecutionRow {
     pub environment_id: Option<Uuid>,
     pub environment_name: Option<String>,
     pub approval_state: Option<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
 }
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct ExecutionPage {
@@ -290,6 +294,18 @@ async fn executions(
     {
         return Err(ApiError::bad_request("invalid_execution_period"));
     }
+    if !deployment && (query.environment_id.is_some() || query.approval_state.is_some()) {
+        return Err(ApiError::bad_request(
+            "deployment_filters_require_deployments",
+        ));
+    }
+    if query
+        .approval_state
+        .as_deref()
+        .is_some_and(|value| !["pending", "approved", "rejected", "not_required"].contains(&value))
+    {
+        return Err(ApiError::bad_request("invalid_approval_state"));
+    }
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     let group = if let Some((registry, ns)) = namespace {
         let c = ensure_context(pool, registry, ns).await?;
@@ -338,21 +354,29 @@ async fn executions(
             return Err(ApiError::conflict("configuration_repository_mismatch"));
         }
     }
-    let (from, extra) = if deployment {
+    if let Some(environment) = query.environment_id {
+        let matches: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM environments e JOIN projects p ON p.id=e.project_id JOIN repository_catalog r ON r.id=p.repository_id WHERE e.id=$1 AND ($2::uuid IS NULL OR r.group_id=$2) AND ($3::uuid IS NULL OR r.id=$3) AND ($4::uuid IS NULL OR p.id=$4))")
+            .bind(environment).bind(group).bind(query.repository_id.or(repository)).bind(query.configuration_id)
+            .fetch_one(pool).await.map_err(ApiError::internal)?;
+        if !matches {
+            return Err(ApiError::conflict("environment_configuration_mismatch"));
+        }
+    }
+    let (from, extra, deployment_filter) = if deployment {
         (
-            "deployments x JOIN environments e ON e.id=x.environment_id JOIN projects p ON p.id=e.project_id",
-            format!(
-                "'environment_id',e.id,'environment_name',e.name,'approval_state',(SELECT approval_state FROM ({}) approval),'pipeline_id',x.pipeline_id",
-                crate::platform::deployment_select("d.id=x.id", "")
-            ),
+            format!("deployments x JOIN environments e ON e.id=x.environment_id JOIN projects p ON p.id=e.project_id JOIN LATERAL ({}) approval ON true", crate::platform::deployment_select("d.id=x.id", "")),
+            "'environment_id',e.id,'environment_name',e.name,'approval_state',approval.approval_state,'pipeline_id',x.pipeline_id".to_owned(),
+            " AND ($8::uuid IS NULL OR e.id=$8) AND ($9::text IS NULL OR approval.approval_state=$9)",
         )
     } else {
         (
-            "pipelines x JOIN projects p ON p.id=x.project_id",
-            "'commit_sha',x.commit_sha,'pipeline_id',x.id".to_owned(),
+            "pipelines x JOIN projects p ON p.id=x.project_id".to_owned(),
+            "'commit_sha',x.commit_sha,'pipeline_id',x.id,'started_at',x.started_at,'finished_at',x.finished_at".to_owned(),
+            " AND $8::uuid IS NULL AND $9::text IS NULL",
         )
     };
     let filter = " JOIN repository_catalog r ON r.id=p.repository_id JOIN git_groups g ON g.id=r.group_id JOIN forge_namespace_bindings b ON b.resource_id=g.id JOIN forge_workspace_projects w ON w.registry_instance_id=b.registry_instance_id AND w.namespace_id=b.namespace_id WHERE ($1::uuid IS NULL OR r.group_id=$1) AND ($2::uuid IS NULL OR r.id=$2) AND ($3::uuid IS NULL OR p.id=$3) AND ($4::text IS NULL OR x.status=$4) AND ($5::text IS NULL OR x.git_ref=$5) AND ($6::timestamptz IS NULL OR x.created_at >= $6) AND ($7::timestamptz IS NULL OR x.created_at <= $7)";
+    let filter = format!("{filter}{deployment_filter}");
     let total: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {from}{filter}"))
         .bind(group)
         .bind(query.repository_id.or(repository))
@@ -361,12 +385,14 @@ async fn executions(
         .bind(&query.git_ref)
         .bind(query.since)
         .bind(query.until)
+        .bind(query.environment_id)
+        .bind(&query.approval_state)
         .fetch_one(pool)
         .await
         .map_err(ApiError::internal)?;
     let (limit, offset) = query.bounds();
     let sql = format!(
-        "SELECT jsonb_build_object('namespace',jsonb_build_object('registry_instance_id',b.registry_instance_id,'namespace_id',b.namespace_id),'id',x.id,'repository_id',r.id,'repository_name',g.slug||'/'||r.slug,'configuration_id',p.id,'configuration_name',p.name,'status',x.status,'git_ref',x.git_ref,'created_at',x.created_at,{extra}) FROM {from}{filter} ORDER BY x.created_at DESC,x.id DESC LIMIT $8 OFFSET $9"
+        "SELECT jsonb_build_object('namespace',jsonb_build_object('registry_instance_id',b.registry_instance_id,'namespace_id',b.namespace_id),'id',x.id,'repository_id',r.id,'repository_name',g.slug||'/'||r.slug,'configuration_id',p.id,'configuration_name',p.name,'status',x.status,'git_ref',x.git_ref,'created_at',x.created_at,{extra}) FROM {from}{filter} ORDER BY x.created_at DESC,x.id DESC LIMIT $10 OFFSET $11"
     );
     let values: Vec<Value> = sqlx::query_scalar(&sql)
         .bind(group)
@@ -376,6 +402,8 @@ async fn executions(
         .bind(query.git_ref)
         .bind(query.since)
         .bind(query.until)
+        .bind(query.environment_id)
+        .bind(query.approval_state)
         .bind(limit)
         .bind(offset)
         .fetch_all(pool)

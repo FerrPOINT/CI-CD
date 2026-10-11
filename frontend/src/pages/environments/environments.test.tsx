@@ -20,7 +20,7 @@ const successDeploymentId = '99999999-9999-4999-8999-999999999999'
 const pipelineId = '11111111-1111-4111-8111-111111111111'
 const now = '2026-09-01T12:00:00Z'
 
-function renderEnvironmentsPage(requests: string[], override?: (url: string, method: string) => Promise<Response> | undefined) {
+function renderEnvironmentsPage(requests: string[], override?: (url: string, method: string) => Promise<Response> | undefined, suffix = '') {
   vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString()
     const method = init?.method ?? 'GET'
@@ -113,7 +113,7 @@ function renderEnvironmentsPage(requests: string[], override?: (url: string, met
 
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[`/delivery-configs/${projectId}/environments`]}>
+      <MemoryRouter initialEntries={[`/delivery-configs/${projectId}/environments${suffix}`]}>
         <Routes>
           <Route path="/delivery-configs/:projectId/environments" element={<EnvironmentsPage />} />
         </Routes>
@@ -140,6 +140,14 @@ afterEach(() => {
 })
 
 describe('EnvironmentsPage protected delivery controls', () => {
+  it('opens and focuses the exact deployment from a workspace link', async () => {
+    HTMLElement.prototype.scrollIntoView = vi.fn()
+    renderEnvironmentsPage([], undefined, `?environment_id=${environmentId}&deployment_id=${successDeploymentId}`)
+    expect(await screen.findByText(`Деплой #${successDeploymentId.slice(0, 8)} · Выбран`)).toBeInTheDocument()
+    const selected = screen.getByText(`Деплой #${successDeploymentId.slice(0, 8)} · Выбран`).closest('li')
+    await waitFor(() => expect(selected).toHaveFocus())
+    expect(selected).toHaveAttribute('aria-current', 'true')
+  })
   it('shows approval state and sends approval and rollback actions', async () => {
     const requests: string[] = []
     renderEnvironmentsPage(requests)

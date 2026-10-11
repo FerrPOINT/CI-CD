@@ -2,7 +2,16 @@ import { useState, type FormEvent } from 'react'
 import { NamespaceLink as Link } from '@sdlc/ui/ui'
 import { useParams, useSearchParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Input, Label } from '@sdlc/ui/ui'
+import {
+  Button,
+  Input,
+  Label,
+  SectionNavigation,
+  SectionNavigationItem,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+} from '@sdlc/ui/ui'
 import { withNamespaceLocation } from '@sdlc/ui/lib'
 import { api } from '@/api/client'
 import { RepositoryConfigurations } from '@/widgets/repository-configurations'
@@ -14,7 +23,7 @@ import type { components } from '@/api/schema'
 import { useNamespaceContext } from '@/widgets/namespace-context'
 export function CatalogRepositoryPage() {
   const { id } = useParams()
-  const [params, setParams] = useSearchParams()
+  const [params] = useSearchParams()
   const intent =
     params.get('task_id') && params.get('tracker_instance_id')
       ? `?${new URLSearchParams({ task_id: params.get('task_id')!, tracker_instance_id: params.get('tracker_instance_id')! })}`
@@ -23,40 +32,59 @@ export function CatalogRepositoryPage() {
   const cache = useQueryClient()
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
+  const [showPullForm, setShowPullForm] = useState(false)
+  const [copied, setCopied] = useState(false)
   const tab = params.get('tab') ?? 'git'
-  function setTab(nextTab: string) {
-    setParams((current) => {
-      const next = new URLSearchParams(current)
-      next.set('tab', nextTab)
-      for (const key of [
-        'offset',
-        'repository_id',
-        'configuration_id',
-        'status',
-        'git_ref',
-        'since',
-        'until',
-      ])
-        next.delete(key)
-      return next
-    })
+  function tabLocation(nextTab: string) {
+    const next = new URLSearchParams(params)
+    next.set('tab', nextTab)
+    for (const key of [
+      'offset',
+      'repository_id',
+      'configuration_id',
+      'status',
+      'git_ref',
+      'since',
+      'until',
+        'environment_id',
+        'approval_state',
+    ])
+      next.delete(key)
+    return `/catalog/repositories/${id}?${next}`
   }
   const repository = useQuery({
-    queryKey: ['catalog-repository', ref?.registry_instance_id, ref?.namespace_id, id],
+    queryKey: [
+      'catalog-repository',
+      ref?.registry_instance_id,
+      ref?.namespace_id,
+      id,
+    ],
     queryFn: ({ signal }) =>
-      api<components['schemas']['CatalogRepository']>(`/catalog/repositories/${id}`, { signal }),
+      api<components['schemas']['CatalogRepository']>(
+        `/catalog/repositories/${id}`,
+        { signal },
+      ),
   })
   const repo = repository.data
   const project = useWorkspace(repo?.namespace ?? ref)
   const pulls = useQuery({
-    queryKey: ['catalog-pulls', ref?.registry_instance_id, ref?.namespace_id, id],
+    queryKey: [
+      'catalog-pulls',
+      ref?.registry_instance_id,
+      ref?.namespace_id,
+      id,
+    ],
     enabled: repo?.kind === 'hosted' && repo.ready,
     queryFn: ({ signal }) =>
-      api<components['schemas']['PullRequest'][]>(`/catalog/repositories/${id}/pulls`, { signal }),
+      api<components['schemas']['PullRequest'][]>(
+        `/catalog/repositories/${id}/pulls`,
+        { signal },
+      ),
   })
   async function createPull(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const data = new FormData(event.currentTarget)
+    const form = event.currentTarget
+    const data = new FormData(form)
     setBusy(true)
     setError(undefined)
     try {
@@ -70,8 +98,15 @@ export function CatalogRepositoryPage() {
         }),
       })
       await cache.invalidateQueries({
-        queryKey: ['catalog-pulls', ref?.registry_instance_id, ref?.namespace_id, id],
+        queryKey: [
+          'catalog-pulls',
+          ref?.registry_instance_id,
+          ref?.namespace_id,
+          id,
+        ],
       })
+      form.reset()
+      setShowPullForm(false)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось создать PR')
     } finally {
@@ -101,7 +136,9 @@ export function CatalogRepositoryPage() {
     <div className="space-y-5">
       <Link
         to={withNamespaceLocation(
-          repo.namespace ? workspacePath(repo.namespace, 'repositories') : '/repositories',
+          repo.namespace
+            ? workspacePath(repo.namespace, 'repositories')
+            : '/repositories',
           repo.namespace ?? null,
         )}
         className="text-accent"
@@ -115,7 +152,7 @@ export function CatalogRepositoryPage() {
         </p>
       )}
       <h1 className="text-xl font-semibold">{repo.public_name}</h1>
-      <nav className="flex flex-wrap gap-2" aria-label="Разделы репозитория">
+      <SectionNavigation aria-label="Разделы репозитория">
         {[
           ['git', 'Git / PR'],
           ...(repo.kind === 'hosted' ? [['files', 'Файлы и история']] : []),
@@ -123,15 +160,20 @@ export function CatalogRepositoryPage() {
           ['deployments', 'Деплои'],
           ['configurations', 'CI-конфигурации'],
         ].map(([key, label]) => (
-          <Button
-            key={key}
-            variant={tab === key ? 'default' : 'outline'}
-            onClick={() => setTab(key)}
-          >
-            {label}
-          </Button>
+          <SectionNavigationItem key={key} asChild active={tab === key}>
+            <Link
+              to={withNamespaceLocation(
+                tabLocation(key),
+                repo.namespace ?? null,
+              )}
+            >
+              {label}
+            </Link>
+          </SectionNavigationItem>
         ))}
-      </nav>
+      </SectionNavigation>
+      {!['git', 'files', 'pipelines', 'deployments', 'configurations'].includes(tab) && <p role="alert">Раздел репозитория не найден.</p>}
+      {tab === 'files' && repo.kind === 'external' && <p role="status">Файлы внешнего репозитория доступны у Git-провайдера.</p>}
       {tab === 'files' &&
         repo.kind === 'hosted' &&
         repo.storage_name &&
@@ -143,7 +185,11 @@ export function CatalogRepositoryPage() {
           <RepositoryBrowserPage repositoryName={repo.storage_name} embedded />
         ))}
       {tab === 'pipelines' && (
-        <ExecutionList key={id + tab} namespace={repo.namespace ?? undefined} repositoryId={id} />
+        <ExecutionList
+          key={id + tab}
+          namespace={repo.namespace ?? undefined}
+          repositoryId={id}
+        />
       )}
       {tab === 'deployments' && (
         <ExecutionList
@@ -163,27 +209,47 @@ export function CatalogRepositoryPage() {
       <div hidden={tab !== 'git'} className="space-y-5">
         {repo.availability && (
           <p role="alert" className="text-danger">
-            Git-хранилище недоступно. История каталога сохранена; для push и merge требуется
-            восстановить исходные данные.
+            Git-хранилище недоступно. История каталога сохранена; для push и
+            merge требуется восстановить исходные данные.
           </p>
         )}
-        <p className="break-all rounded-md border border-border bg-surface p-3 font-mono text-sm">
-          {clone}
-        </p>
-        {repo.kind === 'hosted' && repo.storage_name && (
-          <Link
-            className="text-accent"
-            to={withNamespaceLocation(
-              `/repositories/${encodeURIComponent(repo.storage_name)}`,
-              repo.namespace ?? null,
-            )}
-          >
-            Файлы и история
-          </Link>
-        )}
+        <div className="space-y-2">
+          <Label htmlFor="repository-clone-url">
+            {repo.kind === 'hosted' ? 'Clone URL' : 'URL внешнего Git'}
+          </Label>
+          <div className="flex min-w-0 gap-2">
+            <Input
+              id="repository-clone-url"
+              readOnly
+              value={clone ?? ''}
+              className="font-mono"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                void navigator.clipboard
+                  .writeText(clone ?? '')
+                  .then(() => {
+                    setError(undefined)
+                    setCopied(true)
+                  })
+                  .catch(() => {
+                    setCopied(false)
+                    setError(
+                      'Не удалось скопировать. Выделите URL и скопируйте вручную.',
+                    )
+                  })
+              }}
+            >
+              {copied ? 'Скопировано' : 'Копировать'}
+            </Button>
+          </div>
+        </div>
         {repo.kind === 'external' && (
           <p className="text-sm text-text-muted">
-            Используется внешний Git и существующий CI. Список PR остаётся у провайдера.
+            Используется внешний Git и существующий CI. Список PR остаётся у
+            провайдера.
           </p>
         )}
         {error && (
@@ -193,7 +259,14 @@ export function CatalogRepositoryPage() {
         )}
         {repo.kind === 'hosted' && (
           <section className="space-y-3">
-            <h2 className="font-semibold">Pull requests</h2>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="font-semibold">Pull requests</h2>
+              {repo.state === 'active' && !repo.availability && (
+                <Button type="button" onClick={() => setShowPullForm(true)}>
+                  Создать PR
+                </Button>
+              )}
+            </div>
             {pulls.isPending ? (
               <p role="status">Загружаем PR…</p>
             ) : pulls.isError ? (
@@ -212,27 +285,46 @@ export function CatalogRepositoryPage() {
                     ref,
                   )}
                 >
-                  #{pr.number} {pr.title} · {pr.status}
+                  #{pr.number} {pr.title} ·{' '}
+                  {{ open: 'Открыт', closed: 'Закрыт', merged: 'Слит' }[
+                    pr.status
+                  ] ?? pr.status}
                 </Link>
               ))
             )}
           </section>
         )}
-        {repo.state === 'active' && !repo.availability && repo.kind === 'hosted' && (
-          <form
-            onSubmit={createPull}
-            className="max-w-xl space-y-3 rounded-lg border border-border bg-surface p-4"
-          >
-            <h2 className="font-semibold">Создать PR</h2>
-            <Label htmlFor="pr-title">Название</Label>
-            <Input id="pr-title" name="title" required />
-            <Label htmlFor="pr-source">Исходная ветка</Label>
-            <Input id="pr-source" name="source_branch" required />
-            <Label htmlFor="pr-target">Целевая ветка</Label>
-            <Input id="pr-target" name="target_branch" defaultValue="main" required />
-            <Button disabled={busy}>Создать PR</Button>
-          </form>
-        )}
+        {repo.state === 'active' &&
+          !repo.availability &&
+          repo.kind === 'hosted' && (
+            <Dialog
+              open={showPullForm}
+              onOpenChange={(open) => {
+                if (!busy) setShowPullForm(open)
+              }}
+            >
+              <DialogContent aria-describedby={undefined}>
+                <DialogTitle>Создать PR</DialogTitle>
+                <form
+                  onSubmit={createPull}
+                  className="max-w-xl space-y-3 rounded-lg border border-border bg-surface p-4"
+                >
+                  <Label htmlFor="pr-title">Название</Label>
+                  <Input id="pr-title" name="title" required />
+                  <Label htmlFor="pr-source">Исходная ветка</Label>
+                  <Input id="pr-source" name="source_branch" required />
+                  <Label htmlFor="pr-target">Целевая ветка</Label>
+                  <Input
+                    id="pr-target"
+                    name="target_branch"
+                    defaultValue="main"
+                    required
+                  />
+                  <Button disabled={busy}>Создать PR</Button>
+                </form>
+              </DialogContent>
+            </Dialog>
+          )}
       </div>
     </div>
   )

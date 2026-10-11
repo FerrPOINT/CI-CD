@@ -1,6 +1,12 @@
 import { Navigate, useLocation, useParams } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
-import { NamespaceLink as Link, ProjectAvatar } from '@sdlc/ui/ui'
+import {
+  NamespaceLink as Link,
+  ProjectAvatar,
+  SectionNavigation,
+  SectionNavigationItem,
+  Button,
+} from '@sdlc/ui/ui'
 import { withNamespaceLocation } from '@sdlc/ui/lib'
 import { useWorkspace, workspaceKey, workspacePath } from '@/api/workspaces'
 import { api } from '@/api/client'
@@ -22,7 +28,10 @@ export function NamespaceRedirect() {
       replace
       to={
         ref
-          ? withNamespaceLocation(workspacePath(ref) + (all ? '?project_scope=all' : ''), ref)
+          ? withNamespaceLocation(
+              workspacePath(ref) + (all ? '?project_scope=all' : ''),
+              ref,
+            )
           : '/projects?project_scope=all'
       }
     />
@@ -35,8 +44,10 @@ export function LegacyConfigRedirect() {
     <Navigate
       replace
       to={
-        location.pathname.replace(`/projects/${projectId}`, `/delivery-configs/${projectId}`) +
-        location.search
+        location.pathname.replace(
+          `/projects/${projectId}`,
+          `/delivery-configs/${projectId}`,
+        ) + location.search
       }
     />
   )
@@ -46,13 +57,22 @@ export function WorkspacePage() {
   const { '*': section = '' } = useParams()
   const project = useWorkspace(malformed ? null : ref)
   const summary = useQuery({
-    queryKey: ['workspace-summary', ref?.registry_instance_id, ref?.namespace_id],
+    queryKey: [
+      'workspace-summary',
+      ref?.registry_instance_id,
+      ref?.namespace_id,
+    ],
     enabled: !!ref && !!project.data?.group_id,
     queryFn: ({ signal }) =>
       api<components['schemas']['WorkspaceSummary']>(
         `/workspace-projects/${workspaceKey(ref!)}/summary`,
         { signal },
       ),
+    refetchInterval: (current) =>
+      current.state.data &&
+      (current.state.data.queued || current.state.data.running)
+        ? 3000
+        : false,
   })
   if (malformed || !ref)
     return (
@@ -84,73 +104,120 @@ export function WorkspacePage() {
         <div>
           <h1 className="text-2xl font-semibold">{data.name}</h1>
           <p className="text-sm text-text-muted">
-            {data.project_key} · {data.state === 'archived' ? 'В архиве' : 'Активен'} ·{' '}
-            {data.group_id ? `Git-группа: ${data.group_slug}` : 'Git не подключён'}
+            {data.project_key} ·{' '}
+            {data.state === 'archived' ? 'В архиве' : 'Активен'} ·{' '}
+            {data.group_id
+              ? `Git-группа: ${data.group_slug}`
+              : 'Git не подключён'}
           </p>
         </div>
       </div>
       {data.stale && (
         <p role="status" className="text-warning">
-          Показываем сохранённые метаданные Tracker. Существующие репозитории и CI доступны.
+          Показываем сохранённые метаданные Tracker. Существующие репозитории и
+          CI доступны.
         </p>
       )}
       <WorkspaceLinks namespace={ref} />
-      <nav
-        aria-label="Разделы проекта"
-        className="flex flex-wrap gap-2 border-b border-border pb-3"
-      >
+      <SectionNavigation aria-label="Разделы проекта">
         {sections.map(([path, label]) => (
-          <Link
-            key={path}
-            aria-current={section === path ? 'page' : undefined}
-            className={
-              section === path
-                ? 'rounded-md bg-surface-raised px-3 py-2 font-semibold'
-                : 'rounded-md px-3 py-2 text-text-muted hover:bg-surface-raised'
-            }
-            to={withNamespaceLocation(
-              workspacePath(ref, path) + (all ? '?project_scope=all' : ''),
-              ref,
-            )}
-          >
-            {label}
-          </Link>
+          <SectionNavigationItem asChild active={section === path} key={path}>
+            <Link
+              key={path}
+              to={withNamespaceLocation(
+                workspacePath(ref, path) + (all ? '?project_scope=all' : ''),
+                ref,
+              )}
+            >
+              {label}
+            </Link>
+          </SectionNavigationItem>
         ))}
-      </nav>
+      </SectionNavigation>
       {!data.group_id ? (
-        <p>Git не подключён. Подключите группу репозиториев в настройках проекта Admin.</p>
+        <p>
+          Git не подключён. Подключите группу репозиториев в настройках проекта
+          Admin.
+        </p>
       ) : section === 'repositories' ? (
         <NamespacePage embedded />
       ) : section === 'pipelines' ? (
         <ExecutionList key={workspaceKey(ref) + section} namespace={ref} />
       ) : section === 'deployments' ? (
-        <ExecutionList key={workspaceKey(ref) + section} namespace={ref} deployment />
+        <ExecutionList
+          key={workspaceKey(ref) + section}
+          namespace={ref}
+          deployment
+        />
       ) : section === '' ? (
         <>
-          {summary.isError ? (
-            <p role="alert" className="text-danger">
-              Сводка недоступна.
-            </p>
+          {summary.isError && !summary.data ? (
+            <div role="alert" className="flex gap-2">
+              <p>Сводка недоступна.</p>
+              <Button variant="outline" onClick={() => void summary.refetch()}>
+                Повторить
+              </Button>
+            </div>
           ) : summary.isPending ? (
             <p role="status">Загружаем сводку…</p>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
               {[
-                ['Репозитории', summary.data.repositories],
-                ['CI-конфигурации', summary.data.configurations],
-                ['В очереди', summary.data.queued],
-                ['Выполняются', summary.data.running],
-                ['С ошибкой', summary.data.failed],
-              ].map(([label, count]) => (
-                <div key={label} className="rounded-lg border border-border bg-surface p-4">
+                ['Репозитории', summary.data.repositories, 'repositories'],
+                [
+                  'CI-конфигурации',
+                  summary.data.configurations,
+                  'repositories',
+                ],
+                ['В очереди', summary.data.queued, 'pipelines?status=queued'],
+                [
+                  'Выполняются',
+                  summary.data.running,
+                  'pipelines?status=running',
+                ],
+                ['С ошибкой', summary.data.failed, 'pipelines?status=failed'],
+              ].map(([label, count, target]) => (
+                <Link
+                  key={label}
+                  to={withNamespaceLocation(
+                    workspacePath(ref, String(target)) +
+                      (all
+                        ? String(target).includes('?')
+                          ? '&project_scope=all'
+                          : '?project_scope=all'
+                        : ''),
+                    ref,
+                  )}
+                  className="rounded-lg border border-border bg-surface p-4 hover:bg-surface-raised focus-visible:outline-2 focus-visible:outline-accent"
+                >
                   <p className="text-sm text-text-muted">{label}</p>
                   <p className="mt-2 text-2xl font-semibold">{count}</p>
-                </div>
+                </Link>
               ))}
             </div>
           )}
-          <h2 className="font-semibold">Последние пайплайны</h2>
-          <ExecutionList namespace={ref} />
+          <p className="text-sm text-text-muted">
+            Сводка по всем репозиториям проекта за всё время.
+          </p>
+          {summary.isError && summary.data && (
+            <p role="alert">
+              Не удалось обновить сводку. Показаны последние загруженные данные.
+            </p>
+          )}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="font-semibold">Последние пайплайны</h2>
+            <Link
+              className="text-accent underline"
+              to={withNamespaceLocation(
+                workspacePath(ref, 'pipelines') +
+                  (all ? '?project_scope=all' : ''),
+                ref,
+              )}
+            >
+              Все пайплайны
+            </Link>
+          </div>
+          <ExecutionList key={workspaceKey(ref)} namespace={ref} preview />
         </>
       ) : (
         <p role="alert">Раздел не найден.</p>
