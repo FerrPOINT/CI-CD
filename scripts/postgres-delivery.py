@@ -986,8 +986,12 @@ def main():
         result = {'schema': 'forge/local-postgres-rejection/v1', 'status': 'blocked', 'reason': reason,
                   'dispatchAllowed': False, 'sdlcAcceptanceVerified': False}
         if owner is not None:
-            result.update(currentManifestSha256=owner.point('current'),
-                          confirmedManifestSha256=owner.point('confirmed'))
+            try:
+                current, confirmed = owner.point('current'), owner.point('confirmed')
+            except (Blocked, OSError, ValueError):
+                result['reason'] = 'manifest_pointer_unavailable'
+            else:
+                result.update(currentManifestSha256=current, confirmedManifestSha256=confirmed)
     sys.stdout.buffer.write(canonical(result) + b'\n')
 
 

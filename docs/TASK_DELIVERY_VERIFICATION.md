@@ -29,9 +29,12 @@ fallback на legacy SDK. Регрессии исполняют настоящи
 
 ## Prepared Main / OCI Integration, 11 Октября
 
-Подготовлен normal merge main/PR88 `972e5ac47be555b720195fb4207f395e96872e74`
-и OCI source `53e93566b7aecbccebe1f3e4e948685cf59841a8`. Обе истории сохранены;
-это ещё не committed source и не qualification. Pin текущего main сохранён:
+Normal merge `25d376f` сохраняет main/PR88 `972e5ac47be555b720195fb4207f395e96872e74`
+и OCI source `53e93566b7aecbccebe1f3e4e948685cf59841a8` вместе с test-only
+fixture correction. Следующее объединение сохраняет main/PR93
+`f5cb2b81c7201f5333e51f5dab027e11cf28f6db`: bounded pointer rejection и его
+шесть tests, без изменения delivery authority. Обе истории сохранены;
+source commit не означает qualification. Pin текущего main сохранён:
 `.namespace-base-revision=0ddd38e62163b7cfbbc0276d16ae8857a93eba8d`.
 Full12 run38144495380 закрепляет исходный53e935 и Base0e1c982, а не это
 объединение. Следующие датированные packets сохраняют прежние source/Base
