@@ -46,6 +46,8 @@ function SourceHashes {
         if ($LASTEXITCODE -ne 0) { throw 'Source inventory failed' }
         foreach ($path in $paths) { $hashes[$entry.name + '/' + $path] = (Get-FileHash -LiteralPath (Join-Path $entry.root $path) -Algorithm SHA256).Hash }
     }
+    $selectedPinName = Split-Path -Leaf $basePin
+    $hashes['CI-CD/' + $selectedPinName] = (Get-FileHash -LiteralPath $basePin -Algorithm SHA256).Hash
     return $hashes
 }
 $before = SourceHashes

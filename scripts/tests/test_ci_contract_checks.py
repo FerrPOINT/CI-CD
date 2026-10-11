@@ -1,5 +1,6 @@
 """Regression checks for isolated CLI integration gates."""
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -77,8 +78,40 @@ class DeliveryPinPreflightTests(unittest.TestCase):
     def test_delivery_source_hashes_cover_both_sdk_pin_files(self):
         script = (ROOT / "scripts/verify-task-delivery.ps1").read_text(encoding="utf-8")
         source_hashes = script.split("function SourceHashes", 1)[1].split("$before = SourceHashes", 1)[0]
-        self.assertIn("'.base-revision'", source_hashes)
-        self.assertIn("'.namespace-base-revision'", source_hashes)
+        self.assertIn("$hashes['CI-CD/' + $selectedPinName]", source_hashes)
+
+    def test_source_hashes_include_the_selected_pin_even_when_untracked(self):
+        script = (ROOT / "scripts/verify-task-delivery.ps1").read_text(encoding="utf-8")
+        function = script.split("function SourceHashes {", 1)[1].split("\n$before = SourceHashes", 1)[0]
+        with tempfile.TemporaryDirectory(prefix="forge-source-hashes-") as directory:
+            root = Path(directory)
+            repo, base = root / "CI-CD", root / "services-base"
+            repo.mkdir()
+            base.mkdir()
+            (repo / "scripts").mkdir()
+            (base / "scripts").mkdir()
+            (repo / ".base-revision").write_text("legacy-sdk\n", encoding="ascii")
+            (repo / ".namespace-base-revision").write_text("selected-sdk\n", encoding="ascii")
+            subprocess.run(["git", "init", "-q", str(repo)], check=True)
+            subprocess.run(["git", "-C", str(repo), "add", ".base-revision"], check=True)
+            subprocess.run(["git", "init", "-q", str(base)], check=True)
+            selected_pin = repo / ".namespace-base-revision"
+            ps_quote = lambda value: "'" + str(value).replace("'", "''") + "'"
+            command = (
+                f"$repo = {ps_quote(repo)}; $sdk = {ps_quote(base)}; "
+                f"$basePin = {ps_quote(selected_pin)}; function SourceHashes {{{function}; "
+                "SourceHashes | ConvertTo-Json -Depth 3 -Compress"
+            )
+            result = subprocess.run(
+                [shutil.which("pwsh"), "-NoProfile", "-Command", command],
+                capture_output=True, text=True, timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            hashes = json.loads(result.stdout)
+            self.assertEqual(
+                hashes["CI-CD/.namespace-base-revision"],
+                hashlib.sha256(selected_pin.read_bytes()).hexdigest().upper(),
+            )
 
 
 if __name__ == "__main__":
