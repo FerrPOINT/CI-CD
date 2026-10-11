@@ -265,18 +265,23 @@ Private bridge proof использует ту же привязку. Его pur
 
 ## Execution Contract
 
-### Закрытая диагностика OCI
+### Закрытая диагностика OCI И Integration
 
-Только job C, stage `oci` и исходный `CommandFailure(101)` могут добавить optional
-`error.oci_diagnostics` в существующий report. Нового artifact нет. Strict reader
+Только job C, stage `oci` или `integration` и исходный `CommandFailure(101)` могут
+добавить optional `error.oci_diagnostics` или `error.integration_diagnostics`
+соответственно в существующий report. Оба поля одновременно запрещены.
+Нового artifact нет. Strict reader
 должен использовать frozen `host.validate_safe_error`: вложенные ключи только
 `compiler`, `panics` и optional `cli`, каждый содержит до восьми уникальных записей. Compiler
 record содержит только `code`, `file`, `line`, `column`; panic record вместо
-`code` содержит exact `host.OCI_TEST` в `test`. Legacy errors остаются валидными;
+`code` содержит exact `host.OCI_TEST` в `test` для OCI. Integration публикует
+только фиксированное имя test target `integration_db`, не имя отдельного теста
+или runtime thread: произвольное имя потока отбрасывается. CLI observations
+разрешены только для OCI. Legacy errors остаются валидными;
 неизвестные ключи, типы, пути и identities отвергаются.
 
 Принимается только соседняя пара Rust `error[Edddd]` / source location или
-Rust 1.88 panic header exact известного теста. Имена исходников берутся из
+Rust 1.88 panic header (для OCI — exact известного теста). Имена исходников берутся из
 существующего frozen Rust source catalogue с exact workspace aliases.
 Перед projection размер и SHA256 исходника должны совпасть с catalogue,
 а location должна находиться в этом исходнике. Это attestation source/location,
@@ -285,7 +290,8 @@ Rust 1.88 panic header exact известного теста. Имена исх�
 аутентифицированным диагнозом compiler. Произвольные stack frames и panic
 messages не сохраняются.
 
-Читается только existing private `oci.log`, в памяти, до 1 MiB / 16384 строк.
+Читается только existing private `oci.log` либо `integration.log` соответствующего
+этапа, в памяти, до 1 MiB / 16384 строк. Integration не читает OCI CLI observations.
 Чтение лога и соответствующих исходников отвергает symlinks, hardlinks, чужого
 владельца или device, nonregular files и изменившиеся metadata. Отсутствующие,
 слишком большие, malformed или unattested observations не добавляют диагностику

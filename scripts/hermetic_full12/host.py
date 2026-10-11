@@ -241,7 +241,8 @@ def safe_error(stage, error):
 
 def validate_safe_error(result):
     require(type(result) is dict and {'stage', 'category', 'errno'} <= set(result)
-            and set(result) <= {'stage', 'category', 'errno', 'exit_code', 'dependency', 'bootstrap_step', 'oci_diagnostics'})
+            and set(result) <= {'stage', 'category', 'errno', 'exit_code', 'dependency', 'bootstrap_step',
+                               'oci_diagnostics', 'integration_diagnostics'})
     require(type(result['stage']) is str and type(result['category']) is str
             and result['stage'] in {'admission', 'bootstrap', 'cleanup', 'aggregate', 'parity', *ERROR_STAGES}
             and result['category'] in {'os_error', 'timeout', 'assertion', 'closed_failure'})
@@ -253,12 +254,17 @@ def validate_safe_error(result):
     if 'bootstrap_step' in result:
         require(result['stage'] == 'bootstrap' and type(result['bootstrap_step']) is str
                 and result['bootstrap_step'] in BOOTSTRAP_STEPS)
-    if 'oci_diagnostics' in result:
-        require(result['stage'] == 'oci' and result['category'] == 'closed_failure'
+    diagnostic_fields = {'oci_diagnostics', 'integration_diagnostics'} & set(result)
+    require(len(diagnostic_fields) <= 1)
+    if diagnostic_fields:
+        field = next(iter(diagnostic_fields))
+        require(result['stage'] in ('oci', 'integration') and field == result['stage'] + '_diagnostics'
+                and result['category'] == 'closed_failure'
                 and type(result.get('exit_code')) is int and result['exit_code'] == 101)
-        diagnostic = result['oci_diagnostics']
+        diagnostic = result[field]
         require(type(diagnostic) is dict and {'compiler', 'panics'} <= set(diagnostic)
-                and set(diagnostic) <= {'compiler', 'panics', 'cli'})
+                and set(diagnostic) <= ({'compiler', 'panics', 'cli'} if result['stage'] == 'oci'
+                                        else {'compiler', 'panics'}))
         sources = diagnostic_sources()
         for kind, label in (('compiler', 'code'), ('panics', 'test')):
             entries = diagnostic[kind]
@@ -267,7 +273,8 @@ def validate_safe_error(result):
             for entry in entries:
                 require(type(entry) is dict and set(entry) == {label, 'file', 'line', 'column'})
                 require(type(entry[label]) is str and (re.fullmatch('E[0-9]{4}', entry[label])
-                        if kind == 'compiler' else entry[label] == OCI_TEST))
+                        if kind == 'compiler' else entry[label] == (
+                            OCI_TEST if result['stage'] == 'oci' else 'integration_db')))
                 require(type(entry['file']) is str and entry['file'] in sources)
                 require(all(type(entry[key]) is int and 0 < entry[key] <= sources[entry['file']]['size']
                             for key in ('line', 'column')))
@@ -322,8 +329,9 @@ def diagnostic_sources():
             for item in catalogues[label]['files'] if item['path'].endswith('.rs')}
 
 
-def oci_failure_diagnostics(root):
+def oci_failure_diagnostics(root, stage='oci'):
     """Project observed locations only; source attestation is not proof of log producer identity."""
+    require(stage in ('oci', 'integration'))
     root = Path(root)
     owner = root.stat()
     def bounded_file(path, limit=2**20):
@@ -345,7 +353,7 @@ def oci_failure_diagnostics(root):
             return raw
         finally:
             os.close(fd)
-    lines = bounded_file(root / 'private/oci.log').decode('utf-8', errors='replace').splitlines()
+    lines = bounded_file(root / ('private/' + stage + '.log')).decode('utf-8', errors='replace').splitlines()
     require(len(lines) <= 16384)
     sources, aliases = diagnostic_sources(), {}
     for name in sources:
@@ -382,10 +390,14 @@ def oci_failure_diagnostics(root):
             append('compiler', previous, location.groups())
         match = re.fullmatch(r'error\[(E[0-9]{4})\]:[^\r\n]*', text)
         previous = match[1] if match else None
-        panic = re.fullmatch(r"thread '" + re.escape(OCI_TEST)
+        thread = re.escape(OCI_TEST) if stage == 'oci' else r"[^'\r\n]{1,256}"
+        panic = re.fullmatch(r"thread '" + thread
                             + r"' panicked at (.+):([1-9][0-9]{0,6}):([1-9][0-9]{0,6}):", text)
         if panic:
-            append('panics', OCI_TEST, panic.groups())
+            # Integration thread names can contain private text; expose only the fixed target.
+            append('panics', OCI_TEST if stage == 'oci' else 'integration_db', panic.groups())
+    if stage == 'integration':
+        return result if result['compiler'] or result['panics'] else None
     # The existing producer already retains closed JSON on the protected /output bind.
     def unique_object(pairs):
         value = {}

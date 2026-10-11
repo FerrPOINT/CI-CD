@@ -763,11 +763,11 @@ def public_stage(proof):
 
 def retain_failure(report, phase, error, root, job, proofs):
     report['error'] = h.safe_error(phase, error)
-    if job == 'C' and phase == 'oci' and isinstance(error, h.CommandFailure) and error.code == 101:
+    if job == 'C' and phase in ('oci', 'integration') and isinstance(error, h.CommandFailure) and error.code == 101:
         try:
-            diagnostic = h.oci_failure_diagnostics(root)
+            diagnostic = h.oci_failure_diagnostics(root) if phase == 'oci' else h.oci_failure_diagnostics(root, stage=phase)
             if diagnostic is not None:
-                candidate = {**report['error'], 'oci_diagnostics': diagnostic}
+                candidate = {**report['error'], phase + '_diagnostics': diagnostic}
                 h.validate_safe_error(candidate)
                 report['error'] = candidate
         except Exception as diagnostic_error:

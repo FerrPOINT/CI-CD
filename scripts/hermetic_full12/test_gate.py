@@ -2180,6 +2180,80 @@ class AggregationTests(unittest.TestCase):
 
 
 class OciDiagnosticTests(unittest.TestCase):
+    def test_integration_projection_reads_its_own_log_and_discards_private_thread_names(self):
+        log = self.compiler() + b"thread 'PRIVATE SQL TOKEN' panicked at tests/support/oci_delivery.rs:2:4:\nPRIVATE ARGS\n"
+        with self.fixture(log) as (root, _, name):
+            (root / 'private/oci.log').rename(root / 'private/integration.log')
+            (root / 'private/oci.log').write_bytes(b'PRIVATE OCI MUST NOT BE READ')
+            diagnostic = h.oci_failure_diagnostics(root, stage='integration')
+            self.assertEqual(diagnostic, {
+                'compiler': [{'code': 'E0308', 'file': name, 'line': 2, 'column': 4}],
+                'panics': [{'test': 'integration_db', 'file': name, 'line': 2, 'column': 4}]})
+            h.validate_safe_error({'stage': 'integration', 'category': 'closed_failure', 'errno': None,
+                                   'exit_code': 101, 'integration_diagnostics': diagnostic})
+            self.assertNotIn('PRIVATE', json.dumps(diagnostic))
+            self.assertNotIn('SQL', json.dumps(diagnostic))
+
+    def test_integration_schema_rejects_cross_stage_private_fields_and_unknown_target(self):
+        with self.fixture(self.compiler()) as (root, _, _):
+            (root / 'private/oci.log').rename(root / 'private/integration.log')
+            diagnostic = h.oci_failure_diagnostics(root, stage='integration')
+            base = {'stage': 'integration', 'category': 'closed_failure', 'errno': None,
+                    'exit_code': 101, 'integration_diagnostics': diagnostic}
+            changes = (lambda e: e.update(stage='oci'), lambda e: e.update(exit_code=True),
+                       lambda e: e.update(oci_diagnostics=diagnostic),
+                       lambda e: e['integration_diagnostics'].update(cli=[]),
+                       lambda e: e['integration_diagnostics'].update(message='PRIVATE'),
+                       lambda e: e['integration_diagnostics']['compiler'][0].update(file='/secret/TOKEN.rs'),
+                       lambda e: e['integration_diagnostics'].update(panics=[{
+                           'test': 'PRIVATE', 'file': diagnostic['compiler'][0]['file'], 'line': 2, 'column': 4}]))
+            for change in changes:
+                candidate = copy.deepcopy(base)
+                change(candidate)
+                with self.assertRaises(ValueError):
+                    h.validate_safe_error(candidate)
+            h.validate_safe_error(h.safe_error('integration', h.CommandFailure(101)))
+
+    def test_integration_projection_preserves_failure_and_missing_projection_never_succeeds(self):
+        with self.fixture(self.compiler()) as (root, _, _):
+            (root / 'private/oci.log').rename(root / 'private/integration.log')
+            report = {'status': 'FAIL', 'full12_pass': False, 'stages': [{'stage': name} for name in gate.JOBS['C']]}
+            with patch('sys.stdout', new_callable=io.StringIO) as output:
+                gate.retain_failure(report, 'integration', h.CommandFailure(101), root, 'C', [])
+            self.assertEqual(report['status'], 'FAIL')
+            self.assertFalse(report['full12_pass'])
+            h.validate_safe_error(report['error'])
+            self.assertIn('integration_diagnostics', report['error'])
+            self.assertNotIn('PRIVATE', output.getvalue())
+        for error in (FileNotFoundError('PRIVATE'), ValueError('PRIVATE')):
+            with patch.object(h, 'oci_failure_diagnostics', side_effect=error), patch('sys.stdout', new_callable=io.StringIO):
+                report = {'stages': [{'stage': name} for name in gate.JOBS['C']]}
+                gate.retain_failure(report, 'integration', h.CommandFailure(101), Path('/unused'), 'C', [])
+                self.assertEqual(report['error'], h.safe_error('integration', h.CommandFailure(101)))
+        with patch.object(h, 'oci_failure_diagnostics', side_effect=h.OverheadTimeout('PRIVATE', 1)):
+            with self.assertRaises(h.OverheadTimeout):
+                gate.retain_failure({}, 'integration', h.CommandFailure(101), Path('/unused'), 'C', [])
+
+    def test_integration_projection_keeps_existing_size_source_and_file_guards(self):
+        for log in (b'x' * (2**20 + 1), b'\n' * 16385):
+            with self.fixture(log) as (root, _, _):
+                (root / 'private/oci.log').rename(root / 'private/integration.log')
+                with self.assertRaises(ValueError):
+                    h.oci_failure_diagnostics(root, stage='integration')
+        with self.fixture(self.compiler()) as (root, source, _):
+            (root / 'private/oci.log').rename(root / 'private/integration.log')
+            source.write_bytes(b'PRIVATE SOURCE REPLACEMENT')
+            with self.assertRaises(ValueError):
+                h.oci_failure_diagnostics(root, stage='integration')
+        with self.fixture(self.compiler()) as (root, _, _):
+            log = root / 'private/oci.log'
+            os.link(log, root / 'private/integration.log')
+            with self.assertRaises(ValueError):
+                h.oci_failure_diagnostics(root, stage='integration')
+        with patch.object(Path, 'stat') as metadata, self.assertRaises(ValueError):
+            h.oci_failure_diagnostics(Path('/unused'), stage='PRIVATE')
+        metadata.assert_not_called()
+
     @contextmanager
     def fixture(self, log):
         with tempfile.TemporaryDirectory() as directory:
