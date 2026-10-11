@@ -132,14 +132,33 @@ try {
         if ($LASTEXITCODE -ne 0 -or $remaining) { throw 'Owned containers remain or inventory failed' }
         $networks = docker --context $DockerContext network ls -q --filter "label=com.docker.compose.project=$project"
         if ($LASTEXITCODE -ne 0 -or $networks) { throw 'Owned networks remain or inventory failed' }
-        $ownVolume = $project + '_delivery-qa'
-        $volume = docker --context $DockerContext volume ls -q --filter "name=^${ownVolume}$"
+        $composeVolumes = @('delivery-qa')
+        if ($Gate -in @('oci', 'postgres')) { $composeVolumes += 'engine-tools' }
+        $allVolumes = @(docker --context $DockerContext volume ls -q)
         if ($LASTEXITCODE -ne 0) { throw 'Disposable volume inventory failed' }
-        if ($volume) {
-            $owner = docker --context $DockerContext volume inspect $ownVolume --format '{{index .Labels "com.docker.compose.project"}}'
-            if ($LASTEXITCODE -ne 0 -or $owner -ne $project) { throw 'Disposable volume ownership mismatch' }
-            docker --context $DockerContext volume rm $ownVolume
-            if ($LASTEXITCODE -ne 0) { throw 'Disposable delivery volume cleanup failed' }
+        foreach ($composeVolume in $composeVolumes) {
+            $ownVolume = $project + '_' + $composeVolume
+            if ($allVolumes -ccontains $ownVolume) {
+                $metadata = @(docker --context $DockerContext volume inspect $ownVolume | ConvertFrom-Json)
+                if ($LASTEXITCODE -ne 0 -or $metadata.Count -ne 1 -or
+                    $metadata[0].Labels.'com.docker.compose.project' -cne $project -or
+                    $metadata[0].Labels.'com.docker.compose.volume' -cne $composeVolume) {
+                    throw "Disposable Compose volume ownership mismatch: $composeVolume"
+                }
+                $attached = @(docker --context $DockerContext ps -aq --filter "volume=$ownVolume")
+                if ($LASTEXITCODE -ne 0 -or $attached.Count -gt 0) {
+                    throw "Disposable Compose volume is still attached: $composeVolume"
+                }
+                docker --context $DockerContext volume rm $ownVolume
+                if ($LASTEXITCODE -ne 0) { throw "Disposable Compose volume cleanup failed: $composeVolume" }
+            }
+        }
+        $remainingVolumes = @(docker --context $DockerContext volume ls -q)
+        if ($LASTEXITCODE -ne 0) { throw 'Disposable volume readback failed' }
+        foreach ($composeVolume in $composeVolumes) {
+            if ($remainingVolumes -ccontains ($project + '_' + $composeVolume)) {
+                throw "Disposable Compose volume remains after cleanup: $composeVolume"
+            }
         }
         $after = SourceHashes
         if ($before.Count -ne $after.Count) { throw 'Source inventory changed during QA' }
