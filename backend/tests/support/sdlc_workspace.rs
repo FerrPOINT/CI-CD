@@ -20,6 +20,10 @@ struct Fixture {
 
 impl Fixture {
     async fn new() -> Self {
+        Self::with_repository_binding(true).await
+    }
+
+    async fn with_repository_binding(bind_repository: bool) -> Self {
         let url = std::env::var("CICD_TEST_DATABASE_URL").unwrap();
         assert!(
             url.rsplit('/').next().unwrap().starts_with("forge_test"),
@@ -49,6 +53,14 @@ impl Fixture {
             .execute(&pool)
             .await
             .unwrap();
+        if bind_repository {
+            sqlx::query("UPDATE projects SET repository_id=$2 WHERE id=$1")
+                .bind(project)
+                .bind(repo)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
         sqlx::query("INSERT INTO service_accounts(id,name) VALUES($1,$2)")
             .bind(subject)
             .bind(format!("workspace-{subject}"))
@@ -1038,4 +1050,53 @@ async fn sdlc_workspace_fail_closed_config_subject_rotation_write_only_and_json_
         .0,
         StatusCode::CONFLICT
     );
+}
+
+#[tokio::test]
+async fn sdlc_workspace_repository_uuid_wins_over_a_conflicting_url_tail() {
+    let f = Fixture::with_repository_binding(false).await;
+    let other = Uuid::new_v4();
+    let other_name = format!("other-{}", other.simple());
+    sqlx::query("INSERT INTO repositories(id,name) VALUES($1,$2)")
+        .bind(other)
+        .bind(&other_name)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE projects SET repository_url=$2,repository_id=$3 WHERE id=$1")
+        .bind(f.project)
+        .bind(format!("https://foreign.invalid/git/{other_name}.git"))
+        .bind(f.request.repository_id)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let mut wrong = f.request.clone();
+    wrong.repository_id = other;
+    assert_eq!(f.post(&wrong).await.0, StatusCode::CONFLICT);
+    let (status, receipt) = f.post(&f.request).await;
+    assert_eq!(status, StatusCode::OK, "{receipt}");
+    assert_eq!(
+        receipt["request"]["repositoryId"],
+        f.request.repository_id.to_string()
+    );
+}
+
+#[tokio::test]
+async fn sdlc_workspace_matching_url_without_explicit_repository_binding_is_rejected() {
+    let f = Fixture::with_repository_binding(false).await;
+    assert_eq!(f.post(&f.request).await.0, StatusCode::CONFLICT);
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM sdlc_workspace_operations WHERE project_id=$1")
+            .bind(f.project)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 0);
+    sqlx::query("UPDATE projects SET repository_id=$2 WHERE id=$1")
+        .bind(f.project)
+        .bind(f.request.repository_id)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(f.post(&f.request).await.0, StatusCode::OK);
 }

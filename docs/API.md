@@ -65,6 +65,63 @@ REST API первой версии Forge CI/CD. Контрольная плос�
 
 ## Базовая информация
 
+## Сквозной каталог и выполнение
+
+Каталоги репозиториев (`/catalog/repositories`, `/git-groups/{id}/repositories`,
+`/catalog/available-repositories`) возвращают `items` и серверный `total`;
+поиск и `limit`/`offset` применяются до выдачи страницы. `managed=true` в общем
+каталоге ограничивает выбор подтверждёнными Namespace bindings. Каталог
+доступных репозиториев ищет среди unbound записей, не подключает их автоматически.
+В `/delivery-configurations` `managed=true` ограничивает выдачу конфигурациями
+репозиториев сквозных проектов; без флага legacy/unbound semantics сохраняются.
+`DeliveryConfig.repository_name` — nullable display metadata, не идентичность.
+Старые сохранённые operation readbacks допускают отсутствие этого поля.
+
+Списки деплоев поддерживают `environment_id` и `approval_state` (`pending`,
+`approved`, `rejected`, `not_required`). Окружение проверяется на принадлежность
+проекту, репозиторию и выбранной конфигурации. Counters и страницы используют
+одинаковый фильтр. Эти параметры недопустимы для списка пайплайнов.
+`ExecutionRow.started_at`/`finished_at` nullable и описывают pipeline execution;
+для deployment timestamps не синтезируются из связанного пайплайна.
+
+UI применяет draft-фильтры после «Применить»/Enter, записывает одно состояние URL
+и сбрасывает offset. Deep link деплоя содержит `environment_id` и `deployment_id`
+в `/delivery-configs/{id}/environments`; он раскрывает и выделяет конкретную
+запись, не выполняя approval/rollback автоматически. Ни эти ссылки, ни managed
+catalog flags не расширяют права, lifecycle admission или service scopes.
+
+Новые human endpoints используют прежние scopes/roles и trusted-shared policy.
+Machine reader не получает доступа к human routes. Проект Tracker, репозиторий
+и CI-конфигурация имеют отдельные DTO; строгие SDLC owner envelopes не меняются.
+
+| Endpoint | Назначение |
+| --- | --- |
+| `GET /api/v1/workspace-projects` | Каталог Tracker-проектов с подтверждённым Namespace, `search`, `limit`, `offset` |
+| `GET /api/v1/workspace-projects/{registry}/{namespace}` | Метаданные, Tracker ResourceRef, Git binding и признак stale |
+| `GET .../summary` | Пакетные counters проекта |
+| `GET .../pipelines`, `GET .../deployments` | Общие списки проекта |
+| `GET /api/v1/workspace-summary`, `GET /api/v1/workspace-pipelines` | Общая сводка и список для дашборда |
+| `GET /api/v1/catalog/repositories` | UUID-каталог hosted/external, `search`, `group_id`, `limit`, `offset` |
+| `GET /api/v1/catalog/repositories/{id}/pipelines`, `.../deployments` | Отдельные списки репозитория |
+| `GET/POST /api/v1/catalog/repositories/{id}/delivery-configs` | Конфигурации и атомарное создание с `operation_id` |
+| `GET /api/v1/catalog/repositories/{id}/delivery-config-operations/{operation}` | Readback исходной операции, только её actor |
+| `GET/PUT /api/v1/catalog/repositories/{id}/push-config` | Явный выбор nullable `configuration_id` для push |
+| `GET /api/v1/delivery-configurations`, `GET .../{id}` | Настройки конфигураций; `unbound=true` для диагностики legacy |
+
+Execution lists возвращают `{items,total}` после серверных фильтров:
+`repository_id`, `configuration_id`, `status`, `git_ref`, ISO `since`/`until`,
+`limit` (1–100), `offset`. Чужая repository/config identity относительно route
+возвращает 409. Counts используют тот же фильтр, страницы не размножаются joins.
+Неизвестный каталог — 503; успешно прочитанный пустой каталог — 200 с пустым
+списком. При outage сохраняется последний снимок с `stale=true`.
+
+Legacy `/api/v1/projects` и `project_id` продолжают обозначать CI-конфигурацию.
+`PUT .../delivery-configs/{project_id}` сохраняет явное immutable attach.
+Bound `repository_url` нельзя заменить, удаление конфигурации с history или
+managed binding возвращает 409. Новые starts/mutations проходят archive guards.
+
+## Базовые параметры
+
 - Base URL: `http://{host}:22801/api/v1`
 - Content-Type: `application/json`
 - Auth: conditional. Без непустого `CICD_AUTH_SECRET` API работает в trusted-network режиме; с секретом большинство endpoint-ов требует `Authorization: Bearer <JWT-or-PAT>`.
@@ -115,6 +172,10 @@ source SHA — 40 lowercase hex. `workspaceId` — existing inventory ID
 как actual owner reservation DTO. Поля только declared, не admitted authority.
 PM отсутствует; write request допускается только для Developer, но не выдаёт
 write capability, branch или credentials.
+
+Новая операция требует явного repository UUID в delivery configuration: совпадение
+хвоста clone URL не подтверждает связь. Несвязанный или чужой repository даёт 409
+без ledger row; original-key replay сохраняет прежний immutable receipt.
 
 Receipt `schema=forge/workspace-operation-receipt/v1`, `status=blocked`,
 `dispatchAllowed=false` содержит owner-issued UUID, время, hash и exact original
@@ -261,8 +322,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 40,
-    "latest_required_version": 40,
+    "latest_applied_version": 91,
+    "latest_required_version": 91,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],
@@ -1301,6 +1362,12 @@ curl -sS "http://127.0.0.1:22801/api/v1/pipelines/$(printf '%s' "$PIPELINE" | jq
 
 `Environment` содержит `protected` и `required_approvals`. Для protected environment deployment нельзя сразу создать как terminal `success`/`failed` или связать с уже запущенным pipeline: запись стартует как `pending`, а `POST /deployments/{deployment_id}/approvals` сохраняет immutable decision. При включённой auth-схеме actor берётся из JWT/PAT subject; body `actor` используется только в trusted-network режиме. Когда набрано `required_approvals`, backend запускает pipeline через тот же idempotent trigger helper и связывает его с deployment. Rollback не переписывает исходный deployment: создаётся новая запись с `rollback_of_id`; для обычного окружения pipeline стартует сразу, для protected окружения rollback также ждёт approval.
 
+Общий runner reconcile обновляет только незавершённые автоматические деплои,
+для которых сохранены owner trigger receipt, `deployment_id` и связь с pipeline
+той же CI-конфигурации. Обработка ограничена 100 изменениями за проход и работает
+после restart, включая гонку завершения pipeline до сохранения связи. Ручные
+записи, чужие конфигурации и terminal history не изменяются при последующих retry.
+
 ### Schedules
 
 | Метод | Путь | Назначение |
@@ -1802,3 +1869,8 @@ PR merge для репозитория, ещё не связанного с CI-�
 ## Общая база
 
 Подключение версий, границы контрактов и проверки описаны в [BASE_INTEGRATION](BASE_INTEGRATION.md).
+
+
+## Сквозной Namespace
+
+Версионированные API, данные, ownership и совместимость описаны в [Namespace](NAMESPACE.md).

@@ -163,10 +163,14 @@ pub async fn prepare_workspace_operation(
             .ok_or_else(|| ApiError::conflict("unknown pinned repository"))?;
     let repository =
         crate::git_host::validate_repo_name(&repository).map_err(ApiError::bad_request)?;
-    let patterns = crate::git_host::repository_url_like_patterns(&repository);
-    let linked = sqlx::query_scalar::<_, bool>("SELECT repository_url ILIKE $2 ESCAPE '\\' OR repository_url ILIKE $3 ESCAPE '\\' OR repository_url ILIKE $4 ESCAPE '\\' FROM projects WHERE id=$1")
-        .bind(project).bind(patterns.path).bind(patterns.scp).bind(patterns.exact)
-        .fetch_one(&mut *tx).await.map_err(ApiError::internal)?;
+    let linked = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM projects WHERE id=$1 AND repository_id=$2)",
+    )
+    .bind(project)
+    .bind(request.repository_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?;
     if !linked {
         return Err(ApiError::conflict(
             "repository is not linked to owner project",

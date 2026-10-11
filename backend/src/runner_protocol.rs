@@ -337,6 +337,10 @@ struct ClaimedWork {
     git_ref: String,
     commit_sha: Option<String>,
     repository_url: String,
+    catalog_kind: Option<String>,
+    catalog_external_url: Option<String>,
+    catalog_slug: Option<String>,
+    catalog_group_slug: Option<String>,
     required_secrets: Vec<String>,
     artifact_paths: Vec<String>,
     generation: i64,
@@ -1205,7 +1209,7 @@ async fn claim_next_work(
              SELECT q.id AS queue_id, q.attempt_id, \
                     j.id AS job_id, j.stage_id, j.name AS job_name, j.image, j.command, \
                     LEAST(GREATEST(COALESCE(j.timeout_seconds, 3600), 5), 86400)::integer AS timeout_seconds, \
-                    s.pipeline_id, p.git_ref, p.commit_sha, pr.repository_url, j.required_secrets, j.artifact_paths, \
+                    s.pipeline_id, p.git_ref, p.commit_sha, pr.repository_url, rc.kind AS catalog_kind, rc.external_url AS catalog_external_url, rc.slug AS catalog_slug, gg.slug AS catalog_group_slug, j.required_secrets, j.artifact_paths, \
                     pp.plan_sha256 \
              FROM job_queue q \
              JOIN jobs j ON j.id = q.job_id \
@@ -1214,7 +1218,10 @@ async fn claim_next_work(
              JOIN pipelines p ON p.id = s.pipeline_id \
              JOIN projects pr ON pr.id = p.project_id \
              LEFT JOIN pipeline_plans pp ON pp.pipeline_id = p.id \
+             LEFT JOIN repository_catalog rc ON rc.id=pr.repository_id \
+             LEFT JOIN git_groups gg ON gg.id=rc.group_id \
              WHERE q.state = 'queued' \
+               AND NOT EXISTS(SELECT 1 FROM repository_catalog nr JOIN forge_namespace_bindings nb ON nb.resource_id=nr.group_id WHERE nr.id=pr.repository_id AND nb.state<>'active') \
                AND q.not_before <= now() \
                AND q.required_tags <@ $8::text[] \
                AND j.status = 'queued' \
@@ -1290,7 +1297,7 @@ async fn claim_next_work(
          ) \
          SELECT cq.lease_id, c.job_id, c.stage_id, ca.id AS attempt_id, ca.attempt_no, \
                 c.pipeline_id, c.job_name, c.image, c.command, c.timeout_seconds, \
-                c.git_ref, c.commit_sha, c.repository_url, c.required_secrets, c.artifact_paths, cq.generation, \
+                c.git_ref, c.commit_sha, c.repository_url, c.catalog_kind, c.catalog_external_url, c.catalog_slug, c.catalog_group_slug, c.required_secrets, c.artifact_paths, cq.generation, \
                 cq.lease_expires_at, cq.ack_deadline, c.plan_sha256 \
          FROM candidate c \
          CROSS JOIN claimed_attempt ca \
@@ -1318,6 +1325,19 @@ async fn claim_next_work(
                 continue;
             }
             Err(error) => return Err(ApiError::internal(error)),
+        };
+        let checkout_url = match row.catalog_kind.as_deref() {
+            Some("external") => row
+                .catalog_external_url
+                .clone()
+                .ok_or_else(|| ApiError::service_unavailable("invalid_repository_catalog"))?,
+            Some("hosted") if row.catalog_group_slug.is_some() => {
+                crate::repository_catalog::public_git_url(
+                    row.catalog_group_slug.as_deref().unwrap_or_default(),
+                    row.catalog_slug.as_deref().unwrap_or_default(),
+                )?
+            }
+            _ => row.repository_url.clone(),
         };
         match tx.commit().await {
             Ok(()) => {}
@@ -1353,7 +1373,7 @@ async fn claim_next_work(
                 timeout_seconds: row.timeout_seconds,
                 workspace: RunnerWorkspace {
                     checkout: true,
-                    checkout_url: Some(row.repository_url),
+                    checkout_url: Some(checkout_url),
                 },
                 artifacts: row.artifact_paths,
             },

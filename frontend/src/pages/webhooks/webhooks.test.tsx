@@ -182,9 +182,9 @@ function renderWebhooksPage(requests: string[], options: {
 
   render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[`/projects/${projectId}/webhooks${options.initialSearch ?? (options.initialView ? `?view=${options.initialView}` : '')}`]}>
+      <MemoryRouter initialEntries={[`/delivery-configs/${projectId}/webhooks${options.initialSearch ?? (options.initialView ? `?view=${options.initialView}` : '')}`]}>
         <Routes>
-          <Route path="/projects/:projectId/webhooks" element={<><WebhooksPage /><LocationProbe /></>} />
+          <Route path="/delivery-configs/:projectId/webhooks" element={<><WebhooksPage /><LocationProbe /></>} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
