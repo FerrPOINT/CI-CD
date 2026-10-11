@@ -8,6 +8,40 @@ image, поскольку закреплённый Rust image содержит �
 Docker. Tool binaries копируются в одноразовый QA volume; source/runtime images
 проверяемых компонентов не меняются.
 
+## Hosted Full12: 38093642467
+
+Актуальный [run38093642467/attempt1](https://github.com/FerrPOINT/CI-CD/actions/runs/38093642467)
+завершился FAILURE 2026-10-11. Controls `278c7fb5863dd7b151a2c6bf0c202a274cc459f3`,
+source `e781b533bfb25fa669d5a5c65f8fa7094de7af02`, SDK19a/maintenance66b7.
+Все три fresh artifacts аутентифицированы original strict readback на exact
+run/attempt/head; исторические receipts не переиспользованы.
+
+- A: пять стадий python81/row-smoke/smoke/check/Clippy PASS.
+- B: PostgreSQL5 PASS,24 exact negatives,14 cleaned v2 journals PASS.
+- C: первая failed native stage OCI7, Cargo exit101, CLI exit1, checkpoint child,
+  closed `childErrorClass=DiskSpaceGuard`; fixture observation only,
+  `acceptanceVerified=false`. Frame `backend/tests/support/oci_delivery.rs:603:5`.
+  Только один cleaned stage-parent journal, без OCI-session journal.
+- Stages8–12 (workspace/integration/CLI/OpenAPI/release) NOT_RUN. Original
+  aggregate отклонил C на `scripts/hermetic_full12/run.py:977` (`PARTITION_PASS`).
+- Во всех трёх независимых partitions owned cleanup/disposable cleanup,
+  daemon stopped/delegation removed подтверждены; remaining task resources0,
+  baseline inventory/images сохранены.
+
+| Partition | Artifact | ZIP SHA256 |
+| --- | --- | --- |
+| A | 11684774894 | `9aa9454f4a52198bbe4cfee0e8961e53207677930b34f929e9b402a0fa9082ae` |
+| B | 11686255733 | `a1f315d56269b9d0422ad056bf4e137bac8f713d28f80b47adf5cb396bdcfe64` |
+| C | 11687030847 | `885b860344506b1ca69551b7be10995136dda698feee3066626761384d13cf3a` |
+
+Initial capacity checkpoints проходят неизменные floors, но не измеряют свободное
+место при позднем child refusal. Closed class не доказывает причину расхода места,
+producer authority или successful effect; floor waiver нет. Full12/native SDLC
+acceptance не достигнуты. Sourcee781 опубликован отдельно в
+`fix/forge-oci-child-error-observation-20261010`; PR88/source903db592 — другой,
+более ранний срез. Main `d1282107f042a348fd3ddb7244bf0de00f605e2f` уже ancestore781.
+Исторические OCI/local packets ниже не квалифицируют этот более поздний source.
+
 ## Latest Frozen Native Packet: 8 Октября
 
 Epoch `20261008T172750Z-0f560932eb2b` завершился FAILED/unknown в OCI,
