@@ -27,7 +27,10 @@ $output = Join-Path $repo ('.local/task-delivery-qa/' + $project)
 $composeHost = Join-Path $output 'oci-compose'
 $composeLocal = $composeHost.Replace('\','/')
 $junction = $null
-python -B "$sdk/scripts/verify_base_revision.py" --base $sdk --revision "$repo/.base-revision"
+$basePin = Join-Path $repo '.base-revision'
+$namespacePin = Join-Path $repo '.namespace-base-revision'
+if (Test-Path -LiteralPath $namespacePin) { $basePin = $namespacePin }
+python -B "$sdk/scripts/verify_base_revision.py" --base $sdk --revision $basePin
 if ($LASTEXITCODE -ne 0) { throw 'Pinned Base validation failed' }
 $images = @($RustImage, $PostgresImage)
 if ($Gate -in @('oci', 'postgres')) { $images += $DockerToolsImage }
