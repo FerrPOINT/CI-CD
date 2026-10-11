@@ -11,6 +11,7 @@ import os
 from pathlib import Path, PurePosixPath
 import stat
 import subprocess
+import tarfile
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -18,6 +19,97 @@ from unittest.mock import Mock, patch
 
 import host as h
 import run as gate
+
+
+class DownloadToolsTests(unittest.TestCase):
+    @contextmanager
+    def downloads(self, root, *, invalid_hash=None, invalid_tar=None, invalid_member=None):
+        payloads = {}
+        installed = {}
+        for name, member in (('docker-29.8.2.tgz', 'docker/docker'),
+                             ('docker-rootless-extras-29.8.2.tgz', 'docker-rootless-extras/rootlesskit')):
+            stream = io.BytesIO()
+            content = name.encode()
+            with tarfile.open(fileobj=stream, mode='w:gz') as archive:
+                info = tarfile.TarInfo(member)
+                info.size = len(content)
+                archive.addfile(info, io.BytesIO(content))
+                if name == invalid_member:
+                    info = tarfile.TarInfo('docker/rejected-link')
+                    info.type = tarfile.SYMTYPE
+                    info.linkname = 'docker'
+                    archive.addfile(info)
+            payloads[name] = b'not a tar archive' if name == invalid_tar else stream.getvalue()
+            installed[PurePosixPath(member).name] = content
+        for name in ('docker-compose', 'docker-buildx'):
+            payloads[name] = name.encode()
+            installed[name] = payloads[name]
+        tools = {name: (name, hashlib.sha256(raw).hexdigest()) for name, raw in payloads.items()}
+        if invalid_hash is not None:
+            tools[invalid_hash] = (invalid_hash, '0' * 64)
+        (root / 'unrelated.tgz').write_bytes(b'keep')
+        (root / 'cache').mkdir()
+        (root / 'cache/keep').write_bytes(b'keep')
+        with patch.object(h, 'TOOLS', tools), \
+                patch.object(h.urllib.request, 'urlopen', side_effect=lambda url, **kwargs: io.BytesIO(payloads[url])), \
+                patch.dict(os.environ):
+            yield payloads, installed
+
+    def test_success_removes_only_extracted_tar_staging_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with self.downloads(root) as (payloads, installed):
+                self.assertEqual(h.download_tools(root), root / 'bin')
+                for name, raw in payloads.items():
+                    if name.endswith('.tgz'):
+                        self.assertFalse((root / name).exists())
+                    else:
+                        self.assertEqual((root / name).read_bytes(), raw)
+                        self.assertEqual((root / 'docker-config/cli-plugins' / name).read_bytes(), raw)
+                for name, raw in installed.items():
+                    self.assertEqual((root / 'bin' / name).read_bytes(), raw)
+                self.assertEqual(os.environ['DOCKER_CONFIG'], str(root / 'docker-config'))
+                self.assertTrue(os.environ['PATH'].startswith(str(root / 'bin') + ':'))
+                self.assertEqual((root / 'unrelated.tgz').read_bytes(), b'keep')
+                self.assertEqual((root / 'cache/keep').read_bytes(), b'keep')
+
+    def test_pin_hash_failure_retains_archive_without_extraction(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            name = 'docker-29.8.2.tgz'
+            with self.downloads(root, invalid_hash=name) as (payloads, _):
+                with self.assertRaises(ValueError), patch.object(h.tarfile, 'open') as extract:
+                    h.download_tools(root)
+                extract.assert_not_called()
+                self.assertEqual((root / name).read_bytes(), payloads[name])
+                self.assertEqual(list((root / 'bin').iterdir()), [])
+                self.assertFalse((root / 'docker-rootless-extras-29.8.2.tgz').exists())
+
+    def test_tar_open_failure_retains_failed_archive_and_prior_installed_binary(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            name = 'docker-rootless-extras-29.8.2.tgz'
+            with self.downloads(root, invalid_tar=name) as (payloads, installed):
+                with self.assertRaises(tarfile.ReadError):
+                    h.download_tools(root)
+                self.assertFalse((root / 'docker-29.8.2.tgz').exists())
+                self.assertEqual((root / 'bin/docker').read_bytes(), installed['docker'])
+                self.assertEqual((root / name).read_bytes(), payloads[name])
+                self.assertFalse((root / 'docker-compose').exists())
+
+    def test_extraction_guard_failure_retains_archive_and_partial_installed_binary(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            name = 'docker-rootless-extras-29.8.2.tgz'
+            with self.downloads(root, invalid_member=name) as (payloads, installed):
+                with self.assertRaises(ValueError):
+                    h.download_tools(root)
+                self.assertFalse((root / 'docker-29.8.2.tgz').exists())
+                self.assertEqual((root / name).read_bytes(), payloads[name])
+                for binary in ('docker', 'rootlesskit'):
+                    self.assertEqual((root / 'bin' / binary).read_bytes(), installed[binary])
+                self.assertFalse((root / 'bin/rejected-link').exists())
+                self.assertFalse((root / 'docker-compose').exists())
 
 
 class ControlsTests(unittest.TestCase):

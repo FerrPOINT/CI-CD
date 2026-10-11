@@ -24,6 +24,7 @@ NAMESPACE_MERGE = '32a9615e42d15b8f057e0c858bcd47c3e0b2463f'
 NAMESPACE_MAIN = '56191baf973e973209be2223b902fc484b061a4f'
 PRE_MERGE_SOURCE = '84f0962ce14b95983a015e7d2303cd6f00ec59a7'
 PRE_MERGE_CONTROLS = 'c63330d837b036306c27f062c6063b48ffa8ef82'
+NAMESPACE_CONTROLS = 'be217d82268e57a2f2f5dad0e63125d6f165fd3a'
 POLICY_SOURCE = '75659d8d0bb1415c0ad0ae183bb8cd762aeb9abb'
 PURE_CONTROLS = '030e676bff1653679999de093b9d61195f8430b6'
 PREVIOUS_SOURCE = 'e781b533bfb25fa669d5a5c65f8fa7094de7af02'
@@ -576,8 +577,28 @@ def bind_maintenance(module, proof):
 
 def controls_history(controls):
     require(git(controls, 'rev-parse', '--is-shallow-repository').strip() == b'false')
-    row = git(controls, 'rev-list', '--parents', '-n', '1', 'HEAD').decode().split()
-    require(len(row) == 3 and row[1:] == [PRE_MERGE_CONTROLS, SOURCE])
+    row = git(controls, 'rev-list', '--parents', '-n', '1', NAMESPACE_CONTROLS).decode().split()
+    require(row == [NAMESPACE_CONTROLS, PRE_MERGE_CONTROLS, SOURCE])
+    require(git(controls, 'merge-base', NAMESPACE_CONTROLS, 'HEAD').decode().strip() == NAMESPACE_CONTROLS)
+    anchored = json.loads(git(controls, 'show', NAMESPACE_CONTROLS + ':scripts/hermetic_full12/components.json'))
+    require(set(read(HERE / 'components.json')) == set(anchored))
+    allowed = set(anchored) | {'scripts/hermetic_full12/components.json'}
+    changes = git(controls, 'diff', '--name-status', SOURCE, 'HEAD').decode().splitlines()
+    require(sorted(changes) == ['A\t' + name for name in sorted(allowed)])
+    original_metadata = None
+    for revision in (NAMESPACE_CONTROLS, 'HEAD'):
+        rows = git(controls, 'ls-tree', '-r', '-z', revision, '--', *sorted(allowed)).split(b'\0')
+        metadata = {}
+        for row in filter(None, rows):
+            fields, path = row.split(b'\t', 1)
+            mode, kind, _ = fields.decode().split()
+            require(mode in ('100644', '100755') and kind == 'blob' and path.decode() not in metadata)
+            metadata[path.decode()] = (mode, kind)
+        require(set(metadata) == allowed)
+        if original_metadata is None:
+            original_metadata = metadata
+        else:
+            require(metadata == original_metadata)
     row = git(controls, 'rev-list', '--parents', '-n', '1', PRE_MERGE_CONTROLS).decode().split()
     require(row == [PRE_MERGE_CONTROLS, PURE_CONTROLS, PRE_MERGE_SOURCE])
     row = git(controls, 'rev-list', '--parents', '-n', '1', NAMESPACE_MERGE).decode().split()
@@ -631,7 +652,7 @@ def controls_history(controls):
         require(changes and all(line.startswith('M\t') and line[2:] in CONSUMER_PATHS for line in changes))
     for baseline, revision in ((PREVIOUS_SOURCE, SOURCE_MERGE), (PREVIOUS_SOURCE, PG_CONTROLS),
                                (PREVIOUS_SOURCE, SMOKE_CONTROLS), (POLICY_SOURCE, POLICY_MERGE),
-                               (POLICY_SOURCE, PURE_CONTROLS), (SOURCE, 'HEAD')):
+                               (POLICY_SOURCE, PURE_CONTROLS)):
         changes = git(controls, 'diff', '--name-status', baseline, revision).decode().splitlines()
         require(changes and all(line.startswith('A\t') and
             (line[2:].startswith('scripts/hermetic_full12/') or line[2:] == '.github/workflows/forge-hermetic-full12.yml') for line in changes))
@@ -812,6 +833,7 @@ def download_tools(root):
                     with archive.extractfile(member) as source, (binary / parts[1]).open('xb') as output:
                         shutil.copyfileobj(source, output)
                     (binary / parts[1]).chmod(0o755)
+            target.unlink()
         else:
             shutil.copyfile(target, binary / name)
             (binary / name).chmod(0o755)

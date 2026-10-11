@@ -472,6 +472,18 @@ all below21600s. Existing240s action reserve is not consumed by the new step.
 Host reserve108279229428 bytes, data reserve71319483898 bytes and300000 inodes
 remain enforced. Reclaim is only measured allowlisted disposable hosted paths.
 
+After successful hash verification and extraction, bootstrap removes only its
+two downloaded `.tgz` staging copies. Installed binaries, plugins, image layers
+and dependency caches remain intact. Extraction/hash failure retains the failed
+archive for the existing final cleanup. This reduces redundant storage, not the
+capacity floor; only fresh stage measurements can prove sufficient headroom.
+
+Controls descendants retain the exact `be217` namespace merge as their ancestry
+anchor. Its component-map keys define the same26 source-relative added paths and
+their modes/kinds; current hashes still require verification and review. A normal
+controls-only fix need not itself be another product merge. Historical source,
+resource and acceptance guards remain mandatory.
+
 ### Повторный reclaim перед cache allocation
 
 Initial admission и существующий `cache_allocate` вызывают один guarded reclaim:

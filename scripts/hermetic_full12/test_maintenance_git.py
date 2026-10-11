@@ -415,7 +415,7 @@ class ConsumerHistoryTests(unittest.TestCase):
         self.assertEqual(h.COUNT_CONTROLS, '20e4f4fd12230ed87d01f05b18d3417a11e052a8')
         self.assertEqual(h.LITERAL_CLASS_SOURCE, 'f05d4796160f1ebd14cb60ddc14da9e3eb78c36d')
         self.assertEqual(h.PG_MERGE_PARENT, '903db592f17beb761ed82a20cb8f4645f11ed200')
-        for revision in ('HEAD', h.PURE_CONTROLS, h.CHILD_POLICY_CONTROLS, h.POLICY_MERGE, h.SMOKE_CONTROLS, h.PG_CONTROLS, h.SOURCE_MERGE,
+        for revision in (h.NAMESPACE_CONTROLS, h.PURE_CONTROLS, h.CHILD_POLICY_CONTROLS, h.POLICY_MERGE, h.SMOKE_CONTROLS, h.PG_CONTROLS, h.SOURCE_MERGE,
                          h.SOURCE, h.POLICY_SOURCE, h.PREVIOUS_SOURCE, h.COUNT_CONTROLS, h.LITERAL_CLASS_SOURCE,
                          h.CHILD_CLASS_SOURCE, h.CONTROLS_PARENT):
             selector = ('rev-list', '--parents', '-n', '1', revision)
@@ -453,7 +453,7 @@ class ConsumerHistoryTests(unittest.TestCase):
     def git(_, *args):
         if args == ('rev-parse', '--is-shallow-repository'):
             return b'false\n'
-        parents = {'HEAD': ('a' * 40, h.PRE_MERGE_CONTROLS, h.SOURCE),
+        parents = {h.NAMESPACE_CONTROLS: (h.NAMESPACE_CONTROLS, h.PRE_MERGE_CONTROLS, h.SOURCE),
                    h.PURE_CONTROLS: (h.PURE_CONTROLS, h.CHILD_POLICY_CONTROLS),
                    h.CHILD_POLICY_CONTROLS: (h.CHILD_POLICY_CONTROLS, h.POLICY_MERGE),
                    h.POLICY_MERGE: (h.POLICY_MERGE, h.SMOKE_CONTROLS, h.POLICY_SOURCE),
@@ -492,6 +492,17 @@ class ConsumerHistoryTests(unittest.TestCase):
                    h.PUBLIC_CONTROLS: (h.PUBLIC_CONTROLS, h.ORIGINAL_SOURCE)}
         if args[:4] == ('rev-list', '--parents', '-n', '1'):
             return (' '.join(parents[args[4]]) + '\n').encode()
+        if args == ('merge-base', h.NAMESPACE_CONTROLS, 'HEAD'):
+            return (h.NAMESPACE_CONTROLS + '\n').encode()
+        pins = h.read(h.HERE / 'components.json')
+        allowed = sorted(set(pins) | {'scripts/hermetic_full12/components.json'})
+        if args == ('show', h.NAMESPACE_CONTROLS + ':scripts/hermetic_full12/components.json'):
+            return json.dumps(pins).encode()
+        if args == ('diff', '--name-status', h.SOURCE, 'HEAD'):
+            return ''.join('A\t' + name + '\n' for name in allowed).encode()
+        if args in (('ls-tree', '-r', '-z', h.NAMESPACE_CONTROLS, '--', *allowed),
+                    ('ls-tree', '-r', '-z', 'HEAD', '--', *allowed)):
+            return b''.join(('100644 blob ' + 'f' * 40 + '\t' + name + '\0').encode() for name in allowed)
         if args == ('diff', '--name-status', h.NAMESPACE_MERGE, h.SOURCE):
             return b'M\tdocs/CURRENT_STATE.md\nM\tdocs/TASK_DELIVERY_VERIFICATION.md\n'
         if args in (('diff', '--name-status', h.CONTROLS_PARENT, h.COUNT_CONTROLS),
@@ -514,7 +525,6 @@ class ConsumerHistoryTests(unittest.TestCase):
             return (b'M\tdocs/CURRENT_STATE.md\nM\tdocs/TASK_DELIVERY_VERIFICATION.md\n'
                     b'M\tscripts/native_qa_compose.py\nM\tscripts/tests/test_native_qa_compose.py\n')
         if args in (('diff', '--name-status', h.POLICY_SOURCE, h.PURE_CONTROLS),
-                    ('diff', '--name-status', h.SOURCE, 'HEAD'),
                     ('diff', '--name-status', h.POLICY_SOURCE, h.POLICY_MERGE),
                     ('diff', '--name-status', h.PREVIOUS_SOURCE, h.SMOKE_CONTROLS),
                     ('diff', '--name-status', h.PREVIOUS_SOURCE, h.PG_CONTROLS),
@@ -559,6 +569,50 @@ class ConsumerHistoryTests(unittest.TestCase):
         self.assertEqual(h.QUALIFICATION_CONTROLS, '632ea8347602fe4af22e7369790ed9c75e53f76a')
         self.assertEqual(h.PUBLIC_CONTROLS, '1dbedf85242c3540b70005ce5f0c20badb682c41')
 
+    def test_controls_successor_uses_fixed_merge_anchor_not_head_parent_shape(self):
+        with patch.object(h, 'git', side_effect=self.git) as git:
+            h.controls_history(Path('controls'))
+        self.assertEqual(h.NAMESPACE_CONTROLS, 'be217d82268e57a2f2f5dad0e63125d6f165fd3a')
+        self.assertNotIn((Path('controls'), 'rev-list', '--parents', '-n', '1', 'HEAD'),
+                         [call.args for call in git.call_args_list])
+        selector = ('merge-base', h.NAMESPACE_CONTROLS, 'HEAD')
+        for raw in (b'', (h.SOURCE + '\n').encode()):
+            with self.subTest(raw=raw), patch.object(h, 'git', side_effect=lambda root, *a:
+                    raw if a == selector else self.git(root, *a)), self.assertRaises(ValueError):
+                h.controls_history(Path('controls'))
+
+    def test_controls_successor_requires_exact_anchored_paths(self):
+        selector = ('diff', '--name-status', h.SOURCE, 'HEAD')
+        good = self.git(None, *selector)
+        for raw in (b'\n'.join(good.splitlines()[:-1]), good + good.splitlines()[0] + b'\n',
+                    good + b'A\tscripts/hermetic_full12/new.py\n', good.replace(b'A\t', b'M\t', 1)):
+            with self.subTest(raw=raw), patch.object(h, 'git', side_effect=lambda root, *a:
+                    raw if a == selector else self.git(root, *a)), self.assertRaises(ValueError):
+                h.controls_history(Path('controls'))
+
+    def test_controls_successor_rejects_self_declared_component_keys(self):
+        pins = h.read(h.HERE / 'components.json')
+        selector = ('show', h.NAMESPACE_CONTROLS + ':scripts/hermetic_full12/components.json')
+        anchored = json.dumps(pins).encode()
+        for changed in ({**pins, 'scripts/hermetic_full12/new.py': 'a' * 64},
+                        {name: digest for name, digest in list(pins.items())[1:]}):
+            with self.subTest(changed=changed), patch.object(h, 'read', return_value=changed), \
+                    patch.object(h, 'git', side_effect=lambda root, *a:
+                        anchored if a == selector else self.git(root, *a)), self.assertRaises(ValueError):
+                h.controls_history(Path('controls'))
+
+    def test_controls_successor_preserves_anchored_modes_and_blob_kinds(self):
+        allowed = sorted(set(h.read(h.HERE / 'components.json')) | {'scripts/hermetic_full12/components.json'})
+        selector = ('ls-tree', '-r', '-z', 'HEAD', '--', *allowed)
+        good = self.git(None, *selector)
+        for raw in (good.replace(b'100644 blob', b'100755 blob', 1),
+                    good.replace(b'100644 blob', b'120000 blob', 1),
+                    good.replace(b'100644 blob', b'160000 commit', 1),
+                    b'\0'.join(good.split(b'\0')[1:]), good + good.split(b'\0')[0] + b'\0'):
+            with self.subTest(raw=raw), patch.object(h, 'git', side_effect=lambda root, *a:
+                    raw if a == selector else self.git(root, *a)), self.assertRaises(ValueError):
+                h.controls_history(Path('controls'))
+
     def test_shallow_wrong_parent_or_extra_merge_parent_rejected(self):
         for selector, raw in (
                 (('rev-list', '--parents', '-n', '1', h.NAMESPACE_MERGE),
@@ -566,8 +620,8 @@ class ConsumerHistoryTests(unittest.TestCase):
                 (('rev-list', '--parents', '-n', '1', h.PRE_MERGE_CONTROLS),
                  (h.PRE_MERGE_CONTROLS + ' ' + h.PURE_CONTROLS + ' ' + h.SOURCE).encode()),
                 (('rev-parse', '--is-shallow-repository'), b'true\n'),
-                (('rev-list', '--parents', '-n', '1', 'HEAD'), ('a' * 40 + ' ' + h.SOURCE).encode()),
-                (('rev-list', '--parents', '-n', '1', 'HEAD'), ('a' * 40 + ' ' + h.CONTROLS_PARENT + ' ' + h.SOURCE).encode()),
+                (('rev-list', '--parents', '-n', '1', h.NAMESPACE_CONTROLS), (h.NAMESPACE_CONTROLS + ' ' + h.SOURCE).encode()),
+                (('rev-list', '--parents', '-n', '1', h.NAMESPACE_CONTROLS), (h.NAMESPACE_CONTROLS + ' ' + h.CONTROLS_PARENT + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.CHILD_CLASS_CONTROLS), (h.CHILD_CLASS_CONTROLS + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.CONTROLS_PARENT), (h.CONTROLS_PARENT + ' ' + h.SOURCE).encode()),
                 (('rev-list', '--parents', '-n', '1', h.SOURCE), (h.SOURCE + ' ' + h.OCI_CLI_CONTROLS).encode()),
