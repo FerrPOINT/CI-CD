@@ -1,5 +1,26 @@
 # Public-safe exact-source full12 controls
 
+## Git checkout packaging и namespace fixtures (только подготовка)
+
+Source теперь `53e93566b7aecbccebe1f3e4e948685cf59841a8`, tree
+`792fb4fddecfd2470fdec6214a74ab709a7e971a`, sole parent7db. Normal merge
+сохраняет ordered parents controls763 и source53e935; historical7db edges не
+переименованы. Source child меняет только fixed workspace diagnostic и два docs,
+не production behavior; причина937 ещё не доказана. Effective Base0e1 и
+maintenance pins не меняются. Existing catalogue
+описывает execution bytes: только17 Forge paths с объявленным `text eol=crlf`
+материализуются native Git из pinned source tree. Остальные261 inputs, включая
+весь Base, сохраняют raw Git hashes. Второго catalogue или checksum compatibility
+policy нет. Export проверяет HEAD/tree, exact CRLF path set и отсутствие
+executable attributes; отключает global/system attributes и autocrlf defaults,
+отвергает local `info/attributes`, не запускает custom filters. Existing parity
+проверяет exported execution bytes без изменения predicates.
+QA service получает две explicit namespace fixture IDs из main CI; PostgreSQL
+service и host environment не меняются. Шесть новых pure regressions сохраняют
+все261 прежних selectors (всего267). SQL, migration loader, fixed historical
+SHA384, все12 gates, resource floors, deadlines и cleanup не меняются.
+Prepared source/pure checks не являются новой hosted/full12 acceptance.
+
 ## Namespace main merge successor (prepared only)
 
 Новый source `7db4266f51069d0fda36904a194a1b578659121f`, tree

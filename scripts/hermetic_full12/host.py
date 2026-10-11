@@ -18,8 +18,10 @@ import urllib.request
 import maintenance_git as m
 
 HERE = Path(__file__).resolve().parent
-SOURCE = '7db4266f51069d0fda36904a194a1b578659121f'
-SOURCE_TREE = 'a7201b0c2cb552b871c0de84168246efaa9922e6'
+SOURCE = '53e93566b7aecbccebe1f3e4e948685cf59841a8'
+SOURCE_TREE = '792fb4fddecfd2470fdec6214a74ab709a7e971a'
+NAMESPACE_SOURCE = '7db4266f51069d0fda36904a194a1b578659121f'
+PACKAGING_PARENT = '76368820940e9e7f76bf790df184f546eda7109d'
 NAMESPACE_MERGE = '32a9615e42d15b8f057e0c858bcd47c3e0b2463f'
 NAMESPACE_MAIN = '56191baf973e973209be2223b902fc484b061a4f'
 PRE_MERGE_SOURCE = '84f0962ce14b95983a015e7d2303cd6f00ec59a7'
@@ -41,6 +43,13 @@ SOURCE_PARENT = 'd7443f8dffdd7f5d921c5758bed4e5a35423c0ff'
 ORIGINAL_SOURCE = '25be2e82d4d42673897c8a16070eb8a9519244f0'
 BASE = '0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce'
 LEGACY_BASE = '19a7a381ae6dbea61a643bb96189e483fa64df5c'
+CRLF_PATHS = tuple('backend/migrations/' + name + '.sql' for name in (
+    '0001_bootstrap_v1', '0002_runtime_role', '0003_auth_foundation', '0004_outbox_delivery',
+    '0005_execution_gaps', '0006_git_ci_details', '0010_scoped_api_tokens', '0026_session_family_reuse',
+    '0027_artifact_upload_sessions', '0028_project_dispatch_limits', '0029_service_accounts',
+    '0030_tenants', '0031_outbox_email_channel', '0032_notification_rules_templates',
+    '0033_aggregation_quiet_hours', '0038_platform_messaging')) + (
+    'backend/tests/fixtures/historical_platform_messaging.sql',)
 PUBLIC_CONTROLS = '1dbedf85242c3540b70005ce5f0c20badb682c41'
 QUALIFICATION_CONTROLS = '632ea8347602fe4af22e7369790ed9c75e53f76a'
 SAFETY_CONTROLS = '4d97c54f35b485224a8229495763658fcbbd40e9'
@@ -589,8 +598,11 @@ def bind_maintenance(module, proof):
 
 def controls_history(controls):
     require(git(controls, 'rev-parse', '--is-shallow-repository').strip() == b'false')
+    require(git(controls, 'merge-base', PACKAGING_PARENT, 'HEAD').decode().strip() == PACKAGING_PARENT)
+    row = git(controls, 'rev-list', '--parents', '-n', '1', PACKAGING_PARENT).decode().split()
+    require(row == [PACKAGING_PARENT, '292a04e0abeb73b0956aebe624222b1858088cf5'])
     row = git(controls, 'rev-list', '--parents', '-n', '1', NAMESPACE_CONTROLS).decode().split()
-    require(row == [NAMESPACE_CONTROLS, PRE_MERGE_CONTROLS, SOURCE])
+    require(row == [NAMESPACE_CONTROLS, PRE_MERGE_CONTROLS, NAMESPACE_SOURCE])
     require(git(controls, 'merge-base', NAMESPACE_CONTROLS, 'HEAD').decode().strip() == NAMESPACE_CONTROLS)
     anchored = json.loads(git(controls, 'show', NAMESPACE_CONTROLS + ':scripts/hermetic_full12/components.json'))
     require(set(read(HERE / 'components.json')) == set(anchored))
@@ -615,8 +627,10 @@ def controls_history(controls):
     require(row == [PRE_MERGE_CONTROLS, PURE_CONTROLS, PRE_MERGE_SOURCE])
     row = git(controls, 'rev-list', '--parents', '-n', '1', NAMESPACE_MERGE).decode().split()
     require(row == [NAMESPACE_MERGE, PRE_MERGE_SOURCE, NAMESPACE_MAIN])
+    row = git(controls, 'rev-list', '--parents', '-n', '1', NAMESPACE_SOURCE).decode().split()
+    require(row == [NAMESPACE_SOURCE, NAMESPACE_MERGE])
     row = git(controls, 'rev-list', '--parents', '-n', '1', SOURCE).decode().split()
-    require(row == [SOURCE, NAMESPACE_MERGE])
+    require(row == [SOURCE, NAMESPACE_SOURCE])
     row = git(controls, 'rev-list', '--parents', '-n', '1', POLICY_MERGE).decode().split()
     require(row == [POLICY_MERGE, SMOKE_CONTROLS, POLICY_SOURCE])
     row = git(controls, 'rev-list', '--parents', '-n', '1', SOURCE_MERGE).decode().split()
@@ -677,8 +691,11 @@ def controls_history(controls):
     require(changes and all(line.startswith('M\t') and
             (line[2:] in CONSUMER_PATHS or line in expected) for line in changes))
     require([line for line in changes if line[2:] not in CONSUMER_PATHS] == expected)
-    require(git(controls, 'diff', '--name-status', NAMESPACE_MERGE, SOURCE).decode().splitlines() ==
+    require(git(controls, 'diff', '--name-status', NAMESPACE_MERGE, NAMESPACE_SOURCE).decode().splitlines() ==
             ['M\tdocs/CURRENT_STATE.md', 'M\tdocs/TASK_DELIVERY_VERIFICATION.md'])
+    require(git(controls, 'diff', '--name-status', NAMESPACE_SOURCE, SOURCE).decode().splitlines() ==
+            ['M\tbackend/tests/support/sdlc_workspace.rs', 'M\tdocs/CURRENT_STATE.md',
+             'M\tdocs/TASK_DELIVERY_VERIFICATION.md'])
 
 
 def checkout_proof(workspace):
@@ -702,6 +719,28 @@ def export_sources(checkouts, destination):
         require(len(spec['files']) == spec['count'])
         encoded = json.dumps(spec['files'], sort_keys=True, separators=(',', ':')).encode()
         require(hashlib.sha256(encoded).hexdigest() == spec['sha256'])
+        if label == 'forge':
+            require(git(checkouts[label], 'rev-parse', 'HEAD').decode().strip() == revision)
+            require(git(checkouts[label], 'rev-parse', 'HEAD^{tree}').decode().strip() == SOURCE_TREE)
+            info = Path(git(checkouts[label], 'rev-parse', '--path-format=absolute',
+                            '--git-path', 'info/attributes').decode().strip())
+            require(not info.exists() and not info.is_symlink())
+            # Only native EOL conversion from the pinned tree, never executable filters.
+            render = ['git', '--no-replace-objects', '-C', str(checkouts[label]), '--no-optional-locks',
+                      '--attr-source=' + revision, '-c', 'core.attributesFile=' + os.devnull,
+                      '-c', 'core.autocrlf=false', '-c', 'core.eol=lf']
+            render_env = dict(os.environ, GIT_ATTR_NOSYSTEM='1')
+            names = [item['path'] for item in spec['files']]
+            require(set(CRLF_PATHS) <= set(names) and len(CRLF_PATHS) == 17)
+            eols = command(render + ['check-attr', '-z', 'eol', '--', *names], env=render_env).split(b'\0')
+            require(eols[-1] == b'' and len(eols) == 3 * len(names) + 1)
+            require(all(eols[i:i + 2] == [name.encode(), b'eol'] for i, name in zip(range(0, len(eols) - 1, 3), names)))
+            require({eols[i].decode() for i in range(0, len(eols) - 1, 3) if eols[i + 2] == b'crlf'} == set(CRLF_PATHS))
+            attributes = ('filter', 'working-tree-encoding', 'ident', 'text', 'eol')
+            expected = b''.join(name.encode() + b'\0' + attr.encode() + b'\0' + value + b'\0'
+                for name in CRLF_PATHS for attr, value in zip(attributes,
+                    (b'unspecified', b'unspecified', b'unspecified', b'set', b'crlf')))
+            require(command(render + ['check-attr', '-z', *attributes, '--', *CRLF_PATHS], env=render_env) == expected)
         for item in spec['files']:
             name = item['path']
             relative = PurePosixPath(name)
@@ -710,6 +749,8 @@ def export_sources(checkouts, destination):
             entry = git(checkouts[label], 'ls-tree', revision, '--', name).decode().split()
             require(len(entry) == 4 and entry[0] in ('100644', '100755') and entry[1] == 'blob' and entry[3] == name)
             raw = git(checkouts[label], 'cat-file', 'blob', entry[2])
+            if label == 'forge' and name in CRLF_PATHS:
+                raw = command(render + ['cat-file', '--filters', '--path=' + name, entry[2]], env=render_env)
             require(len(raw) == item['size'] and hashlib.sha256(raw).hexdigest() == item['sha256'])
             target = destination / folder / name
             target.parent.mkdir(parents=True, exist_ok=True)

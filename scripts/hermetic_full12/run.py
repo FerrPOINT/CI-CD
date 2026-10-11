@@ -366,6 +366,8 @@ def manifest(root, config, images):
         'CARGO_INCREMENTAL': '0', 'CARGO_PROFILE_DEV_DEBUG': '0', 'CARGO_PROFILE_TEST_DEBUG': '0',
         'CARGO_NET_RETRY': '2', 'CARGO_HTTP_TIMEOUT': '60', 'PYTHONDONTWRITEBYTECODE': '1',
         'CICD_TEST_DATABASE_URL': 'postgres://postgres@postgres:5432/forge_test_delivery',
+        'CICD_NAMESPACE__INSTANCE_ID': '75b72b83-2897-4114-a2d1-d9cd40aee232',
+        'CICD_NAMESPACE__REGISTRY_INSTANCE_ID': '366087c3-b9a4-4a05-b98d-fc28f748ed33',
         'CICD_TEST_PG_IMAGE': images['postgres'], 'CICD_TEST_PG_PYTHON': '/usr/local/bin/python3'}
     for kind in ('pg', 'oci'):
         for suffix, value in (('PROJECT', config[kind + '_project']), ('NETWORK', config['project'] + '_qa'),

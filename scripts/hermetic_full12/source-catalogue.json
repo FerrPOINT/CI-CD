@@ -1,5 +1,5 @@
 {
-  "source_sha": "7db4266f51069d0fda36904a194a1b578659121f",
+  "source_sha": "53e93566b7aecbccebe1f3e4e948685cf59841a8",
   "product_base_sha": "0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce",
   "catalogues": {
     "base": {
@@ -633,33 +633,33 @@
         },
         {
           "path": "backend/migrations/0001_bootstrap_v1.sql",
-          "sha256": "2de529438049ead97ef5ff81ad7b531c386dd34d259b9499f5a790ade3d3f35d",
-          "size": 6651
+          "sha256": "585aa915d326dd0599f09071bee4c53ded7d408c68832a4a41e988c9eea2abe7",
+          "size": 6820
         },
         {
           "path": "backend/migrations/0002_runtime_role.sql",
-          "sha256": "1443e42e3342745f5b4bab64a53f91ac2d44dbab89c097ca1934408dd83c9858",
-          "size": 792
+          "sha256": "498a6141511273485dae52b4066683147d591b14c8d1cdb9cb3517e0a49b8911",
+          "size": 811
         },
         {
           "path": "backend/migrations/0003_auth_foundation.sql",
-          "sha256": "a2300491f301cb6708fbddc507cdaefe3064c03c8b8f35539b0cf77479082d54",
-          "size": 944
+          "sha256": "5c74c7e0d485cd5e0bea85529e249374c03f60cda4e2527dec82ddc02e9789b2",
+          "size": 966
         },
         {
           "path": "backend/migrations/0004_outbox_delivery.sql",
-          "sha256": "a473d420fbfccf247371b8980e8efadf7996b1d002ed98cd50a50d432d602ecc",
-          "size": 1597
+          "sha256": "699b8c94a95ddf13e4754b3f9f19a2e8c7dffe57dbe571f5d8c99476a5c18c4a",
+          "size": 1633
         },
         {
           "path": "backend/migrations/0005_execution_gaps.sql",
-          "sha256": "54b3811af75d195d4f10f6644b8170e3640e0a19caac1ef307200fb24a8ab5ae",
-          "size": 1026
+          "sha256": "ad09d36b559b42c6ca6630699d3cd2ab22f266e2f99a5784e8b247ab8666fb48",
+          "size": 1045
         },
         {
           "path": "backend/migrations/0006_git_ci_details.sql",
-          "sha256": "90f2f138bf7b454b678ed03b71390b969915e7e0830129c7911ee4b22bb726fc",
-          "size": 1345
+          "sha256": "2700eebf76ba025d0c02d8c6c02c0493df8eb9edda8f9b4e7ea1030b4f47cf00",
+          "size": 1379
         },
         {
           "path": "backend/migrations/0007_execution_attempts.sql",
@@ -678,8 +678,8 @@
         },
         {
           "path": "backend/migrations/0010_scoped_api_tokens.sql",
-          "sha256": "4aa6760341ec8e8439ec8d79628b4d1dbba613fce861f20f0dd267bd45c4bea0",
-          "size": 647
+          "sha256": "98b8ecdac2a63312e98b7954f00bf0e4a208d885066eb7d25b53bbc9bb15a21f",
+          "size": 665
         },
         {
           "path": "backend/migrations/0011_notification_outbox_index.sql",
@@ -758,43 +758,43 @@
         },
         {
           "path": "backend/migrations/0026_session_family_reuse.sql",
-          "sha256": "138759a9a69a2b5b3627eda78296fbc24fee50e2c52e92c9e7138d6159ae5e68",
-          "size": 919
+          "sha256": "48f2e1b68c7c8b2112e5589e5bccf7152d7c76feb68ce5fd44bfb04d1bce23bc",
+          "size": 946
         },
         {
           "path": "backend/migrations/0027_artifact_upload_sessions.sql",
-          "sha256": "a30831daa2a1cea938cb20d71c3d81f12a4d1d2b72886c5f46037b1982d2e88d",
-          "size": 2406
+          "sha256": "a8fb14d6febce5e6025496450c2cf96d59ce41c2ca8cee36757f61cdd90d8514",
+          "size": 2458
         },
         {
           "path": "backend/migrations/0028_project_dispatch_limits.sql",
-          "sha256": "6a377710cdea482858321123d8968b85176f6a5e4f500c6e0cb87b65f38c820f",
-          "size": 435
+          "sha256": "0db223775cfbda8c045fec920de029462d3ff9806dc073a533564bc74984a5e3",
+          "size": 443
         },
         {
           "path": "backend/migrations/0029_service_accounts.sql",
-          "sha256": "c1029494c0fbfdb686a757279e2a60a6642f00c1b9e27786660f28d363a94775",
-          "size": 1080
+          "sha256": "6ae2c9b77314dc8731fc32ba30fa3abd4a829e0c6b85b8ec526842d84f5c2fe5",
+          "size": 1104
         },
         {
           "path": "backend/migrations/0030_tenants.sql",
-          "sha256": "8a68ed8968a155ed7e20853e9bcf61ab9abd43f640388dc4936bd6fb4cc6ca1a",
-          "size": 1242
+          "sha256": "eb6954c7c4bf0ac1dcd6e599c8bd7b700361642e0e5c0bd334c7eaf54ff3c430",
+          "size": 1270
         },
         {
           "path": "backend/migrations/0031_outbox_email_channel.sql",
-          "sha256": "c86deea2f1fea2c2fadedf174a55d2962244b749ebd5c35f8e3e5e7119aa2324",
-          "size": 374
+          "sha256": "1ebc29188db8030d7c56263f4c3821ecfc84ea2f1d1bff63e647d26b01c94efc",
+          "size": 379
         },
         {
           "path": "backend/migrations/0032_notification_rules_templates.sql",
-          "sha256": "c3dccb6eec4a87e828db6ddeb659846938794f8a36b416e5eed0df1b7c9020b0",
-          "size": 2403
+          "sha256": "e4e3f2cc1e0c5a9f6e7223e0490b4d9bfd012017245236b29cb5df585f4ecd83",
+          "size": 2455
         },
         {
           "path": "backend/migrations/0033_aggregation_quiet_hours.sql",
-          "sha256": "441272fb828a861c4161c64d96a99d7f0f778115a8495e3e583f98a5aa309e51",
-          "size": 2105
+          "sha256": "1c59b70c0d3515377d89b89e55c329de63af11a1b851aa438fef9639985d456d",
+          "size": 2144
         },
         {
           "path": "backend/migrations/0034_central_subject.sql",
@@ -818,8 +818,8 @@
         },
         {
           "path": "backend/migrations/0038_platform_messaging.sql",
-          "sha256": "8a38568adbc66770c64709adcd21c0c84f9939d2ba5132cee96987eb5b94a313",
-          "size": 1034
+          "sha256": "5fcb8baf8acc052a355f0761cf313739f4ab93a29161971a5136aa0da731ed99",
+          "size": 1057
         },
         {
           "path": "backend/migrations/0039_runner_completion_readback.sql",
@@ -1103,8 +1103,8 @@
         },
         {
           "path": "backend/tests/fixtures/historical_platform_messaging.sql",
-          "sha256": "8a38568adbc66770c64709adcd21c0c84f9939d2ba5132cee96987eb5b94a313",
-          "size": 1034
+          "sha256": "5fcb8baf8acc052a355f0761cf313739f4ab93a29161971a5136aa0da731ed99",
+          "size": 1057
         },
         {
           "path": "backend/tests/helpers/manifest_target.rs",
@@ -1163,8 +1163,8 @@
         },
         {
           "path": "backend/tests/support/sdlc_workspace.rs",
-          "sha256": "0f0ffb2b4fe8676aa88a820f47ce37e5a6be6d821994455261b6ec8456e2d41a",
-          "size": 39553
+          "sha256": "c38cb33b72ecbe13a7ebb39bd56450180362b8f4d9c12a2666018fda067a642a",
+          "size": 40045
         },
         {
           "path": "backend/tests/support/task_delivery.rs",
@@ -1402,7 +1402,7 @@
           "size": 35571
         }
       ],
-      "sha256": "7810345687bd895608c61fc114798006e6a657badf6b9765e946b305cf31e893"
+      "sha256": "113990763f32c8680b03b5e7082ac794faff0030752f3398c1170b232a974f60"
     }
   },
   "image_ids": {

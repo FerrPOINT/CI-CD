@@ -26,7 +26,8 @@ def git_response(argv):
     if args == ['rev-parse', '--is-shallow-repository']:
         return b'false\n'
     if args[0] == 'rev-list':
-        chain = {h.NAMESPACE_CONTROLS: (h.NAMESPACE_CONTROLS, h.PRE_MERGE_CONTROLS, h.SOURCE),
+        chain = {h.PACKAGING_PARENT: (h.PACKAGING_PARENT, '292a04e0abeb73b0956aebe624222b1858088cf5'),
+                 h.NAMESPACE_CONTROLS: (h.NAMESPACE_CONTROLS, h.PRE_MERGE_CONTROLS, h.NAMESPACE_SOURCE),
                  h.PURE_CONTROLS: (h.PURE_CONTROLS, h.CHILD_POLICY_CONTROLS),
                  h.CHILD_POLICY_CONTROLS: (h.CHILD_POLICY_CONTROLS, h.POLICY_MERGE),
                  h.POLICY_MERGE: (h.POLICY_MERGE, h.SMOKE_CONTROLS, h.POLICY_SOURCE),
@@ -34,7 +35,8 @@ def git_response(argv):
                  h.PRE_MERGE_SOURCE: (h.PRE_MERGE_SOURCE, h.POLICY_SOURCE),
                  h.PRE_MERGE_CONTROLS: (h.PRE_MERGE_CONTROLS, h.PURE_CONTROLS, h.PRE_MERGE_SOURCE),
                  h.NAMESPACE_MERGE: (h.NAMESPACE_MERGE, h.PRE_MERGE_SOURCE, h.NAMESPACE_MAIN),
-                 h.SOURCE: (h.SOURCE, h.NAMESPACE_MERGE),
+                 h.NAMESPACE_SOURCE: (h.NAMESPACE_SOURCE, h.NAMESPACE_MERGE),
+                 h.SOURCE: (h.SOURCE, h.NAMESPACE_SOURCE),
                  h.POLICY_SOURCE: (h.POLICY_SOURCE, h.PREVIOUS_SOURCE),
                  h.PG_CONTROLS: (h.PG_CONTROLS, h.SOURCE_MERGE),
                  h.SOURCE_MERGE: (h.SOURCE_MERGE, h.COUNT_CONTROLS, h.PREVIOUS_SOURCE),
@@ -64,8 +66,9 @@ def git_response(argv):
                  h.QUALIFICATION_CONTROLS: (h.QUALIFICATION_CONTROLS, h.PUBLIC_CONTROLS),
                  h.PUBLIC_CONTROLS: (h.PUBLIC_CONTROLS, h.ORIGINAL_SOURCE)}
         return (' '.join(chain[args[-1]]) + '\n').encode()
-    if args == ['merge-base', h.NAMESPACE_CONTROLS, 'HEAD']:
-        return (h.NAMESPACE_CONTROLS + '\n').encode()
+    if args in (['merge-base', h.NAMESPACE_CONTROLS, 'HEAD'],
+                ['merge-base', h.PACKAGING_PARENT, 'HEAD']):
+        return (args[1] + '\n').encode()
     pins = h.read(h.HERE / 'components.json')
     allowed = sorted(set(pins) | {'scripts/hermetic_full12/components.json'})
     if args == ['show', h.NAMESPACE_CONTROLS + ':scripts/hermetic_full12/components.json']:
@@ -76,8 +79,11 @@ def git_response(argv):
     if args[0] == 'diff':
         if args[2:] == [h.SOURCE, 'HEAD']:
             return ''.join('A\t' + name + '\n' for name in allowed).encode()
-        if args[2:] == [h.NAMESPACE_MERGE, h.SOURCE]:
+        if args[2:] == [h.NAMESPACE_MERGE, h.NAMESPACE_SOURCE]:
             return b'M\tdocs/CURRENT_STATE.md\nM\tdocs/TASK_DELIVERY_VERIFICATION.md\n'
+        if args[2:] == [h.NAMESPACE_SOURCE, h.SOURCE]:
+            return (b'M\tbackend/tests/support/sdlc_workspace.rs\nM\tdocs/CURRENT_STATE.md\n'
+                    b'M\tdocs/TASK_DELIVERY_VERIFICATION.md\n')
         if args[2:] == [h.OCI_CLI_CONTROLS, h.CHECKPOINT_MERGE]:
             return b'M\tbackend/tests/support/oci_delivery.rs\nM\tscripts/tests/test_oci_offline_fixture.py\n'
         if args[2:] == [h.CHECKPOINT_CONTROLS, h.CONTROLS_PARENT]:
@@ -171,8 +177,8 @@ class DeadlineBoundaryTests(unittest.TestCase):
                    'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_SHA': 'a' * 40}
             with patch.dict(os.environ, env), patch.object(h.m, 'preflight'), patch.object(h.m, 'read_payloads', return_value=({}, {})), patch.object(h, 'hosted_guard'), patch.object(h, 'verify_components', return_value={}), patch.object(h, 'wall_budget', side_effect=wall), patch.object(h.time, 'monotonic', side_effect=lambda: clock[0]), patch.object(h, 'command', side_effect=command), patch.object(h, 'reclaim', side_effect=h.CapacityFailure({'host_free_bytes': 0})), patch.object(gate, 'start_daemon') as start, patch.object(gate, 'stop_daemon', return_value={'stopped': True}):
                 self.assertEqual(gate.run_job('C'), 1)
-            self.assertEqual(envelopes[:2], [5400, 1140])  # Seventy-one successful Git calls consume4260.
-            self.assertEqual(len(git_calls), 142)  # Initial + final parity proof, private qualification separately tested.
+            self.assertEqual(envelopes[:2], [5400, 900])  # Seventy-five successful Git calls consume4500.
+            self.assertEqual(len(git_calls), 150)  # Initial + final parity proof, private qualification separately tested.
             start.assert_not_called()
             self.assertIsNone(h.BOOTSTRAP_DEADLINE)
 

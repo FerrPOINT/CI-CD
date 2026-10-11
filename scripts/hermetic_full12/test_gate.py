@@ -231,7 +231,7 @@ class ControlsTests(unittest.TestCase):
     def test_sparse_omitted_git_bytes_are_identical_and_outside_export_catalogue(self):
         root = h.HERE.parents[1]
         omitted = []
-        for revision in ('9a5a7d84acc03b54c48ad3b6e8e1ede9fd21ec44', h.SOURCE):
+        for revision in ('9a5a7d84acc03b54c48ad3b6e8e1ede9fd21ec44', h.NAMESPACE_SOURCE):
             rows = subprocess.check_output(['git', '--no-replace-objects', '-C', str(root),
                 'ls-tree', '-r', '-l', '-z', revision, '--', 'docs', 'frontend'], timeout=15)
             files = {}
@@ -286,7 +286,7 @@ class ControlsTests(unittest.TestCase):
         self.assertEqual(sum(isinstance(node, ast.Assert) for node in ast.walk(ast.parse((h.HERE / 'row_smoke.py').read_bytes()))), 16)
 
     def test_source_and_base_exact(self):
-        self.assertEqual(h.SOURCE, '7db4266f51069d0fda36904a194a1b578659121f')
+        self.assertEqual(h.SOURCE, '53e93566b7aecbccebe1f3e4e948685cf59841a8')
         self.assertEqual(h.BASE, '0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce')
         self.assertEqual(h.LEGACY_BASE, '19a7a381ae6dbea61a643bb96189e483fa64df5c')
 
@@ -474,6 +474,150 @@ class ControlsTests(unittest.TestCase):
         cli_tests = (root / 'backend/src/bin/forge-delivery.rs').read_text(encoding='utf-8').split('#[cfg(test)]', 1)[1]
         self.assertEqual(cli_tests.count('#[test]'), 2)
         self.assertIn('#[cfg(not(feature = "oci-integration"))]', cli_tests)
+
+
+class ExecutionPackagingTests(unittest.TestCase):
+    def setUp(self):
+        def command(argv, *, env=None):
+            self.assertEqual(argv[0], 'git')
+            return subprocess.check_output(argv, env=env, stderr=subprocess.PIPE, timeout=15)
+        bridge = patch.object(h, 'command', side_effect=command)
+        bridge.start()
+        self.addCleanup(bridge.stop)
+
+    @contextmanager
+    def fixture(self, *, nested=None):
+        repository = h.HERE.parents[1]
+        source = h.git(repository, 'cat-file', 'blob', h.SOURCE + ':.gitattributes')
+        raw_files = {name: h.git(repository, 'cat-file', 'blob', h.SOURCE + ':' + name)
+                     for name in h.CRLF_PATHS}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            checkout = root / 'checkout'
+            checkout.mkdir()
+
+            def git(*args):
+                return subprocess.check_output(['git', '-c', 'core.autocrlf=false', '-C', str(checkout),
+                    *args], stderr=subprocess.PIPE, timeout=15)
+
+            git('init', '--template=', '--initial-branch=main')
+            (checkout / '.gitattributes').write_bytes(source)
+            files = dict(raw_files)
+            files.update({f'plain/{number}.txt': b'unchanged\n' for number in range(261)})
+            for name, raw in files.items():
+                path = checkout / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(raw)
+            git('add', '.')
+            if nested is not None:
+                (checkout / 'backend/.gitattributes').write_bytes(nested)
+                git('add', 'backend/.gitattributes')
+            git('-c', 'user.name=Pure Fixture', '-c', 'user.email=fixture@example.invalid',
+                '-c', 'commit.gpgsign=false', 'commit', '-qm', 'synthetic export fixture')
+            revision = git('rev-parse', 'HEAD').decode().strip()
+            entries = [{'path': name, 'size': len(raw.replace(b'\n', b'\r\n') if name in h.CRLF_PATHS else raw),
+                        'sha256': hashlib.sha256(raw.replace(b'\n', b'\r\n') if name in h.CRLF_PATHS else raw).hexdigest()}
+                       for name, raw in sorted(files.items())]
+            catalogues = {'forge': {'count': 278, 'files': entries,
+                'sha256': hashlib.sha256(json.dumps(entries, sort_keys=True, separators=(',', ':')).encode()).hexdigest()},
+                'base': {'count': 0, 'files': [], 'sha256': hashlib.sha256(b'[]').hexdigest()}}
+            with patch.object(h, 'SOURCE', revision), patch.object(h, 'SOURCE_TREE', git('rev-parse', 'HEAD^{tree}').decode().strip()), \
+                    patch.object(h, 'read', return_value={'catalogues': catalogues}):
+                yield checkout, root / 'export', catalogues, git
+
+    def test_pinned_catalogue_records_native_execution_bytes_and_historical_checksum(self):
+        repository = h.HERE.parents[1]
+        files = h.read(h.HERE / 'source-catalogue.json')['catalogues']['forge']['files']
+        changed = []
+        for item in files:
+            raw = h.git(repository, 'cat-file', 'blob', h.SOURCE + ':' + item['path'])
+            expected = raw.replace(b'\n', b'\r\n') if item['path'] in h.CRLF_PATHS else raw
+            self.assertEqual((item['size'], item['sha256']), (len(expected), hashlib.sha256(expected).hexdigest()))
+            if expected != raw:
+                changed.append(item['path'])
+            if item['path'] == 'backend/tests/fixtures/historical_platform_messaging.sql':
+                self.assertEqual(hashlib.sha384(expected).hexdigest(),
+                    '875f127c9f0c51477f61cee89816edea0168d5cf842f3bdbfce5d683df033af224f5619035439f84359f671aee2981ce')
+        self.assertEqual(set(changed), set(h.CRLF_PATHS))
+        self.assertEqual(len(changed), 17)
+
+    def test_real_git_export_and_parity_reject_lf_tamper_extra_and_symlink(self):
+        with self.fixture() as (checkout, destination, _, git):
+            catalogue = h.export_sources({'forge': checkout, 'base': checkout}, destination)
+            self.assertTrue(h.parity(destination, catalogue))
+            path = destination / 'CI-CD/backend/tests/fixtures/historical_platform_messaging.sql'
+            original = path.read_bytes()
+            self.assertEqual(hashlib.sha384(original).hexdigest(),
+                '875f127c9f0c51477f61cee89816edea0168d5cf842f3bdbfce5d683df033af224f5619035439f84359f671aee2981ce')
+            self.assertNotEqual(original, git('cat-file', 'blob', h.SOURCE + ':backend/tests/fixtures/historical_platform_messaging.sql'))
+            path.chmod(0o600)
+            path.write_bytes(original.replace(b'\r\n', b'\n'))
+            with self.assertRaises(ValueError):
+                h.parity(destination, catalogue)
+            path.write_bytes(original)
+            extra = destination / 'CI-CD/plain/extra'
+            extra.write_bytes(b'not catalogued')
+            with self.assertRaises(ValueError):
+                h.parity(destination, catalogue)
+            extra.unlink()
+            if os.name == 'posix':
+                path.unlink()
+                path.symlink_to(checkout / 'backend/tests/fixtures/historical_platform_messaging.sql')
+                with self.assertRaises(ValueError):
+                    h.parity(destination, catalogue)
+
+    def test_global_attributes_autocrlf_and_worktree_attributes_cannot_change_export(self):
+        with self.fixture() as (checkout, destination, _, git):
+            global_attrs = checkout.parent / 'global-attributes'
+            global_attrs.write_text('* filter=forbidden working-tree-encoding=UTF-16 ident -text\n')
+            marker = checkout.parent / 'filter-ran'
+            git('config', 'core.attributesFile', str(global_attrs))
+            git('config', 'core.autocrlf', 'true')
+            git('config', 'core.eol', 'crlf')
+            git('config', 'filter.forbidden.smudge', 'echo forbidden > ' + str(marker))
+            (checkout / '.gitattributes').write_text('* filter=forbidden\n')
+            catalogue = h.export_sources({'forge': checkout, 'base': checkout}, destination)
+            self.assertTrue(h.parity(destination, catalogue))
+            self.assertFalse(marker.exists())
+            self.assertEqual((destination / 'CI-CD/plain/0.txt').read_bytes(), b'unchanged\n')
+
+    def test_info_attributes_and_pinned_custom_filter_or_changed_eol_are_rejected(self):
+        with self.fixture() as (checkout, destination, _, git):
+            attributes = checkout / '.git/info/attributes'
+            attributes.parent.mkdir(exist_ok=True)
+            attributes.write_text('* filter=forbidden\n')
+            git('config', 'filter.forbidden.smudge', 'exit 77')
+            with self.assertRaises(ValueError):
+                h.export_sources({'forge': checkout, 'base': checkout}, destination)
+        for attribute in (b'filter=forbidden', b'working-tree-encoding=UTF-16', b'ident', b'eol=lf', b'-text'):
+            with self.subTest(attribute=attribute), self.fixture(nested=b'migrations/0038_platform_messaging.sql ' + attribute + b'\n') as (checkout, destination, _, git):
+                marker = checkout.parent / 'filter-ran'
+                git('config', 'filter.forbidden.smudge', 'echo forbidden > ' + str(marker))
+                with self.assertRaises(ValueError):
+                    h.export_sources({'forge': checkout, 'base': checkout}, destination)
+                self.assertFalse(marker.exists())
+
+    def test_wrong_source_tree_and_execution_catalogue_hash_are_rejected(self):
+        with self.fixture() as (checkout, destination, catalogue, _):
+            for field in ('SOURCE', 'SOURCE_TREE'):
+                with self.subTest(field=field), patch.object(h, field, '0' * 40), self.assertRaises(ValueError):
+                    h.export_sources({'forge': checkout, 'base': checkout}, destination)
+            item = next(item for item in catalogue['forge']['files'] if item['path'] in h.CRLF_PATHS)
+            item['sha256'] = '0' * 64
+            catalogue['forge']['sha256'] = hashlib.sha256(json.dumps(catalogue['forge']['files'], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+            with self.assertRaises(ValueError):
+                h.export_sources({'forge': checkout, 'base': checkout}, destination)
+
+    def test_namespace_fixture_environment_matches_exact_source_ci_only_in_qa(self):
+        source = h.git(h.HERE.parents[1], 'cat-file', 'blob', h.SOURCE + ':.github/workflows/ci.yml').decode()
+        expected = {'CICD_NAMESPACE__INSTANCE_ID': '75b72b83-2897-4114-a2d1-d9cd40aee232',
+                    'CICD_NAMESPACE__REGISTRY_INSTANCE_ID': '366087c3-b9a4-4a05-b98d-fc28f748ed33'}
+        manifest = gate.manifest(Path('/unused'), {'project': 'owned', 'pg_project': 'pg', 'oci_project': 'oci'},
+                                 {'tools': 'tools', 'postgres': 'postgres'})
+        for name, value in expected.items():
+            self.assertIn(name + ': ' + value, source)
+            self.assertEqual(manifest['services']['qa']['environment'][name], value)
+            self.assertNotIn(name, manifest['services']['postgres']['environment'])
 
 
 class ReclaimTests(unittest.TestCase):
