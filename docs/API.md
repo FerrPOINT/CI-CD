@@ -2,6 +2,12 @@
 
 ## Owner-local PostgreSQL CLI
 
+Если current/confirmed manifest pointer повреждён или недоступен, CLI возвращает
+JSON `forge/local-postgres-rejection/v1` со статусом `blocked` и reason
+`manifest_pointer_unavailable`. Оба SHA в таком ответе отсутствуют: неизвестное
+состояние не выдаётся за отсутствие manifest или подтверждённую пару. При
+доступных pointers исходная причина отказа и оба значения сохраняются.
+
 `forge-delivery --postgres` — отдельный privileged isolated executor, не новый
 HTTP endpoint. Он использует тот же strict `DeliveryCommand`/original lookup,
 machine ACL и sealed retained artifact. Policy/credentials/SQL/backup не принимаются

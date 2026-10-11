@@ -9,6 +9,9 @@
 
 ## [Unreleased]
 
+- PostgreSQL delivery сохраняет JSON-отказ при повреждённом или недоступном
+  manifest pointer; неизвестная пара SHA не выдаётся за подтверждённую.
+
 - Локальный delivery gate проверяет `.namespace-base-revision`, когда этот pin
   присутствует, как сборка и CI. Для legacy checkout сохраняется `.base-revision`;
   ошибочный выбранный pin блокирует запуск до Docker-операций.
