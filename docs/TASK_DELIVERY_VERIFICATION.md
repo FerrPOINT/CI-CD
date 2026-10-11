@@ -1,7 +1,15 @@
 # Forge task workspace, candidate и owner-local delivery evidence
 
-**Статус 2026-10-11:** bounded source implementation и component verification;
-полного SDLC acceptance нет.
+**Статус 2026-10-11:** текущий [receipt38114891349/1](https://github.com/FerrPOINT/CI-CD/actions/runs/38114891349)
+на c633/source84f подтверждает A1–5, B PG5/24 negatives, OCI7 PASS1 и workspace8
+PASS225; integration9 отказал по HOST108209971200<108279229428 bytes
+(deficit69258228), DATA/inodes PASS. Cleanup проверен, original aggregate REJECT.
+Новый normal merge `32a9615e42d15b8f057e0c858bcd47c3e0b2463f` (84f+main56191)
+имеет только fmt82/Python81/adapter43 PASS, не Rust/native qualification.
+Receipt source84f не квалифицирует merged source; full12/SDLC acceptance нет.
+CI выбирает `.namespace-base-revision` (`0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce`)
+вместо legacy `.base-revision`19a; receipts84f/SDK19a не подтверждают parity
+или acceptance нового SDK.
 
 `oci` и `postgres` QA gates используют отдельный immutable Docker CLI/Compose
 image, поскольку закреплённый Rust image содержит компилятор, но не клиент
@@ -10,7 +18,7 @@ Docker. Tool binaries копируются в одноразовый QA volume; 
 
 ## Hosted Full12: 38109147644
 
-Свежий [run38109147644/attempt1](https://github.com/FerrPOINT/CI-CD/actions/runs/38109147644)
+Исторический [run38109147644/attempt1](https://github.com/FerrPOINT/CI-CD/actions/runs/38109147644)
 завершился FAILURE 2026-10-11. Controls `030e676bff1653679999de093b9d61195f8430b6`,
 source `75659d8d0bb1415c0ad0ae183bb8cd762aeb9abb`, SDK19a/maintenance66b7.
 Original strict readback проверил все три artifacts, run/attempt/head/source266,
