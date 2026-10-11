@@ -549,6 +549,8 @@ pub async fn compare_refs(
 pub struct PullRequest {
     pub id: Uuid,
     pub repository_name: String,
+    #[sqlx(default)]
+    pub repository_id: Option<Uuid>,
     pub number: i32,
     pub title: String,
     pub description: String,
@@ -664,8 +666,9 @@ pub async fn list_pull_requests(
     AxumPath(repo): AxumPath<String>,
 ) -> Result<Json<Vec<PullRequest>>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    let repo = crate::repository_catalog::resolve_storage(pool, &repo).await?;
     let prs = sqlx::query_as::<_, PullRequest>(
-        "SELECT id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha \
+        "SELECT id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha \
          FROM pull_requests WHERE repository_name = $1 ORDER BY number DESC",
     )
     .bind(&repo)
@@ -688,6 +691,7 @@ pub async fn list_pull_request_page(
     Query(params): Query<PullRequestListParams>,
 ) -> Result<Json<PullRequestPage>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    let repo = crate::repository_catalog::resolve_storage(pool, &repo).await?;
     let params = params.normalize()?;
     let total = sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM pull_requests \
@@ -702,7 +706,7 @@ pub async fn list_pull_request_page(
     .await
     .map_err(ApiError::internal)?;
     let prs = sqlx::query_as::<_, PullRequest>(
-        "SELECT id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha \
+        "SELECT id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha \
          FROM pull_requests \
          WHERE repository_name = $1 \
            AND ($2::text IS NULL OR status = $2) \
@@ -741,8 +745,9 @@ pub async fn get_pull_request(
     AxumPath((repo, number)): AxumPath<(String, i32)>,
 ) -> Result<Json<PullRequest>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    let repo = crate::repository_catalog::resolve_storage(pool, &repo).await?;
     let pr = sqlx::query_as::<_, PullRequest>(
-        "SELECT id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha \
+        "SELECT id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha \
          FROM pull_requests WHERE repository_name = $1 AND number = $2",
     )
     .bind(&repo)
@@ -764,10 +769,20 @@ pub async fn get_pull_request(
 )]
 pub async fn create_pull_request(
     State(state): State<std::sync::Arc<AppState>>,
+    AxumPath(repo): AxumPath<String>,
     claims: Option<axum::Extension<crate::auth::AccessClaims>>,
-    Json(input): Json<CreatePullRequest>,
+    Json(mut input): Json<CreatePullRequest>,
 ) -> Result<Json<PullRequest>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    let repository = crate::repository_catalog::resolve_storage(pool, &repo).await?;
+    let requested =
+        crate::repository_catalog::resolve_storage(pool, &input.repository_name).await?;
+    if repository != requested {
+        return Err(ApiError::bad_request("repository_identity_mismatch"));
+    }
+    input.repository_name = repository;
+    let _namespace_lease =
+        crate::repository_catalog::write_lease(&state, &input.repository_name).await?;
     if input.title.trim().is_empty()
         || input.source_branch.trim().is_empty()
         || input.target_branch.trim().is_empty()
@@ -782,7 +797,7 @@ pub async fn create_pull_request(
         ));
     }
     let next_number: i32 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(number), 0) + 1 FROM pull_requests WHERE repository_name = $1",
+        "SELECT allocate_repository_pr_number(id) FROM repository_catalog WHERE storage_name=$1",
     )
     .bind(&input.repository_name)
     .fetch_one(pool)
@@ -803,7 +818,7 @@ pub async fn create_pull_request(
         None => input.author.clone().unwrap_or_default(),
     };
     let pr = sqlx::query_as::<_, PullRequest>(
-        "INSERT INTO pull_requests (id, repository_name, number, title, description, source_branch, target_branch, status, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, 'open', $8) RETURNING id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",
+        "INSERT INTO pull_requests (id, repository_name, number, title, description, source_branch, target_branch, status, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, 'open', $8) RETURNING id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",
     )
     .bind(Uuid::new_v4())
     .bind(&input.repository_name)
@@ -841,8 +856,9 @@ pub async fn pr_action(
     Json(input): Json<PrAction>,
 ) -> Result<Json<PullRequest>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    let repo = crate::repository_catalog::resolve_storage(pool, &repo).await?;
     let pr = sqlx::query_as::<_, PullRequest>(
-        "SELECT id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha FROM pull_requests WHERE repository_name = $1 AND number = $2",
+        "SELECT id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha FROM pull_requests WHERE repository_name = $1 AND number = $2",
     )
     .bind(&repo)
     .bind(number)
@@ -851,6 +867,8 @@ pub async fn pr_action(
     .map_err(ApiError::internal)?
     .ok_or_else(ApiError::not_found)?;
 
+    let _namespace_lease =
+        crate::repository_catalog::write_lease(&state, &pr.repository_name).await?;
     match input.action.as_str() {
         "merge" => {
             if pr.status != "open" {
@@ -860,9 +878,9 @@ pub async fn pr_action(
             // success pipeline on the PR source branch head (GitLab parity).
             let protected: Option<bool> = sqlx::query_scalar(
                 "SELECT COALESCE(BOOL_OR($2 = ANY(p.protected_branches)), FALSE) FROM projects p \
-                 WHERE p.repository_url LIKE ('%' || $1 || '%')",
+                 WHERE p.repository_id=$1",
             )
-            .bind(&pr.repository_name)
+            .bind(pr.repository_id)
             .bind(&pr.target_branch)
             .fetch_optional(pool)
             .await
@@ -883,11 +901,11 @@ pub async fn pr_action(
                 let green: Option<Uuid> = sqlx::query_scalar(
                     "SELECT pl.id FROM pipelines pl \
                      JOIN projects pr2 ON pr2.id = pl.project_id \
-                     WHERE pr2.repository_url LIKE ('%' || $1 || '%') AND pl.git_ref = $2 \
+                     WHERE pr2.repository_id=$1 AND pl.git_ref = $2 \
                        AND pl.commit_sha = $3 AND pl.status = 'success' \
                      ORDER BY pl.created_at DESC LIMIT 1",
                 )
-                .bind(&pr.repository_name)
+                .bind(pr.repository_id)
                 .bind(&pr.source_branch)
                 .bind(source_head.clone().unwrap_or_default())
                 .fetch_optional(pool)
@@ -968,7 +986,7 @@ pub async fn pr_action(
                 ));
             }
             let updated = sqlx::query_as::<_, PullRequest>(
-                "UPDATE pull_requests SET status = 'merged', merged_at = now(), updated_at = now(), merge_commit_sha = $2 WHERE id = $1 RETURNING id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",
+                "UPDATE pull_requests SET status = 'merged', merged_at = now(), updated_at = now(), merge_commit_sha = $2 WHERE id = $1 RETURNING id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",
             )
             .bind(pr.id)
             .bind(&merge_sha)
@@ -982,7 +1000,7 @@ pub async fn pr_action(
                 return Err(ApiError::conflict("pull request is not open"));
             }
             let updated = sqlx::query_as::<_, PullRequest>(
-                "UPDATE pull_requests SET status = 'closed', updated_at = now() WHERE id = $1 RETURNING id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",
+                "UPDATE pull_requests SET status = 'closed', updated_at = now() WHERE id = $1 RETURNING id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",
             )
             .bind(pr.id)
             .fetch_one(pool)
@@ -997,7 +1015,7 @@ pub async fn pr_action(
                 ));
             }
             let updated = sqlx::query_as::<_, PullRequest>(
-                "UPDATE pull_requests SET status = 'open', updated_at = now() WHERE id = $1 RETURNING id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",
+                "UPDATE pull_requests SET status = 'open', updated_at = now() WHERE id = $1 RETURNING id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",
             )
             .bind(pr.id)
             .fetch_one(pool)

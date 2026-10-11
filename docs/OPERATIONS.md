@@ -12,6 +12,126 @@
 
 Доступ к Docker daemon, хостовой файловой системе, `.env`, bare Git-томам и backup-файлам считается привилегированным. Не передавайте реальные секреты через командную строку, Git, логи или скриншоты.
 
+## Owner-local PostgreSQL delivery
+
+Source packet: `forge-delivery --postgres`, отдельные protected PG root/policy/
+guard URL/runtime password из [ENV](ENV.md#owner-local-postgresql-delivery).
+Запускается только против выделенного temporary PostgreSQL target с actual enforced
+HBA/role topology. Permanent runtimes и их базы этот путь не принимает. Policy
+operator-controlled; owner/daemon и administrator остаются privileged trust boundary.
+
+Complete retained catalog и exact source/target schema должны пройти preflight.
+После application stop/login fence/session drain создаётся dump; fresh restore drill
+сверяет rows/sequences/schema. Migration меняет только новую shadow DB. Application
+получает отдельные reader/writer credentials; writer release следует после всех
+image/database/health/acceptance checks. Snapshot source остаётся fenced.
+
+Для известной failure до writer release explicit rollback связывает current CAS
+с verified backup и last-confirmed image, восстанавливает в ещё одну fresh DB и
+проверяет все checks. Source/failed DB drift, corrupt backup, unknown sessions или
+history блокируют восстановление. После release старый snapshot restore запрещён.
+RPO=0 только для acknowledged pre-drain writes. Post-release writes требуют нового
+snapshot/forward compatibility либо отдельного authoritative incident decision.
+
+После SIGKILL требуется original-key `--readback`. `--reconcile` наблюдает лишь
+фактически завершённый release при совпадающей serving pair; никаких command retries
+или automatic down migrations. Partial Unknown удерживает target для privileged
+расследования. Не удалять journals и не менять operation key для обхода hold.
+
+QA: tools `deploy/qa/postgres-tools.Dockerfile` добавляет pinned Python/Compose plugin
+к OCI tools; `scripts/verify-task-delivery.ps1 -Gate postgres` использует реальные
+runner/Git/artifact/images/PG application. Тот же явный набор immutable image IDs и
+external cache names, что для общего gate. Generated execution Compose сохраняется
+host-visible; child `sdlc-qa-forge-pg-*` и parent удаляются exact finally down, только
+own disposable PG/publication volumes. Root live/final Docker audit обязателен.
+[ADR-0022](adr/0022-owner-local-postgres-shadow-delivery.md),
+[plan/evidence](../plans/2026-10-08-mutable-postgres-delivery.md). Scoped PostgreSQL suite verified;
+full quality/publication evidence — [task verification](TASK_DELIVERY_VERIFICATION.md).
+
+## Owner-local manifest delivery
+
+Контейнерный срез: тот же CLI с `--oci`, отдельными `CICD_LOCAL_OCI_ROOT/POLICY`
+и existing project machine token. Typed data preflight rejection выдаёт stdout
+`forge/local-oci-rejection/v1`, status blocked и фиксированный reason, exit1.
+Остальные ошибки возвращают `unknown_or_rejected`: effect мог начаться, поэтому
+проверять original operation key через readback, не создавать новый retry key.
+Поддержан preloaded immutable local image и immutable read-only data snapshot:
+`readonly_snapshot_v1`, exact source/image/data identity, пустой migrations list.
+Mutable DB, down migrations, unknown/incompatible data и drift блокируются;
+automatic restore/backfill/repair отсутствуют. Rollback не пишет snapshot.
+
+Policy фиксирует temporary `sdlc-qa-forge-oci-<unique>`, daemon ID и совпадающие
+owner QA network/volume. Caller не передаёт Compose/commands/mounts. Linux
+parent-death signal ограничивает standalone Compose client; durable child
+identity/exit проверяются перед recovery. Actual container ID/image/mount/network
+и version/compatibility/application acceptance сверяются до и после. Replay и
+recovery не вызывают Compose up. Unknown holds не удалять для retry.
+
+OCI QA: tools image строится из `deploy/qa/oci-tools.Dockerfile`; verify script
+использует `-Gate oci`, explicit socket mount только своего controller и internal
+network. Feature `oci-integration` включает actual daemon/runner/image tests;
+обычный hosted suite не выдаётся за них. Exact own child Compose cleanup — test
+Drop и wrapper finally; parent disposable volume удаляется только после проверки
+отсутствия child containers. Реальные execution specs сохраняются в host-visible
+`composeRoot`; Windows wrapper создаёт temporary owned junction для того же файла
+и удаляет только junction в finally, сохраняя evidence directory. Docker audit
+должен проходить и при работающем child. [ADR-0021](adr/0021-owner-local-oci-readonly-data.md).
+
+Это ограниченная privileged техническая capability для одного static artifact
+и отдельного Unix target. Она не установлена на постоянные стенды и не открывает
+SDLC dispatch. Перед effect owner задаёт absolute isolated root, policy JSON
+и existing project machine credential через env (см. [ENV](ENV.md#owner-local-static-delivery)).
+Не используйте Git/artifact/runtime snapshot directories как target.
+
+Command JSON содержит original workspace key/lookup, новый immutable operationKey,
+`action`, exact artifact UUID для deploy и expected-current manifest SHA256.
+Null expected-current разрешён только для действительно пустого target. CLI:
+
+```bash
+forge-delivery --project-id "$PROJECT_ID" --command-file command.json
+forge-delivery --project-id "$PROJECT_ID" --command-file command.json --readback
+forge-delivery --project-id "$PROJECT_ID" --command-file command.json --reconcile
+```
+
+Root хранит `owner.json`, process-lifetime `.lock`, immutable `operations/<key-hash>/`
+intent/active/result и отдельный reconciled result, `manifests/<SHA256>.json`,
+`objects/<SHA256>`, atomic `current.json`/`confirmed.json`. Key replay читает прежний
+результат, не исполняет promotion повторно. Changed command/hash/binding/policy
+закрыты. Token/account/scope fresh проверяются и удерживаются DB locks на время
+операции; credential не хранится в command/manifest/receipt.
+
+Unknown/torn/active operation удерживает target. Expiry/restart не освобождают hold.
+Reconcile получает OS lock (предыдущий local writer уже завершился), сверяет
+current manifest/bytes и новые HTTP checks. Publication не повторяется. Если
+current не соответствует intent, state остаётся unknown; auto-repair/delete нет.
+Исторический unknown сохраняется, terminal readback получает отдельный receipt.
+Readback сам не выполняет probes и показывает latest known history, не fresh health.
+
+Health/acceptance failure сохраняет failed evidence и не двигает last-confirmed.
+Rollback — новый explicit command с `action: rollback`, `artifactId: null` и exact
+current CAS. Target берётся только из last-confirmed manifest, не caller version.
+Artifact/config/plan/source identity и application checks проверяются после
+восстановления. Ошибка rollback не выдаётся за success. CLI exit0 — latest verified,
+exit2 — unavailable/failed/unknown receipt, exit1 — rejected/unavailable command.
+Файлы hold не удалять для продолжения polling: требуется owner reconciliation.
+
+Эти checks не доказывают полный business acceptance, mutable database compatibility,
+production orchestrator stop или native attestation. Owner-local OCI slice выше
+проверяет только read-only snapshot protocol; migration/data restore и реальный
+admission требуют отдельного опубликованного protocol.
+
+Воспроизводимый QA из корня CI-CD: PowerShell7 script
+`scripts/verify-task-delivery.ps1 -BaseRoot <readonly-pinned-Base-checkout>
+-RustImage <cached-sha256-image-ID> -PostgresImage <cached-sha256-image-ID>
+-TargetCache <existing-cache-volume> -CargoCache <existing-cache-volume>
+-RustupCache <existing-cache-volume> -Gate full`. Image IDs и source hashes
+проверяются; `-Gate delivery` выполняет только focused component suite.
+`deploy/qa/task-delivery.compose.yml` требует unique explicit project, owner/purpose
+labels и отдельный disposable volume/network. Script выполняет config/build,
+finally exact Compose down и удаляет только собственный disposable volume;
+cached images/volumes сохраняются. Evidence находится в `.local/task-delivery-qa/`.
+Никаких постоянных services, runtime pins или публичных портов этот QA не создаёт.
+
 ## Runner Workspace Recovery
 
 Source capability, не подтверждённая installed runtime приёмка. `forge-runner`

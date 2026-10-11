@@ -17,6 +17,7 @@ pub(crate) mod pipelines_routes;
 pub(crate) mod projects_routes;
 pub(crate) mod readiness;
 pub(crate) mod router;
+pub(crate) mod sdlc_workspace;
 #[cfg(test)]
 use authz_mw::{
     ProjectScopeRef, RateLimitRule, api_token_scope_allows, project_scope_ref, rate_limit_client,
@@ -39,6 +40,9 @@ use router::{build_router_with_cors, cors_layer_from_allowed_origins};
 
 pub struct AppState {
     pub pool: Option<PgPool>,
+    /// Two bounded admission connections keep Git/hooks from exhausting the
+    /// primary pool while an archive fence is held across filesystem writes.
+    pub namespace_admission_pool: Option<PgPool>,
     pub auth_secret: Option<String>,
     pub git: crate::git_host::GitConfig,
     pub config: crate::config::RuntimeConfig,
@@ -88,6 +92,47 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         )
     ),
     paths(
+        crate::workspace_projects::all_pipelines,
+        crate::workspace_projects::all_summary,
+        crate::repository_catalog::all,
+        crate::delivery_configs::readback,
+        crate::workspace_projects::list,
+        crate::workspace_projects::get,
+        crate::workspace_projects::summary,
+        crate::workspace_projects::pipelines,
+        crate::workspace_projects::deployments,
+        crate::workspace_projects::repository_pipelines,
+        crate::workspace_projects::repository_deployments,
+        crate::delivery_configs::unbound,
+        crate::delivery_configs::get,
+        crate::delivery_configs::list,
+        crate::delivery_configs::create,
+        crate::delivery_configs::push_get,
+        crate::delivery_configs::push_put,
+        crate::namespace::apply,
+        crate::task_links::link,
+        crate::task_links::list,
+        crate::task_links::evidence,
+        crate::namespace::available_resources,
+        crate::namespace::stats,
+        crate::namespace::contexts,
+        crate::namespace::context,
+        crate::namespace::readback,
+        crate::repository_catalog::verified_repository,
+        crate::repository_catalog::verified_repositories,
+        crate::repository_catalog::list,
+        crate::repository_catalog::create,
+        crate::repository_catalog::connect_delivery,
+        crate::repository_catalog::get,
+        crate::repository_catalog::available,
+        crate::repository_catalog::attach,
+        crate::repository_catalog::pulls,
+        crate::repository_catalog::pull,
+        crate::repository_catalog::create_pull,
+        crate::repository_catalog::pull_action,
+        sdlc_workspace::prepare_workspace_operation, sdlc_workspace::get_workspace_operation,
+        sdlc_workspace::get_candidate_evidence,
+        crate::task_delivery::reject_sdlc_delivery, crate::task_delivery::get_local_delivery,
         crate::api::readiness::health, crate::api::readiness::readiness, metrics, serve_openapi_json,
         crate::api::auth_routes::auth_login, crate::api::auth_routes::auth_refresh,
         crate::api::auth_routes::auth_logout,
@@ -172,6 +217,24 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::api::pipelines_routes::get_test_report, crate::api::pipelines_routes::upload_test_report,
     ),
     components(schemas(
+        crate::domain::sdlc_workspace::WorkspaceOperationRequest,
+        crate::domain::sdlc_workspace::WorkspaceTaskBinding,
+        crate::domain::sdlc_workspace::WorkspaceOperationReceipt,
+        crate::domain::sdlc_workspace::WorkspaceOperationReadback,
+        crate::domain::sdlc_workspace::WorkspaceOperationLookup,
+        crate::domain::sdlc_workspace::CandidateEvidenceReadback,
+        crate::domain::sdlc_workspace::CandidateArtifactEvidence,
+        crate::domain::task_delivery::DeliveryCommand,
+        crate::domain::task_delivery::DeliveryAction,
+        crate::domain::task_delivery::DeliveryManifest,
+        crate::domain::task_delivery::DeliveryReceipt,
+        crate::domain::task_delivery::DeliveryReadback,
+        crate::domain::task_delivery::DeliveryStatus,
+        crate::domain::task_delivery::DeliveryProbe,
+        crate::domain::sdlc_workspace::WorkspaceRole,
+        crate::domain::sdlc_workspace::WorkspaceAccess,
+        crate::domain::sdlc_workspace::WorkspaceOperationStatus,
+        crate::domain::sdlc_workspace::WorkspaceOperationBlocker,
         crate::auth::LoginRequest, crate::auth::LogoutRequest, crate::auth::LogoutResponse, crate::auth::RefreshRequest, crate::auth::TokenPair,
         dto::Project, dto::CreateProject, projects_routes::UpdateProject, dto::ProjectMembership, dto::ProjectMembershipInput,
         crate::api::readiness::Readiness,
@@ -295,6 +358,18 @@ pub struct ApiError {
     pub(crate) message: String,
 }
 impl ApiError {
+    pub(crate) fn resource_delete(error: sqlx::Error) -> Self {
+        if error.as_database_error().is_some_and(|db| {
+            db.code().as_deref() == Some("23503")
+                && db
+                    .constraint()
+                    .is_some_and(|name| name.starts_with("sdlc_workspace_operations_"))
+        }) {
+            Self::conflict("resource is retained by immutable SDLC workspace history")
+        } else {
+            Self::internal(error)
+        }
+    }
     pub(crate) fn unavailable() -> Self {
         Self {
             status: StatusCode::SERVICE_UNAVAILABLE,
@@ -376,6 +451,28 @@ impl ApiError {
         }
     }
     pub(crate) fn internal(error: sqlx::Error) -> Self {
+        if let Some(database) = error.as_database_error()
+            && database.code().as_deref() == Some("23505")
+            && matches!(
+                database.constraint(),
+                Some(
+                    "delivery_configuration_repository_name" | "legacy_unbound_configuration_name"
+                )
+            )
+        {
+            return Self::conflict("delivery_configuration_name_conflict");
+        }
+        if let Some(database) = error.as_database_error()
+            && database.code().as_deref() == Some("42501")
+            && matches!(
+                database.message(),
+                "namespace_resource_read_only"
+                    | "delivery_configuration_history_protected"
+                    | "delivery_checkout_identity_immutable"
+            )
+        {
+            return Self::conflict(database.message());
+        }
         tracing::error!(%error, "internal API error");
         Self {
             status: StatusCode::INTERNAL_SERVER_ERROR,

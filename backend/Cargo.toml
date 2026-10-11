@@ -52,12 +52,22 @@ path = "src/bin/openapi-dump.rs"
 name = "forge-runner"
 path = "src/bin/forge-runner.rs"
 
+[[bin]]
+name = "forge-delivery"
+path = "src/bin/forge-delivery.rs"
+
+[[bin]]
+name = "forge-pg-migrate"
+path = "src/bin/forge-pg-migrate.rs"
+
 
 [features]
+oci-integration = ["integration"]
+postgres-integration = ["integration"]
 integration = []
 
 [dependencies]
-sdlc-shared = { path = "../../services-base/crates/sdlc-shared" }
+sdlc-shared = { path = "../../services-base/crates/sdlc-shared", features = ["openapi"] }
 cicd-app = { path = "app" }
 cicd-infra = { path = "infra" }
 cicd-api = { path = "api" }
@@ -86,6 +96,8 @@ sdlc-auth-core = { path = "../../services-base/crates/sdlc-auth-core" }
 serde_yaml = { package = "yaml_serde", version = "0.10" }
 sha2 = "0.10"
 hmac = "0.12"
+sha1 = "0.10"
+libc = "0.2"
 sqlx = { workspace = true }
 thiserror.workspace = true
 tokio.workspace = true

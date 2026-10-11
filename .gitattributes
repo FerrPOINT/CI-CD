@@ -1,4 +1,5 @@
 # SQLx checksums include line endings. Keep applied migration bytes stable.
+*.sh text eol=lf
 backend/migrations/*.sql text eol=lf
 backend/migrations/0001_bootstrap_v1.sql text eol=crlf
 backend/migrations/0002_runtime_role.sql text eol=crlf

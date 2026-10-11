@@ -323,7 +323,7 @@ pub(crate) async fn update_project(
     Ok(Json(project))
 }
 
-#[utoipa::path(delete, path="/api/v1/projects/{project_id}", tag="projects", params(("project_id"=Uuid, Path)), responses((status=200), (status=404)))]
+#[utoipa::path(delete, path="/api/v1/projects/{project_id}", tag="projects", params(("project_id"=Uuid, Path)), responses((status=200), (status=404), (status=409, description="Resource retained by immutable SDLC workspace history")))]
 pub(crate) async fn delete_project(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
@@ -332,7 +332,7 @@ pub(crate) async fn delete_project(
         .bind(project_id)
         .fetch_optional(pool(&state)?)
         .await
-        .map_err(ApiError::internal)?
+        .map_err(ApiError::resource_delete)?
         .ok_or_else(ApiError::not_found)?;
     Ok(Json(serde_json::json!({"deleted": deleted})))
 }
@@ -355,6 +355,7 @@ mod tests {
             .route("/projects/{project_id}", patch(update_project))
             .with_state(Arc::new(AppState {
                 pool: None,
+                namespace_admission_pool: None,
                 auth_secret: None,
                 git: config.git.to_git_config(),
                 config,

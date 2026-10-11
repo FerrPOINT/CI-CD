@@ -358,3 +358,14 @@ git diff --exit-code
 - [ENV](ENV.md), `docker-compose.yml`, `.env.example` и `justfile` -- local configuration and executable commands.
 - [TESTING](DEVELOPMENT_GUIDE.md) и [CI/CD](DEVELOPMENT_GUIDE.md) -- historical/detail references; current CI source is `.github/workflows/ci.yml`.
 - [DOCUMENTATION GOVERNANCE](DOCUMENTATION_GOVERNANCE.md) -- authority matrix, status taxonomy and documentation checks.
+
+### Слой кеширования серверной сборки
+
+Обе Docker-рецептуры backend создают временные исходники всех объявленных
+исполняемых целей Cargo перед кешированием зависимостей, затем очищают продуктовые
+пакеты и собирают настоящие исходники. При добавлении `[[bin]]` обновляйте этот
+слой в обеих рецептурах и проверяйте реальные сборки. Compile-time delivery
+script witnesses также копируются из того же закреплённого комплекта: продуктовый
+postgres-delivery.py и три Base helper, сравниваемые через `include_bytes!`.
+Текущая корректировка:
+[план проверки](../plans/2026-10-10-production-backend-build.md).

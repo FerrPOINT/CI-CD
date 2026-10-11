@@ -388,10 +388,12 @@ dependencies = [
 name = "cicd-domain"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "serde",
  "thiserror",
  "url",
  "utoipa",
+ "uuid",
 ]
 
 [[package]]
@@ -399,6 +401,8 @@ name = "cicd-infra"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "cicd-domain",
+ "serde_json",
  "sqlx",
  "uuid",
 ]
@@ -431,6 +435,7 @@ dependencies = [
  "hmac",
  "jsonwebtoken",
  "lettre",
+ "libc",
  "rand_core 0.6.4",
  "reqwest 0.12.28",
  "sdlc-auth-core",
@@ -438,6 +443,7 @@ dependencies = [
  "sdlc-telemetry",
  "serde",
  "serde_json",
+ "sha1",
  "sha2",
  "sqlx",
  "subtle",
@@ -2217,6 +2223,7 @@ dependencies = [
  "thiserror",
  "tower-http 0.7.1",
  "tracing",
+ "utoipa",
  "uuid",
 ]
 
