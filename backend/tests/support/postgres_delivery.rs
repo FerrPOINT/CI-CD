@@ -528,6 +528,48 @@ async fn sdlc_pg_delivery_rejects_reader_sequence_and_view_writes() {
 }
 
 #[tokio::test]
+async fn sdlc_pg_delivery_rejects_reader_writable_foreign_tables() {
+    let mut t = Pg::new().await;
+    let initial = t.build("A", None).await;
+    let first = t.execute(&initial, None).await;
+    assert_eq!(latest(&first)["status"], "verified");
+    let database = t.manifest(&first)["database"].as_str().unwrap().to_owned();
+
+    t.sql(
+        &database,
+        "CREATE SCHEMA fdw; CREATE EXTENSION postgres_fdw SCHEMA fdw; \
+         CREATE SERVER foreign_test FOREIGN DATA WRAPPER postgres_fdw \
+         OPTIONS (host '127.0.0.1', dbname 'unused'); \
+         CREATE FOREIGN TABLE public.foreign_records (id bigint) SERVER foreign_test \
+         OPTIONS (schema_name 'public', table_name 'records'); \
+         GRANT UPDATE ON public.foreign_records TO forge_reader;",
+    )
+    .await;
+    let mut connection = t.connection(&database).await;
+    let reader_can_update: bool = sqlx::query_scalar(
+        "SELECT has_table_privilege('forge_reader', 'public.foreign_records', 'UPDATE')",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .unwrap();
+    connection.close().await.unwrap();
+    assert!(reader_can_update, "fixture must prove the reader write grant exists");
+
+    let candidate = t.build("B", Some(&first)).await;
+    let failed = t.execute(&candidate, None).await;
+    assert_eq!(failed["reason"], "unsupported_foreign_table");
+    assert_eq!(
+        failed["confirmedManifestSha256"],
+        first["confirmedManifestSha256"]
+    );
+    assert_eq!(
+        failed["currentManifestSha256"],
+        first["currentManifestSha256"]
+    );
+    println!("ACTUAL_PG_READER_WRITABLE_FOREIGN_TABLE=REJECTED");
+}
+
+#[tokio::test]
 async fn sdlc_pg_delivery_rejects_serving_database_fingerprint_drift() {
     let mut t = Pg::new().await;
     let command = t.build("A", None).await;
