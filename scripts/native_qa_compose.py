@@ -25,7 +25,7 @@ import threading
 import time
 import uuid
 
-SDK_SHA256 = '2569882c3bb6a8b86ebb42367254720c5f802d5423bc98ef02c6fe3283e0874f'
+SDK_SHA256 = '5e74856ecbaf2bf3c21a614479ec400c8437398d0111c02397983cc9c0a6bfe6'
 DAEMON_ID = '38138e49-da1a-4f64-ba35-15cc6ef9400e'
 TASK = 'forge-task-delivery'
 PURPOSES = {
