@@ -74,6 +74,12 @@ class DeliveryPinPreflightTests(unittest.TestCase):
     def test_legacy_checkout_keeps_its_base_pin(self):
         self.assertEqual(self.selected_pin(False), ".base-revision")
 
+    def test_delivery_source_hashes_cover_both_sdk_pin_files(self):
+        script = (ROOT / "scripts/verify-task-delivery.ps1").read_text(encoding="utf-8")
+        source_hashes = script.split("function SourceHashes", 1)[1].split("$before = SourceHashes", 1)[0]
+        self.assertIn("'.base-revision'", source_hashes)
+        self.assertIn("'.namespace-base-revision'", source_hashes)
+
 
 if __name__ == "__main__":
     unittest.main()

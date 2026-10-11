@@ -40,7 +40,7 @@ foreach ($image in $images) {
 }
 function SourceHashes {
     $hashes = [ordered]@{}
-    foreach ($entry in @(@{root=$repo; name='CI-CD'; paths=@('backend','deploy','scripts','openapi','.base-revision')},
+    foreach ($entry in @(@{root=$repo; name='CI-CD'; paths=@('backend','deploy','scripts','openapi','.base-revision','.namespace-base-revision')},
                         @{root=$sdk; name='services-base'; paths=@('crates','Cargo.toml','Cargo.lock','LICENSE','scripts/platform_backup.py','scripts/platform_postgres.py','scripts/compose_helpers.py')})) {
         $paths = git -C $entry.root ls-files -- $entry.paths
         if ($LASTEXITCODE -ne 0) { throw 'Source inventory failed' }
