@@ -123,6 +123,19 @@ it('distinguishes no matches and resets only filter parameters', async () => {
   expect(screen.getByTestId('location')).toHaveTextContent('project_scope=all')
 })
 
+it('validates native calendar values committed directly by the browser at submit', async () => {
+  mount()
+  fireEvent.click(screen.getByRole('button', { name: 'Фильтры' }))
+  const since = screen.getByLabelText('Дата начала') as HTMLInputElement
+  const until = screen.getByLabelText('Дата окончания') as HTMLInputElement
+  since.value = '2026-10-12'
+  until.value = '2026-10-10'
+  fireEvent.click(screen.getByRole('button', { name: 'Применить' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('Дата начала позже даты окончания')
+  expect(since).toHaveValue('2026-10-12')
+  expect(screen.getByTestId('location')).not.toHaveTextContent('since=')
+})
+
 it('links a deployment to its exact environment and keeps the pipeline as a separate action', async () => {
   vi.mocked(api).mockImplementation(async (path) =>
     path.includes('/deployments?')

@@ -195,8 +195,16 @@ export function ExecutionFilterForm({
       className="space-y-4"
       onSubmit={(event) => {
         event.preventDefault()
-        const since = draft.since && executionBoundary(draft.since, false)
-        const until = draft.until && executionBoundary(draft.until, true)
+        const data = new FormData(event.currentTarget)
+        // Native calendar edits can commit at submit/blur; preserve exact ISO bookmarks when the displayed day is unchanged.
+        const calendarValue = (key: 'since' | 'until') => {
+          const value = String(data.get(key) ?? '')
+          return value === draft[key].slice(0, 10) ? draft[key] : value
+        }
+        const submitted = { ...draft, since: calendarValue('since'), until: calendarValue('until') }
+        setDraft(submitted)
+        const since = submitted.since && executionBoundary(submitted.since, false)
+        const until = submitted.until && executionBoundary(submitted.until, true)
         if (
           (since && Number.isNaN(Date.parse(since))) ||
           (until && Number.isNaN(Date.parse(until)))
@@ -208,7 +216,7 @@ export function ExecutionFilterForm({
           setError('Дата начала позже даты окончания.')
           return
         }
-        onApply(draft)
+        onApply(submitted)
       }}
     >
       <div className="grid min-w-0 gap-4 sm:grid-cols-2">
@@ -293,6 +301,7 @@ export function ExecutionFilterForm({
               <Input
                 {...attrs}
                 type="date"
+                name="since"
                 value={draft.since.slice(0, 10)}
                 onChange={(e) => update('since', e.target.value)}
               />
@@ -303,6 +312,7 @@ export function ExecutionFilterForm({
               <Input
                 {...attrs}
                 type="date"
+                name="until"
                 value={draft.until.slice(0, 10)}
                 onChange={(e) => update('until', e.target.value)}
               />
