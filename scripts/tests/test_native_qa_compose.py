@@ -216,8 +216,27 @@ class NativeSdkTests(unittest.TestCase):
         self.assertEqual(first.read_bytes(), before)
         self.assertEqual(Path(operation.generations[0]['path']).read_bytes(), generation)
         self.assertEqual(q.read(operation.path)['services']['application']['image'], IMAGE2)
+        rollback = self.children / 'oci' / 'rollback.json'
+        rollback.write_bytes(before)
+        self.assertNotEqual(rollback, first)
+        self.assertEqual(rollback.read_bytes(), first.read_bytes())
+        self.up('oci', rollback, 'application')
+        self.assertEqual(q.read(operation.path)['services']['application']['image'], IMAGE)
+        self.assertEqual(len(operation.generations), 3)
+        self.assertEqual([item['path'] for item in operation.source_records],
+                         [str(first), str(second), str(rollback)])
+        self.assertEqual(operation.source_records[0]['sha256'], operation.source_records[2]['sha256'])
+        for item in operation.source_records:
+            self.assertEqual(q.digest(Path(item['path']).read_bytes()), item['sha256'])
+        self.assertEqual(first.read_bytes(), before)
+        self.assertEqual(Path(operation.generations[0]['path']).read_bytes(), generation)
+        operation.check_ownership()
         self.bridge.close()
         self.assertFalse(self.model.items['container'])
+        self.assertFalse(self.model.items['volume'])
+        self.assertIn('parent_qa', self.model.items['network'])
+        self.assertEqual(q.read(operation.journal)['phase'], 'cleaned')
+        self.assertFalse(list(operation.registry.glob('*.json')))
 
     def test_initial_resource_adoption_refused_by_actual_sdk(self):
         self.model.items['container']['foreign'] = {'Config': {'Labels': {'com.docker.compose.project': PG}}}
@@ -264,6 +283,14 @@ class NativeSdkTests(unittest.TestCase):
         _, source = self.start_pg()
         with self.assertRaises(ValueError):
             self.up('pg', source, 'database')
+        duplicate = self.source('pg', q.read(source), 'same-body.json')
+        self.assertNotEqual(duplicate, source)
+        self.assertEqual(duplicate.read_bytes(), source.read_bytes())
+        with self.assertRaises(ValueError):
+            self.up('pg', duplicate, 'database')
+        _, source = self.start_oci()
+        with self.assertRaises(ValueError):
+            self.up('oci', source, 'application')
 
     def test_new_resource_inventory_refused(self):
         self.start_pg()

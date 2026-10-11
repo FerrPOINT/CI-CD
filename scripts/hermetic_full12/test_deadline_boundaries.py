@@ -25,11 +25,13 @@ def git_response(argv):
     if args == ['rev-parse', '--is-shallow-repository']:
         return b'false\n'
     if args[0] == 'rev-list':
-        chain = {'HEAD': (os.environ['GITHUB_SHA'], h.CHILD_POLICY_CONTROLS),
+        chain = {'HEAD': (os.environ['GITHUB_SHA'], h.PURE_CONTROLS, h.SOURCE),
+                 h.PURE_CONTROLS: (h.PURE_CONTROLS, h.CHILD_POLICY_CONTROLS),
                  h.CHILD_POLICY_CONTROLS: (h.CHILD_POLICY_CONTROLS, h.POLICY_MERGE),
-                 h.POLICY_MERGE: (h.POLICY_MERGE, h.SMOKE_CONTROLS, h.SOURCE),
+                 h.POLICY_MERGE: (h.POLICY_MERGE, h.SMOKE_CONTROLS, h.POLICY_SOURCE),
                  h.SMOKE_CONTROLS: (h.SMOKE_CONTROLS, h.PG_CONTROLS),
-                 h.SOURCE: (h.SOURCE, h.PREVIOUS_SOURCE),
+                 h.SOURCE: (h.SOURCE, h.POLICY_SOURCE),
+                 h.POLICY_SOURCE: (h.POLICY_SOURCE, h.PREVIOUS_SOURCE),
                  h.PG_CONTROLS: (h.PG_CONTROLS, h.SOURCE_MERGE),
                  h.SOURCE_MERGE: (h.SOURCE_MERGE, h.COUNT_CONTROLS, h.PREVIOUS_SOURCE),
                  h.COUNT_CONTROLS: (h.COUNT_CONTROLS, h.CHILD_CLASS_CONTROLS),
@@ -64,8 +66,15 @@ def git_response(argv):
         if args[2:] == [h.CHECKPOINT_CONTROLS, h.CONTROLS_PARENT]:
             return (b'M\tbackend/src/bin/forge-delivery.rs\nM\tbackend/src/task_delivery/oci.rs\n'
                     b'M\tbackend/tests/support/oci_delivery.rs\nM\tscripts/tests/test_oci_offline_fixture.py\n')
-        if args[2:] in ([h.PREVIOUS_SOURCE, h.SOURCE], [h.SMOKE_CONTROLS, h.POLICY_MERGE]):
+        if args[2:] in ([h.PREVIOUS_SOURCE, h.POLICY_SOURCE], [h.SMOKE_CONTROLS, h.POLICY_MERGE]):
             return b'M\tdocs/CURRENT_STATE.md\nM\tdocs/TASK_DELIVERY_VERIFICATION.md\n'
+        if args[2:] == [h.POLICY_SOURCE, h.SOURCE]:
+            return (b'M\tdocs/CURRENT_STATE.md\nM\tdocs/TASK_DELIVERY_VERIFICATION.md\n'
+                    b'M\tscripts/native_qa_compose.py\nM\tscripts/tests/test_native_qa_compose.py\n')
+        if args[2:] == [h.PURE_CONTROLS, 'HEAD']:
+            return (b'M\tdocs/CURRENT_STATE.md\nM\tdocs/TASK_DELIVERY_VERIFICATION.md\n'
+                    b'M\tscripts/hermetic_full12/run.py\nM\tscripts/native_qa_compose.py\n'
+                    b'M\tscripts/tests/test_native_qa_compose.py\n')
         return (b'M' if args[2] in (h.CONTROLS_PARENT, h.SOURCE_MERGE, h.PG_CONTROLS, h.POLICY_MERGE, h.CHILD_POLICY_CONTROLS) else b'A') + b'\tscripts/hermetic_full12/run.py\n'
     if args[0] == 'show':
         return (h.BASE + '\n').encode()
@@ -145,8 +154,8 @@ class DeadlineBoundaryTests(unittest.TestCase):
                    'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_SHA': 'a' * 40}
             with patch.dict(os.environ, env), patch.object(h.m, 'preflight'), patch.object(h.m, 'read_payloads', return_value=({}, {})), patch.object(h, 'hosted_guard'), patch.object(h, 'verify_components', return_value={}), patch.object(h, 'wall_budget', side_effect=wall), patch.object(h.time, 'monotonic', side_effect=lambda: clock[0]), patch.object(h, 'command', side_effect=command), patch.object(h, 'reclaim', side_effect=h.CapacityFailure({'host_free_bytes': 0})), patch.object(gate, 'start_daemon') as start, patch.object(gate, 'stop_daemon', return_value={'stopped': True}):
                 self.assertEqual(gate.run_job('C'), 1)
-            self.assertEqual(envelopes[:2], [5400, 2040])  # Fifty-six successful Git calls consume3360.
-            self.assertEqual(len(git_calls), 112)  # Initial + final parity proof, private qualification separately tested.
+            self.assertEqual(envelopes[:2], [5400, 1740])  # Sixty-one successful Git calls consume3660.
+            self.assertEqual(len(git_calls), 122)  # Initial + final parity proof, private qualification separately tested.
             start.assert_not_called()
             self.assertIsNone(h.BOOTSTRAP_DEADLINE)
 

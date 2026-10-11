@@ -5,13 +5,23 @@
 
 ## Актуальная hosted qualification: 11 октября 2026
 
-[38093642467/1](https://github.com/FerrPOINT/CI-CD/actions/runs/38093642467),
-controls278/sourcee781: terminal FAILURE. Strict readback подтверждает A5 PASS
-и B PG5/24 negatives/14 cleaned journals PASS; C OCI7 отказал с child
-`DiskSpaceGuard`, stages8–12 NOT_RUN, original aggregate REJECT.
-Owned cleanup завершён, remaining0. Full12/native SDLC acceptance нет;
-начальные capacity checkpoints не доказывают late child capacity и не разрешают
-снижение floor. [Точный результат и provenance](TASK_DELIVERY_VERIFICATION.md#hosted-full12-38093642467).
+[38109147644/1](https://github.com/FerrPOINT/CI-CD/actions/runs/38109147644),
+controls030/source756: terminal FAILURE. Strict readback подтверждает A5 PASS
+и B PG5/24 negatives/14 cleaned journals PASS. C OCI7: rollback assertion
+`oci_delivery.rs:625:5`, closed child `ValueError` и вторичная cleanup assertion
+`:477:17`; stages8–12 NOT_RUN, original aggregate REJECT. Во всех трёх partitions
+owned cleanup и zero remaining task inventory проверены.
+Reviewed QA-only fix различает новый OCI operation path и повтор прежнего Compose
+body при rollback A→B→A; same-path replay, PG same-body rejection и все custody
+guards сохранены. Linux Python81 и native adapter43 pure tests PASS; Docker/native
+acceptance исправления ещё нет. Closed class не объясняет любой `ValueError`.
+[Точный результат и границы](TASK_DELIVERY_VERIFICATION.md#hosted-full12-38109147644).
+
+Исторический controls278/sourcee781 run38093642467 завершился отдельным
+OCI7 `DiskSpaceGuard` отказом; его receipts не квалифицируют текущий source.
+Начальные capacity checkpoints не доказывают late child capacity и не разрешают
+снижение floor. [Исторический provenance](TASK_DELIVERY_VERIFICATION.md#hosted-full12-38093642467).
+Full12/native SDLC acceptance нет.
 Исторические local packets ниже сохраняют только свой source/scope.
 
 ## Что работает сейчас (Current verified)

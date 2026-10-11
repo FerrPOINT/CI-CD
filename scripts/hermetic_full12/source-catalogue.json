@@ -1,5 +1,5 @@
 {
-  "source_sha": "75659d8d0bb1415c0ad0ae183bb8cd762aeb9abb",
+  "source_sha": "84f0962ce14b95983a015e7d2303cd6f00ec59a7",
   "product_base_sha": "19a7a381ae6dbea61a643bb96189e483fa64df5c",
   "catalogues": {
     "base": {
@@ -1233,8 +1233,8 @@
         },
         {
           "path": "scripts/native_qa_compose.py",
-          "sha256": "bf838ac03632515795347b935f313df385e376a777a5618a2d6f19f5a23c91f3",
-          "size": 30760
+          "sha256": "7edd0161c7f327d8c5de3e94f3bfbf507f640d2ce41ac3ab2fd6b97b1d371f25",
+          "size": 30804
         },
         {
           "path": "scripts/native_qa_compose_client.py",
@@ -1293,8 +1293,8 @@
         },
         {
           "path": "scripts/tests/test_native_qa_compose.py",
-          "sha256": "1161a3614754fc787cee697bf432e74b2ed530e537a187def1b74e81474013ba",
-          "size": 32036
+          "sha256": "6a97734f544059ef807aebef66fb5d7aecfc4d2eef77013ab3f369a790dccd06",
+          "size": 33670
         },
         {
           "path": "scripts/tests/test_observability_contract.py",
@@ -1342,7 +1342,7 @@
           "size": 35571
         }
       ],
-      "sha256": "b186bb3b64d5983d7dcbdf85370683789a4ee230ea97401599bb5ae6781c6696"
+      "sha256": "5263913dc01c64a7bb66f872a227f34f9b2d7d9511a411a3eb42b8cbaa591cd8"
     }
   },
   "image_ids": {
@@ -2333,7 +2333,7 @@
         "mode": "100644"
       },
       "scripts/native_qa_compose.py": {
-        "blob": "d6d0691e07f1b8ecb3ee23575d7a4f9d3d3551f2",
+        "blob": "db35756ed57559c4fb33c4be4a4bd58f941438ff",
         "mode": "100644"
       },
       "scripts/native_qa_compose_client.py": {
@@ -2381,7 +2381,7 @@
         "mode": "100644"
       },
       "scripts/tests/test_native_qa_compose.py": {
-        "blob": "f3596de4023b18289156b243aef541ccdafae693",
+        "blob": "0af05d40de135547915c4faf982c6b86d9681acd",
         "mode": "100644"
       },
       "scripts/tests/test_observability_contract.py": {

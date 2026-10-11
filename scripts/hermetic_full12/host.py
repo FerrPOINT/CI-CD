@@ -18,7 +18,9 @@ import urllib.request
 import maintenance_git as m
 
 HERE = Path(__file__).resolve().parent
-SOURCE = '75659d8d0bb1415c0ad0ae183bb8cd762aeb9abb'
+SOURCE = '84f0962ce14b95983a015e7d2303cd6f00ec59a7'
+POLICY_SOURCE = '75659d8d0bb1415c0ad0ae183bb8cd762aeb9abb'
+PURE_CONTROLS = '030e676bff1653679999de093b9d61195f8430b6'
 PREVIOUS_SOURCE = 'e781b533bfb25fa669d5a5c65f8fa7094de7af02'
 POLICY_MERGE = 'b5bd585b41a3ccd3225d2a508b3e45974d5fd309'
 SMOKE_CONTROLS = '278c7fb5863dd7b151a2c6bf0c202a274cc459f3'
@@ -568,8 +570,10 @@ def bind_maintenance(module, proof):
 
 def controls_history(controls):
     require(git(controls, 'rev-parse', '--is-shallow-repository').strip() == b'false')
+    row = git(controls, 'rev-list', '--parents', '-n', '1', 'HEAD').decode().split()
+    require(len(row) == 3 and row[1:] == [PURE_CONTROLS, SOURCE])
     row = git(controls, 'rev-list', '--parents', '-n', '1', POLICY_MERGE).decode().split()
-    require(row == [POLICY_MERGE, SMOKE_CONTROLS, SOURCE])
+    require(row == [POLICY_MERGE, SMOKE_CONTROLS, POLICY_SOURCE])
     row = git(controls, 'rev-list', '--parents', '-n', '1', SOURCE_MERGE).decode().split()
     require(row == [SOURCE_MERGE, COUNT_CONTROLS, PREVIOUS_SOURCE])
     row = git(controls, 'rev-list', '--parents', '-n', '1', PREVIOUS_SOURCE).decode().split()
@@ -578,9 +582,9 @@ def controls_history(controls):
     require(row == [CONTROLS_PARENT, CHECKPOINT_CONTROLS, CHILD_CLASS_SOURCE])
     row = git(controls, 'rev-list', '--parents', '-n', '1', CHECKPOINT_MERGE).decode().split()
     require(row == [CHECKPOINT_MERGE, OCI_CLI_CONTROLS, SOURCE_PARENT])
-    for revision, parent in (('HEAD', CHILD_POLICY_CONTROLS), (CHILD_POLICY_CONTROLS, POLICY_MERGE),
+    for revision, parent in ((PURE_CONTROLS, CHILD_POLICY_CONTROLS), (CHILD_POLICY_CONTROLS, POLICY_MERGE),
                              (SMOKE_CONTROLS, PG_CONTROLS),
-                             (SOURCE, PREVIOUS_SOURCE), (PG_CONTROLS, SOURCE_MERGE),
+                             (SOURCE, POLICY_SOURCE), (POLICY_SOURCE, PREVIOUS_SOURCE), (PG_CONTROLS, SOURCE_MERGE),
                              (COUNT_CONTROLS, CHILD_CLASS_CONTROLS),
                              (LITERAL_CLASS_SOURCE, CHILD_CLASS_SOURCE),
                              (CHILD_CLASS_CONTROLS, CONTROLS_PARENT), (CHILD_CLASS_SOURCE, SOURCE_PARENT),
@@ -610,17 +614,24 @@ def controls_history(controls):
                         'M\tbackend/tests/support/oci_delivery.rs', 'M\tscripts/tests/test_oci_offline_fixture.py'])
     for baseline, revision in ((CONTROLS_PARENT, COUNT_CONTROLS), (SOURCE_MERGE, PG_CONTROLS),
                                (PG_CONTROLS, SMOKE_CONTROLS), (SOURCE_MERGE, SMOKE_CONTROLS),
-                               (POLICY_MERGE, CHILD_POLICY_CONTROLS), (CHILD_POLICY_CONTROLS, 'HEAD')):
+                               (POLICY_MERGE, CHILD_POLICY_CONTROLS), (CHILD_POLICY_CONTROLS, PURE_CONTROLS)):
         changes = git(controls, 'diff', '--name-status', baseline, revision).decode().splitlines()
         require(changes and all(line.startswith('M\t') and line[2:] in CONSUMER_PATHS for line in changes))
     for baseline, revision in ((PREVIOUS_SOURCE, SOURCE_MERGE), (PREVIOUS_SOURCE, PG_CONTROLS),
-                               (PREVIOUS_SOURCE, SMOKE_CONTROLS), (SOURCE, POLICY_MERGE), (SOURCE, 'HEAD')):
+                               (PREVIOUS_SOURCE, SMOKE_CONTROLS), (POLICY_SOURCE, POLICY_MERGE),
+                               (POLICY_SOURCE, PURE_CONTROLS), (SOURCE, 'HEAD')):
         changes = git(controls, 'diff', '--name-status', baseline, revision).decode().splitlines()
         require(changes and all(line.startswith('A\t') and
             (line[2:].startswith('scripts/hermetic_full12/') or line[2:] == '.github/workflows/forge-hermetic-full12.yml') for line in changes))
     expected = ['M\tdocs/CURRENT_STATE.md', 'M\tdocs/TASK_DELIVERY_VERIFICATION.md']
-    for baseline, revision in ((PREVIOUS_SOURCE, SOURCE), (SMOKE_CONTROLS, POLICY_MERGE)):
+    for baseline, revision in ((PREVIOUS_SOURCE, POLICY_SOURCE), (SMOKE_CONTROLS, POLICY_MERGE)):
         require(git(controls, 'diff', '--name-status', baseline, revision).decode().splitlines() == expected)
+    expected += ['M\tscripts/native_qa_compose.py', 'M\tscripts/tests/test_native_qa_compose.py']
+    require(git(controls, 'diff', '--name-status', POLICY_SOURCE, SOURCE).decode().splitlines() == expected)
+    changes = git(controls, 'diff', '--name-status', PURE_CONTROLS, 'HEAD').decode().splitlines()
+    require(changes and all(line.startswith('M\t') and
+            (line[2:] in CONSUMER_PATHS or line in expected) for line in changes))
+    require([line for line in changes if line[2:] not in CONSUMER_PATHS] == expected)
 
 
 def checkout_proof(workspace):

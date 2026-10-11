@@ -1,8 +1,29 @@
 # Public-safe exact-source full12 controls
 
+## Reviewed OCI rollback source successor
+
+Текущий normal merge сохраняет ordered parents controls
+`030e676bff1653679999de093b9d61195f8430b6` и product
+`84f0962ce14b95983a015e7d2303cd6f00ec59a7` (tree
+`9dc257fe8af698dbd7689f566fc8ca85a3c17456`, sole parent756).
+Source756→84f меняет только два status docs и `scripts/native_qa_compose.py` /
+`scripts/tests/test_native_qa_compose.py`. Новый OCI operation path допускает
+повтор прежних immutable config bytes для rollback A→B→A; повтор path и PG body
+по-прежнему запрещены. Исторические source756/19b/030 edges проверяются отдельно.
+Все три product checkout, catalogue и coverage теперь связаны с84f.
+266 Git inputs (Forge178 + Base88) сохранены; изменены только два Python blobs.
+Rust compiled inputs, SDK/locks/pins,12 stages,245 pure selectors, native counts,
+budget/floor/cleanup/privacy validators и mandatory Linux preflight неизменны.
+
+Actual030/source756 run38109147644 завершился FAILURE: A5 и B5/24negative PASS,
+C OCI7 rollback assertion failure с fixture-only ValueError diagnostic,8–12 NOT_RUN;
+original aggregate REJECT, cleanup всех
+трёх jobs подтверждён. Это не результат нового84f. Reviewed adapter fix прошёл
+Linux81+43 pure tests, но не Docker/native acceptance. Новый полный run ещё нужен.
+
 ## Mandatory hosted Linux pure preflight
 
-Текущий successor является normal child19b и сохраняет exact sole-parent edge19b
+Исторический030 является normal child19b и сохраняет exact sole-parent edge19b
 к policy merge. Только job A
 после `Reviewed immutable controls`, до private Base availability/checkout и heavy
 work, выполняет `Pure controls regression tests` с timeout2min в
@@ -16,15 +37,15 @@ Linux process/timer cases ограничены собственными disposab
 Только truthful A accounting дополнен120s: ACTION840->960, total20232->20352s.
 Reserve240s, job360min, native/bootstrap/subprocess/cleanup и B/C budgets неизменны.
 245 Linux обязательны перед native attempt; локальный WSL timeout не объявлен PASS.
-Source756, child floor5 и все полные admission checks сохранены как в19b.
+В030 source756, child floor5 и все полные admission checks сохранены как в19b.
 
 ## Hosted child disk policy successor
 
-Текущий source `75659d8d0bb1415c0ad0ae183bb8cd762aeb9abb` имеет sole parent
+Исторический source `75659d8d0bb1415c0ad0ae183bb8cd762aeb9abb` имеет sole parent
 e781 и меняет только `docs/CURRENT_STATE.md` / `docs/TASK_DELIVERY_VERIFICATION.md`.
 Normal merge `b5bd585b41a3ccd3225d2a508b3e45974d5fd309` сохраняет ordered parents
 controls `278c7fb5863dd7b151a2c6bf0c202a274cc459f3` и exact source756.
-Все три product checkout, catalogue и coverage теперь привязаны к756;
+В policy successor все три product checkout, catalogue и coverage привязаны к756;
 все266 input blobs (Forge178 + Base88), compiled sources, SDK/locks/pins неизменны.
 Исторические e781/278 edges и seals не переименованы в текущие receipts.
 

@@ -106,7 +106,7 @@ class ControlsTests(unittest.TestCase):
         self.assertEqual(sum(isinstance(node, ast.Assert) for node in ast.walk(ast.parse((h.HERE / 'row_smoke.py').read_bytes()))), 16)
 
     def test_source_and_base_exact(self):
-        self.assertEqual(h.SOURCE, '75659d8d0bb1415c0ad0ae183bb8cd762aeb9abb')
+        self.assertEqual(h.SOURCE, '84f0962ce14b95983a015e7d2303cd6f00ec59a7')
         self.assertEqual(h.BASE, '19a7a381ae6dbea61a643bb96189e483fa64df5c')
 
     def test_checkpoint_source_catalogue_and_all_three_checkout_bindings(self):
@@ -118,6 +118,8 @@ class ControlsTests(unittest.TestCase):
         self.assertEqual(workflow.count('ref: ' + h.SOURCE + '\n'), 3)
         self.assertNotIn('ref: ' + h.SOURCE_PARENT, workflow)
         expected = {
+            'scripts/native_qa_compose.py': (30804, '7edd0161c7f327d8c5de3e94f3bfbf507f640d2ce41ac3ab2fd6b97b1d371f25'),
+            'scripts/tests/test_native_qa_compose.py': (33670, '6a97734f544059ef807aebef66fb5d7aecfc4d2eef77013ab3f369a790dccd06'),
             'backend/src/bin/forge-delivery.rs': (4919, '61fe2874c3bd32564c66232c91a113f771c09b6b5660ed026b89c0e183d7af59'),
             'backend/src/task_delivery/oci.rs': (65354, 'ccfdce2b67bc222ff7e81a6d8cb0fb1c23452e1fc8ac895b339b261492afcb44'),
             'backend/tests/support/oci_delivery.rs': (33707, 'f769f2cc3c8ba758fa202625e5c2cf52c0e67a157f0845a85e80580d6f1e6f72'),
