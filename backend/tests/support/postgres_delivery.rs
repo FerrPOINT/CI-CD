@@ -537,17 +537,18 @@ async fn sdlc_pg_delivery_rejects_reader_writable_foreign_tables() {
 
     t.sql(
         &database,
-        "CREATE SCHEMA fdw; CREATE EXTENSION postgres_fdw SCHEMA fdw; \
+        "CREATE SCHEMA fdw; CREATE SCHEMA pgx; CREATE EXTENSION postgres_fdw SCHEMA fdw; \
          CREATE SERVER foreign_test FOREIGN DATA WRAPPER postgres_fdw \
          OPTIONS (host '127.0.0.1', dbname 'unused'); \
-         CREATE FOREIGN TABLE public.foreign_records (id bigint) SERVER foreign_test \
+         GRANT USAGE ON SCHEMA pgx TO forge_reader; \
+         CREATE FOREIGN TABLE pgx.foreign_records (id bigint) SERVER foreign_test \
          OPTIONS (schema_name 'public', table_name 'records'); \
-         GRANT UPDATE ON public.foreign_records TO forge_reader;",
+         GRANT UPDATE ON pgx.foreign_records TO forge_reader;",
     )
     .await;
     let mut connection = t.connection(&database).await;
     let reader_can_update: bool = sqlx::query_scalar(
-        "SELECT has_table_privilege('forge_reader', 'public.foreign_records', 'UPDATE')",
+        "SELECT has_table_privilege('forge_reader', 'pgx.foreign_records', 'UPDATE')",
     )
     .fetch_one(&mut connection)
     .await

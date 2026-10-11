@@ -272,7 +272,7 @@ class Owner:
     def roles(self):
         roles = json.loads(self.sql('postgres', "SELECT json_agg(json_build_object('name',rolname,'login',rolcanlogin,"
             "'super',rolsuper,'createdb',rolcreatedb,'createrole',rolcreaterole,'replication',rolreplication,'bypass',rolbypassrls)) "
-            "FROM pg_roles WHERE rolname NOT LIKE 'pg_%';"))
+            "FROM pg_roles WHERE left(rolname,3) <> 'pg_';"))
         require({x['name'] for x in roles} == {'postgres', 'forge_reader', 'forge_writer'}, 'unknown_database_role')
         for role in roles:
             if role['name'] != 'postgres':
@@ -280,7 +280,7 @@ class Owner:
                         'application_role_has_privileged_access')
         require(self.sql('postgres', "SELECT count(*) FROM pg_auth_members m "
                 "JOIN pg_roles r ON r.oid=m.roleid JOIN pg_roles u ON u.oid=m.member "
-                "WHERE r.rolname NOT LIKE 'pg_%' OR u.rolname NOT LIKE 'pg_%';") == '0',
+                "WHERE left(r.rolname,3) <> 'pg_' OR left(u.rolname,3) <> 'pg_';") == '0',
                 'unknown_role_membership')
         return {x['name']: x for x in roles}
 
@@ -316,7 +316,7 @@ class Owner:
 
     def reject_foreign_tables(self, database):
         require(self.sql(database, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
-                "WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema' AND c.relkind='f';") == '0',
+                "WHERE left(n.nspname,3) <> 'pg_' AND n.nspname <> 'information_schema' AND c.relkind='f';") == '0',
                 'unsupported_foreign_table')
 
     def fingerprint(self, database):
@@ -350,7 +350,7 @@ class Owner:
                 'application_writer_can_create_or_mutate_history')
         tables = json.loads(self.sql(database, "SELECT COALESCE(json_agg(json_build_object('schema',n.nspname,'table',c.relname) "
             "ORDER BY n.nspname,c.relname),'[]') FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
-            "WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema' AND c.relkind IN ('r','p');"))
+            "WHERE left(n.nspname,3) <> 'pg_' AND n.nspname <> 'information_schema' AND c.relkind IN ('r','p');"))
         require(0 < len(tables) <= 16 and all(t['schema'] == 'public' for t in tables), 'unsupported_database_catalog')
         row_hashes = {}
         for table in tables:
