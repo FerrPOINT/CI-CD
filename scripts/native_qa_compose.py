@@ -266,7 +266,8 @@ def session_class(sdk):
                 raise ValueError('Invocation manifest is not a new native generation')
             source = read(path)
             value = digest(path.read_bytes())
-            if any(item['path'] == str(path) or item['sha256'] == value for item in self.source_records):
+            if any(item['path'] == str(path) or (self.kind != 'oci' and item['sha256'] == value)
+                   for item in self.source_records):
                 raise ValueError('Native Compose up replay refused')
             if len(self.source_records) >= 256:
                 raise ValueError('Native generation budget exhausted')

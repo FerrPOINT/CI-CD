@@ -1,6 +1,6 @@
 # Forge task workspace, candidate и owner-local delivery evidence
 
-**Статус 2026-10-08:** bounded source implementation и local component verification;
+**Статус 2026-10-11:** bounded source implementation и component verification;
 полного SDLC acceptance нет.
 
 `oci` и `postgres` QA gates используют отдельный immutable Docker CLI/Compose
@@ -8,9 +8,46 @@ image, поскольку закреплённый Rust image содержит �
 Docker. Tool binaries копируются в одноразовый QA volume; source/runtime images
 проверяемых компонентов не меняются.
 
+## Hosted Full12: 38109147644
+
+Свежий [run38109147644/attempt1](https://github.com/FerrPOINT/CI-CD/actions/runs/38109147644)
+завершился FAILURE 2026-10-11. Controls `030e676bff1653679999de093b9d61195f8430b6`,
+source `75659d8d0bb1415c0ad0ae183bb8cd762aeb9abb`, SDK19a/maintenance66b7.
+Original strict readback проверил все три artifacts, run/attempt/head/source266,
+component seals, ZIP/member checksums и provenance. Linux controls pure step
+подтверждён отдельно actual console:245 PASS/0 skip,3.704s.
+
+- A: python81/row-smoke/smoke/check/Clippy, пять стадий PASS.
+- B: PostgreSQL5 PASS,24 negatives,14 cleaned v2 journals PASS.
+- C: OCI7 FAIL/exit101; rollback Verified assertion `oci_delivery.rs:625:5`,
+  затем Drop cleanup assertion `:477:17`. Closed CLI observations:
+  `other_document/exit2` и child `ValueError/exit1`, `acceptanceVerified=false`.
+- Stages8–12 NOT_RUN; original frozen030 aggregate REJECT/exit1.
+- Все три partitions: owned/disposable cleanup, daemon stopped/delegation removed,
+  zero remaining task resources, сохранение baseline inventory/images проверены.
+
+| Partition | Artifact | ZIP SHA256 |
+| --- | --- | --- |
+| A | 11691497057 | `b3622644ed630ddb79b003522bc26d008798ebe27d1bee3a5fb1cc6f092c3efc` |
+| B | 11692260857 | `816f4c07f86faac0e613504dbf2980038996a73b729d0a3383cce056bb32adb7` |
+| C | 11691966992 | `ec2d47f77d9649b6cb57a29e155bd0a430b4278d17cfe49f53587acf1d8aacb6` |
+
+Source review и pure RED воспроизвели QA adapter defect: новый rollback key/path
+возвращает прежний A Compose body, а `source_proof` ошибочно отвергает повтор body
+как replay. Reviewed минимальная OCI-only поправка допускает прежний body под
+новым owned path; same-path replay, PG content-replay, digest/mutation, sandbox,
+generation limit и cleanup guards сохранены. Existing A→B→A regression расширен;
+Linux Python81/81 и native adapter43/43 PASS, без skips и Docker execution.
+Production OCI ledger/CLI/schema, pins, deadlines и resources не менялись.
+Это source/pure evidence, не новая Docker/native qualification исправления.
+`other_document/exit2` также описывает нормальный Readback ожидаемо Failed B,
+не обязательно schema parsing failure; `ValueError` class сам по себе не
+локализует predicate и не объясняет все возможные отказы. Исторический278 ниже
+остаётся отдельным source-specific результатом; full12/native SDLC acceptance нет.
+
 ## Hosted Full12: 38093642467
 
-Актуальный [run38093642467/attempt1](https://github.com/FerrPOINT/CI-CD/actions/runs/38093642467)
+Исторический [run38093642467/attempt1](https://github.com/FerrPOINT/CI-CD/actions/runs/38093642467)
 завершился FAILURE 2026-10-11. Controls `278c7fb5863dd7b151a2c6bf0c202a274cc459f3`,
 source `e781b533bfb25fa669d5a5c65f8fa7094de7af02`, SDK19a/maintenance66b7.
 Все три fresh artifacts аутентифицированы original strict readback на exact
