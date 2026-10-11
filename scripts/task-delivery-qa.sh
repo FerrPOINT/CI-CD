@@ -18,7 +18,9 @@ cargo fmt --all --check
 rustfmt --edition 2024 --check tests/helpers/manifest_target.rs
 rustc --edition=2024 tests/helpers/manifest_target.rs -o /delivery-qa/manifest-target
 touch /delivery-qa/ready
-cargo clippy --locked --offline --workspace --all-targets --features integration -- -D warnings
+if [ "${CICD_QA_GATE:-full}" != postgres ] && [ "${CICD_QA_GATE:-full}" != oci ]; then
+  cargo clippy --locked --offline --workspace --all-targets --features integration -- -D warnings
+fi
 if [ "${CICD_QA_GATE:-full}" = postgres ]; then
   export DOCKER_HOST=unix:///var/run/docker.sock
   python3 -B -c "from pathlib import Path; compile(Path('/work/CI-CD/scripts/postgres-delivery.py').read_text(), 'postgres-delivery.py', 'exec')"
