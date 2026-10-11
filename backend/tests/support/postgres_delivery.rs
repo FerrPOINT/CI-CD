@@ -553,7 +553,10 @@ async fn sdlc_pg_delivery_rejects_reader_writable_foreign_tables() {
     .await
     .unwrap();
     connection.close().await.unwrap();
-    assert!(reader_can_update, "fixture must prove the reader write grant exists");
+    assert!(
+        reader_can_update,
+        "fixture must prove the reader write grant exists"
+    );
 
     let candidate = t.build("B", Some(&first)).await;
     let failed = t.execute(&candidate, None).await;
