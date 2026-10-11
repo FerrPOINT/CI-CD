@@ -32,6 +32,10 @@ jobs:
           path: controls
           fetch-depth: 0
           persist-credentials: false
+      - name: Pure controls regression tests
+        working-directory: controls/scripts/hermetic_full12
+        timeout-minutes: 2
+        run: python3 -B -m unittest discover -p 'test_*.py'
       - name: Read-only Base authorization availability
         timeout-minutes: 1
         env:

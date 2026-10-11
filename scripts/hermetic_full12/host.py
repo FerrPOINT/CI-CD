@@ -22,6 +22,7 @@ SOURCE = '75659d8d0bb1415c0ad0ae183bb8cd762aeb9abb'
 PREVIOUS_SOURCE = 'e781b533bfb25fa669d5a5c65f8fa7094de7af02'
 POLICY_MERGE = 'b5bd585b41a3ccd3225d2a508b3e45974d5fd309'
 SMOKE_CONTROLS = '278c7fb5863dd7b151a2c6bf0c202a274cc459f3'
+CHILD_POLICY_CONTROLS = '19b1a68bb6cc337cadb77a92d03e6c69d7095933'
 CHILD_CLASS_SOURCE = '5f973b33e758a4d60e86fc8ff4eda99c6d4496c1'
 LITERAL_CLASS_SOURCE = 'f05d4796160f1ebd14cb60ddc14da9e3eb78c36d'
 PG_MERGE_PARENT = '903db592f17beb761ed82a20cb8f4645f11ed200'
@@ -577,7 +578,8 @@ def controls_history(controls):
     require(row == [CONTROLS_PARENT, CHECKPOINT_CONTROLS, CHILD_CLASS_SOURCE])
     row = git(controls, 'rev-list', '--parents', '-n', '1', CHECKPOINT_MERGE).decode().split()
     require(row == [CHECKPOINT_MERGE, OCI_CLI_CONTROLS, SOURCE_PARENT])
-    for revision, parent in (('HEAD', POLICY_MERGE), (SMOKE_CONTROLS, PG_CONTROLS),
+    for revision, parent in (('HEAD', CHILD_POLICY_CONTROLS), (CHILD_POLICY_CONTROLS, POLICY_MERGE),
+                             (SMOKE_CONTROLS, PG_CONTROLS),
                              (SOURCE, PREVIOUS_SOURCE), (PG_CONTROLS, SOURCE_MERGE),
                              (COUNT_CONTROLS, CHILD_CLASS_CONTROLS),
                              (LITERAL_CLASS_SOURCE, CHILD_CLASS_SOURCE),
@@ -608,7 +610,7 @@ def controls_history(controls):
                         'M\tbackend/tests/support/oci_delivery.rs', 'M\tscripts/tests/test_oci_offline_fixture.py'])
     for baseline, revision in ((CONTROLS_PARENT, COUNT_CONTROLS), (SOURCE_MERGE, PG_CONTROLS),
                                (PG_CONTROLS, SMOKE_CONTROLS), (SOURCE_MERGE, SMOKE_CONTROLS),
-                               (POLICY_MERGE, 'HEAD')):
+                               (POLICY_MERGE, CHILD_POLICY_CONTROLS), (CHILD_POLICY_CONTROLS, 'HEAD')):
         changes = git(controls, 'diff', '--name-status', baseline, revision).decode().splitlines()
         require(changes and all(line.startswith('M\t') and line[2:] in CONSUMER_PATHS for line in changes))
     for baseline, revision in ((PREVIOUS_SOURCE, SOURCE_MERGE), (PREVIOUS_SOURCE, PG_CONTROLS),

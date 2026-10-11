@@ -29,7 +29,7 @@ class ControlsTests(unittest.TestCase):
 
     def test_all_original_budgets(self):
         self.assertEqual(list(gate.BUDGETS.values()), [2400, 300, 300, 2400, 2400, 5400, 2400, 900, 900, 900, 900, 1800])
-        self.assertEqual({job: gate.job_budget(job) for job in gate.JOBS}, {'A': 20232, 'B': 14350, 'C': 21570})
+        self.assertEqual({job: gate.job_budget(job) for job in gate.JOBS}, {'A': 20352, 'B': 14350, 'C': 21570})
         for job in gate.JOBS:
             self.assertLess(gate.job_budget(job), 21600)
         coverage = h.read(h.HERE / 'coverage.json')
@@ -59,6 +59,12 @@ class ControlsTests(unittest.TestCase):
             declared = sum(int(value) * 60 for value in re.findall(r'^        timeout-minutes: (\d+)$', block, re.M))
             self.assertEqual(declared + 240, gate.ACTION_SECONDS[job])
             self.assertEqual(block.count('run.py run ' + job), 1)
+            pure = "      - name: Pure controls regression tests\n        working-directory: controls/scripts/hermetic_full12\n        timeout-minutes: 2\n        run: python3 -B -m unittest discover -p 'test_*.py'\n"
+            self.assertEqual(block.count(pure), int(job == 'A'))
+            if job == 'A':
+                self.assertLess(block.index('name: Reviewed immutable controls'), block.index(pure))
+                self.assertLess(block.index(pure), block.index('name: Read-only Base authorization availability'))
+                self.assertLess(block.index(pure), block.index('name: Exact authenticated product SDK'))
         self.assertNotIn('workflow_dispatch', workflow)
 
     def test_overhead_alarm_restored_on_failure(self):

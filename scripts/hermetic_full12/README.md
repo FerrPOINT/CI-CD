@@ -1,5 +1,23 @@
 # Public-safe exact-source full12 controls
 
+## Mandatory hosted Linux pure preflight
+
+Текущий successor является normal child19b и сохраняет exact sole-parent edge19b
+к policy merge. Только job A
+после `Reviewed immutable controls`, до private Base availability/checkout и heavy
+work, выполняет `Pure controls regression tests` с timeout2min в
+`controls/scripts/hermetic_full12`: `python3 -B -m unittest discover -p 'test_*.py'`.
+Все245 cases используют stdlib, временные fixtures и собственный full Git history;
+отдельные `private_bridge_proofs.py` не входят в discovery. Нет private dependency,
+соседних checkout или установленного packet requirement для этого preflight.
+Git checkout с fetch-depth0 уже содержит нужные historical executor blobs.
+Linux process/timer cases ограничены собственными disposable subprocesses, не Docker.
+
+Только truthful A accounting дополнен120s: ACTION840->960, total20232->20352s.
+Reserve240s, job360min, native/bootstrap/subprocess/cleanup и B/C budgets неизменны.
+245 Linux обязательны перед native attempt; локальный WSL timeout не объявлен PASS.
+Source756, child floor5 и все полные admission checks сохранены как в19b.
+
 ## Hosted child disk policy successor
 
 Текущий source `75659d8d0bb1415c0ad0ae183bb8cd762aeb9abb` имеет sole parent
@@ -396,7 +414,9 @@ Original stage budgets remain 2400/300/300/2400/2400/5400/2400/900/900/900/900/1
 Smoke retains 300s aggregate/30s call/10s wait, 30 assertions and13 markers.
 Bootstrap is5400s from entry; stage overhead has300s entry/10s assertions/500s
 independent teardown. Finally has1500+220+60s. Action/upload reserves and command
-cleanup tails yield A20232/B14350/C21570s, all below21600s. No budgets increased.
+cleanup tails originally yield A20232/B14350/C21570s. Mandatory pure preflight now
+adds only120s to A20352; B14350/C21570 and all native budgets remain unchanged,
+all below21600s. Existing240s action reserve is not consumed by the new step.
 Host reserve108279229428 bytes, data reserve71319483898 bytes and300000 inodes
 remain enforced. Reclaim is only measured allowlisted disposable hosted paths.
 

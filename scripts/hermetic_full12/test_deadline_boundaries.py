@@ -25,7 +25,8 @@ def git_response(argv):
     if args == ['rev-parse', '--is-shallow-repository']:
         return b'false\n'
     if args[0] == 'rev-list':
-        chain = {'HEAD': (os.environ['GITHUB_SHA'], h.POLICY_MERGE),
+        chain = {'HEAD': (os.environ['GITHUB_SHA'], h.CHILD_POLICY_CONTROLS),
+                 h.CHILD_POLICY_CONTROLS: (h.CHILD_POLICY_CONTROLS, h.POLICY_MERGE),
                  h.POLICY_MERGE: (h.POLICY_MERGE, h.SMOKE_CONTROLS, h.SOURCE),
                  h.SMOKE_CONTROLS: (h.SMOKE_CONTROLS, h.PG_CONTROLS),
                  h.SOURCE: (h.SOURCE, h.PREVIOUS_SOURCE),
@@ -65,7 +66,7 @@ def git_response(argv):
                     b'M\tbackend/tests/support/oci_delivery.rs\nM\tscripts/tests/test_oci_offline_fixture.py\n')
         if args[2:] in ([h.PREVIOUS_SOURCE, h.SOURCE], [h.SMOKE_CONTROLS, h.POLICY_MERGE]):
             return b'M\tdocs/CURRENT_STATE.md\nM\tdocs/TASK_DELIVERY_VERIFICATION.md\n'
-        return (b'M' if args[2] in (h.CONTROLS_PARENT, h.SOURCE_MERGE, h.PG_CONTROLS, h.POLICY_MERGE) else b'A') + b'\tscripts/hermetic_full12/run.py\n'
+        return (b'M' if args[2] in (h.CONTROLS_PARENT, h.SOURCE_MERGE, h.PG_CONTROLS, h.POLICY_MERGE, h.CHILD_POLICY_CONTROLS) else b'A') + b'\tscripts/hermetic_full12/run.py\n'
     if args[0] == 'show':
         return (h.BASE + '\n').encode()
     if args == ['rev-parse', 'HEAD^{tree}']:
@@ -144,8 +145,8 @@ class DeadlineBoundaryTests(unittest.TestCase):
                    'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_SHA': 'a' * 40}
             with patch.dict(os.environ, env), patch.object(h.m, 'preflight'), patch.object(h.m, 'read_payloads', return_value=({}, {})), patch.object(h, 'hosted_guard'), patch.object(h, 'verify_components', return_value={}), patch.object(h, 'wall_budget', side_effect=wall), patch.object(h.time, 'monotonic', side_effect=lambda: clock[0]), patch.object(h, 'command', side_effect=command), patch.object(h, 'reclaim', side_effect=h.CapacityFailure({'host_free_bytes': 0})), patch.object(gate, 'start_daemon') as start, patch.object(gate, 'stop_daemon', return_value={'stopped': True}):
                 self.assertEqual(gate.run_job('C'), 1)
-            self.assertEqual(envelopes[:2], [5400, 2160])  # Fifty-four successful Git calls consume3240.
-            self.assertEqual(len(git_calls), 108)  # Initial + final parity proof, private qualification separately tested.
+            self.assertEqual(envelopes[:2], [5400, 2040])  # Fifty-six successful Git calls consume3360.
+            self.assertEqual(len(git_calls), 112)  # Initial + final parity proof, private qualification separately tested.
             start.assert_not_called()
             self.assertIsNone(h.BOOTSTRAP_DEADLINE)
 
@@ -190,7 +191,7 @@ class DeadlineBoundaryTests(unittest.TestCase):
         self.assertEqual((gate.ASSERT_SECONDS, gate.EXIT_SECONDS), (10, 500))
         old = {'A': 20182, 'B': 14340, 'C': 21510}
         for job in gate.JOBS:
-            self.assertEqual(gate.job_budget(job), old[job] + len(gate.JOBS[job]) * 10)
+            self.assertEqual(gate.job_budget(job), old[job] + len(gate.JOBS[job]) * 10 + (120 if job == 'A' else 0))
             self.assertLess(gate.job_budget(job), 21600)
         coverage = h.read(h.HERE / 'coverage.json')['orchestration_budget']
         self.assertEqual(coverage['total_job_seconds'], {job: gate.job_budget(job) for job in gate.JOBS})

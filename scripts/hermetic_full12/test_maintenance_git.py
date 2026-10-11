@@ -415,7 +415,7 @@ class ConsumerHistoryTests(unittest.TestCase):
         self.assertEqual(h.COUNT_CONTROLS, '20e4f4fd12230ed87d01f05b18d3417a11e052a8')
         self.assertEqual(h.LITERAL_CLASS_SOURCE, 'f05d4796160f1ebd14cb60ddc14da9e3eb78c36d')
         self.assertEqual(h.PG_MERGE_PARENT, '903db592f17beb761ed82a20cb8f4645f11ed200')
-        for revision in (h.POLICY_MERGE, h.SMOKE_CONTROLS, h.PG_CONTROLS, h.SOURCE_MERGE,
+        for revision in (h.CHILD_POLICY_CONTROLS, h.POLICY_MERGE, h.SMOKE_CONTROLS, h.PG_CONTROLS, h.SOURCE_MERGE,
                          h.SOURCE, h.PREVIOUS_SOURCE, h.COUNT_CONTROLS, h.LITERAL_CLASS_SOURCE,
                          h.CHILD_CLASS_SOURCE, h.CONTROLS_PARENT):
             selector = ('rev-list', '--parents', '-n', '1', revision)
@@ -437,7 +437,8 @@ class ConsumerHistoryTests(unittest.TestCase):
                          ('diff', '--name-status', h.SOURCE_MERGE, h.PG_CONTROLS),
                          ('diff', '--name-status', h.PG_CONTROLS, h.SMOKE_CONTROLS),
                          ('diff', '--name-status', h.SOURCE_MERGE, h.SMOKE_CONTROLS),
-                         ('diff', '--name-status', h.POLICY_MERGE, 'HEAD'),
+                         ('diff', '--name-status', h.POLICY_MERGE, h.CHILD_POLICY_CONTROLS),
+                         ('diff', '--name-status', h.CHILD_POLICY_CONTROLS, 'HEAD'),
                          ('diff', '--name-status', h.SOURCE, h.POLICY_MERGE),
                          ('diff', '--name-status', h.SOURCE, 'HEAD')):
             for raw in (b'', b'M\tbackend/src/task_delivery/oci.rs\n',
@@ -450,7 +451,8 @@ class ConsumerHistoryTests(unittest.TestCase):
     def git(_, *args):
         if args == ('rev-parse', '--is-shallow-repository'):
             return b'false\n'
-        parents = {'HEAD': ('a' * 40, h.POLICY_MERGE),
+        parents = {'HEAD': ('a' * 40, h.CHILD_POLICY_CONTROLS),
+                   h.CHILD_POLICY_CONTROLS: (h.CHILD_POLICY_CONTROLS, h.POLICY_MERGE),
                    h.POLICY_MERGE: (h.POLICY_MERGE, h.SMOKE_CONTROLS, h.SOURCE),
                    h.SMOKE_CONTROLS: (h.SMOKE_CONTROLS, h.PG_CONTROLS),
                    h.SOURCE: (h.SOURCE, h.PREVIOUS_SOURCE),
@@ -487,7 +489,8 @@ class ConsumerHistoryTests(unittest.TestCase):
                     ('diff', '--name-status', h.SOURCE_MERGE, h.PG_CONTROLS),
                     ('diff', '--name-status', h.PG_CONTROLS, h.SMOKE_CONTROLS),
                     ('diff', '--name-status', h.SOURCE_MERGE, h.SMOKE_CONTROLS),
-                    ('diff', '--name-status', h.POLICY_MERGE, 'HEAD')):
+                    ('diff', '--name-status', h.POLICY_MERGE, h.CHILD_POLICY_CONTROLS),
+                    ('diff', '--name-status', h.CHILD_POLICY_CONTROLS, 'HEAD')):
             return b'M\tscripts/hermetic_full12/maintenance-pin.json\n'
         if args == ('diff', '--name-status', h.OCI_CLI_CONTROLS, h.CHECKPOINT_MERGE):
             return b'M\tbackend/tests/support/oci_delivery.rs\nM\tscripts/tests/test_oci_offline_fixture.py\n'
@@ -517,6 +520,7 @@ class ConsumerHistoryTests(unittest.TestCase):
         self.assertEqual(h.PREVIOUS_SOURCE, 'e781b533bfb25fa669d5a5c65f8fa7094de7af02')
         self.assertEqual(h.SMOKE_CONTROLS, '278c7fb5863dd7b151a2c6bf0c202a274cc459f3')
         self.assertEqual(h.POLICY_MERGE, 'b5bd585b41a3ccd3225d2a508b3e45974d5fd309')
+        self.assertEqual(h.CHILD_POLICY_CONTROLS, '19b1a68bb6cc337cadb77a92d03e6c69d7095933')
         self.assertEqual(h.SOURCE_PARENT, 'd7443f8dffdd7f5d921c5758bed4e5a35423c0ff')
         self.assertEqual(h.ORIGINAL_SOURCE, '25be2e82d4d42673897c8a16070eb8a9519244f0')
         self.assertEqual(h.OCI_CLI_CONTROLS, '876784219c3b2751b4351c81a90fc4971c797fde')
@@ -563,11 +567,11 @@ class ConsumerHistoryTests(unittest.TestCase):
                     h.controls_history(Path('controls'))
 
     def test_consumer_delta_and_public_history_path_guards(self):
-        for baseline, raw in ((h.POLICY_MERGE, b''),
-                              (h.POLICY_MERGE, b'M\tbackend/src/main.rs\n'),
-                              (h.POLICY_MERGE, b'M\tscripts/hermetic_full12/tools.Dockerfile\n'),
-                              (h.POLICY_MERGE, b'D\tscripts/hermetic_full12/maintenance-pin.json\n'),
-                              (h.POLICY_MERGE, b'A\tscripts/hermetic_full12/private.py\n'),
+        for baseline, raw in ((h.CHILD_POLICY_CONTROLS, b''),
+                              (h.CHILD_POLICY_CONTROLS, b'M\tbackend/src/main.rs\n'),
+                              (h.CHILD_POLICY_CONTROLS, b'M\tscripts/hermetic_full12/tools.Dockerfile\n'),
+                              (h.CHILD_POLICY_CONTROLS, b'D\tscripts/hermetic_full12/maintenance-pin.json\n'),
+                              (h.CHILD_POLICY_CONTROLS, b'A\tscripts/hermetic_full12/private.py\n'),
                               (h.SOURCE, b'M\tbackend/Cargo.lock\n'),
                               (h.SOURCE, b'A\t.local/private.py\n')):
             with self.subTest(baseline=baseline, raw=raw), patch.object(h, 'git', side_effect=lambda root, *a:

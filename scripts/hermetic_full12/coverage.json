@@ -404,11 +404,11 @@
     "stage_exit_seconds": 500,
     "finally_seconds": 1800,
     "command_cleanup_seconds": 20,
-    "actions_seconds": {"A": 840, "B": 840, "C": 1260},
+    "actions_seconds": {"A": 960, "B": 840, "C": 1260},
     "host_job_seconds": 21600,
     "sourceprep_scope": "one monotonic bootstrap deadline from run_job entry shared by verification/setup and materialization",
     "assertions_teardown_scope": "separate non-nested alarms; teardown rearms after assertions context exits even on timeout",
-    "total_job_seconds": {"A": 20232, "B": 14350, "C": 21570},
+    "total_job_seconds": {"A": 20352, "B": 14350, "C": 21570},
     "unknown_overhead": "FAIL_CLOSED_NO_ACCEPTANCE"
   }
 }
