@@ -14,6 +14,7 @@ if [ "${CICD_QA_GATE:-full}" = oci ] || [ "${CICD_QA_GATE:-full}" = postgres ]; 
   docker buildx version >/dev/null
   docker-compose version >/dev/null
 fi
+run_gate() {
 cargo fmt --all --check
 rustfmt --edition 2024 --check tests/helpers/manifest_target.rs
 rustc --edition=2024 tests/helpers/manifest_target.rs -o /delivery-qa/manifest-target
@@ -47,3 +48,10 @@ cargo run --locked --offline --bin openapi-dump -- /output/openapi-delivery.yaml
 diff --strip-trailing-cr /output/openapi-delivery.yaml /contract/openapi.yaml
 if [ "${CICD_QA_GATE:-full}" = full ]; then cargo build --locked --offline --release --workspace; fi
 echo "TASK_DELIVERY_QA_GATE=${CICD_QA_GATE:-full}:PASS"
+}
+
+# Git exports can have older timestamps than artifacts in an external cache.
+# Keep downloaded dependencies, but give every gate its own compiled target.
+export -f run_gate
+export TMPDIR=/delivery-qa
+exec bash /work/services-base/scripts/run_rust_gate.sh -- bash -euo pipefail -c run_gate

@@ -125,7 +125,11 @@ admission требуют отдельного опубликованного pro
 -RustImage <cached-sha256-image-ID> -PostgresImage <cached-sha256-image-ID>
 -TargetCache <existing-cache-volume> -CargoCache <existing-cache-volume>
 -RustupCache <existing-cache-volume> -Gate full`. Image IDs и source hashes
-проверяются; `-Gate delivery` выполняет только focused component suite.
+проверяются и фиксируются в evidence. Каждый gate использует новый Cargo target через
+закреплённый Base `run_rust_gate.sh`; inherited compiled cache не участвует в
+сборке. Target удаляется при успехе и ошибке, внешние caches сохраняются. Параметр
+`-TargetCache` сохранён для совместимости запуска, но его compiled artifacts не
+используются. `-Gate delivery` выполняет только focused component suite.
 Для `-Gate oci` и `-Gate postgres` также передайте
 `-DockerToolsImage <cached-sha256-image-ID>`.
 `-PostgresTestFilter` ограничивает PostgreSQL integration tests по prefix
