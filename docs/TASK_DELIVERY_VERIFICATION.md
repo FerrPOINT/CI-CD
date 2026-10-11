@@ -3,6 +3,17 @@
 **Статус 2026-10-08:** bounded source implementation и local component verification;
 полного SDLC acceptance нет.
 
+`oci` и `postgres` QA gates используют отдельный immutable Docker CLI/Compose
+image, поскольку закреплённый Rust image содержит компилятор, но не клиент
+Docker. Tool binaries копируются в одноразовый QA volume; source/runtime images
+проверяемых компонентов не меняются.
+
+Локальный `verify-task-delivery.ps1` выбирает `.namespace-base-revision`, если
+он присутствует, иначе `.base-revision`. Это тот же порядок, что у build и CI.
+Ошибка выбранного pin завершает preflight до Docker-операций; она не разрешает
+fallback на legacy SDK. Регрессии исполняют настоящий PowerShell preflight
+с остановкой на границе Base verifier, без запуска контейнеров.
+
 ## Latest Frozen Native Packet: 8 Октября
 
 Epoch `20261008T172750Z-0f560932eb2b` завершился FAILED/unknown в OCI,

@@ -272,7 +272,7 @@ class Owner:
     def roles(self):
         roles = json.loads(self.sql('postgres', "SELECT json_agg(json_build_object('name',rolname,'login',rolcanlogin,"
             "'super',rolsuper,'createdb',rolcreatedb,'createrole',rolcreaterole,'replication',rolreplication,'bypass',rolbypassrls)) "
-            "FROM pg_roles WHERE rolname NOT LIKE 'pg_%';"))
+            "FROM pg_roles WHERE left(rolname,3) <> 'pg_';"))
         require({x['name'] for x in roles} == {'postgres', 'forge_reader', 'forge_writer'}, 'unknown_database_role')
         for role in roles:
             if role['name'] != 'postgres':
@@ -280,7 +280,7 @@ class Owner:
                         'application_role_has_privileged_access')
         require(self.sql('postgres', "SELECT count(*) FROM pg_auth_members m "
                 "JOIN pg_roles r ON r.oid=m.roleid JOIN pg_roles u ON u.oid=m.member "
-                "WHERE r.rolname NOT LIKE 'pg_%' OR u.rolname NOT LIKE 'pg_%';") == '0',
+                "WHERE left(r.rolname,3) <> 'pg_' OR left(u.rolname,3) <> 'pg_';") == '0',
                 'unknown_role_membership')
         return {x['name']: x for x in roles}
 
@@ -314,6 +314,11 @@ class Owner:
                 time.sleep(0.05)
         self.guard()
 
+    def reject_foreign_tables(self, database):
+        require(self.sql(database, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE left(n.nspname,3) <> 'pg_' AND n.nspname <> 'information_schema' AND c.relkind='f';") == '0',
+                'unsupported_foreign_table')
+
     def fingerprint(self, database):
         require(int(self.sql(database, 'SELECT pg_database_size(current_database());')) <= 16 * 1024 * 1024,
                 'database_exceeds_supported_bound')
@@ -322,14 +327,21 @@ class Owner:
                 "WHERE d.datname=current_database() AND a.grantee=0 "
                 "AND a.privilege_type IN ('CONNECT','CREATE','TEMPORARY');") == '0',
                 'public_database_admission_not_closed')
+        self.reject_foreign_tables(database)
         require(self.sql(database, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
                 "WHERE n.nspname='public' AND c.relkind IN ('r','p','S','v','m','f') "
                 "AND pg_get_userbyid(c.relowner)<>'postgres';") == '0', 'unknown_application_object_owner')
         evidence = self.pg.database_evidence(self.args, self.database(database))
         require(not evidence['routines'] and not evidence['triggers'], 'unsupported_writer_routines_or_triggers')
         require(self.sql(database, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
-                "WHERE n.nspname='public' AND c.relkind IN ('r','p') "
-                "AND has_table_privilege('forge_reader',c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER');") == '0'
+                "WHERE n.nspname='public' AND c.relkind IN ('r','p','v','f') "
+                "AND has_table_privilege('forge_reader',c.oid,'INSERT,UPDATE,DELETE')") == '0'
+                and self.sql(database, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE n.nspname='public' AND c.relkind IN ('r','p','f') "
+                "AND has_table_privilege('forge_reader',c.oid,'TRUNCATE,REFERENCES,TRIGGER');") == '0'
+                and self.sql(database, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE n.nspname='public' AND c.relkind='S' "
+                "AND has_sequence_privilege('forge_reader',format('%I.%I',n.nspname,c.relname),'USAGE,UPDATE');") == '0'
                 and self.sql(database, "SELECT has_schema_privilege('forge_reader','public','CREATE');") == 'f',
                 'application_reader_can_write_or_create')
         require(self.sql(database, "SELECT has_schema_privilege('forge_writer','public','CREATE') "
@@ -338,7 +350,7 @@ class Owner:
                 'application_writer_can_create_or_mutate_history')
         tables = json.loads(self.sql(database, "SELECT COALESCE(json_agg(json_build_object('schema',n.nspname,'table',c.relname) "
             "ORDER BY n.nspname,c.relname),'[]') FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
-            "WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema' AND c.relkind IN ('r','p');"))
+            "WHERE left(n.nspname,3) <> 'pg_' AND n.nspname <> 'information_schema' AND c.relkind IN ('r','p');"))
         require(0 < len(tables) <= 16 and all(t['schema'] == 'public' for t in tables), 'unsupported_database_catalog')
         row_hashes = {}
         for table in tables:
@@ -468,6 +480,7 @@ class Owner:
         password = os.environ.get('CICD_LOCAL_PG_RUNTIME_PASSWORD', '')
         require(16 <= len(password) <= 128, 'protected_runtime_credential_required')
         database = manifest['database']
+        self.reject_foreign_tables(database)
         self.sql(database, 'BEGIN; GRANT USAGE ON SCHEMA public TO forge_reader,forge_writer; '
                  'GRANT SELECT ON ALL TABLES IN SCHEMA public TO forge_reader; '
                  'GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA public TO forge_writer; '
@@ -475,7 +488,7 @@ class Owner:
                  'GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA public TO forge_writer; COMMIT;')
         self.sql('postgres', f'GRANT CONNECT ON DATABASE {self.pg.ident(database)} TO forge_reader;')
         require(self.sql(database, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
-                "WHERE n.nspname='public' AND c.relkind IN ('r','p') "
+                "WHERE n.nspname='public' AND c.relkind IN ('r','p','f') "
                 "AND has_table_privilege('forge_reader',c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER');") == '0'
                 and self.sql(database, "SELECT has_schema_privilege('forge_reader','public','CREATE');") == 'f',
                 'application_reader_can_write_or_create')
@@ -517,7 +530,7 @@ class Owner:
             pass
         return observed
 
-    def observe(self, manifest, manifest_sha, receipt):
+    def observe(self, manifest, manifest_sha, receipt, check_published_fingerprint=True):
         try:
             self.engine()
             actual = self.docker('container', 'inspect', self.project + '-application-1')[0]
@@ -533,6 +546,8 @@ class Owner:
             ip = actual['NetworkSettings']['Networks'][self.policy['networkName']]['IPAddress']
             origin = 'http://' + ip + ':8000'
             before = self.fingerprint(manifest['database'])
+            if check_published_fingerprint:
+                require(before == manifest['databaseFingerprint'], 'serving_database_fingerprint_mismatch')
             require(before['schema'] == manifest['descriptor']['targetSchema'], 'serving_database_schema_mismatch')
             identity = digest(canonical({'database': manifest['database'], 'schemaVersion': before['schema']['version']}))
             probes = {}
@@ -561,8 +576,9 @@ class Owner:
                 receipt.update(status='unavailable', reason='application_check_unavailable')
             else:
                 receipt.update(status='verified', reason='isolated_image_database_application_checks_verified')
-        except BaseException:
-            receipt.update(status='unknown', reason='database_or_engine_outcome_unknown')
+        except BaseException as error:
+            receipt.update(status='unknown', reason=str(error) if isinstance(error, Blocked)
+                           else 'database_or_engine_outcome_unknown')
         return receipt
 
     def release(self, manifest, manifest_sha, receipt):
@@ -619,7 +635,7 @@ class Owner:
         granted = self.sql('postgres', f"SELECT has_database_privilege('forge_writer',{self.pg.literal(manifest['database'])},'CONNECT');")
         if granted != 't':
             return old
-        receipt = self.observe(manifest, manifest_sha, dict(intent['receipt']))
+        receipt = self.observe(manifest, manifest_sha, dict(intent['receipt']), check_published_fingerprint=False)
         if receipt['status'] == 'verified':
             receipt['manifestSha256'] = manifest_sha
             immutable(self.dir / 'reconciled.json', receipt)
@@ -743,6 +759,7 @@ class Owner:
 
 def main():
     packet = json.loads(sys.stdin.buffer.read(256 * 1024 + 1))
+    owner = None
     try:
         owner = Owner(packet)
         result = owner.execute()
@@ -750,6 +767,9 @@ def main():
         reason = str(error) if isinstance(error, Blocked) else 'owner_command_rejected_or_unavailable'
         result = {'schema': 'forge/local-postgres-rejection/v1', 'status': 'blocked', 'reason': reason,
                   'dispatchAllowed': False, 'sdlcAcceptanceVerified': False}
+        if owner is not None:
+            result.update(currentManifestSha256=owner.point('current'),
+                          confirmedManifestSha256=owner.point('confirmed'))
     sys.stdout.buffer.write(canonical(result) + b'\n')
 
 
