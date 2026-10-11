@@ -18,7 +18,6 @@ cargo fmt --all --check
 rustfmt --edition 2024 --check tests/helpers/manifest_target.rs
 rustc --edition=2024 tests/helpers/manifest_target.rs -o /delivery-qa/manifest-target
 touch /delivery-qa/ready
-cargo check --locked --offline --workspace --all-targets --features integration
 cargo clippy --locked --offline --workspace --all-targets --features integration -- -D warnings
 if [ "${CICD_QA_GATE:-full}" = postgres ]; then
   export DOCKER_HOST=unix:///var/run/docker.sock
