@@ -1,6 +1,10 @@
 # Forge task workspace, candidate и owner-local delivery evidence
 
-**Статус 2026-10-11:** текущий [receipt38114891349/1](https://github.com/FerrPOINT/CI-CD/actions/runs/38114891349)
+**Статус 2026-10-11:** [текущий full12](#hosted-full12-38137543879) на source7db
+не принят: integration9 FAIL, aggregate REJECT. Runtime promotion и полный SDLC
+не подтверждены. Следующие старые receipts сохраняют только исходный scope.
+
+Исторический [receipt38114891349/1](https://github.com/FerrPOINT/CI-CD/actions/runs/38114891349)
 на c633/source84f подтверждает A1–5, B PG5/24 negatives, OCI7 PASS1 и workspace8
 PASS225; integration9 отказал по HOST108209971200<108279229428 bytes
 (deficit69258228), DATA/inodes PASS. Cleanup проверен, original aggregate REJECT.
@@ -15,6 +19,48 @@ CI выбирает `.namespace-base-revision` (`0e1c982a1ddd4c999871d25b73d3cb7
 image, поскольку закреплённый Rust image содержит компилятор, но не клиент
 Docker. Tool binaries копируются в одноразовый QA volume; source/runtime images
 проверяемых компонентов не меняются.
+
+## Hosted Full12: 38137543879
+
+[Run38137543879/attempt1](https://github.com/FerrPOINT/CI-CD/actions/runs/38137543879)
+завершился FAILURE 2026-10-11T12:54:39Z. Exact controls
+`76368820940e9e7f76bf790df184f546eda7109d`, source
+`7db4266f51069d0fda36904a194a1b578659121f`, effective Base
+`0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce`. Original strict A/B/C readback PASS;
+исходный aggregate REJECT/exit1. Это не полный12 PASS.
+
+- A1-5 PASS: Python81, row-smoke, smoke, check, Clippy.
+- B6 PASS: PostgreSQL5,24 negatives,14 cleaned journals.
+- C: OCI1 и workspace235 PASS; integration9 `closed_failure`, exit101.
+  CLI/OpenAPI/release NOT_RUN. Compiler diagnostics пусты.
+- Source-bound panic locations: `integration_db.rs:9477:10`, `:9000:5`,
+  `:9206:18`, `support/sdlc_workspace.rs:937:5`. Fixed target label
+  `integration_db` не является runtime test/thread identity; private bodies
+  и названия потоков не сохранялись.
+- Все три cleanup/disposable/daemon/delegation predicates true; inventory равен
+  собственному baseline, исходные images сохранены. Capacity floors не снижались.
+
+| Partition | Artifact | ZIP SHA256 |
+| --- | --- | --- |
+| A | 11701197719 | `839e2f7cbd65a64ccc041bf2b9572b52f2699883289a70d6e61dbb048cea5251` |
+| B | 11703026124 | `a8689f4db47ee434a74efddde14b7c46d606f5805a09b77c7934bcddc6801609` |
+| C | 11702448195 | `b756f7ca7435d67aed8349d6d9b429aaab36b7fcc962b9fd6160bf8fd437626a` |
+
+Source diagnosis: обычный checkout соблюдает `.gitattributes`, включая CRLF
+для migration0038 и независимого historical fixture. Их Git-rendered bytes
+имеют прежний SHA384 `875f127c9f0c51477f61cee89816edea0168d5cf842f3bdbfce5d683df033af224f5619035439f84359f671aee2981ce`;
+QA raw export даёт LF и ломает assertion9000. Это packaging defect, не доказанный
+production migration bug. SQL, migration loader и historical hash не изменяются.
+Namespace fixtures на9477/9206 требуют explicit instance/registry IDs, уже
+заданные основной CI, но отсутствующие в full12 integration environment.
+Исправление существующих exporter/catalogue и test environment ещё не принято.
+
+Причина937 остаётся неизвестной. Empty config sections не объясняют отказ:
+guard проверяет keys; lease expiry и timeout source также не доказаны.
+Минимальная диагностическая поправка сохраняет исходный physical-observation
+assertion и отдельно различает409/503/429/прочий status фиксированными callsites,
+без body/Debug. Она не ослабляет production guard и не подтверждает root cause.
+Новое выполнение исправленного source/controls необходимо до acceptance.
 
 ## Hosted Full12: 38109147644
 

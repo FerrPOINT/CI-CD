@@ -1,9 +1,27 @@
 # CURRENT STATE — Forge CI/CD
 
 > **Производный снимок текущего состояния.** Сверяется с кодом и evidence; authority — код и коммит, не этот файл. Обновлять при каждом изменении capability.
-> Снято: `2026-10-08`, candidate `feat/task-delivery-evidence-20261007`, не установленный runtime; visual evidence перечислено в `docs/assets/screens/manifest.md`.
+> Снято: `2026-10-11`, candidate `fix/forge-oci-child-error-observation-20261010`, не установленный runtime; visual evidence перечислено в `docs/assets/screens/manifest.md`.
 
 ## Актуальная hosted qualification: 11 октября 2026
+
+[38137543879/1](https://github.com/FerrPOINT/CI-CD/actions/runs/38137543879),
+controls7636882/source7db4266: terminal FAILURE, original strict readback PASS,
+aggregate REJECT. A1-5, B PostgreSQL5/24 negatives, OCI1 и workspace235 PASS;
+integration9 завершилась exit101, CLI/OpenAPI/release не выполнялись.
+Capacity/admission и все три scoped cleanup/inventory прошли.
+Сохранены четыре source-bound panic locations; причины и hashes перечислены
+в [актуальном отчёте](TASK_DELIVERY_VERIFICATION.md#hosted-full12-38137543879).
+
+Source-проверка выявила несоответствие QA export обычному Git checkout:
+raw blobs обходят объявленные CRLF для исторического SQL и fixture.
+В integration environment также отсутствуют namespace IDs из основной CI.
+Исправления относятся к существующей QA упаковке, не к production SQL/checksum
+guards. Отдельная ошибка восстановления workspace пока не объяснена; тест
+теперь различает HTTP status фиксированными panic callsites без вывода body.
+Это diagnostic candidate, не исправление причины или новая acceptance.
+
+## Исторический HOST capacity refusal
 
 [38114891349/1](https://github.com/FerrPOINT/CI-CD/actions/runs/38114891349),
 controlsc633/source84f: terminal FAILURE. Original strict A/B/C readback:

@@ -934,10 +934,19 @@ async fn sdlc_workspace_http_hidden_bytes_and_config_never_append_false_physical
         1
     );
     next.operation_key = "clean-after-fixture-restoration".into();
-    assert_eq!(
-        socket_post(&client, &url, f, &next).await.1["physicalSourceObserved"],
-        true
-    );
+    let (status, body) = socket_post(&client, &url, f, &next).await;
+    match status {
+        reqwest::StatusCode::OK => {}
+        reqwest::StatusCode::CONFLICT => panic!("restored workspace observation conflict"),
+        reqwest::StatusCode::SERVICE_UNAVAILABLE => {
+            panic!("restored workspace observation unavailable")
+        }
+        reqwest::StatusCode::TOO_MANY_REQUESTS => {
+            panic!("restored workspace observation rate limited")
+        }
+        _ => panic!("restored workspace observation unexpected status"),
+    }
+    assert_eq!(body["physicalSourceObserved"], true);
     next.operation_key = "wrong-row-lease-generation".into();
     next.workspace_generation += 1;
     next.workspace_id = format!(
