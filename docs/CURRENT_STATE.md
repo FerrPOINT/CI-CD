@@ -3,6 +3,17 @@
 > **Производный снимок текущего состояния.** Сверяется с кодом и evidence; authority — код и коммит, не этот файл. Обновлять при каждом изменении capability.
 > Снято: `2026-10-08`, candidate `feat/task-delivery-evidence-20261007`, не установленный runtime; visual evidence перечислено в `docs/assets/screens/manifest.md`.
 
+## Актуальная hosted qualification: 11 октября 2026
+
+[38093642467/1](https://github.com/FerrPOINT/CI-CD/actions/runs/38093642467),
+controls278/sourcee781: terminal FAILURE. Strict readback подтверждает A5 PASS
+и B PG5/24 negatives/14 cleaned journals PASS; C OCI7 отказал с child
+`DiskSpaceGuard`, stages8–12 NOT_RUN, original aggregate REJECT.
+Owned cleanup завершён, remaining0. Full12/native SDLC acceptance нет;
+начальные capacity checkpoints не доказывают late child capacity и не разрешают
+снижение floor. [Точный результат и provenance](TASK_DELIVERY_VERIFICATION.md#hosted-full12-38093642467).
+Исторические local packets ниже сохраняют только свой source/scope.
+
 ## Что работает сейчас (Current verified)
 
 ### Непринятое hardening reader fence и OCI recovery, 2026-10-08
