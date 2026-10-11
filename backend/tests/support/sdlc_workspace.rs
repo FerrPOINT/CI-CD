@@ -804,7 +804,11 @@ async fn socket_post(
 #[tokio::test]
 async fn sdlc_workspace_http_hidden_bytes_and_config_never_append_false_physical_observation() {
     use sha1::{Digest, Sha1};
-    use std::{fs, os::unix::fs::MetadataExt, time::Duration};
+    use std::{
+        fs,
+        os::unix::fs::{MetadataExt, PermissionsExt},
+        time::Duration,
+    };
     let p = PhysicalFixture::new().await;
     let f = &p.f;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -864,8 +868,17 @@ async fn sdlc_workspace_http_hidden_bytes_and_config_never_append_false_physical
         .unwrap()
         .set_times(fs::FileTimes::new().set_modified(before.modified().unwrap()))
         .unwrap();
+    fs::set_permissions(&file_path, fs::Permissions::from_mode(0o600)).unwrap();
     let meta = fs::metadata(&file_path).unwrap();
     assert_eq!(meta.len(), before.len());
+    assert_eq!(meta.modified().unwrap(), before.modified().unwrap());
+    assert_eq!(meta.mode() & 0o777, 0o600);
+    // Git index modes encode executable identity, not the checkout's Unix permissions.
+    let index_mode = if meta.mode() & 0o100 != 0 {
+        0o100755
+    } else {
+        0o100644
+    };
     let mut index = fs::read(&index_path).unwrap();
     assert_eq!(&index[..12], b"DIRC\0\0\0\x02\0\0\0\x01");
     for (slot, value) in index[12..52].chunks_exact_mut(4).zip([
@@ -875,7 +888,7 @@ async fn sdlc_workspace_http_hidden_bytes_and_config_never_append_false_physical
         meta.mtime_nsec() as u32,
         meta.dev() as u32,
         meta.ino() as u32,
-        meta.mode(),
+        index_mode,
         meta.uid(),
         meta.gid(),
         meta.len() as u32,
@@ -895,6 +908,13 @@ async fn sdlc_workspace_http_hidden_bytes_and_config_never_append_false_physical
         )
         .unwrap();
     assert_eq!(physical_git(checkout, &["status", "--porcelain"]), "");
+    assert_eq!(
+        physical_git(checkout, &["ls-files", "--stage"]),
+        format!(
+            "100644 {} 0\tartifact.txt",
+            physical_git(checkout, &["rev-parse", "HEAD:artifact.txt"])
+        )
+    );
     next.operation_key = "spoofed-stat-cache".into();
     assert_eq!(
         socket_post(&client, &url, f, &next).await.0,

@@ -415,7 +415,8 @@ class ConsumerHistoryTests(unittest.TestCase):
         self.assertEqual(h.COUNT_CONTROLS, '20e4f4fd12230ed87d01f05b18d3417a11e052a8')
         self.assertEqual(h.LITERAL_CLASS_SOURCE, 'f05d4796160f1ebd14cb60ddc14da9e3eb78c36d')
         self.assertEqual(h.PG_MERGE_PARENT, '903db592f17beb761ed82a20cb8f4645f11ed200')
-        for revision in (h.PACKAGING_PARENT, h.NAMESPACE_SOURCE, h.NAMESPACE_CONTROLS, h.PURE_CONTROLS, h.CHILD_POLICY_CONTROLS, h.POLICY_MERGE, h.SMOKE_CONTROLS, h.PG_CONTROLS, h.SOURCE_MERGE,
+        for revision in (h.RETARGET_PARENT, h.PACKAGING_SOURCE, h.UNION_MERGE, h.UNION_MAIN,
+                         h.PACKAGING_PARENT, h.NAMESPACE_SOURCE, h.NAMESPACE_CONTROLS, h.PURE_CONTROLS, h.CHILD_POLICY_CONTROLS, h.POLICY_MERGE, h.SMOKE_CONTROLS, h.PG_CONTROLS, h.SOURCE_MERGE,
                          h.SOURCE, h.POLICY_SOURCE, h.PREVIOUS_SOURCE, h.COUNT_CONTROLS, h.LITERAL_CLASS_SOURCE,
                          h.CHILD_CLASS_SOURCE, h.CONTROLS_PARENT):
             selector = ('rev-list', '--parents', '-n', '1', revision)
@@ -442,7 +443,8 @@ class ConsumerHistoryTests(unittest.TestCase):
                          ('diff', '--name-status', h.POLICY_SOURCE, h.POLICY_MERGE),
                          ('diff', '--name-status', h.POLICY_SOURCE, h.PURE_CONTROLS),
                          ('diff', '--name-status', h.PURE_CONTROLS, h.PRE_MERGE_CONTROLS),
-                         ('diff', '--name-status', h.NAMESPACE_SOURCE, h.SOURCE),
+                         ('diff', '--name-status', h.NAMESPACE_SOURCE, h.PACKAGING_SOURCE),
+                         ('diff', '--name-status', h.UNION_MERGE, h.SOURCE),
                          ('diff', '--name-status', h.SOURCE, 'HEAD')):
             for raw in (b'', b'M\tbackend/src/task_delivery/oci.rs\n',
                         b'A\t.local/private.py\n', b'D\tscripts/hermetic_full12/run.py\n'):
@@ -454,7 +456,11 @@ class ConsumerHistoryTests(unittest.TestCase):
     def git(_, *args):
         if args == ('rev-parse', '--is-shallow-repository'):
             return b'false\n'
-        parents = {h.PACKAGING_PARENT: (h.PACKAGING_PARENT, '292a04e0abeb73b0956aebe624222b1858088cf5'),
+        parents = {h.RETARGET_PARENT: (h.RETARGET_PARENT, h.PACKAGING_PARENT, h.PACKAGING_SOURCE),
+                   h.PACKAGING_SOURCE: (h.PACKAGING_SOURCE, h.NAMESPACE_SOURCE),
+                   h.UNION_MERGE: (h.UNION_MERGE, h.PR88_MAIN, h.PACKAGING_SOURCE),
+                   h.UNION_MAIN: (h.UNION_MAIN, h.PR88_MAIN, '572d51713f5c9443f1ed10dbf2b62d53cd6c6d10'),
+                   h.PACKAGING_PARENT: (h.PACKAGING_PARENT, '292a04e0abeb73b0956aebe624222b1858088cf5'),
                    h.NAMESPACE_CONTROLS: (h.NAMESPACE_CONTROLS, h.PRE_MERGE_CONTROLS, h.NAMESPACE_SOURCE),
                    h.PURE_CONTROLS: (h.PURE_CONTROLS, h.CHILD_POLICY_CONTROLS),
                    h.CHILD_POLICY_CONTROLS: (h.CHILD_POLICY_CONTROLS, h.POLICY_MERGE),
@@ -464,7 +470,7 @@ class ConsumerHistoryTests(unittest.TestCase):
                    h.PRE_MERGE_CONTROLS: (h.PRE_MERGE_CONTROLS, h.PURE_CONTROLS, h.PRE_MERGE_SOURCE),
                    h.NAMESPACE_MERGE: (h.NAMESPACE_MERGE, h.PRE_MERGE_SOURCE, h.NAMESPACE_MAIN),
                    h.NAMESPACE_SOURCE: (h.NAMESPACE_SOURCE, h.NAMESPACE_MERGE),
-                   h.SOURCE: (h.SOURCE, h.NAMESPACE_SOURCE),
+                   h.SOURCE: (h.SOURCE, h.UNION_MERGE, h.UNION_MAIN),
                    h.POLICY_SOURCE: (h.POLICY_SOURCE, h.PREVIOUS_SOURCE),
                    h.PG_CONTROLS: (h.PG_CONTROLS, h.SOURCE_MERGE),
                    h.SOURCE_MERGE: (h.SOURCE_MERGE, h.COUNT_CONTROLS, h.PREVIOUS_SOURCE),
@@ -495,7 +501,8 @@ class ConsumerHistoryTests(unittest.TestCase):
                    h.PUBLIC_CONTROLS: (h.PUBLIC_CONTROLS, h.ORIGINAL_SOURCE)}
         if args[:4] == ('rev-list', '--parents', '-n', '1'):
             return (' '.join(parents[args[4]]) + '\n').encode()
-        if args in (('merge-base', h.NAMESPACE_CONTROLS, 'HEAD'),
+        if args in (('merge-base', h.RETARGET_PARENT, 'HEAD'),
+                    ('merge-base', h.NAMESPACE_CONTROLS, 'HEAD'),
                     ('merge-base', h.PACKAGING_PARENT, 'HEAD')):
             return (args[1] + '\n').encode()
         pins = h.read(h.HERE / 'components.json')
@@ -509,9 +516,13 @@ class ConsumerHistoryTests(unittest.TestCase):
             return b''.join(('100644 blob ' + 'f' * 40 + '\t' + name + '\0').encode() for name in allowed)
         if args == ('diff', '--name-status', h.NAMESPACE_MERGE, h.NAMESPACE_SOURCE):
             return b'M\tdocs/CURRENT_STATE.md\nM\tdocs/TASK_DELIVERY_VERIFICATION.md\n'
-        if args == ('diff', '--name-status', h.NAMESPACE_SOURCE, h.SOURCE):
+        if args == ('diff', '--name-status', h.NAMESPACE_SOURCE, h.PACKAGING_SOURCE):
             return (b'M\tbackend/tests/support/sdlc_workspace.rs\nM\tdocs/CURRENT_STATE.md\n'
                     b'M\tdocs/TASK_DELIVERY_VERIFICATION.md\n')
+        if args == ('diff', '--name-status', h.UNION_MERGE, h.SOURCE):
+            return (b'M\t.github/workflows/ci.yml\nM\tCHANGELOG.md\nM\tdocs/API.md\n'
+                    b'M\tdocs/TASK_DELIVERY_VERIFICATION.md\nM\tscripts/postgres-delivery.py\n'
+                    b'A\tscripts/tests/test_postgres_rejection.py\n')
         if args in (('diff', '--name-status', h.CONTROLS_PARENT, h.COUNT_CONTROLS),
                     ('diff', '--name-status', h.SOURCE_MERGE, h.PG_CONTROLS),
                     ('diff', '--name-status', h.PG_CONTROLS, h.SMOKE_CONTROLS),
@@ -550,7 +561,9 @@ class ConsumerHistoryTests(unittest.TestCase):
         self.assertEqual(h.CHECKPOINT_CONTROLS, 'abf62e7d310249a3abd74ebbdd53c626f6312f55')
         self.assertEqual(h.CHECKPOINT_MERGE, '667d1be736c8834deb1a20602b95bb0d6c815157')
         self.assertEqual(h.CHILD_CLASS_SOURCE, '5f973b33e758a4d60e86fc8ff4eda99c6d4496c1')
-        self.assertEqual(h.SOURCE, '53e93566b7aecbccebe1f3e4e948685cf59841a8')
+        self.assertEqual(h.SOURCE, 'ce378b10adf11a1e366e4620f33dd6bddefc4743')
+        self.assertEqual(h.PACKAGING_SOURCE, '53e93566b7aecbccebe1f3e4e948685cf59841a8')
+        self.assertEqual(h.RETARGET_PARENT, '378566c74c90830eb9480dc5784aa35dc760ed5d')
         self.assertEqual(h.NAMESPACE_SOURCE, '7db4266f51069d0fda36904a194a1b578659121f')
         self.assertEqual(h.PACKAGING_PARENT, '76368820940e9e7f76bf790df184f546eda7109d')
         self.assertEqual(h.POLICY_SOURCE, '75659d8d0bb1415c0ad0ae183bb8cd762aeb9abb')

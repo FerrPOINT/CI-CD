@@ -1,6 +1,30 @@
 # Public-safe exact-source full12 controls
 
-## Git checkout packaging и namespace fixtures (только подготовка)
+## Current main union retarget (prepared only)
+
+Current source is `ce378b10adf11a1e366e4620f33dd6bddefc4743`, tree
+`cba6912cfa5c6dd0a878082fb0b80d42c92a5562`, with ordered parents
+`25d376f3e12b0d959cd70b46b4594b733a1ca106` and
+`f5cb2b81c7201f5333e51f5dab027e11cf28f6db`. The pending normal merge retains
+controls378 and exact sourcece; historical source53/controls378 receipts are not
+retargeted. Effective `.namespace-base-revision` is
+`0ddd38e62163b7cfbbc0276d16ae8857a93eba8d`; legacy19a and maintenance66b7
+remain separate and unchanged. This pair needs fresh native qualification.
+
+Catalogue282 = Forge189 + Base93 retains every previous path and adds the
+source rejection test plus Base delegation module/migration/test. Exactly17
+declared CRLF paths still use native Git execution bytes; every other input
+keeps raw Git bytes. Source-derived counts are Python87 (49+32+6), PG6 with
+all24 negatives and the foreign writable-table rejection marker, workspace235,
+integration92 and CLI2. Existing Python stage explicitly includes the six
+rejection tests; only that reviewed command extends the historical gates.sh
+origin. The smoke consumer binds the exact admitted executor hash; observer
+bytes and assertions are unchanged. All267 pure selectors,12 stages, resource
+floors, deadlines, cleanup, transport and closed privacy schemas are retained.
+Prepared pure/source checks are not Rust/PG/OCI/full12 acceptance. PR94 ordinary
+CI is separate; original run38144495380/readers remain scoped to378/source53.
+
+## Historical Git checkout packaging and namespace fixtures
 
 Source теперь `53e93566b7aecbccebe1f3e4e948685cf59841a8`, tree
 `792fb4fddecfd2470fdec6214a74ab709a7e971a`, sole parent7db. Normal merge

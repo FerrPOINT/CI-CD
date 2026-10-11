@@ -264,7 +264,7 @@ class ControlsTests(unittest.TestCase):
 
     def test_source265_catalogues(self):
         catalogues = h.read(h.HERE / 'source-catalogue.json')['catalogues']
-        self.assertEqual({key: value['count'] for key, value in catalogues.items()}, {'forge': 188, 'base': 90})
+        self.assertEqual({key: value['count'] for key, value in catalogues.items()}, {'forge': 189, 'base': 93})
         for spec in catalogues.values():
             raw = json.dumps(spec['files'], sort_keys=True, separators=(',', ':')).encode()
             self.assertEqual(hashlib.sha256(raw).hexdigest(), spec['sha256'])
@@ -286,8 +286,8 @@ class ControlsTests(unittest.TestCase):
         self.assertEqual(sum(isinstance(node, ast.Assert) for node in ast.walk(ast.parse((h.HERE / 'row_smoke.py').read_bytes()))), 16)
 
     def test_source_and_base_exact(self):
-        self.assertEqual(h.SOURCE, '53e93566b7aecbccebe1f3e4e948685cf59841a8')
-        self.assertEqual(h.BASE, '0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce')
+        self.assertEqual(h.SOURCE, 'ce378b10adf11a1e366e4620f33dd6bddefc4743')
+        self.assertEqual(h.BASE, '0ddd38e62163b7cfbbc0276d16ae8857a93eba8d')
         self.assertEqual(h.LEGACY_BASE, '19a7a381ae6dbea61a643bb96189e483fa64df5c')
 
     def test_namespace_pin_precedes_legacy_and_exports_complete_backend(self):
@@ -306,9 +306,13 @@ class ControlsTests(unittest.TestCase):
                     PurePosixPath(name).name in ('Cargo.toml', 'Cargo.lock')}
         self.assertTrue(required <= files)
         self.assertIn('.namespace-base-revision', files)
+        self.assertIn('scripts/tests/test_postgres_rejection.py', files)
         base_files = {item['path'] for item in catalogue['catalogues']['base']['files']}
         self.assertTrue({'crates/sdlc-shared/src/resource_context.rs',
-                         'crates/auth-server/tests/cookie_isolation.rs'} <= base_files)
+                         'crates/auth-server/tests/cookie_isolation.rs',
+                         'crates/auth-server/src/delegation.rs',
+                         'crates/auth-server/tests/delegation.rs',
+                         'crates/auth-server/migrations/0007_token_delegation.sql'} <= base_files)
         values = {('show', 'HEAD:.base-revision'): h.LEGACY_BASE,
                   ('show', 'HEAD:.namespace-base-revision'): h.BASE,
                   ('rev-parse', 'HEAD^{tree}'): h.SOURCE_TREE}
@@ -333,8 +337,8 @@ class ControlsTests(unittest.TestCase):
                     'backend/cli/tests/cli_real_api.rs', 'backend/tests/support/candidate_evidence.rs',
                     'backend/tests/support/oci_delivery.rs', 'backend/tests/support/postgres_delivery.rs',
                     'backend/tests/support/sdlc_workspace.rs', 'backend/tests/support/task_delivery.rs')
-        self.assertEqual(sum(counts.values()), 341)
-        self.assertEqual(sum(counts[name] for name in excluded), 104)
+        self.assertEqual(sum(counts.values()), 342)
+        self.assertEqual(sum(counts[name] for name in excluded), 105)
         # Only these two attributed tests are excluded by the default OCI feature set.
         child = source['backend/src/task_delivery/oci.rs'].split('mod child_diagnostic_tests {', 1)[1]
         self.assertEqual(child.count('#[cfg(feature = "oci-integration")]'), 2)
@@ -366,8 +370,8 @@ class ControlsTests(unittest.TestCase):
             'backend/src/task_delivery/oci.rs': (65354, 'ccfdce2b67bc222ff7e81a6d8cb0fb1c23452e1fc8ac895b339b261492afcb44'),
             'backend/tests/support/oci_delivery.rs': (33707, 'f769f2cc3c8ba758fa202625e5c2cf52c0e67a157f0845a85e80580d6f1e6f72'),
             'scripts/tests/test_oci_offline_fixture.py': (42548, '382d4a91b88d54786a57b132d28d3c295199ea0da0146091cc41a894ae7a6514'),
-            'backend/tests/support/postgres_delivery.rs': (48885, '1c893637921bafacddee6a9d631c557d314524d119b93af5b7d4b748673daccd'),
-            'scripts/tests/test_postgres_delivery.py': (50886, '291d090bdf6455c653de0ef8b3a282c3a0cf78ee2c55f42e74f8a42631593eae'),
+            'backend/tests/support/postgres_delivery.rs': (50619, '10c9bdb99058330dd0aa82da313695d68759f8fa137e912fa413303bd2c1ffee'),
+            'scripts/tests/test_postgres_delivery.py': (51120, '29476ca99a5e603136aee323399e702db860ea002b7948a3525284031f42fbb0'),
         }
         files = {item['path']: item for item in catalogue['catalogues']['forge']['files']}
         for name, (size, digest) in expected.items():
@@ -391,12 +395,12 @@ class ControlsTests(unittest.TestCase):
 
     def test_python_command_scope_exact(self):
         text = (h.HERE / 'gates.sh').read_text()
-        self.assertIn('python3 -B -m unittest scripts.tests.test_postgres_delivery scripts.tests.test_oci_offline_fixture', text)
+        self.assertIn('python3 -B -m unittest scripts.tests.test_postgres_delivery scripts.tests.test_oci_offline_fixture scripts.tests.test_postgres_rejection\n', text)
         self.assertIn('sdlc_pg_delivery -- --test-threads=1 --nocapture', text)
         self.assertIn('sdlc_oci_delivery -- --test-threads=1 --nocapture', text)
 
     def test_python_admission_counts_actual_source_and_rejects_missing_or_extra_test(self):
-        expected = {'test_postgres_delivery.py': 49, 'test_oci_offline_fixture.py': 32}
+        expected = {'test_postgres_delivery.py': 49, 'test_oci_offline_fixture.py': 32, 'test_postgres_rejection.py': 6}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             tests = root / 'sources/CI-CD/scripts/tests'
@@ -465,7 +469,7 @@ class ControlsTests(unittest.TestCase):
         coverage = h.read(h.HERE / 'coverage.json')
         self.assertFalse(coverage['executed'])
         self.assertFalse(coverage['inherited_gate_results'])
-        self.assertIn('Ran 81 tests', coverage['stages'][0]['assertions'])
+        self.assertIn('Ran 87 tests', coverage['stages'][0]['assertions'])
         tests = (root / 'backend/src/task_delivery/oci.rs').read_text(encoding='utf-8').split('mod child_diagnostic_tests {', 1)[1]
         self.assertIn('fn child_outcome_preserves_failure_and_rejection_contract()', tests)
         self.assertIn('fn ordinary_feature_excludes_child_observation()', tests)
@@ -503,7 +507,7 @@ class ExecutionPackagingTests(unittest.TestCase):
             git('init', '--template=', '--initial-branch=main')
             (checkout / '.gitattributes').write_bytes(source)
             files = dict(raw_files)
-            files.update({f'plain/{number}.txt': b'unchanged\n' for number in range(261)})
+            files.update({f'plain/{number}.txt': b'unchanged\n' for number in range(265)})
             for name, raw in files.items():
                 path = checkout / name
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -518,7 +522,7 @@ class ExecutionPackagingTests(unittest.TestCase):
             entries = [{'path': name, 'size': len(raw.replace(b'\n', b'\r\n') if name in h.CRLF_PATHS else raw),
                         'sha256': hashlib.sha256(raw.replace(b'\n', b'\r\n') if name in h.CRLF_PATHS else raw).hexdigest()}
                        for name, raw in sorted(files.items())]
-            catalogues = {'forge': {'count': 278, 'files': entries,
+            catalogues = {'forge': {'count': 282, 'files': entries,
                 'sha256': hashlib.sha256(json.dumps(entries, sort_keys=True, separators=(',', ':')).encode()).hexdigest()},
                 'base': {'count': 0, 'files': [], 'sha256': hashlib.sha256(b'[]').hexdigest()}}
             with patch.object(h, 'SOURCE', revision), patch.object(h, 'SOURCE_TREE', git('rev-parse', 'HEAD^{tree}').decode().strip()), \
@@ -1005,27 +1009,35 @@ class GateAssertionTests(unittest.TestCase):
                  'maintain,reader-lo,writer-history-column,writer-history-view,writer-history-view-column,'
                  'writer-history-rule,writer-history-child,writer-history-grandchild,writer-history-parent,'
                  'writer-history-fk-delete,writer-history-fk-update,pgx-schema,large-object,pgx-role,owner')
-        markers = ('5 passed; 0 failed', 'ACTUAL_PG_READER_LO_DENIED_AND_EXCLUSIVE_DATABASE_ACCESS:PASS',
+        markers = ('6 passed; 0 failed', 'ACTUAL_PG_READER_LO_DENIED_AND_EXCLUSIVE_DATABASE_ACCESS:PASS',
                    'ACTUAL_PG_WRITER_HISTORY_VIEW_DML_DENIED:PASS',
                    'ACTUAL_PG_FOREIGN_PROOF_REJECTED_CURRENT_WRITER_POOL_RECOVERY:PASS',
                    'ACTUAL_PG_READER_SEQUENCE_AND_VIEW_WRITES=REJECTED',
                    'ACTUAL_PG_MANIFEST_FINGERPRINT_DRIFT=REJECTED',
+                   'ACTUAL_PG_READER_WRITABLE_FOREIGN_TABLE=REJECTED',
                    'ACTUAL_PG_RESTORE_NEGATIVES=' + cases + ':PASS')
         raw = '\n'.join(markers).encode()
-        self.assertEqual(gate.assertions('postgres', raw, Path('.')), {'tests_passed': 5, 'negative_count': 24})
+        self.assertEqual(gate.assertions('postgres', raw, Path('.')), {'tests_passed': 6, 'negative_count': 24})
         for marker in markers:
             with self.subTest(missing=marker), self.assertRaises(ValueError):
                 gate.assertions('postgres', raw.replace(marker.encode(), b''), Path('.'))
-        for before, after in (('5 passed', '3 passed'), ('reader-table,', 'reader,'),
+        for before, after in (('6 passed', '5 passed'), ('6 passed', '3 passed'), ('reader-table,', 'reader,'),
                               ('corrupt,', 'unknown-case,'), ('role,', 'corrupt,'), (':PASS', ':FAIL')):
             with self.subTest(before=before, after=after), self.assertRaises(ValueError):
                 gate.assertions('postgres', raw.replace(before.encode(), after.encode()), Path('.'))
 
     def test_merged_python81_and_hosted_fixture_interpreter(self):
-        self.assertEqual(gate.PYTHON_METHOD_COUNTS, {'test_postgres_delivery.py': 49, 'test_oci_offline_fixture.py': 32})
-        self.assertEqual(gate.assertions('python', b'Ran 81 tests\nFROZEN_LINUX_PYTHON_UNITS:PASS', Path('.')),
-                         {'tests_passed': 81})
-        for count in (75, 78, 80, 82):
+        self.assertEqual(gate.PYTHON_METHOD_COUNTS, {'test_postgres_delivery.py': 49, 'test_oci_offline_fixture.py': 32, 'test_postgres_rejection.py': 6})
+        self.assertEqual(gate.assertions('python', b'Ran 87 tests\nFROZEN_LINUX_PYTHON_UNITS:PASS', Path('.')),
+                         {'tests_passed': 87})
+        command = 'python3 -B -m unittest scripts.tests.test_postgres_delivery scripts.tests.test_oci_offline_fixture scripts.tests.test_postgres_rejection'
+        self.assertIn(command, (h.HERE / 'gates.sh').read_text())
+        root = h.HERE.parents[1]
+        self.assertEqual({name: len([node for cls in ast.parse((root / 'scripts/tests' / name).read_bytes()).body
+                                     if isinstance(cls, ast.ClassDef) for node in cls.body
+                                     if isinstance(node, ast.FunctionDef) and node.name.startswith('test_')])
+                          for name in gate.PYTHON_METHOD_COUNTS}, gate.PYTHON_METHOD_COUNTS)
+        for count in (75, 78, 80, 81, 82, 86, 88):
             with self.subTest(count=count), self.assertRaises(ValueError):
                 gate.assertions('python', f'Ran {count} tests\nFROZEN_LINUX_PYTHON_UNITS:PASS'.encode(), Path('.'))
         config = {'project': 'owned', 'pg_project': 'pg', 'oci_project': 'oci'}
@@ -1040,7 +1052,7 @@ class GateAssertionTests(unittest.TestCase):
             gate.assertions('python', b'Ran 74 tests\nFROZEN_LINUX_PYTHON_UNITS:PASS', Path('.'))
 
     def test_python75(self):
-        self.assertEqual(gate.assertions('python', b'Ran 81 tests\nFROZEN_LINUX_PYTHON_UNITS:PASS', Path('.'))['tests_passed'], 81)
+        self.assertEqual(gate.assertions('python', b'Ran 87 tests\nFROZEN_LINUX_PYTHON_UNITS:PASS', Path('.'))['tests_passed'], 87)
 
     def test_workspace219_rejected(self):
         raw = b'test result: ok. 219 passed; 0 failed;\nFROZEN_WORKSPACE_RUSTFMT:PASS\nFROZEN_WORKSPACE_UMASK=0022'
@@ -1068,7 +1080,7 @@ class GateAssertionTests(unittest.TestCase):
 
 
 class SmokeExecutorBindingTests(unittest.TestCase):
-    CURRENT = '0ad5fb510626516f2f8b8d7254c9147b0b1fad99c8d185ca27e35c7d64eec299'
+    CURRENT = '488ff8d130054d0e03c9f1ad803a066f6d789676215e4e77b9d33e68e9a4cf23'
 
     class Validated(Exception):
         pass
@@ -2177,7 +2189,7 @@ MAINTENANCE_TEST_FILES = {name: {'blob': 'd' * 40, 'sha256': 'c' * 64} for name 
 
 def report_fixture(job):
     catalogue = h.read(h.HERE / 'source-catalogue.json')['catalogues']
-    counts = {'python': 81, 'postgres': 5, 'oci': 1, 'workspace': 235, 'integration': 92, 'cli': 2}
+    counts = {'python': 87, 'postgres': 6, 'oci': 1, 'workspace': 235, 'integration': 92, 'cli': 2}
     stages = [{'stage': stage, 'status': 'PASS', 'timeout_seconds': gate.BUDGETS[stage],
                'source_parity': True, 'cleanup_complete': True, **({'tests_passed': counts[stage]} if stage in counts else {})}
               for stage in gate.JOBS[job]]
@@ -2205,11 +2217,11 @@ def report_fixture(job):
     return {'schema': 'forge/hermetic-full12-partition/v1', 'job': job, 'status': 'PARTITION_PASS',
         'inherited_gate_results': False, 'workflow_run': '123', 'workflow_attempt': '1',
         'checkout': {'controls': 'a' * 40, 'source': h.SOURCE, 'base': h.BASE}, 'components': {'fixture': 'a' * 64},
-        'job_budget_seconds': gate.job_budget(job), 'source_count': 278, 'source_parity': True, 'checkout_parity': True,
+        'job_budget_seconds': gate.job_budget(job), 'source_count': 282, 'source_parity': True, 'checkout_parity': True,
         'source_hashes': {key: value['sha256'] for key, value in catalogue.items()},
         'maintenance_sha256': 'c' * 64,
         'maintenance_git': {'repository': h.m.REPOSITORY, 'commit': 'f' * 40, 'ref': h.m.CANDIDATE_REF, 'files': MAINTENANCE_TEST_FILES},
-        'python_methods': {'test_postgres_delivery.py': 49, 'test_oci_offline_fixture.py': 32},
+        'python_methods': {'test_postgres_delivery.py': 49, 'test_oci_offline_fixture.py': 32, 'test_postgres_rejection.py': 6},
         'admission_sha256': 'b' * 64, 'execution_sha256': 'c' * 64,
         'cache': {'new_locked_cache': True, 'private_cache_imported': False,
             'journal': {**journal, 'project': 'sdlc-build-forge-cache-' + token, 'purpose': 'locked-dependency-fetch-only'}},

@@ -401,6 +401,11 @@ class Owner:
                 time.sleep(0.05)
         self.guard()
 
+    def reject_foreign_tables(self, database):
+        require(self.sql(database, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                "WHERE left(n.nspname,3) <> 'pg_' AND n.nspname <> 'information_schema' AND c.relkind='f';") == '0',
+                'unsupported_foreign_table')
+
     def reader_permissions(self, database):
         require(self.sql(database, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
                 "WHERE left(n.nspname,3) <> 'pg_' AND n.nspname <> 'information_schema' "
@@ -429,6 +434,7 @@ class Owner:
                 "WHERE d.datname=current_database() AND a.grantee=0 "
                 "AND a.privilege_type IN ('CONNECT','CREATE','TEMPORARY');") == '0',
                 'public_database_admission_not_closed')
+        self.reject_foreign_tables(database)
         require(self.sql(database, "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
                 "WHERE n.nspname='public' AND c.relkind IN ('r','p','S','v','m','f') "
                 "AND pg_get_userbyid(c.relowner)<>'postgres';") == '0', 'unknown_application_object_owner')
@@ -631,6 +637,7 @@ class Owner:
         password = os.environ.get('CICD_LOCAL_PG_RUNTIME_PASSWORD', '')
         require(16 <= len(password) <= 128, 'protected_runtime_credential_required')
         database = manifest['database']
+        self.reject_foreign_tables(database)
         self.sql(database, 'BEGIN; GRANT USAGE ON SCHEMA public TO forge_reader,forge_writer; '
                  'GRANT SELECT ON ALL TABLES IN SCHEMA public TO forge_reader; '
                  'GRANT SELECT ON ALL TABLES IN SCHEMA public TO forge_writer; '
@@ -970,6 +977,7 @@ class Owner:
 
 def main():
     packet = json.loads(sys.stdin.buffer.read(256 * 1024 + 1))
+    owner = None
     try:
         owner = Owner(packet)
         result = owner.execute()
@@ -977,6 +985,13 @@ def main():
         reason = str(error) if isinstance(error, Blocked) else 'owner_command_rejected_or_unavailable'
         result = {'schema': 'forge/local-postgres-rejection/v1', 'status': 'blocked', 'reason': reason,
                   'dispatchAllowed': False, 'sdlcAcceptanceVerified': False}
+        if owner is not None:
+            try:
+                current, confirmed = owner.point('current'), owner.point('confirmed')
+            except (Blocked, OSError, ValueError):
+                result['reason'] = 'manifest_pointer_unavailable'
+            else:
+                result.update(currentManifestSha256=current, confirmedManifestSha256=confirmed)
     sys.stdout.buffer.write(canonical(result) + b'\n')
 
 

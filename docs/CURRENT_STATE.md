@@ -1,25 +1,26 @@
 # CURRENT STATE — Forge CI/CD
 
 > **Производный снимок текущего состояния.** Сверяется с кодом и evidence; authority — код и коммит, не этот файл. Обновлять при каждом изменении capability.
-> Снято: `2026-10-11`, candidate `fix/forge-oci-child-error-observation-20261010`, не установленный runtime; visual evidence перечислено в `docs/assets/screens/manifest.md`.
+> Снято: `2026-10-11`, candidate `fix/forge-runtime-main-integration-20261011`, не установленный runtime; visual evidence перечислено в `docs/assets/screens/manifest.md`.
 
 ## Актуальная hosted qualification: 11 октября 2026
 
-[38137543879/1](https://github.com/FerrPOINT/CI-CD/actions/runs/38137543879),
-controls7636882/source7db4266: terminal FAILURE, original strict readback PASS,
+[38144495380/1](https://github.com/FerrPOINT/CI-CD/actions/runs/38144495380),
+controls378566c/source53e935: terminal FAILURE, original strict readback PASS,
 aggregate REJECT. A1-5, B PostgreSQL5/24 negatives, OCI1 и workspace235 PASS;
-integration9 завершилась exit101, CLI/OpenAPI/release не выполнялись.
-Capacity/admission и все три scoped cleanup/inventory прошли.
-Сохранены четыре source-bound panic locations; причины и hashes перечислены
-в [актуальном отчёте](TASK_DELIVERY_VERIFICATION.md#hosted-full12-38137543879).
+integration9 завершилась exit101: fixed source callsite подтверждает HTTP409
+после fixture restoration. CLI/OpenAPI/release не выполнялись. Capacity и все
+три scoped cleanup/inventory прошли. HTTP body и guard reason не сохранялись.
+[Отчёт и границы доказательств](TASK_DELIVERY_VERIFICATION.md#hosted-full12-38144495380).
 
-Source-проверка выявила несоответствие QA export обычному Git checkout:
-raw blobs обходят объявленные CRLF для исторического SQL и fixture.
-В integration environment также отсутствуют namespace IDs из основной CI.
-Исправления относятся к существующей QA упаковке, не к production SQL/checksum
-guards. Отдельная ошибка восстановления workspace пока не объяснена; тест
-теперь различает HTTP status фиксированными panic callsites без вывода body.
-Это diagnostic candidate, не исправление причины или новая acceptance.
+Текущий candidate объединяет main/PR88 с сохранённым OCI hardening и новым
+test-only исправлением Git index mode. Для Unix permissions0600 прежняя
+фикстура пишет недопустимый index100600; восстановление bytes его не исправляет.
+Git-only reproduction подтверждает дефект, но не доказывает permissions
+исторического failed run. Новая фикстура явно проверяет0600, canonical100644,
+скрытые forged bytes и успешное последующее восстановление. Production guards,
+SQL migrations и их checksums не ослабляются. Итоговый source ещё не прошёл
+новые Rust/native gates; pin main Base0ddd38e сохранён, старые PASS его не принимают.
 
 ## Исторический HOST capacity refusal
 

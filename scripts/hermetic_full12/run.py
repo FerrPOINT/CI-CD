@@ -29,7 +29,7 @@ POSTGRES = 'postgres:17-bookworm@sha256:3645570cccdfa447589da9f57dd740faa29b3093
 PYTHON = 'python:3.12-bookworm@sha256:e91fec3d1ac69f04e4eddcd29c327e630ce34658cf31075bfa7e8b0e052bafea'
 RUST = 'rust:1.88.0@sha256:af306cfa71d987911a781c37b59d7d67d934f49684058f96cf72079c3626bfe0'
 BINARIES = ('cicd-server', 'forge-runner', 'forge-delivery', 'forge-pg-migrate', 'openapi-dump', 'cicd-cli', 'cicd-migrate')
-PYTHON_METHOD_COUNTS = {'test_postgres_delivery.py': 49, 'test_oci_offline_fixture.py': 32}
+PYTHON_METHOD_COUNTS = {'test_postgres_delivery.py': 49, 'test_oci_offline_fixture.py': 32, 'test_postgres_rejection.py': 6}
 
 # Root-only filesystem operation; no shell, environment, private input or unit restart.
 DELEGATION_PROGRAM = r'''
@@ -476,7 +476,7 @@ def smoke(root, operation, q, admission, images):
     h.bind_maintenance(base, admission['maintenance_git'])
     h.require(base.SDK_SHA256 == q.SDK_SHA256)
     h.require(base.EXECUTOR_SHA256 == '3cb62f6ed3dbfd641eb540eb2cdd603ee6ff7ba9a6ce81702c6f47444673c56f')
-    base.EXECUTOR_SHA256 = '0ad5fb510626516f2f8b8d7254c9147b0b1fad99c8d185ca27e35c7d64eec299'
+    base.EXECUTOR_SHA256 = '488ff8d130054d0e03c9f1ad803a066f6d789676215e4e77b9d33e68e9a4cf23'
     base.DAEMON_ID = transport.DAEMON_ID = admission['daemon']['id']
     transport.ENDPOINT, transport.DAEMON_ROOT = admission['daemon']['endpoint'], admission['daemon']['root']
     transport.PG_IMAGE = images['postgres']
@@ -506,9 +506,10 @@ def assertions(stage, raw, root):
         'smoke': ('ACTUAL_PG17_SQL_SMOKE:PASS',),
         'check': ('LOCKED_INTEGRATION_FEATURES_CHECK:PASS',),
         'clippy': ('LOCKED_INTEGRATION_FEATURES_CLIPPY:PASS',),
-        'postgres': ('5 passed; 0 failed', 'ACTUAL_PG_READER_LO_DENIED_AND_EXCLUSIVE_DATABASE_ACCESS:PASS',
+        'postgres': ('6 passed; 0 failed', 'ACTUAL_PG_READER_LO_DENIED_AND_EXCLUSIVE_DATABASE_ACCESS:PASS',
             'ACTUAL_PG_WRITER_HISTORY_VIEW_DML_DENIED:PASS', 'ACTUAL_PG_FOREIGN_PROOF_REJECTED_CURRENT_WRITER_POOL_RECOVERY:PASS',
-            'ACTUAL_PG_READER_SEQUENCE_AND_VIEW_WRITES=REJECTED', 'ACTUAL_PG_MANIFEST_FINGERPRINT_DRIFT=REJECTED'),
+            'ACTUAL_PG_READER_SEQUENCE_AND_VIEW_WRITES=REJECTED', 'ACTUAL_PG_MANIFEST_FINGERPRINT_DRIFT=REJECTED',
+            'ACTUAL_PG_READER_WRITABLE_FOREIGN_TABLE=REJECTED'),
         'oci': ('1 passed; 0 failed', 'ACTUAL_OCI_SIGKILL_AFTER_VERIFIED_CHECKS_HISTORICAL_PROOF_PRESERVED:PASS'),
         'workspace': ('FROZEN_WORKSPACE_RUSTFMT:PASS', 'FROZEN_WORKSPACE_UMASK=0022'),
         'integration': (), 'cli': ('CLI_INTEGRATION_CLIPPY:PASS',),
@@ -529,7 +530,7 @@ def assertions(stage, raw, root):
                    'writer-history-view', 'writer-history-view-column', 'writer-history-rule',
                    'writer-history-child', 'writer-history-grandchild', 'writer-history-parent',
                    'writer-history-fk-delete', 'writer-history-fk-update', 'pgx-schema', 'large-object', 'pgx-role', 'owner'})
-        proof['tests_passed'], proof['negative_count'] = 5, 24
+        proof['tests_passed'], proof['negative_count'] = 6, 24
     if stage == 'oci':
         proof['tests_passed'] = 1
     if stage == 'python':
@@ -810,7 +811,7 @@ def run_job(job):
                 'attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'owner_pid': os.getpid()}, exclusive=True)
             report = {'schema': 'forge/hermetic-full12-partition/v1', 'job': job, 'workflow_run': os.environ['GITHUB_RUN_ID'],
                 'workflow_attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'checkout': checkout, 'components': components,
-                'source_count': 278, 'inherited_gate_results': False, 'full12_pass': False, 'status': 'FAIL',
+                'source_count': 282, 'inherited_gate_results': False, 'full12_pass': False, 'status': 'FAIL',
                 'maintenance_sha256': h.m.EXPECTED_FILES['scripts/compose_helpers.py']['sha256'],
                 'maintenance_git': maintenance_proof,
                 'job_budget_seconds': job_budget(job),
@@ -980,7 +981,7 @@ def aggregate(a, b, c, expected_a, expected_b):
         h.require(report['job_budget_seconds'] == job_budget(job) < HOST_SECONDS)
         h.require(report['workflow_run'] == os.environ['GITHUB_RUN_ID'] and report['workflow_attempt'] == os.environ['GITHUB_RUN_ATTEMPT'])
         h.require(report['checkout']['controls'] == os.environ['GITHUB_SHA'] and report['checkout']['source'] == h.SOURCE and report['checkout']['base'] == h.BASE)
-        h.require(report['components'] == components and report['source_count'] == 278)
+        h.require(report['components'] == components and report['source_count'] == 282)
         h.require(report['maintenance_sha256'] == h.m.EXPECTED_FILES['scripts/compose_helpers.py']['sha256'])
         h.m.proof_matches(report['maintenance_git'])
         h.require(report['python_methods'] == PYTHON_METHOD_COUNTS)
@@ -1035,7 +1036,7 @@ def aggregate(a, b, c, expected_a, expected_b):
             if proof['stage'] in ('postgres', 'oci'):
                 key = 'pg_project' if proof['stage'] == 'postgres' else 'oci_project'
                 h.require(any(item['project'] == projects[key] for item in proof['journal_proofs']))
-            expected = {'python': sum(PYTHON_METHOD_COUNTS.values()), 'postgres': 5, 'oci': 1, 'workspace': 235, 'integration': 92, 'cli': 2}.get(proof['stage'])
+            expected = {'python': sum(PYTHON_METHOD_COUNTS.values()), 'postgres': 6, 'oci': 1, 'workspace': 235, 'integration': 92, 'cli': 2}.get(proof['stage'])
             if expected is not None:
                 h.require(proof.get('tests_passed') == expected)
             if proof['stage'] == 'postgres':
@@ -1054,7 +1055,7 @@ def aggregate(a, b, c, expected_a, expected_b):
     return {'schema': 'forge/hermetic-full12-acceptance/v1', 'status': 'PASS', 'source': h.SOURCE,
         'controls': os.environ['GITHUB_SHA'], 'workflow_run': os.environ['GITHUB_RUN_ID'],
         'workflow_attempt': os.environ['GITHUB_RUN_ATTEMPT'], 'stage_count': 12,
-        'source_count': 278, 'source_hashes': reports[0]['source_hashes'], 'components': components,
+        'source_count': 282, 'source_hashes': reports[0]['source_hashes'], 'components': components,
         'partitions': {'A': expected_a, 'B': expected_b, 'C': h.sha(c)}, 'independent_daemons': True,
         'cleanup_all_complete': True, 'product_runtime_promoted': False}
 

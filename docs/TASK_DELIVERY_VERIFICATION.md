@@ -1,7 +1,8 @@
 # Forge task workspace, candidate и owner-local delivery evidence
 
-**Статус 2026-10-11:** [текущий full12](#hosted-full12-38137543879) на source7db
-не принят: integration9 FAIL, aggregate REJECT. Runtime promotion и полный SDLC
+**Статус 2026-10-11:** [подготовленное объединение main/OCI](#prepared-main--oci-integration-11-октября)
+не квалифицировано. [Последний full12](#hosted-full12-38144495380) на source53e935
+не принят: integration9 HTTP409/FAIL, aggregate REJECT. Runtime promotion и полный SDLC
 не подтверждены. Следующие старые receipts сохраняют только исходный scope.
 
 Исторический [receipt38114891349/1](https://github.com/FerrPOINT/CI-CD/actions/runs/38114891349)
@@ -11,7 +12,7 @@ PASS225; integration9 отказал по HOST108209971200<108279229428 bytes
 Новый normal merge `32a9615e42d15b8f057e0c858bcd47c3e0b2463f` (84f+main56191)
 имеет только fmt82/Python81/adapter43 PASS, не Rust/native qualification.
 Receipt source84f не квалифицирует merged source; full12/SDLC acceptance нет.
-CI выбирает `.namespace-base-revision` (`0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce`)
+Для этого исторического merge CI выбирал `.namespace-base-revision` (`0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce`)
 вместо legacy `.base-revision`19a; receipts84f/SDK19a не подтверждают parity
 или acceptance нового SDK.
 
@@ -19,6 +20,68 @@ CI выбирает `.namespace-base-revision` (`0e1c982a1ddd4c999871d25b73d3cb7
 image, поскольку закреплённый Rust image содержит компилятор, но не клиент
 Docker. Tool binaries копируются в одноразовый QA volume; source/runtime images
 проверяемых компонентов не меняются.
+
+Локальный `verify-task-delivery.ps1` выбирает `.namespace-base-revision`, если
+он присутствует, иначе `.base-revision`. Это тот же порядок, что у build и CI.
+Ошибка выбранного pin завершает preflight до Docker-операций; она не разрешает
+fallback на legacy SDK. Регрессии исполняют настоящий PowerShell preflight
+с остановкой на границе Base verifier, без запуска контейнеров.
+
+## Prepared Main / OCI Integration, 11 Октября
+
+Normal merge `25d376f` сохраняет main/PR88 `972e5ac47be555b720195fb4207f395e96872e74`
+и OCI source `53e93566b7aecbccebe1f3e4e948685cf59841a8` вместе с test-only
+fixture correction. Следующее объединение сохраняет main/PR93
+`f5cb2b81c7201f5333e51f5dab027e11cf28f6db`: bounded pointer rejection и его
+шесть tests, без изменения delivery authority. Обе истории сохранены;
+source commit не означает qualification. Pin текущего main сохранён:
+`.namespace-base-revision=0ddd38e62163b7cfbbc0276d16ae8857a93eba8d`.
+Full12 run38144495380 закрепляет исходный53e935 и Base0e1c982, а не это
+объединение. Следующие датированные packets сохраняют прежние source/Base
+границы; scoped PASS не подтверждают итоговый merge или production SDLC.
+
+### Git Index Fixture Correction
+
+Integration fixture подменяла stat cache raw `MetadataExt::mode()`. Git index
+принимает canonical100644/100755, а Unix file0600 даёт raw100600. Изолированный
+Git-only reproduction на Linux проверил обе формы при permissions0644/0600:
+`git status` скрывает forged bytes во всех четырёх случаях, но raw0600 оставляет
+index100600 даже после восстановления исходного содержимого. Production
+`verify_index` корректно отвергает такой index до проверки физических bytes.
+
+Test-only correction повторяет уже существующую unit fixture: явно0600,
+canonical executable identity и assertion exact pinned index entry. Проверки
+409/no index repair/no false row, original receipt replay и последующего200/
+physical observation сохранены. Production source не меняется. Это доказанный
+дефект фикстуры, не доказанная причина historical409: фактические file mode и
+HTTP body того run не сохранялись. Нужна новая exact-source qualification.
+
+## Hosted Full12: 38144495380
+
+[Run38144495380/attempt1](https://github.com/FerrPOINT/CI-CD/actions/runs/38144495380)
+завершился FAILURE 2026-10-11T14:42:52Z. Exact controls
+`378566c74c90830eb9480dc5784aa35dc760ed5d`, source
+`53e93566b7aecbccebe1f3e4e948685cf59841a8`, effective Base
+`0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce`. Original strict A/B/C readback PASS,
+aggregate REJECT/exit1; full12 acceptance отсутствует.
+
+- A1-5 PASS: Python81, row-smoke, smoke, check, Clippy.
+- B6 PASS: PostgreSQL5,24 negatives,14 cleaned native/parent journals.
+- C: OCI1 и workspace235 PASS; integration9 closed_failure/exit101.
+  Fixed source frame `support/sdlc_workspace.rs:940:42` означает HTTP409
+  для `clean-after-fixture-restoration`, не timeout/503/429.
+- CLI/OpenAPI/release NOT_RUN. Все25 component seals,278 input hashes,
+  unchanged capacity floors и все три scoped cleanup/inventory проверены.
+  Private body, test/thread identity и underlying guard reason не сохранялись.
+
+| Partition | Artifact | ZIP SHA256 |
+| --- | --- | --- |
+| A | 11704233518 | `e2974cab481d4fbaefe1e4c42b12c0235656973cd5474fd522a25bcf90ea8c89` |
+| B | 11704974073 | `40b4cd1bb42cc7ec5bf31e093e41ff88bb67ab576cfb91117e560f9283dc9add` |
+| C | 11705880107 | `85d2241c6c3a34a8c7780250b4ff7ef69e65d933191179bafaa7d8e4281538ac` |
+
+Этот receipt не квалифицирует main/PR88 union, его новый Base pin0ddd38e или
+fixture correction. Raw private logs не требуются и не публиковались.
 
 ## Hosted Full12: 38137543879
 

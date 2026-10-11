@@ -18,8 +18,13 @@ import urllib.request
 import maintenance_git as m
 
 HERE = Path(__file__).resolve().parent
-SOURCE = '53e93566b7aecbccebe1f3e4e948685cf59841a8'
-SOURCE_TREE = '792fb4fddecfd2470fdec6214a74ab709a7e971a'
+SOURCE = 'ce378b10adf11a1e366e4620f33dd6bddefc4743'
+SOURCE_TREE = 'cba6912cfa5c6dd0a878082fb0b80d42c92a5562'
+RETARGET_PARENT = '378566c74c90830eb9480dc5784aa35dc760ed5d'
+PACKAGING_SOURCE = '53e93566b7aecbccebe1f3e4e948685cf59841a8'
+UNION_MERGE = '25d376f3e12b0d959cd70b46b4594b733a1ca106'
+UNION_MAIN = 'f5cb2b81c7201f5333e51f5dab027e11cf28f6db'
+PR88_MAIN = '972e5ac47be555b720195fb4207f395e96872e74'
 NAMESPACE_SOURCE = '7db4266f51069d0fda36904a194a1b578659121f'
 PACKAGING_PARENT = '76368820940e9e7f76bf790df184f546eda7109d'
 NAMESPACE_MERGE = '32a9615e42d15b8f057e0c858bcd47c3e0b2463f'
@@ -41,7 +46,7 @@ PG_CONTROLS = 'b9a25bf5fb944175f8da053f3fdd82f4e970386d'
 COUNT_CONTROLS = '20e4f4fd12230ed87d01f05b18d3417a11e052a8'
 SOURCE_PARENT = 'd7443f8dffdd7f5d921c5758bed4e5a35423c0ff'
 ORIGINAL_SOURCE = '25be2e82d4d42673897c8a16070eb8a9519244f0'
-BASE = '0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce'
+BASE = '0ddd38e62163b7cfbbc0276d16ae8857a93eba8d'
 LEGACY_BASE = '19a7a381ae6dbea61a643bb96189e483fa64df5c'
 CRLF_PATHS = tuple('backend/migrations/' + name + '.sql' for name in (
     '0001_bootstrap_v1', '0002_runtime_role', '0003_auth_foundation', '0004_outbox_delivery',
@@ -598,6 +603,14 @@ def bind_maintenance(module, proof):
 
 def controls_history(controls):
     require(git(controls, 'rev-parse', '--is-shallow-repository').strip() == b'false')
+    require(git(controls, 'merge-base', RETARGET_PARENT, 'HEAD').decode().strip() == RETARGET_PARENT)
+    for revision, parents in (
+            (RETARGET_PARENT, (PACKAGING_PARENT, PACKAGING_SOURCE)),
+            (UNION_MERGE, (PR88_MAIN, PACKAGING_SOURCE)),
+            (UNION_MAIN, (PR88_MAIN, '572d51713f5c9443f1ed10dbf2b62d53cd6c6d10')),
+            (SOURCE, (UNION_MERGE, UNION_MAIN))):
+        require(git(controls, 'rev-list', '--parents', '-n', '1', revision).decode().split() ==
+                [revision, *parents])
     require(git(controls, 'merge-base', PACKAGING_PARENT, 'HEAD').decode().strip() == PACKAGING_PARENT)
     row = git(controls, 'rev-list', '--parents', '-n', '1', PACKAGING_PARENT).decode().split()
     require(row == [PACKAGING_PARENT, '292a04e0abeb73b0956aebe624222b1858088cf5'])
@@ -629,8 +642,8 @@ def controls_history(controls):
     require(row == [NAMESPACE_MERGE, PRE_MERGE_SOURCE, NAMESPACE_MAIN])
     row = git(controls, 'rev-list', '--parents', '-n', '1', NAMESPACE_SOURCE).decode().split()
     require(row == [NAMESPACE_SOURCE, NAMESPACE_MERGE])
-    row = git(controls, 'rev-list', '--parents', '-n', '1', SOURCE).decode().split()
-    require(row == [SOURCE, NAMESPACE_SOURCE])
+    row = git(controls, 'rev-list', '--parents', '-n', '1', PACKAGING_SOURCE).decode().split()
+    require(row == [PACKAGING_SOURCE, NAMESPACE_SOURCE])
     row = git(controls, 'rev-list', '--parents', '-n', '1', POLICY_MERGE).decode().split()
     require(row == [POLICY_MERGE, SMOKE_CONTROLS, POLICY_SOURCE])
     row = git(controls, 'rev-list', '--parents', '-n', '1', SOURCE_MERGE).decode().split()
@@ -693,9 +706,13 @@ def controls_history(controls):
     require([line for line in changes if line[2:] not in CONSUMER_PATHS] == expected)
     require(git(controls, 'diff', '--name-status', NAMESPACE_MERGE, NAMESPACE_SOURCE).decode().splitlines() ==
             ['M\tdocs/CURRENT_STATE.md', 'M\tdocs/TASK_DELIVERY_VERIFICATION.md'])
-    require(git(controls, 'diff', '--name-status', NAMESPACE_SOURCE, SOURCE).decode().splitlines() ==
+    require(git(controls, 'diff', '--name-status', NAMESPACE_SOURCE, PACKAGING_SOURCE).decode().splitlines() ==
             ['M\tbackend/tests/support/sdlc_workspace.rs', 'M\tdocs/CURRENT_STATE.md',
              'M\tdocs/TASK_DELIVERY_VERIFICATION.md'])
+    require(git(controls, 'diff', '--name-status', UNION_MERGE, SOURCE).decode().splitlines() ==
+            ['M\t.github/workflows/ci.yml', 'M\tCHANGELOG.md', 'M\tdocs/API.md',
+             'M\tdocs/TASK_DELIVERY_VERIFICATION.md', 'M\tscripts/postgres-delivery.py',
+             'A\tscripts/tests/test_postgres_rejection.py'])
 
 
 def checkout_proof(workspace):
@@ -713,7 +730,7 @@ def checkout_proof(workspace):
 
 def export_sources(checkouts, destination):
     catalogues = read(HERE / 'source-catalogue.json')['catalogues']
-    require(sum(x['count'] for x in catalogues.values()) == 278)
+    require(sum(x['count'] for x in catalogues.values()) == 282)
     for label, folder, revision in (('forge', 'CI-CD', SOURCE), ('base', 'services-base', BASE)):
         spec = catalogues[label]
         require(len(spec['files']) == spec['count'])

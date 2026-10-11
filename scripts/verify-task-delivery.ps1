@@ -27,7 +27,10 @@ $output = Join-Path $repo ('.local/task-delivery-qa/' + $project)
 $composeHost = Join-Path $output 'oci-compose'
 $composeLocal = $composeHost.Replace('\','/')
 $junction = $null
-python -B "$sdk/scripts/verify_base_revision.py" --base $sdk --revision "$repo/.base-revision"
+$basePin = Join-Path $repo '.base-revision'
+$namespacePin = Join-Path $repo '.namespace-base-revision'
+if (Test-Path -LiteralPath $namespacePin) { $basePin = $namespacePin }
+python -B "$sdk/scripts/verify_base_revision.py" --base $sdk --revision $basePin
 if ($LASTEXITCODE -ne 0) { throw 'Pinned Base validation failed' }
 $images = @($RustImage, $PostgresImage)
 if ($Gate -in @('oci', 'postgres')) { $images += $DockerToolsImage }
@@ -37,12 +40,14 @@ foreach ($image in $images) {
 }
 function SourceHashes {
     $hashes = [ordered]@{}
-    foreach ($entry in @(@{root=$repo; name='CI-CD'; paths=@('backend','deploy','scripts','openapi','.base-revision')},
+    foreach ($entry in @(@{root=$repo; name='CI-CD'; paths=@('backend','deploy','scripts','openapi','.base-revision','.namespace-base-revision')},
                         @{root=$sdk; name='services-base'; paths=@('crates','Cargo.toml','Cargo.lock','LICENSE','scripts/platform_backup.py','scripts/platform_postgres.py','scripts/compose_helpers.py')})) {
         $paths = git -C $entry.root ls-files -- $entry.paths
         if ($LASTEXITCODE -ne 0) { throw 'Source inventory failed' }
         foreach ($path in $paths) { $hashes[$entry.name + '/' + $path] = (Get-FileHash -LiteralPath (Join-Path $entry.root $path) -Algorithm SHA256).Hash }
     }
+    $selectedPinName = Split-Path -Leaf $basePin
+    $hashes['CI-CD/' + $selectedPinName] = (Get-FileHash -LiteralPath $basePin -Algorithm SHA256).Hash
     return $hashes
 }
 $before = SourceHashes
@@ -132,14 +137,33 @@ try {
         if ($LASTEXITCODE -ne 0 -or $remaining) { throw 'Owned containers remain or inventory failed' }
         $networks = docker --context $DockerContext network ls -q --filter "label=com.docker.compose.project=$project"
         if ($LASTEXITCODE -ne 0 -or $networks) { throw 'Owned networks remain or inventory failed' }
-        $ownVolume = $project + '_delivery-qa'
-        $volume = docker --context $DockerContext volume ls -q --filter "name=^${ownVolume}$"
+        $composeVolumes = @('delivery-qa')
+        if ($Gate -in @('oci', 'postgres')) { $composeVolumes += 'engine-tools' }
+        $allVolumes = @(docker --context $DockerContext volume ls -q)
         if ($LASTEXITCODE -ne 0) { throw 'Disposable volume inventory failed' }
-        if ($volume) {
-            $owner = docker --context $DockerContext volume inspect $ownVolume --format '{{index .Labels "com.docker.compose.project"}}'
-            if ($LASTEXITCODE -ne 0 -or $owner -ne $project) { throw 'Disposable volume ownership mismatch' }
-            docker --context $DockerContext volume rm $ownVolume
-            if ($LASTEXITCODE -ne 0) { throw 'Disposable delivery volume cleanup failed' }
+        foreach ($composeVolume in $composeVolumes) {
+            $ownVolume = $project + '_' + $composeVolume
+            if ($allVolumes -ccontains $ownVolume) {
+                $metadata = @(docker --context $DockerContext volume inspect $ownVolume | ConvertFrom-Json)
+                if ($LASTEXITCODE -ne 0 -or $metadata.Count -ne 1 -or
+                    $metadata[0].Labels.'com.docker.compose.project' -cne $project -or
+                    $metadata[0].Labels.'com.docker.compose.volume' -cne $composeVolume) {
+                    throw "Disposable Compose volume ownership mismatch: $composeVolume"
+                }
+                $attached = @(docker --context $DockerContext ps -aq --filter "volume=$ownVolume")
+                if ($LASTEXITCODE -ne 0 -or $attached.Count -gt 0) {
+                    throw "Disposable Compose volume is still attached: $composeVolume"
+                }
+                docker --context $DockerContext volume rm $ownVolume
+                if ($LASTEXITCODE -ne 0) { throw "Disposable Compose volume cleanup failed: $composeVolume" }
+            }
+        }
+        $remainingVolumes = @(docker --context $DockerContext volume ls -q)
+        if ($LASTEXITCODE -ne 0) { throw 'Disposable volume readback failed' }
+        foreach ($composeVolume in $composeVolumes) {
+            if ($remainingVolumes -ccontains ($project + '_' + $composeVolume)) {
+                throw "Disposable Compose volume remains after cleanup: $composeVolume"
+            }
         }
         $after = SourceHashes
         if ($before.Count -ne $after.Count) { throw 'Source inventory changed during QA' }

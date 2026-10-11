@@ -502,10 +502,12 @@ class SnapshotBoundaryTests(unittest.TestCase):
         with patch.dict(os.environ, {"CICD_LOCAL_PG_RUNTIME_PASSWORD": "disposable-test-password"}):
             with self.assertRaisesRegex(DELIVERY.Blocked, "stop_after_grants"):
                 value.application({"database": "candidate"}, "hash")
-        self.assertNotIn("GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES", queries[0])
-        self.assertIn("c.relkind IN ('r','p')", queries[1])
-        self.assertIn("c.relname<>'_sqlx_migrations'", queries[1])
-        self.assertEqual(queries[2], 'GRANT INSERT,UPDATE,DELETE ON public."records" TO forge_writer;')
+        self.assertEqual(queries[0], "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
+                         "WHERE left(n.nspname,3) <> 'pg_' AND n.nspname <> 'information_schema' AND c.relkind='f';")
+        self.assertNotIn("GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES", queries[1])
+        self.assertIn("c.relkind IN ('r','p')", queries[2])
+        self.assertIn("c.relname<>'_sqlx_migrations'", queries[2])
+        self.assertEqual(queries[3], 'GRANT INSERT,UPDATE,DELETE ON public."records" TO forge_writer;')
 
     def test_writer_view_and_rewrite_routes_are_rejected(self):
         for mode, reason in (("view", "application_writer_can_mutate_view"),

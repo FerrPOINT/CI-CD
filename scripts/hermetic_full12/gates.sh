@@ -4,7 +4,7 @@ cd /work/CI-CD/backend
 case "$1" in
   python)
     cd /work/CI-CD
-    python3 -B -m unittest scripts.tests.test_postgres_delivery scripts.tests.test_oci_offline_fixture
+    python3 -B -m unittest scripts.tests.test_postgres_delivery scripts.tests.test_oci_offline_fixture scripts.tests.test_postgres_rejection
     echo 'FROZEN_LINUX_PYTHON_UNITS:PASS'
     ;;
   check)

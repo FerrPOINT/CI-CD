@@ -1,14 +1,14 @@
 {
-  "source_sha": "53e93566b7aecbccebe1f3e4e948685cf59841a8",
-  "product_base_sha": "0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce",
+  "source_sha": "ce378b10adf11a1e366e4620f33dd6bddefc4743",
+  "product_base_sha": "0ddd38e62163b7cfbbc0276d16ae8857a93eba8d",
   "catalogues": {
     "base": {
-      "count": 90,
+      "count": 93,
       "files": [
         {
           "path": "Cargo.lock",
-          "sha256": "b6499b0b52a3feca76ae2e13a35eddd73b4d97b02b9bbfac30e67a5a5570a06f",
-          "size": 90454
+          "sha256": "8ab302f2a5984bea2787ba5afccbebfa807ce7e3310b3c0c420797b284449c08",
+          "size": 90474
         },
         {
           "path": "Cargo.toml",
@@ -22,13 +22,13 @@
         },
         {
           "path": "crates/auth-server/Cargo.toml",
-          "sha256": "cef075a651bb20c04b9c012c593b1b1d7fad89a23637c36ce2a16ab232727efd",
-          "size": 1266
+          "sha256": "cb05dced6459055efac71dc3fc507f57d315171d51e0e7dc6f5f2be17ef29cf4",
+          "size": 1297
         },
         {
           "path": "crates/auth-server/Dockerfile",
-          "sha256": "2fffec2faf70b06ee132b946fa472bd020b6a554bdaa621ac1cd74a24e9a3f99",
-          "size": 1366
+          "sha256": "8244cccf9762d1ab000b7407da67d553f8283f29970382e402244306d93602e2",
+          "size": 1175
         },
         {
           "path": "crates/auth-server/migrations/0001_users_sessions.sql",
@@ -61,14 +61,24 @@
           "size": 427
         },
         {
+          "path": "crates/auth-server/migrations/0007_token_delegation.sql",
+          "sha256": "54d09fb4e3d23c2db1d23c1ae256cf8495ce4c59a623d463af5442e5c45c3ccf",
+          "size": 2510
+        },
+        {
           "path": "crates/auth-server/src/admin.rs",
           "sha256": "279bae0eba6ba3727c28e2631a75dcfdc43933e4288d55fbf1f29d19e7864eab",
           "size": 1289
         },
         {
           "path": "crates/auth-server/src/config.rs",
-          "sha256": "9c8c29215432171b82c7010096b57bf45f1c15f7278dc1b87a7284560cf423e4",
-          "size": 6834
+          "sha256": "5ee86c4c387b8f0d9431e300a73537be26d54a8351289c9b1624d3adcf1e663d",
+          "size": 12729
+        },
+        {
+          "path": "crates/auth-server/src/delegation.rs",
+          "sha256": "5000c1ffc9f685fd7a580152480ae6f56189d45eef92dd6f86ce38fd947bfca0",
+          "size": 11631
         },
         {
           "path": "crates/auth-server/src/jwt.rs",
@@ -77,8 +87,8 @@
         },
         {
           "path": "crates/auth-server/src/lib.rs",
-          "sha256": "dbd1463f4baf22a620beb8bd00bfd42a2a88489246137a6e834a78422b0d4c87",
-          "size": 1359
+          "sha256": "863c3d22b144fe1ede9bed735ba49bc71f5b7ed0536ae06f9d87058d14a173a9",
+          "size": 1398
         },
         {
           "path": "crates/auth-server/src/main.rs",
@@ -97,8 +107,8 @@
         },
         {
           "path": "crates/auth-server/src/oidc_routes.rs",
-          "sha256": "8068c027ef3b143dea14025ba6b9f55ba69c58cd0973fbaeb9b3c3620dde9f4d",
-          "size": 18004
+          "sha256": "a0f94d61f55396f0ee63e1301596921c4918e23e541a2155dcd331dd38e73993",
+          "size": 17935
         },
         {
           "path": "crates/auth-server/src/oidc_store.rs",
@@ -117,18 +127,18 @@
         },
         {
           "path": "crates/auth-server/src/routes.rs",
-          "sha256": "1331b8b9e920dcc95e71100f48a571b9c553cdae996f00c080619c6c9a64dd57",
-          "size": 25129
+          "sha256": "a35ddd5db7ed4c1dab33ea70de3ad09b577bc51cfbf76da313906936a7c55ac3",
+          "size": 26999
         },
         {
           "path": "crates/auth-server/src/store.rs",
-          "sha256": "588975ef0f8fe45107664dc01a767727dd734e2d48176df28996ad6406ebfeae",
-          "size": 21827
+          "sha256": "47a3cca20a1be48121de7ca99e47aa8bd06834459abbd8baf3f6c3c3577ea46f",
+          "size": 25858
         },
         {
           "path": "crates/auth-server/src/theme-tokens.css",
-          "sha256": "3bf8b3471d697bc3edb51b9ce6ec088c7a52858c037e1ddc7c5273093159f518",
-          "size": 3710
+          "sha256": "18e4d947e87a71b8d8afc534896dbc7249e874535e1a27281c7da41e2f514b00",
+          "size": 3777
         },
         {
           "path": "crates/auth-server/src/ui_theme.rs",
@@ -141,9 +151,14 @@
           "size": 19709
         },
         {
+          "path": "crates/auth-server/tests/delegation.rs",
+          "sha256": "58deeda791e414ffb16e48e733321184a056f42b735e6804f23664fe1cb03f14",
+          "size": 40062
+        },
+        {
           "path": "crates/auth-server/tests/integration.rs",
-          "sha256": "ca42b891757acfff8cb0bcb7463a42a98484c145bfe8446a6739af40c21bd955",
-          "size": 35152
+          "sha256": "ec50e72f098258684176a8961cb50d374a247f5555de1534e956b10d0a0c6201",
+          "size": 32173
         },
         {
           "path": "crates/sdlc-auth-core/Cargo.toml",
@@ -442,24 +457,24 @@
         },
         {
           "path": "scripts/compose_helpers.py",
-          "sha256": "5496e6526b18455cbb8d4883c4a8c3449d6257a47caa2d035290b8ecf595b7ed",
-          "size": 12254
+          "sha256": "5e74856ecbaf2bf3c21a614479ec400c8437398d0111c02397983cc9c0a6bfe6",
+          "size": 16089
         },
         {
           "path": "scripts/platform_backup.py",
-          "sha256": "8fa6b2ca91bd66ef607497d1ce80665bfa4a0a95f5404a2592fb5f12aa127c02",
-          "size": 36840
+          "sha256": "37364488ec9d2c105f21d85afd67369e39df9107b81d3cc56c30bac4d7d5a48c",
+          "size": 23560
         },
         {
           "path": "scripts/platform_postgres.py",
-          "sha256": "0bccecc3917c78c46b5cc225ef3994b1c9637b4c00dcd62bf517f95ab3cd34a8",
-          "size": 42854
+          "sha256": "1c7a4f7b3afb03f44f8c1e46fb12ab14330b0ee6102800274f3ee88b8ca67f92",
+          "size": 41303
         }
       ],
-      "sha256": "df4463b05d0bab2e60a13a25b50be31b3d808b2d1cb8674ad1c22c8571c0653d"
+      "sha256": "d54c63689024bdc2f42be243fd4cd533ccde97af7f6fc74e43855544d866016d"
     },
     "forge": {
-      "count": 188,
+      "count": 189,
       "files": [
         {
           "path": ".base-revision",
@@ -468,7 +483,7 @@
         },
         {
           "path": ".namespace-base-revision",
-          "sha256": "8ec45644bccf17644b951d72f1de4196f4651e7041de4cad65898f8af78d56d6",
+          "sha256": "5483de00f91b9dfa32fe19a373d21064f43709456b05cfdfa89c8c8cb4b15f37",
           "size": 41
         },
         {
@@ -1158,13 +1173,13 @@
         },
         {
           "path": "backend/tests/support/postgres_delivery.rs",
-          "sha256": "1c893637921bafacddee6a9d631c557d314524d119b93af5b7d4b748673daccd",
-          "size": 48885
+          "sha256": "10c9bdb99058330dd0aa82da313695d68759f8fa137e912fa413303bd2c1ffee",
+          "size": 50619
         },
         {
           "path": "backend/tests/support/sdlc_workspace.rs",
-          "sha256": "c38cb33b72ecbe13a7ebb39bd56450180362b8f4d9c12a2666018fda067a642a",
-          "size": 40045
+          "sha256": "b5da8a66a015b25ea3d97e81207d177024c7cbac41b4b4c2833ab9f463ebaad2",
+          "size": 40702
         },
         {
           "path": "backend/tests/support/task_delivery.rs",
@@ -1303,8 +1318,8 @@
         },
         {
           "path": "scripts/postgres-delivery.py",
-          "sha256": "0ad5fb510626516f2f8b8d7254c9147b0b1fad99c8d185ca27e35c7d64eec299",
-          "size": 63074
+          "sha256": "488ff8d130054d0e03c9f1ad803a066f6d789676215e4e77b9d33e68e9a4cf23",
+          "size": 63869
         },
         {
           "path": "scripts/restore.sh",
@@ -1323,8 +1338,8 @@
         },
         {
           "path": "scripts/task-delivery-qa.sh",
-          "sha256": "d5761cde12e323b93333765e16f3fe8bb0b3451f9e82944b00719a46c9288edf",
-          "size": 3282
+          "sha256": "6a530d52442a000403d5822a190bc4211edc0fc8023ab794ae577217ce20dd16",
+          "size": 3599
         },
         {
           "path": "scripts/tests/test_backend_dockerfile.py",
@@ -1338,8 +1353,8 @@
         },
         {
           "path": "scripts/tests/test_ci_contract_checks.py",
-          "sha256": "aa7182d628678df82c8f338decbebee8fb0370705d8e9308e04c7205a75b380f",
-          "size": 1650
+          "sha256": "49045166afe3ca5d1c020f9151f019bc08ce6b0ca61906300c592b3a7f7972e7",
+          "size": 6219
         },
         {
           "path": "scripts/tests/test_forge_backup_umbrella.py",
@@ -1368,8 +1383,13 @@
         },
         {
           "path": "scripts/tests/test_postgres_delivery.py",
-          "sha256": "291d090bdf6455c653de0ef8b3a282c3a0cf78ee2c55f42e74f8a42631593eae",
-          "size": 50886
+          "sha256": "29476ca99a5e603136aee323399e702db860ea002b7948a3525284031f42fbb0",
+          "size": 51120
+        },
+        {
+          "path": "scripts/tests/test_postgres_rejection.py",
+          "sha256": "0c78d0c03ead167cb3f3590c1cc6554275a1051935cf43183b8a868040167a9b",
+          "size": 4462
         },
         {
           "path": "scripts/tests/test_tls_profile.py",
@@ -1393,8 +1413,8 @@
         },
         {
           "path": "scripts/verify-task-delivery.ps1",
-          "sha256": "16468b68b8e60a4bcc46586a6415fb92f4830b9c2b8b63ebd05663a7680cdc2e",
-          "size": 10630
+          "sha256": "d62bf462ae9f34844ad18032dda2d9214d08a2343821e6c80c3c724d02a10bad",
+          "size": 12094
         },
         {
           "path": "scripts/verify_docs.py",
@@ -1402,7 +1422,7 @@
           "size": 35571
         }
       ],
-      "sha256": "113990763f32c8680b03b5e7082ac794faff0030752f3398c1170b232a974f60"
+      "sha256": "dacc0da179efbfa7755846583bb23e38e17aae30cc7c3de0df83da0639c2cc45"
     }
   },
   "image_ids": {
@@ -1415,7 +1435,7 @@
   "objects": {
     "base": {
       "Cargo.lock": {
-        "blob": "10dd6cb88365acacdc0d2da22bb1e31977ee0c4b",
+        "blob": "e0bb0c5eb77052622dadb741ffa45f9405039234",
         "mode": "100644"
       },
       "Cargo.toml": {
@@ -1427,11 +1447,11 @@
         "mode": "100644"
       },
       "crates/auth-server/Cargo.toml": {
-        "blob": "11b2552010c3c20853779362fe37c35fe2f75888",
+        "blob": "6d828d4bd32a4597c01f7a64967ad0934d6df355",
         "mode": "100644"
       },
       "crates/auth-server/Dockerfile": {
-        "blob": "d7c45e082b2440acd44f6d9f9bd32f8efe3f89e4",
+        "blob": "3eb1a838338abe9f9e42ffeeaea24ef6c47b5c19",
         "mode": "100644"
       },
       "crates/auth-server/migrations/0001_users_sessions.sql": {
@@ -1458,12 +1478,20 @@
         "blob": "b1c30abd770a38db7a95e80e3617ef281eb2cbdc",
         "mode": "100644"
       },
+      "crates/auth-server/migrations/0007_token_delegation.sql": {
+        "blob": "51a63e9e396cfe0d3b4904386395e4a93e929ed1",
+        "mode": "100644"
+      },
       "crates/auth-server/src/admin.rs": {
         "blob": "254cb4d8957f208c55c1d161bf5a9352fff0b7c9",
         "mode": "100644"
       },
       "crates/auth-server/src/config.rs": {
-        "blob": "dd797a6017f10ee5d221d9b886bf9fcc4c280146",
+        "blob": "5b324a6ff75d184bf46b4e740dbdef2b8a230c5b",
+        "mode": "100644"
+      },
+      "crates/auth-server/src/delegation.rs": {
+        "blob": "c44f616a124ac5261b5952aa4132d781ba3daf11",
         "mode": "100644"
       },
       "crates/auth-server/src/jwt.rs": {
@@ -1471,7 +1499,7 @@
         "mode": "100644"
       },
       "crates/auth-server/src/lib.rs": {
-        "blob": "a0da8bfdefa3d9a5ceca16b84b8f86698f3c919e",
+        "blob": "6fb237a932272c572de6290c2a334aebe6628aad",
         "mode": "100644"
       },
       "crates/auth-server/src/main.rs": {
@@ -1487,7 +1515,7 @@
         "mode": "100644"
       },
       "crates/auth-server/src/oidc_routes.rs": {
-        "blob": "c0917516c8e896003d784e5a609f068237991cbf",
+        "blob": "3bd5afea2088b9c65744b8836276419db48bff9b",
         "mode": "100644"
       },
       "crates/auth-server/src/oidc_store.rs": {
@@ -1503,15 +1531,15 @@
         "mode": "100644"
       },
       "crates/auth-server/src/routes.rs": {
-        "blob": "032e1e2e46d8f0c3473753c78f59117fd2f0ee94",
+        "blob": "330242cadd6d5d521d53ebe04691c8102f6f79d7",
         "mode": "100644"
       },
       "crates/auth-server/src/store.rs": {
-        "blob": "3acf8626d564427094450e7cb3002176f4e90420",
+        "blob": "9b286c50c2d16892b4f6a2b9294f0ca9518cc9c8",
         "mode": "100644"
       },
       "crates/auth-server/src/theme-tokens.css": {
-        "blob": "104966129ef0c68662f76b4e3c3be3f4fe0434cf",
+        "blob": "2f62991f2fd218f74e57d8f7bd80fca96cde5199",
         "mode": "100644"
       },
       "crates/auth-server/src/ui_theme.rs": {
@@ -1522,8 +1550,12 @@
         "blob": "4142e68960113f25f84f8b6c074d73f3a847306a",
         "mode": "100644"
       },
+      "crates/auth-server/tests/delegation.rs": {
+        "blob": "90c8e0f514b43e205cca711394132f248171d00a",
+        "mode": "100644"
+      },
       "crates/auth-server/tests/integration.rs": {
-        "blob": "3b620c4d7f991d92d0cbad7f63cd9afd700bd3a2",
+        "blob": "f2f478e82c357aa8c8df9b8b80a6e52156566b8c",
         "mode": "100644"
       },
       "crates/sdlc-auth-core/Cargo.toml": {
@@ -1763,15 +1795,15 @@
         "mode": "100644"
       },
       "scripts/compose_helpers.py": {
-        "blob": "2e86d1e05c3463b1e9dc18c8e2dd88fe32e9b55c",
+        "blob": "1ec8803af11c1cb99d59f58dd89019b04cd07cc0",
         "mode": "100644"
       },
       "scripts/platform_backup.py": {
-        "blob": "5ebf1737cf2657c83863b6f8dd4550e697e75426",
+        "blob": "6a99e303a6cc21f3bc67a5e45c8c13b9be8e5044",
         "mode": "100644"
       },
       "scripts/platform_postgres.py": {
-        "blob": "425419cc29b63bb2edd71c94fab0e5a22a8f1ac4",
+        "blob": "b781f733ebad44c87ce50110b037bca349491589",
         "mode": "100644"
       }
     },
@@ -1781,7 +1813,7 @@
         "mode": "100644"
       },
       ".namespace-base-revision": {
-        "blob": "a2554956f012ff1d7707f26396b4b7e0211b2a36",
+        "blob": "58117ad381c4198ae65a74a167f2b075235ce25b",
         "mode": "100644"
       },
       "backend/Cargo.lock": {
@@ -2333,11 +2365,11 @@
         "mode": "100644"
       },
       "backend/tests/support/postgres_delivery.rs": {
-        "blob": "5342f8f159d4625aec8fcff890ece7be52605e92",
+        "blob": "da5ccb6bcd43304493c35ac2ab043a0cf264b85e",
         "mode": "100644"
       },
       "backend/tests/support/sdlc_workspace.rs": {
-        "blob": "b8d3fbc37c13304fbda1e81b2c2aeb921e11440c",
+        "blob": "ffab89bc5923d579c586e66975defb96b0c801e7",
         "mode": "100644"
       },
       "backend/tests/support/task_delivery.rs": {
@@ -2449,7 +2481,7 @@
         "mode": "100755"
       },
       "scripts/postgres-delivery.py": {
-        "blob": "aeaabb427e7b294649b79ea1b406a47402686927",
+        "blob": "ff3525108f103853346ebde4406b001bda5baa59",
         "mode": "100644"
       },
       "scripts/restore.sh": {
@@ -2465,7 +2497,7 @@
         "mode": "100644"
       },
       "scripts/task-delivery-qa.sh": {
-        "blob": "cd3c37d742e538f8153b61864273c65f422573f8",
+        "blob": "442108ae7023b0979024cd45470f4ff8f2c1cf68",
         "mode": "100644"
       },
       "scripts/tests/test_backend_dockerfile.py": {
@@ -2477,7 +2509,7 @@
         "mode": "100644"
       },
       "scripts/tests/test_ci_contract_checks.py": {
-        "blob": "9f2863af89642f92cde9b0366f466b663d664c8d",
+        "blob": "ac01c2c37322a07e8ccbae297614a1bade553342",
         "mode": "100644"
       },
       "scripts/tests/test_forge_backup_umbrella.py": {
@@ -2501,7 +2533,11 @@
         "mode": "100644"
       },
       "scripts/tests/test_postgres_delivery.py": {
-        "blob": "61c01aee4e199cfd85671e8c0b063f4f2d64e7b3",
+        "blob": "ac9df2fc7e211ea36f719eeddd048ebeb0f01fc9",
+        "mode": "100644"
+      },
+      "scripts/tests/test_postgres_rejection.py": {
+        "blob": "e87c5146c30dadca6431f7ed0761fa2f34f0efca",
         "mode": "100644"
       },
       "scripts/tests/test_tls_profile.py": {
@@ -2521,7 +2557,7 @@
         "mode": "100755"
       },
       "scripts/verify-task-delivery.ps1": {
-        "blob": "456cb523cf5054b6537f82b0e0be0dbe67e5efd8",
+        "blob": "bc734ccbbb454fa0a4e0a38d0ea9c3550c4b7d58",
         "mode": "100644"
       },
       "scripts/verify_docs.py": {

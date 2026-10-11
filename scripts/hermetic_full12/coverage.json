@@ -1,6 +1,6 @@
 {
   "kind": "hermetic_full12_three_job_coverage",
-  "source_sha": "53e93566b7aecbccebe1f3e4e948685cf59841a8",
+  "source_sha": "ce378b10adf11a1e366e4620f33dd6bddefc4743",
   "inherited_gate_results": false,
   "executed": false,
   "all_stages_required": true,
@@ -31,11 +31,12 @@
           "-m",
           "unittest",
           "scripts.tests.test_postgres_delivery",
-          "scripts.tests.test_oci_offline_fixture"
+          "scripts.tests.test_oci_offline_fixture",
+          "scripts.tests.test_postgres_rejection"
         ]
       ],
       "assertions": [
-        "Ran 81 tests",
+        "Ran 87 tests",
         "FROZEN_LINUX_PYTHON_UNITS:PASS"
       ],
       "execution": "REQUIRED_FRESH",
@@ -169,13 +170,14 @@
         ]
       ],
       "assertions": [
-        "5 passed; 0 failed",
+        "6 passed; 0 failed",
         "ACTUAL_PG_READER_LO_DENIED_AND_EXCLUSIVE_DATABASE_ACCESS:PASS",
         "ACTUAL_PG_WRITER_HISTORY_VIEW_DML_DENIED:PASS",
         "ACTUAL_PG_FOREIGN_PROOF_REJECTED_CURRENT_WRITER_POOL_RECOVERY:PASS",
         "ACTUAL_PG_READER_SEQUENCE_AND_VIEW_WRITES=REJECTED",
         "ACTUAL_PG_MANIFEST_FINGERPRINT_DRIFT=REJECTED",
-        "24 exact restore-negative identities including reader-table and writer-history child/grandchild/parent/FK-delete/FK-update and column/view/view-column/rule"
+        "24 exact restore-negative identities including reader-table and writer-history child/grandchild/parent/FK-delete/FK-update and column/view/view-column/rule",
+        "ACTUAL_PG_READER_WRITABLE_FOREIGN_TABLE=REJECTED"
       ],
       "execution": "REQUIRED_FRESH",
       "unchanged_source_parity_and_exact_cleanup_required": true,
@@ -241,7 +243,7 @@
       ],
       "execution": "REQUIRED_FRESH",
       "unchanged_source_parity_and_exact_cleanup_required": true,
-      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace235/integration92 source-derived only; merged source and effective Base0e1 unverified"
+      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace235/integration92 source-derived only; merged source and effective Base0ddd unverified"
     },
     {
       "stage": "integration",
@@ -269,7 +271,7 @@
       ],
       "execution": "REQUIRED_FRESH",
       "unchanged_source_parity_and_exact_cleanup_required": true,
-      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace235/integration92 source-derived only; merged source and effective Base0e1 unverified"
+      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace235/integration92 source-derived only; merged source and effective Base0ddd unverified"
     },
     {
       "stage": "cli",
@@ -312,7 +314,7 @@
       ],
       "execution": "REQUIRED_FRESH",
       "unchanged_source_parity_and_exact_cleanup_required": true,
-      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace235/integration92 source-derived only; merged source and effective Base0e1 unverified"
+      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace235/integration92 source-derived only; merged source and effective Base0ddd unverified"
     },
     {
       "stage": "openapi",
@@ -341,7 +343,7 @@
       ],
       "execution": "REQUIRED_FRESH",
       "unchanged_source_parity_and_exact_cleanup_required": true,
-      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace235/integration92 source-derived only; merged source and effective Base0e1 unverified"
+      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace235/integration92 source-derived only; merged source and effective Base0ddd unverified"
     },
     {
       "stage": "release",
@@ -363,7 +365,7 @@
       ],
       "execution": "REQUIRED_FRESH",
       "unchanged_source_parity_and_exact_cleanup_required": true,
-      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace235/integration92 source-derived only; merged source and effective Base0e1 unverified"
+      "assertion_authority": "pinned full_retention_v2 followup plus stage_receipt; workspace235/integration92 source-derived only; merged source and effective Base0ddd unverified"
     }
   ],
   "original_components_sha256": {
@@ -404,11 +406,19 @@
     "stage_exit_seconds": 500,
     "finally_seconds": 1800,
     "command_cleanup_seconds": 20,
-    "actions_seconds": {"A": 960, "B": 840, "C": 1260},
+    "actions_seconds": {
+      "A": 960,
+      "B": 840,
+      "C": 1260
+    },
     "host_job_seconds": 21600,
     "sourceprep_scope": "one monotonic bootstrap deadline from run_job entry shared by verification/setup and materialization",
     "assertions_teardown_scope": "separate non-nested alarms; teardown rearms after assertions context exits even on timeout",
-    "total_job_seconds": {"A": 20352, "B": 14350, "C": 21570},
+    "total_job_seconds": {
+      "A": 20352,
+      "B": 14350,
+      "C": 21570
+    },
     "unknown_overhead": "FAIL_CLOSED_NO_ACCEPTANCE"
   }
 }
