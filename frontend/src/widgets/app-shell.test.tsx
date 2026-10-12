@@ -73,6 +73,19 @@ afterEach(() => {
 });
 
 describe("AppShell navigation", () => {
+  it("shares the utility disclosure between desktop and mobile", async () => {
+    renderShell();
+    fireEvent.click(screen.getByRole("button", { name: "Служебное" }));
+    fireEvent.click(screen.getByRole("button", { name: "navigation.toggleMenu" }));
+    const dialog = await screen.findByRole("dialog");
+    const utility = within(dialog).getByRole("button", { name: "Служебное" });
+    expect(utility).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(utility);
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Служебное" })).toHaveAttribute("aria-expanded", "false");
+  });
+
   it("marks the parent section active on a direct nested route", () => {
     renderShell("/repositories/platform-core/compare");
 
