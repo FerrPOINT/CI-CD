@@ -125,7 +125,18 @@ admission требуют отдельного опубликованного pro
 -RustImage <cached-sha256-image-ID> -PostgresImage <cached-sha256-image-ID>
 -TargetCache <existing-cache-volume> -CargoCache <existing-cache-volume>
 -RustupCache <existing-cache-volume> -Gate full`. Image IDs и source hashes
-проверяются; `-Gate delivery` выполняет только focused component suite.
+проверяются и фиксируются в evidence. Каждый gate использует новый Cargo target через
+закреплённый Base `run_rust_gate.sh`; inherited compiled cache не участвует в
+сборке. Target удаляется при успехе и ошибке, внешние caches сохраняются. Параметр
+`-TargetCache` сохранён для совместимости запуска, но его compiled artifacts не
+используются. `-Gate delivery` выполняет только focused component suite.
+Для `-Gate oci` и `-Gate postgres` также передайте
+`-DockerToolsImage <cached-sha256-image-ID>`.
+`-PostgresTestFilter` ограничивает PostgreSQL integration tests по prefix
+`sdlc_pg_delivery...`; значение по умолчанию запускает полную crash/rollback suite.
+Gates `oci` и `postgres` stage Docker CLI/Compose из отдельного pinned image
+внутри одноразового QA-проекта: Rust QA image сам по себе этих бинарников не
+содержит.
 `deploy/qa/task-delivery.compose.yml` требует unique explicit project, owner/purpose
 labels и отдельный disposable volume/network. Script выполняет config/build,
 finally exact Compose down и удаляет только собственный disposable volume;

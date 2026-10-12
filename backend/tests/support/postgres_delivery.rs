@@ -112,6 +112,15 @@ impl Drop for Pg {
 }
 impl Pg {
     async fn new() -> Self {
+        let python_bin = match std::env::var("CICD_TEST_PG_PYTHON") {
+            Ok(path) => PathBuf::from(path),
+            Err(std::env::VarError::NotPresent) => PathBuf::from("/usr/bin/python3.11"),
+            Err(std::env::VarError::NotUnicode(_)) => panic!("invalid test Python interpreter"),
+        };
+        assert!(
+            python_bin.is_absolute(),
+            "absolute test Python interpreter required"
+        );
         let t = ActualDelivery::new().await;
         let case = Uuid::new_v4().simple().to_string();
         let project = std::env::var("CICD_TEST_PG_PROJECT").unwrap();
@@ -135,13 +144,13 @@ impl Pg {
         let seed = format!("forge_test_pg_{}_seed", &case[..12]);
         let pg_volume = format!("{project}_postgres-data");
         let image = std::env::var("CICD_TEST_PG_IMAGE").unwrap();
-        let spec = serde_json::json!({"services":{"database":{"image":image,"pull_policy":"never",
+        let spec = serde_json::json!({"services":{"database":{"image":image,"pull_policy":"never","init":true,
             "command":["postgres","-c","hba_file=/etc/forge/pg_hba.conf"],
             "environment":{"POSTGRES_HOST_AUTH_METHOD":"trust","POSTGRES_DB":seed},
             "labels":{"sdlc.task":"forge-task-delivery","sdlc.purpose":"disposable-postgres-target"},
             "volumes":[{"type":"volume","source":"data","target":"/var/lib/postgresql/data"},
                 {"type":"bind","source":format!("{mount}/pg-{case}/pg_hba.conf"),"target":"/etc/forge/pg_hba.conf","read_only":true}],
-            "networks":["owner"],"healthcheck":{"test":["CMD-SHELL",format!("pg_isready -h 127.0.0.1 -U postgres && psql -X -qAt -U postgres -d {seed} -c 'SELECT 1'")],"interval":"1s","timeout":"2s","start_period":"15s","retries":60}}},
+            "networks":["owner"],"healthcheck":{"test":["CMD-SHELL","pg_isready -h 127.0.0.1 -U postgres"],"interval":"1s","timeout":"2s","start_period":"15s","retries":60}}},
             "networks":{"owner":{"external":true,"name":network}},
             "volumes":{"data":{"name":pg_volume,"labels":{"sdlc.task":"forge-task-delivery","sdlc.purpose":"disposable-postgres-data"}}}});
         std::fs::write(&compose_file, serde_json::to_vec(&spec).unwrap()).unwrap();
@@ -167,7 +176,7 @@ impl Pg {
                 .fetch_one(&mut conn)
                 .await
                 .unwrap();
-        sqlx::raw_sql(&format!("CREATE ROLE forge_reader LOGIN PASSWORD '{password}'; CREATE ROLE forge_writer NOLOGIN PASSWORD '{password}'; REVOKE ALL ON DATABASE {seed} FROM PUBLIC;")).execute(&mut conn).await.unwrap();
+        sqlx::raw_sql(&format!("CREATE ROLE forge_reader LOGIN PASSWORD '{password}'; CREATE ROLE forge_writer NOLOGIN PASSWORD '{password}'; REVOKE ALL ON DATABASE {seed} FROM PUBLIC; REVOKE ALL ON DATABASE postgres FROM PUBLIC; REVOKE ALL ON DATABASE template0 FROM PUBLIC; REVOKE ALL ON DATABASE template1 FROM PUBLIC; REVOKE EXECUTE ON FUNCTION pg_catalog.lo_create(oid),pg_catalog.lo_creat(integer),pg_catalog.lo_from_bytea(oid,bytea),pg_catalog.lo_import(text),pg_catalog.lo_import(text,oid),pg_catalog.lo_put(oid,bigint,bytea),pg_catalog.lowrite(integer,bytea),pg_catalog.lo_truncate(integer,integer),pg_catalog.lo_truncate64(integer,bigint),pg_catalog.lo_unlink(oid) FROM PUBLIC,forge_reader,forge_writer;")).execute(&mut conn).await.unwrap();
         let catalog = t.temp.join("seed-catalog");
         std::fs::create_dir(&catalog).unwrap();
         std::fs::write(catalog.join("0001_seed.sql"), SEED).unwrap();
@@ -181,6 +190,10 @@ impl Pg {
             .execute(&mut conn)
             .await
             .unwrap();
+        sqlx::raw_sql("CREATE VIEW public.qa_history_view AS SELECT version,description,installed_on,success,checksum,execution_time FROM public._sqlx_migrations;")
+            .execute(&mut conn)
+            .await
+            .unwrap();
         conn.close().await.unwrap();
         let daemon = docker(&["info", "--format", "{{json .ID}}"]);
         let policy = t.temp.join("postgres-policy.json");
@@ -188,7 +201,7 @@ impl Pg {
             "daemonId":daemon,"systemIdentifier":system,"controllerIp":controller,"hbaFile":hba,
             "composeFile":compose_file,"composeRoot":compose_root,"postgresImageId":image,"postgresVolumeName":pg_volume,
             "networkName":network,"volumeName":volume,"volumeRoot":"/delivery-qa","initialDatabase":seed,
-            "baseRoot":"/work/services-base","pythonBin":"/usr/local/bin/python3","executor":"/work/CI-CD/scripts/postgres-delivery.py",
+            "baseRoot":"/work/services-base","pythonBin":python_bin,"executor":"/work/CI-CD/scripts/postgres-delivery.py",
             "migrationBin":env!("CARGO_BIN_EXE_forge-pg-migrate"),"leaseSeconds":300,
             "checks":{"origin":"http://127.0.0.1:8000","healthPath":"/health","healthBodySha256":hash(b"ok\n"),
                 "acceptancePath":"/acceptance","acceptanceBodySha256":hash(b"accepted:records\n")}});
@@ -360,6 +373,67 @@ impl Pg {
         conn.close().await.unwrap();
         assert_eq!(rows, ["alpha", "beta", "gamma", "delta"]);
     }
+    async fn access_boundary(&self, current: &serde_json::Value) {
+        let manifest = self.manifest(current);
+        let target = manifest["database"].as_str().unwrap();
+        let mut admin = self.connection("postgres").await;
+        let databases: Vec<String> =
+            sqlx::query_scalar("SELECT datname FROM pg_database ORDER BY datname")
+                .fetch_all(&mut admin)
+                .await
+                .unwrap();
+        admin.close().await.unwrap();
+        for role in ["reader", "writer"] {
+            for database in &databases {
+                let connected = tokio::time::timeout(
+                    Duration::from_secs(10),
+                    sqlx::PgConnection::connect(&format!(
+                        "postgres://forge_{role}:{}@{}:5432/{database}",
+                        self.password,
+                        self.config["ip"].as_str().unwrap()
+                    )),
+                )
+                .await
+                .unwrap();
+                if database == target {
+                    let mut connected = connected.unwrap();
+                    if role == "reader" {
+                        for query in [
+                            "SELECT pg_catalog.lo_create(0)",
+                            "SELECT pg_catalog.lo_creat(0)",
+                            "SELECT pg_catalog.lo_from_bytea(0,'\\x00'::bytea)",
+                        ] {
+                            let error = sqlx::raw_sql(query)
+                                .execute(&mut connected)
+                                .await
+                                .unwrap_err();
+                            assert_eq!(
+                                error.as_database_error().and_then(|e| e.code()).as_deref(),
+                                Some("42501")
+                            );
+                        }
+                    } else {
+                        let error = sqlx::raw_sql("UPDATE public.qa_history_view SET description='unauthorized' WHERE version=1;")
+                            .execute(&mut connected)
+                            .await
+                            .expect_err("writer mutated SQLx history through a view");
+                        assert_eq!(
+                            error.as_database_error().unwrap().code().as_deref(),
+                            Some("42501")
+                        );
+                    }
+                    connected.close().await.unwrap();
+                } else {
+                    assert!(
+                        connected.is_err(),
+                        "{role} accessed nonselected database {database}"
+                    );
+                }
+            }
+        }
+        println!("ACTUAL_PG_READER_LO_DENIED_AND_EXCLUSIVE_DATABASE_ACCESS:PASS");
+        println!("ACTUAL_PG_WRITER_HISTORY_VIEW_DML_DENIED:PASS");
+    }
     async fn negative_restore(&self, command: &DeliveryCommand, current: &serde_json::Value) {
         let manifest = self.manifest(current);
         let source = self.config["seedDatabase"].as_str().unwrap();
@@ -412,6 +486,166 @@ impl Pg {
             "REVOKE INSERT ON public.records FROM forge_reader;",
         )
         .await;
+        for (name, grant, revoke) in [
+            (
+                "reader-column",
+                "GRANT UPDATE(payload) ON public.records TO forge_reader;",
+                "REVOKE UPDATE(payload) ON public.records FROM forge_reader;",
+            ),
+            (
+                "reader-view",
+                "CREATE VIEW public.qa_reader_view AS SELECT id,payload FROM public.records; GRANT INSERT ON public.qa_reader_view TO forge_reader;",
+                "DROP VIEW public.qa_reader_view;",
+            ),
+            (
+                "reader-sequence-usage",
+                "GRANT USAGE ON SEQUENCE public.records_id_seq TO forge_reader;",
+                "REVOKE USAGE ON SEQUENCE public.records_id_seq FROM forge_reader;",
+            ),
+            (
+                "reader-sequence-update",
+                "GRANT UPDATE ON SEQUENCE public.records_id_seq TO forge_reader;",
+                "REVOKE UPDATE ON SEQUENCE public.records_id_seq FROM forge_reader;",
+            ),
+            (
+                "reader-maintain",
+                "GRANT MAINTAIN ON public.records TO forge_reader;",
+                "REVOKE MAINTAIN ON public.records FROM forge_reader;",
+            ),
+        ] {
+            self.sql(failed_db, grant).await;
+            let rollback = self.rollback(command, current, &format!("negative-{name}"));
+            assert_eq!(
+                self.execute(&rollback, None).await["reason"],
+                "application_reader_can_write_or_create",
+                "{name}"
+            );
+            self.sql(failed_db, revoke).await;
+        }
+        self.sql(
+            failed_db,
+            "GRANT EXECUTE ON FUNCTION pg_catalog.lo_create(oid) TO PUBLIC;",
+        )
+        .await;
+        let rollback = self.rollback(command, current, "negative-reader-lo");
+        assert_eq!(
+            self.execute(&rollback, None).await["reason"],
+            "application_reader_can_mutate_large_objects"
+        );
+        self.sql(
+            failed_db,
+            "REVOKE EXECUTE ON FUNCTION pg_catalog.lo_create(oid) FROM PUBLIC;",
+        )
+        .await;
+        self.sql(
+            failed_db,
+            "GRANT UPDATE(description) ON public._sqlx_migrations TO forge_writer;",
+        )
+        .await;
+        let rollback = self.rollback(command, current, "negative-writer-history-column");
+        assert_eq!(
+            self.execute(&rollback, None).await["reason"],
+            "application_writer_can_create_or_mutate_history"
+        );
+        self.sql(
+            failed_db,
+            "REVOKE UPDATE(description) ON public._sqlx_migrations FROM forge_writer;",
+        )
+        .await;
+        for (name, grant, revoke, reason) in [
+            (
+                "writer-history-view",
+                "GRANT UPDATE ON public.qa_history_view TO forge_writer;",
+                "REVOKE UPDATE ON public.qa_history_view FROM forge_writer;",
+                "application_writer_can_mutate_view",
+            ),
+            (
+                "writer-history-view-column",
+                "GRANT UPDATE(description) ON public.qa_history_view TO forge_writer;",
+                "REVOKE UPDATE(description) ON public.qa_history_view FROM forge_writer;",
+                "application_writer_can_mutate_view",
+            ),
+            (
+                "writer-history-rule",
+                "CREATE RULE qa_history_write AS ON UPDATE TO public.records DO ALSO UPDATE public._sqlx_migrations SET description='unauthorized' WHERE version=1;",
+                "DROP RULE qa_history_write ON public.records;",
+                "unsupported_writer_rules",
+            ),
+            (
+                "writer-history-child",
+                "CREATE TABLE public.qa_history_child () INHERITS (public._sqlx_migrations);",
+                "DROP TABLE public.qa_history_child;",
+                "unsupported_history_inheritance",
+            ),
+            (
+                "writer-history-grandchild",
+                "CREATE TABLE public.qa_history_child () INHERITS (public._sqlx_migrations); CREATE TABLE public.qa_history_grandchild () INHERITS (public.qa_history_child);",
+                "DROP TABLE public.qa_history_grandchild; DROP TABLE public.qa_history_child;",
+                "unsupported_history_inheritance",
+            ),
+            (
+                "writer-history-parent",
+                "CREATE TABLE public.qa_history_parent (LIKE public._sqlx_migrations); ALTER TABLE public._sqlx_migrations INHERIT public.qa_history_parent;",
+                "ALTER TABLE public._sqlx_migrations NO INHERIT public.qa_history_parent; DROP TABLE public.qa_history_parent;",
+                "unsupported_history_inheritance",
+            ),
+            (
+                "writer-history-fk-delete",
+                "CREATE TABLE public.qa_history_versions(version bigint PRIMARY KEY); INSERT INTO public.qa_history_versions SELECT version FROM public._sqlx_migrations; ALTER TABLE public._sqlx_migrations ADD CONSTRAINT qa_history_fk FOREIGN KEY(version) REFERENCES public.qa_history_versions(version) ON DELETE CASCADE;",
+                "ALTER TABLE public._sqlx_migrations DROP CONSTRAINT qa_history_fk; DROP TABLE public.qa_history_versions;",
+                "unsupported_history_referential_actions",
+            ),
+            (
+                "writer-history-fk-update",
+                "CREATE TABLE public.qa_history_versions(version bigint PRIMARY KEY); INSERT INTO public.qa_history_versions SELECT version FROM public._sqlx_migrations; ALTER TABLE public._sqlx_migrations ADD CONSTRAINT qa_history_fk FOREIGN KEY(version) REFERENCES public.qa_history_versions(version) ON UPDATE CASCADE;",
+                "ALTER TABLE public._sqlx_migrations DROP CONSTRAINT qa_history_fk; DROP TABLE public.qa_history_versions;",
+                "unsupported_history_referential_actions",
+            ),
+        ] {
+            self.sql(failed_db, grant).await;
+            let rollback = self.rollback(command, current, &format!("negative-{name}"));
+            assert_eq!(
+                self.execute(&rollback, None).await["reason"],
+                reason,
+                "{name}"
+            );
+            self.sql(failed_db, revoke).await;
+        }
+        self.sql(
+            failed_db,
+            "CREATE SCHEMA pgx; CREATE TABLE pgx.qa_records(id integer);",
+        )
+        .await;
+        let rollback = self.rollback(command, current, "negative-pgx-schema");
+        assert_eq!(
+            self.execute(&rollback, None).await["reason"],
+            "unsupported_database_catalog"
+        );
+        self.sql(failed_db, "DROP TABLE pgx.qa_records; DROP SCHEMA pgx;")
+            .await;
+        let mut connection = self.connection(failed_db).await;
+        let large_object: i64 = sqlx::query_scalar("SELECT lo_create(0)::bigint")
+            .fetch_one(&mut connection)
+            .await
+            .unwrap();
+        connection.close().await.unwrap();
+        let rollback = self.rollback(command, current, "negative-large-object");
+        assert_eq!(
+            self.execute(&rollback, None).await["reason"],
+            "unsupported_large_object_inventory"
+        );
+        self.sql(
+            failed_db,
+            &format!("SELECT lo_unlink({large_object}::oid);"),
+        )
+        .await;
+        self.sql("postgres", "CREATE ROLE pgx_reader;").await;
+        let rollback = self.rollback(command, current, "negative-pgx-role");
+        assert_eq!(
+            self.execute(&rollback, None).await["reason"],
+            "unknown_database_role"
+        );
+        self.sql("postgres", "DROP ROLE pgx_reader;").await;
         self.sql(
             failed_db,
             "ALTER TABLE public.records OWNER TO forge_writer;",
@@ -424,7 +658,9 @@ impl Pg {
         );
         self.sql(failed_db, "ALTER TABLE public.records OWNER TO postgres;")
             .await;
-        println!("ACTUAL_PG_RESTORE_NEGATIVES=corrupt,role,session,drift,reader,owner:PASS");
+        println!(
+            "ACTUAL_PG_RESTORE_NEGATIVES=corrupt,role,session,drift,reader-table,column,view,sequence-usage,sequence-update,maintain,reader-lo,writer-history-column,writer-history-view,writer-history-view-column,writer-history-rule,writer-history-child,writer-history-grandchild,writer-history-parent,writer-history-fk-delete,writer-history-fk-update,pgx-schema,large-object,pgx-role,owner:PASS"
+        );
     }
 }
 
@@ -435,13 +671,31 @@ async fn sdlc_pg_delivery_actual_migration_restore_rows_sequences_and_write_boun
         let a = t.build("A", None).await;
         let first = t.execute(&a, None).await;
         assert_eq!(latest(&first)["status"], "verified");
+        t.access_boundary(&first).await;
         assert_eq!(t.execute(&a, None).await, first);
         assert_eq!(t.write("gamma").await, 3);
         assert_eq!(t.write("delta").await, 4);
         let command = t.build(mode, Some(&first)).await;
+        let mut old_reader = sqlx::PgConnection::connect(&format!(
+            "postgres://forge_reader:{}@{}:5432/{}",
+            t.password,
+            t.config["ip"].as_str().unwrap(),
+            t.manifest(&first)["database"].as_str().unwrap()
+        ))
+        .await
+        .unwrap();
         let result = t.execute(&command, None).await;
+        assert!(
+            sqlx::raw_sql("SELECT 1")
+                .execute(&mut old_reader)
+                .await
+                .is_err(),
+            "old reader session survived application drain"
+        );
+        drop(old_reader);
         if mode == "B" {
             assert_eq!(latest(&result)["status"], "verified");
+            t.access_boundary(&result).await;
             assert_eq!(
                 t.manifest(&result)["databaseFingerprint"]["schema"]["version"],
                 2
@@ -478,6 +732,7 @@ async fn sdlc_pg_delivery_actual_migration_restore_rows_sequences_and_write_boun
             let rollback = t.rollback(&command, &result, mode);
             let restored = t.execute(&rollback, None).await;
             assert_eq!(latest(&restored)["status"], "verified");
+            t.access_boundary(&restored).await;
             assert_eq!(
                 t.manifest(&restored)["descriptor"]["imageId"],
                 t.manifest(&first)["descriptor"]["imageId"]
@@ -487,6 +742,162 @@ async fn sdlc_pg_delivery_actual_migration_restore_rows_sequences_and_write_boun
         }
         println!("ACTUAL_PG_SCENARIO={mode}:PASS");
     }
+}
+
+#[tokio::test]
+async fn sdlc_pg_delivery_rejects_reader_sequence_and_view_writes() {
+    let mut t = Pg::new().await;
+    let command = t.build("A", None).await;
+    let seed = t.config["seedDatabase"].as_str().unwrap();
+    t.sql(
+        seed,
+        "GRANT UPDATE ON SEQUENCE public.records_id_seq TO forge_reader;",
+    )
+    .await;
+    assert_eq!(
+        t.execute(&command, None).await["reason"],
+        "application_reader_can_write_or_create"
+    );
+    t.sql(
+        seed,
+        "REVOKE UPDATE ON SEQUENCE public.records_id_seq FROM forge_reader;",
+    )
+    .await;
+
+    t.sql(
+        seed,
+        "CREATE VIEW public.editable_records AS SELECT id,payload FROM public.records; GRANT SELECT,UPDATE ON public.editable_records TO forge_reader;",
+    )
+    .await;
+    t.sql(
+        seed,
+        "BEGIN; SET ROLE forge_reader; UPDATE public.editable_records SET payload='view write' WHERE id=1; ROLLBACK;",
+    )
+    .await;
+    assert_eq!(
+        t.execute(&command, None).await["reason"],
+        "application_reader_can_write_or_create"
+    );
+    t.sql(seed, "DROP VIEW public.editable_records;").await;
+    println!("ACTUAL_PG_READER_SEQUENCE_AND_VIEW_WRITES=REJECTED");
+}
+
+#[tokio::test]
+async fn sdlc_pg_delivery_rejects_reader_writable_foreign_tables() {
+    let mut t = Pg::new().await;
+    let initial = t.build("A", None).await;
+    let first = t.execute(&initial, None).await;
+    assert_eq!(latest(&first)["status"], "verified");
+    let database = t.manifest(&first)["database"].as_str().unwrap().to_owned();
+
+    t.sql(
+        &database,
+        "CREATE SCHEMA fdw; CREATE SCHEMA pgx; CREATE EXTENSION postgres_fdw SCHEMA fdw; \
+         CREATE SERVER foreign_test FOREIGN DATA WRAPPER postgres_fdw \
+         OPTIONS (host '127.0.0.1', dbname 'unused'); \
+         GRANT USAGE ON SCHEMA pgx TO forge_reader; \
+         CREATE FOREIGN TABLE pgx.foreign_records (id bigint) SERVER foreign_test \
+         OPTIONS (schema_name 'public', table_name 'records'); \
+         GRANT UPDATE ON pgx.foreign_records TO forge_reader;",
+    )
+    .await;
+    let mut connection = t.connection(&database).await;
+    let reader_can_update: bool = sqlx::query_scalar(
+        "SELECT has_table_privilege('forge_reader', 'pgx.foreign_records', 'UPDATE')",
+    )
+    .fetch_one(&mut connection)
+    .await
+    .unwrap();
+    connection.close().await.unwrap();
+    assert!(
+        reader_can_update,
+        "fixture must prove the reader write grant exists"
+    );
+
+    let candidate = t.build("B", Some(&first)).await;
+    let failed = t.execute(&candidate, None).await;
+    assert_eq!(failed["reason"], "unsupported_foreign_table");
+    assert_eq!(
+        failed["confirmedManifestSha256"],
+        first["confirmedManifestSha256"]
+    );
+    assert_eq!(
+        failed["currentManifestSha256"],
+        first["currentManifestSha256"]
+    );
+    println!("ACTUAL_PG_READER_WRITABLE_FOREIGN_TABLE=REJECTED");
+}
+
+#[tokio::test]
+async fn sdlc_pg_delivery_rejects_serving_database_fingerprint_drift() {
+    let mut t = Pg::new().await;
+    let command = t.build("A", None).await;
+    let operation = t
+        .root
+        .join("operations")
+        .join(hash(command.operation_key.as_bytes()));
+    let resume = t.t.temp.join("resume-after-manifest-drift");
+    let mut child = t
+        .process(&command)
+        .env("CICD_TEST_PG_PAUSE_AT", "application-started")
+        .env("CICD_TEST_PG_RESUME_FILE", &resume)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let checkpoint = operation.join("application-started.json");
+    let deadline = Instant::now() + Duration::from_secs(300);
+    while !checkpoint.exists() {
+        if let Some(status) = child.try_wait().unwrap() {
+            let output = child.wait_with_output().await.unwrap();
+            panic!(
+                "child stopped before application-started: {status}; stdout: {}; stderr: {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        assert!(
+            Instant::now() < deadline,
+            "checkpoint deadline: application-started"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let manifest_sha: String =
+        serde_json::from_slice(&std::fs::read(t.root.join("current.json")).unwrap()).unwrap();
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(
+            t.root
+                .join("manifests")
+                .join(format!("{manifest_sha}.json")),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let database = manifest["database"].as_str().unwrap();
+    t.sql(
+        database,
+        "UPDATE public.records SET payload='post-publication drift' WHERE id=1;",
+    )
+    .await;
+    std::fs::write(&resume, b"resume").unwrap();
+    let output = tokio::time::timeout(Duration::from_secs(330), child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "PG CLI did not return a non-verified outcome: stdout: {}; stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["receipt"]["status"], "unknown");
+    assert_eq!(
+        result["receipt"]["reason"],
+        "serving_database_fingerprint_mismatch"
+    );
+    println!("ACTUAL_PG_MANIFEST_FINGERPRINT_DRIFT=REJECTED");
 }
 
 #[tokio::test]
@@ -563,12 +974,90 @@ async fn sdlc_pg_delivery_sigkill_checkpoints_hold_without_dangerous_replay() {
         } else {
             None
         };
+        let mut writer_connection = None;
+        let mut historical_proof = None;
+        if phase == "writes-released" {
+            let proof_path = operation.join("verified-checks.json");
+            let proof_bytes = std::fs::read(&proof_path).unwrap();
+            let mut foreign: serde_json::Value = serde_json::from_slice(&proof_bytes).unwrap();
+            foreign["originalOperation"]["operationId"] = Uuid::new_v4().to_string().into();
+            std::fs::write(&proof_path, serde_json::to_vec(&foreign).unwrap()).unwrap();
+            assert_eq!(
+                t.execute(&command, Some("--reconcile")).await["reason"],
+                "receipt_binding_mismatch"
+            );
+            assert!(!operation.join("reconciled.json").exists());
+            std::fs::write(&proof_path, &proof_bytes).unwrap();
+            for field in ["dataSha256", "sequencesSha256"] {
+                let mut foreign: serde_json::Value = serde_json::from_slice(&proof_bytes).unwrap();
+                foreign["databaseFingerprint"][field] = "0".repeat(64).into();
+                std::fs::write(&proof_path, serde_json::to_vec(&foreign).unwrap()).unwrap();
+                assert_eq!(
+                    t.execute(&command, Some("--reconcile")).await["reason"],
+                    "historical_fingerprint_binding_mismatch"
+                );
+                assert!(!operation.join("reconciled.json").exists());
+                std::fs::write(&proof_path, &proof_bytes).unwrap();
+            }
+            historical_proof = Some((
+                proof_path.clone(),
+                proof_bytes,
+                std::fs::metadata(&proof_path).unwrap().modified().unwrap(),
+            ));
+            let database = t.manifest(&unknown)["database"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            writer_connection = Some(
+                sqlx::PgConnection::connect(&format!(
+                    "postgres://forge_writer:{}@{}:5432/{database}",
+                    t.password,
+                    t.config["ip"].as_str().unwrap()
+                ))
+                .await
+                .unwrap(),
+            );
+            t.sql(
+                "postgres",
+                "GRANT CONNECT ON DATABASE postgres TO forge_reader;",
+            )
+            .await;
+            assert_eq!(
+                t.execute(&command, Some("--reconcile")).await["reason"],
+                "application_database_connection_scope_changed"
+            );
+            assert_eq!(
+                latest(&t.execute(&command, Some("--readback")).await)["status"],
+                "unknown"
+            );
+            t.sql(
+                "postgres",
+                "REVOKE CONNECT ON DATABASE postgres FROM forge_reader;",
+            )
+            .await;
+        }
         let recovered = t.execute(&command, Some("--reconcile")).await;
         assert_eq!(recovered["receipt"], unknown["receipt"]);
         if phase == "writes-released" {
             assert_eq!(latest(&recovered)["status"], "verified");
             assert_eq!(latest(&recovered)["containerId"], container.unwrap());
             assert_eq!(t.write("after-reconcile").await, 6);
+            let connection = writer_connection.as_mut().unwrap();
+            assert_eq!(
+                sqlx::query_scalar::<_, i32>("SELECT 1")
+                    .fetch_one(connection)
+                    .await
+                    .unwrap(),
+                1
+            );
+            writer_connection.take().unwrap().close().await.unwrap();
+            let (proof_path, proof_bytes, proof_modified) = historical_proof.unwrap();
+            assert_eq!(std::fs::read(&proof_path).unwrap(), proof_bytes);
+            assert_eq!(
+                std::fs::metadata(&proof_path).unwrap().modified().unwrap(),
+                proof_modified
+            );
+            println!("ACTUAL_PG_FOREIGN_PROOF_REJECTED_CURRENT_WRITER_POOL_RECOVERY:PASS");
             let rollback = t.rollback(&command, &recovered, "post-crash-release");
             assert_eq!(
                 t.execute(&rollback, None).await["reason"],

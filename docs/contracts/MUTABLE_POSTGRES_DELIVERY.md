@@ -18,6 +18,9 @@ Supported pending SQL v1: одна `ALTER TABLE public.<identifier> ADD COLUMN
 <identifier> <text|integer|bigint|boolean> NULL` без arbitrary SQL/backfill/down.
 Исторические bytes сравниваются с SHA384 SQLx history, artifact catalog — с SHA256.
 Dataset ограничен16MiB/16 public tables/512 rows на table, routines/triggers закрыты.
+Foreign tables are unsupported: the owner rejects them before catalog inspection,
+backup, or application grants because their external data is outside the verified
+database fingerprint and restore boundary.
 
 Owner policy отдельно связывает выделенный temporary Compose project, actual daemon
 и PostgreSQL system identifier, source DB, allowed DML/read roles, immutable previous

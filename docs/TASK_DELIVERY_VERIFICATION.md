@@ -1,7 +1,200 @@
 # Forge task workspace, candidate и owner-local delivery evidence
 
-**Статус 2026-10-08:** bounded source implementation и local component verification;
-полного SDLC acceptance нет.
+**Статус 2026-10-11:** [подготовленное объединение main/OCI](#prepared-main--oci-integration-11-октября)
+не квалифицировано. [Последний full12](#hosted-full12-38144495380) на source53e935
+не принят: integration9 HTTP409/FAIL, aggregate REJECT. Runtime promotion и полный SDLC
+не подтверждены. Следующие старые receipts сохраняют только исходный scope.
+
+Исторический [receipt38114891349/1](https://github.com/FerrPOINT/CI-CD/actions/runs/38114891349)
+на c633/source84f подтверждает A1–5, B PG5/24 negatives, OCI7 PASS1 и workspace8
+PASS225; integration9 отказал по HOST108209971200<108279229428 bytes
+(deficit69258228), DATA/inodes PASS. Cleanup проверен, original aggregate REJECT.
+Новый normal merge `32a9615e42d15b8f057e0c858bcd47c3e0b2463f` (84f+main56191)
+имеет только fmt82/Python81/adapter43 PASS, не Rust/native qualification.
+Receipt source84f не квалифицирует merged source; full12/SDLC acceptance нет.
+Для этого исторического merge CI выбирал `.namespace-base-revision` (`0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce`)
+вместо legacy `.base-revision`19a; receipts84f/SDK19a не подтверждают parity
+или acceptance нового SDK.
+
+`oci` и `postgres` QA gates используют отдельный immutable Docker CLI/Compose
+image, поскольку закреплённый Rust image содержит компилятор, но не клиент
+Docker. Tool binaries копируются в одноразовый QA volume; source/runtime images
+проверяемых компонентов не меняются.
+
+Локальный `verify-task-delivery.ps1` выбирает `.namespace-base-revision`, если
+он присутствует, иначе `.base-revision`. Это тот же порядок, что у build и CI.
+Ошибка выбранного pin завершает preflight до Docker-операций; она не разрешает
+fallback на legacy SDK. Регрессии исполняют настоящий PowerShell preflight
+с остановкой на границе Base verifier, без запуска контейнеров.
+
+## Prepared Main / OCI Integration, 11 Октября
+
+Normal merge `25d376f` сохраняет main/PR88 `972e5ac47be555b720195fb4207f395e96872e74`
+и OCI source `53e93566b7aecbccebe1f3e4e948685cf59841a8` вместе с test-only
+fixture correction. Следующее объединение сохраняет main/PR93
+`f5cb2b81c7201f5333e51f5dab027e11cf28f6db`: bounded pointer rejection и его
+шесть tests, без изменения delivery authority. Обе истории сохранены;
+source commit не означает qualification. Pin текущего main сохранён:
+`.namespace-base-revision=0ddd38e62163b7cfbbc0276d16ae8857a93eba8d`.
+Full12 run38144495380 закрепляет исходный53e935 и Base0e1c982, а не это
+объединение. Следующие датированные packets сохраняют прежние source/Base
+границы; scoped PASS не подтверждают итоговый merge или production SDLC.
+
+### Git Index Fixture Correction
+
+Integration fixture подменяла stat cache raw `MetadataExt::mode()`. Git index
+принимает canonical100644/100755, а Unix file0600 даёт raw100600. Изолированный
+Git-only reproduction на Linux проверил обе формы при permissions0644/0600:
+`git status` скрывает forged bytes во всех четырёх случаях, но raw0600 оставляет
+index100600 даже после восстановления исходного содержимого. Production
+`verify_index` корректно отвергает такой index до проверки физических bytes.
+
+Test-only correction повторяет уже существующую unit fixture: явно0600,
+canonical executable identity и assertion exact pinned index entry. Проверки
+409/no index repair/no false row, original receipt replay и последующего200/
+physical observation сохранены. Production source не меняется. Это доказанный
+дефект фикстуры, не доказанная причина historical409: фактические file mode и
+HTTP body того run не сохранялись. Нужна новая exact-source qualification.
+
+## Hosted Full12: 38144495380
+
+[Run38144495380/attempt1](https://github.com/FerrPOINT/CI-CD/actions/runs/38144495380)
+завершился FAILURE 2026-10-11T14:42:52Z. Exact controls
+`378566c74c90830eb9480dc5784aa35dc760ed5d`, source
+`53e93566b7aecbccebe1f3e4e948685cf59841a8`, effective Base
+`0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce`. Original strict A/B/C readback PASS,
+aggregate REJECT/exit1; full12 acceptance отсутствует.
+
+- A1-5 PASS: Python81, row-smoke, smoke, check, Clippy.
+- B6 PASS: PostgreSQL5,24 negatives,14 cleaned native/parent journals.
+- C: OCI1 и workspace235 PASS; integration9 closed_failure/exit101.
+  Fixed source frame `support/sdlc_workspace.rs:940:42` означает HTTP409
+  для `clean-after-fixture-restoration`, не timeout/503/429.
+- CLI/OpenAPI/release NOT_RUN. Все25 component seals,278 input hashes,
+  unchanged capacity floors и все три scoped cleanup/inventory проверены.
+  Private body, test/thread identity и underlying guard reason не сохранялись.
+
+| Partition | Artifact | ZIP SHA256 |
+| --- | --- | --- |
+| A | 11704233518 | `e2974cab481d4fbaefe1e4c42b12c0235656973cd5474fd522a25bcf90ea8c89` |
+| B | 11704974073 | `40b4cd1bb42cc7ec5bf31e093e41ff88bb67ab576cfb91117e560f9283dc9add` |
+| C | 11705880107 | `85d2241c6c3a34a8c7780250b4ff7ef69e65d933191179bafaa7d8e4281538ac` |
+
+Этот receipt не квалифицирует main/PR88 union, его новый Base pin0ddd38e или
+fixture correction. Raw private logs не требуются и не публиковались.
+
+## Hosted Full12: 38137543879
+
+[Run38137543879/attempt1](https://github.com/FerrPOINT/CI-CD/actions/runs/38137543879)
+завершился FAILURE 2026-10-11T12:54:39Z. Exact controls
+`76368820940e9e7f76bf790df184f546eda7109d`, source
+`7db4266f51069d0fda36904a194a1b578659121f`, effective Base
+`0e1c982a1ddd4c999871d25b73d3cb7df5cb2bce`. Original strict A/B/C readback PASS;
+исходный aggregate REJECT/exit1. Это не полный12 PASS.
+
+- A1-5 PASS: Python81, row-smoke, smoke, check, Clippy.
+- B6 PASS: PostgreSQL5,24 negatives,14 cleaned journals.
+- C: OCI1 и workspace235 PASS; integration9 `closed_failure`, exit101.
+  CLI/OpenAPI/release NOT_RUN. Compiler diagnostics пусты.
+- Source-bound panic locations: `integration_db.rs:9477:10`, `:9000:5`,
+  `:9206:18`, `support/sdlc_workspace.rs:937:5`. Fixed target label
+  `integration_db` не является runtime test/thread identity; private bodies
+  и названия потоков не сохранялись.
+- Все три cleanup/disposable/daemon/delegation predicates true; inventory равен
+  собственному baseline, исходные images сохранены. Capacity floors не снижались.
+
+| Partition | Artifact | ZIP SHA256 |
+| --- | --- | --- |
+| A | 11701197719 | `839e2f7cbd65a64ccc041bf2b9572b52f2699883289a70d6e61dbb048cea5251` |
+| B | 11703026124 | `a8689f4db47ee434a74efddde14b7c46d606f5805a09b77c7934bcddc6801609` |
+| C | 11702448195 | `b756f7ca7435d67aed8349d6d9b429aaab36b7fcc962b9fd6160bf8fd437626a` |
+
+Source diagnosis: обычный checkout соблюдает `.gitattributes`, включая CRLF
+для migration0038 и независимого historical fixture. Их Git-rendered bytes
+имеют прежний SHA384 `875f127c9f0c51477f61cee89816edea0168d5cf842f3bdbfce5d683df033af224f5619035439f84359f671aee2981ce`;
+QA raw export даёт LF и ломает assertion9000. Это packaging defect, не доказанный
+production migration bug. SQL, migration loader и historical hash не изменяются.
+Namespace fixtures на9477/9206 требуют explicit instance/registry IDs, уже
+заданные основной CI, но отсутствующие в full12 integration environment.
+Исправление существующих exporter/catalogue и test environment ещё не принято.
+
+Причина937 остаётся неизвестной. Empty config sections не объясняют отказ:
+guard проверяет keys; lease expiry и timeout source также не доказаны.
+Минимальная диагностическая поправка сохраняет исходный physical-observation
+assertion и отдельно различает409/503/429/прочий status фиксированными callsites,
+без body/Debug. Она не ослабляет production guard и не подтверждает root cause.
+Новое выполнение исправленного source/controls необходимо до acceptance.
+
+## Hosted Full12: 38109147644
+
+Исторический [run38109147644/attempt1](https://github.com/FerrPOINT/CI-CD/actions/runs/38109147644)
+завершился FAILURE 2026-10-11. Controls `030e676bff1653679999de093b9d61195f8430b6`,
+source `75659d8d0bb1415c0ad0ae183bb8cd762aeb9abb`, SDK19a/maintenance66b7.
+Original strict readback проверил все три artifacts, run/attempt/head/source266,
+component seals, ZIP/member checksums и provenance. Linux controls pure step
+подтверждён отдельно actual console:245 PASS/0 skip,3.704s.
+
+- A: python81/row-smoke/smoke/check/Clippy, пять стадий PASS.
+- B: PostgreSQL5 PASS,24 negatives,14 cleaned v2 journals PASS.
+- C: OCI7 FAIL/exit101; rollback Verified assertion `oci_delivery.rs:625:5`,
+  затем Drop cleanup assertion `:477:17`. Closed CLI observations:
+  `other_document/exit2` и child `ValueError/exit1`, `acceptanceVerified=false`.
+- Stages8–12 NOT_RUN; original frozen030 aggregate REJECT/exit1.
+- Все три partitions: owned/disposable cleanup, daemon stopped/delegation removed,
+  zero remaining task resources, сохранение baseline inventory/images проверены.
+
+| Partition | Artifact | ZIP SHA256 |
+| --- | --- | --- |
+| A | 11691497057 | `b3622644ed630ddb79b003522bc26d008798ebe27d1bee3a5fb1cc6f092c3efc` |
+| B | 11692260857 | `816f4c07f86faac0e613504dbf2980038996a73b729d0a3383cce056bb32adb7` |
+| C | 11691966992 | `ec2d47f77d9649b6cb57a29e155bd0a430b4278d17cfe49f53587acf1d8aacb6` |
+
+Source review и pure RED воспроизвели QA adapter defect: новый rollback key/path
+возвращает прежний A Compose body, а `source_proof` ошибочно отвергает повтор body
+как replay. Reviewed минимальная OCI-only поправка допускает прежний body под
+новым owned path; same-path replay, PG content-replay, digest/mutation, sandbox,
+generation limit и cleanup guards сохранены. Existing A→B→A regression расширен;
+Linux Python81/81 и native adapter43/43 PASS, без skips и Docker execution.
+Production OCI ledger/CLI/schema, pins, deadlines и resources не менялись.
+Это source/pure evidence, не новая Docker/native qualification исправления.
+`other_document/exit2` также описывает нормальный Readback ожидаемо Failed B,
+не обязательно schema parsing failure; `ValueError` class сам по себе не
+локализует predicate и не объясняет все возможные отказы. Исторический278 ниже
+остаётся отдельным source-specific результатом; full12/native SDLC acceptance нет.
+
+## Hosted Full12: 38093642467
+
+Исторический [run38093642467/attempt1](https://github.com/FerrPOINT/CI-CD/actions/runs/38093642467)
+завершился FAILURE 2026-10-11. Controls `278c7fb5863dd7b151a2c6bf0c202a274cc459f3`,
+source `e781b533bfb25fa669d5a5c65f8fa7094de7af02`, SDK19a/maintenance66b7.
+Все три fresh artifacts аутентифицированы original strict readback на exact
+run/attempt/head; исторические receipts не переиспользованы.
+
+- A: пять стадий python81/row-smoke/smoke/check/Clippy PASS.
+- B: PostgreSQL5 PASS,24 exact negatives,14 cleaned v2 journals PASS.
+- C: первая failed native stage OCI7, Cargo exit101, CLI exit1, checkpoint child,
+  closed `childErrorClass=DiskSpaceGuard`; fixture observation only,
+  `acceptanceVerified=false`. Frame `backend/tests/support/oci_delivery.rs:603:5`.
+  Только один cleaned stage-parent journal, без OCI-session journal.
+- Stages8–12 (workspace/integration/CLI/OpenAPI/release) NOT_RUN. Original
+  aggregate отклонил C на `scripts/hermetic_full12/run.py:977` (`PARTITION_PASS`).
+- Во всех трёх независимых partitions owned cleanup/disposable cleanup,
+  daemon stopped/delegation removed подтверждены; remaining task resources0,
+  baseline inventory/images сохранены.
+
+| Partition | Artifact | ZIP SHA256 |
+| --- | --- | --- |
+| A | 11684774894 | `9aa9454f4a52198bbe4cfee0e8961e53207677930b34f929e9b402a0fa9082ae` |
+| B | 11686255733 | `a1f315d56269b9d0422ad056bf4e137bac8f713d28f80b47adf5cb396bdcfe64` |
+| C | 11687030847 | `885b860344506b1ca69551b7be10995136dda698feee3066626761384d13cf3a` |
+
+Initial capacity checkpoints проходят неизменные floors, но не измеряют свободное
+место при позднем child refusal. Closed class не доказывает причину расхода места,
+producer authority или successful effect; floor waiver нет. Full12/native SDLC
+acceptance не достигнуты. Sourcee781 опубликован отдельно в
+`fix/forge-oci-child-error-observation-20261010`; PR88/source903db592 — другой,
+более ранний срез. Main `d1282107f042a348fd3ddb7244bf0de00f605e2f` уже ancestore781.
+Исторические OCI/local packets ниже не квалифицируют этот более поздний source.
 
 ## Latest Frozen Native Packet: 8 Октября
 

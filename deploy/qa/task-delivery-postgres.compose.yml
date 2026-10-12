@@ -9,6 +9,7 @@ services:
       CICD_TEST_PG_VOLUME: ${CICD_QA_OCI_VOLUME:?Owned publication volume required}
       CICD_TEST_PG_COMPOSE_ROOT: ${CICD_QA_OCI_COMPOSE_LOCAL}
       CICD_TEST_PG_IMAGE: ${CICD_QA_POSTGRES_IMAGE:?Immutable database image required}
+      CICD_QA_POSTGRES_TEST_FILTER: ${CICD_QA_POSTGRES_TEST_FILTER:-sdlc_pg_delivery}
 networks:
   qa:
     internal: true
