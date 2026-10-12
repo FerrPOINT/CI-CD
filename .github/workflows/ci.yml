@@ -127,6 +127,7 @@ jobs:
         run: |
           pin=.base-revision
           if [ -f .namespace-base-revision ]; then pin=.namespace-base-revision; fi
+          if [ -f .base-ui-revision ]; then pin=.base-ui-revision; fi
           echo "sha=$(cat "$pin")" >> "$GITHUB_OUTPUT"
           echo "pin=$pin" >> "$GITHUB_OUTPUT"
       - name: Check out services-base sibling (@sdlc/ui file dep)
