@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import type { NamespaceLocation } from '@sdlc/ui/lib'
+import { sortProjectNavigation, type NamespaceLocation } from '@sdlc/ui/lib'
 import type { components } from './schema'
 import { api } from './client'
 
@@ -29,13 +29,19 @@ export function useWorkspaceCatalog() {
           { signal },
         )
         items.push(...page.items)
-        if (items.length >= page.total) return items
-        if (!page.items.length) throw new Error('Каталог изменился. Обновите страницу.')
+        if (items.length >= page.total)
+          return sortProjectNavigation(items, (p) => p.name, workspaceKey)
+        if (!page.items.length)
+          throw new Error('Каталог изменился. Обновите страницу.')
       }
     },
   })
 }
-export function useConfigurations(repositoryId?: string, offset = 0, search = '') {
+export function useConfigurations(
+  repositoryId?: string,
+  offset = 0,
+  search = '',
+) {
   return useQuery({
     queryKey: ['delivery-configurations', repositoryId, offset, search],
     queryFn: ({ signal }) =>
