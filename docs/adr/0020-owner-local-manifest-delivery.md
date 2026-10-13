@@ -4,6 +4,13 @@
 
 Proposed, 2026-10-08. Source и actual QA gates описываются отдельно.
 
+Source follow-up2026-10-13 реализует прежний static executor в existing task HTTP
+adapter только для заранее опубликованного nonproduction target, accepted
+Developer commit и fresh Tracker DevOps assignment/lease. Counterpart — существующий
+Tracker lifecycle/result GET, не новый receipt/proof protocol. Старые local-verification
+receipts сохраняются; generic approvals и privileged OCI/PostgreSQL границы не меняются.
+[Точный API](../API.md#task-bound-nonproduction-delivery). PG/runtime квалификация pending.
+
 ## Context
 
 Generic deployments/rollback связывают pipeline records, но не наблюдают served

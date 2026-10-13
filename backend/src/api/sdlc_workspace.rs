@@ -24,7 +24,7 @@ pub fn routes() -> Router<Arc<AppState>> {
             "/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/candidate-evidence",
             get(get_candidate_evidence),
         )
-        .route("/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations", post(crate::task_delivery::reject_sdlc_delivery))
+        .route("/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations", post(crate::task_delivery::execute_task_delivery))
         .route("/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations/{delivery_key}", get(crate::task_delivery::get_local_delivery))
         .layer(DefaultBodyLimit::max(16 * 1024))
         .layer(axum::middleware::map_response(|mut response: axum::response::Response| async move {
@@ -82,6 +82,23 @@ pub(crate) fn verify_lookup(
         ));
     }
     Ok(())
+}
+
+fn source_lease_matches(
+    request: &WorkspaceOperationRequest,
+    lease: &ledger::LeaseObservation,
+) -> bool {
+    // DevOps observes a retained completed build; it does not claim that job or gain write access.
+    let completed_read = request.role == WorkspaceRole::Devops
+        && request.access == WorkspaceAccess::ReadOnly
+        && lease.status == "completed"
+        && lease.completion_received;
+    lease.attempt_id == request.attempt_id
+        && lease.generation == request.workspace_generation
+        && lease.current_generation == request.workspace_generation
+        && lease.acknowledged
+        && lease.source_commit.as_deref() == Some(&request.source_commit)
+        && (completed_read || (lease.status == "active" && !lease.expired))
 }
 
 #[utoipa::path(post, path="/api/v1/projects/{project_id}/sdlc/workspace-operations",
@@ -142,14 +159,7 @@ pub async fn prepare_workspace_operation(
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::conflict("lease does not belong to this project"))?;
-    if lease.attempt_id != request.attempt_id
-        || lease.generation != request.workspace_generation
-        || lease.current_generation != request.workspace_generation
-        || lease.status != "active"
-        || lease.expired
-        || !lease.acknowledged
-        || lease.source_commit.as_deref() != Some(&request.source_commit)
-    {
+    if !source_lease_matches(&request, &lease) {
         return Err(ApiError::conflict(
             "stale lease, generation, attempt or source pin",
         ));
@@ -217,10 +227,7 @@ pub async fn prepare_workspace_operation(
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::conflict("lease unavailable"))?;
-    if fresh.expired
-        || fresh.status != "active"
-        || fresh.current_generation != request.workspace_generation
-    {
+    if !source_lease_matches(&request, &fresh) {
         return Err(ApiError::conflict(
             "lease expired or superseded during observation",
         ));

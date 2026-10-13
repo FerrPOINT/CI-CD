@@ -1,5 +1,41 @@
 # API v1 Specification — Forge CI/CD
 
+## Task-bound Nonproduction Delivery
+
+**Source candidate2026-10-13, runtime/PG ещё не квалифицированы.** Existing delivery
+POST подключён к прежнему static-manifest executor только для заранее опубликованного
+owner target: `taskExecution.environment=nonproduction`, exact environment/repository,
+Tracker instance/project и lease holder. Окружение должно принадлежать Forge project,
+иметь `protected=false` и `required_approvals=0`. Generic Maintainer approval/rollback
+не меняются. HTTP не enroll-ит target и не принимает URL, commands или готовый receipt.
+Новых queue/controller, agent-side `forge-delivery` или Hermes hooks нет.
+
+В `DeliveryCommand` добавлен optional `taskFence`: `developmentResultId`, `assignmentId`,
+`executionId`, `agentId`, `leaseId`, `fencingToken`, `expectedLeaseVersion`, `assignmentHash`.
+Для effect он обязателен; legacy без него сохраняет503. Отсутствующие optional поля
+не сериализуются, прежние command/policy hashes и immutable blocked receipts сохраняются.
+Completed build с genuine completion ACK можно записать только как readonly DevOps
+source observation, не как active/writable workspace или текущую Tracker authority.
+
+Сервер читает существующие Tracker `GET /api/v1/issues/{task}/sdlc/lifecycle` и
+`GET .../lifecycle/results/{developmentResultId}`: `CICD_TASK_TRACKER_URL` и
+`CICD_TASK_TRACKER_READ_TOKEN` с единственным scope `task-tracker:read`.
+Accepted Developer result должен совпасть по task/cycle/commit с pipeline snapshot;
+текущий assignment — DevOps/Deployment с exact active lease. Scheduler holder и
+bound agent machine subject остаются разными identity. Forge не claim/renew/release-ит
+Tracker lease и не завершает business stage. Проверяется outer `runtime_state=running`
+вместе с lease clock, без переписывания `receipt`. Transport/readback time входит в lease budget.
+
+POST200 возвращает прежний `DeliveryReadback`; новый scope — `task_nonproduction_delivery`,
+`dispatchAllowed=true`, но `sdlcAcceptanceVerified=false`: окончательное завершение
+принадлежит Tracker. Verified требует actual served manifest/artifact, health и
+acceptance probes. Failed/unknown не доказывают отсутствия effect. Original-key replay
+не публикует повторно; unknown reconciliation только наблюдает существующий intent.
+Для этой read-only reconciliation допустим monotonic heartbeat version при неизменных
+assignment/holder/lease/fence. GET остаётся read-only. Expired/foreign/changed/protected
+удерживаются. Local CLI/OCI/PostgreSQL adapters отвергают task-fenced команды.
+Следующие старые разделы описывают legacy local-verification и отсутствие counterpart.
+
 ## Owner-local PostgreSQL CLI
 
 Если current/confirmed manifest pointer повреждён или недоступен, CLI возвращает
@@ -37,7 +73,7 @@ Validation rejection до accepted intent не создаёт operation. Пос�
 Deploy требует exact artifact UUID; rollback запрещает artifact selector и требует
 exact current SHA256. Null current означает пустой target, не wildcard.
 Dedicated machine/project `api:write`, original owner binding/hash проверяются;
-валидный запрос получает503: authoritative Tracker admission/source binding
+legacy запрос без taskFence получает503: authoritative Tracker admission/source binding
 недоступны, **deployment effect отсутствует**. Caller receipts/accepted/status/
 URLs/commands и неизвестные поля отклоняются422; malformed command400,
 credential401/403, owner operation404, changed binding409.

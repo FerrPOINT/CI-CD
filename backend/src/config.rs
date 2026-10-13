@@ -74,13 +74,31 @@ pub struct RuntimeConfig {
     pub sdlc_workspace: SdlcWorkspaceConfig,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct SdlcWorkspaceConfig {
     pub operation_subject: Option<uuid::Uuid>,
     /// A deployment-owned local mount. No caller-authored path or URL.
     pub observation_root: Option<PathBuf>,
     pub local_delivery_root: Option<PathBuf>,
     pub local_delivery_policy: Option<PathBuf>,
+    pub tracker_read_url: Option<String>,
+    pub tracker_read_token: Option<String>,
+}
+
+impl std::fmt::Debug for SdlcWorkspaceConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SdlcWorkspaceConfig")
+            .field("operation_subject", &self.operation_subject)
+            .field("observation_root", &self.observation_root)
+            .field("local_delivery_root", &self.local_delivery_root)
+            .field("local_delivery_policy", &self.local_delivery_policy)
+            .field("tracker_read_url", &self.tracker_read_url)
+            .field(
+                "tracker_read_token_configured",
+                &self.tracker_read_token.is_some(),
+            )
+            .finish()
+    }
 }
 
 /// Egress allowlist for outbound webhook deliveries (Stage 5 item 2).
@@ -321,6 +339,8 @@ impl RuntimeConfig {
             secrets,
             smtp,
             sdlc_workspace: SdlcWorkspaceConfig {
+                tracker_read_url: optional_trimmed(get("CICD_TASK_TRACKER_URL")),
+                tracker_read_token: optional_secret_value(get("CICD_TASK_TRACKER_READ_TOKEN")),
                 local_delivery_root: optional_trimmed(get("CICD_LOCAL_DELIVERY_ROOT"))
                     .map(PathBuf::from),
                 local_delivery_policy: optional_trimmed(get("CICD_LOCAL_DELIVERY_POLICY"))

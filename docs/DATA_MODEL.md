@@ -1,5 +1,14 @@
 # Дата-модель Forge CI/CD
 
+Source candidate2026-10-13: optional `DeliveryCommand.taskFence` сохраняет текущий
+DevOps context и accepted Developer result ID в прежнем filesystem intent.
+`DeliveryPolicy.taskExecution` явно разрешает task-bound nonproduction HTTP effect
+на уже опубликованном target. Отсутствующие поля не меняют прежнюю сериализацию/hashes.
+Новых таблиц/migrations и переписывания history нет; migration0040 сохраняет blocked
+source-observation receipt. Completed acknowledged build допускает только readonly
+DevOps observation, не реактивацию job lease. Current Tracker authority читается
+отдельно перед новым effect. [API](API.md#task-bound-nonproduction-delivery); PG/runtime pending.
+
 PostgreSQL shadow source packet хранит отдельный filesystem journal:
 `forge/isolated-postgres-manifest/v1` связывает sealed candidate, exact image,
 system identifier/database, schema/history/rows/sequences fingerprint,

@@ -1045,6 +1045,10 @@ pub async fn local_command(
     }
     command.validate().map_err(anyhow::Error::msg)?;
     ensure!(
+        command.task_fence.is_none(),
+        "task delivery uses the authenticated owner API"
+    );
+    ensure!(
         token.starts_with("forge_sat_"),
         "existing owner machine credential required"
     );
@@ -1158,6 +1162,7 @@ mod tests {
                     health_body_sha256: sha(b"ok\n"),
                     acceptance_path: "/acceptance".into(),
                     acceptance_body_sha256: sha(b"accepted\n"),
+                    task_execution: None,
                 },
             };
             let owner = Owner {
@@ -1220,6 +1225,7 @@ mod tests {
                 action: DeliveryAction::Deploy,
                 artifact_id: Some(artifact_id),
                 expected_manifest_sha256: None,
+                task_fence: None,
             };
             command.validate().unwrap();
             let manifest = Manifest {

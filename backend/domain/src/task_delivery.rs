@@ -1,4 +1,4 @@
-//! Local technical delivery evidence. Never Tracker admission or SDLC dispatch authority.
+//! Technical delivery evidence; Tracker remains the lifecycle and business-completion owner.
 use super::sdlc_workspace::{WorkspaceOperationLookup, WorkspaceOperationReceipt};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -21,10 +21,42 @@ pub struct DeliveryCommand {
     pub artifact_id: Option<Uuid>,
     /// CAS against the published manifest; null means an empty target, never wildcard.
     pub expected_manifest_sha256: Option<String>,
+    /// Current Tracker DevOps context, not a caller-issued admission receipt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_fence: Option<TaskDeliveryFence>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TaskDeliveryFence {
+    pub development_result_id: Uuid,
+    pub assignment_id: Uuid,
+    pub execution_id: Uuid,
+    pub agent_id: Uuid,
+    pub lease_id: Uuid,
+    pub fencing_token: i64,
+    pub expected_lease_version: i64,
+    pub assignment_hash: String,
 }
 
 impl DeliveryCommand {
     pub fn validate(&self) -> Result<(), &'static str> {
+        if let Some(fence) = &self.task_fence
+            && ([
+                fence.development_result_id,
+                fence.assignment_id,
+                fence.execution_id,
+                fence.agent_id,
+                fence.lease_id,
+            ]
+            .iter()
+            .any(Uuid::is_nil)
+                || !(1..=9007199254740991).contains(&fence.fencing_token)
+                || !(1..=9007199254740991).contains(&fence.expected_lease_version)
+                || !digest(&fence.assignment_hash))
+        {
+            return Err("Нужен точный положительный Tracker delivery fence");
+        }
         for key in [&self.operation_key, &self.workspace_operation_key] {
             if key.is_empty()
                 || key.len() > 128
@@ -138,4 +170,48 @@ pub struct DeliveryReadback {
     pub current_manifest_sha256: Option<String>,
     pub confirmed_manifest_sha256: Option<String>,
     pub reconciliation_needed: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn legacy_command_roundtrip_does_not_add_a_task_fence() {
+        let id = Uuid::new_v4();
+        let value = json!({"operationKey":"deploy:1","workspaceOperationKey":"prepare:1",
+            "original":{"requestHash":"a".repeat(64),"taskId":id,"rootTaskId":id,
+                "assignmentId":id,"executionId":id,"fencingToken":1},
+            "action":"deploy","artifactId":id,"expectedManifestSha256":null});
+        let command: DeliveryCommand = serde_json::from_value(value.clone()).unwrap();
+        command.validate().unwrap();
+        assert!(command.task_fence.is_none());
+        assert_eq!(serde_json::to_value(command).unwrap(), value);
+    }
+
+    #[test]
+    fn task_fence_is_exact_positive_context_not_an_authority_flag() {
+        let id = Uuid::new_v4();
+        let value = json!({"developmentResultId":id,"assignmentId":id,"executionId":id,"agentId":id,"leaseId":id,
+            "fencingToken":1,"expectedLeaseVersion":1,"assignmentHash":"a".repeat(64)});
+        assert!(serde_json::from_value::<TaskDeliveryFence>(value.clone()).is_ok());
+        for field in [
+            "developmentResultId",
+            "assignmentId",
+            "executionId",
+            "agentId",
+            "leaseId",
+            "fencingToken",
+            "expectedLeaseVersion",
+            "assignmentHash",
+        ] {
+            let mut bad = value.clone();
+            bad.as_object_mut().unwrap().remove(field);
+            assert!(serde_json::from_value::<TaskDeliveryFence>(bad).is_err());
+        }
+        let mut injected = value;
+        injected["accepted"] = json!(true);
+        assert!(serde_json::from_value::<TaskDeliveryFence>(injected).is_err());
+    }
 }

@@ -132,7 +132,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::repository_catalog::pull_action,
         sdlc_workspace::prepare_workspace_operation, sdlc_workspace::get_workspace_operation,
         sdlc_workspace::get_candidate_evidence,
-        crate::task_delivery::reject_sdlc_delivery, crate::task_delivery::get_local_delivery,
+        crate::task_delivery::execute_task_delivery, crate::task_delivery::get_local_delivery,
         crate::api::readiness::health, crate::api::readiness::readiness, metrics, serve_openapi_json,
         crate::api::auth_routes::auth_login, crate::api::auth_routes::auth_refresh,
         crate::api::auth_routes::auth_logout,

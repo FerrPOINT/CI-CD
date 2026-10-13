@@ -158,6 +158,10 @@ pub async fn local_command(
     );
     command.validate().map_err(anyhow::Error::msg)?;
     ensure!(
+        command.task_fence.is_none(),
+        "task delivery uses the authenticated owner API"
+    );
+    ensure!(
         token.starts_with("forge_sat_"),
         "owner machine credential required"
     );
