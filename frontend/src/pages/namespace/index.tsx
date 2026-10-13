@@ -1,3 +1,4 @@
+import { LoadingState } from '@sdlc/ui/ui'
 import { useState, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router'
 import { NamespaceLink as Link } from '@sdlc/ui/ui'
@@ -171,7 +172,7 @@ export function NamespacePage({ embedded = false }: { embedded?: boolean }) {
         className="max-w-md"
       />
       {repositories.isPending ? (
-        <p role="status">Загружаем репозитории…</p>
+        <LoadingState message="Загружаем репозитории…" />
       ) : repositories.isError ? (
         <p role="alert" className="text-danger">
           Каталог репозиториев недоступен.

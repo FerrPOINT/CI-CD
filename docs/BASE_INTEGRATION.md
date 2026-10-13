@@ -43,3 +43,17 @@ login-тестами; локальные fixture-проверки не заме�
 закрытия и возврата focus. Продуктовые операции и HTTP-контракты не меняются.
 Обновление pin требует повторных frontend/package/theme и живых UI-проверок;
 исторические результаты прежнего Base не подтверждают эту приёмку.
+
+## Отдельный UI pin и размещение в Base
+
+`.base-ui-revision` закрепляет frontend Base; `.base-revision` остаётся SDK pin.
+Frontend job CI проверяет UI checkout независимо от backend jobs. Для frontend
+сборки используйте `python scripts/build.py frontend` и соседний UI checkout
+на точном SHA. Совместную пересборку backend и UI с разными pins выполняйте
+отдельно, сохраняя исходный SDK checkout.
+
+`VITE_PLATFORM_ORIGIN` передаётся как Docker build argument. Пустое значение
+сохраняет standalone; настроенное включает memory router, silent SSO и общий
+bridge. Продукт сохраняет собственные API, профиль, permissions и формы.
+[Оболочка Base](https://github.com/FerrPOINT/services-base/blob/2523e7ac1b56a14e9038f41472df4ce7a114dc1e/frontend/platform/README.md) описывает
+конфигурацию, подготовку кадра и отдельную runtime-приёмку.

@@ -4,6 +4,7 @@ import { useNamespaceNavigate as useNavigate } from '@sdlc/ui/ui'
 import { completeSso } from '@sdlc/ui/sso'
 import { Button } from '@sdlc/ui/ui'
 import { ssoConfig, useAuth } from '@/shared/auth/auth-provider'
+import { finishPlatformLogin } from '@sdlc/ui/platform'
 
 let pending: ReturnType<typeof completeSso> | null = null
 function completion() {
@@ -24,18 +25,14 @@ export function SsoCallbackPage() {
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     let active = true
-    void completion()
-      .then((session) => {
-        if (!active) return
-        acceptSso(session)
-        navigate(session.returnTo, { replace: true })
-      })
-      .catch((caught) => {
-        if (active) setError(caught instanceof Error ? caught.message : 'Не удалось завершить вход')
-      })
-    return () => {
-      active = false
-    }
+    void completion().then((session) => {
+      if (!active) return
+      acceptSso(session)
+      if (!finishPlatformLogin(import.meta.env.VITE_PLATFORM_ORIGIN)) navigate(session.returnTo, { replace: true })
+    }).catch((caught) => {
+      if (active) setError(caught instanceof Error ? caught.message : 'Не удалось завершить вход')
+    })
+    return () => { active = false }
   }, [acceptSso, navigate])
   return (
     <main className="grid min-h-screen place-items-center bg-background p-4">
