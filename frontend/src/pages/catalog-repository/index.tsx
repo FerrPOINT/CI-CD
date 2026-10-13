@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { NamespaceLink as Link } from '@sdlc/ui/ui'
+import { LoadingState, NamespaceLink as Link } from '@sdlc/ui/ui'
 import { useParams, useSearchParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Input, Label } from '@sdlc/ui/ui'
@@ -71,7 +71,7 @@ export function CatalogRepositoryPage() {
       setBusy(false)
     }
   }
-  if (repository.isPending) return <p role="status">Загружаем репозиторий…</p>
+  if (repository.isPending) return <LoadingState message="Загружаем репозиторий…" />
   if (malformed || repository.isError || !repo)
     return (
       <p role="alert" className="text-danger">
@@ -127,7 +127,7 @@ export function CatalogRepositoryPage() {
         <section className="space-y-3">
           <h2 className="font-semibold">Pull requests</h2>
           {pulls.isPending ? (
-            <p role="status">Загружаем PR…</p>
+            <LoadingState message="Загружаем PR…" />
           ) : pulls.isError ? (
             <p role="alert" className="text-danger">
               PR недоступны.

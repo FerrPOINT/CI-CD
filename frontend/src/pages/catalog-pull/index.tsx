@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { NamespaceLink as Link } from '@sdlc/ui/ui'
+import { LoadingState, NamespaceLink as Link } from '@sdlc/ui/ui'
 import { useParams, useSearchParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, usePlatformServices } from '@sdlc/ui/ui'
@@ -74,7 +74,7 @@ export function CatalogPullPage() {
       setBusy(false)
     }
   }
-  if (query.isPending || repository.isPending) return <p role="status">Загружаем PR…</p>
+  if (query.isPending || repository.isPending) return <LoadingState message="Загружаем PR…" />
   if (
     malformed ||
     query.isError ||
@@ -121,7 +121,7 @@ export function CatalogPullPage() {
       <section className="space-y-2">
         <h2 className="font-semibold">Связанные задачи</h2>
         {links.isPending ? (
-          <p role="status">Загружаем связи…</p>
+          <LoadingState message="Загружаем связи…" />
         ) : links.isError ? (
           <p role="alert" className="text-danger">
             Связи недоступны.

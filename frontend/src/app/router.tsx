@@ -1,3 +1,4 @@
+import { LoadingState } from '@sdlc/ui/ui'
 import { CatalogRepositoryPage } from '@/pages/catalog-repository'
 import { CatalogPullPage } from '@/pages/catalog-pull'
 import { NamespacePage } from '@/pages/namespace'
@@ -71,11 +72,7 @@ const AuditLogPage = lazy(() =>
 )
 const UsersPage = lazy(() => import('@/pages/users').then((m) => ({ default: m.UsersPage })))
 
-function PageLoader() {
-  return (
-    <div className="flex items-center justify-center py-16 text-sm text-text-muted">Loading…</div>
-  )
-}
+function PageLoader() { return <LoadingState /> }
 
 const withSuspense = (el: ReactElement) => <Suspense fallback={<PageLoader />}><PlatformRoute>{el}</PlatformRoute></Suspense>
 

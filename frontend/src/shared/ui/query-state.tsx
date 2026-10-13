@@ -6,7 +6,7 @@ import { useTranslation } from 'react-i18next'
 import { Inbox } from 'lucide-react'
 import { ApiError } from '@/api/client'
 import { ForbiddenPage } from '@/pages/forbidden'
-import { Button } from '@sdlc/ui/ui'
+import { LoadingState, Button } from '@sdlc/ui/ui'
 
 export function QueryState<T>({
   data,
@@ -29,20 +29,7 @@ export function QueryState<T>({
 }) {
   const { t } = useTranslation()
 
-  if (isLoading) {
-    return (
-      <div
-        className="space-y-2"
-        role="status"
-        aria-busy="true"
-        aria-label={t('common.loading', 'Загрузка')}
-      >
-        <div className="h-8 animate-pulse rounded bg-surface-raised" />
-        <div className="h-8 animate-pulse rounded bg-surface-raised" />
-        <div className="h-8 animate-pulse rounded bg-surface-raised" />
-      </div>
-    )
-  }
+  if (isLoading) { return <LoadingState message={t('common.loading', 'Загрузка')} /> }
 
   if (error) {
     if (error instanceof ApiError && error.status === 403) {

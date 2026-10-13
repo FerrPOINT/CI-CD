@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { NamespaceLink as Link } from '@sdlc/ui/ui'
+import { LoadingState, NamespaceLink as Link } from '@sdlc/ui/ui'
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Input, Label } from '@sdlc/ui/ui'
@@ -101,7 +101,7 @@ export function NamespacePage() {
           : 'Репозитории проекта'}
       </p>
       {repositories.isPending ? (
-        <p role="status">Загружаем репозитории…</p>
+        <LoadingState message="Загружаем репозитории…" />
       ) : repositories.isError ? (
         <p role="alert" className="text-danger">
           Каталог репозиториев недоступен.

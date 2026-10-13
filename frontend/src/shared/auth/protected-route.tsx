@@ -1,3 +1,4 @@
+import { LoadingState } from '@sdlc/ui/ui'
 // K2: layout route guard driven by AuthProvider.
 
 import { Navigate, Outlet, useLocation } from 'react-router'
@@ -9,7 +10,7 @@ export function ProtectedRoute() {
   const location = useLocation()
 
   if (status === 'checking') {
-    return <div className="flex min-h-screen items-center justify-center text-sm text-text-muted">…</div>
+    return <LoadingState />
   }
   if (status === 'authenticated') {
     return <Outlet />

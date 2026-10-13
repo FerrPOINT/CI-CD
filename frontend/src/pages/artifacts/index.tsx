@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useParams } from 'react-router'
-import { Copy, Download, Loader2, Package, Search } from 'lucide-react'
+import { Copy, Download, Package, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { downloadArtifact, saveDownloadedArtifact } from '@/api/client'
 import { useArtifacts } from '@/api/hooks'
 import type { Artifact } from '@/api/types'
-import { Button, Input } from '@sdlc/ui/ui'
+import { Loader, Button, Input } from '@sdlc/ui/ui'
 import { QueryState } from '@/shared/ui/query-state'
 
 const pageSize = 20
@@ -144,7 +144,7 @@ export function ArtifactsPage() {
                             onClick={() => void handleDownload(artifact)}
                           >
                             {downloadingId === artifact.id
-                              ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                              ? <Loader size="sm" className="h-4 w-4" aria-hidden />
                               : <Download className="h-4 w-4" aria-hidden />}
                           </button>
                         )}
