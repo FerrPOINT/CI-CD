@@ -487,6 +487,7 @@ async fn task_bound_http_delivery_uses_live_devops_and_preserves_rollback_and_re
     use axum::{Json, Router, routing::get};
     use serde_json::{Value, json};
     let mut t = ActualDelivery::new().await;
+    t.f.request.role = cicd::domain::sdlc_workspace::WorkspaceRole::Developer;
     t.f.request.binding.root_task_id = t.f.request.binding.task_id;
     let environment = Uuid::new_v4();
     sqlx::query("INSERT INTO environments(id,project_id,name,protected,required_approvals) VALUES($1,$2,'task-nonproduction',false,0)")
