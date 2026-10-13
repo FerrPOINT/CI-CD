@@ -198,8 +198,10 @@ pub(crate) async fn require_auth(
     let path = req.uri().path().to_string();
     if claims.role == "service_account"
         && (path.starts_with("/api/v1/git-groups/")
-            || path.starts_with("/api/v1/catalog/repositories/")
-            || path.starts_with("/api/v1/namespace-contexts"))
+            || path.starts_with("/api/v1/catalog/repositories")
+            || path.starts_with("/api/v1/namespace-contexts")
+            || path.starts_with("/api/v1/workspace-")
+            || path.starts_with("/api/v1/delivery-configurations"))
     {
         return Err(ApiError::forbidden());
     }

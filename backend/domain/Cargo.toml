@@ -10,4 +10,6 @@ repository.workspace = true
 utoipa = { workspace = true }
 serde.workspace = true
 thiserror.workspace = true
+uuid.workspace = true
+chrono.workspace = true
 url = "2.5"

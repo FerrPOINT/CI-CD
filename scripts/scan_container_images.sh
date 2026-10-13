@@ -22,7 +22,7 @@ for image in "$@"; do
   fi
 
   python3 "$SDLC_WORKSPACE_DIR/services-base/scripts/compose_probe.py" \
-    --docker-context "$SDLC_DOCKER_CONTEXT" --task "$SDLC_TASK" --purpose container-vulnerability-scan -- --rm \
+    --docker-context "$SDLC_DOCKER_CONTEXT" --task "$SDLC_TASK" --purpose container-vulnerability-scan -- --network isolated --rm \
     -v /var/run/docker.sock:/var/run/docker.sock \
     -v "$TRIVY_CACHE_DIR:/root/.cache/trivy" \
     "$TRIVY_IMAGE" image \

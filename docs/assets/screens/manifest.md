@@ -59,6 +59,15 @@ Namespace candidate добавляет `/namespace`, `/catalog/repositories/:id`
 в целевом `pdlc1` через Codex IAB на 375/1920/2560 ещё не выполнена;
 исторические screenshots выше не подтверждают эти новые экраны.
 
+Workspace/configuration candidate добавляет `/workspaces/:registry/:namespace/*`,
+`/delivery-configs`, `/delivery-configs/:projectId/settings`,
+`/delivery-configs/:projectId/pipelines`, `/delivery-configs/:projectId/secrets`,
+`/delivery-configs/:projectId/environments`, `/delivery-configs/:projectId/schedules`,
+`/delivery-configs/:projectId/webhooks` и `/delivery-configs/:projectId/reports`.
+Их актуальные снимки и проверка клавиатуры/focus на живом candidate ещё не сняты.
+До приёмки на 375/1920/2560 эти маршруты остаются неподтверждёнными;
+исторические изображения legacy `/projects/:id/...` не заменяют эту проверку.
+
 | Файл | Маршрут | Режим | Viewport | Размер PNG |
 |---|---|---|---|---|
 | [wide.png](../../screenshots/375x812/wide.png) | `/` | `wide` | 375×812 | 375×1306 |

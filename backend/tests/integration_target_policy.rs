@@ -19,6 +19,8 @@ use sqlx::postgres::PgPoolOptions;
 use std::str::FromStr;
 use tower::ServiceExt;
 use uuid::Uuid;
+#[path = "support/fixture_cleanup.rs"]
+mod fixture_cleanup;
 
 async fn test_pool_in_schema(schema: &str) -> sqlx::PgPool {
     let base_url = std::env::var("CICD_TEST_DATABASE_URL")
@@ -189,11 +191,7 @@ async fn scheduler_utc_cron_next_fire_is_stable_utc_wall_clock() {
     assert_eq!(next_after_dst.minute(), 30);
     assert!(next_after_dst > before_dst);
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup");
+    fixture_cleanup::projects(&pool).await;
 }
 
 #[tokio::test]
@@ -263,11 +261,7 @@ async fn scheduler_recovers_misfired_slot_exactly_once() {
         "schedule moved forward past the missed slot"
     );
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup");
+    fixture_cleanup::projects(&pool).await;
 }
 
 /// Outbox attempts ledger records a single observed outcome per
@@ -458,9 +452,5 @@ async fn approval_policy_rejects_double_vote_and_post_decision_votes() {
         "rejected deployment must not start a pipeline"
     );
 
-    sqlx::query("DELETE FROM projects WHERE id = $1")
-        .bind(project_id)
-        .execute(&pool)
-        .await
-        .expect("cleanup");
+    fixture_cleanup::projects(&pool).await;
 }

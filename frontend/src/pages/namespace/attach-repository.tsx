@@ -1,8 +1,9 @@
 import { useState, type FormEvent } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Input, Label } from '@sdlc/ui/ui'
+import { Button, Input, Label, SearchableSelect } from '@sdlc/ui/ui'
 import { useSessionCommand, type NamespaceLocation } from '@sdlc/ui/lib'
 import { api } from '@/api/client'
+import { catalogErrorMessage } from '@/api/catalog-errors'
 import { useAuth } from '@/shared/auth/auth-provider'
 import type { components } from '@/api/schema'
 
@@ -10,13 +11,16 @@ type Attach = components['schemas']['AttachRepository']
 export function AttachRepository({
   groupId,
   namespace,
+  onAttached,
 }: {
   groupId: string
   namespace: NamespaceLocation
+  onAttached?: () => void
 }) {
   const { session } = useAuth()
   const cache = useQueryClient()
   const [offset, setOffset] = useState(0)
+  const [search, setSearch] = useState('')
   const [repository, setRepository] = useState('')
   const [slug, setSlug] = useState('')
   const [busy, setBusy] = useState(false)
@@ -31,10 +35,11 @@ export function AttachRepository({
       namespace.registry_instance_id,
       namespace.namespace_id,
       offset,
+      search,
     ],
     queryFn: ({ signal }) =>
       api<components['schemas']['CatalogPage']>(
-        `/catalog/available-repositories?limit=50&offset=${offset}`,
+        `/catalog/available-repositories?limit=50&offset=${offset}&search=${encodeURIComponent(search)}`,
         { signal },
       ),
   })
@@ -58,6 +63,7 @@ export function AttachRepository({
       journal.clear()
       setRepository('')
       setSlug('')
+      onAttached?.()
       await Promise.all([
         cache.invalidateQueries({ queryKey: ['unbound-repositories'] }),
         cache.invalidateQueries({
@@ -69,7 +75,7 @@ export function AttachRepository({
         }),
       ])
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Подключение недоступно')
+      setError(catalogErrorMessage(e))
     } finally {
       setBusy(false)
     }
@@ -79,7 +85,9 @@ export function AttachRepository({
       onSubmit={attach}
       className="max-w-xl space-y-4 rounded-lg border border-border bg-surface p-4"
     >
-      <h2 className="font-semibold">Подключить существующий репозиторий Forge</h2>
+      <h2 className="font-semibold">
+        Подключить существующий репозиторий Forge
+      </h2>
       <p className="text-sm text-text-muted">
         История Git, номера PR и прежний clone URL сохраняются.
       </p>
@@ -90,48 +98,45 @@ export function AttachRepository({
       ) : (
         <div className="space-y-2">
           <Label htmlFor="existing-repository">Репозиторий</Label>
-          <select
+          <SearchableSelect
             id="existing-repository"
-            required
+            label="Репозиторий Forge"
             value={journal.command?.repository ?? repository}
             disabled={busy || Boolean(journal.command) || available.isPending}
-            onChange={(e) => {
-              setRepository(e.target.value)
-              setSlug(available.data?.items.find((r) => r.id === e.target.value)?.slug ?? '')
+            onChange={(value) => {
+              setRepository(value)
+              setSlug(
+                available.data?.items.find((r) => r.id === value)?.slug ?? '',
+              )
             }}
-            className="min-h-10 w-full rounded-md border border-border bg-surface px-3 text-sm"
-          >
-            <option value="">Выберите репозиторий</option>
-            {available.data?.items.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.public_name}
-              </option>
-            ))}
-            {journal.command &&
-              !available.data?.items.some((r) => r.id === journal.command?.repository) && (
-                <option value={journal.command.repository}>Исходный репозиторий операции</option>
-              )}
-          </select>
+            selectedLabel={
+              journal.command ? 'Репозиторий выбранного подключения' : undefined
+            }
+            placeholder="Выберите репозиторий"
+            allowEmpty={false}
+            search={search}
+            onSearch={(value) => {
+              setSearch(value)
+              setOffset(0)
+            }}
+            offset={offset}
+            pageSize={50}
+            total={available.data?.total ?? 0}
+            onPage={setOffset}
+            loading={available.isPending}
+            options={(available.data?.items ?? []).map((repo) => ({
+              value: repo.id,
+              label: repo.public_name,
+            }))}
+          />
         </div>
       )}
       <div className="flex gap-2">
         <Button
           type="button"
           variant="outline"
-          disabled={offset === 0 || busy || Boolean(journal.command)}
-          onClick={() => setOffset(Math.max(0, offset - 50))}
+          onClick={() => void available.refetch()}
         >
-          Назад
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          disabled={(available.data?.items.length ?? 0) < 50 || busy || Boolean(journal.command)}
-          onClick={() => setOffset(offset + 50)}
-        >
-          Далее
-        </Button>
-        <Button type="button" variant="outline" onClick={() => void available.refetch()}>
           Обновить
         </Button>
       </div>
@@ -151,7 +156,11 @@ export function AttachRepository({
         </p>
       )}
       <Button disabled={busy || (!journal.command && (!repository || !slug))}>
-        {busy ? 'Подключаем…' : journal.command ? 'Повторить исходную операцию' : 'Подключить'}
+        {busy
+          ? 'Подключаем…'
+          : journal.command
+            ? 'Повторить исходную операцию'
+            : 'Подключить'}
       </Button>
     </form>
   )

@@ -27,11 +27,25 @@ Fallback на другой Docker context запрещён.
 из сохранённого manifest. Удаляются только volumes данного attempt; immutable
 sources объявлены external и сохраняются.
 
+Выход Docker CLI не доказывает остановку job: перед terminal completion требуется
+свежий Engine readback остановленного собственного контейнера. Timeout явно
+останавливает только контейнер текущего attempt и повторяет readback. Cleanup
+проверяет ownership контейнеров, volumes и сетей, затем свежий terminal receipt
+своего attempt/job. Неизвестный completion не разрешает удаление.
+
+Drop только сохраняет `cleanup-required`; фоновой команды down нет. Неподтверждённый
+выход сохраняет PID либо reservation в обёртке runner. Живой владелец с неизвестной
+остановкой блокирует новую диспетчеризацию до reconciliation; автоматический
+replay отсутствует. После рестарта recovery подтверждает остановку до освобождения
+lease и удаления файлов. Чужие owner/project/manifest/resource names блокируют
+действия. Неизвестное или отозванное acknowledgement сохраняет данные.
+
 После прерывания backend сверяет journal, daemon, labels, execution attempt
 и состояние БД перед новой диспетчеризацией. Оборванный attempt становится
 failed с неизвестным результатом исполнения; ресурсы очищаются через его
 Compose manifest. Автоматического replay нет. Повтор требует явного retry API.
-Чужие labels или неправильный daemon блокируют cleanup и dispatch.
+Чужие labels, foreign volume users/network members или неправильный daemon
+блокируют stop/cleanup и dispatch до первой операции с ресурсами.
 
 Pulse размещается только в приватном Git/project CI/CD `sdlc1`. При импорте
 сначала передаются проверенные commits и tags, затем регистрируется project:
@@ -44,6 +58,10 @@ webServer. Sources Base экспортируются из точного commit 
 `SDLC_PROJECT`, сохранённый `SDLC_SIGNING_KEY` и защищённый output archive;
 использует полный workspace profile и согласованную остановку писателей.
 Retention или удаление старых данных wrapper не выполняет.
+
+Backend gate и Trivy scanner используют отдельную временную сеть для загрузки
+Rust-компонентов, зависимостей и базы уязвимостей. Сеть принадлежит QA-проекту
+и удаляется при cleanup; к постоянным сетям workspace helpers не подключаются.
 
 Лимит проекта проверяется до резервирования lease в SERIALIZABLE transaction.
 Встроенный и внешний runner учитывают активные leases, включая подготовку.

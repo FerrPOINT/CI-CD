@@ -1,6 +1,7 @@
+import { LoadingState } from '@sdlc/ui/ui'
 import { useState } from 'react'
-import { LoadingState, NamespaceLink as Link } from '@sdlc/ui/ui'
-import { useParams, useSearchParams } from 'react-router'
+import { NamespaceLink as Link } from '@sdlc/ui/ui'
+import { useLocation, useParams, useSearchParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, usePlatformServices } from '@sdlc/ui/ui'
 import { withNamespaceLocation } from '@sdlc/ui/lib'
@@ -8,6 +9,7 @@ import { api } from '@/api/client'
 import type { components } from '@/api/schema'
 import { useNamespaceContext } from '@/widgets/namespace-context'
 export function CatalogPullPage() {
+  const { search } = useLocation()
   const { id, number } = useParams()
   const { ref, malformed } = useNamespaceContext()
   const cache = useQueryClient()
@@ -140,6 +142,7 @@ export function CatalogPullPage() {
                   href={withNamespaceLocation(
                     `${trackerUrl}/issues/${link.task.task_id}`,
                     link.namespace,
+                    search,
                   )}
                 >
                   {link.task_key}
