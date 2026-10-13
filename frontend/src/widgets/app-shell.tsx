@@ -125,7 +125,7 @@ export function AppShell() {
                   <DialogTitle className="text-base">
                     <span className="sr-only">{t('navigation.toggleMenu')}</span>
                     <span className="flex items-center gap-3" aria-hidden>
-                      <PlatformMark size="sm" withName={false} />
+                      <PlatformMark size="shell" withName={false} />
                       <span>{t('app.name')}</span>
                     </span>
                   </DialogTitle>
@@ -141,7 +141,7 @@ export function AppShell() {
               className="flex items-center justify-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
               aria-label={t('app.name')}
             >
-              <PlatformMark size="sm" withName={false} />
+              <PlatformMark size="shell" withName={false} />
             </NavLink>
           </>
         }
@@ -179,7 +179,7 @@ export function AppShell() {
         }
       />
       <aside className={`fixed bottom-0 left-0 top-[var(--shell-header-height)] z-20 hidden ${compact ? 'w-[var(--shell-sidebar-compact)]' : 'w-[var(--shell-sidebar-expanded)]'} flex-col border-r border-border bg-surface md:flex`}>
-        <div className="min-h-0 flex-1 overflow-y-auto p-2 xl:p-3">
+        <div className={`min-h-0 flex-1 overflow-y-auto py-2 ${compact ? 'px-2' : 'px-3'}`}>
           <Button variant="ghost" size="icon" title={compact ? 'Развернуть навигацию' : 'Свернуть навигацию'} aria-label={compact ? 'Развернуть навигацию' : 'Свернуть навигацию'} aria-expanded={!compact} onClick={() => setCompact(value => !value)}><PanelLeft aria-hidden size={16} /></Button>
           <NavigationList disclosures={disclosures} compact={compact} />
         </div>
