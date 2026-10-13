@@ -57,7 +57,7 @@ describe('AuthProvider', () => {
     const session = { accessToken: 'fresh-fixture', expiresAt: Date.now() + 60000, subject: 'fixture', email: 'fixture@example.test', name: 'Fixture', returnTo: '/' }
     complete(session)
     await waitFor(() => expect(screen.getByTestId('probe')).toHaveTextContent('authenticated'))
-    expect(authMod.acceptSso).toHaveBeenCalledWith(session.accessToken, session.expiresAt, session.name)
+    expect(authMod.acceptSso).toHaveBeenCalledWith(session.accessToken, session.expiresAt, session.name, session.subject)
   })
 
   it('redirects to central logout without rendering the local login route', async () => {
