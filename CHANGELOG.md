@@ -13,6 +13,11 @@
 
 ## [Unreleased]
 
+- Task-bound nonproduction delivery подключается к существующему API с текущим
+  DevOps assignment/lease, принятым Developer result и заранее опубликованным
+  target policy. Штатный CLI получает workspace prepare/readback/delivery;
+  обычные protected deployments и approvals не меняются. Live-квалификация pending.
+
 - Standalone frontend build проверяет `.base-ui-revision`; SDK pin и legacy fallback сохраняются.
 
 - Логотип оболочки использует общий размер Base 40 px; компактный сайдбар равен высоте хедера (60 px).

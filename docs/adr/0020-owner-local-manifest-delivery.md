@@ -43,10 +43,13 @@ Last-confirmed manifest меняется только после всех owner 
 использует именно сохранённый confirmed manifest и expected-current CAS, затем
 снова проверяет served bytes/identity и application checks.
 
-HTTP SDLC command всегда fail-closed до authoritative counterpart. HTTP GET
-может читать authenticated local operation history; это technical local receipt,
-не `base-sdlc/*` grant и не business acceptance. `dispatchAllowed` и
-`sdlcAcceptanceVerified` остаются false, original blocked receipt не меняется.
+Legacy HTTP command без `taskFence` остаётся fail-closed; OCI/PostgreSQL HTTP
+dispatch этим пакетом не открывается. Новая opt-in static-manifest ветка использует
+existing Tracker readback и owner-published nonproduction policy. Только её receipt
+имеет scope `task_nonproduction_delivery` и `dispatchAllowed=true`.
+`sdlcAcceptanceVerified=false`: окончательный business transition принадлежит Tracker.
+Original blocked workspace receipt и legacy verification hashes не меняются.
+Authenticated GET читает только technical history и не разрешает новый effect.
 
 ## Alternatives Considered
 
