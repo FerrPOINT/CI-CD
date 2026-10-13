@@ -1,10 +1,12 @@
+import { LoadingState } from '@sdlc/ui/ui'
+import { createProductRouter, PlatformRoute } from '@sdlc/ui/platform'
 import { ConfigurationContext } from '@/widgets/configuration-context'
 import { CatalogRepositoryPage } from '@/pages/catalog-repository'
 import { CatalogPullPage } from '@/pages/catalog-pull'
 import { WorkspacePage, NamespaceRedirect, LegacyConfigRedirect } from '@/pages/workspace'
 import { DeliveryConfigurationsPage } from '@/pages/delivery-configurations'
 import { lazy, Suspense, type ReactElement } from 'react'
-import { createBrowserRouter, Navigate, Outlet } from 'react-router'
+import { Navigate, Outlet } from 'react-router'
 import { AppShell } from '@/widgets/app-shell'
 import { AuthProvider } from '@/shared/auth/auth-provider'
 import { ProtectedRoute } from '@/shared/auth/protected-route'
@@ -72,13 +74,9 @@ const AuditLogPage = lazy(() =>
 )
 const UsersPage = lazy(() => import('@/pages/users').then((m) => ({ default: m.UsersPage })))
 
-function PageLoader() {
-  return (
-    <div className="flex items-center justify-center py-16 text-sm text-text-muted">Loading…</div>
-  )
-}
+function PageLoader() { return <LoadingState /> }
 
-const withSuspense = (el: ReactElement) => <Suspense fallback={<PageLoader />}>{el}</Suspense>
+const withSuspense = (el: ReactElement) => <Suspense fallback={<PageLoader />}><PlatformRoute>{el}</PlatformRoute></Suspense>
 const ConfigurationSettingsPage = lazy(() =>
   import('@/pages/configuration-settings').then((m) => ({ default: m.ConfigurationSettingsPage })),
 )
@@ -98,8 +96,8 @@ export const appRoutes = [
             element: <AppShell />,
             children: [
               { path: '/namespace', element: <NamespaceRedirect /> },
-              { path: '/workspaces/:registry/:namespace/*', element: <WorkspacePage /> },
-              { path: '/delivery-configs', element: <DeliveryConfigurationsPage /> },
+              { path: '/workspaces/:registry/:namespace/*', element: withSuspense(<WorkspacePage />) },
+              { path: '/delivery-configs', element: withSuspense(<DeliveryConfigurationsPage />) },
               {
                 path: '/delivery-configs/:projectId/settings',
                 element: withSuspense(
@@ -110,11 +108,11 @@ export const appRoutes = [
               },
               {
                 path: '/catalog/repositories/:id',
-                element: <CatalogRepositoryPage />,
+                element: withSuspense(<CatalogRepositoryPage />),
               },
               {
                 path: '/catalog/repositories/:id/pulls/:number',
-                element: <CatalogPullPage />,
+                element: withSuspense(<CatalogPullPage />),
               },
               { path: '/', element: withSuspense(<DashboardPage />) },
               { path: '/projects', element: withSuspense(<ProjectsPage />) },
@@ -221,4 +219,4 @@ export const appRoutes = [
   { path: '*', element: <Navigate to="/" replace /> },
 ]
 
-export const router = createBrowserRouter(appRoutes)
+export const router = createProductRouter(appRoutes, { serviceKey: 'ci-cd', portalOrigin: import.meta.env.VITE_PLATFORM_ORIGIN })

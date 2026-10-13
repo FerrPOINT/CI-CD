@@ -1,3 +1,4 @@
+import { LoadingState } from '@sdlc/ui/ui'
 import { useState, type FormEvent } from 'react'
 import { NamespaceLink as Link } from '@sdlc/ui/ui'
 import { useParams, useSearchParams } from 'react-router'
@@ -113,7 +114,7 @@ export function CatalogRepositoryPage() {
       setBusy(false)
     }
   }
-  if (repository.isPending) return <p role="status">Загружаем репозиторий…</p>
+  if (repository.isPending) return <LoadingState message="Загружаем репозиторий…" />
   if (malformed || repository.isError || !repo)
     return (
       <p role="alert" className="text-danger">
@@ -268,7 +269,7 @@ export function CatalogRepositoryPage() {
               )}
             </div>
             {pulls.isPending ? (
-              <p role="status">Загружаем PR…</p>
+              <LoadingState message="Загружаем PR…" />
             ) : pulls.isError ? (
               <p role="alert" className="text-danger">
                 PR недоступны.

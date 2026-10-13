@@ -1,3 +1,4 @@
+import { LoadingState } from '@sdlc/ui/ui'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import type { components } from '@/api/schema'
@@ -18,7 +19,7 @@ export function DashboardPage() {
     <div className="space-y-5">
       <h1 className="text-2xl font-semibold">CI/CD</h1>
       {summary.isPending ? (
-        <p role="status">Загружаем сводку…</p>
+        <LoadingState message="Загружаем сводку…" />
       ) : summary.isError ? (
         <p role="alert" className="text-danger">
           Сводка недоступна.
@@ -47,7 +48,7 @@ export function DashboardPage() {
         {runners.isError ? (
           <p className="text-danger">Состояние исполнителей недоступно.</p>
         ) : runners.isPending ? (
-          <p role="status">Загружаем исполнителей…</p>
+          <LoadingState message="Загружаем исполнителей…" />
         ) : (
           <p className="text-sm text-text-muted">
             Онлайн: {runners.data.filter((runner) => runner.status === 'online').length} /{' '}
