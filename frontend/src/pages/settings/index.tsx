@@ -53,7 +53,7 @@ export function SettingsPage() {
     <div className="space-y-5">
       <div className="flex items-center gap-2">
         <Settings className="h-5 w-5 shrink-0 text-accent" aria-hidden />
-        <h1 className="text-xl font-bold sm:text-2xl">{t('settings.title')}</h1>
+        <h1 className="text-xl font-bold sm:text-2xl">Конфигурация сервера</h1>
       <Link className="block text-accent" to="/delivery-configs">Непривязанные CI-конфигурации</Link>
       </div>
       <p className="text-sm text-text-muted">{t('settings.description')}</p>

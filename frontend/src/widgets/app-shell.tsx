@@ -1,8 +1,9 @@
+import { SidebarNavigationGroup, useSidebarDisclosure, NamespaceNavLink as NavLink } from '@sdlc/ui/ui'
 import { SidebarItem } from '@sdlc/ui/ui'
 import { NamespaceShellContext } from './namespace-context'
 import { useProjectDisclosures, WorkspaceNavigation } from './workspace-navigation'
 import { useEffect, useState } from 'react'
-import { NavLink, Outlet, useLocation } from 'react-router'
+import { Outlet, useLocation } from 'react-router'
 import {
   CircleUserRound,
   Cpu,
@@ -14,7 +15,6 @@ import {
   Menu,
   PanelLeft,
   Settings,
-  Users,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -39,35 +39,77 @@ type NavigationListProps = {
   onNavigate?: () => void
   compact?: boolean
   disclosures: ReturnType<typeof useProjectDisclosures>
+  utilities: ReturnType<typeof useSidebarDisclosure>
+  utilityActive: boolean
 }
 
-function NavigationList({ onNavigate, compact = false, disclosures }: NavigationListProps) {
-  const { t } = useTranslation()
-  const location = useLocation()
-  const scope = new URLSearchParams(location.search).get('project_scope') === 'all' ? '?project_scope=all' : location.search
+function NavigationList({
+  onNavigate,
+  compact = false,
+  disclosures,
+  utilities,
+  utilityActive,
+}: NavigationListProps) {
+  const { t } = useTranslation();
+  const location = useLocation();
+  const scope =
+    new URLSearchParams(location.search).get("project_scope") === "all"
+      ? "?project_scope=all"
+      : location.search;
 
   const navItems = [
-    { to: '/', icon: LayoutDashboard, label: t('navigation.dashboard') },
-    { to: '/projects', icon: FolderGit2, label: t('navigation.projects') },
-    { to: '/repositories', icon: GitFork, label: t('navigation.repositories') },
-    { to: '/runners', icon: Cpu, label: t('navigation.runners') },
-    { to: '/users', icon: Users, label: t('navigation.users') },
-    { to: '/audit-log', icon: History, label: t('navigation.auditLog') },
-    { to: '/settings', icon: Settings, label: t('navigation.settings') },
-  ]
-
-  return (
-    <div><nav className="flex flex-col gap-1" aria-label={t('navigation.main')}>
-      {navItems.map(({ to, icon: Icon, label }) => (
+    { to: "/", icon: LayoutDashboard, label: t("navigation.dashboard") },
+    { to: "/projects", icon: FolderGit2, label: t("navigation.projects") },
+    { to: "/repositories", icon: GitFork, label: "Все репозитории" },
+  ];
+  const utilityItems = [
+    { to: "/runners", icon: Cpu, label: t("navigation.runners") },
+    { to: "/audit-log", icon: History, label: t("navigation.auditLog") },
+    { to: "/settings", icon: Settings, label: "Конфигурация сервера" },
+    {
+      to: "/delivery-configs",
+      icon: FolderGit2,
+      label: "Непривязанные CI-конфигурации",
+    },
+  ];
+  const links = (items: typeof navItems) => (
+    <nav className="base-sidebar-list" aria-label={t("navigation.main")}>
+      {items.map(({ to, icon: Icon, label }) => (
         <SidebarItem key={to} asChild compact={compact}>
-          <NavLink to={to + scope} end={to === '/'} onClick={onNavigate} aria-label={label} title={label}>
+          <NavLink
+            to={to + scope}
+            end={to === "/"}
+            onClick={onNavigate}
+            aria-label={label}
+            title={label}
+          >
             <Icon aria-hidden />
             <span className="base-sidebar-item-label">{label}</span>
           </NavLink>
         </SidebarItem>
       ))}
-    </nav>{import.meta.env.VITE_NAMESPACE_ENABLED === 'true' && <WorkspaceNavigation {...disclosures} compact={compact} onNavigate={onNavigate} />}</div>
-  )
+    </nav>
+  );
+  return (
+    <div>
+      {links(navItems)}
+      {import.meta.env.VITE_NAMESPACE_ENABLED === "true" && (
+        <WorkspaceNavigation
+          {...disclosures}
+          compact={compact}
+          onNavigate={onNavigate}
+        />
+      )}
+      <SidebarNavigationGroup
+        label="Служебное"
+        active={utilityActive}
+        compact={compact}
+        {...utilities}
+      >
+        {links(utilityItems)}
+      </SidebarNavigationGroup>
+    </div>
+  );
 }
 
 export function AppShell() {
@@ -76,6 +118,8 @@ export function AppShell() {
   const location = useLocation()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const disclosures = useProjectDisclosures()
+  const utilityActive = ['/runners', '/audit-log', '/settings', '/delivery-configs'].some(to => location.pathname === to || location.pathname.startsWith(to + '/'))
+  const utilities = useSidebarDisclosure(utilityActive ? location.pathname : null)
   const [compact, setCompact] = useState(() => { try { return localStorage.getItem('forge:sidebar-compact') === 'true' } catch { return false } })
   useEffect(() => { try { localStorage.setItem('forge:sidebar-compact', String(compact)) } catch { /* Storage is optional. */ } }, [compact])
   useEffect(() => {
@@ -131,7 +175,7 @@ export function AppShell() {
                   </DialogTitle>
                 </DialogHeader>
                 <div className="min-h-0 flex-1 overflow-y-auto p-3" id="mobile-navigation">
-                  <NavigationList disclosures={disclosures} onNavigate={() => setMobileMenuOpen(false)} />
+                  <NavigationList utilities={utilities} utilityActive={utilityActive} disclosures={disclosures} onNavigate={() => setMobileMenuOpen(false)} />
                 </div>
               </DialogContent>
             </Dialog>
@@ -181,7 +225,7 @@ export function AppShell() {
       <aside className={`fixed bottom-0 left-0 top-[var(--shell-header-height)] z-20 hidden ${compact ? 'w-[var(--shell-sidebar-compact)]' : 'w-[var(--shell-sidebar-expanded)]'} flex-col border-r border-border bg-surface md:flex`}>
         <div className={`min-h-0 flex-1 overflow-y-auto py-2 ${compact ? 'px-2' : 'px-3'}`}>
           <Button variant="ghost" size="icon" title={compact ? 'Развернуть навигацию' : 'Свернуть навигацию'} aria-label={compact ? 'Развернуть навигацию' : 'Свернуть навигацию'} aria-expanded={!compact} onClick={() => setCompact(value => !value)}><PanelLeft aria-hidden size={16} /></Button>
-          <NavigationList disclosures={disclosures} compact={compact} />
+          <NavigationList utilities={utilities} utilityActive={utilityActive} disclosures={disclosures} compact={compact} />
         </div>
       </aside>
       <div className={`min-w-0 ${compact ? 'md:pl-[var(--shell-sidebar-compact)]' : 'md:pl-[var(--shell-sidebar-expanded)]'}`}>
