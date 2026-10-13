@@ -76,7 +76,7 @@ const UsersPage = lazy(() => import('@/pages/users').then((m) => ({ default: m.U
 
 function PageLoader() { return <LoadingState /> }
 
-const withSuspense = (el: ReactElement) => <Suspense fallback={<PageLoader />}><PlatformRoute>{el}</PlatformRoute></Suspense>
+const withSuspense = (el: ReactElement) => <Suspense fallback={<PageLoader />}>{el}</Suspense>
 const ConfigurationSettingsPage = lazy(() =>
   import('@/pages/configuration-settings').then((m) => ({ default: m.ConfigurationSettingsPage })),
 )
@@ -93,7 +93,7 @@ export const appRoutes = [
         element: <ProtectedRoute />,
         children: [
           {
-            element: <AppShell />,
+            element: <PlatformRoute><AppShell /></PlatformRoute>,
             children: [
               { path: '/namespace', element: <NamespaceRedirect /> },
               { path: '/workspaces/:registry/:namespace/*', element: <WorkspacePage /> },
