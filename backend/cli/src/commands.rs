@@ -34,6 +34,11 @@ impl Page {
 }
 #[derive(Subcommand)]
 pub enum WorkCommand {
+    /// Task-bound workspace and delivery API; no local executor or automatic replay.
+    Workspace {
+        #[command(subcommand)]
+        command: WorkspaceCommand,
+    },
     Repository {
         #[command(subcommand)]
         command: RepositoryCommand,
@@ -42,6 +47,151 @@ pub enum WorkCommand {
         #[command(subcommand)]
         command: PrCommand,
     },
+}
+
+#[derive(Args)]
+pub struct WorkspaceTarget {
+    #[arg(long)]
+    project: uuid::Uuid,
+    #[arg(long)]
+    operation_key: String,
+}
+impl WorkspaceTarget {
+    fn path(&self) -> Result<String> {
+        operation_key(&self.operation_key)?;
+        Ok(format!(
+            "/projects/{}/sdlc/workspace-operations/{}",
+            self.project,
+            enc(&self.operation_key)
+        ))
+    }
+}
+#[derive(Subcommand)]
+pub enum WorkspaceCommand {
+    Prepare {
+        #[arg(long)]
+        project: uuid::Uuid,
+        #[arg(long)]
+        from_file: String,
+    },
+    Readback {
+        #[command(flatten)]
+        target: WorkspaceTarget,
+        #[arg(long)]
+        from_file: String,
+    },
+    CandidateEvidence {
+        #[command(flatten)]
+        target: WorkspaceTarget,
+        #[arg(long)]
+        from_file: String,
+    },
+    Delivery {
+        #[command(flatten)]
+        target: WorkspaceTarget,
+        /// Exact DeliveryCommand JSON, including taskFence; '-' reads stdin.
+        #[arg(long)]
+        from_file: String,
+    },
+    DeliveryReadback {
+        #[command(flatten)]
+        target: WorkspaceTarget,
+        #[arg(long)]
+        delivery_key: String,
+        #[arg(long)]
+        from_file: String,
+    },
+}
+
+fn operation_key(key: &str) -> Result<()> {
+    if key.is_empty()
+        || key.len() > 128
+        || matches!(key, "." | "..")
+        || !key
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_.:".contains(&b))
+    {
+        bail!("Некорректный original operation key");
+    }
+    Ok(())
+}
+
+async fn workspace(api: &ApiClient, command: WorkspaceCommand) -> Result<Value> {
+    let (path, file, post) = match command {
+        WorkspaceCommand::Prepare { project, from_file } => (
+            format!("/projects/{project}/sdlc/workspace-operations"),
+            from_file,
+            true,
+        ),
+        WorkspaceCommand::Readback { target, from_file } => (target.path()?, from_file, false),
+        WorkspaceCommand::CandidateEvidence { target, from_file } => (
+            format!("{}/candidate-evidence", target.path()?),
+            from_file,
+            false,
+        ),
+        WorkspaceCommand::Delivery { target, from_file } => (
+            format!("{}/delivery-operations", target.path()?),
+            from_file,
+            true,
+        ),
+        WorkspaceCommand::DeliveryReadback {
+            target,
+            delivery_key,
+            from_file,
+        } => {
+            operation_key(&delivery_key)?;
+            (
+                format!(
+                    "{}/delivery-operations/{}",
+                    target.path()?,
+                    enc(&delivery_key)
+                ),
+                from_file,
+                false,
+            )
+        }
+    };
+    let raw = support::read_text(&file)?;
+    if raw.len() > 16 * 1024 {
+        bail!("Workspace JSON превышает лимит16KiB");
+    }
+    let body: Value =
+        serde_json::from_str(&raw).map_err(|_| anyhow::anyhow!("Некорректный workspace JSON"))?;
+    let object = body
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("Ожидается workspace JSON object"))?;
+    if post {
+        // Authority and typed request validation remain server-owned. Never synthesize keys/fences.
+        return api.json(api.post(&path).json(&body)).await;
+    }
+    let fields = [
+        "requestHash",
+        "taskId",
+        "rootTaskId",
+        "assignmentId",
+        "executionId",
+        "fencingToken",
+    ];
+    if object.len() != fields.len() || fields.iter().any(|key| !object.contains_key(*key)) {
+        bail!("Нужен точный WorkspaceOperationLookup без дополнительных полей");
+    }
+    let mut pairs = Vec::new();
+    for key in fields {
+        let value = if key == "fencingToken" {
+            object[key]
+                .as_i64()
+                .filter(|v| *v > 0)
+                .map(|v| v.to_string())
+        } else {
+            object[key]
+                .as_str()
+                .filter(|v| !v.is_empty())
+                .map(str::to_owned)
+        }
+        .ok_or_else(|| anyhow::anyhow!("Некорректный WorkspaceOperationLookup"))?;
+        pairs.push((key, Some(value)));
+    }
+    get(api, &path, pairs).await
 }
 #[derive(Subcommand)]
 pub enum RepositoryCommand {
@@ -168,6 +318,7 @@ async fn action(api: &ApiClient, repo: &str, number: u32, action: &str) -> Resul
 }
 pub async fn execute(api: &ApiClient, command: WorkCommand) -> Result<Value> {
     match command {
+        WorkCommand::Workspace { command } => workspace(api, command).await,
         WorkCommand::Repository {command}=>match command {
             RepositoryCommand::List=>api.json(api.get("/repositories")).await,
             RepositoryCommand::Create {name,visibility}=>api.json(api.post("/repositories").json(&json!({"name":name,"visibility":visibility}))).await,
