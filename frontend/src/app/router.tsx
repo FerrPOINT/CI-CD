@@ -76,7 +76,7 @@ const UsersPage = lazy(() => import('@/pages/users').then((m) => ({ default: m.U
 
 function PageLoader() { return <LoadingState /> }
 
-const withSuspense = (el: ReactElement) => <Suspense fallback={<PageLoader />}>{el}</Suspense>
+const withSuspense = (el: ReactElement) => <Suspense fallback={<PageLoader />}><PlatformRoute>{el}</PlatformRoute></Suspense>
 const ConfigurationSettingsPage = lazy(() =>
   import('@/pages/configuration-settings').then((m) => ({ default: m.ConfigurationSettingsPage })),
 )
@@ -93,11 +93,11 @@ export const appRoutes = [
         element: <ProtectedRoute />,
         children: [
           {
-            element: <PlatformRoute><AppShell /></PlatformRoute>,
+            element: <AppShell />,
             children: [
               { path: '/namespace', element: <NamespaceRedirect /> },
-              { path: '/workspaces/:registry/:namespace/*', element: <WorkspacePage /> },
-              { path: '/delivery-configs', element: <DeliveryConfigurationsPage /> },
+              { path: '/workspaces/:registry/:namespace/*', element: withSuspense(<WorkspacePage />) },
+              { path: '/delivery-configs', element: withSuspense(<DeliveryConfigurationsPage />) },
               {
                 path: '/delivery-configs/:projectId/settings',
                 element: withSuspense(
@@ -108,11 +108,11 @@ export const appRoutes = [
               },
               {
                 path: '/catalog/repositories/:id',
-                element: <CatalogRepositoryPage />,
+                element: withSuspense(<CatalogRepositoryPage />),
               },
               {
                 path: '/catalog/repositories/:id/pulls/:number',
-                element: <CatalogPullPage />,
+                element: withSuspense(<CatalogPullPage />),
               },
               { path: '/', element: withSuspense(<DashboardPage />) },
               { path: '/projects', element: withSuspense(<ProjectsPage />) },
