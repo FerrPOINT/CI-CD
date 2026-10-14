@@ -190,6 +190,12 @@ pub(crate) async fn retry_pipeline(
     Path(pipeline_id): Path<Uuid>,
 ) -> ApiResult<RetriedPipelineResult> {
     let pool = pool(&state)?;
+    // Match cancellation's lock order and retain the reservation fence until
+    // publication commits. A terminal DB status alone does not prove exit.
+    let running = match state.running_jobs.as_ref() {
+        Some(running) => Some(running.lock().await),
+        None => None,
+    };
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
     let status =
         sqlx::query_scalar::<_, String>("SELECT status FROM pipelines WHERE id = $1 FOR UPDATE")
@@ -203,11 +209,19 @@ pub(crate) async fn retry_pipeline(
             "only failed or canceled pipelines can be retried",
         ));
     }
-    sqlx::query_scalar::<_, Uuid>("SELECT j.id FROM jobs j JOIN stages s ON s.id=j.stage_id WHERE s.pipeline_id=$1 ORDER BY j.id FOR UPDATE OF j")
+    let jobs = sqlx::query_as::<_, (Uuid, String)>("SELECT j.id,j.status FROM jobs j JOIN stages s ON s.id=j.stage_id WHERE s.pipeline_id=$1 ORDER BY j.id FOR UPDATE OF j")
         .bind(pipeline_id)
         .fetch_all(&mut *tx)
         .await
         .map_err(ApiError::internal)?;
+    if jobs.iter().any(|(id, status)| {
+        matches!(status.as_str(), "failed" | "canceled")
+            && running.as_ref().is_some_and(|jobs| jobs.contains_key(id))
+    }) {
+        return Err(ApiError::conflict(
+            "previous embedded execution has not released its reservation",
+        ));
+    }
     close_retry_leases(
         &mut tx,
         pipeline_id,
@@ -318,6 +332,12 @@ pub(crate) async fn retry_job(
     Path(job_id): Path<Uuid>,
 ) -> ApiResult<Job> {
     let pool = pool(&state)?;
+    // The embedded worker keeps this reservation through stop and cleanup,
+    // including preparation (PID zero) and uncertain process termination.
+    let running = match state.running_jobs.as_ref() {
+        Some(running) => Some(running.lock().await),
+        None => None,
+    };
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
     let pipeline = sqlx::query_scalar::<_, Uuid>(
         "SELECT s.pipeline_id FROM jobs j JOIN stages s ON s.id=j.stage_id WHERE j.id=$1",
@@ -341,6 +361,14 @@ pub(crate) async fn retry_job(
     if job.status != "failed" && job.status != "canceled" {
         return Err(ApiError::conflict(
             "only failed or canceled jobs can be retried",
+        ));
+    }
+    if running
+        .as_ref()
+        .is_some_and(|jobs| jobs.contains_key(&job_id))
+    {
+        return Err(ApiError::conflict(
+            "previous embedded execution has not released its reservation",
         ));
     }
     close_retry_leases(
