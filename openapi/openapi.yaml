@@ -1851,6 +1851,8 @@ paths:
                 $ref: '#/components/schemas/Job'
         '404':
           description: ''
+        '409':
+          description: ''
   /api/v1/jobs/{job_id}/start:
     post:
       tags:

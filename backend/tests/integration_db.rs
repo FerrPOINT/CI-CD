@@ -4580,6 +4580,27 @@ async fn cancel_pipeline_signals_external_runner_until_confirmed() {
     assert!(lease_completed_at.is_none());
     assert!(cancel_requested_at.is_some());
 
+    for endpoint in [
+        format!("/api/v1/jobs/{job_id}/retry"),
+        format!("/api/v1/pipelines/{pipeline_id}/retry"),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(Request::post(endpoint).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        let state: (String, Option<chrono::DateTime<Utc>>, i64) = sqlx::query_as(
+            "SELECT lease_status,completed_at,(SELECT count(*) FROM execution_attempts WHERE job_id=$2) FROM job_leases WHERE id=$1",
+        )
+        .bind(lease_id)
+        .bind(job_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(state, ("active".to_owned(), None, 1));
+    }
+
     let response = app
         .clone()
         .oneshot(
@@ -4680,16 +4701,80 @@ async fn cancel_pipeline_signals_external_runner_until_confirmed() {
     .await
     .expect("insert stale active external lease");
 
-    let response = app
-        .clone()
-        .oneshot(
+    // Administrative terminal metadata or expiry does not prove an acknowledged runner stopped.
+    for state in ["active", "expired", "canceled"] {
+        sqlx::query("UPDATE job_leases SET lease_status=$2,completed_at=CASE WHEN $2='active' THEN NULL ELSE now() END,terminal_status=CASE WHEN $2='active' THEN NULL ELSE 'canceled' END WHERE id=$1")
+            .bind(stale_lease_id).bind(state).execute(&pool).await.unwrap();
+        for endpoint in [
+            format!("/api/v1/jobs/{job_id}/retry"),
+            format!("/api/v1/pipelines/{pipeline_id}/retry"),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(Request::post(endpoint).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::CONFLICT);
+            let current:(String,bool,i64)=sqlx::query_as("SELECT lease_status,completion_received_at IS NULL,(SELECT count(*) FROM execution_attempts WHERE job_id=$2) FROM job_leases WHERE id=$1")
+                .bind(stale_lease_id).bind(job_id).fetch_one(&pool).await.unwrap();
+            assert_eq!(current, (state.to_owned(), true, 1));
+        }
+    }
+    sqlx::query("UPDATE job_leases SET lease_status='active',completed_at=NULL,terminal_status=NULL WHERE id=$1")
+        .bind(stale_lease_id).execute(&pool).await.unwrap();
+    let response=app.clone().oneshot(
+        Request::post(format!("/api/v1/runner/leases/{stale_lease_id}/complete"))
+            .header("authorization",format!("Bearer {runner_credential}"))
+            .header("content-type","application/json")
+            .body(Body::from(serde_json::json!({"protocolVersion":1,"leaseToken":format!("stale-{lease_token}"),"fencingToken":2,"attemptId":attempt_id,"outcome":"canceled","finishedAt":Utc::now()}).to_string())).unwrap()
+    ).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let confirmed: bool =
+        sqlx::query_scalar("SELECT completion_received_at IS NOT NULL FROM job_leases WHERE id=$1")
+            .bind(stale_lease_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(confirmed);
+
+    // Both entry points serialize on the pipeline and publish only one retry attempt.
+    let (job_retry, pipeline_retry) = tokio::join!(
+        app.clone().oneshot(
+            Request::post(format!("/api/v1/jobs/{job_id}/retry"))
+                .body(Body::empty())
+                .unwrap()
+        ),
+        app.clone().oneshot(
             Request::post(format!("/api/v1/pipelines/{pipeline_id}/retry"))
                 .body(Body::empty())
-                .unwrap(),
+                .unwrap()
         )
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
+    );
+    let statuses = [
+        job_retry.unwrap().status(),
+        pipeline_retry.unwrap().status(),
+    ];
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|status| **status == StatusCode::OK)
+            .count(),
+        1
+    );
+    assert_eq!(
+        statuses
+            .iter()
+            .filter(|status| **status == StatusCode::CONFLICT)
+            .count(),
+        1
+    );
+    let attempts: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM execution_attempts WHERE job_id=$1")
+            .bind(job_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(attempts, 2);
     let active_leases: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM job_leases WHERE job_id = $1 AND lease_status = 'active'",
     )

@@ -1657,6 +1657,14 @@ Machine principals для автоматизации (AUTHORIZATION target-step;
 | POST | `/jobs/{job_id}/retry` | — | Сбрасывает terminal job в queued и создаёт новую `execution_attempt` без удаления старых логов |
 | POST | `/jobs/{job_id}/start` | — | Стартует manual job и возвращает `{"started":true}` |
 
+Retry job и pipeline возвращает `409`, пока внешний runner сохраняет активный lease
+либо acknowledged lease без authenticated completion receipt. Истечение lease и
+административный `canceled` не подтверждают остановку процесса. Retry не закрывает
+такой lease принудительно; неизвестный исход требует owner reconciliation.
+После подтверждения новая попытка и её queue entry публикуются одной транзакцией.
+Конкурентные retry одного job/pipeline создают одну попытку; второй запрос получает
+`409`. Human SSO/PAT и существующий runner completion protocol не меняются.
+
 История попыток хранится в `execution_attempts`. Логическая запись `jobs` остаётся текущей проекцией для pipeline/stage aggregation, а terminal evidence каждой попытки читается через `/jobs/{job_id}/attempts` и `/jobs/{job_id}/attempts/{attempt_id}/logs`; для длинных логов UI/API используют bounded `/logs/page`.
 
 Ошибки: `404` — ресурс не найден; `400/409` — недопустимая операция/состояние; `503` — БД недоступна.

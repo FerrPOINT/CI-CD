@@ -1,5 +1,15 @@
 # Дата-модель Forge CI/CD
 
+## Retry и подтверждение внешнего выполнения
+
+Для external lease с `runner_id` и `lease_token_hash` активное состояние либо
+`acknowledged_at` без `completion_received_at` блокирует retry с `409`.
+`expired`, административный `canceled` и `completed_at` не заменяют receipt
+аутентифицированного runner. Исторические записи не backfill-ятся.
+Retry блокирует строку pipeline, затем jobs; attempt, изменение проекций и queue
+entry публикуются одной транзакцией. Lease и очередь других выполняющихся jobs
+не закрываются. Новых таблиц и миграций нет.
+
 PostgreSQL shadow source packet хранит отдельный filesystem journal:
 `forge/isolated-postgres-manifest/v1` связывает sealed candidate, exact image,
 system identifier/database, schema/history/rows/sequences fingerprint,
