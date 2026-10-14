@@ -4,7 +4,7 @@ import { GitMerge, RotateCcw, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { usePullRequestAction } from '@/api/hooks'
 import type { PullRequest } from '@/api/types'
-import { ConfirmDialog } from '@/shared/ui/confirm-dialog'
+import { ConfirmDialog } from '@sdlc/ui/ui'
 import { Button } from '@sdlc/ui/ui'
 
 type ConfirmedAction = 'merge' | 'close'
@@ -73,9 +73,9 @@ export function PullRequestActions({ repo, pullRequest, compact = false }: {
         })}
         confirmLabel={pendingAction ? t(`pulls.${pendingAction}`) : ''}
         confirmVariant={pendingAction === 'merge' ? 'default' : 'destructive'}
-        pending={action.isPending}
+        isPending={action.isPending}
         closeOnConfirm={false}
-        onCancel={() => setPendingAction(null)}
+        onOpenChange={(open) => { if (!open) setPendingAction(null) }}
         onConfirm={() => { if (pendingAction) runAction(pendingAction) }}
       />
     </>

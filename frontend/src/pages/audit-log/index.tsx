@@ -5,7 +5,7 @@ import { ChevronLeft, ChevronRight, History, Search, X } from "lucide-react";
 
 import { useAuditLog } from "@/api/hooks";
 import { QueryState } from "@/shared/ui/query-state";
-import { UserAvatar } from "@/shared/ui/user-avatar";
+import { InitialsAvatar as UserAvatar } from "@sdlc/ui/ui";
 import {
   Button,
   Card,

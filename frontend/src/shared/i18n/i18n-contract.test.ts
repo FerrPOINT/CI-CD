@@ -3,6 +3,7 @@ import type { ChangeStatus, PullRequestAction, PullRequestStatus, RunnerStatus, 
 import i18n from './config'
 import en from './locales/en.json'
 import ru from './locales/ru.json'
+import { sdlcLocales } from '@sdlc/ui/i18n'
 
 interface TranslationTree {
   [key: string]: string | TranslationTree
@@ -61,8 +62,19 @@ afterEach(async () => {
 })
 
 describe('i18n contract', () => {
-  it('keeps ru and en translation keys in parity', () => {
-    expect(flatten(localeTrees.ru).keys).toEqual(flatten(localeTrees.en).keys)
+  it('keeps effective product and Base fallback translation keys in parity', () => {
+    const effectiveKeys = (locale: 'ru' | 'en') => [...new Set([
+      ...flatten(localeTrees[locale]).keys,
+      ...flatten(sdlcLocales[locale]).keys,
+    ])].sort()
+    expect(effectiveKeys('ru')).toEqual(effectiveKeys('en'))
+  })
+
+  it('keeps a product override while resolving the other locale from Base', async () => {
+    await i18n.changeLanguage('ru')
+    expect(i18n.t('common.cancel')).toBe(ru.common.cancel)
+    await i18n.changeLanguage('en')
+    expect(i18n.t('common.cancel')).toBe(sdlcLocales.en.common.cancel)
   })
 
   it('does not ship empty values or raw-key fallbacks', () => {

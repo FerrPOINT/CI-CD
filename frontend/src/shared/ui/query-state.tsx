@@ -1,78 +1,19 @@
-// K2/K3: unified query states — loading skeleton, empty state, error (with
-// 403 → ForbiddenPage and 401-expiry handled by the terminal hook).
+import {
+  QueryState as BaseQueryState,
+  type QueryStateProps,
+} from "@sdlc/ui/ui";
+import { ApiError } from "@/api/client";
+import { ForbiddenPage } from "@/pages/forbidden";
 
-import type { ReactNode } from 'react'
-import { useTranslation } from 'react-i18next'
-import { Inbox } from 'lucide-react'
-import { ApiError } from '@/api/client'
-import { ForbiddenPage } from '@/pages/forbidden'
-import { LoadingState, Button } from '@sdlc/ui/ui'
-
-export function QueryState<T>({
-  data,
-  isLoading,
-  error,
-  errorMessage,
-  isEmpty,
-  empty,
-  onRetry,
-  children,
-}: {
-  data: T | undefined
-  isLoading: boolean
-  error: unknown
-  errorMessage?: string
-  isEmpty?: (data: T) => boolean
-  empty?: { title?: string; description?: string }
-  onRetry?: () => void
-  children: (data: T) => ReactNode
-}) {
-  const { t } = useTranslation()
-
-  if (isLoading) { return <LoadingState message={t('common.loading', 'Загрузка')} /> }
-
-  if (error) {
-    if (error instanceof ApiError && error.status === 403) {
-      return <ForbiddenPage />
-    }
-    return (
-      <div
-        className="flex flex-wrap items-center gap-3 rounded-md border border-status-failed/40 bg-surface p-4 text-sm text-text-secondary"
-        role="alert"
-      >
-        <span>
-          {errorMessage ?? (error instanceof Error ? error.message : t('errors.unknown', 'Неизвестная ошибка'))}
-        </span>
-        {onRetry && (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="min-h-10 sm:min-h-10"
-            onClick={onRetry}
-          >
-            {t('common.retry')}
-          </Button>
-        )}
-      </div>
-    )
+/** Forge retains its project-access explanation; all generic query UI belongs to Base. */
+export function QueryState<T>(props: QueryStateProps<T>) {
+  if (
+    !props.isLoading &&
+    props.error &&
+    props.error instanceof ApiError &&
+    props.error.status === 403
+  ) {
+    return <ForbiddenPage />;
   }
-
-  if (data === undefined || data === null) {
-    return <div className="p-4 text-sm text-text-muted">{t('common.noData', 'Нет данных')}</div>
-  }
-
-  if (isEmpty?.(data)) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-2 rounded-md border border-dashed border-border p-8 text-center">
-        <Inbox className="h-8 w-8 text-text-muted" aria-hidden />
-        <p className="text-sm font-medium">{empty?.title ?? t('common.empty', 'Пусто')}</p>
-        {empty?.description && (
-          <p className="max-w-sm text-xs text-text-secondary">{empty.description}</p>
-        )}
-      </div>
-    )
-  }
-
-  return <>{children(data)}</>
+  return <BaseQueryState {...props} />;
 }

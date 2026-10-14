@@ -23,8 +23,8 @@ import { currentSession } from "@/api/auth";
 import type { PullRequest, PullRequestStatus } from "@/api/types";
 import { formatDate } from "@/shared/lib/format";
 import { QueryState } from "@/shared/ui/query-state";
-import { UserAvatar } from "@/shared/ui/user-avatar";
-import { useDebouncedValue } from "@/shared/lib/use-debounced-value";
+import { InitialsAvatar as UserAvatar } from "@sdlc/ui/ui";
+import { useDebouncedValue } from "@sdlc/ui/lib";
 import { Button, Input, Label, Textarea } from "@sdlc/ui/ui";
 import { PullRequestActions } from "./actions";
 

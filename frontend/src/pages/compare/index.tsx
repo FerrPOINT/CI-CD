@@ -10,7 +10,7 @@ import { ChevronRight, FileDiff, GitCompareArrows } from "lucide-react";
 import { useRepositoryComparison, useRepositoryRefs } from "@/api/hooks";
 import type { ChangeStatus, Comparison } from "@/api/types";
 import { QueryState } from "@/shared/ui/query-state";
-import { useDebouncedValue } from "@/shared/lib/use-debounced-value";
+import { useDebouncedValue } from "@sdlc/ui/lib";
 import { Button, Input, Label } from "@sdlc/ui/ui";
 
 const changeStatusStyles: Record<ChangeStatus, string> = {

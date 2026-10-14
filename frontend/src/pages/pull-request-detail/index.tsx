@@ -18,7 +18,7 @@ import type { PullRequest, PullRequestStatus } from "@/api/types";
 import { formatDate } from "@/shared/lib/format";
 import { QueryState } from "@/shared/ui/query-state";
 import { PullRequestActions } from "@/pages/pull-requests/actions";
-import { UserAvatar } from "@/shared/ui/user-avatar";
+import { InitialsAvatar as UserAvatar } from "@sdlc/ui/ui";
 
 export function buildCompareHref(
   pr: Pick<PullRequest, "repository_name" | "source_branch" | "target_branch">,

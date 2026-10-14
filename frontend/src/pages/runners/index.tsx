@@ -11,7 +11,7 @@ import {
   ResourceList,
   ResourceListRow,
 } from "@sdlc/ui/ui";
-import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
+import { ConfirmDialog } from "@sdlc/ui/ui";
 import { QueryState } from "@/shared/ui/query-state";
 
 const pageSize = 20;
@@ -323,9 +323,12 @@ export function RunnersPage() {
             : ""
         }
         description={t("runners.deleteWarning")}
-        pending={deleteRunner.isPending}
+        isPending={deleteRunner.isPending}
         closeOnConfirm={false}
-        onCancel={() => setPendingDelete(null)}
+        onOpenChange={(open) => {
+          if (open) return;
+          setPendingDelete(null);
+        }}
         onConfirm={() => {
           if (!pendingDelete) return;
           deleteRunner.mutate(pendingDelete.id, {
@@ -336,6 +339,8 @@ export function RunnersPage() {
             onError: () => toast.error(t("runners.deleteError")),
           });
         }}
+        confirmLabel={t("common.delete")}
+        pendingLabel={t("common.delete")}
       />
     </div>
   );
