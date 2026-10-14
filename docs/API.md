@@ -1672,6 +1672,12 @@ Retry job и pipeline возвращает `409`, пока внешний runner
 pipeline retry проверяет только свои failed/canceled jobs. Блокировка reservation
 удерживается до commit новой попытки, в порядке reservation → pipeline → jobs.
 
+После рестарта embedded retry дополнительно проверяет protected Compose journal
+своих прежних attempts. До подтверждённого `cleaned` с `stopped=true` job и pipeline
+retry возвращают `409` без новой attempt/queue. Умерший owner не является receipt.
+Неполный/повреждённый journal, symlink или несовпадение owner scope также дают `409`.
+Штатный recovery подтверждает остановку и очистку; сам retry Docker не вызывает.
+
 История попыток хранится в `execution_attempts`. Логическая запись `jobs` остаётся текущей проекцией для pipeline/stage aggregation, а terminal evidence каждой попытки читается через `/jobs/{job_id}/attempts` и `/jobs/{job_id}/attempts/{attempt_id}/logs`; для длинных логов UI/API используют bounded `/logs/page`.
 
 Ошибки: `404` — ресурс не найден; `400/409` — недопустимая операция/состояние; `503` — БД недоступна.

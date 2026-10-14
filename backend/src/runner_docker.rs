@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
     time::Duration,
 };
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use uuid::Uuid;
 
@@ -16,6 +17,89 @@ pub(crate) struct Client {
 }
 fn invalid(message: &str) -> io::Error {
     io::Error::other(message)
+}
+
+/// Retry admission reads existing recovery evidence; it never stops or cleans.
+pub(crate) async fn retry_unconfirmed(job: Uuid, attempt: Uuid) -> io::Result<bool> {
+    let root = PathBuf::from(
+        std::env::var("CICD_RUNNER_WORKSPACE_ROOT").unwrap_or_else(|_| "/workspaces".into()),
+    )
+    .join(".compose-control");
+    retry_unconfirmed_at(
+        &root,
+        job,
+        attempt,
+        &std::env::var("CICD_RUNNER_DOCKER_DAEMON_ID").unwrap_or_default(),
+        &std::env::var("CICD_RUNNER_WORKSPACE_VOLUME").unwrap_or_default(),
+    )
+    .await
+}
+
+async fn retry_unconfirmed_at(
+    root: &Path,
+    job: Uuid,
+    attempt: Uuid,
+    daemon: &str,
+    control_volume: &str,
+) -> io::Result<bool> {
+    let project = format!("sdlc-build-job-{}", attempt.simple());
+    for path in [root.to_path_buf(), root.join(&project)] {
+        match tokio::fs::symlink_metadata(&path).await {
+            // Legacy/shell and preparation failures before any Docker effect
+            // have no Compose journal. Existing directories must be complete.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error),
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+                return Err(invalid("recovery directory ownership is unavailable"));
+            }
+            Ok(_) => {}
+        }
+    }
+    let directory = root.join(&project);
+    let manifest_path = directory.join("compose.json");
+    let journal = recovery_json(&directory.join("journal.json"), 64 * 1024).await?;
+    let manifest = recovery_json(&manifest_path, 1024 * 1024).await?;
+    let labels = &manifest["services"]["transfer"]["labels"];
+    if daemon.is_empty()
+        || control_volume.is_empty()
+        || journal["project"] != project
+        || journal["daemon_id"] != daemon
+        || journal["manifest"].as_str() != manifest_path.to_str()
+        || manifest["name"] != project
+        || labels["sdlc.job"] != job.to_string()
+        || labels["sdlc.attempt"] != attempt.to_string()
+        || labels["sdlc.task"] != format!("job-{job}")
+        || labels["sdlc.purpose"] != "cicd-job"
+        || labels["sdlc.control-volume"] != control_volume
+    {
+        return Err(invalid("recovery journal scope differs from retry"));
+    }
+    if journal["phase"] == "cleaned" {
+        if journal["stopped"] != true {
+            return Err(invalid("cleaned recovery journal has no stop confirmation"));
+        }
+        return Ok(false);
+    }
+    // Owner death and a terminal DB projection do not prove Engine termination.
+    // Only the existing owner reconciliation may publish the cleaned journal.
+    Ok(true)
+}
+
+async fn recovery_json(path: &Path, limit: u64) -> io::Result<Value> {
+    let metadata = tokio::fs::symlink_metadata(path).await?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() || metadata.len() > limit {
+        return Err(invalid("recovery evidence is not a bounded regular file"));
+    }
+    let mut bytes = Vec::new();
+    tokio::fs::File::open(path)
+        .await?
+        .take(limit + 1)
+        .read_to_end(&mut bytes)
+        .await?;
+    if bytes.len() as u64 > limit {
+        return Err(invalid("recovery evidence exceeds its limit"));
+    }
+    serde_json::from_slice(&bytes).map_err(|_| invalid("invalid recovery evidence"))
 }
 
 fn source_provenance_matches(volume: &Value, revision: &str, workspace: &str) -> bool {
@@ -805,6 +889,122 @@ fn compose_job(args: &[String], envs: &[(String, String)]) -> io::Result<Value> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn retry_requires_cleaned_owned_journal_even_after_owner_death() {
+        let root = std::env::temp_dir().join(format!("forge-retry-journal-{}", Uuid::new_v4()));
+        let job = Uuid::new_v4();
+        let attempt = Uuid::new_v4();
+        let project = format!("sdlc-build-job-{}", attempt.simple());
+        let directory = root.join(&project);
+        let manifest_path = directory.join("compose.json");
+        let journal_path = directory.join("journal.json");
+        let daemon = "registered-test-daemon";
+        let control = "owned-control";
+        assert!(
+            !retry_unconfirmed_at(&root, job, attempt, daemon, control)
+                .await
+                .unwrap()
+        );
+        std::fs::create_dir_all(&directory).unwrap();
+        let manifest = json!({"name":project,"services":{"transfer":{"labels":{
+            "sdlc.job":job.to_string(),"sdlc.attempt":attempt.to_string(),
+            "sdlc.task":format!("job-{job}"),"sdlc.purpose":"cicd-job","sdlc.control-volume":control}}}});
+        write_private(&manifest_path, &manifest).unwrap();
+        let mut journal = json!({"project":project,"daemon_id":daemon,"manifest":manifest_path,
+                                 "owner":"4294967295:0","stopped":false});
+        for phase in [
+            "prepared",
+            "execution-started",
+            "cleanup-required",
+            "execution-stopped",
+        ] {
+            journal["phase"] = json!(phase);
+            journal["stopped"] = json!(phase == "execution-stopped");
+            write_private(&journal_path, &journal).unwrap();
+            assert!(
+                retry_unconfirmed_at(&root, job, attempt, daemon, control)
+                    .await
+                    .unwrap(),
+                "owner death or stopped phase {phase} is not completed recovery"
+            );
+        }
+        journal["phase"] = json!("cleaned");
+        journal["stopped"] = json!(true);
+        write_private(&journal_path, &journal).unwrap();
+        assert!(
+            !retry_unconfirmed_at(&root, job, attempt, daemon, control)
+                .await
+                .unwrap()
+        );
+        assert!(
+            retry_unconfirmed_at(&root, Uuid::new_v4(), attempt, daemon, control)
+                .await
+                .is_err(),
+            "foreign job binding must fail closed"
+        );
+        assert!(
+            retry_unconfirmed_at(&root, job, attempt, "foreign-daemon", control)
+                .await
+                .is_err()
+        );
+        assert!(
+            retry_unconfirmed_at(&root, job, attempt, daemon, "foreign-control")
+                .await
+                .is_err()
+        );
+        journal["stopped"] = json!(false);
+        write_private(&journal_path, &journal).unwrap();
+        assert!(
+            retry_unconfirmed_at(&root, job, attempt, daemon, control)
+                .await
+                .is_err(),
+            "cleaned without stopped must fail closed"
+        );
+        std::fs::write(&journal_path, b"{invalid").unwrap();
+        assert!(
+            retry_unconfirmed_at(&root, job, attempt, daemon, control)
+                .await
+                .is_err()
+        );
+        std::fs::write(&journal_path, vec![b' '; 64 * 1024 + 1]).unwrap();
+        assert!(
+            retry_unconfirmed_at(&root, job, attempt, daemon, control)
+                .await
+                .is_err()
+        );
+        std::fs::remove_file(&journal_path).unwrap();
+        assert!(
+            retry_unconfirmed_at(&root, job, attempt, daemon, control)
+                .await
+                .is_err(),
+            "existing incomplete directory is not prelaunch absence"
+        );
+        std::fs::remove_file(&manifest_path).unwrap();
+        std::fs::remove_dir(&directory).unwrap();
+        #[cfg(unix)]
+        {
+            let foreign = root.join("foreign");
+            std::fs::create_dir(&foreign).unwrap();
+            std::fs::write(foreign.join("do-not-touch"), b"foreign").unwrap();
+            std::os::unix::fs::symlink(&foreign, &directory).unwrap();
+            assert!(
+                retry_unconfirmed_at(&root, job, attempt, daemon, control)
+                    .await
+                    .is_err(),
+                "foreign recovery symlink must fail closed"
+            );
+            assert_eq!(
+                std::fs::read(foreign.join("do-not-touch")).unwrap(),
+                b"foreign"
+            );
+            std::fs::remove_file(&directory).unwrap();
+            std::fs::remove_file(foreign.join("do-not-touch")).unwrap();
+            std::fs::remove_dir(foreign).unwrap();
+        }
+        std::fs::remove_dir(root).unwrap();
+    }
+
     #[test]
     fn runner_sources_accept_registered_installations_and_reject_foreign_provenance() {
         let revision = "875cac2edf1a18c3a8a59e2f67256d02a8fc04e4";

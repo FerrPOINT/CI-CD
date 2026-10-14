@@ -18,6 +18,14 @@ reservation → pipeline → jobs. Слоты других jobs сохраняю
 После рестарта существующий Compose journal/reconciliation по-прежнему отвечает
 за подтверждение остановки перед dispatch; новая DB receipt-схема не вводится.
 
+Перед retry API выбирает embedded `job_leases.attempt_id` только для своих
+failed/canceled jobs и читает их существующие protected Compose journals.
+Даже после рестарта API не добавляет attempt или queue entry до `cleaned` и
+`stopped=true`, сверяя job/attempt, daemon, control volume и manifest path.
+Повреждённое/неполное существующее evidence отклоняется с `409`; API не изменяет
+journal и не выполняет Docker-операции под DB locks. Отсутствие legacy/prelaunch
+каталога сохраняет совместимость. Новых таблиц, миграций и backfill нет.
+
 PostgreSQL shadow source packet хранит отдельный filesystem journal:
 `forge/isolated-postgres-manifest/v1` связывает sealed candidate, exact image,
 system identifier/database, schema/history/rows/sequences fingerprint,

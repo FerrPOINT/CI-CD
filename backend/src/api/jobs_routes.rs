@@ -301,6 +301,30 @@ async fn close_retry_leases(
             "previous external runner termination is unconfirmed",
         ));
     }
+    let embedded = sqlx::query_as::<_, (Uuid, Uuid)>(
+        "SELECT l.job_id,l.attempt_id FROM job_leases l JOIN jobs j ON j.id=l.job_id \
+         JOIN stages s ON s.id=j.stage_id WHERE s.pipeline_id=$1 \
+         AND ($2::uuid IS NULL OR l.job_id=$2) AND j.status IN ('failed','canceled') \
+         AND NOT (l.runner_id IS NOT NULL AND l.lease_token_hash IS NOT NULL)",
+    )
+    .bind(pipeline)
+    .bind(job)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(ApiError::internal)?;
+    for (job, attempt) in embedded {
+        let pending = crate::runner_docker::retry_unconfirmed(job, attempt)
+            .await
+            .map_err(|error| {
+                tracing::warn!(%job, %attempt, %error, "embedded retry recovery evidence unavailable");
+                ApiError::conflict("previous embedded execution recovery confirmation is unavailable")
+            })?;
+        if pending {
+            return Err(ApiError::conflict(
+                "previous embedded execution has not completed recovery",
+            ));
+        }
+    }
     sqlx::query(
         "UPDATE job_leases l SET lease_status='canceled',completed_at=COALESCE(l.completed_at,now()), \
          terminal_status='canceled',error_tail=COALESCE(l.error_tail,$3) \
