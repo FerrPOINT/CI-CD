@@ -13,6 +13,8 @@
 
 ## [Unreleased]
 
+- Обычные списки ресурсов используют общий ResourceList Base: отступы, разделители и hover/focus едины; продуктовая сетка и действия сохранены.
+
 - Standalone frontend build проверяет `.base-ui-revision`; SDK pin и legacy fallback сохраняются.
 
 - Логотип оболочки использует общий размер Base 40 px; компактный сайдбар равен высоте хедера (60 px).
