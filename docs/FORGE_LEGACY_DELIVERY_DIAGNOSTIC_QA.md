@@ -4,6 +4,26 @@
 Причина прежнего timeout не установлена: marker/wchan/stack нужны для следующего
 наблюдения, а не для вывода о ресурсах. CLI deadline остаётся 25 секунд.
 
+## Локальная квалификация: 14 октября 2026
+
+Immutable Forge `4525694a1d9b0f70d401087cbc0e6053a78933c3`, Base
+`33ce7042a7617db59285390a67b191e3ae738dbf`, Rust1.88.0, один Cargo worker,
+locked/offline registry и отдельная PG17. SHA задан до compile и при запуске;
+реальная строка `DELIVERY_SOURCE_SHA` совпала с экспортом.
+
+- Compile integration binary: PASS.
+- Три diagnostic unit tests: PASS, без ignored/нулевого выбора.
+- Exact legacy selector: PASS за16.69с. Проверены runner artifact, unavailable,
+  A verified, B health failed с rollback A, C acceptance failed с rollback A,
+  D SIGKILL, readback-only recovery и version-unavailable recovery.
+- Runner exit0; Base ComposeHelper v2 journal `cleaned`, own cleanup verified.
+  Порог30ГиБ сохранён; принятые образы, volumes и runtime не менялись.
+
+Прежний25с timeout не повторился, но его исходная причина не установлена.
+Таймауты и guards не повышались/ослаблялись. Отдельный ранее прошедший HTTP A/B
+не перезапускался, общий workspace/release gate этим узким прогоном не подменяется.
+Это local fixture-backed qualification, не live DevOps/семиролевой acceptance.
+
 ## Источники
 
 - `9948d5e` main содержит diagnostics из worker `019c044` без смысловых отличий.
@@ -74,4 +94,5 @@ symbols. Cmdline, env, kernel addresses, raw journal/reason/commands не чит
 Ровно один owned временный Compose project через Base ComposeHelper v2, 30 GiB
 preflight и finally cleanup собственных ресурсов. Disposable target/cache/tmp
 не смешивать с evidence. Постоянные runtime, snapshots, volumes и images не менять.
-Этот source packet не утверждает Cargo/PG PASS или live acceptance.
+Сам diagnostic source packet не доказывает Cargo/PG PASS: результаты отдельного
+локального прогона и их точная граница перечислены выше. Live acceptance не заявлен.

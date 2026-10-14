@@ -3,7 +3,18 @@
 > **Производный снимок текущего состояния.** Сверяется с кодом и evidence; authority — код и коммит, не этот файл. Обновлять при каждом изменении capability.
 > Снято: `2026-10-11`, candidate `fix/forge-runtime-main-integration-20261011`, не установленный runtime; visual evidence перечислено в `docs/assets/screens/manifest.md`.
 
-## Актуальная hosted qualification: 11 октября 2026
+## Точечная локальная квалификация: 14 октября 2026
+
+На source `4525694` с SDK `33ce7042` проходят compile integration binary,
+три diagnostic units и exact legacy delivery PostgreSQL/CLI scenario. Последний
+подтверждает artifact, health/acceptance failures, rollback и recovery послеSIGKILL;
+прежний25с timeout не повторился, его исходная причина остаётся неизвестной.
+Один временный ComposeHelper v2 project очищен; принятый стенд не менялся.
+[Проверки и границы](FORGE_LEGACY_DELIVERY_DIAGNOSTIC_QA.md#локальная-квалификация-14-октября-2026).
+Это не полный workspace/release gate, установка или live семиролевой сценарий.
+Исторические результаты ниже сохраняют собственные source/scope.
+
+## Историческая hosted qualification: 11 октября 2026
 
 [38144495380/1](https://github.com/FerrPOINT/CI-CD/actions/runs/38144495380),
 controls378566c/source53e935: terminal FAILURE, original strict readback PASS,
