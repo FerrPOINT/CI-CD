@@ -1665,6 +1665,13 @@ Retry job и pipeline возвращает `409`, пока внешний runner
 Конкурентные retry одного job/pipeline создают одну попытку; второй запрос получает
 `409`. Human SSO/PAT и существующий runner completion protocol не меняются.
 
+Для embedded executor retry возвращает `409`, пока worker удерживает reservation
+этой job: подготовка и очистка с PID `0` также учитываются. При неизвестной
+остановке worker сохраняет reservation до reconciliation. Terminal status в БД
+не заменяет освобождение этого слота. Reservation других jobs не блокирует retry;
+pipeline retry проверяет только свои failed/canceled jobs. Блокировка reservation
+удерживается до commit новой попытки, в порядке reservation → pipeline → jobs.
+
 История попыток хранится в `execution_attempts`. Логическая запись `jobs` остаётся текущей проекцией для pipeline/stage aggregation, а terminal evidence каждой попытки читается через `/jobs/{job_id}/attempts` и `/jobs/{job_id}/attempts/{attempt_id}/logs`; для длинных логов UI/API используют bounded `/logs/page`.
 
 Ошибки: `404` — ресурс не найден; `400/409` — недопустимая операция/состояние; `503` — БД недоступна.

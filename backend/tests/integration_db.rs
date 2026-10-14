@@ -126,6 +126,14 @@ async fn authenticated_app_with_git(
     pool: sqlx::PgPool,
     git: cicd::git_host::GitConfig,
 ) -> axum::Router {
+    authenticated_app_with_running(pool, git, None).await
+}
+
+async fn authenticated_app_with_running(
+    pool: sqlx::PgPool,
+    git: cicd::git_host::GitConfig,
+    running: Option<cicd::runner::RunningJobs>,
+) -> axum::Router {
     let user_id = Uuid::new_v4();
     let username = format!("it-api-user-{}", user_id.simple());
     let password = "IntegrationPass1!";
@@ -142,11 +150,11 @@ async fn authenticated_app_with_git(
         .await
         .expect("insert API test credential");
 
-    let app = cicd::api::app_with_git_and_auth_secret(
-        Some(pool),
-        git,
-        Some(format!("api-test-secret-{user_id}")),
-    );
+    let config = cicd::config::RuntimeConfig::from_env_for_app()
+        .expect("valid integration config")
+        .with_auth_secret(Some(format!("api-test-secret-{user_id}")));
+    let app = cicd::api::app_with_git_and_config(Some(pool), git, running, config)
+        .expect("build authenticated integration router");
     let token = login_access_token(app.clone(), &username, password).await;
     let authorization = axum::http::HeaderValue::from_str(&format!("Bearer {token}"))
         .expect("valid API test token");
@@ -3971,6 +3979,135 @@ async fn job_retry_preserves_attempt_logs_and_appends_to_new_attempt() {
     );
 
     fixture_cleanup::projects(&pool).await;
+}
+
+#[tokio::test]
+async fn retry_waits_for_embedded_execution_reservation_release() {
+    let pool = test_pool().await;
+    let running: cicd::runner::RunningJobs = Default::default();
+    let app = authenticated_app_with_running(
+        pool.clone(),
+        cicd::git_host::GitConfig::default(),
+        Some(running.clone()),
+    )
+    .await;
+    for endpoint in ["job", "pipeline"] {
+        let project = Uuid::new_v4();
+        let pipeline = Uuid::new_v4();
+        let stage = Uuid::new_v4();
+        let job = Uuid::new_v4();
+        let sibling = Uuid::new_v4();
+        let attempt = Uuid::new_v4();
+        let lease = Uuid::new_v4();
+        sqlx::query("INSERT INTO projects(id,name,repository_url) VALUES($1,$2,'https://example.invalid/retry.git')")
+            .bind(project).bind(format!("embedded-retry-{project}"))
+            .execute(&pool).await.expect("insert project");
+        sqlx::query("INSERT INTO pipelines(id,project_id,git_ref,status,finished_at) VALUES($1,$2,'main','failed',now())")
+            .bind(pipeline).bind(project).execute(&pool).await.expect("insert pipeline");
+        sqlx::query("INSERT INTO stages(id,pipeline_id,name,position,status) VALUES($1,$2,'build',0,'failed')")
+            .bind(stage).bind(pipeline).execute(&pool).await.expect("insert stage");
+        for (id, position, status) in [(job, 0, "canceled"), (sibling, 1, "running")] {
+            sqlx::query("INSERT INTO jobs(id,stage_id,name,image,command,position,status) VALUES($1,$2,$3,'alpine:3.21','true',$4,$5)")
+                .bind(id).bind(stage).bind(format!("job-{id}")).bind(position).bind(status)
+                .execute(&pool).await.expect("insert job");
+        }
+        sqlx::query("INSERT INTO execution_attempts(id,job_id,attempt_no,status,trigger,finished_at) VALUES($1,$2,1,'canceled','initial',now())")
+            .bind(attempt).bind(job).execute(&pool).await.expect("insert canceled attempt");
+        sqlx::query("INSERT INTO job_leases(id,job_id,attempt_id,runner_name,lease_status,generation,lease_expires_at,completed_at,terminal_status) VALUES($1,$2,$3,'embedded','canceled',1,now(),now(),'canceled')")
+            .bind(lease).bind(job).bind(attempt).execute(&pool).await.expect("insert closed embedded lease");
+        let original_lease: serde_json::Value =
+            sqlx::query_scalar("SELECT to_jsonb(l) FROM job_leases l WHERE id=$1")
+                .bind(lease)
+                .fetch_one(&pool)
+                .await
+                .expect("read original lease");
+        let path = if endpoint == "job" {
+            format!("/api/v1/jobs/{job}/retry")
+        } else {
+            format!("/api/v1/pipelines/{pipeline}/retry")
+        };
+        running.lock().await.insert(sibling, 5678);
+        // Zero covers preparation/cleanup; a PID covers running or unknown stop.
+        for pid in [0, 1234] {
+            running.lock().await.insert(job, pid);
+            let response = app
+                .clone()
+                .oneshot(Request::post(&path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::CONFLICT,
+                "{endpoint}: embedded reservation {pid} must block retry"
+            );
+            let counts: (i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM execution_attempts WHERE job_id=$1),(SELECT count(*) FROM job_queue WHERE job_id=$1)")
+                .bind(job).fetch_one(&pool).await.expect("read retry effects");
+            assert_eq!(
+                counts,
+                (1, 0),
+                "denied retry must not append or enqueue an attempt"
+            );
+            let status: String = sqlx::query_scalar("SELECT status FROM jobs WHERE id=$1")
+                .bind(job)
+                .fetch_one(&pool)
+                .await
+                .expect("read original status");
+            assert_eq!(status, "canceled");
+            let unchanged_lease: serde_json::Value =
+                sqlx::query_scalar("SELECT to_jsonb(l) FROM job_leases l WHERE id=$1")
+                    .bind(lease)
+                    .fetch_one(&pool)
+                    .await
+                    .expect("read retained lease");
+            assert_eq!(unchanged_lease, original_lease);
+        }
+        running.lock().await.remove(&job);
+        // Hold the pipeline row to prove retry keeps the reservation mutex
+        // while waiting for its DB publication, matching cancellation's order.
+        let mut fence = pool.begin().await.expect("hold pipeline publication");
+        sqlx::query("SELECT id FROM pipelines WHERE id=$1 FOR UPDATE")
+            .bind(pipeline)
+            .execute(&mut *fence)
+            .await
+            .expect("lock pipeline");
+        let response = tokio::spawn(
+            app.clone()
+                .oneshot(Request::post(&path).body(Body::empty()).unwrap()),
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if running.try_lock().is_err() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("retry must acquire reservation mutex before pipeline lock");
+        assert!(!response.is_finished(), "publication is still fenced");
+        fence.commit().await.expect("release pipeline publication");
+        let response = tokio::time::timeout(std::time::Duration::from_secs(5), response)
+            .await
+            .expect("retry completes after publication fence release")
+            .expect("retry task")
+            .expect("retry response");
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "unrelated running job must not block retry"
+        );
+        let counts: (i64, i64) = sqlx::query_as("SELECT (SELECT count(*) FROM execution_attempts WHERE job_id=$1),(SELECT count(*) FROM job_queue WHERE job_id=$1 AND state='queued')")
+            .bind(job).fetch_one(&pool).await.expect("read accepted retry effects");
+        assert_eq!(counts, (2, 1));
+        assert_eq!(running.lock().await.get(&sibling), Some(&5678));
+        let sibling_status: String = sqlx::query_scalar("SELECT status FROM jobs WHERE id=$1")
+            .bind(sibling)
+            .fetch_one(&pool)
+            .await
+            .expect("read sibling status");
+        assert_eq!(sibling_status, "running");
+        running.lock().await.remove(&sibling);
+    }
 }
 
 #[tokio::test]
