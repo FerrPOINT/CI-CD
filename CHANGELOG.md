@@ -13,6 +13,8 @@
 
 ## [Unreleased]
 
+- CI принимает образы с точным SHA-256 digest в defaults и jobs, включая legacy-конфигурации; некорректные digest по-прежнему отклоняются до запуска pipeline.
+
 - Обычные списки ресурсов используют общий ResourceList Base: отступы, разделители и hover/focus едины; продуктовая сетка и действия сохранены.
 
 - Standalone frontend build проверяет `.base-ui-revision`; SDK pin и legacy fallback сохраняются.

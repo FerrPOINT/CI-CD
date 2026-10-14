@@ -1184,10 +1184,26 @@ fn validate_ci_stages(stages: &[CiStage]) -> Result<(), String> {
 }
 
 fn is_safe_image_reference(image: &str) -> bool {
-    !image.is_empty()
-        && !image.starts_with('.')
-        && !image.contains("..")
-        && image.chars().all(|character| {
+    let name = match image.split_once('@') {
+        Some((name, digest)) => {
+            let Some(hash) = digest.strip_prefix("sha256:") else {
+                return false;
+            };
+            if hash.len() != 64
+                || !hash
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+            {
+                return false;
+            }
+            name
+        }
+        None => image,
+    };
+    !name.is_empty()
+        && !name.starts_with('.')
+        && !name.contains("..")
+        && name.chars().all(|character| {
             character.is_ascii_alphanumeric() || matches!(character, '/' | ':' | '.' | '_' | '-')
         })
 }
@@ -1807,6 +1823,57 @@ jobs:
         assert_eq!(first.plan["dependencies"][0]["to"], "test");
         assert_eq!(first.plan["dependencies"][1]["from"], "test");
         assert_eq!(first.plan["dependencies"][1]["to"], "package");
+    }
+
+    #[test]
+    fn pipeline_accepts_sha256_image_pins() {
+        let digest = format!("sha256:{}", "a1".repeat(32));
+        let default_image = format!("alpine@{digest}");
+        let job_image = format!("registry.example:5000/team/build:stable@{digest}");
+        for (source, expected) in [
+            (
+                format!(
+                    "version: 1\ndefaults:\n  image: {default_image}\njobs:\n  build:\n    commands: [echo build]\n"
+                ),
+                &default_image,
+            ),
+            (
+                format!(
+                    "version: 1\ndefaults:\n  image: {default_image}\njobs:\n  build:\n    image: {job_image}\n    commands: [echo build]\n"
+                ),
+                &job_image,
+            ),
+            (
+                format!(
+                    "stages:\n  - name: build\n    jobs:\n      - name: build\n        image: {job_image}\n        command: echo build\n"
+                ),
+                &job_image,
+            ),
+        ] {
+            let parsed = parse_pipeline_config(Some(&source)).expect("valid SHA-256 image pin");
+            assert_eq!(&parsed.stages[0].jobs[0].image, expected);
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_image_digest() {
+        for image in [
+            "alpine@sha256:".to_owned(),
+            format!("alpine@sha256:{}", "a".repeat(63)),
+            format!("alpine@sha256:{}", "a".repeat(65)),
+            format!("alpine@sha256:{}", "g".repeat(64)),
+            format!("@sha256:{}", "a".repeat(64)),
+            format!("../alpine@sha256:{}", "a".repeat(64)),
+            format!("alpine;echo@sha256:{}", "a".repeat(64)),
+            format!("alpine@sha256:{}@sha256:{}", "a".repeat(64), "a".repeat(64)),
+            format!("alpine@sha512:{}", "a".repeat(64)),
+        ] {
+            assert!(!is_safe_image_reference(&image), "{image}");
+            let source = format!(
+                "version: 1\ndefaults:\n  image: '{image}'\njobs:\n  build:\n    commands: [echo build]\n"
+            );
+            assert!(parse_pipeline_config(Some(&source)).is_err(), "{image}");
+        }
     }
 
     #[test]
