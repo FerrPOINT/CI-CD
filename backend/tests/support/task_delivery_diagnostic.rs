@@ -2,6 +2,40 @@
 use serde_json::{Value, json};
 use std::{fs, io::Read, os::unix::fs::OpenOptionsExt, path::Path, time::UNIX_EPOCH};
 
+fn canonical_sha(value: &str) -> bool {
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn source_binding<'a>(
+    compiled: Option<&'a str>,
+    expected: Option<&str>,
+) -> Result<Option<&'a str>, &'static str> {
+    match (compiled, expected) {
+        // Ordinary developer runs remain unqualified, not falsely SHA-bound.
+        (None, None) => Ok(None),
+        (Some(source), Some(expected)) if canonical_sha(source) && source == expected => {
+            Ok(Some(source))
+        }
+        _ => Err("Forge diagnostic compile/run source binding differs"),
+    }
+}
+
+pub(super) fn assert_source_binding() {
+    let expected = match std::env::var("FORGE_SOURCE_SHA") {
+        Ok(value) => Some(value),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(std::env::VarError::NotUnicode(_)) => {
+            panic!("FORGE_SOURCE_SHA must be canonical UTF-8")
+        }
+    };
+    let source = source_binding(option_env!("FORGE_SOURCE_SHA"), expected.as_deref())
+        .expect("Forge legacy QA requires the same source SHA during compilation and execution");
+    eprintln!("DELIVERY_SOURCE_SHA={}", json!(source));
+}
+
 // File state: 0 missing, 1 regular, 2 invalid type/path, 3 unavailable, 4 oversized.
 fn metadata(path: &Path) -> Value {
     match fs::symlink_metadata(path) {
@@ -191,16 +225,35 @@ pub(super) fn emit(root: &Path, digest: &str, pid: Option<u32>) {
             markers[name] = metadata(&controls.join(name));
         }
     }
-    let source = option_env!("FORGE_SOURCE_SHA").filter(|s| {
-        s.len() == 40
-            && s.bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-    });
+    let source = option_env!("FORGE_SOURCE_SHA").filter(|s| canonical_sha(s));
     eprintln!(
         "DELIVERY_TIMEOUT_STATE={}",
         json!({"sourceSha":source,
         "operation":operation(root,digest),"markers":markers,"child":process})
     );
+}
+
+#[test]
+fn delivery_timeout_source_binding_rejects_runtime_only_stale_and_malformed_sha() {
+    let sha = "a".repeat(40);
+    let other = "b".repeat(40);
+    assert_eq!(
+        source_binding(Some(&sha), Some(&sha)),
+        Ok(Some(sha.as_str()))
+    );
+    assert_eq!(source_binding(None, None), Ok(None));
+    for (compiled, expected) in [
+        (None, Some(sha.as_str())),
+        (Some(sha.as_str()), None),
+        (Some(sha.as_str()), Some(other.as_str())),
+        (Some("a7f9183"), Some("a7f9183")),
+        (Some(""), Some("")),
+    ] {
+        assert!(source_binding(compiled, expected).is_err());
+    }
+    for invalid in ["A".repeat(40), "g".repeat(40), "a".repeat(41)] {
+        assert!(source_binding(Some(&invalid), Some(&invalid)).is_err());
+    }
 }
 
 #[test]

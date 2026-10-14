@@ -735,6 +735,7 @@ async fn task_bound_http_delivery_uses_live_devops_and_preserves_rollback_and_re
 #[cfg(unix)]
 #[tokio::test]
 async fn sdlc_task_delivery_actual_versions_health_acceptance_rollback_and_crash_recovery() {
+    timeout_diagnostic::assert_source_binding();
     let mut t = ActualDelivery::new().await;
     let (a, original_a) = t.build("A", "version=A\nhealth=ok\nacceptance=ok\n").await;
     let mut missing = a.clone();
