@@ -6,6 +6,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "task_delivery_diagnostic.rs"]
+mod timeout_diagnostic;
+
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -379,20 +382,16 @@ impl ActualDelivery {
             .stderr(std::process::Stdio::piped())
             .spawn()
             .unwrap();
+        let pid = process.id();
         let mut wait = tokio::spawn(async move { process.wait_with_output().await.unwrap() });
         let output = match tokio::time::timeout(Duration::from_secs(25), &mut wait).await {
             Ok(result) => result.unwrap(),
             Err(_) => {
-                type LockDiagnostic = (i32, String, Option<String>, Vec<i32>, String);
-                let locks: Vec<LockDiagnostic> = sqlx::query_as("SELECT pid,state,wait_event,pg_blocking_pids(pid),left(query,160) FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() ORDER BY pid LIMIT 20").fetch_all(&self.f.pool).await.unwrap();
-                eprintln!(
-                    "DELIVERY_TIMEOUT key={} locks={locks:?}",
-                    command.operation_key
+                timeout_diagnostic::emit(
+                    &self.target_root,
+                    &hash(command.operation_key.as_bytes()),
+                    pid,
                 );
-                let files = std::fs::read_dir(&self.target_root)
-                    .ok()
-                    .map(|entries| entries.flatten().map(|e| e.file_name()).collect::<Vec<_>>());
-                eprintln!("DELIVERY_TARGET_FILES={files:?}");
                 wait.abort();
                 panic!("owner local CLI exceeded deadline");
             }
