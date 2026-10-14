@@ -1,16 +1,22 @@
-import { useState } from 'react'
-import { Button, Input, NamespaceLink as Link } from '@sdlc/ui/ui'
-import { useConfigurations } from '@/api/workspaces'
+import { useState } from "react";
+import {
+  Button,
+  Input,
+  NamespaceLink as Link,
+  ResourceList,
+  ResourceListRow,
+} from "@sdlc/ui/ui";
+import { useConfigurations } from "@/api/workspaces";
 export function DeliveryConfigurationsPage() {
-  const [offset, setOffset] = useState(0)
-  const [search, setSearch] = useState('')
-  const configs = useConfigurations(undefined, offset, search)
+  const [offset, setOffset] = useState(0);
+  const [search, setSearch] = useState("");
+  const configs = useConfigurations(undefined, offset, search);
   return (
     <div className="space-y-5">
       <h1 className="text-2xl font-semibold">Непривязанные CI-конфигурации</h1>
       <p className="text-text-muted">
-        Существующие настройки и история сохранены. Подключите конфигурацию на странице нужного
-        репозитория.
+        Существующие настройки и история сохранены. Подключите конфигурацию на
+        странице нужного репозитория.
       </p>
       <Input
         className="max-w-md"
@@ -18,8 +24,8 @@ export function DeliveryConfigurationsPage() {
         placeholder="Поиск конфигураций…"
         value={search}
         onChange={(event) => {
-          setSearch(event.target.value)
-          setOffset(0)
+          setSearch(event.target.value);
+          setOffset(0);
         }}
       />
       {configs.isPending ? (
@@ -27,19 +33,32 @@ export function DeliveryConfigurationsPage() {
       ) : configs.isError ? (
         <p role="alert">Конфигурации недоступны.</p>
       ) : (
-        <ul className="divide-y divide-border rounded-lg border border-border bg-surface">
-          {configs.data.items.map((config) => (
-            <li key={config.id} className="p-4">
-              <Link className="text-accent" to={`/delivery-configs/${config.id}/pipelines`}>
-                {config.name}
-              </Link>
-              <p className="break-all text-sm text-text-muted">{config.repository_url}</p>
-            </li>
-          ))}
-          {!configs.data.total && (
-            <li className="p-4 text-text-muted">Все конфигурации подключены.</li>
-          )}
-        </ul>
+        <ResourceList asChild variant="bordered" density="comfortable">
+          <ul>
+            {configs.data.items.map((config) => (
+              <ResourceListRow asChild key={config.id}>
+                <li>
+                  <Link
+                    className="text-accent"
+                    to={`/delivery-configs/${config.id}/pipelines`}
+                  >
+                    {config.name}
+                  </Link>
+                  <p className="break-all text-sm text-text-muted">
+                    {config.repository_url}
+                  </p>
+                </li>
+              </ResourceListRow>
+            ))}
+            {!configs.data.total && (
+              <ResourceListRow asChild>
+                <li className="text-text-muted">
+                  Все конфигурации подключены.
+                </li>
+              </ResourceListRow>
+            )}
+          </ul>
+        </ResourceList>
       )}
       <div className="flex gap-2">
         <Button
@@ -58,5 +77,5 @@ export function DeliveryConfigurationsPage() {
         </Button>
       </div>
     </div>
-  )
+  );
 }
