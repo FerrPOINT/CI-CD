@@ -14,7 +14,7 @@ vi.mock('@sdlc/ui/sso', async (importOriginal) => ({
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
     i18n: { language: 'ru' },
-    t: (key: string, fallback?: string | object) => typeof fallback === 'string' ? fallback : key,
+    t: (key: string, fallback?: string | { defaultValue?: string }) => typeof fallback === 'string' ? fallback : fallback?.defaultValue ?? key,
   }),
 }))
 
@@ -107,7 +107,7 @@ const routeCases = [
   { entry: `/projects/${projectId}/reports`, marker: '75' },
   { entry: '/audit-log', marker: 'project.created' },
   { entry: '/users', marker: 'Открыть пользователей' },
-  { entry: '/login', marker: 'Войти через SDLC' },
+  { entry: '/login', marker: 'Войти через SSO' },
 ] as const
 
 afterEach(() => {

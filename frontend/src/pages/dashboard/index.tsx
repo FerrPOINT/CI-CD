@@ -1,4 +1,4 @@
-import { LoadingState } from '@sdlc/ui/ui'
+import { LoadingState, PageHeader } from '@sdlc/ui/ui'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import type { components } from '@/api/schema'
@@ -17,7 +17,10 @@ export function DashboardPage() {
   })
   return (
     <div className="space-y-5">
-      <h1 className="text-2xl font-semibold">CI/CD</h1>
+      <PageHeader title="CI/CD" context={<>
+        <p>Показатели относятся к подключённым проектам.</p>
+        <p className="flex flex-wrap gap-3"><Link to="/repositories" className="text-accent underline">Все репозитории</Link><Link to="/delivery-configs" className="text-accent underline">Все CI-конфигурации</Link></p>
+      </>} />
       {summary.isPending ? (
         <LoadingState message="Загружаем сводку…" />
       ) : summary.isError ? (
