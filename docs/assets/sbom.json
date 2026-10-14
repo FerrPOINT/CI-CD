@@ -4,7 +4,7 @@
   "serialNumber": "urn:uuid:00000000-0000-0000-0000-000000000000",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-07T15:01:03Z",
+    "timestamp": "2026-10-14T13:44:43Z",
     "component": {
       "type": "application",
       "name": "forge-ci-cd",
@@ -2481,54 +2481,6 @@
       "version": "1.0.23",
       "purl": "pkg:cargo/zmij@1.0.23",
       "license": "unknown"
-    },
-    {
-      "type": "library",
-      "name": "@radix-ui/react-alert-dialog",
-      "version": "1.1.13",
-      "purl": "pkg:npm/@radix-ui/react-alert-dialog@1.1.13",
-      "license": "unknown",
-      "scope": "required"
-    },
-    {
-      "type": "library",
-      "name": "@radix-ui/react-dialog",
-      "version": "1.1.13",
-      "purl": "pkg:npm/@radix-ui/react-dialog@1.1.13",
-      "license": "unknown",
-      "scope": "required"
-    },
-    {
-      "type": "library",
-      "name": "@radix-ui/react-dropdown-menu",
-      "version": "2.1.14",
-      "purl": "pkg:npm/@radix-ui/react-dropdown-menu@2.1.14",
-      "license": "unknown",
-      "scope": "required"
-    },
-    {
-      "type": "library",
-      "name": "@radix-ui/react-label",
-      "version": "2.1.6",
-      "purl": "pkg:npm/@radix-ui/react-label@2.1.6",
-      "license": "unknown",
-      "scope": "required"
-    },
-    {
-      "type": "library",
-      "name": "@radix-ui/react-slot",
-      "version": "1.2.2",
-      "purl": "pkg:npm/@radix-ui/react-slot@1.2.2",
-      "license": "unknown",
-      "scope": "required"
-    },
-    {
-      "type": "library",
-      "name": "@radix-ui/react-tabs",
-      "version": "1.1.11",
-      "purl": "pkg:npm/@radix-ui/react-tabs@1.1.11",
-      "license": "unknown",
-      "scope": "required"
     },
     {
       "type": "library",
