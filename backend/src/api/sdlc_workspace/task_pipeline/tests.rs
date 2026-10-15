@@ -180,9 +180,11 @@ async fn tracker_transport_is_readonly_bounded_and_spent_time_is_not_renewed() {
     let (intent, mut value) = fixture(WorkspaceRole::Developer, "Development");
     value["receipt"]["lease"]["expires_at"] = json!(Utc::now() + chrono::Duration::milliseconds(5));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let mut config = SdlcWorkspaceConfig::default();
-    config.tracker_read_url = Some(format!("http://{}", listener.local_addr().unwrap()));
-    config.tracker_read_token = Some("fixture-reader".into());
+    let config = SdlcWorkspaceConfig {
+        tracker_read_url: Some(format!("http://{}", listener.local_addr().unwrap())),
+        tracker_read_token: Some("fixture-reader".into()),
+        ..Default::default()
+    };
     let path = format!("/api/v1/issues/{}/sdlc/lifecycle", intent.binding.task_id);
     let app = Router::new().route(
         &path,
