@@ -8,7 +8,8 @@ deterministic exact-candidate проверок.
 Проверить no-change, один компонент, dependency/toolchain change и corrupt output;
 измерить duration и cache hit/miss. Сохранять прогретые caches и чистить own scratch.
 
-Docker frontend: раздельные unit/compile stages, проверка unit перед compilation;
+Docker frontend: раздельные unit/compile stages, unit/static перед compilation;
+TypeScript проверяется один раз в обязательном unit stage; compile запускает Vite.
 production COPY исключает тесты. Frozen dependencies сохраняют общий совместимый
 pnpm download store. Dockerfile syntax 1.19 и parent digests закреплены.
 Runtime и package build scripts сохраняют прежние публичные команды.
