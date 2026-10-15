@@ -31,8 +31,6 @@ pub(crate) struct TaskTriggerPipeline {
     path="/api/v1/projects/{project_id}/pipelines",
     tag="pipelines",
     request_body=TaskTriggerPipeline,
-    tag="pipelines",
-    request_body=TaskTriggerPipeline,
     params(
         ("project_id"=Uuid, Path),
         ("Idempotency-Key" = Option<Uuid>, Header, description = "Optional UUID idempotency key for retry-safe pipeline trigger")
