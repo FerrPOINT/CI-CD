@@ -3,7 +3,10 @@
 Owner-local OCI CLI поддерживает preloaded immutable image и read-only data
 snapshot без migrations/restore. Actual container/mount/network, served manifest,
 schema/bytes compatibility и application acceptance отделены от desired Compose
-state. [ADR-0021](adr/0021-owner-local-oci-readonly-data.md); OCI HTTP dispatch закрыт.
+state. [ADR-0021](adr/0021-owner-local-oci-readonly-data.md) сохраняет local CLI scope.
+Новый opt-in HTTP OCI source adapter использует текущую task authority и existing
+executor: [ADR-0026](adr/0026-task-bound-oci-owner-target.md). Компиляция, actual
+OCI qualification и установка ещё не подтверждены; Static остаётся default.
 [Сквозные проекты и CI-конфигурации](adr/0024-workspace-projects-delivery-configurations.md): Tracker владеет именем и ключом проекта; Forge хранит проверенную локальную проекцию, Git-группу, репозитории и выполнение. Старый `project_id` остаётся ID CI-конфигурации.
 
 Target интеграция автономного SDLC: [delivery receipts v1](SDLC_DELIVERY_V1.md).
