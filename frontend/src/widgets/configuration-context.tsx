@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { Fragment, type ReactNode } from 'react'
 import { useParams, useLocation } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -148,7 +148,7 @@ export function ConfigurationContext({
           ))}
         </SectionNavigation>
       )}
-      {children}
+      <Fragment key={projectId}>{children}</Fragment>
     </div>
   )
 }
