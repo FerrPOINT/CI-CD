@@ -68,6 +68,18 @@ RUN case "${TARGETARCH:-amd64}" in \
  && rm /tmp/docker-compose \
  && docker compose version
 
+# Official Buildx v0.37.2 release checksums; daemon access stays in the backend.
+ARG BUILDX_VERSION=0.37.2
+RUN case "${TARGETARCH:-amd64}" in \
+      amd64) buildx_arch=amd64; buildx_sha=982ca20490b45ed1ec8d99795974d3d874a358f75938c9c237305010e6b7e548 ;; \
+      arm64) buildx_arch=arm64; buildx_sha=efa38cb7aa7db2dbb9ad049b00b0a9737f66f033626177b5a4e845184ad7ab29 ;; \
+      *) exit 1 ;; esac \
+ && curl -fsSL "https://github.com/docker/buildx/releases/download/v${BUILDX_VERSION}/buildx-v${BUILDX_VERSION}.linux-${buildx_arch}" -o /tmp/docker-buildx \
+ && echo "${buildx_sha}  /tmp/docker-buildx" | sha256sum -c - \
+ && install -m 0755 /tmp/docker-buildx /usr/local/lib/docker/cli-plugins/docker-buildx \
+ && rm /tmp/docker-buildx \
+ && docker buildx version
+
 WORKDIR /app
 COPY --from=build /app/target/release/cicd-server /usr/local/bin/cicd-server
 COPY --from=build /app/target/release/forge-runner /usr/local/bin/forge-runner
