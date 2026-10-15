@@ -24,6 +24,34 @@ use std::{
 };
 use uuid::Uuid;
 
+#[derive(Serialize, utoipa::ToSchema)]
+#[serde(untagged)]
+pub enum TaskDeliveryReadback {
+    Static(DeliveryReadback),
+    Oci(oci::Readback),
+}
+
+async fn task_environment(
+    connection: &mut sqlx::PgConnection,
+    project: Uuid,
+    policy: &probes::TaskExecutionPolicy,
+) -> Result<(), crate::api::ApiError> {
+    use crate::api::ApiError;
+    let environment = sqlx::query_as::<_, (Uuid, bool, i32)>(
+        "SELECT project_id,protected,required_approvals FROM environments WHERE id=$1 FOR SHARE",
+    )
+    .bind(policy.environment_id)
+    .fetch_optional(connection)
+    .await
+    .map_err(ApiError::internal)?;
+    if environment != Some((project, false, 0)) {
+        return Err(ApiError::conflict(
+            "Task target чужой, защищён или требует approval",
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct TargetOwner {
@@ -704,13 +732,13 @@ pub async fn local_command(
 }
 
 /// Task-only nonproduction delivery. Generic deployment approval/rollback policy is unchanged.
-#[utoipa::path(post,path="/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations",operation_id="reject_sdlc_delivery",tag="SDLC workspace",params(("project_id"=Uuid,Path),("operation_key"=String,Path)),request_body=DeliveryCommand,responses((status=200,body=DeliveryReadback),(status=503,description="Owner task target or Tracker readback unavailable"),(status=400),(status=401),(status=403),(status=404),(status=409)))]
+#[utoipa::path(post,path="/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations",operation_id="reject_sdlc_delivery",tag="SDLC workspace",params(("project_id"=Uuid,Path),("operation_key"=String,Path)),request_body=DeliveryCommand,responses((status=200,body=TaskDeliveryReadback),(status=503,description="Owner task target or Tracker readback unavailable"),(status=400),(status=401),(status=403),(status=404),(status=409)))]
 pub(crate) async fn execute_task_delivery(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<crate::auth::AccessClaims>,
     ApiPath((project, key)): ApiPath<(Uuid, String)>,
     Json(command): Json<DeliveryCommand>,
-) -> Result<Json<DeliveryReadback>, crate::api::ApiError> {
+) -> Result<Json<TaskDeliveryReadback>, crate::api::ApiError> {
     use crate::api::ApiError;
     command.validate().map_err(ApiError::bad_request)?;
     if command.workspace_operation_key != key {
@@ -734,24 +762,19 @@ pub(crate) async fn execute_task_delivery(
         .task_fence
         .as_ref()
         .ok_or_else(|| ApiError::service_unavailable("Нужен текущий task delivery fence"))?;
+    if state.config.sdlc_workspace.local_delivery_kind == crate::config::LocalDeliveryKind::Oci {
+        let result =
+            oci::execute_task(state.clone(), &claims, &mut tx, project, &command, original).await?;
+        tx.commit().await.map_err(ApiError::internal)?;
+        return Ok(Json(TaskDeliveryReadback::Oci(result)));
+    }
     // No HTTP enrollment: the owner must already have published this target/policy.
     let target = configured_target(&state, project, false)
         .map_err(|_| ApiError::service_unavailable("Опубликованный owner target недоступен"))?;
     let policy = target.policy.task_execution.as_ref().ok_or_else(|| {
         ApiError::service_unavailable("Nonproduction task delivery policy недоступна")
     })?;
-    let environment = sqlx::query_as::<_, (Uuid, bool, i32)>(
-        "SELECT project_id,protected,required_approvals FROM environments WHERE id=$1 FOR SHARE",
-    )
-    .bind(policy.environment_id)
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(ApiError::internal)?;
-    if environment != Some((project, false, 0)) {
-        return Err(ApiError::conflict(
-            "Task target чужой, защищён или требует approval",
-        ));
-    }
+    task_environment(&mut tx, project, policy).await?;
     let existing = operation_dir(&target.root, &command.operation_key).exists();
     // Completed original-key replay needs no new lease and cannot repeat publication.
     if existing {
@@ -760,7 +783,7 @@ pub(crate) async fn execute_task_delivery(
             .map_err(|_| ApiError::conflict("Исходный delivery journal не совпадает"))?;
         if !readback.reconciliation_needed {
             tx.commit().await.map_err(ApiError::internal)?;
-            return Ok(Json(readback));
+            return Ok(Json(TaskDeliveryReadback::Static(readback)));
         }
     }
     crate::repository_catalog::require_project_writable(
@@ -800,16 +823,16 @@ pub(crate) async fn execute_task_delivery(
             ApiError::conflict("Delivery удерживается; перед повтором прочитайте original key")
         })?;
     tx.commit().await.map_err(ApiError::internal)?;
-    Ok(Json(result))
+    Ok(Json(TaskDeliveryReadback::Static(result)))
 }
 
-#[utoipa::path(get,path="/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations/{delivery_key}",tag="SDLC workspace",params(("project_id"=Uuid,Path),("operation_key"=String,Path),("delivery_key"=String,Path),("requestHash"=String,Query),("taskId"=Uuid,Query),("rootTaskId"=Uuid,Query),("assignmentId"=Uuid,Query),("executionId"=Uuid,Query),("fencingToken"=i64,Query)),responses((status=200,body=DeliveryReadback),(status=400),(status=401),(status=403),(status=404),(status=409),(status=503)))]
+#[utoipa::path(get,path="/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations/{delivery_key}",tag="SDLC workspace",params(("project_id"=Uuid,Path),("operation_key"=String,Path),("delivery_key"=String,Path),("requestHash"=String,Query),("taskId"=Uuid,Query),("rootTaskId"=Uuid,Query),("assignmentId"=Uuid,Query),("executionId"=Uuid,Query),("fencingToken"=i64,Query)),responses((status=200,body=TaskDeliveryReadback),(status=400),(status=401),(status=403),(status=404),(status=409),(status=503)))]
 pub(crate) async fn get_local_delivery(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<crate::auth::AccessClaims>,
     ApiPath((project, key, delivery_key)): ApiPath<(Uuid, String, String)>,
     Query(expected): Query<WorkspaceOperationLookup>,
-) -> Result<Json<DeliveryReadback>, crate::api::ApiError> {
+) -> Result<Json<TaskDeliveryReadback>, crate::api::ApiError> {
     use crate::api::ApiError;
     let mut tx = state
         .pool
@@ -824,8 +847,6 @@ pub(crate) async fn get_local_delivery(
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found_named("workspace operation"))?;
     sdlc_workspace::verify_lookup(&original, &expected)?;
-    let target = configured_target(&state, project, false)
-        .map_err(|_| ApiError::service_unavailable("owner local delivery target unavailable"))?;
     if delivery_key.is_empty()
         || delivery_key.len() > 128
         || !delivery_key
@@ -834,6 +855,13 @@ pub(crate) async fn get_local_delivery(
     {
         return Err(ApiError::bad_request("invalid delivery key"));
     }
+    if state.config.sdlc_workspace.local_delivery_kind == crate::config::LocalDeliveryKind::Oci {
+        let result = oci::read_task(&state, project, &key, &delivery_key, &original)?;
+        tx.commit().await.map_err(ApiError::internal)?;
+        return Ok(Json(TaskDeliveryReadback::Oci(result)));
+    }
+    let target = configured_target(&state, project, false)
+        .map_err(|_| ApiError::service_unavailable("owner local delivery target unavailable"))?;
     let path = operation_dir(&target.root, &delivery_key).join("intent.json");
     let intent = optional::<Intent>(&path)
         .map_err(|_| ApiError::conflict("owner delivery journal unavailable or inconsistent"))?
@@ -847,5 +875,5 @@ pub(crate) async fn get_local_delivery(
         .readback(&intent.receipt.command, &original)
         .map_err(|_| ApiError::conflict("original delivery journal mismatch"))?;
     tx.commit().await.map_err(ApiError::internal)?;
-    Ok(Json(result))
+    Ok(Json(TaskDeliveryReadback::Static(result)))
 }

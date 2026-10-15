@@ -50,7 +50,31 @@ Source checks не заменяют реальные PostgreSQL/runner/artifact 
 ## Task-bound Nonproduction Delivery
 
 **Source candidate2026-10-13, runtime/PG ещё не квалифицированы.** Existing delivery
-POST подключён к прежнему static-manifest executor только для заранее опубликованного
+Серверный `CICD_LOCAL_DELIVERY_KIND` выбирает `static` (также default при отсутствии)
+или `oci`; пустое, неизвестное значение, пробелы и другой регистр отклоняются.
+Selector не принимается от агента. `DeliveryCommand` и original hashes не меняются.
+Те же POST/GET возвращают untagged server-local `TaskDeliveryReadback`: прежний
+`DeliveryReadback` либо OCI readback; static JSON shape сохраняется без wrapper.
+
+OCI HTTP использует существующие `CICD_LOCAL_DELIVERY_ROOT/POLICY`, где policy имеет
+прежний OCI формат и `checks.taskExecution`. Target должен быть заранее enrolled
+owner-операцией с тем же project/policy hash; HTTP не создаёт target. Local CLI
+продолжает использовать `CICD_LOCAL_OCI_ROOT/POLICY`, local-verification и отвергать
+taskFence. Его historical receipts остаются owner_local_verification/dispatchAllowed=false.
+
+Task OCI повторно проверяет SAT/project/environment/Tracker перед pointer publication,
+Compose и reconciliation publication. Receipt schema `forge/local-oci-operation/v1`,
+scope `task_nonproduction_delivery`, dispatchAllowed=true, sdlcAcceptanceVerified=false.
+Это не business stage completion. Сохраняются exact daemon/Compose ownership,
+immutable image+commit, original-key CAS/unknown hold/no-redispatch и confirmed rollback.
+GET читает только оригинальный task receipt и ничего не запускает/renew-ит.
+
+OCI ограничения не расширены: Linux, approved temporary owned Compose project,
+одна application, port8000, readonly manifest/data snapshot, no migrations,
+реальные version/health/acceptance/compatibility и container/mount/image readbacks.
+Это source candidate; compile/PG/actual OCI qualification и generated OpenAPI pending.
+
+Static POST подключён к прежнему static-manifest executor только для заранее опубликованного
 owner target: `taskExecution.environment=nonproduction`, exact environment/repository,
 Tracker instance/project и lease holder. Окружение должно принадлежать Forge project,
 иметь `protected=false` и `required_approvals=0`. Generic Maintainer approval/rollback
