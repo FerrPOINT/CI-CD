@@ -1221,6 +1221,7 @@ async fn claim_next_work(
              LEFT JOIN repository_catalog rc ON rc.id=pr.repository_id \
              LEFT JOIN git_groups gg ON gg.id=rc.group_id \
              WHERE q.state = 'queued' \
+                AND NOT EXISTS(SELECT 1 FROM task_pipeline_intents ti WHERE ti.pipeline_id=p.id) \
                AND NOT EXISTS(SELECT 1 FROM repository_catalog nr JOIN forge_namespace_bindings nb ON nb.resource_id=nr.group_id WHERE nr.id=pr.repository_id AND nb.state<>'active') \
                AND q.not_before <= now() \
                AND q.required_tags <@ $8::text[] \

@@ -6,6 +6,8 @@ mod candidate_evidence;
 #[cfg(unix)]
 #[path = "task_delivery.rs"]
 mod task_delivery;
+#[path = "task_pipeline.rs"]
+mod task_pipeline;
 
 struct Fixture {
     pool: sqlx::PgPool,

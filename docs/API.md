@@ -1,5 +1,51 @@
 # API v1 Specification — Forge CI/CD
 
+## Task Pipeline Workspace (Source Candidate)
+
+Optional `task_intent` у прежнего `POST /api/v1/projects/{project_id}/pipelines`
+принимает typed `TaskWorkspaceIntent`: `operationKey`, `binding` (прежний
+`WorkspaceTaskBinding`), `repositoryId`, exact `sourceCommit`, technical `role`,
+`agentId`, `trackerLeaseId`, `holderSubject`, `expectedLeaseVersion`.
+Поля intent используют camelCase; прежние `git_ref` и `variables` не меняются.
+Runner lease/attempt/generation/workspace ID и готовый receipt не принимаются.
+Legacy без intent сохраняет прежний trigger/fingerprint/response.
+
+Task branch требует явный original UUID `Idempotency-Key`, dedicated project SAT
+и совпадение опубликованного Tracker project/namespace/repository mapping.
+Свежий серверный Tracker reader проверяет текущий role assignment, native binding
+и live lease; monotonic heartbeat version допустим только при том же tuple/fence.
+Нужен exact SHA с repository `.forge-ci.yml`, без legacy template/manual/tagged
+external jobs. Embedded runner обязателен. External poll не получает task jobs.
+
+Embedded runner сохраняет настоящий preparation request до Git IO; повторное
+наблюдение не клонирует заново. Receipt записывается до job command и cleanup.
+Перед spawn ещё раз проверяются authority и оригинальный submission CAS.
+Повторная/неопределённая submission удерживается, не запускается и не становится
+фиктивным terminal. Это не новая queue, Tracker claim или writable admission.
+
+`GET /api/v1/projects/{project_id}/pipelines/{pipeline_id}/task-workspace`
+с `api:read` того же dedicated service-account subject возвращает `null`, если
+original receipt ещё не записан, иначе exact `WorkspaceOperationReceipt`.
+Readback исторический: не требует живого Tracker lease, не повторяет Git/command
+и не выдаёт runner credential. Чужой project/subject отвергается.
+Прежние workspace/candidate/delivery endpoints принимают полученный original
+key/hash/binding; receipt остаётся blocked, `dispatchAllowed=false`.
+Candidate требует реальные completion ACKs, repository plan и artifact bytes;
+task delivery отдельно проверяет current DevOps fence/owner policy/health.
+
+CLI source candidate:
+
+```sh
+cicd-cli pipeline run --project "$FORGE_PROJECT" --git-ref "$SOURCE_SHA" \
+  --idempotency-key "$ORIGINAL_PIPELINE_KEY" --task-intent intent.json
+cicd-cli pipeline task-workspace --project "$FORGE_PROJECT" --id "$PIPELINE_ID"
+```
+
+Не выбирать новый key после unknown; не заимствовать runner lease credentials.
+Требуются MAIN-owned additive journal migration/OpenAPI registration и новая
+квалификация CLI/server; это не утверждение о доступности установленного image.
+Source checks не заменяют реальные PostgreSQL/runner/artifact tests.
+
 ## Task-bound Nonproduction Delivery
 
 **Source candidate2026-10-13, runtime/PG ещё не квалифицированы.** Existing delivery

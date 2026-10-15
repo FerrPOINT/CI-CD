@@ -3,7 +3,7 @@ mod files;
 pub mod oci;
 pub mod postgres;
 mod probes;
-mod tracker;
+pub(crate) mod tracker;
 use crate::{
     api::{AppState, sdlc_workspace},
     domain::{sdlc_workspace::*, task_delivery::*},

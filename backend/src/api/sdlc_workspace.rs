@@ -10,8 +10,14 @@ use sha2::{Digest, Sha256};
 use std::{sync::Arc, time::Duration};
 use uuid::Uuid;
 
+pub(crate) mod task_pipeline;
+
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
+        .route(
+            "/api/v1/projects/{project_id}/pipelines/{pipeline_id}/task-workspace",
+            get(task_pipeline::read_receipt),
+        )
         .route(
             "/api/v1/projects/{project_id}/sdlc/workspace-operations",
             post(prepare_workspace_operation),

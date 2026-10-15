@@ -51,6 +51,7 @@ pub struct RuntimeRunnerConfig {
     pub shared_sources_volume: Option<String>,
     pub artifacts: ArtifactsConfig,
     pub secrets: SecretsConfig,
+    pub sdlc_workspace: crate::config::SdlcWorkspaceConfig,
 }
 
 impl RuntimeRunnerConfig {
@@ -66,6 +67,7 @@ impl RuntimeRunnerConfig {
             shared_sources_volume: config.runner.shared_sources_volume.clone(),
             artifacts: config.artifacts.clone(),
             secrets: config.secrets.clone(),
+            sdlc_workspace: config.sdlc_workspace.clone(),
         }
     }
 
@@ -958,6 +960,18 @@ async fn run_job_inner(
     };
     let attempt_id = lease.attempt_id;
 
+    if !matches!(
+        crate::api::sdlc_workspace::task_pipeline::already_submitted(
+            &pool,
+            job.pipeline_id,
+            attempt_id,
+        )
+        .await,
+        Ok(false)
+    ) {
+        return Ok(ExecutionOutcome::Held);
+    }
+
     let owned_workspace = prepare_workspace(&pool, &job, &lease, config).await?;
     let workspace = owned_workspace.checkout().to_path_buf();
 
@@ -1120,6 +1134,20 @@ async fn run_job_inner(
         cmd
     };
 
+    let task_until = crate::api::sdlc_workspace::task_pipeline::before_spawn(
+        &pool,
+        job.pipeline_id,
+        attempt_id,
+        &config.sdlc_workspace,
+    )
+    .await;
+    let task_until = match task_until {
+        Err(_) | Ok(crate::api::sdlc_workspace::task_pipeline::Spawn::Held) => {
+            return Ok(ExecutionOutcome::Held);
+        }
+        Ok(crate::api::sdlc_workspace::task_pipeline::Spawn::Legacy) => None,
+        Ok(crate::api::sdlc_workspace::task_pipeline::Spawn::Permit(until)) => Some(until),
+    };
     let mut guard = running.lock().await;
     let active: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM execution_attempts a JOIN job_leases l ON l.attempt_id=a.id \
@@ -1142,6 +1170,9 @@ async fn run_job_inner(
             config.keep_workspace,
         )
         .await);
+    }
+    if task_until.is_some_and(|until| std::time::Instant::now() >= until) {
+        return Ok(ExecutionOutcome::Held);
     }
     let mut child = child
         .spawn()
@@ -1389,6 +1420,13 @@ async fn finish_workspace_retention(
             tracing::warn!(attempt_id = %lease.attempt_id, "workspace completion journal unavailable; files retained");
             return ExecutionOutcome::Held;
         }
+        // Only this embedded owner has observed and journaled actual terminal completion.
+        // Keep generic/external completion semantics unchanged.
+        if sqlx::query("UPDATE job_leases l SET acknowledged_at=COALESCE(l.acknowledged_at,clock_timestamp()),completion_received_at=COALESCE(l.completion_received_at,clock_timestamp()) WHERE l.id=$1 AND l.runner_id IS NULL AND EXISTS(SELECT 1 FROM jobs j JOIN stages s ON s.id=j.stage_id JOIN task_pipeline_intents t ON t.pipeline_id=s.pipeline_id WHERE j.id=l.job_id)")
+            .bind(lease.id).execute(pool).await.is_err()
+        {
+            return ExecutionOutcome::Held;
+        }
         if let Some(remote) = remote_job {
             if let Err(error) = remote.cleanup(pool).await {
                 tracing::warn!(attempt_id = %lease.attempt_id, %error, "acknowledged Compose resources retained; dispatch held");
@@ -1606,6 +1644,20 @@ async fn prepare_workspace(
     lease: &EmbeddedJobLease,
     config: &RuntimeRunnerConfig,
 ) -> Result<crate::runner_workspace::OwnedWorkspace, ApiError> {
+    if let Some(workspace) = crate::api::sdlc_workspace::task_pipeline::prepare(
+        pool,
+        job.pipeline_id,
+        job.id,
+        lease.id,
+        lease.attempt_id,
+        lease.generation,
+        config,
+        &workspace_root(config),
+    )
+    .await?
+    {
+        return Ok(workspace);
+    }
     let repo_url =
         crate::repository_catalog::checkout_url_for_project(pool, job.project_id).await?;
 

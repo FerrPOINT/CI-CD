@@ -218,6 +218,41 @@ async fn get(client: &reqwest::Client, url: reqwest::Url, token: &str) -> Result
     serde_json::from_slice(&bytes).map_err(|_| unavailable())
 }
 
+/// Existing server-only reader. Returns the request start time, not a renewed receipt clock.
+pub(crate) async fn read_lifecycle(
+    config: &crate::config::SdlcWorkspaceConfig,
+    task: uuid::Uuid,
+) -> Result<(Instant, Value), ApiError> {
+    let unavailable = || ApiError::service_unavailable("Tracker lifecycle недоступен");
+    let mut url = reqwest::Url::parse(config.tracker_read_url.as_deref().ok_or_else(unavailable)?)
+        .map_err(|_| unavailable())?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(unavailable());
+    }
+    let token = config
+        .tracker_read_token
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(unavailable)?;
+    url.set_path(&format!("/api/v1/issues/{task}/sdlc/lifecycle"));
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .retry(reqwest::retry::never())
+        .timeout(Duration::from_secs(3))
+        .build()
+        .map_err(|_| unavailable())?;
+    let start = Instant::now();
+    Ok((start, get(&client, url, token).await?))
+}
+
 pub(super) async fn read(
     state: &AppState,
     policy: &TaskExecutionPolicy,
