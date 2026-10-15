@@ -152,9 +152,43 @@ async fn task_pipeline_original_custody_cas_receipt_locator_and_cleanup_are_reta
             .unwrap()
     );
     drop(conn);
-    let other = Fixture::new().await;
-    let (status, _) = call(&f.app, "GET", &url, &other.read_token, String::new()).await;
+    // Another Fixture owns a different search_path: seed this foreign principal
+    // in the router's schema so the request exercises authorization, not 401.
+    let foreign_project = Uuid::new_v4();
+    let foreign_subject = Uuid::new_v4();
+    let foreign_token_id = Uuid::new_v4();
+    let foreign_token = format!("forge_sat_{}", Uuid::new_v4().simple());
+    sqlx::query("INSERT INTO projects(id,name,repository_url) VALUES($1,$2,$3)")
+        .bind(foreign_project)
+        .bind(format!("foreign-{foreign_project}"))
+        .bind(format!("https://forge.invalid/git/{foreign_project}.git"))
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO service_accounts(id,name) VALUES($1,$2)")
+        .bind(foreign_subject)
+        .bind(format!("foreign-{foreign_subject}"))
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO api_tokens(id,name,token_hash,token_hint,project_id,scopes,principal_type,service_account_id,expires_at) VALUES($1,'foreign-workspace',$2,'qa-only',$3,ARRAY['api:read'],'service_account',$4,now()+interval '5 minutes')")
+        .bind(foreign_token_id).bind(cicd::auth::hash_token(&foreign_token))
+        .bind(foreign_project).bind(foreign_subject).execute(&f.pool).await.unwrap();
+    let (status, _) = call(&f.app, "GET", &url, &foreign_token, String::new()).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+    let authenticated: bool =
+        sqlx::query_scalar("SELECT last_used_at IS NOT NULL FROM api_tokens WHERE id=$1")
+            .bind(foreign_token_id)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert!(
+        authenticated,
+        "foreign token must pass bearer authentication"
+    );
+    let unknown_token = format!("forge_sat_{}", Uuid::new_v4().simple());
+    let (status, _) = call(&f.app, "GET", &url, &unknown_token, String::new()).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     physical.owned.record_completion("success").unwrap();
     physical.owned.acknowledge_completion("success").unwrap();
     cicd::runner_workspace::OwnedWorkspace::reopen(
