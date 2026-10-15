@@ -13,8 +13,10 @@ import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 import traceback
+import types
 from pathlib import Path
 from urllib.parse import quote
 from urllib.request import Request, HTTPRedirectHandler, ProxyHandler, build_opener
@@ -186,7 +188,15 @@ class Owner:
         self.args = argparse.Namespace(project=self.project, project_directory=plain(p['composeRoot']),
             compose_file=[plain(p['composeFile'])], env_file=[], layout='legacy',
             _docker=['/usr/local/bin/docker'], _daemon_id=p['daemonId'])
-        sys.path.insert(0, str(plain(p['baseRoot'])))
+        base_root = plain(p['baseRoot'])
+        # -B prevents cache writes, but still reads existing unchecked bytecode.
+        self.import_cache = tempfile.TemporaryDirectory(prefix='forge-pg-source-')
+        sys.pycache_prefix = self.import_cache.name
+        sys.path.insert(0, str(base_root))
+        # Base scripts is a namespace, not an executable unpinned package or module.
+        namespace = types.ModuleType('scripts')
+        namespace.__path__ = [str(base_root / 'scripts')]
+        sys.modules['scripts'] = namespace
         from scripts import platform_backup, platform_postgres
         self.base, self.pg = platform_backup, platform_postgres
         require(Path(self.base.__file__).resolve().is_relative_to(Path(p['baseRoot']).resolve()), 'pinned_utility_import_mismatch')

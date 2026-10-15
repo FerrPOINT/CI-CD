@@ -15,6 +15,9 @@
 
 ## [Unreleased]
 
+- PostgreSQL delivery загружает закреплённый namespace Base напрямую:
+  посторонние `scripts.py`, `scripts/__init__.py` и сохранённый bytecode не
+  подменяют проверенный helper-код. SQL, credentials и HTTP-контракты не меняются.
 - Frontend Dev использует OIDC client ID и API backend из workspace-профиля:
   dev callback больше не отправляется с production client ID, а Vite proxy не
   игнорирует адрес собственного backend.
