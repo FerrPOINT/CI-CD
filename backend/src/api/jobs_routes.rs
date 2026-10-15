@@ -8,7 +8,7 @@ use axum::Json;
 use axum::extract::{Path, State};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sqlx::{FromRow, PgPool};
+use sqlx::{FromRow, PgConnection, PgPool};
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
@@ -190,25 +190,46 @@ pub(crate) async fn retry_pipeline(
     Path(pipeline_id): Path<Uuid>,
 ) -> ApiResult<RetriedPipelineResult> {
     let pool = pool(&state)?;
-    let status = sqlx::query_scalar::<_, String>("SELECT status FROM pipelines WHERE id = $1")
-        .bind(pipeline_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(ApiError::internal)?
-        .ok_or_else(ApiError::not_found)?;
+    // Match cancellation's lock order and retain the reservation fence until
+    // publication commits. A terminal DB status alone does not prove exit.
+    let running = match state.running_jobs.as_ref() {
+        Some(running) => Some(running.lock().await),
+        None => None,
+    };
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+    let status =
+        sqlx::query_scalar::<_, String>("SELECT status FROM pipelines WHERE id = $1 FOR UPDATE")
+            .bind(pipeline_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(ApiError::internal)?
+            .ok_or_else(ApiError::not_found)?;
     if status != "failed" && status != "canceled" {
         return Err(ApiError::conflict(
             "only failed or canceled pipelines can be retried",
         ));
     }
-    crate::runner::force_cancel_active_leases_for_pipeline(
-        pool,
+    let jobs = sqlx::query_as::<_, (Uuid, String)>("SELECT j.id,j.status FROM jobs j JOIN stages s ON s.id=j.stage_id WHERE s.pipeline_id=$1 ORDER BY j.id FOR UPDATE OF j")
+        .bind(pipeline_id)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    if jobs.iter().any(|(id, status)| {
+        matches!(status.as_str(), "failed" | "canceled")
+            && running.as_ref().is_some_and(|jobs| jobs.contains_key(id))
+    }) {
+        return Err(ApiError::conflict(
+            "previous embedded execution has not released its reservation",
+        ));
+    }
+    close_retry_leases(
+        &mut tx,
         pipeline_id,
+        None,
         "pipeline retry superseded canceled lease",
     )
-    .await
-    .map_err(ApiError::internal)?;
-    sqlx::query(
+    .await?;
+    let attempts = sqlx::query_as::<_, (Uuid, Uuid)>(
         "WITH retry_jobs AS ( \
              SELECT j.id \
              FROM jobs j JOIN stages s ON s.id = j.stage_id \
@@ -219,50 +240,145 @@ pub(crate) async fn retry_pipeline(
              GROUP BY r.id \
          ) \
          INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) \
-         SELECT gen_random_uuid(), job_id, attempt_no, 'queued', 'pipeline_retry' FROM nexts",
+         SELECT gen_random_uuid(), job_id, attempt_no, 'queued', 'pipeline_retry' FROM nexts RETURNING job_id,id",
     )
     .bind(pipeline_id)
-    .execute(pool)
+    .fetch_all(&mut *tx)
     .await
     .map_err(ApiError::internal)?;
     sqlx::query(
         "UPDATE jobs SET status = 'queued', started_at = NULL, finished_at = NULL WHERE status IN ('failed','canceled') AND stage_id IN (SELECT id FROM stages WHERE pipeline_id = $1)",
     )
     .bind(pipeline_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(ApiError::internal)?;
     sqlx::query(
         "UPDATE stages SET status = 'queued' WHERE status IN ('failed','canceled') AND pipeline_id = $1",
     )
     .bind(pipeline_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(ApiError::internal)?;
     sqlx::query(
         "UPDATE pipelines SET status = 'queued', started_at = NULL, finished_at = NULL WHERE id = $1",
     )
     .bind(pipeline_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(ApiError::internal)?;
-    crate::store::enqueue_missing_ready_jobs(pool)
-        .await
-        .map_err(ApiError::internal)?;
+    for (job, attempt) in attempts {
+        crate::store::enqueue_job_attempt_tx(&mut tx, job, attempt)
+            .await
+            .map_err(ApiError::internal)?;
+    }
+    tx.commit().await.map_err(ApiError::internal)?;
+    crate::dispatch_signal::notify_runner_work_available();
     Ok(Json(RetriedPipelineResult {
         retried: pipeline_id,
     }))
 }
 
-#[utoipa::path(post, path="/api/v1/jobs/{job_id}/retry", tag="jobs", params(("job_id"=Uuid, Path)), responses((status=200, body=Job), (status=404)))]
+async fn close_retry_leases(
+    connection: &mut PgConnection,
+    pipeline: Uuid,
+    job: Option<Uuid>,
+    reason: &str,
+) -> Result<(), ApiError> {
+    let unconfirmed: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM job_leases l JOIN jobs j ON j.id=l.job_id JOIN stages s ON s.id=j.stage_id \
+         WHERE s.pipeline_id=$1 AND ($2::uuid IS NULL OR l.job_id=$2) \
+         AND l.runner_id IS NOT NULL AND l.lease_token_hash IS NOT NULL \
+         AND (l.lease_status='active' OR (l.acknowledged_at IS NOT NULL AND l.completion_received_at IS NULL)))",
+    )
+    .bind(pipeline)
+    .bind(job)
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(ApiError::internal)?;
+    if unconfirmed {
+        return Err(ApiError::conflict(
+            "previous external runner termination is unconfirmed",
+        ));
+    }
+    let embedded = sqlx::query_as::<_, (Uuid, Uuid)>(
+        "SELECT l.job_id,l.attempt_id FROM job_leases l JOIN jobs j ON j.id=l.job_id \
+         JOIN stages s ON s.id=j.stage_id WHERE s.pipeline_id=$1 \
+         AND ($2::uuid IS NULL OR l.job_id=$2) AND j.status IN ('failed','canceled') \
+         AND NOT (l.runner_id IS NOT NULL AND l.lease_token_hash IS NOT NULL)",
+    )
+    .bind(pipeline)
+    .bind(job)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(ApiError::internal)?;
+    for (job, attempt) in embedded {
+        let pending = crate::runner_docker::retry_unconfirmed(job, attempt)
+            .await
+            .map_err(|error| {
+                tracing::warn!(%job, %attempt, %error, "embedded retry recovery evidence unavailable");
+                ApiError::conflict("previous embedded execution recovery confirmation is unavailable")
+            })?;
+        if pending {
+            return Err(ApiError::conflict(
+                "previous embedded execution has not completed recovery",
+            ));
+        }
+    }
+    sqlx::query(
+        "UPDATE job_leases l SET lease_status='canceled',completed_at=COALESCE(l.completed_at,now()), \
+         terminal_status='canceled',error_tail=COALESCE(l.error_tail,$3) \
+         FROM jobs j JOIN stages s ON s.id=j.stage_id WHERE l.job_id=j.id AND s.pipeline_id=$1 \
+         AND ($2::uuid IS NULL OR l.job_id=$2) AND j.status IN ('failed','canceled') AND l.lease_status='active'",
+    )
+    .bind(pipeline)
+    .bind(job)
+    .bind(reason)
+    .execute(&mut *connection)
+    .await
+    .map_err(ApiError::internal)?;
+    sqlx::query(
+        "UPDATE job_queue q SET state='canceled',completed_at=COALESCE(q.completed_at,now()),updated_at=now() \
+         FROM jobs j JOIN stages s ON s.id=j.stage_id WHERE q.job_id=j.id AND s.pipeline_id=$1 \
+         AND ($2::uuid IS NULL OR q.job_id=$2) AND j.status IN ('failed','canceled') AND q.state IN ('queued','leased')",
+    )
+    .bind(pipeline)
+    .bind(job)
+    .execute(&mut *connection)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(())
+}
+
+#[utoipa::path(post, path="/api/v1/jobs/{job_id}/retry", tag="jobs", params(("job_id"=Uuid, Path)), responses((status=200, body=Job), (status=404), (status=409)))]
 pub(crate) async fn retry_job(
     State(state): State<Arc<AppState>>,
     Path(job_id): Path<Uuid>,
 ) -> ApiResult<Job> {
     let pool = pool(&state)?;
-    let job = sqlx::query_as::<_, Job>("SELECT id, stage_id, name, image, command, required_tags, required_secrets, artifact_paths, position, status, started_at, finished_at FROM jobs WHERE id = $1")
+    // The embedded worker keeps this reservation through stop and cleanup,
+    // including preparation (PID zero) and uncertain process termination.
+    let running = match state.running_jobs.as_ref() {
+        Some(running) => Some(running.lock().await),
+        None => None,
+    };
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+    let pipeline = sqlx::query_scalar::<_, Uuid>(
+        "SELECT s.pipeline_id FROM jobs j JOIN stages s ON s.id=j.stage_id WHERE j.id=$1",
+    )
+    .bind(job_id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)?;
+    sqlx::query("SELECT id FROM pipelines WHERE id=$1 FOR UPDATE")
+        .bind(pipeline)
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    let job = sqlx::query_as::<_, Job>("SELECT id, stage_id, name, image, command, required_tags, required_secrets, artifact_paths, position, status, started_at, finished_at FROM jobs WHERE id = $1 FOR UPDATE")
         .bind(job_id)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(ApiError::not_found)?;
@@ -271,44 +387,54 @@ pub(crate) async fn retry_job(
             "only failed or canceled jobs can be retried",
         ));
     }
-    crate::runner::complete_active_lease_for_job(
-        pool,
-        job_id,
-        "canceled",
-        Some("job retry superseded canceled lease"),
+    if running
+        .as_ref()
+        .is_some_and(|jobs| jobs.contains_key(&job_id))
+    {
+        return Err(ApiError::conflict(
+            "previous embedded execution has not released its reservation",
+        ));
+    }
+    close_retry_leases(
+        &mut tx,
+        pipeline,
+        Some(job_id),
+        "job retry superseded canceled lease",
     )
-    .await
-    .map_err(ApiError::internal)?;
+    .await?;
+    let attempt_id = Uuid::new_v4();
     sqlx::query(
         "INSERT INTO execution_attempts (id, job_id, attempt_no, status, trigger) \
          SELECT $2, $1, COALESCE(MAX(attempt_no), 0) + 1, 'queued', 'job_retry' \
          FROM execution_attempts WHERE job_id = $1",
     )
     .bind(job_id)
-    .bind(Uuid::new_v4())
-    .execute(pool)
+    .bind(attempt_id)
+    .execute(&mut *tx)
     .await
     .map_err(ApiError::internal)?;
     let updated = sqlx::query_as::<_, Job>("UPDATE jobs SET status = 'queued', started_at = NULL, finished_at = NULL WHERE id = $1 RETURNING id, stage_id, name, image, command, required_tags, required_secrets, artifact_paths, position, status, started_at, finished_at")
         .bind(job_id)
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(ApiError::internal)?;
     sqlx::query(
         "UPDATE stages SET status = 'queued' WHERE id = $1 AND status IN ('failed','canceled')",
     )
     .bind(job.stage_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(ApiError::internal)?;
     sqlx::query("UPDATE pipelines SET status = 'running', finished_at = NULL WHERE id = (SELECT pipeline_id FROM stages WHERE id = $1) AND status IN ('failed','canceled')")
         .bind(job.stage_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await
         .map_err(ApiError::internal)?;
-    crate::store::enqueue_current_job_attempt(pool, job_id)
+    crate::store::enqueue_job_attempt_tx(&mut tx, job_id, attempt_id)
         .await
         .map_err(ApiError::internal)?;
+    tx.commit().await.map_err(ApiError::internal)?;
+    crate::dispatch_signal::notify_runner_work_available();
     Ok(Json(updated))
 }
 
