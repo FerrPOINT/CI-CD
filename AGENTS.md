@@ -81,3 +81,9 @@ sdlc1, sdlc2 и sdlc-common; временные sdlc-qa-/sdlc-build- имеют 
 labels и общий prune запрещены. Rootless runner проверяет TLS и daemon ID без
 Desktop fallback. Pulse — приватный Git/pipeline только в CI/CD sdlc1.
 Подробности: [Compose runner](docs/COMPOSE_RUNNER.md).
+
+## Термины PDLC и общие компоненты
+
+Перед изменением платформенных имён прочитайте [интеграцию с Base](docs/PDLC_BASE_INTEGRATION.md) и канонические TERMS/BRANDING.
+Для UI: `pnpm --dir frontend exec pdlc-ui search "задача"` → `show ExportName` → один нужный `example`. В Workflow SSR используйте штатный exporter Base.
+Не переносите продуктовые запросы, DTO и права в общий UI. SDK/UI/skills pins независимы; новое имя платформы не меняет SDLC IDs/scopes или Hermes upstream.

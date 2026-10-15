@@ -9,6 +9,40 @@ use tokio::{
 
 pub const GUARD_KEY: i64 = 0x464f524745504744;
 
+// Pin transitive Python policy imports together with their privileged callers.
+const BASE_PG_HELPERS: [(&str, &[u8]); 5] = [
+    (
+        "platform_backup.py",
+        include_bytes!("../../../../services-base/scripts/platform_backup.py"),
+    ),
+    (
+        "platform_postgres.py",
+        include_bytes!("../../../../services-base/scripts/platform_postgres.py"),
+    ),
+    (
+        "compose_helpers.py",
+        include_bytes!("../../../../services-base/scripts/compose_helpers.py"),
+    ),
+    (
+        "platform_namespace.py",
+        include_bytes!("../../../../services-base/scripts/platform_namespace.py"),
+    ),
+    (
+        "_platform_namespace_contract.py",
+        include_bytes!("../../../../services-base/scripts/_platform_namespace_contract.py"),
+    ),
+];
+
+fn verify_base_utilities(base_root: &Path) -> anyhow::Result<()> {
+    for (name, bytes) in BASE_PG_HELPERS {
+        ensure!(
+            read_bytes(&base_root.join("scripts").join(name), 256 * 1024)? == bytes,
+            "pinned Base utility differs"
+        );
+    }
+    Ok(())
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Schema {
@@ -239,25 +273,7 @@ pub async fn local_command(
             == include_bytes!("../../../scripts/postgres-delivery.py"),
         "coordinator source differs from compiled owner implementation"
     );
-    for (name, bytes) in [
-        (
-            "platform_backup.py",
-            include_bytes!("../../../../services-base/scripts/platform_backup.py").as_slice(),
-        ),
-        (
-            "platform_postgres.py",
-            include_bytes!("../../../../services-base/scripts/platform_postgres.py").as_slice(),
-        ),
-        (
-            "compose_helpers.py",
-            include_bytes!("../../../../services-base/scripts/compose_helpers.py").as_slice(),
-        ),
-    ] {
-        ensure!(
-            read_bytes(&policy.base_root.join("scripts").join(name), 256 * 1024)? == bytes,
-            "pinned Base utility differs"
-        );
-    }
+    verify_base_utilities(&policy.base_root)?;
     let policy_hash = sha(&serde_json::to_vec(&policy)?);
     let candidate = if !read_only
         && !reconcile
@@ -385,4 +401,37 @@ pub async fn local_command(
     );
     tx.commit().await?;
     Ok(value)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn namespace_policy_imports_cannot_change_independently_of_the_pinned_callers() {
+        struct Fixture(PathBuf);
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                std::fs::remove_dir_all(&self.0).unwrap();
+            }
+        }
+        let root =
+            Fixture(std::env::temp_dir().join(format!("forge-base-helpers-{}", Uuid::new_v4())));
+        std::fs::create_dir_all(root.0.join("scripts")).unwrap();
+        for (name, bytes) in BASE_PG_HELPERS {
+            std::fs::write(root.0.join("scripts").join(name), bytes).unwrap();
+        }
+        verify_base_utilities(&root.0).unwrap();
+        for name in ["platform_namespace.py", "_platform_namespace_contract.py"] {
+            let path = root.0.join("scripts").join(name);
+            let original = std::fs::read(&path).unwrap();
+            std::fs::write(&path, b"raise RuntimeError('unreviewed policy')").unwrap();
+            assert_eq!(
+                verify_base_utilities(&root.0).unwrap_err().to_string(),
+                "pinned Base utility differs"
+            );
+            std::fs::write(&path, original).unwrap();
+        }
+        verify_base_utilities(&root.0).unwrap();
+    }
 }
