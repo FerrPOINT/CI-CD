@@ -62,6 +62,13 @@ struct Completion {
     descriptor: OciCandidateDescriptor,
 }
 
+#[derive(PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CleanupAcknowledgement {
+    request_sha256: String,
+    completion_sha256: String,
+}
+
 /// These are monitor observations, not evidence that a remote BuildKit solver stopped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BuildExit {
@@ -247,7 +254,8 @@ pub(crate) fn retry_unconfirmed(
     private_directory(&directory)?;
     let path = directory.join("intent.json");
     if !missing(&path)? {
-        let intent: Intent = serde_json::from_slice(&read_private(&path, 8192)?)?;
+        let bytes = read_private(&path, 8192)?;
+        let intent: Intent = serde_json::from_slice(&bytes)?;
         intent.scope.validate()?;
         intent.spec.validate().map_err(anyhow::Error::msg)?;
         ensure!(
@@ -256,6 +264,9 @@ pub(crate) fn retry_unconfirmed(
                 && intent.scope.attempt_id == attempt,
             "image build retry custody differs from job/attempt"
         );
+        if cleanup_is_complete(&directory, &intent, &digest(&bytes))? {
+            return Ok(false);
+        }
     }
     Ok(true)
 }
@@ -263,6 +274,10 @@ pub(crate) fn retry_unconfirmed(
 impl PreparedImageBuild {
     fn verify_intent(&self) -> anyhow::Result<()> {
         private_directory(&self.directory)?;
+        ensure!(
+            self.directory.canonicalize()? == self.directory,
+            "noncanonical build custody"
+        );
         let bytes = read_private(&self.directory.join("intent.json"), 8192)?;
         let saved: Intent = serde_json::from_slice(&bytes)?;
         ensure!(
@@ -330,6 +345,13 @@ impl PreparedImageBuild {
         BuildCompletion::Held(BuildHoldReason::Unknown)
     }
 
+    /// ONLY after MAIN has durably acknowledged the exact DB job/attempt/lease completion.
+    /// This is not a DB acknowledgement writer. Unknown builds have no valid completion proof.
+    pub(crate) fn acknowledge_and_cleanup(&self) -> anyhow::Result<()> {
+        self.verify_intent()?;
+        acknowledge_cleanup(&self.directory, &self.intent, &self.request_sha256)
+    }
+
     async fn complete_success(&self) -> anyhow::Result<CompletedImageBuild> {
         self.verify_intent()?;
         ensure!(
@@ -393,6 +415,160 @@ impl PreparedImageBuild {
             artifact_path,
         })
     }
+}
+
+fn cleanup_acknowledgement(
+    directory: &Path,
+    intent: &Intent,
+    request_sha256: &str,
+) -> anyhow::Result<Vec<u8>> {
+    ensure!(
+        read_private(&directory.join("started.json"), 64)? == request_sha256.as_bytes()
+            && read_private(&directory.join("exported.json"), 64)? == request_sha256.as_bytes(),
+        "build completion has no exact start/export custody"
+    );
+    let bytes = read_private(&directory.join("completed.json"), 8192)?;
+    let completion: Completion = serde_json::from_slice(&bytes)?;
+    completion
+        .descriptor
+        .validate()
+        .map_err(anyhow::Error::msg)?;
+    ensure!(
+        serde_json::to_vec(&completion)? == bytes
+            && completion.request_sha256 == request_sha256
+            && completion.daemon_id == intent.daemon_id
+            && completion.descriptor.source_commit == intent.source_commit
+            && completion.descriptor.readable_schema_versions
+                == intent.spec.readable_schema_versions,
+        "saved build completion differs from exact intent"
+    );
+    let image = String::from_utf8(read_owned(&directory.join("image-id"), 80, false)?)?;
+    ensure!(
+        completion.descriptor.image_id == image.trim(),
+        "saved build completion image differs"
+    );
+    Ok(serde_json::to_vec(&CleanupAcknowledgement {
+        request_sha256: request_sha256.into(),
+        completion_sha256: digest(&bytes),
+    })?)
+}
+
+fn cleanup_is_complete(
+    directory: &Path,
+    intent: &Intent,
+    request_sha256: &str,
+) -> anyhow::Result<bool> {
+    let ack = directory.join("acknowledged.json");
+    let cleaned = directory.join("cleaned.json");
+    if missing(&ack)? {
+        ensure!(
+            missing(&cleaned)?,
+            "cleaned build custody lacks acknowledgement"
+        );
+        return Ok(false);
+    }
+    let expected = cleanup_acknowledgement(directory, intent, request_sha256)?;
+    ensure!(
+        read_private(&ack, 1024)? == expected,
+        "build acknowledgement differs"
+    );
+    if missing(&cleaned)? {
+        return Ok(false);
+    }
+    ensure!(
+        read_private(&cleaned, 1024)? == expected
+            && missing(&directory.join("tree"))?
+            && missing(&directory.join("output"))?,
+        "build cleaned custody differs or disposable files reappeared"
+    );
+    Ok(true)
+}
+
+fn acknowledge_cleanup(
+    directory: &Path,
+    intent: &Intent,
+    request_sha256: &str,
+) -> anyhow::Result<()> {
+    private_directory(directory)?;
+    ensure!(
+        directory.canonicalize()? == directory
+            && directory
+                .file_name()
+                .is_some_and(|name| name
+                    == format!("image-build-{}", intent.scope.attempt_id.simple()).as_str()),
+        "cleanup path differs from exact owned attempt"
+    );
+    if cleanup_is_complete(directory, intent, request_sha256)? {
+        return Ok(());
+    }
+    let proof = cleanup_acknowledgement(directory, intent, request_sha256)?;
+    let ack = directory.join("acknowledged.json");
+    if missing(&ack)? {
+        write_new(&ack, &proof, 0o600)?;
+    } else {
+        ensure!(
+            read_private(&ack, 1024)? == proof,
+            "build acknowledgement differs"
+        );
+    }
+    let paths = [directory.join("tree"), directory.join("output")];
+    let mut entries = 0usize;
+    // Validate the complete exact write-set before deleting either target.
+    for path in &paths {
+        if !missing(path)? {
+            verify_disposable(directory, path, 0, &mut entries)?;
+        }
+    }
+    for path in &paths {
+        if !missing(path)? {
+            ensure!(
+                path.canonicalize()? == *path && path.parent() == Some(directory),
+                "cleanup target changed"
+            );
+            fs::remove_dir_all(path)?;
+        }
+    }
+    sync_directory(directory)?;
+    write_new(&directory.join("cleaned.json"), &proof, 0o600)?;
+    Ok(())
+}
+
+fn verify_disposable(
+    root: &Path,
+    path: &Path,
+    depth: usize,
+    entries: &mut usize,
+) -> anyhow::Result<()> {
+    *entries += 1;
+    ensure!(
+        *entries <= MAX_FILES * 65 + 128
+            && depth <= 65
+            && path.starts_with(root)
+            && path != root
+            && path.canonicalize()? == path,
+        "disposable build subtree exceeds owned boundary"
+    );
+    let metadata = fs::symlink_metadata(path)?;
+    ensure!(
+        !metadata.file_type().is_symlink() && (metadata.is_dir() || metadata.is_file()),
+        "linked/special disposable build file denied"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        ensure!(
+            metadata.dev() == fs::metadata(root)?.dev()
+                && metadata.uid() == unsafe { libc::geteuid() }
+                && (metadata.is_dir() || metadata.nlink() == 1),
+            "foreign/linked disposable build file denied"
+        );
+    }
+    if metadata.is_dir() {
+        for item in fs::read_dir(path)? {
+            verify_disposable(root, &item?.path(), depth + 1, entries)?;
+        }
+    }
+    Ok(())
 }
 
 fn hold_reason(exit: BuildExit) -> Option<BuildHoldReason> {
@@ -821,6 +997,173 @@ mod tests {
 
     fn tree(path: &str, mode: &str) -> Vec<u8> {
         format!("{mode} blob {}\t{path}\0", "a".repeat(40)).into_bytes()
+    }
+
+    #[cfg(unix)]
+    fn synthetic_completed_custody(
+        root: &Path,
+        job: Uuid,
+        attempt: Uuid,
+    ) -> anyhow::Result<(PathBuf, Intent, String)> {
+        let directory = root.join(format!("image-build-{}", attempt.simple()));
+        create_directory(&directory)?;
+        let intent = Intent {
+            schema: "forge/backend-image-build/v1".into(),
+            scope: ImageBuildScope {
+                project_id: Uuid::new_v4(),
+                pipeline_id: Uuid::new_v4(),
+                job_id: job,
+                attempt_id: attempt,
+                lease_id: Uuid::new_v4(),
+                generation: 1,
+            },
+            repository_id: Uuid::new_v4(),
+            source_commit: "a".repeat(40),
+            spec: ImageBuildSpec {
+                context: ".".into(),
+                dockerfile: "Dockerfile".into(),
+                target: None,
+                descriptor_artifact: "candidate.json".into(),
+                readable_schema_versions: vec![1],
+            },
+            daemon_id: "fixture-daemon-not-live".into(),
+        };
+        let bytes = serde_json::to_vec(&intent)?;
+        let hash = digest(&bytes);
+        write_new(&directory.join("intent.json"), &bytes, 0o600)?;
+        write_new(&directory.join("exported.json"), hash.as_bytes(), 0o600)?;
+        write_new(&directory.join("started.json"), hash.as_bytes(), 0o600)?;
+        let image = format!("sha256:{}", "b".repeat(64));
+        write_new(&directory.join("image-id"), image.as_bytes(), 0o644)?;
+        let descriptor = OciCandidateDescriptor::new(image, intent.source_commit.clone(), vec![1])
+            .map_err(anyhow::Error::msg)?;
+        write_new(
+            &directory.join("completed.json"),
+            &serde_json::to_vec(&Completion {
+                request_sha256: hash.clone(),
+                daemon_id: intent.daemon_id.clone(),
+                descriptor: descriptor.clone(),
+            })?,
+            0o600,
+        )?;
+        create_directory(&directory.join("tree"))?;
+        write_new(&directory.join("tree/Dockerfile"), b"FROM scratch", 0o644)?;
+        seal_directories(&directory.join("tree"))?;
+        create_directory(&directory.join("output"))?;
+        write_new(
+            &directory.join("output/candidate.json"),
+            &serde_json::to_vec(&descriptor)?,
+            0o600,
+        )?;
+        Ok((directory, intent, hash))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn image_build_cleanup_ack_preserves_proof_and_only_then_releases_retry_hold() {
+        use std::os::unix::fs::MetadataExt;
+        let root = std::env::temp_dir().join(format!("forge-image-build-ack-{}", Uuid::new_v4()));
+        create_directory(&root).unwrap();
+        let job = Uuid::new_v4();
+        let attempt = Uuid::new_v4();
+        let result = (|| -> anyhow::Result<()> {
+            let (directory, intent, hash) = synthetic_completed_custody(&root, job, attempt)?;
+            assert!(retry_unconfirmed(&root, job, attempt)?);
+            let completed = read_private(&directory.join("completed.json"), 8192)?;
+            acknowledge_cleanup(&directory, &intent, &hash)?;
+            assert!(missing(&directory.join("tree"))? && missing(&directory.join("output"))?);
+            assert_eq!(
+                read_private(&directory.join("completed.json"), 8192)?,
+                completed
+            );
+            assert_eq!(
+                read_private(&directory.join("intent.json"), 8192)?,
+                serde_json::to_vec(&intent)?
+            );
+            assert!(!retry_unconfirmed(&root, job, attempt)?);
+            let inode = fs::metadata(directory.join("acknowledged.json"))?.ino();
+            acknowledge_cleanup(&directory, &intent, &hash)?;
+            assert_eq!(
+                fs::metadata(directory.join("acknowledged.json"))?.ino(),
+                inode
+            );
+            let cleaned = directory.join("cleaned.json");
+            let cleaned_bytes = read_private(&cleaned, 1024)?;
+            fs::write(&cleaned, b"{}")?;
+            assert!(retry_unconfirmed(&root, job, attempt).is_err());
+            fs::write(&cleaned, &cleaned_bytes)?;
+            create_directory(&directory.join("tree"))?;
+            assert!(retry_unconfirmed(&root, job, attempt).is_err());
+            Ok(())
+        })();
+        fs::remove_dir_all(&root).unwrap();
+        result.unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn image_build_cleanup_missing_or_changed_proof_never_deletes_disposable_bytes() {
+        let root =
+            std::env::temp_dir().join(format!("forge-image-build-bad-ack-{}", Uuid::new_v4()));
+        create_directory(&root).unwrap();
+        let result = (|| -> anyhow::Result<()> {
+            let (directory, intent, hash) =
+                synthetic_completed_custody(&root, Uuid::new_v4(), Uuid::new_v4())?;
+            let path = directory.join("completed.json");
+            let bytes = read_private(&path, 8192)?;
+            fs::remove_file(&path)?;
+            assert!(acknowledge_cleanup(&directory, &intent, &hash).is_err());
+            assert!(missing(&directory.join("acknowledged.json"))?);
+            let mut wrong: Completion = serde_json::from_slice(&bytes)?;
+            wrong.descriptor.source_commit = "c".repeat(40);
+            write_new(&path, &serde_json::to_vec(&wrong)?, 0o600)?;
+            assert!(acknowledge_cleanup(&directory, &intent, &hash).is_err());
+            assert!(
+                !missing(&directory.join("tree/Dockerfile"))?
+                    && !missing(&directory.join("output/candidate.json"))?
+            );
+            assert!(
+                missing(&directory.join("acknowledged.json"))?
+                    && missing(&directory.join("cleaned.json"))?
+            );
+            Ok(())
+        })();
+        fs::remove_dir_all(&root).unwrap();
+        result.unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn image_build_cleanup_rejects_foreign_links_and_incomplete_ack_stays_held() {
+        use std::os::unix::fs::symlink;
+        let root =
+            std::env::temp_dir().join(format!("forge-image-build-link-ack-{}", Uuid::new_v4()));
+        create_directory(&root).unwrap();
+        let job = Uuid::new_v4();
+        let attempt = Uuid::new_v4();
+        let result = (|| -> anyhow::Result<()> {
+            let (directory, intent, hash) = synthetic_completed_custody(&root, job, attempt)?;
+            let outside = root.join("outside-owned-synthetic");
+            write_new(&outside, b"untouched", 0o600)?;
+            symlink(&outside, directory.join("output/foreign-link"))?;
+            assert!(acknowledge_cleanup(&directory, &intent, &hash).is_err());
+            assert_eq!(read_private(&outside, 32)?, b"untouched");
+            assert!(!missing(&directory.join("tree/Dockerfile"))?);
+            assert!(
+                missing(&directory.join("cleaned.json"))?
+                    && retry_unconfirmed(&root, job, attempt)?
+            );
+            fs::remove_file(directory.join("output/foreign-link"))?;
+            fs::hard_link(&outside, directory.join("output/foreign-hardlink"))?;
+            assert!(acknowledge_cleanup(&directory, &intent, &hash).is_err());
+            assert!(!missing(&directory.join("tree/Dockerfile"))?);
+            fs::remove_file(directory.join("output/foreign-hardlink"))?;
+            acknowledge_cleanup(&directory, &intent, &hash)?;
+            assert!(!retry_unconfirmed(&root, job, attempt)?);
+            Ok(())
+        })();
+        fs::remove_dir_all(&root).unwrap();
+        result.unwrap();
     }
 
     #[cfg(unix)]
