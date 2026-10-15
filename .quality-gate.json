@@ -28,6 +28,25 @@
   },
   "gates": [
     {
+      "id": "docs:contracts",
+      "component": "docs",
+      "profiles": [
+        "fast",
+        "integrated"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "scripts/verify_docs.py",
+        "--all"
+      ],
+      "cwd": ".",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": true
+    },
+    {
       "id": "frontend:types",
       "component": "frontend",
       "profiles": [
@@ -36,10 +55,10 @@
         "build"
       ],
       "argv": [
-        "{python}",
-        "-B",
-        "scripts/verify_docs.py",
-        "--all"
+        "pnpm",
+        "exec",
+        "tsc",
+        "--noEmit"
       ],
       "cwd": "frontend",
       "inputs": [
