@@ -410,7 +410,7 @@
   ],
   "additional_acceptance": "Existing product CI/CONTRIBUTING: MSRV/features, ignored DB, OpenAPI/packed consumer/themes, security and live acceptance remain separate mandatory gates where applicable.",
   "frontend_generated": [
-    "src/shared/api/schema.d.ts"
+    "src/api/schema.d.ts"
   ],
   "frontend_unit_inputs": [
     "frontend/src/**/*.test.ts",
