@@ -28,6 +28,37 @@ async fn task_pipeline_original_custody_cas_receipt_locator_and_cleanup_are_reta
         .execute(&f.pool)
         .await
         .unwrap();
+    // Fresh INSERTs exercise the closed JSON CHECKs, not retained-row immutability.
+    for (label, field, value) in [
+        ("null execution ID", "executionId", serde_json::Value::Null),
+        (
+            "nil routing snapshot",
+            "routingSnapshotId",
+            json!(Uuid::nil()),
+        ),
+        ("unknown binding key", "unexpected", json!(true)),
+    ] {
+        let mut malformed = serde_json::to_value(&intent).unwrap();
+        malformed["binding"][field] = value;
+        let mut tx = f.pool.begin().await.unwrap();
+        let error = sqlx::query("INSERT INTO task_pipeline_intents(pipeline_id,project_id,service_account_id,api_token_id,preparation_job_id,operation_key,intent) VALUES($1,$2,$3,$4,$5,$6,$7)")
+            .bind(pipeline).bind(f.project).bind(f.subject).bind(f.token_id).bind(job)
+            .bind(&intent.operation_key).bind(malformed).execute(&mut *tx).await.unwrap_err();
+        let code = error.as_database_error().and_then(|error| error.code());
+        tx.rollback().await.unwrap();
+        assert_eq!(
+            code.as_deref(),
+            Some("23514"),
+            "{label}: JSON CHECK must reject INSERT"
+        );
+        let count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM task_pipeline_intents WHERE pipeline_id=$1")
+                .bind(pipeline)
+                .fetch_one(&f.pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 0, "{label}: failed INSERT must leave no custody row");
+    }
     let mut conn = f.pool.acquire().await.unwrap();
     ledger::append_task_pipeline(
         &mut conn, pipeline, f.project, f.subject, f.token_id, job, &intent,
@@ -42,6 +73,36 @@ async fn task_pipeline_original_custody_cas_receipt_locator_and_cleanup_are_reta
     let (status, pending) = call(&f.app, "GET", &url, &f.read_token, String::new()).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(pending, serde_json::Value::Null);
+    for (label, field, value) in [
+        ("string contract version", "contractVersion", json!("1")),
+        ("unknown preparation key", "unexpected", json!(true)),
+    ] {
+        let mut malformed = serde_json::to_value(&f.request).unwrap();
+        malformed[field] = value;
+        let mut tx = f.pool.begin().await.unwrap();
+        let error = sqlx::query(
+            "UPDATE task_pipeline_intents SET preparation_request=$2 WHERE pipeline_id=$1",
+        )
+        .bind(pipeline)
+        .bind(malformed)
+        .execute(&mut *tx)
+        .await
+        .unwrap_err();
+        let code = error.as_database_error().and_then(|error| error.code());
+        tx.rollback().await.unwrap();
+        assert_eq!(
+            code.as_deref(),
+            Some("23514"),
+            "{label}: JSON CHECK must reject initial preparation"
+        );
+        let unchanged: bool = sqlx::query_scalar("SELECT preparation_request IS NULL AND intent=$2 AND cardinality(submitted_attempts)=0 FROM task_pipeline_intents WHERE pipeline_id=$1")
+            .bind(pipeline).bind(serde_json::to_value(&intent).unwrap())
+            .fetch_one(&f.pool).await.unwrap();
+        assert!(
+            unchanged,
+            "{label}: failed UPDATE must retain untouched custody"
+        );
+    }
     let claim = |pool: sqlx::PgPool, request: WorkspaceOperationRequest| async move {
         let mut conn = pool.acquire().await.unwrap();
         ledger::claim_task_preparation(&mut conn, pipeline, &request)
