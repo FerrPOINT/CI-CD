@@ -89,14 +89,13 @@ impl TaskPipeline {
                 }
             }
         }
-        let pids: Vec<u32> = self
-            .running
-            .lock()
-            .await
-            .values()
-            .copied()
-            .filter(|pid| *pid != 0)
-            .collect();
+        let running = self.running.lock().await;
+        anyhow::ensure!(
+            !running.values().any(|pid| *pid == 0),
+            "owned preparation quiescence remains unknown"
+        );
+        let pids: Vec<u32> = running.values().copied().collect();
+        drop(running);
         // Cancellation/panic drops production Child (kill_on_drop); observe actual exit too.
         tokio::time::timeout(StdDuration::from_secs(5), async {
             loop {
@@ -116,7 +115,6 @@ impl TaskPipeline {
         })
         .await
         .map_err(|_| anyhow::anyhow!("owned shell exit remains unknown"))??;
-        self.quiescent = true;
         self.peer.abort();
         self.server.abort();
         let _ = tokio::time::timeout(StdDuration::from_secs(5), &mut self.peer)
@@ -154,6 +152,11 @@ impl TaskPipeline {
                         request.lease_id,
                         request.workspace_generation,
                     )?;
+                    match std::fs::symlink_metadata(path.join(".forge-preparation-active.json")) {
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+                        Ok(_) => anyhow::bail!("owned Git preparation may still be active"),
+                        Err(error) => return Err(error.into()),
+                    }
                     // Disposable test teardown after quiescence, never fabricated product ACK.
                     tokio::fs::remove_dir_all(&path).await?;
                 }
@@ -161,6 +164,7 @@ impl TaskPipeline {
                 Err(error) => return Err(error.into()),
             }
         }
+        self.quiescent = true;
         fixture_cleanup::projects(&self.pool).await;
         self.pool.close().await;
         Ok(())
