@@ -27,6 +27,10 @@ mod fixture_cleanup;
 #[path = "support/sdlc_workspace.rs"]
 mod sdlc_workspace;
 
+#[cfg(unix)]
+#[path = "support/task_pipeline_http.rs"]
+mod task_pipeline_http;
+
 type CanceledExternalLeaseState = (
     String,
     String,
