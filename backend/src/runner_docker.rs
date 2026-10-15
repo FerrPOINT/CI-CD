@@ -15,6 +15,51 @@ pub(crate) struct Client {
     cert_path: String,
     daemon_id: String,
 }
+
+pub(crate) struct ImageBuildCommand<'a> {
+    pub spec: &'a crate::domain::image_build::ImageBuildSpec,
+    pub context: &'a Path,
+    pub dockerfile: &'a Path,
+    pub iid_file: &'a Path,
+    pub docker_config: &'a Path,
+    pub source_commit: &'a str,
+    pub attempt: Uuid,
+    pub request_sha256: &'a str,
+}
+
+fn image_build_inspection_matches(
+    value: &Value,
+    image: &str,
+    source_commit: &str,
+    attempt: Uuid,
+    request_sha256: &str,
+) -> bool {
+    value["id"] == image
+        && value["revision"] == source_commit
+        && value["attempt"] == attempt.to_string()
+        && value["request"] == request_sha256
+        && value["os"] == "linux"
+        && (value["volumes"].is_null()
+            || value["volumes"].as_object().is_some_and(|v| v.is_empty()))
+}
+
+fn image_build_builder_matches(value: &Value, host: &str, default_endpoint: &str) -> bool {
+    default_endpoint == host
+        && value["Name"] == "default"
+        && value["Driver"] == "docker"
+        && value.get("Err").is_none()
+        && value["Nodes"].as_array().is_some_and(|nodes| {
+            nodes.len() == 1
+                && nodes[0]["Endpoint"] == "default"
+                && nodes[0]["Status"] == "running"
+                && nodes[0].get("Err").is_none()
+        })
+}
+
+fn image_build_version_matches(value: &str) -> bool {
+    let mut fields = value.split_whitespace();
+    fields.next() == Some("github.com/docker/buildx") && fields.next() == Some("v0.37.2")
+}
 fn invalid(message: &str) -> io::Error {
     io::Error::other(message)
 }
@@ -113,6 +158,211 @@ fn source_provenance_matches(volume: &Value, revision: &str, workspace: &str) ->
 }
 
 impl Client {
+    /// Shared authenticated task actions use the already-configured backend Engine authority.
+    /// Legacy callers keep their existing paths; this never selects a host/socket fallback.
+    pub(crate) async fn configured_verified() -> io::Result<Self> {
+        let client = Self::from_env()?;
+        client.verify().await?;
+        Ok(client)
+    }
+
+    /// Existing backend authority only; the caller cannot supply an endpoint or credential.
+    pub(crate) async fn for_image_build(docker_config: &Path) -> io::Result<Self> {
+        let client = Self::from_env()?;
+        client.verify_image_build(docker_config).await?;
+        Ok(client)
+    }
+
+    fn image_build_control_command(&self, docker_config: &Path) -> Command {
+        let mut command = Command::new("docker");
+        // No inherited job secrets, Buildx remote builder, contexts or credential helpers.
+        command
+            .env_clear()
+            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+            .env("DOCKER_CONFIG", docker_config)
+            .kill_on_drop(true);
+        #[cfg(windows)]
+        if let Some(root) = std::env::var_os("SystemRoot") {
+            command.env("SystemRoot", root);
+        }
+        self.apply(&mut command);
+        command
+    }
+
+    async fn image_build_read(&self, docker_config: &Path, args: &[&str]) -> io::Result<String> {
+        let mut child = self
+            .image_build_control_command(docker_config)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()?;
+        let result = tokio::time::timeout(Duration::from_secs(30), async {
+            let mut bytes = Vec::new();
+            child
+                .stdout
+                .take()
+                .ok_or_else(|| invalid("missing Docker readback"))?
+                .take(65537)
+                .read_to_end(&mut bytes)
+                .await?;
+            if bytes.len() > 65536 || !child.wait().await?.success() {
+                return Err(invalid("bounded Docker image-build readback failed"));
+            }
+            String::from_utf8(bytes)
+                .map(|v| v.trim().to_owned())
+                .map_err(|_| invalid("invalid Docker image-build readback encoding"))
+        })
+        .await;
+        match result {
+            Ok(Ok(value)) => Ok(value),
+            _ => {
+                let _ = child.kill().await;
+                Err(invalid("Docker image-build readback unavailable"))
+            }
+        }
+    }
+
+    async fn verify_image_build_daemon(&self, docker_config: &Path) -> io::Result<()> {
+        if self
+            .image_build_read(docker_config, &["info", "--format", "{{.ID}}"])
+            .await?
+            != self.daemon_id
+        {
+            return Err(invalid(
+                "image build daemon differs from registered workspace",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn verify_image_build(&self, docker_config: &Path) -> io::Result<()> {
+        self.verify_image_build_daemon(docker_config).await?;
+        if !image_build_version_matches(
+            &self
+                .image_build_read(docker_config, &["buildx", "version"])
+                .await?,
+        ) {
+            return Err(invalid("verified Buildx v0.37.2 is required"));
+        }
+        let default_endpoint: String = serde_json::from_str(
+            &self
+                .image_build_read(
+                    docker_config,
+                    &[
+                        "context",
+                        "inspect",
+                        "default",
+                        "--format",
+                        "{{json .Endpoints.docker.Host}}",
+                    ],
+                )
+                .await?,
+        )?;
+        // v0.37.2 inspect has no --format. ls emits one JSON object per builder.
+        let listing = self
+            .image_build_read(docker_config, &["buildx", "ls", "--format", "json"])
+            .await?;
+        let builders = serde_json::Deserializer::from_str(&listing)
+            .into_iter::<Value>()
+            .collect::<Result<Vec<_>, _>>()?;
+        if builders.len() != 1
+            || !image_build_builder_matches(&builders[0], &self.host, &default_endpoint)
+        {
+            return Err(invalid(
+                "image build requires the existing same-daemon Docker builder",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn image_build_command(&self, build: ImageBuildCommand<'_>) -> io::Result<Command> {
+        use crate::domain::image_build::{ImageBuildSpec, valid_commit};
+        let ImageBuildSpec { target, .. } = build.spec;
+        if build.spec.validate().is_err()
+            || !valid_commit(build.source_commit)
+            || build.attempt.is_nil()
+            || build.request_sha256.len() != 64
+            || !build
+                .request_sha256
+                .bytes()
+                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+        {
+            return Err(invalid("invalid typed image build command"));
+        }
+        let mut command = self.image_build_control_command(build.docker_config);
+        command
+            .args([
+                "buildx",
+                "build",
+                "--builder",
+                "default",
+                "--load",
+                "--network",
+                "default",
+                "--provenance=false",
+                "--sbom=false",
+                "--progress",
+                "plain",
+                "--iidfile",
+            ])
+            .arg(build.iid_file)
+            .arg("--file")
+            .arg(build.dockerfile)
+            .arg("--label")
+            .arg(format!(
+                "org.opencontainers.image.revision={}",
+                build.source_commit
+            ))
+            .arg("--label")
+            .arg(format!("sdlc.attempt={}", build.attempt))
+            .arg("--label")
+            .arg(format!(
+                "forge.image-build-request={}",
+                build.request_sha256
+            ));
+        if let Some(target) = target {
+            command.arg("--target").arg(target);
+        }
+        command
+            .arg(build.context)
+            .stdin(std::process::Stdio::null());
+        Ok(command)
+    }
+
+    pub(crate) async fn inspect_built_image(
+        &self,
+        docker_config: &Path,
+        image: &str,
+        source_commit: &str,
+        attempt: Uuid,
+        request_sha256: &str,
+    ) -> io::Result<()> {
+        if !crate::domain::image_build::valid_image_id(image) {
+            return Err(invalid("build did not return an immutable image ID"));
+        }
+        self.verify_image_build_daemon(docker_config).await?;
+        let format = r#"{"id":{{json .Id}},"revision":{{json (index .Config.Labels "org.opencontainers.image.revision")}},"attempt":{{json (index .Config.Labels "sdlc.attempt")}},"request":{{json (index .Config.Labels "forge.image-build-request")}},"os":{{json .Os}},"volumes":{{json .Config.Volumes}}}"#;
+        let value: Value = serde_json::from_str(
+            &self
+                .image_build_read(
+                    docker_config,
+                    &["image", "inspect", image, "--format", format],
+                )
+                .await?,
+        )?;
+        if !image_build_inspection_matches(&value, image, source_commit, attempt, request_sha256) {
+            return Err(invalid(
+                "built image differs from exact source/attempt or OCI requirements",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn image_build_daemon_id(&self) -> &str {
+        &self.daemon_id
+    }
+
     fn from_env() -> io::Result<Self> {
         let host = std::env::var("DOCKER_HOST").unwrap_or_default();
         let cert_path = std::env::var("DOCKER_CERT_PATH").unwrap_or_default();
@@ -889,6 +1139,165 @@ fn compose_job(args: &[String], envs: &[(String, String)]) -> io::Result<Value> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn image_build_requires_pinned_buildx_and_same_daemon_default_driver() {
+        assert!(image_build_version_matches(
+            "github.com/docker/buildx v0.37.2 abcdef"
+        ));
+        for version in [
+            "",
+            "github.com/docker/buildx v0.37.1 abc",
+            "other v0.37.2",
+            "github.com/docker/buildx v0.37.20",
+        ] {
+            assert!(!image_build_version_matches(version));
+        }
+        let host = "tcp://runner-daemon:2376";
+        let builder = json!({"Name":"default", "Driver":"docker",
+            "Nodes":[{"Endpoint":"default","Status":"running"}]});
+        assert!(image_build_builder_matches(&builder, host, host));
+        assert!(!image_build_builder_matches(
+            &builder,
+            host,
+            "tcp://foreign:2376"
+        ));
+        for field in ["Name", "Driver"] {
+            let mut wrong = builder.clone();
+            wrong[field] = json!("remote");
+            assert!(!image_build_builder_matches(&wrong, host, host));
+        }
+        for (field, value) in [("Endpoint", "tcp://foreign:2376"), ("Status", "inactive")] {
+            let mut wrong = builder.clone();
+            wrong["Nodes"][0][field] = json!(value);
+            assert!(!image_build_builder_matches(&wrong, host, host));
+        }
+        let mut wrong = builder.clone();
+        wrong["Nodes"] = json!([]);
+        assert!(!image_build_builder_matches(&wrong, host, host));
+        wrong["Nodes"] = json!([builder["Nodes"][0].clone(), builder["Nodes"][0].clone()]);
+        assert!(!image_build_builder_matches(&wrong, host, host));
+        let mut wrong = builder;
+        wrong["Err"] = json!("unavailable");
+        assert!(!image_build_builder_matches(&wrong, host, host));
+    }
+
+    #[test]
+    fn image_build_inspection_pins_image_source_attempt_request_and_oci_shape() {
+        let attempt = Uuid::new_v4();
+        let image = format!("sha256:{}", "a".repeat(64));
+        let source = "b".repeat(40);
+        let hash = "c".repeat(64);
+        let value = json!({"id":image,"revision":source,"attempt":attempt.to_string(),
+            "request":hash,"os":"linux","volumes":null});
+        assert!(image_build_inspection_matches(
+            &value, &image, &source, attempt, &hash
+        ));
+        for field in ["id", "revision", "attempt", "request", "os"] {
+            let mut wrong = value.clone();
+            wrong[field] = json!("changed");
+            assert!(!image_build_inspection_matches(
+                &wrong, &image, &source, attempt, &hash
+            ));
+        }
+        let mut wrong = value;
+        wrong["volumes"] = json!({"/implicit":{}});
+        assert!(!image_build_inspection_matches(
+            &wrong, &image, &source, attempt, &hash
+        ));
+    }
+
+    #[test]
+    fn image_build_command_is_fixed_load_without_job_env_or_arbitrary_options() {
+        use crate::domain::image_build::ImageBuildSpec;
+        let client = Client {
+            host: "tcp://runner-daemon:2376".into(),
+            cert_path: "/backend-only/tls".into(),
+            daemon_id: "expected-daemon".into(),
+        };
+        let spec = ImageBuildSpec {
+            context: ".".into(),
+            dockerfile: "Dockerfile".into(),
+            target: Some("release".into()),
+            descriptor_artifact: "candidate.json".into(),
+            readable_schema_versions: vec![1],
+        };
+        let source = "a".repeat(40);
+        let hash = "b".repeat(64);
+        let attempt = Uuid::new_v4();
+        let command = client
+            .image_build_command(ImageBuildCommand {
+                spec: &spec,
+                context: Path::new("/control/tree"),
+                dockerfile: Path::new("/control/tree/Dockerfile"),
+                iid_file: Path::new("/control/image-id"),
+                docker_config: Path::new("/control/docker-config"),
+                source_commit: &source,
+                attempt,
+                request_sha256: &hash,
+            })
+            .unwrap();
+        let command = command.as_std();
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_str().unwrap())
+            .collect();
+        assert_eq!(
+            &args[..8],
+            &[
+                "buildx",
+                "build",
+                "--builder",
+                "default",
+                "--load",
+                "--network",
+                "default",
+                "--provenance=false"
+            ]
+        );
+        assert_eq!(
+            &args[args.len() - 3..],
+            &["--target", "release", "/control/tree"]
+        );
+        for flag in [
+            "--push",
+            "--secret",
+            "--ssh",
+            "--allow",
+            "--build-arg",
+            "--tag",
+            "--output",
+        ] {
+            assert!(!args.contains(&flag));
+        }
+        let env: std::collections::BTreeMap<_, _> = command
+            .get_envs()
+            .filter_map(|(key, value)| {
+                value.map(|value| {
+                    (
+                        key.to_string_lossy().into_owned(),
+                        value.to_string_lossy().into_owned(),
+                    )
+                })
+            })
+            .collect();
+        assert_eq!(env["DOCKER_HOST"], client.host);
+        assert_eq!(env["DOCKER_TLS_VERIFY"], "1");
+        assert_eq!(env["DOCKER_CONFIG"], "/control/docker-config");
+        for key in env.keys() {
+            assert!(
+                [
+                    "PATH",
+                    "SystemRoot",
+                    "DOCKER_HOST",
+                    "DOCKER_CERT_PATH",
+                    "DOCKER_TLS_VERIFY",
+                    "DOCKER_CONFIG"
+                ]
+                .contains(&key.as_str())
+            );
+        }
+    }
 
     #[tokio::test]
     async fn retry_requires_cleaned_owned_journal_even_after_owner_death() {
