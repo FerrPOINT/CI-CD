@@ -1,6 +1,7 @@
 # ADR-0025: task intent в существующем pipeline и embedded runner
 
-Статус: source candidate; migration/OpenAPI companion и runtime qualification pending.
+Статус: source candidate; migration/policy/OpenAPI registration подключены,
+генерация спецификации и runtime qualification pending.
 
 ## Проблема
 
@@ -31,7 +32,7 @@ Legacy trigger без intent не меняется; external task preparation з
 
 ## Границы
 
-MAIN применяет одну additive migration и регистрирует OpenAPI из source;
+Одна additive migration и OpenAPI registration подключены из source;
 released DDL, Hermes, SDK, dependency locks и accepted stand не меняются.
 Crash после custody commit до Git/spawn может консервативно удержать работу:
 отсутствие effect не выдумывается и attempt/key автоматически не сбрасываются.

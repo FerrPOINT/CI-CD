@@ -130,6 +130,12 @@ const fn user(
 /// Exhaustive policy registry for the current OpenAPI/router surface.
 pub const ROUTE_POLICIES: &[RoutePolicy] = &[
     user(
+        GET,
+        "/api/v1/projects/{project_id}/pipelines/{pipeline_id}/task-workspace",
+        Action::Read,
+        Role::Viewer,
+    ),
+    user(
         POST,
         "/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations",
         Action::Write,

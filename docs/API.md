@@ -42,8 +42,9 @@ cicd-cli pipeline task-workspace --project "$FORGE_PROJECT" --id "$PIPELINE_ID"
 ```
 
 Не выбирать новый key после unknown; не заимствовать runner lease credentials.
-Требуются MAIN-owned additive journal migration/OpenAPI registration и новая
-квалификация CLI/server; это не утверждение о доступности установленного image.
+Additive journal migration, route policy и OpenAPI registration подключены в
+исходниках. Генерация спецификации и квалификация CLI/server ещё не выполнены;
+это не утверждение о доступности установленного image.
 Source checks не заменяют реальные PostgreSQL/runner/artifact tests.
 
 ## Task-bound Nonproduction Delivery
