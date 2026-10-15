@@ -200,11 +200,18 @@
         "frontend/dist"
       ],
       "environment_inputs": [
-        "VITE_NAMESPACE_ENABLED",
-        "VITE_PLATFORM_ORIGIN",
-        "VITE_AUTH_ISSUER",
-        "VITE_PLATFORM_BRANDING_URL",
-        "VITE_PLATFORM_SERVICES_URL"
+        "VITE_*",
+        "NODE_*",
+        "BROWSERSLIST*",
+        "npm_*",
+        "NPM_*",
+        "PNPM_*",
+        "SOURCE_DATE_EPOCH",
+        "HOME",
+        "USERPROFILE",
+        "TMPDIR",
+        "TEMP",
+        "TMP"
       ],
       "kind": "artifact",
       "exclude_inputs": [
@@ -343,6 +350,42 @@
       ],
       "artifact_outputs": [
         "."
+      ],
+      "artifact_toolchain": "pinned-image",
+      "environment_inputs": [
+        "CARGO_*",
+        "RUST*",
+        "CC",
+        "CC_*",
+        "CFLAGS",
+        "CFLAGS_*",
+        "CXX",
+        "CXX_*",
+        "CXXFLAGS",
+        "AR",
+        "AR_*",
+        "RANLIB",
+        "LD",
+        "LD_*",
+        "LDFLAGS",
+        "PKG_CONFIG*",
+        "OPENSSL*",
+        "LIBSSL*",
+        "SQLX_*",
+        "SQLITE*",
+        "LIBSQLITE*",
+        "VCPKG*",
+        "BINDGEN*",
+        "LIBCLANG*",
+        "ZSTD*",
+        "CMAKE*",
+        "SOURCE_DATE_EPOCH",
+        "HOME",
+        "LIBRARY_PATH",
+        "LD_LIBRARY_PATH",
+        "CPATH",
+        "C_INCLUDE_PATH",
+        "CPLUS_INCLUDE_PATH"
       ]
     }
   ],
