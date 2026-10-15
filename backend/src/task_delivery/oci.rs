@@ -102,6 +102,7 @@ struct Owner {
     project: Uuid,
     policy: Policy,
     policy_hash: String,
+    task_client: Option<crate::runner_docker::Client>,
 }
 
 struct TaskAuthority<'a> {
@@ -415,7 +416,22 @@ impl Owner {
             project,
             policy,
             policy_hash,
+            task_client: None,
         })
+    }
+
+    fn check_task_daemon(&self, daemon_id: &str) -> anyhow::Result<()> {
+        ensure!(
+            !daemon_id.is_empty() && daemon_id == self.policy.daemon_id,
+            "configured task daemon differs from OCI owner policy"
+        );
+        Ok(())
+    }
+
+    fn with_task_client(mut self, client: crate::runner_docker::Client) -> anyhow::Result<Self> {
+        self.check_task_daemon(client.image_build_daemon_id())?;
+        self.task_client = Some(client);
+        Ok(self)
     }
 
     fn data(&self, descriptor: &Descriptor) -> anyhow::Result<(u32, String)> {
@@ -451,12 +467,17 @@ impl Owner {
         child
             .args(args)
             .env_clear()
-            .env("DOCKER_HOST", "unix:///var/run/docker.sock")
             .env("DOCKER_CONFIG", self.root.join("docker-config"))
             .env("PATH", "/usr/local/bin:/usr/bin:/bin")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        if let Some(client) = &self.task_client {
+            // Apply explicit runner transport after clearing inherited environment.
+            client.apply(&mut child);
+        } else {
+            child.env("DOCKER_HOST", "unix:///var/run/docker.sock");
+        }
         #[cfg(target_os = "linux")]
         unsafe {
             child.pre_exec(|| {
@@ -923,6 +944,10 @@ impl Owner {
             command.task_fence.is_some() == task.is_some(),
             "task effect requires live owner authorization"
         );
+        ensure!(
+            task.is_some() == self.task_client.is_some(),
+            "task effect requires configured owner transport"
+        );
         if let Some(task) = &task {
             task.permit.check()?;
         }
@@ -1228,6 +1253,12 @@ pub(super) async fn execute_task(
     };
     let permit = tracker::read(&state, policy, &original, fence, existing).await?;
     sdlc_workspace::authorize(connection, &state, claims, project, "api:write").await?;
+    let client = crate::runner_docker::Client::configured_verified()
+        .await
+        .map_err(|_| ApiError::service_unavailable("Проверенный OCI task daemon недоступен"))?;
+    let owner = owner.with_task_client(client).map_err(|_| {
+        ApiError::service_unavailable("OCI owner daemon не совпадает с конфигурацией")
+    })?;
     owner
         .execute(
             command,
@@ -1403,6 +1434,7 @@ mod tests {
                 project,
                 policy_hash: sha(&serde_json::to_vec(&policy).unwrap()),
                 policy,
+                task_client: None,
             };
             let attempt_id = Uuid::new_v4();
             let request = WorkspaceOperationRequest {
@@ -1552,6 +1584,90 @@ mod tests {
         fn drop(&mut self) {
             std::fs::remove_dir_all(&self.owner.root).unwrap();
         }
+    }
+
+    #[test]
+    fn task_oci_transport_requires_exact_published_daemon_without_rewriting_policy() {
+        let fixture = RecoveryFixture::new();
+        let policy = serde_json::to_vec(&fixture.owner.policy).unwrap();
+        let intent = std::fs::read(fixture.dir.join("intent.json")).unwrap();
+        fixture
+            .owner
+            .check_task_daemon(&fixture.owner.policy.daemon_id)
+            .unwrap();
+        for daemon in ["", "foreign-daemon"] {
+            assert!(fixture.owner.check_task_daemon(daemon).is_err());
+        }
+        assert!(fixture.owner.task_client.is_none());
+        assert_eq!(serde_json::to_vec(&fixture.owner.policy).unwrap(), policy);
+        assert_eq!(
+            std::fs::read(fixture.dir.join("intent.json")).unwrap(),
+            intent
+        );
+    }
+
+    #[test]
+    fn task_oci_legacy_docker_and_compose_keep_isolated_unix_environment() {
+        let fixture = RecoveryFixture::new();
+        for binary in [
+            &fixture.owner.policy.docker_bin,
+            &fixture.owner.policy.compose_bin,
+        ] {
+            let command = fixture.owner.process(binary, &["version".into()]);
+            let command = command.as_std();
+            let env = command
+                .get_envs()
+                .map(|(key, value)| (key.to_owned(), value.map(|value| value.to_owned())))
+                .collect::<std::collections::BTreeMap<_, _>>();
+            assert_eq!(env.len(), 3);
+            assert_eq!(
+                env.get(std::ffi::OsStr::new("DOCKER_HOST")),
+                Some(&Some("unix:///var/run/docker.sock".into()))
+            );
+            assert_eq!(
+                env.get(std::ffi::OsStr::new("DOCKER_CONFIG")),
+                Some(&Some(
+                    fixture.owner.root.join("docker-config").into_os_string()
+                ))
+            );
+            assert_eq!(
+                env.get(std::ffi::OsStr::new("PATH")),
+                Some(&Some("/usr/local/bin:/usr/bin:/bin".into()))
+            );
+            assert_eq!(
+                command
+                    .get_args()
+                    .map(|arg| arg.to_str().unwrap())
+                    .collect::<Vec<_>>(),
+                ["version"]
+            );
+        }
+    }
+
+    #[test]
+    fn task_oci_saved_http_readback_needs_no_transport_or_engine() {
+        let mut fixture = RecoveryFixture::new();
+        fixture.intent.receipt.command.task_fence = Some(task_fence());
+        fixture.intent.receipt.scope = "task_nonproduction_delivery".into();
+        fixture.intent.receipt.dispatch_allowed = true;
+        fixture.intent.receipt.command_sha256 =
+            sha(&serde_json::to_vec(&fixture.intent.receipt.command).unwrap());
+        // This synthetic fixture has not been published as an HTTP operation yet.
+        std::fs::remove_file(fixture.dir.join("intent.json")).unwrap();
+        immutable(&fixture.dir.join("intent.json"), &fixture.intent).unwrap();
+        let proof = fixture.verified("2026-10-07T00:01:00Z");
+        immutable(&fixture.dir.join("result.json"), &proof).unwrap();
+        let bytes = std::fs::read(fixture.dir.join("result.json")).unwrap();
+        assert!(fixture.owner.task_client.is_none());
+        assert!(!fixture.owner.policy.docker_bin.exists());
+        let readback = fixture.readback().unwrap();
+        assert_eq!(readback.latest_status(), DeliveryStatus::Verified);
+        assert!(!readback.reconciliation_needed);
+        assert_eq!(
+            std::fs::read(fixture.dir.join("result.json")).unwrap(),
+            bytes
+        );
+        assert!(!fixture.dir.join("child.json").exists());
     }
 
     #[test]
