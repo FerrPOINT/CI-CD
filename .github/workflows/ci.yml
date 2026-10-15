@@ -21,6 +21,23 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: CI-CD
+      - name: Read pinned Base revision
+        id: base
+        working-directory: CI-CD
+        run: |
+          pin=.base-revision
+          if [ -f .namespace-base-revision ]; then pin=.namespace-base-revision; fi
+          echo "sha=$(cat "$pin")" >> "$GITHUB_OUTPUT"
+          echo "pin=$pin" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: FerrPOINT/services-base
+          path: services-base
+          token: ${{ secrets.SERVICES_BASE_TOKEN }}
+          ref: ${{ steps.base.outputs.sha }}
+      - name: Verify pinned Base checkout
+        working-directory: CI-CD
+        run: python3 ../services-base/scripts/verify_base_revision.py --revision "${{ steps.base.outputs.pin }}" --base ../services-base
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
