@@ -539,7 +539,7 @@ async fn case(f: &TaskPipeline) {
         git(&workspace.join("workspace"), &["rev-parse", "HEAD"]),
         f.intent.source_commit
     );
-    while !running.lock().await.get(&job).is_some_and(|pid| *pid != 0) {
+    while running.lock().await.get(&job).is_none_or(|pid| *pid == 0) {
         assert!(
             !f.worker.lock().await.as_ref().unwrap().is_finished(),
             "shell stopped before barrier release"
