@@ -34,6 +34,53 @@ class BackendDockerfileTests(unittest.TestCase):
         dockerfile = DOCKERFILE.read_text(encoding="utf-8")
         self.assertIn("ARG DOCKER_CLI_VERSION=29.5.0", dockerfile)
 
+    def test_buildx_pin_and_checksums_match_in_both_backend_recipes(self) -> None:
+        blocks = []
+        for name in ("Dockerfile", "Dockerfile.umbrella"):
+            dockerfile = (DOCKERFILE.parent / name).read_text(encoding="utf-8")
+            with self.subTest(dockerfile=name):
+                self.assertEqual(dockerfile.count("ARG BUILDX_VERSION="), 1)
+                block = re.search(
+                    r"^# Official Buildx.*?^ && docker buildx version$",
+                    dockerfile,
+                    re.MULTILINE | re.DOTALL,
+                )
+                self.assertIsNotNone(block)
+                blocks.append(block.group(0))
+                self.assertIn("ARG BUILDX_VERSION=0.37.2", block.group(0))
+                self.assertIn(
+                    "amd64) buildx_arch=amd64; buildx_sha="
+                    "982ca20490b45ed1ec8d99795974d3d874a358f75938c9c237305010e6b7e548 ;;",
+                    block.group(0),
+                )
+                self.assertIn(
+                    "arm64) buildx_arch=arm64; buildx_sha="
+                    "efa38cb7aa7db2dbb9ad049b00b0a9737f66f033626177b5a4e845184ad7ab29 ;;",
+                    block.group(0),
+                )
+                self.assertIn("*) exit 1 ;; esac", block.group(0))
+        if len(blocks) == 2:
+            self.assertEqual(blocks[0], blocks[1])
+
+    def test_buildx_is_verified_and_installed_in_final_backend_stage(self) -> None:
+        for name in ("Dockerfile", "Dockerfile.umbrella"):
+            dockerfile = (DOCKERFILE.parent / name).read_text(encoding="utf-8")
+            build, runtime = dockerfile.split("FROM debian:bookworm-slim", 1)
+            with self.subTest(dockerfile=name):
+                self.assertNotIn("BUILDX_VERSION", build)
+                steps = [
+                    'curl -fsSL "https://github.com/docker/buildx/releases/download/'
+                    'v${BUILDX_VERSION}/buildx-v${BUILDX_VERSION}.linux-${buildx_arch}"',
+                    'echo "${buildx_sha}  /tmp/docker-buildx" | sha256sum -c -',
+                    "install -m 0755 /tmp/docker-buildx /usr/local/lib/docker/cli-plugins/docker-buildx",
+                    "rm /tmp/docker-buildx",
+                    "docker buildx version",
+                ]
+                for step in steps:
+                    self.assertIn(step, runtime)
+                positions = [runtime.index(step) for step in steps]
+                self.assertEqual(positions, sorted(positions))
+
 
 if __name__ == "__main__":
     unittest.main()
