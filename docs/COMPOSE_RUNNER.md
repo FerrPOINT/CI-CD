@@ -40,6 +40,14 @@ replay отсутствует. После рестарта recovery подтве
 lease и удаления файлов. Чужие owner/project/manifest/resource names блокируют
 действия. Неизвестное или отозванное acknowledgement сохраняет данные.
 
+Retry API также читает существующий journal каждого embedded attempt своей job.
+Сброшенная при рестарте память и умерший owner не разрешают новую attempt/queue:
+до `cleaned` с `stopped=true` API возвращает `409`. Проверяются attempt/job,
+daemon, control volume и manifest path; повреждение, symlink и неполный существующий
+каталог блокируют retry. Чтение ограничено 64 KiB для journal и 1 MiB для manifest.
+Отсутствующий каталог legacy/shell либо prelaunch failure не создаётся заново.
+API не выполняет stop/cleanup: подтверждение по-прежнему публикует штатный recovery.
+
 После прерывания backend сверяет journal, daemon, labels, execution attempt
 и состояние БД перед новой диспетчеризацией. Оборванный attempt становится
 failed с неизвестным результатом исполнения; ресурсы очищаются через его

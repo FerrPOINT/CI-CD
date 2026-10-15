@@ -1,10 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { NamespaceLink as Link } from '@sdlc/ui/ui'
-import { useParams } from 'react-router'
-import { useTranslation } from 'react-i18next'
-import { ApiError } from '@/api/client'
-import { ConfigurationContext } from '@/widgets/configuration-context'
-import { ForbiddenPage } from '@/pages/forbidden'
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  NamespaceLink as Link,
+  ResourceList,
+  ResourceListRow,
+} from "@sdlc/ui/ui";
+import { useParams } from "react-router";
+import { useTranslation } from "react-i18next";
+import { ApiError } from "@/api/client";
+import { ConfigurationContext } from "@/widgets/configuration-context";
+import { ForbiddenPage } from "@/pages/forbidden";
 import {
   usePipeline,
   useUpdateJobStatus,
@@ -14,9 +18,16 @@ import {
   useRetryPipeline,
   useTestReport,
   useJobAttempts,
-} from '@/api/hooks'
-import { Card } from '@sdlc/ui/ui'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@sdlc/ui/ui'
+} from "@/api/hooks";
+import { Card } from "@sdlc/ui/ui";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@sdlc/ui/ui";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,10 +37,10 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@sdlc/ui/ui'
-import type { Job, TestReport } from '@/api/types'
-import { Button } from '@sdlc/ui/ui'
-import { Input } from '@sdlc/ui/ui'
+} from "@sdlc/ui/ui";
+import type { Job, TestReport } from "@/api/types";
+import { Button } from "@sdlc/ui/ui";
+import { Input } from "@sdlc/ui/ui";
 import {
   ChevronRight,
   Terminal,
@@ -44,85 +55,101 @@ import {
   FileCode2,
   ArrowDownToLine,
   History,
-} from 'lucide-react'
-import { toast } from 'sonner'
-import type { PipelinePlan, Status } from '@/api/types'
+} from "lucide-react";
+import { toast } from "sonner";
+import type { PipelinePlan, Status } from "@/api/types";
 
 const statusColors: Record<string, string> = {
-  queued: 'bg-text-muted',
-  running: 'bg-warning',
-  success: 'bg-success',
-  failed: 'bg-danger',
-  canceled: 'bg-text-muted',
-}
+  queued: "bg-text-muted",
+  running: "bg-warning",
+  success: "bg-success",
+  failed: "bg-danger",
+  canceled: "bg-text-muted",
+};
 
 export function PipelineDetailPage() {
-  const { t } = useTranslation()
-  const { pipelineId } = useParams<{ pipelineId: string }>()
-  const { data, isLoading, error, refetch } = usePipeline(pipelineId)
-  const updateStatus = useUpdateJobStatus()
-  const cancelPipeline = useCancelPipeline()
-  const retryPipeline = useRetryPipeline()
-  const [selectedJobId, setSelectedJobId] = useState<string | null>(null)
-  const [logMessage, setLogMessage] = useState('')
-  const [confirmCancel, setConfirmCancel] = useState(false)
-  const logPanelRef = useRef<HTMLDivElement>(null)
+  const { t } = useTranslation();
+  const { pipelineId } = useParams<{ pipelineId: string }>();
+  const { data, isLoading, error, refetch } = usePipeline(pipelineId);
+  const updateStatus = useUpdateJobStatus();
+  const cancelPipeline = useCancelPipeline();
+  const retryPipeline = useRetryPipeline();
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [logMessage, setLogMessage] = useState("");
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const logPanelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (selectedJobId) logPanelRef.current?.scrollIntoView?.({ block: 'start' })
-  }, [selectedJobId])
+    if (selectedJobId)
+      logPanelRef.current?.scrollIntoView?.({ block: "start" });
+  }, [selectedJobId]);
 
   if (isLoading)
     return (
       <p role="status" className="text-sm text-text-muted">
-        {t('common.loading')}
+        {t("common.loading")}
       </p>
-    )
+    );
   if (error && !data) {
-    if (error instanceof ApiError && error.status === 403) return <ForbiddenPage />
+    if (error instanceof ApiError && error.status === 403)
+      return <ForbiddenPage />;
     return (
-      <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-danger">
-        <span>{t('pipelines.loadError')}</span>
-        <Button type="button" variant="outline" className="min-h-10" onClick={() => void refetch()}>
-          {t('common.retry')}
+      <div
+        role="alert"
+        className="flex flex-wrap items-center gap-3 text-sm text-danger"
+      >
+        <span>{t("pipelines.loadError")}</span>
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-10"
+          onClick={() => void refetch()}
+        >
+          {t("common.retry")}
         </Button>
       </div>
-    )
+    );
   }
-  if (!data) return <p className="text-sm text-text-muted">{t('common.noData')}</p>
+  if (!data)
+    return <p className="text-sm text-text-muted">{t("common.noData")}</p>;
 
-  const { pipeline, stages, plan } = data
-  const selectedJob = stages.flatMap((s) => s.jobs).find((j) => j.id === selectedJobId)
+  const { pipeline, stages, plan } = data;
+  const selectedJob = stages
+    .flatMap((s) => s.jobs)
+    .find((j) => j.id === selectedJobId);
 
   function handleStatus(jobId: string, status: Status) {
     updateStatus.mutate(
       { jobId, status },
       {
-        onSuccess: () => toast.success(t('jobs.statusUpdated')),
+        onSuccess: () => toast.success(t("jobs.statusUpdated")),
         onError: (e) => toast.error(e.message),
       },
-    )
+    );
   }
 
   function handleCancel() {
     cancelPipeline.mutate(pipeline.id, {
       onSuccess: () => {
-        setConfirmCancel(false)
-        toast.success(t('pipelines.canceledNotice'))
+        setConfirmCancel(false);
+        toast.success(t("pipelines.canceledNotice"));
       },
-      onError: () => toast.error(t('pipelines.actionError')),
-    })
+      onError: () => toast.error(t("pipelines.actionError")),
+    });
   }
 
   function handleRetry() {
     retryPipeline.mutate(pipeline.id, {
-      onSuccess: () => toast.success(t('pipelines.retryStarted')),
-      onError: () => toast.error(t('pipelines.actionError')),
-    })
+      onSuccess: () => toast.success(t("pipelines.retryStarted")),
+      onError: () => toast.error(t("pipelines.actionError")),
+    });
   }
 
   return (
-    <ConfigurationContext configurationId={pipeline.project_id} showSettings={false}>
+    <ConfigurationContext
+      configurationId={pipeline.project_id}
+      showSettings={false}
+    >
       <div className="min-w-0 space-y-6">
         <div>
           <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-text-muted">
@@ -130,14 +157,15 @@ export function PipelineDetailPage() {
               to={`/delivery-configs/${pipeline.project_id}/pipelines`}
               className="inline-flex min-h-10 items-center hover:text-text-primary"
             >
-              {t('navigation.pipelines')}
+              {t("navigation.pipelines")}
             </Link>
             <ChevronRight className="h-3 w-3" />
             <span>#{pipeline.id.slice(0, 8)}</span>
           </div>
           <div className="mt-2 flex min-w-0 flex-wrap items-center gap-3">
             <h1 className="text-2xl font-bold">#{pipeline.id.slice(0, 8)}</h1>
-            {(pipeline.status === 'queued' || pipeline.status === 'running') && (
+            {(pipeline.status === "queued" ||
+              pipeline.status === "running") && (
               <Button
                 size="sm"
                 variant="outline"
@@ -145,10 +173,11 @@ export function PipelineDetailPage() {
                 disabled={cancelPipeline.isPending}
                 onClick={() => setConfirmCancel(true)}
               >
-                <Ban className="h-4 w-4" /> {t('pipelines.cancel')}
+                <Ban className="h-4 w-4" /> {t("pipelines.cancel")}
               </Button>
             )}
-            {(pipeline.status === 'failed' || pipeline.status === 'canceled') && (
+            {(pipeline.status === "failed" ||
+              pipeline.status === "canceled") && (
               <Button
                 size="sm"
                 variant="outline"
@@ -156,11 +185,16 @@ export function PipelineDetailPage() {
                 disabled={retryPipeline.isPending}
                 onClick={handleRetry}
               >
-                <RotateCcw className="h-4 w-4" /> {t('pipelines.retry')}
+                <RotateCcw className="h-4 w-4" /> {t("pipelines.retry")}
               </Button>
             )}
-            <code className="rounded bg-surface-raised px-2 py-1 text-sm">{pipeline.git_ref}</code>
-            <span role="status" className="flex items-center gap-1.5 text-sm text-text-secondary">
+            <code className="rounded bg-surface-raised px-2 py-1 text-sm">
+              {pipeline.git_ref}
+            </code>
+            <span
+              role="status"
+              className="flex items-center gap-1.5 text-sm text-text-secondary"
+            >
               <span
                 className={`h-2.5 w-2.5 rounded-full ${statusColors[pipeline.status]}`}
                 aria-hidden
@@ -171,26 +205,34 @@ export function PipelineDetailPage() {
         </div>
 
         {error && (
-          <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-danger">
-            <span>{t('pipelines.loadError')}</span>
+          <div
+            role="alert"
+            className="flex flex-wrap items-center gap-2 text-sm text-danger"
+          >
+            <span>{t("pipelines.loadError")}</span>
             <Button
               type="button"
               variant="outline"
               className="min-h-10"
               onClick={() => void refetch()}
             >
-              {t('common.retry')}
+              {t("common.retry")}
             </Button>
           </div>
         )}
 
         {plan && <PipelinePlanCard plan={plan} />}
 
-        <div className="grid min-w-0 gap-4 lg:grid-cols-3" data-pipeline-layout="stage-grid">
+        <div
+          className="grid min-w-0 gap-4 lg:grid-cols-3"
+          data-pipeline-layout="stage-grid"
+        >
           {stages.map((stage) => (
             <Card key={stage.id} className="min-w-0 p-4">
               <div className="flex items-center justify-between gap-3 border-b border-border pb-3">
-                <h3 className="min-w-0 break-words text-sm font-semibold">{stage.name}</h3>
+                <h3 className="min-w-0 break-words text-sm font-semibold">
+                  {stage.name}
+                </h3>
                 <span className="flex shrink-0 items-center gap-1.5 text-xs text-text-muted">
                   <span
                     className={`h-2.5 w-2.5 rounded-full ${statusColors[stage.status]}`}
@@ -221,7 +263,7 @@ export function PipelineDetailPage() {
                 <div className="flex items-center gap-2">
                   <Terminal className="h-4 w-4 text-accent" />
                   <h3 className="text-sm font-semibold">
-                    {t('jobs.logs')} — {selectedJob.name}
+                    {t("jobs.logs")} — {selectedJob.name}
                   </h3>
                 </div>
                 <Button
@@ -230,12 +272,15 @@ export function PipelineDetailPage() {
                   className="min-h-10 sm:min-h-10"
                   onClick={() => setSelectedJobId(null)}
                 >
-                  {t('common.close')}
+                  {t("common.close")}
                 </Button>
               </div>
               <JobLogPanel
                 jobId={selectedJob.id}
-                live={selectedJob.status === 'queued' || selectedJob.status === 'running'}
+                live={
+                  selectedJob.status === "queued" ||
+                  selectedJob.status === "running"
+                }
                 logMessage={logMessage}
                 setLogMessage={setLogMessage}
               />
@@ -246,29 +291,34 @@ export function PipelineDetailPage() {
         <AlertDialog open={confirmCancel} onOpenChange={setConfirmCancel}>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>{t('pipelines.cancelTitle')}</AlertDialogTitle>
-              <AlertDialogDescription>{t('pipelines.cancelDescription')}</AlertDialogDescription>
+              <AlertDialogTitle>{t("pipelines.cancelTitle")}</AlertDialogTitle>
+              <AlertDialogDescription>
+                {t("pipelines.cancelDescription")}
+              </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel className="min-h-10" disabled={cancelPipeline.isPending}>
-                {t('pipelines.keepRunning')}
+              <AlertDialogCancel
+                className="min-h-10"
+                disabled={cancelPipeline.isPending}
+              >
+                {t("pipelines.keepRunning")}
               </AlertDialogCancel>
               <AlertDialogAction
                 className="min-h-10"
                 disabled={cancelPipeline.isPending}
                 onClick={(event) => {
-                  event.preventDefault()
-                  handleCancel()
+                  event.preventDefault();
+                  handleCancel();
                 }}
               >
-                {t('pipelines.confirmCancel')}
+                {t("pipelines.confirmCancel")}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
       </div>
     </ConfigurationContext>
-  )
+  );
 }
 
 function JobCard({
@@ -277,35 +327,47 @@ function JobCard({
   onShowLogs,
   pending,
 }: {
-  job: Job
-  onStatus: (jobId: string, status: Status) => void
-  onShowLogs: () => void
-  pending: boolean
+  job: Job;
+  onStatus: (jobId: string, status: Status) => void;
+  onShowLogs: () => void;
+  pending: boolean;
 }) {
-  const { t } = useTranslation()
-  const terminalJobId = job.status === 'failed' || job.status === 'canceled' ? job.id : undefined
-  const { data: attempts = [] } = useJobAttempts(terminalJobId)
-  const latestDiagnostic = attempts.find((attempt) => attempt.error_tail)?.error_tail
+  const { t } = useTranslation();
+  const terminalJobId =
+    job.status === "failed" || job.status === "canceled" ? job.id : undefined;
+  const { data: attempts = [] } = useJobAttempts(terminalJobId);
+  const latestDiagnostic = attempts.find(
+    (attempt) => attempt.error_tail,
+  )?.error_tail;
 
   return (
     <div className="min-w-0 border-t border-border py-3 first:border-t-0">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
-          <span className={`h-2 w-2 rounded-full ${statusColors[job.status]}`} />
+          <span
+            className={`h-2 w-2 rounded-full ${statusColors[job.status]}`}
+          />
           <span className="break-words text-sm font-medium">{job.name}</span>
         </div>
-        <span className="text-xs text-text-muted">{t(`pipelines.${job.status}`)}</span>
+        <span className="text-xs text-text-muted">
+          {t(`pipelines.${job.status}`)}
+        </span>
       </div>
       <p className="mt-2 min-w-0 break-words text-xs text-text-muted">
-        <code className="rounded bg-surface-raised px-1 py-0.5">{job.image}</code>
+        <code className="rounded bg-surface-raised px-1 py-0.5">
+          {job.image}
+        </code>
         <span className="mx-1">·</span>
         <code className="break-all">{job.command}</code>
       </p>
       {job.required_tags.length > 0 && (
         <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-text-muted">
-          <span>{t('jobs.runnerTags')}:</span>
+          <span>{t("jobs.runnerTags")}:</span>
           {job.required_tags.map((tag) => (
-            <code key={tag} className="rounded bg-surface-raised px-1.5 py-0.5 text-text-primary">
+            <code
+              key={tag}
+              className="rounded bg-surface-raised px-1.5 py-0.5 text-text-primary"
+            >
               {tag}
             </code>
           ))}
@@ -313,7 +375,7 @@ function JobCard({
       )}
       {job.required_secrets.length > 0 && (
         <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-text-muted">
-          <span>{t('jobs.secrets')}:</span>
+          <span>{t("jobs.secrets")}:</span>
           {job.required_secrets.map((secret) => (
             <code
               key={secret}
@@ -326,9 +388,12 @@ function JobCard({
       )}
       {job.artifact_paths.length > 0 && (
         <div className="mt-2 flex flex-wrap items-center gap-1 text-xs text-text-muted">
-          <span>{t('jobs.artifacts')}:</span>
+          <span>{t("jobs.artifacts")}:</span>
           {job.artifact_paths.map((path) => (
-            <code key={path} className="rounded bg-surface-raised px-1.5 py-0.5 text-text-primary">
+            <code
+              key={path}
+              className="rounded bg-surface-raised px-1.5 py-0.5 text-text-primary"
+            >
               {path}
             </code>
           ))}
@@ -340,64 +405,74 @@ function JobCard({
         </p>
       )}
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
-        <Button size="sm" variant="outline" className="min-h-10 sm:min-h-10" onClick={onShowLogs}>
-          <Terminal className="h-3 w-3" /> {t('jobs.logs')}
+        <Button
+          size="sm"
+          variant="outline"
+          className="min-h-10 sm:min-h-10"
+          onClick={onShowLogs}
+        >
+          <Terminal className="h-3 w-3" /> {t("jobs.logs")}
         </Button>
-        <Button asChild size="sm" variant="outline" className="min-h-10 sm:min-h-10">
+        <Button
+          asChild
+          size="sm"
+          variant="outline"
+          className="min-h-10 sm:min-h-10"
+        >
           <Link to={`/jobs/${job.id}/artifacts`}>
-            <Package className="h-3 w-3" /> {t('artifacts.title')}
+            <Package className="h-3 w-3" /> {t("artifacts.title")}
           </Link>
         </Button>
       </div>
-      {(job.status === 'queued' || job.status === 'running') && (
+      {(job.status === "queued" || job.status === "running") && (
         <details className="group mt-2 text-sm text-text-muted">
           <summary className="flex min-h-10 cursor-pointer items-center gap-1">
             <ChevronRight
               className="h-4 w-4 transition-transform group-open:rotate-90"
               aria-hidden
             />
-            {t('jobs.manualStatus')}
+            {t("jobs.manualStatus")}
           </summary>
           <div className="flex flex-wrap gap-2 pb-1">
-            {job.status === 'queued' && (
+            {job.status === "queued" && (
               <Button
                 size="sm"
                 variant="outline"
                 className="min-h-10 sm:min-h-10"
                 disabled={pending}
-                onClick={() => onStatus(job.id, 'running')}
+                onClick={() => onStatus(job.id, "running")}
               >
-                <Play className="h-3 w-3" /> {t('jobs.start')}
+                <Play className="h-3 w-3" /> {t("jobs.start")}
               </Button>
             )}
-            {job.status === 'running' && (
+            {job.status === "running" && (
               <>
                 <Button
                   size="sm"
                   variant="outline"
                   className="min-h-10 sm:min-h-10"
                   disabled={pending}
-                  onClick={() => onStatus(job.id, 'success')}
+                  onClick={() => onStatus(job.id, "success")}
                 >
-                  <CheckCircle2 className="h-3 w-3" /> {t('jobs.pass')}
+                  <CheckCircle2 className="h-3 w-3" /> {t("jobs.pass")}
                 </Button>
                 <Button
                   size="sm"
                   variant="outline"
                   className="min-h-10 sm:min-h-10"
                   disabled={pending}
-                  onClick={() => onStatus(job.id, 'failed')}
+                  onClick={() => onStatus(job.id, "failed")}
                 >
-                  <XCircle className="h-3 w-3" /> {t('jobs.fail')}
+                  <XCircle className="h-3 w-3" /> {t("jobs.fail")}
                 </Button>
                 <Button
                   size="sm"
                   variant="outline"
                   className="min-h-10 sm:min-h-10"
                   disabled={pending}
-                  onClick={() => onStatus(job.id, 'canceled')}
+                  onClick={() => onStatus(job.id, "canceled")}
                 >
-                  <Square className="h-3 w-3" /> {t('jobs.cancel')}
+                  <Square className="h-3 w-3" /> {t("jobs.cancel")}
                 </Button>
               </>
             )}
@@ -405,18 +480,20 @@ function JobCard({
         </details>
       )}
     </div>
-  )
+  );
 }
 
 function PipelinePlanCard({ plan }: { plan: PipelinePlan }) {
-  const { t } = useTranslation()
+  const { t } = useTranslation();
   return (
     <Card className="min-w-0 px-4">
       <details className="group">
         <summary className="flex min-h-12 cursor-pointer items-center justify-between gap-3 py-2">
           <span className="flex min-w-0 items-center gap-2">
             <FileCode2 className="h-4 w-4 shrink-0 text-accent" aria-hidden />
-            <span className="text-sm font-semibold">{t('pipelines.planTitle')}</span>
+            <span className="text-sm font-semibold">
+              {t("pipelines.planTitle")}
+            </span>
           </span>
           <span className="flex min-w-0 items-center gap-2 text-xs text-text-muted">
             <span className="break-all">{plan.config_source}</span>
@@ -427,22 +504,33 @@ function PipelinePlanCard({ plan }: { plan: PipelinePlan }) {
           </span>
         </summary>
         <dl className="grid min-w-0 gap-3 border-t border-border py-3 text-xs sm:grid-cols-2 lg:grid-cols-3">
-          <PlanFact label={t('pipelines.planParser')} value={plan.parser_version} />
           <PlanFact
-            label={t('pipelines.planCommit')}
-            value={plan.resolved_commit_sha ?? '-'}
+            label={t("pipelines.planParser")}
+            value={plan.parser_version}
+          />
+          <PlanFact
+            label={t("pipelines.planCommit")}
+            value={plan.resolved_commit_sha ?? "-"}
             mono
           />
           <PlanFact
-            label={t('pipelines.planEdges')}
+            label={t("pipelines.planEdges")}
             value={String(planDependencyCount(plan.plan))}
           />
-          <PlanFact label={t('pipelines.planConfigHash')} value={plan.config_sha256} mono />
-          <PlanFact label={t('pipelines.planHash')} value={plan.plan_sha256} mono />
+          <PlanFact
+            label={t("pipelines.planConfigHash")}
+            value={plan.config_sha256}
+            mono
+          />
+          <PlanFact
+            label={t("pipelines.planHash")}
+            value={plan.plan_sha256}
+            mono
+          />
         </dl>
       </details>
     </Card>
-  )
+  );
 }
 
 function PlanFact({
@@ -450,24 +538,26 @@ function PlanFact({
   value,
   mono = false,
 }: {
-  label: string
-  value: string
-  mono?: boolean
+  label: string;
+  value: string;
+  mono?: boolean;
 }) {
   return (
     <div className="min-w-0">
       <dt className="text-text-muted">{label}</dt>
-      <dd className={`mt-1 break-all ${mono ? 'font-mono text-[11px]' : 'font-medium'}`}>
+      <dd
+        className={`mt-1 break-all ${mono ? "font-mono text-[11px]" : "font-medium"}`}
+      >
         {value}
       </dd>
     </div>
-  )
+  );
 }
 
 function planDependencyCount(plan: unknown): number {
-  if (!plan || typeof plan !== 'object') return 0
-  const dependencies = (plan as { dependencies?: unknown }).dependencies
-  return Array.isArray(dependencies) ? dependencies.length : 0
+  if (!plan || typeof plan !== "object") return 0;
+  const dependencies = (plan as { dependencies?: unknown }).dependencies;
+  return Array.isArray(dependencies) ? dependencies.length : 0;
 }
 
 function JobLogPanel({
@@ -476,116 +566,137 @@ function JobLogPanel({
   logMessage,
   setLogMessage,
 }: {
-  jobId: string
-  live: boolean
-  logMessage: string
-  setLogMessage: (v: string) => void
+  jobId: string;
+  live: boolean;
+  logMessage: string;
+  setLogMessage: (v: string) => void;
 }) {
-  const { t } = useTranslation()
-  const attemptsQuery = useJobAttempts(jobId, live)
-  const attempts = useMemo(() => attemptsQuery.data ?? [], [attemptsQuery.data])
-  const [selectedAttemptId, setSelectedAttemptId] = useState<string | null>(null)
-  const [logSearch, setLogSearch] = useState('')
-  const [appliedLogSearch, setAppliedLogSearch] = useState('')
-  const selectedAttempt = attempts.find((a) => a.id === selectedAttemptId) ?? attempts[0]
-  const logPages = useJobLogPages(jobId, selectedAttempt?.id, appliedLogSearch, live)
-  const tailMode = appliedLogSearch.length === 0
+  const { t } = useTranslation();
+  const attemptsQuery = useJobAttempts(jobId, live);
+  const attempts = useMemo(
+    () => attemptsQuery.data ?? [],
+    [attemptsQuery.data],
+  );
+  const [selectedAttemptId, setSelectedAttemptId] = useState<string | null>(
+    null,
+  );
+  const [logSearch, setLogSearch] = useState("");
+  const [appliedLogSearch, setAppliedLogSearch] = useState("");
+  const selectedAttempt =
+    attempts.find((a) => a.id === selectedAttemptId) ?? attempts[0];
+  const logPages = useJobLogPages(
+    jobId,
+    selectedAttempt?.id,
+    appliedLogSearch,
+    live,
+  );
+  const tailMode = appliedLogSearch.length === 0;
   const logs = useMemo(() => {
-    const pages = logPages.data?.pages ?? []
-    const orderedPages = tailMode ? [...pages].reverse() : pages
-    return orderedPages.flatMap((page) => page.items)
-  }, [logPages.data, tailMode])
-  const logViewportRef = useRef<HTMLPreElement>(null)
-  const followTailRef = useRef(true)
-  const preserveScrollHeightRef = useRef<number | null>(null)
-  const previousLastSequenceRef = useRef<number | null>(null)
-  const [showLatestLogs, setShowLatestLogs] = useState(false)
-  const initialLogsError = logPages.isError && logPages.data == null
-  const nextLogsError = logPages.isFetchNextPageError
-  const refreshLogsError = logPages.isRefetchError && !nextLogsError
-  const appendLog = useAppendLog()
-  const activeAttemptId = attempts[0]?.id
-  const canAppend = !!selectedAttempt && selectedAttempt.id === activeAttemptId
+    const pages = logPages.data?.pages ?? [];
+    const orderedPages = tailMode ? [...pages].reverse() : pages;
+    return orderedPages.flatMap((page) => page.items);
+  }, [logPages.data, tailMode]);
+  const logViewportRef = useRef<HTMLPreElement>(null);
+  const followTailRef = useRef(true);
+  const preserveScrollHeightRef = useRef<number | null>(null);
+  const previousLastSequenceRef = useRef<number | null>(null);
+  const [showLatestLogs, setShowLatestLogs] = useState(false);
+  const initialLogsError = logPages.isError && logPages.data == null;
+  const nextLogsError = logPages.isFetchNextPageError;
+  const refreshLogsError = logPages.isRefetchError && !nextLogsError;
+  const appendLog = useAppendLog();
+  const activeAttemptId = attempts[0]?.id;
+  const canAppend = !!selectedAttempt && selectedAttempt.id === activeAttemptId;
 
   useEffect(() => {
-    const timeout = window.setTimeout(() => setAppliedLogSearch(logSearch.trim()), 300)
-    return () => window.clearTimeout(timeout)
-  }, [logSearch])
+    const timeout = window.setTimeout(
+      () => setAppliedLogSearch(logSearch.trim()),
+      300,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [logSearch]);
 
   useEffect(() => {
     if (attempts.length === 0) {
-      setSelectedAttemptId(null)
-      return
+      setSelectedAttemptId(null);
+      return;
     }
-    if (!selectedAttemptId || !attempts.some((a) => a.id === selectedAttemptId)) {
-      setSelectedAttemptId(attempts[0].id)
+    if (
+      !selectedAttemptId ||
+      !attempts.some((a) => a.id === selectedAttemptId)
+    ) {
+      setSelectedAttemptId(attempts[0].id);
     }
-  }, [attempts, selectedAttemptId])
+  }, [attempts, selectedAttemptId]);
 
   useEffect(() => {
-    followTailRef.current = tailMode
-    preserveScrollHeightRef.current = null
-    previousLastSequenceRef.current = null
-    setShowLatestLogs(false)
-  }, [appliedLogSearch, selectedAttempt?.id, tailMode])
+    followTailRef.current = tailMode;
+    preserveScrollHeightRef.current = null;
+    previousLastSequenceRef.current = null;
+    setShowLatestLogs(false);
+  }, [appliedLogSearch, selectedAttempt?.id, tailMode]);
 
   useEffect(() => {
-    const lastSequence = logs[logs.length - 1]?.sequence ?? null
+    const lastSequence = logs[logs.length - 1]?.sequence ?? null;
     if (!tailMode) {
-      previousLastSequenceRef.current = lastSequence
-      return
+      previousLastSequenceRef.current = lastSequence;
+      return;
     }
 
-    const viewport = logViewportRef.current
-    const preservedHeight = preserveScrollHeightRef.current
+    const viewport = logViewportRef.current;
+    const preservedHeight = preserveScrollHeightRef.current;
     if (viewport && preservedHeight != null) {
-      viewport.scrollTop += viewport.scrollHeight - preservedHeight
-      preserveScrollHeightRef.current = null
-      previousLastSequenceRef.current = lastSequence
-      return
+      viewport.scrollTop += viewport.scrollHeight - preservedHeight;
+      preserveScrollHeightRef.current = null;
+      previousLastSequenceRef.current = lastSequence;
+      return;
     }
 
-    const previousLastSequence = previousLastSequenceRef.current
+    const previousLastSequence = previousLastSequenceRef.current;
     if (viewport && followTailRef.current && logs.length > 0) {
-      viewport.scrollTop = viewport.scrollHeight
+      viewport.scrollTop = viewport.scrollHeight;
     } else if (
       previousLastSequence != null &&
       lastSequence != null &&
       lastSequence > previousLastSequence
     ) {
-      setShowLatestLogs(true)
+      setShowLatestLogs(true);
     }
-    previousLastSequenceRef.current = lastSequence
-  }, [logs, tailMode])
+    previousLastSequenceRef.current = lastSequence;
+  }, [logs, tailMode]);
 
   function loadNextLogPage() {
     if (tailMode) {
-      preserveScrollHeightRef.current = logViewportRef.current?.scrollHeight ?? null
-      followTailRef.current = false
-      setShowLatestLogs(true)
+      preserveScrollHeightRef.current =
+        logViewportRef.current?.scrollHeight ?? null;
+      followTailRef.current = false;
+      setShowLatestLogs(true);
     }
-    void logPages.fetchNextPage()
+    void logPages.fetchNextPage();
   }
 
   function scrollToLatestLog() {
-    const viewport = logViewportRef.current
-    if (viewport) viewport.scrollTop = viewport.scrollHeight
-    followTailRef.current = true
-    setShowLatestLogs(false)
+    const viewport = logViewportRef.current;
+    if (viewport) viewport.scrollTop = viewport.scrollHeight;
+    followTailRef.current = true;
+    setShowLatestLogs(false);
   }
 
   return (
     <div className="mt-3 space-y-3">
       {attemptsQuery.isError && (
-        <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-danger">
-          <span>{t('jobs.attemptsError')}</span>
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-2 text-sm text-danger"
+        >
+          <span>{t("jobs.attemptsError")}</span>
           <Button
             type="button"
             variant="outline"
             className="min-h-10"
             onClick={() => void attemptsQuery.refetch()}
           >
-            {t('common.retry')}
+            {t("common.retry")}
           </Button>
         </div>
       )}
@@ -597,27 +708,32 @@ function JobLogPanel({
                 key={attempt.id}
                 type="button"
                 size="sm"
-                variant={attempt.id === selectedAttempt?.id ? 'default' : 'outline'}
+                variant={
+                  attempt.id === selectedAttempt?.id ? "default" : "outline"
+                }
                 className="min-h-10 sm:min-h-10"
                 onClick={() => setSelectedAttemptId(attempt.id)}
               >
-                {t('jobs.attempt')} #{attempt.attempt_no} · {t(`pipelines.${attempt.status}`)}
+                {t("jobs.attempt")} #{attempt.attempt_no} ·{" "}
+                {t(`pipelines.${attempt.status}`)}
               </Button>
             ))}
           </div>
           {selectedAttempt && (
             <div className="grid gap-2 text-xs text-text-muted sm:grid-cols-2 lg:grid-cols-4">
               <span>
-                {t('jobs.trigger')}: {selectedAttempt.trigger}
+                {t("jobs.trigger")}: {selectedAttempt.trigger}
               </span>
               <span>
-                {t('jobs.exitCode')}: {selectedAttempt.exit_code ?? '-'}
+                {t("jobs.exitCode")}: {selectedAttempt.exit_code ?? "-"}
               </span>
               <span>
-                {t('jobs.startedAt')}: {formatAttemptTime(selectedAttempt.started_at)}
+                {t("jobs.startedAt")}:{" "}
+                {formatAttemptTime(selectedAttempt.started_at)}
               </span>
               <span>
-                {t('jobs.finishedAt')}: {formatAttemptTime(selectedAttempt.finished_at)}
+                {t("jobs.finishedAt")}:{" "}
+                {formatAttemptTime(selectedAttempt.finished_at)}
               </span>
             </div>
           )}
@@ -633,10 +749,10 @@ function JobLogPanel({
           <div className="flex flex-wrap gap-2">
             <Input
               type="search"
-              aria-label={t('jobs.searchLogs')}
+              aria-label={t("jobs.searchLogs")}
               value={logSearch}
               onChange={(e) => setLogSearch(e.target.value)}
-              placeholder={t('jobs.searchLogs')}
+              placeholder={t("jobs.searchLogs")}
               className="min-h-10 min-w-40 flex-1 font-mono text-sm"
             />
             {logSearch && (
@@ -645,9 +761,9 @@ function JobLogPanel({
                 size="sm"
                 variant="outline"
                 className="min-h-10 sm:min-h-10"
-                onClick={() => setLogSearch('')}
+                onClick={() => setLogSearch("")}
               >
-                {t('common.clear')}
+                {t("common.clear")}
               </Button>
             )}
             <Button
@@ -657,114 +773,146 @@ function JobLogPanel({
               className="min-h-10 sm:min-h-10"
               onClick={() => void logPages.refetch()}
             >
-              <RotateCcw className="h-4 w-4" aria-hidden /> {t('jobs.refreshLogs')}
+              <RotateCcw className="h-4 w-4" aria-hidden />{" "}
+              {t("jobs.refreshLogs")}
             </Button>
           </div>
           {initialLogsError && (
-            <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-danger">
-              <span>{t('jobs.logsError')}</span>
+            <div
+              role="alert"
+              className="flex flex-wrap items-center gap-2 text-sm text-danger"
+            >
+              <span>{t("jobs.logsError")}</span>
               <Button
                 type="button"
                 variant="outline"
                 className="min-h-10"
                 onClick={() => void logPages.refetch()}
               >
-                {t('common.retry')}
+                {t("common.retry")}
               </Button>
             </div>
           )}
           {nextLogsError && (
-            <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-danger">
-              <span>{t('jobs.logsPageError')}</span>
+            <div
+              role="alert"
+              className="flex flex-wrap items-center gap-2 text-sm text-danger"
+            >
+              <span>{t("jobs.logsPageError")}</span>
               <Button
                 type="button"
                 variant="outline"
                 className="min-h-10"
                 onClick={loadNextLogPage}
               >
-                {t('common.retry')}
+                {t("common.retry")}
               </Button>
             </div>
           )}
           {refreshLogsError && (
-            <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-danger">
-              <span>{t('jobs.logsRefreshError')}</span>
+            <div
+              role="alert"
+              className="flex flex-wrap items-center gap-2 text-sm text-danger"
+            >
+              <span>{t("jobs.logsRefreshError")}</span>
               <Button
                 type="button"
                 variant="outline"
                 className="min-h-10"
                 onClick={() => void logPages.refetch()}
               >
-                {t('common.retry')}
+                {t("common.retry")}
               </Button>
             </div>
           )}
-          {tailMode && logPages.hasNextPage && !initialLogsError && !nextLogsError && (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="min-h-10 sm:min-h-10"
-              disabled={logPages.isFetchingNextPage}
-              onClick={loadNextLogPage}
-            >
-              <History className="h-4 w-4" aria-hidden />
-              {logPages.isFetchingNextPage ? t('common.loading') : t('jobs.loadEarlierLogs')}
-            </Button>
-          )}
+          {tailMode &&
+            logPages.hasNextPage &&
+            !initialLogsError &&
+            !nextLogsError && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="min-h-10 sm:min-h-10"
+                disabled={logPages.isFetchingNextPage}
+                onClick={loadNextLogPage}
+              >
+                <History className="h-4 w-4" aria-hidden />
+                {logPages.isFetchingNextPage
+                  ? t("common.loading")
+                  : t("jobs.loadEarlierLogs")}
+              </Button>
+            )}
           {!initialLogsError && (
             <pre
               ref={logViewportRef}
               role="log"
-              aria-label={t('jobs.logs')}
+              aria-label={t("jobs.logs")}
               tabIndex={0}
               onScroll={(event) => {
-                if (!tailMode) return
-                const viewport = event.currentTarget
+                if (!tailMode) return;
+                const viewport = event.currentTarget;
                 const nearBottom =
-                  viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 24
-                followTailRef.current = nearBottom
-                setShowLatestLogs(!nearBottom)
+                  viewport.scrollHeight -
+                    viewport.scrollTop -
+                    viewport.clientHeight <=
+                  24;
+                followTailRef.current = nearBottom;
+                setShowLatestLogs(!nearBottom);
               }}
               className="max-h-80 overflow-auto rounded-md bg-zinc-950 p-3 text-xs text-green-400"
             >
               {logPages.isLoading
-                ? t('common.loading')
+                ? t("common.loading")
                 : logs.length === 0
-                  ? t('jobs.noLogs')
+                  ? t("jobs.noLogs")
                   : logs
-                      .map((l) => `${String(l.sequence).padStart(3, '0')}  ${l.message}`)
-                      .join('\n')}
+                      .map(
+                        (l) =>
+                          `${String(l.sequence).padStart(3, "0")}  ${l.message}`,
+                      )
+                      .join("\n")}
             </pre>
           )}
-          {tailMode && showLatestLogs && logs.length > 0 && !initialLogsError && (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="min-h-10 sm:min-h-10"
-              onClick={scrollToLatestLog}
-            >
-              <ArrowDownToLine className="h-4 w-4" aria-hidden /> {t('jobs.latestLogs')}
-            </Button>
-          )}
-          {!tailMode && logPages.hasNextPage && !initialLogsError && !nextLogsError && (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="min-h-10 sm:min-h-10"
-              disabled={logPages.isFetchingNextPage}
-              onClick={loadNextLogPage}
-            >
-              {logPages.isFetchingNextPage ? t('common.loading') : t('jobs.loadMoreLogs')}
-            </Button>
-          )}
+          {tailMode &&
+            showLatestLogs &&
+            logs.length > 0 &&
+            !initialLogsError && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="min-h-10 sm:min-h-10"
+                onClick={scrollToLatestLog}
+              >
+                <ArrowDownToLine className="h-4 w-4" aria-hidden />{" "}
+                {t("jobs.latestLogs")}
+              </Button>
+            )}
+          {!tailMode &&
+            logPages.hasNextPage &&
+            !initialLogsError &&
+            !nextLogsError && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="min-h-10 sm:min-h-10"
+                disabled={logPages.isFetchingNextPage}
+                onClick={loadNextLogPage}
+              >
+                {logPages.isFetchingNextPage
+                  ? t("common.loading")
+                  : t("jobs.loadMoreLogs")}
+              </Button>
+            )}
         </>
       )}
-      {!selectedAttempt && !attemptsQuery.isLoading && !attemptsQuery.isError && (
-        <p className="text-sm text-text-muted">{t('jobs.noLogs')}</p>
-      )}
+      {!selectedAttempt &&
+        !attemptsQuery.isLoading &&
+        !attemptsQuery.isError && (
+          <p className="text-sm text-text-muted">{t("jobs.noLogs")}</p>
+        )}
       {canAppend && (
         <details className="group text-sm text-text-muted">
           <summary className="flex min-h-10 cursor-pointer items-center gap-1">
@@ -772,27 +920,27 @@ function JobLogPanel({
               className="h-4 w-4 transition-transform group-open:rotate-90"
               aria-hidden
             />
-            {t('jobs.manualLog')}
+            {t("jobs.manualLog")}
           </summary>
           <form
             className="flex flex-wrap gap-2"
             onSubmit={(e) => {
-              e.preventDefault()
-              if (!logMessage.trim() || appendLog.isPending) return
+              e.preventDefault();
+              if (!logMessage.trim() || appendLog.isPending) return;
               appendLog.mutate(
                 { jobId, message: logMessage.trim() },
                 {
-                  onSuccess: () => setLogMessage(''),
+                  onSuccess: () => setLogMessage(""),
                   onError: (err) => toast.error(err.message),
                 },
-              )
+              );
             }}
           >
             <Input
-              aria-label={t('jobs.logMessage')}
+              aria-label={t("jobs.logMessage")}
               value={logMessage}
               onChange={(e) => setLogMessage(e.target.value)}
-              placeholder={t('jobs.logMessage')}
+              placeholder={t("jobs.logMessage")}
               className="min-h-10 min-w-40 flex-1 font-mono text-sm"
               disabled={appendLog.isPending}
             />
@@ -802,38 +950,51 @@ function JobLogPanel({
               className="min-h-10 sm:min-h-10"
               disabled={appendLog.isPending || !logMessage.trim()}
             >
-              {t('jobs.append')}
+              {t("jobs.append")}
             </Button>
           </form>
         </details>
       )}
     </div>
-  )
+  );
 }
 
 function formatAttemptTime(value: string | null): string {
-  return value ? new Date(value).toLocaleString() : '-'
+  return value ? new Date(value).toLocaleString() : "-";
 }
 
 function JobTestReportPanel({ jobId }: { jobId: string }) {
-  const { t } = useTranslation()
-  const { data: reports = [], isLoading, isError, refetch } = useTestReport(jobId)
-  if (isLoading) return null
+  const { t } = useTranslation();
+  const {
+    data: reports = [],
+    isLoading,
+    isError,
+    refetch,
+  } = useTestReport(jobId);
+  if (isLoading) return null;
   if (isError)
     return (
-      <div role="alert" className="flex flex-wrap items-center gap-2 text-sm text-danger">
-        <span>{t('jobs.reportError')}</span>
-        <Button type="button" variant="outline" className="min-h-10" onClick={() => void refetch()}>
-          {t('common.retry')}
+      <div
+        role="alert"
+        className="flex flex-wrap items-center gap-2 text-sm text-danger"
+      >
+        <span>{t("jobs.reportError")}</span>
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-10"
+          onClick={() => void refetch()}
+        >
+          {t("common.retry")}
         </Button>
       </div>
-    )
-  if (reports.length === 0) return null
+    );
+  if (reports.length === 0) return null;
   const total = reports.reduce<{
-    total: number
-    passed: number
-    failed: number
-    skipped: number
+    total: number;
+    passed: number;
+    failed: number;
+    skipped: number;
   }>(
     (acc, r) => ({
       total: acc.total + r.tests_total,
@@ -842,50 +1003,61 @@ function JobTestReportPanel({ jobId }: { jobId: string }) {
       skipped: acc.skipped + r.tests_skipped,
     }),
     { total: 0, passed: 0, failed: 0, skipped: 0 },
-  )
+  );
   return (
     <Card className="p-4">
       <div className="flex items-center gap-2 border-b border-border pb-3">
         <ClipboardCheck className="h-4 w-4 text-accent" />
         <h3 className="text-sm font-semibold">
-          {t('jobs.testReport', 'Тест-отчёты')} — {selectedLabel(total)}
+          {t("jobs.testReport", "Тест-отчёты")} — {selectedLabel(total)}
         </h3>
       </div>
-      <div className="mt-3 divide-y divide-border border-y border-border md:hidden">
-        {reports.map((r: TestReport) => (
-          <div key={r.id} className="py-3 text-sm">
-            <p className="font-medium">{r.suite_name}</p>
-            <p className="mt-1 text-xs text-text-muted">
-              ✓{r.tests_passed} ✗{r.tests_failed} ⇒{r.tests_skipped} / {r.tests_total}
-              {r.duration_ms != null && ` · ${r.duration_ms}ms`}
-            </p>
-          </div>
-        ))}
-      </div>
+      <ResourceList asChild>
+        <div className="mt-3 md:hidden">
+          {reports.map((r: TestReport) => (
+            <ResourceListRow asChild key={r.id}>
+              <div className="text-sm">
+                <p className="font-medium">{r.suite_name}</p>
+                <p className="mt-1 text-xs text-text-muted">
+                  ✓{r.tests_passed} ✗{r.tests_failed} ⇒{r.tests_skipped} /{" "}
+                  {r.tests_total}
+                  {r.duration_ms != null && ` · ${r.duration_ms}ms`}
+                </p>
+              </div>
+            </ResourceListRow>
+          ))}
+        </div>
+      </ResourceList>
       <div className="mt-3 hidden overflow-hidden md:block">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>{t('jobs.suite', 'Набор')}</TableHead>
+              <TableHead>{t("jobs.suite", "Набор")}</TableHead>
               <TableHead>✓</TableHead>
               <TableHead>✗</TableHead>
               <TableHead>⇢</TableHead>
-              <TableHead>{t('jobs.total', 'Всего')}</TableHead>
-              <TableHead>{t('jobs.duration', 'Время')}</TableHead>
+              <TableHead>{t("jobs.total", "Всего")}</TableHead>
+              <TableHead>{t("jobs.duration", "Время")}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {reports.map((r: TestReport) => (
               <TableRow key={r.id}>
                 <TableCell className="font-medium">{r.suite_name}</TableCell>
-                <TableCell className="text-emerald-500">{r.tests_passed}</TableCell>
-                <TableCell className={r.tests_failed > 0 ? 'text-destructive' : ''}>
+                <TableCell className="text-emerald-500">
+                  {r.tests_passed}
+                </TableCell>
+                <TableCell
+                  className={r.tests_failed > 0 ? "text-destructive" : ""}
+                >
                   {r.tests_failed}
                 </TableCell>
-                <TableCell className="text-text-muted">{r.tests_skipped}</TableCell>
+                <TableCell className="text-text-muted">
+                  {r.tests_skipped}
+                </TableCell>
                 <TableCell>{r.tests_total}</TableCell>
                 <TableCell className="text-text-muted">
-                  {r.duration_ms != null ? `${r.duration_ms}ms` : '-'}
+                  {r.duration_ms != null ? `${r.duration_ms}ms` : "-"}
                 </TableCell>
               </TableRow>
             ))}
@@ -893,14 +1065,14 @@ function JobTestReportPanel({ jobId }: { jobId: string }) {
         </Table>
       </div>
     </Card>
-  )
+  );
 
   function selectedLabel(sum: {
-    total: number
-    passed: number
-    failed: number
-    skipped: number
+    total: number;
+    passed: number;
+    failed: number;
+    skipped: number;
   }): string {
-    return `${sum.passed}/${sum.total}`
+    return `${sum.passed}/${sum.total}`;
   }
 }

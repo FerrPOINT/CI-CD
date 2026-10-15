@@ -9,6 +9,32 @@ source-observation receipt. Completed acknowledged build допускает то
 DevOps observation, не реактивацию job lease. Current Tracker authority читается
 отдельно перед новым effect. [API](API.md#task-bound-nonproduction-delivery); PG/runtime pending.
 
+## Retry и подтверждение выполнения
+
+Для external lease с `runner_id` и `lease_token_hash` активное состояние либо
+`acknowledged_at` без `completion_received_at` блокирует retry с `409`.
+`expired`, административный `canceled` и `completed_at` не заменяют receipt
+аутентифицированного runner. Исторические записи не backfill-ятся.
+Retry блокирует строку pipeline, затем jobs; attempt, изменение проекций и queue
+entry публикуются одной транзакцией. Lease и очередь других выполняющихся jobs
+не закрываются. Новых таблиц и миграций нет.
+
+Embedded worker хранит in-process reservation до завершения подготовки,
+выполнения и cleanup. Retry захватывает этот же mutex перед DB-транзакцией
+и возвращает `409` для удерживаемой failed/canceled job, включая PID `0`.
+Mutex удерживается до commit; порядок соответствует cancellation:
+reservation → pipeline → jobs. Слоты других jobs сохраняются и не запрещают retry.
+После рестарта существующий Compose journal/reconciliation по-прежнему отвечает
+за подтверждение остановки перед dispatch; новая DB receipt-схема не вводится.
+
+Перед retry API выбирает embedded `job_leases.attempt_id` только для своих
+failed/canceled jobs и читает их существующие protected Compose journals.
+Даже после рестарта API не добавляет attempt или queue entry до `cleaned` и
+`stopped=true`, сверяя job/attempt, daemon, control volume и manifest path.
+Повреждённое/неполное существующее evidence отклоняется с `409`; API не изменяет
+journal и не выполняет Docker-операции под DB locks. Отсутствие legacy/prelaunch
+каталога сохраняет совместимость. Новых таблиц, миграций и backfill нет.
+
 PostgreSQL shadow source packet хранит отдельный filesystem journal:
 `forge/isolated-postgres-manifest/v1` связывает sealed candidate, exact image,
 system identifier/database, schema/history/rows/sequences fingerprint,
