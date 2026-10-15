@@ -32,7 +32,8 @@
       "component": "docs",
       "profiles": [
         "fast",
-        "integrated"
+        "integrated",
+        "release"
       ],
       "argv": [
         "{python}",
@@ -44,7 +45,8 @@
       "inputs": [
         "**"
       ],
-      "cacheable": true
+      "cacheable": true,
+      "test_tier": "static"
     },
     {
       "id": "frontend:types",
@@ -52,7 +54,8 @@
       "profiles": [
         "fast",
         "integrated",
-        "build"
+        "build",
+        "release"
       ],
       "argv": [
         "pnpm",
@@ -84,18 +87,22 @@
           "pattern": "^10\\.28\\.1\\s*$"
         }
       ],
-      "prepare_frontend": "22.20.0"
+      "prepare_frontend": "22.20.0",
+      "test_tier": "static"
     },
     {
       "id": "frontend:tests",
       "component": "frontend",
       "profiles": [
         "fast",
-        "integrated"
+        "integrated",
+        "release",
+        "unit",
+        "build"
       ],
       "argv": [
         "pnpm",
-        "test"
+        "test:unit"
       ],
       "cwd": "frontend",
       "inputs": [
@@ -121,13 +128,15 @@
           "pattern": "^10\\.28\\.1\\s*$"
         }
       ],
-      "prepare_frontend": "22.20.0"
+      "prepare_frontend": "22.20.0",
+      "test_tier": "unit"
     },
     {
       "id": "frontend:lint",
       "component": "frontend",
       "profiles": [
-        "integrated"
+        "integrated",
+        "release"
       ],
       "argv": [
         "pnpm",
@@ -157,7 +166,8 @@
           "pattern": "^10\\.28\\.1\\s*$"
         }
       ],
-      "prepare_frontend": "22.20.0"
+      "prepare_frontend": "22.20.0",
+      "test_tier": "static"
     },
     {
       "id": "frontend:build",
@@ -228,13 +238,17 @@
         "frontend/src/*.test.mjs",
         "frontend/src/*.test.cjs",
         "frontend/e2e/**"
-      ]
+      ],
+      "test_tier": "artifact"
     },
     {
       "id": "backend:unit",
       "component": "backend",
       "profiles": [
-        "fast"
+        "fast",
+        "release",
+        "unit",
+        "build"
       ],
       "argv": [
         "bash",
@@ -263,13 +277,16 @@
           "pattern": "^rustc 1\\.88\\.0\\b"
         }
       ],
-      "sdk_revision": ".namespace-base-revision"
+      "sdk_revision": ".namespace-base-revision",
+      "test_tier": "unit"
     },
     {
       "id": "backend:quality",
       "component": "backend",
       "profiles": [
-        "integrated"
+        "integration",
+        "integrated",
+        "release"
       ],
       "argv": [
         "bash",
@@ -302,7 +319,8 @@
           "pattern": "^rustc 1\\.88\\.0\\b"
         }
       ],
-      "sdk_revision": ".namespace-base-revision"
+      "sdk_revision": ".namespace-base-revision",
+      "test_tier": "integration"
     },
     {
       "id": "backend:build",
@@ -386,7 +404,8 @@
         "CPATH",
         "C_INCLUDE_PATH",
         "CPLUS_INCLUDE_PATH"
-      ]
+      ],
+      "test_tier": "artifact"
     }
   ],
   "additional_acceptance": "Existing product CI/CONTRIBUTING: MSRV/features, ignored DB, OpenAPI/packed consumer/themes, security and live acceptance remain separate mandatory gates where applicable.",
@@ -406,5 +425,18 @@
     "frontend/src/*.spec.tsx",
     "frontend/src/*.test.mjs",
     "frontend/src/*.test.cjs"
-  ]
+  ],
+  "test_policy": {
+    "automatic": [
+      "unit",
+      "static",
+      "artifact"
+    ],
+    "manual_release": [
+      "integration",
+      "slow",
+      "live"
+    ],
+    "release_required": true
+  }
 }
