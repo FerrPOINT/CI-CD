@@ -80,6 +80,26 @@ pub async fn prepare(
     source: &PreparationSource,
     request: &WorkspaceOperationRequest,
 ) -> anyhow::Result<PreparationObservation> {
+    prepare_with_deadline(root, source, request, None).await
+}
+
+/// A deadline gates new effects, not observation of retained preparation.
+pub async fn prepare_with_deadline(
+    root: &Path,
+    source: &PreparationSource,
+    request: &WorkspaceOperationRequest,
+    deadline: Option<Instant>,
+) -> anyhow::Result<PreparationObservation> {
+    prepare_at(root, source, request, deadline, Instant::now).await
+}
+
+async fn prepare_at(
+    root: &Path,
+    source: &PreparationSource,
+    request: &WorkspaceOperationRequest,
+    deadline: Option<Instant>,
+    mut now: impl FnMut() -> Instant,
+) -> anyhow::Result<PreparationObservation> {
     let intent = validate(source, request)?;
     verify_source(&intent).await?;
     let directory = root.join(&request.workspace_id);
@@ -89,6 +109,10 @@ pub async fn prepare(
         Err(e) => return Err(e.into()),
     };
     let owned = if fresh {
+        ensure!(
+            deadline.is_none_or(|until| now() < until),
+            "preparation deadline expired before workspace creation"
+        );
         OwnedWorkspace::create_identified(
             root,
             &request.workspace_id,
@@ -111,6 +135,10 @@ pub async fn prepare(
             .repository
             .to_str()
             .context("repository path is not UTF-8")?;
+        ensure!(
+            deadline.is_none_or(|until| now() < until),
+            "preparation deadline expired before clone"
+        );
         git(
             &owned.directory,
             &[
@@ -125,6 +153,10 @@ pub async fn prepare(
             ],
         )
         .await?;
+        ensure!(
+            deadline.is_none_or(|until| now() < until),
+            "preparation deadline expired before checkout"
+        );
         git(
             owned.checkout(),
             &[

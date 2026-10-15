@@ -364,9 +364,6 @@ pub(crate) async fn prepare(
         return Err(ApiError::conflict("Preparation уже начата"));
     }
     tx.commit().await.map_err(ApiError::internal)?;
-    if Instant::now() >= until {
-        return Err(ApiError::conflict("Lease истёк до Git IO"));
-    }
     let storage = crate::repository_catalog::local_storage_for_project(pool, record.project_id)
         .await?
         .ok_or_else(|| ApiError::conflict("Hosted repository недоступен"))?;
@@ -378,7 +375,7 @@ pub(crate) async fn prepare(
         source_commit: request.source_commit.clone(),
     };
     let result = if fresh {
-        preparation::prepare(root, &source, &request).await
+        preparation::prepare_with_deadline(root, &source, &request, Some(until)).await
     } else {
         preparation::readback(root, &source, &request).await
     };
