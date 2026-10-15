@@ -40,3 +40,10 @@ workflow_dispatch на exact ref. Автоматический CI не подн�
 
 Required security/data/compatibility checks и thresholds сохраняются.
 Unit success не заменяет ручную приёмку; NOT RUN не означает PASS.
+
+Cache bootstrap включается в server через `include_str!`. После обновления
+`scripts/vendor/base-forge-cache-tooling.json` нужен новый server artifact;
+одних Python tests недостаточно. Native qualification выполняется отдельно,
+под UID 10001 с `deploy/forge-job-seccomp.json`, без изменения runtime/pins.
+Текущий packet использует разрешённый directory-relative `linkat` и сохраняет
+атомарность/no-overwrite; sandbox ради cache hit не расширяется.

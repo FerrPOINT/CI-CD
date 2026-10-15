@@ -14,7 +14,11 @@
     "cargo_188": "pdlc-operator-downloads-v1-cargo188",
     "cargo_199": "pdlc-operator-downloads-v1-cargo199",
     "uv_cp311": "pdlc-operator-downloads-v1-uv011-cp311",
-    "pip_cp311": "pdlc-operator-downloads-v1-pip-cp311"
+    "pip_cp311": "pdlc-operator-downloads-v1-pip-cp311",
+    "gradle_qa_961": "pdlc-quality-java-gradle-9.6.1-temurin25.0.4.1",
+    "gradle_qa_980": "pdlc-quality-java-gradle-9.8.0-temurin25.0.4.1",
+    "gradle_product_961": "java-agent-gradle-9.6.1-temurin25.0.4.1",
+    "gradle_product_980": "java-agent-gradle-9.8.0-temurin25.0.4.1"
   },
   "compiler_cache_bytes": 2147483648,
   "native_artifact_bytes_per_product": 1073741824,

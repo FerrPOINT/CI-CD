@@ -190,7 +190,16 @@ def materialize(source, destination, expected_sha256, maximum_bytes):
                     partial = Path(output.name)
                     shutil.copyfileobj(incoming, output)
                 # Atomic, no overwrite. Both links are private; neither points into the seed.
-                os.link(partial, target)
+                if os.link in os.supports_dir_fd:
+                    # CPython otherwise uses legacy link(2), which the product
+                    # sandbox denies. Directory-relative linkat is already approved.
+                    directory = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY)
+                    try:
+                        os.link(partial.name, target.name, src_dir_fd=directory, dst_dir_fd=directory)
+                    finally:
+                        os.close(directory)
+                else:
+                    os.link(partial, target)
             finally:
                 if partial is not None:
                     partial.unlink(missing_ok=True)

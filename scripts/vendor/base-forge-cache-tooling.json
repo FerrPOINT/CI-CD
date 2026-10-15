@@ -1,15 +1,15 @@
 {
   "files": {
     "base-build-cache-policy.json": {
-      "sha256": "6d45067c29554151a02e97982a13b4e2afc6920ebd15726f58baddb849b351a7",
+      "sha256": "30355801482c0b6b9ad95b46e45758264b9e7221e68a8fad17947ed2d77ce5a5",
       "source": "deploy/build-cache-policy.json"
     },
     "base_forge_job_cache.py": {
-      "sha256": "83f3428d4268926d8ebb863f353d992b6b369906215a89575303c3541143ef70",
+      "sha256": "d1236858dec3766440eacdd59772a4abfd203a4aac363ca5a876aee1b97bf888",
       "source": "scripts/forge_job_cache.py"
     }
   },
   "repository": "https://github.com/FerrPOINT/services-base",
-  "revision": "a48ae8d5fecad07675402edff265b2f6c64676f3",
+  "revision": "b4208a6d932b1ad6888439a2be0f7ba1624febae",
   "schema": "base-forge-cache-tooling/v1"
 }

@@ -20,7 +20,7 @@ registry, который получает Gateway. Нужен immutable tool ima
 
 Standalone tooling поставляется из exact Base commit, указанного в
 `scripts/vendor/base-forge-cache-tooling.json`. Контракт и обязательная native
-матрица: [Base FORGE_CACHE_PROTOCOL](https://github.com/FerrPOINT/services-base/blob/a48ae8d5fecad07675402edff265b2f6c64676f3/docs/FORGE_CACHE_PROTOCOL.md).
+матрица: [Base FORGE_CACHE_PROTOCOL](https://github.com/FerrPOINT/services-base/blob/b4208a6d932b1ad6888439a2be0f7ba1624febae/docs/FORGE_CACHE_PROTOCOL.md).
 Unit tests не заменяют полный runner build и native owner/RO/cleanup proof.
 
 Payload budget входит в общий download pool и считается один раз на seed, а не
