@@ -1,6 +1,7 @@
 # Umbrella build for the SDLC fleet root compose (context = /opt/dev/sdlc).
 # Stages the sibling services-base checkout so the sdlc-auth-core path
 # dependency (../../../services-base/...) resolves.
+ARG FORGE_COMPOSE_SOURCE=download
 FROM rust:1.88.0-slim-bookworm@sha256:38bc5a86d998772d4aec2348656ed21438d20fcdce2795b56ca434cf21430d89 AS dependencies
 ARG TARGETARCH
 ARG CARGO_REGISTRY_CACHE_ID=pdlc-operator-downloads-v1-cargo188
@@ -61,7 +62,7 @@ COPY services-base/scripts /services-base/scripts
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked find src domain app infra api cli migration -name '*.rs' -exec touch {} + \
  && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server -p cicd-cli
 
-FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
+FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS runtime-base
 # docker-cli only (DooD): embedded runner spawns job containers through the
 # mounted host docker socket; no daemon runs inside this image. The static
 # official CLI is pinned because bookworm's docker.io is too old for the
@@ -72,6 +73,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl git git-lf
   | tar -xz --strip-components=1 -C /usr/local/bin docker/docker \
  && useradd --create-home --uid 10001 cicd
 
+FROM runtime-base AS compose-download
 # Official Compose v5.5.1 release checksums (not downloaded mutable checksums).
 ARG TARGETARCH
 RUN case "${TARGETARCH:-amd64}" in \
@@ -79,11 +81,26 @@ RUN case "${TARGETARCH:-amd64}" in \
       arm64) compose_arch=aarch64; compose_sha=732e3a84c1a0f67256ce80bc2598a24546b10ca05f9faa97efceb1171ece2ef7 ;; \
       *) exit 1 ;; esac \
  && mkdir -p /usr/local/lib/docker/cli-plugins \
- && curl -fsSL "https://github.com/docker/compose/releases/download/v5.5.1/docker-compose-linux-${compose_arch}" -o /tmp/docker-compose \
+ && curl -fsSL --connect-timeout 15 --max-time 180 "https://github.com/docker/compose/releases/download/v5.5.1/docker-compose-linux-${compose_arch}" -o /tmp/docker-compose \
  && echo "${compose_sha}  /tmp/docker-compose" | sha256sum -c - \
  && install -m 0755 /tmp/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose \
  && rm /tmp/docker-compose \
  && docker compose version
+
+FROM runtime-base AS compose-preloaded
+ARG TARGETARCH
+COPY --from=forge-compose /docker-compose /tmp/docker-compose
+RUN case "${TARGETARCH:-amd64}" in \
+      amd64) compose_arch=x86_64; compose_sha=db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576 ;; \
+      arm64) compose_arch=aarch64; compose_sha=732e3a84c1a0f67256ce80bc2598a24546b10ca05f9faa97efceb1171ece2ef7 ;; \
+      *) exit 1 ;; esac \
+ && mkdir -p /usr/local/lib/docker/cli-plugins \
+ && echo "${compose_sha}  /tmp/docker-compose" | sha256sum -c - \
+ && install -m 0755 /tmp/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose \
+ && rm /tmp/docker-compose \
+ && docker compose version
+
+FROM compose-${FORGE_COMPOSE_SOURCE} AS runtime
 
 WORKDIR /app
 COPY --from=build /app/target/release/cicd-server /usr/local/bin/cicd-server

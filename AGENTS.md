@@ -48,12 +48,12 @@ cd frontend && pnpm build
 
 Не использовать `docker compose restart` для применения нового образа или env: пересоздавать сервисы через `docker compose up -d` либо `docker compose up --build -d`.
 
-## Checklist перед завершением
+## Проверка завершения и отдельный release gate
 
 - [ ] Изменения соответствуют существующей архитектуре и не затёрли чужую работу.
-- [ ] Backend-проверки проходят: fmt, clippy, test, release build.
-- [ ] Frontend-проверки проходят: `pnpm openapi:check`, `pnpm openapi:compat --base-ref origin/main`, `pnpm test`, `pnpm build`.
-- [ ] `docker compose config` и `docker compose build` успешны при изменении контейнеров.
+- [ ] Пройдены scoped unit/static затронутых компонентов по `.quality-gate.json`; подходящие проверенные outputs/receipts переиспользованы.
+- [ ] На интегрированной вехе проверен один application artifact. Config/build контейнеров выполняются при изменении соответствующих inputs, без повторной компиляции неизменного кода.
+- [ ] Для релиза отдельно подтверждены полный backend/frontend набор, integration/slow/coverage и необходимые security/data/live gates на exact candidate; невыполненные проверки обозначены NOT RUN.
 - [ ] Для новых endpoint выполнена curl-проверка; для UI-изменений сделаны актуальные screenshots при необходимости.
 - [ ] Документация, `.env.example` и ADR обновлены, если изменились контракт, конфигурация или решение.
 - [ ] В diff отсутствуют credentials, токены, `.env` и другие чувствительные данные.
@@ -95,3 +95,9 @@ Required security/data/compatibility/live checks и product toolchains сохр�
 
 Уровни и команды: [TESTING](docs/TESTING.md). Полный `.github/workflows/release.yml`
 запускается вручную на exact ref; зелёный unit build не означает release acceptance.
+
+Root candidate producer может переиспользовать локальный public Compose 5.5.1
+artifact через named context `forge-compose` и `FORGE_COMPOSE_SOURCE=preloaded`.
+Он закреплён repository digest; recipe проверяет официальный SHA-256 до исполнения.
+Самостоятельный build сохраняет default download с ограничением ожидания. Команда
+подготовки — Base `scripts/compose_tool.py`; SDK/runtime/operator pins не меняются.
