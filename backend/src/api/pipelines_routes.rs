@@ -17,11 +17,13 @@ use std::path::Path as FsPath;
 use std::sync::Arc;
 use uuid::Uuid;
 
-/// Additive task branch; the flattened legacy fields and ordinary trigger remain unchanged.
+/// Additive task branch; legacy field types/defaults and ordinary trigger remain unchanged.
 #[derive(Deserialize, utoipa::ToSchema)]
 pub(crate) struct TaskTriggerPipeline {
-    #[serde(flatten)]
-    legacy: TriggerPipeline,
+    git_ref: Option<String>,
+    /// Optional run variables; exposed to every job as CICD_VAR_<KEY>.
+    #[serde(default)]
+    variables: Option<BTreeMap<String, String>>,
     #[serde(default)]
     task_intent: Option<crate::domain::sdlc_workspace::TaskWorkspaceIntent>,
 }
@@ -46,7 +48,13 @@ pub(crate) async fn trigger_pipeline(
 ) -> Result<(HeaderMap, Json<PipelineDetail>), ApiError> {
     let idempotency_key = pipeline_idempotency_key(&headers)?;
     let pool = pool(&state)?;
-    let submission = match input.task_intent {
+    let TaskTriggerPipeline {
+        git_ref,
+        variables,
+        task_intent,
+    } = input;
+    let legacy = TriggerPipeline { git_ref, variables };
+    let submission = match task_intent {
         Some(intent) => {
             if idempotency_key.is_none() {
                 return Err(ApiError::bad_request(
@@ -61,12 +69,12 @@ pub(crate) async fn trigger_pipeline(
         }
         None => None,
     };
-    let git_ref = input.legacy.git_ref.unwrap_or_else(|| "main".into());
+    let git_ref = legacy.git_ref.unwrap_or_else(|| "main".into());
     let outcome = create_pipeline_bound(
         pool,
         project_id,
         git_ref,
-        serde_json::to_value(input.legacy.variables.unwrap_or_default())
+        serde_json::to_value(legacy.variables.unwrap_or_default())
             .unwrap_or_else(|_| serde_json::json!({})),
         PIPELINE_TRIGGER_SOURCE_API,
         idempotency_key.as_deref(),
@@ -370,7 +378,7 @@ mod task_trigger_tests {
         }))
         .unwrap();
         assert!(input.task_intent.is_none());
-        assert_eq!(input.legacy.git_ref.as_deref(), Some("main"));
+        assert_eq!(input.git_ref.as_deref(), Some("main"));
         let vars = serde_json::json!({"CHECK":"yes"});
         assert_eq!(
             task_trigger_fingerprint("main", &vars, None),
@@ -382,6 +390,54 @@ mod task_trigger_tests {
             }))
             .is_err()
         );
+    }
+
+    #[test]
+    fn task_trigger_legacy_fields_preserve_decode_and_default_parity() {
+        for value in [
+            serde_json::json!({}),
+            serde_json::json!({"git_ref":null,"variables":null}),
+            serde_json::json!({"git_ref":"main","variables":{"CHECK":"yes"}}),
+            serde_json::json!({"git_ref":"","variables":{},"unrelated":true}),
+            serde_json::json!({"git_ref":"refs/heads/ветка","variables":{"TEXT":"значение"},"task_intent":null}),
+            serde_json::json!({"git_ref":42}),
+            serde_json::json!({"variables":[]}),
+            serde_json::json!({"variables":{"CHECK":42}}),
+            serde_json::json!([]),
+        ] {
+            let typed = serde_json::from_value::<TaskTriggerPipeline>(value.clone());
+            let original = serde_json::from_value::<TriggerPipeline>(value);
+            assert_eq!(typed.is_ok(), original.is_ok());
+            if let (Ok(typed), Ok(original)) = (typed, original) {
+                assert!(typed.task_intent.is_none());
+                let legacy = TriggerPipeline {
+                    git_ref: typed.git_ref,
+                    variables: typed.variables,
+                };
+                assert_eq!(legacy.git_ref, original.git_ref);
+                assert_eq!(legacy.variables, original.variables);
+            }
+        }
+    }
+
+    #[test]
+    fn task_trigger_schema_has_object_root_and_exact_legacy_properties() {
+        #[derive(utoipa::OpenApi)]
+        #[openapi(components(schemas(TaskTriggerPipeline, TriggerPipeline)))]
+        struct Contract;
+        let document = serde_json::to_value(<Contract as utoipa::OpenApi>::openapi()).unwrap();
+        let schemas = &document["components"]["schemas"];
+        let typed = &schemas["TaskTriggerPipeline"];
+        let original = &schemas["TriggerPipeline"];
+        assert_eq!(typed["type"], "object");
+        assert!(typed.get("allOf").is_none());
+        for field in ["git_ref", "variables"] {
+            assert!(original["properties"].get(field).is_some());
+            assert_eq!(typed["properties"][field], original["properties"][field]);
+        }
+        assert_eq!(typed.get("required"), original.get("required"));
+        assert_eq!(typed["properties"].as_object().unwrap().len(), 3);
+        assert!(typed["properties"].get("task_intent").is_some());
     }
 
     #[test]
