@@ -3061,7 +3061,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/TriggerPipeline'
+              $ref: '#/components/schemas/TaskTriggerPipeline'
         required: true
       responses:
         '200':
@@ -3075,6 +3075,38 @@ paths:
         '404':
           description: ''
         '409':
+          description: ''
+  /api/v1/projects/{project_id}/pipelines/{pipeline_id}/task-workspace:
+    get:
+      tags:
+      - SDLC workspace
+      summary: 'Authenticated original locator: pending is null, not accepted/success; no lease token.'
+      operationId: read_receipt
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: pipeline_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                oneOf:
+                - type: 'null'
+                - $ref: '#/components/schemas/WorkspaceOperationReceipt'
+        '403':
+          description: ''
+        '404':
           description: ''
   /api/v1/projects/{project_id}/reports/summary:
     get:
@@ -3332,7 +3364,7 @@ paths:
     post:
       tags:
       - SDLC workspace
-      summary: HTTP delivery remains fail-closed. No caller flag or configured local target enables dispatch.
+      summary: Task-only nonproduction delivery. Generic deployment approval/rollback policy is unchanged.
       operationId: reject_sdlc_delivery
       parameters:
       - name: project_id
@@ -3353,6 +3385,12 @@ paths:
               $ref: '#/components/schemas/DeliveryCommand'
         required: true
       responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryReadback'
         '400':
           description: ''
         '401':
@@ -3364,7 +3402,7 @@ paths:
         '409':
           description: ''
         '503':
-          description: Tracker admission/source binding unavailable; no deployment effect
+          description: Owner task target or Tracker readback unavailable
   /api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations/{delivery_key}:
     get:
       tags:
@@ -6273,6 +6311,11 @@ components:
           type: string
         original:
           $ref: '#/components/schemas/WorkspaceOperationLookup'
+        taskFence:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/TaskDeliveryFence'
+            description: Current Tracker DevOps context, not a caller-issued admission receipt.
         workspaceOperationKey:
           type: string
       additionalProperties: false
@@ -8698,6 +8741,42 @@ components:
           type: string
         sha:
           type: string
+    TaskDeliveryFence:
+      type: object
+      required:
+      - developmentResultId
+      - assignmentId
+      - executionId
+      - agentId
+      - leaseId
+      - fencingToken
+      - expectedLeaseVersion
+      - assignmentHash
+      properties:
+        agentId:
+          type: string
+          format: uuid
+        assignmentHash:
+          type: string
+        assignmentId:
+          type: string
+          format: uuid
+        developmentResultId:
+          type: string
+          format: uuid
+        executionId:
+          type: string
+          format: uuid
+        expectedLeaseVersion:
+          type: integer
+          format: int64
+        fencingToken:
+          type: integer
+          format: int64
+        leaseId:
+          type: string
+          format: uuid
+      additionalProperties: false
     TaskPullEvidence:
       type: object
       required:
@@ -8742,6 +8821,64 @@ components:
           type: string
           format: uuid
         tracker_instance_id:
+          type: string
+          format: uuid
+      additionalProperties: false
+    TaskTriggerPipeline:
+      type: object
+      description: Additive task branch; legacy field types/defaults and ordinary trigger remain unchanged.
+      properties:
+        git_ref:
+          type:
+          - string
+          - 'null'
+        task_intent:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/TaskWorkspaceIntent'
+        variables:
+          type:
+          - object
+          - 'null'
+          description: Optional run variables; exposed to every job as CICD_VAR_<KEY>.
+          additionalProperties:
+            type: string
+          propertyNames:
+            type: string
+    TaskWorkspaceIntent:
+      type: object
+      description: Task input only. Runner lease/attempt/workspace identities are never caller supplied.
+      required:
+      - operationKey
+      - binding
+      - repositoryId
+      - sourceCommit
+      - role
+      - agentId
+      - trackerLeaseId
+      - holderSubject
+      - expectedLeaseVersion
+      properties:
+        agentId:
+          type: string
+          format: uuid
+        binding:
+          $ref: '#/components/schemas/WorkspaceTaskBinding'
+        expectedLeaseVersion:
+          type: integer
+          format: int64
+        holderSubject:
+          type: string
+        operationKey:
+          type: string
+        repositoryId:
+          type: string
+          format: uuid
+        role:
+          $ref: '#/components/schemas/WorkspaceRole'
+        sourceCommit:
+          type: string
+        trackerLeaseId:
           type: string
           format: uuid
       additionalProperties: false
