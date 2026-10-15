@@ -153,7 +153,16 @@ def parent_death():
             'coordinator_parent_unavailable')
 
 
-def bind_base_sources(root):
+def bind_base_sources(root, sources):
+    modules = {}
+    for source in sources:
+        require(source.endswith('.py') and source.startswith(
+            ('scripts/', 'base-operator/src/pdlc_operator/')), 'unknown_base_source')
+        name = source.removeprefix('base-operator/src/').removesuffix('.py').replace('/', '.')
+        name = name.removesuffix('.__init__')
+        require(name not in modules, 'duplicate_base_source')
+        modules[name] = root / source
+
     class SourceLoader(importlib.machinery.SourceFileLoader):
         def get_code(self, fullname):
             # Compile verified source instead of trusting an existing .pyc.
@@ -168,10 +177,8 @@ def bind_base_sources(root):
                 spec = importlib.machinery.ModuleSpec(fullname, None, is_package=True)
                 spec.submodule_search_locations = [str(root / 'scripts')]
                 return spec
-            source_root = root if parts[0] == 'scripts' else root / 'base-operator/src'
-            source = source_root.joinpath(*parts)
-            source = source / '__init__.py' if source.is_dir() else source.with_suffix('.py')
-            if not source.is_file():
+            source = modules.get(fullname)
+            if source is None or not source.is_file():
                 raise ModuleNotFoundError('pinned Base source module unavailable')
             return importlib.util.spec_from_file_location(
                 fullname, source, loader=SourceLoader(fullname, str(source)))
@@ -216,7 +223,7 @@ class Owner:
             compose_file=[plain(p['composeFile'])], env_file=[], layout='legacy',
             _docker=['/usr/local/bin/docker'], _daemon_id=p['daemonId'])
         base_root = plain(p['baseRoot'])
-        bind_base_sources(base_root)
+        bind_base_sources(base_root, packet['baseSources'])
         from scripts import platform_backup, platform_postgres
         self.base, self.pg = platform_backup, platform_postgres
         require(Path(self.base.__file__).resolve().is_relative_to(Path(p['baseRoot']).resolve()), 'pinned_utility_import_mismatch')

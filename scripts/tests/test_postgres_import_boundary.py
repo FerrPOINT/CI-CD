@@ -29,7 +29,9 @@ class PostgresImportBoundaryTests(unittest.TestCase):
                 shutil.copyfile(BASE / name, target)
             marker = root / 'unreviewed-import'
             if shadow:
-                (bundle / shadow).write_text(
+                target = bundle / shadow
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(
                     'from pathlib import Path\n'
                     f'Path({str(marker)!r}).write_text("executed")\n'
                     'raise RuntimeError("unreviewed import executed")\n',
@@ -60,6 +62,7 @@ class PostgresImportBoundaryTests(unittest.TestCase):
                 'root': str(owner_root), 'readOnly': True,
                 'command': {'operationKey': 'import-boundary'},
                 'originalOperation': {}, 'policySha256': 'a' * 64,
+                'baseSources': files,
                 'policy': {
                     'projectName': project, 'networkName': parent + '_qa',
                     'volumeName': parent + '_delivery-qa',
@@ -105,6 +108,12 @@ print(owner.base.__file__)
 
     def test_native_sidecar_cannot_replace_a_pinned_source(self):
         self.check_import(native=True)
+
+    def test_package_cannot_replace_a_pinned_script_module(self):
+        self.check_import('scripts/platform_backup/__init__.py')
+
+    def test_package_cannot_replace_a_pinned_operator_module(self):
+        self.check_import('base-operator/src/pdlc_operator/backup/primitives/__init__.py')
 
 
 if __name__ == '__main__':

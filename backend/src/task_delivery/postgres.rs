@@ -391,7 +391,8 @@ pub async fn local_command(
     }
     let packet = serde_json::json!({"projectId":project,"root":resolved,"policy":policy,"policySha256":policy_hash,
         "command":command,"originalOperation":original,"sealedCandidate":candidate,
-        "readOnly":read_only,"reconcile":reconcile,"guardPid":guard_pid,"guardKey":GUARD_KEY});
+        "readOnly":read_only,"reconcile":reconcile,"guardPid":guard_pid,"guardKey":GUARD_KEY,
+        "baseSources":BASE_PG_HELPERS.iter().map(|(name, _)| *name).collect::<Vec<_>>()});
     let mut process = Command::new(&policy.python_bin);
     process
         .arg("-B")
