@@ -1,5 +1,10 @@
 # Архитектура Forge CI/CD
 
+Typed task image-build source использует existing embedded runner и backend
+Docker/TLS authority без передачи её jobs/agents. Exact Git export и generated
+OCI descriptor отделены от mutable job checkout. Source не заменяет actual
+build/deployment qualification: [ADR-0027](adr/0027-task-backend-image-build.md).
+
 Owner-local OCI CLI поддерживает preloaded immutable image и read-only data
 snapshot без migrations/restore. Actual container/mount/network, served manifest,
 schema/bytes compatibility и application acceptance отделены от desired Compose

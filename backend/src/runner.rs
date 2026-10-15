@@ -21,6 +21,14 @@ use crate::{
     config::{ArtifactsConfig, RunnerMode, RuntimeConfig, SecretsConfig},
 };
 
+#[cfg(test)]
+#[path = "runner_image_build_admission_tests.rs"]
+mod image_build_admission_tests;
+
+#[cfg(all(test, feature = "integration"))]
+#[path = "runner_image_build_terminal_tests.rs"]
+mod image_build_terminal_tests;
+
 const RUNNER_RECONCILE_INTERVAL_SECONDS: u64 = 2;
 const RUNNER_STALE_OFFLINE_AFTER_SECONDS: i64 = 120;
 const DEFAULT_RUNNER_QUEUE_TIMEOUT_SECONDS: i64 =
@@ -921,6 +929,228 @@ fn lease_status_for_terminal(terminal_status: &str) -> &'static str {
     }
 }
 
+#[derive(sqlx::FromRow)]
+struct ImageBuildPlan {
+    plan: serde_json::Value,
+    plan_sha256: String,
+    config_sha256: String,
+    raw_config: String,
+    config_source: String,
+    resolved_commit_sha: Option<String>,
+    stage_position: i32,
+    job_position: i32,
+}
+
+fn planned_image_build(
+    job: &JobRow,
+    snapshot: &ImageBuildPlan,
+) -> Result<Option<crate::domain::image_build::ImageBuildSpec>, ApiError> {
+    use sha2::{Digest, Sha256};
+    let entry = snapshot.plan["jobs"].as_array().and_then(|jobs| {
+        jobs.iter().find(|entry| {
+            entry["stage_position"].as_i64() == Some(i64::from(snapshot.stage_position))
+                && entry["position"].as_i64() == Some(i64::from(snapshot.job_position))
+        })
+    });
+    let Some(spec) = entry.and_then(|entry| entry.get("image_build")) else {
+        if job.command == "forge:image-build" || job.image == "forge:backend-image-build" {
+            return Err(ApiError::conflict(
+                "Image build requires an immutable typed plan",
+            ));
+        }
+        return Ok(None);
+    };
+    let spec: crate::domain::image_build::ImageBuildSpec = serde_json::from_value(spec.clone())
+        .map_err(|_| ApiError::conflict("Invalid image build plan"))?;
+    spec.validate().map_err(ApiError::conflict)?;
+    let entry = entry.expect("typed entry was found");
+    let bytes = serde_json::to_vec(&snapshot.plan)
+        .map_err(|_| ApiError::conflict("Invalid immutable build plan"))?;
+    let expected_artifacts = vec![spec.descriptor_artifact.clone()];
+    if snapshot.config_source != "repository"
+        || snapshot.plan["format"] != "v1-dag"
+        || snapshot.plan["version"] != 1
+        || snapshot.plan["config_source"] != "repository"
+        || job
+            .commit_sha
+            .as_deref()
+            .is_none_or(|sha| !crate::domain::image_build::valid_commit(sha))
+        || snapshot.resolved_commit_sha != job.commit_sha
+        || snapshot.plan["resolved_commit_sha"].as_str() != job.commit_sha.as_deref()
+        || format!("{:x}", Sha256::digest(&bytes)) != snapshot.plan_sha256
+        || format!("{:x}", Sha256::digest(snapshot.raw_config.as_bytes())) != snapshot.config_sha256
+        || entry["key"].as_str() != Some(job.name.as_str())
+        || entry["stage"].as_str() != Some(job.stage_name.as_str())
+        || job.command != "forge:image-build"
+        || entry["command"] != job.command
+        || job.image != "forge:backend-image-build"
+        || entry["image"] != job.image
+        || entry["commands"] != serde_json::json!([])
+        || entry["required_secrets"] != serde_json::json!([])
+        || entry["required_tags"] != serde_json::json!([])
+        || entry["allow_failure"] != false
+        || !job.required_secrets.is_empty()
+        || job.artifact_paths != expected_artifacts
+        || entry["artifact_paths"] != serde_json::json!(expected_artifacts)
+    {
+        return Err(ApiError::conflict(
+            "Image build differs from its repository plan",
+        ));
+    }
+    Ok(Some(spec))
+}
+
+async fn image_build_input(
+    pool: &PgPool,
+    job: &JobRow,
+    config: &RuntimeRunnerConfig,
+) -> Result<
+    Option<(
+        crate::domain::image_build::ImageBuildSpec,
+        crate::runner_workspace::preparation::PreparationSource,
+    )>,
+    ApiError,
+> {
+    let snapshot = sqlx::query_as::<_, ImageBuildPlan>(
+        "SELECT p.plan,p.plan_sha256,p.config_sha256,p.raw_config,p.config_source, \
+         p.resolved_commit_sha,s.position AS stage_position,j.position AS job_position \
+         FROM pipeline_plans p JOIN stages s ON s.pipeline_id=p.pipeline_id \
+         JOIN jobs j ON j.stage_id=s.id WHERE j.id=$1",
+    )
+    .bind(job.id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    let Some(snapshot) = snapshot else {
+        if job.command == "forge:image-build" || job.image == "forge:backend-image-build" {
+            return Err(ApiError::conflict("Image build plan is unavailable"));
+        }
+        return Ok(None);
+    };
+    let Some(spec) = planned_image_build(job, &snapshot)? else {
+        return Ok(None);
+    };
+    if config.mode != RunnerMode::Docker {
+        return Err(ApiError::conflict(
+            "Backend image builds require the configured Docker runner",
+        ));
+    }
+    let mut conn = pool.acquire().await.map_err(ApiError::internal)?;
+    let record = cicd_infra::sdlc_workspace::find_task_pipeline(&mut conn, job.pipeline_id, false)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::conflict("Image build requires authenticated task intent"))?;
+    drop(conn);
+    if record.project_id != job.project_id
+        || Some(record.intent.source_commit.as_str()) != job.commit_sha.as_deref()
+    {
+        return Err(ApiError::conflict(
+            "Image build task source differs from pipeline",
+        ));
+    }
+    let storage = crate::repository_catalog::local_storage_for_project(pool, job.project_id)
+        .await?
+        .ok_or_else(|| ApiError::conflict("Hosted build source is unavailable"))?;
+    let storage = crate::git_host::validate_repo_name(&storage).map_err(ApiError::conflict)?;
+    Ok(Some((
+        spec,
+        crate::runner_workspace::preparation::PreparationSource {
+            project_id: job.project_id,
+            repository_id: record.intent.repository_id,
+            repository: config.git_root.join(format!("{storage}.git")),
+            source_commit: record.intent.source_commit.clone(),
+        },
+    )))
+}
+
+async fn image_build_attempt_active(
+    pool: &PgPool,
+    lease: &EmbeddedJobLease,
+) -> Result<bool, ApiError> {
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM execution_attempts a JOIN job_leases l ON l.attempt_id=a.id \
+         JOIN jobs j ON j.id=a.job_id WHERE a.id=$1 AND l.id=$2 AND l.generation=$3 \
+         AND a.status='running' AND j.status='running' AND l.lease_status='active' \
+         AND l.runner_id IS NULL AND l.runner_name='embedded' \
+         AND l.cancel_requested_at IS NULL AND l.lease_expires_at>clock_timestamp() \
+         AND l.generation=(SELECT max(generation) FROM job_leases WHERE job_id=j.id))",
+    )
+    .bind(lease.attempt_id)
+    .bind(lease.id)
+    .bind(lease.generation)
+    .fetch_one(pool)
+    .await
+    .map_err(ApiError::internal)
+}
+
+async fn finish_image_build_success(
+    pool: &PgPool,
+    job: Uuid,
+    lease: &EmbeddedJobLease,
+    exit_code: Option<i32>,
+    until: std::time::Instant,
+) -> Result<bool, ApiError> {
+    if std::time::Instant::now() >= until {
+        return Ok(false);
+    }
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+    // Use reconciliation's lease -> attempt -> job order. A failed predicate rolls back all writes.
+    let changed = sqlx::query(
+        "UPDATE job_leases l SET lease_status='completed',completed_at=clock_timestamp(), \
+         terminal_status='success' WHERE l.id=$1 AND l.attempt_id=$2 AND l.job_id=$3 \
+         AND l.generation=$4 AND l.lease_status='active' AND l.runner_id IS NULL \
+         AND l.runner_name='embedded' AND l.cancel_requested_at IS NULL \
+         AND l.lease_expires_at>clock_timestamp() \
+         AND l.generation=(SELECT max(generation) FROM job_leases WHERE job_id=$3) \
+         AND EXISTS(SELECT 1 FROM execution_attempts a JOIN jobs j ON j.id=a.job_id \
+             JOIN stages s ON s.id=j.stage_id JOIN pipelines p ON p.id=s.pipeline_id \
+             WHERE a.id=$2 AND a.job_id=$3 AND a.status='running' AND j.status='running' \
+             AND p.status IN ('queued','running'))",
+    )
+    .bind(lease.id)
+    .bind(lease.attempt_id)
+    .bind(job)
+    .bind(lease.generation)
+    .execute(&mut *tx)
+    .await
+    .map_err(ApiError::internal)?
+    .rows_affected();
+    if changed != 1 {
+        tx.rollback().await.map_err(ApiError::internal)?;
+        return Ok(false);
+    }
+    let attempt = sqlx::query(
+        "UPDATE execution_attempts SET status='success',finished_at=clock_timestamp(),exit_code=$3,error_tail=NULL \
+         WHERE id=$1 AND job_id=$2 AND status='running'",
+    ).bind(lease.attempt_id).bind(job).bind(exit_code).execute(&mut *tx).await
+        .map_err(ApiError::internal)?.rows_affected();
+    let job_changed = sqlx::query(
+        "UPDATE jobs SET status='success',finished_at=clock_timestamp() WHERE id=$1 AND status='running'",
+    ).bind(job).execute(&mut *tx).await.map_err(ApiError::internal)?.rows_affected();
+    let queue = sqlx::query(
+        "UPDATE job_queue SET state='completed',completed_at=clock_timestamp(),updated_at=clock_timestamp() \
+         WHERE lease_id=$1 AND attempt_id=$2 AND job_id=$3 AND state='leased'",
+    ).bind(lease.id).bind(lease.attempt_id).bind(job).execute(&mut *tx).await
+        .map_err(ApiError::internal)?.rows_affected();
+    let deadline_live: bool =
+        sqlx::query_scalar("SELECT lease_expires_at>clock_timestamp() FROM job_leases WHERE id=$1")
+            .bind(lease.id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(ApiError::internal)?;
+    if attempt != 1
+        || job_changed != 1
+        || queue != 1
+        || !deadline_live
+        || std::time::Instant::now() >= until
+    {
+        tx.rollback().await.map_err(ApiError::internal)?;
+        return Ok(false);
+    }
+    tx.commit().await.map_err(ApiError::internal)?;
+    Ok(true)
+}
+
 async fn run_job_inner(
     pool: PgPool,
     job_id: Uuid,
@@ -972,8 +1202,40 @@ async fn run_job_inner(
         return Ok(ExecutionOutcome::Held);
     }
 
+    let image_input = image_build_input(&pool, &job, config).await?;
     let owned_workspace = prepare_workspace(&pool, &job, &lease, config).await?;
     let workspace = owned_workspace.checkout().to_path_buf();
+    let mut image_build = if let Some((spec, source)) = image_input {
+        match crate::runner_image_build::prepare(
+            &workspace_root(config).join(".compose-control"),
+            &source,
+            crate::runner_image_build::ImageBuildScope {
+                project_id: job.project_id,
+                pipeline_id: job.pipeline_id,
+                job_id,
+                attempt_id,
+                lease_id: lease.id,
+                generation: lease.generation,
+            },
+            spec,
+        )
+        .await
+        {
+            Ok(build) => Some(build),
+            Err(_) => {
+                append_attempt_log(
+                    &pool,
+                    job_id,
+                    attempt_id,
+                    "runner: image build preparation held; inspect original attempt custody",
+                )
+                .await?;
+                return Ok(ExecutionOutcome::Held);
+            }
+        }
+    } else {
+        None
+    };
 
     // REQ-SEC-002: inject only job-declared project secrets as env vars.
     let secrets = crate::platform::project_secret_pairs_for_names_with_config(
@@ -1065,7 +1327,7 @@ async fn run_job_inner(
     }
     envs.extend(secrets.iter().cloned());
 
-    let mut remote_job = if config.mode == RunnerMode::Docker {
+    let mut remote_job = if image_build.is_none() && config.mode == RunnerMode::Docker {
         Some(
             crate::runner_docker::RemoteJob::prepare(job_id, attempt_id, &workspace)
                 .await
@@ -1093,7 +1355,16 @@ async fn run_job_inner(
             }
         }
     }
-    let mut child = if config.mode == RunnerMode::Docker {
+    let mut child = if let Some(build) = &image_build {
+        let mut cmd = match build.command() {
+            Ok(command) => command,
+            Err(_) => return Ok(ExecutionOutcome::Held),
+        };
+        cmd.stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        cmd
+    } else if config.mode == RunnerMode::Docker {
         // Bind only this fresh attempt wrapper, never a reusable job directory.
         let workspace_subdir = workspace
             .parent()
@@ -1160,6 +1431,9 @@ async fn run_job_inner(
     .fetch_one(&pool)
     .await
     .map_err(ApiError::internal)?;
+    if image_build.is_some() && (!active || !image_build_attempt_active(&pool, &lease).await?) {
+        return Ok(ExecutionOutcome::Held);
+    }
     if !active {
         drop(guard);
         return Ok(finish_workspace_retention(
@@ -1174,9 +1448,19 @@ async fn run_job_inner(
     if task_until.is_some_and(|until| std::time::Instant::now() >= until) {
         return Ok(ExecutionOutcome::Held);
     }
-    let mut child = child
-        .spawn()
-        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if let Some(build) = &mut image_build {
+        if build.mark_started().is_err() {
+            return Ok(ExecutionOutcome::Held);
+        }
+    }
+    let mut child = match child.spawn() {
+        Ok(child) => child,
+        Err(_) if image_build.is_some() => {
+            let _ = image_build.as_ref().expect("build scope").hold_unknown();
+            return Ok(ExecutionOutcome::Held);
+        }
+        Err(error) => return Err(ApiError::internal(sqlx::Error::Io(error))),
+    };
 
     if let Some(pid) = child.id() {
         guard.insert(job_id, pid);
@@ -1206,6 +1490,12 @@ async fn run_job_inner(
             let message = format!("runner: job timed out after {timeout_secs}s, killing");
             let _ = child.start_kill();
             if confirmed_process_exit(child.wait().await, job_id, attempt_id).is_none() {
+                return Ok(ExecutionOutcome::Held);
+            }
+            if let Some(build) = &image_build {
+                let _ = build.complete(crate::runner_image_build::BuildExit::TimedOut).await;
+                append_attempt_log(&pool, job_id, attempt_id,
+                    "runner: build timeout; remote solver termination unconfirmed, attempt held").await?;
                 return Ok(ExecutionOutcome::Held);
             }
             if let Some(remote) = &mut remote_job {
@@ -1256,6 +1546,9 @@ async fn run_job_inner(
     };
 
     let Some(exit_status) = confirmed_process_exit(exit_status, job_id, attempt_id) else {
+        if let Some(build) = &image_build {
+            let _ = build.hold_unknown();
+        }
         return Ok(ExecutionOutcome::Held);
     };
     if let Some(remote) = &mut remote_job {
@@ -1296,16 +1589,74 @@ async fn run_job_inner(
             error_tail = Some(format!("runner: remote artifact transfer failed: {error}"));
         }
     }
+    let completed_build = if let Some(build) = &image_build {
+        use crate::runner_image_build::{BuildCompletion, BuildExit};
+        if !image_build_attempt_active(&pool, &lease).await? {
+            let _ = build.complete(BuildExit::Cancelled).await;
+            return Ok(ExecutionOutcome::Held);
+        }
+        let observation = if exit_status.success() {
+            BuildExit::Success
+        } else {
+            BuildExit::Failed
+        };
+        match build.complete(observation).await {
+            BuildCompletion::Complete(completed) => {
+                if completed.descriptor.source_commit.as_str()
+                    != job.commit_sha.as_deref().unwrap_or("")
+                    || completed.artifact_path
+                        != completed.artifact_root.join(&job.artifact_paths[0])
+                {
+                    return Ok(ExecutionOutcome::Held);
+                }
+                Some(completed)
+            }
+            BuildCompletion::Held(reason) => {
+                tracing::warn!(%job_id, %attempt_id, ?reason, "image build held for original readback");
+                return Ok(ExecutionOutcome::Held);
+            }
+        }
+    } else {
+        None
+    };
+    // The build runs under the original submission once; this is readonly authority readback.
+    let mut publication_guard = None;
+    let mut publication_until = None;
+    if completed_build.is_some() {
+        let until = match crate::api::sdlc_workspace::task_pipeline::verify_submitted_attempt(
+            &pool,
+            job.pipeline_id,
+            attempt_id,
+            &config.sdlc_workspace,
+        )
+        .await
+        {
+            Ok(until) => until,
+            Err(_) => return Ok(ExecutionOutcome::Held),
+        };
+        let guard = running.lock().await;
+        if !image_build_attempt_active(&pool, &lease).await? || std::time::Instant::now() >= until {
+            return Ok(ExecutionOutcome::Held);
+        }
+        publication_guard = Some(guard);
+        publication_until = Some(until);
+    }
+    let artifact_root = completed_build
+        .as_ref()
+        .map_or(workspace.as_path(), |b| b.artifact_root.as_path());
     let artifact_error = collect_declared_artifacts(
         &pool,
         &config.artifacts,
         job_id,
         attempt_id,
-        &workspace,
+        artifact_root,
         &job.artifact_paths,
     )
     .await
     .err();
+    if image_build.is_some() && artifact_error.is_some() {
+        return Ok(ExecutionOutcome::Held);
+    }
     if final_status == "success" {
         if let Some(error) = artifact_error {
             final_status = "failed";
@@ -1317,6 +1668,29 @@ async fn run_job_inner(
         }
     }
 
+    if image_build.is_some() && !image_build_attempt_active(&pool, &lease).await? {
+        return Ok(ExecutionOutcome::Held);
+    }
+    if let Some(until) = publication_until {
+        if !finish_image_build_success(&pool, job_id, &lease, exit_code, until).await? {
+            return Ok(ExecutionOutcome::Held);
+        }
+        drop(publication_guard);
+        refresh_stage(pool.clone(), job.id).await?;
+        let outcome =
+            finish_workspace_retention(&pool, &lease, owned_workspace, None, config.keep_workspace)
+                .await;
+        if outcome == ExecutionOutcome::Finished
+            && image_build
+                .as_ref()
+                .expect("typed completion scope")
+                .acknowledge_and_cleanup()
+                .is_err()
+        {
+            return Ok(ExecutionOutcome::Held);
+        }
+        return Ok(outcome);
+    }
     let updated = sqlx::query(
         "UPDATE jobs SET status = $2, finished_at = now() \
          WHERE id = $1 AND status='running' \
@@ -1328,6 +1702,9 @@ async fn run_job_inner(
     .execute(&pool)
     .await
     .map_err(ApiError::internal)?;
+    if image_build.is_some() && updated.rows_affected() == 0 {
+        return Ok(ExecutionOutcome::Held);
+    }
     if updated.rows_affected() == 0 {
         mark_attempt_canceled(
             &pool,
@@ -1365,15 +1742,23 @@ async fn run_job_inner(
     .await
     .map_err(ApiError::internal)?;
     complete_embedded_job_lease(&pool, lease.id, final_status, error_tail.as_deref()).await?;
+    drop(publication_guard);
     refresh_stage(pool.clone(), job.id).await?;
-    Ok(finish_workspace_retention(
+    let outcome = finish_workspace_retention(
         &pool,
         &lease,
         owned_workspace,
         remote_job.as_mut(),
         config.keep_workspace,
     )
-    .await)
+    .await;
+    if matches!(outcome, ExecutionOutcome::Finished)
+        && let Some(build) = &image_build
+        && build.acknowledge_and_cleanup().is_err()
+    {
+        return Ok(ExecutionOutcome::Held);
+    }
+    Ok(outcome)
 }
 
 fn confirmed_process_exit(

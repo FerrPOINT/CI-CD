@@ -1,5 +1,37 @@
 # API v1 Specification — Forge CI/CD
 
+## Typed Image Build In Task Pipeline
+
+Source candidate; actual Rust/PG/TLS build/deployment qualification pending.
+В repository `.forge-ci.yml` v1 job может использовать `image_build` вместо
+`commands`:
+
+```yaml
+version: 1
+jobs:
+  application:
+    image_build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+      descriptor_artifact: delivery/candidate.json
+      readable_schema_versions: [1]
+```
+
+`target` необязателен. Пути portable relative; Dockerfile разрешается внутри
+context. `commands`, job image/tags/secrets/artifacts/allow_failure и default tags
+не смешиваются с `image_build`. Неизвестные поля отклоняются. Ручной pipeline без
+authenticated `task_intent` это действие не запускает.
+
+Новых HTTP routes нет: используется существующий pipeline API, exact repository
+SHA, project SAT, Tracker authority и embedded queue/lease. В immutable v1 plan
+добавляется optional `image_build`; обычные jobs сохраняют прежний JSON/hash.
+Backend собирает sealed Git context через existing configured Docker daemon и
+возвращает artifact `forge/oci-candidate/v1` с immutable image ID/source commit.
+Unknown/timeout удерживает original attempt без автоматического rebuild.
+Artifact не означает deployment или SDLC acceptance. Подробности:
+[ADR-0027](adr/0027-task-backend-image-build.md).
+
 ## Task Pipeline Workspace (Source Candidate)
 
 Optional `task_intent` у прежнего `POST /api/v1/projects/{project_id}/pipelines`

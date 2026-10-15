@@ -144,6 +144,11 @@ async fn create_pipeline_bound(
         None => ("legacy_template", LEGACY_TEMPLATE_CONFIG.to_string()),
     };
     let parsed_config = parse_pipeline_config(Some(&raw_config)).map_err(ApiError::bad_request)?;
+    if parsed_config.has_image_build() && task.is_none() {
+        return Err(ApiError::bad_request(
+            "image_build доступен только для авторизованного task pipeline",
+        ));
+    }
     let plan_snapshot = build_pipeline_plan_snapshot(
         &git_ref,
         commit_sha.as_deref(),
@@ -532,6 +537,11 @@ enum ParsedPipelinePlan {
 }
 
 impl ParsedPipelineConfig {
+    fn has_image_build(&self) -> bool {
+        matches!(&self.plan, ParsedPipelinePlan::V1(plan)
+            if plan.jobs.iter().any(|job| job.image_build.is_some()))
+    }
+
     fn parser_version(&self) -> &'static str {
         match self.plan {
             ParsedPipelinePlan::Legacy => LEGACY_PIPELINE_PLAN_PARSER_VERSION,
@@ -627,6 +637,8 @@ struct V1PlanJob {
     timeout_seconds: Option<i32>,
     allow_failure: bool,
     needs: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image_build: Option<crate::domain::image_build::ImageBuildSpec>,
 }
 
 fn build_pipeline_plan_snapshot(
@@ -928,6 +940,7 @@ struct NormalizedV1Job {
     timeout_seconds: Option<i32>,
     allow_failure: bool,
     needs: Vec<String>,
+    image_build: Option<crate::domain::image_build::ImageBuildSpec>,
 }
 
 fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
@@ -955,7 +968,9 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
         #[serde(default)]
         needs: Vec<String>,
         image: Option<String>,
+        #[serde(default)]
         commands: Vec<String>,
+        image_build: Option<crate::domain::image_build::ImageBuildSpec>,
         timeout: Option<String>,
         tags: Option<Vec<String>>,
         #[serde(default)]
@@ -1003,7 +1018,21 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
                 ".forge-ci.yml v1 job key '{key}' must match ^[a-zA-Z][a-zA-Z0-9_.-]{{0,62}}$"
             ));
         }
-        if job.commands.is_empty() || job.commands.len() > 64 {
+        if let Some(build) = &job.image_build {
+            build.validate()?;
+            if !job.commands.is_empty()
+                || job.image.is_some()
+                || job.tags.is_some()
+                || !job.secrets.is_empty()
+                || job.artifacts.is_some()
+                || job.allow_failure
+                || !default_tags.is_empty()
+            {
+                return Err(format!(
+                    ".forge-ci.yml v1 job '{key}': image_build несовместим с commands, image, tags, secrets, artifacts и allow_failure"
+                ));
+            }
+        } else if job.commands.is_empty() || job.commands.len() > 64 {
             return Err(format!(
                 ".forge-ci.yml v1 job '{key}' must define 1..64 commands"
             ));
@@ -1016,7 +1045,11 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
             }
         }
 
-        let image = job.image.unwrap_or_else(|| default_image.clone());
+        let image = if job.image_build.is_some() {
+            "forge:backend-image-build".into()
+        } else {
+            job.image.unwrap_or_else(|| default_image.clone())
+        };
         if !is_safe_image_reference(&image) {
             return Err(format!(
                 ".forge-ci.yml v1 job '{key}' image must be a safe image reference"
@@ -1032,19 +1065,22 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
         };
         let required_secrets =
             normalize_v1_secret_names(&format!("jobs.{key}.secrets"), job.secrets)?;
-        let artifact_paths = match job.artifacts {
-            Some(artifacts) => {
-                if artifacts.paths.is_empty() {
-                    return Err(format!(
-                        ".forge-ci.yml v1 jobs.{key}.artifacts.paths must define at least one path"
-                    ));
+        let artifact_paths = match &job.image_build {
+            Some(build) => vec![build.descriptor_artifact.clone()],
+            None => match job.artifacts {
+                Some(artifacts) => {
+                    if artifacts.paths.is_empty() {
+                        return Err(format!(
+                            ".forge-ci.yml v1 jobs.{key}.artifacts.paths must define at least one path"
+                        ));
+                    }
+                    normalize_v1_artifact_paths(
+                        &format!("jobs.{key}.artifacts.paths"),
+                        artifacts.paths,
+                    )?
                 }
-                normalize_v1_artifact_paths(
-                    &format!("jobs.{key}.artifacts.paths"),
-                    artifacts.paths,
-                )?
-            }
-            None => Vec::new(),
+                None => Vec::new(),
+            },
         };
 
         if job.needs.len() > 64 {
@@ -1085,6 +1121,7 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
                 timeout_seconds,
                 allow_failure: job.allow_failure,
                 needs,
+                image_build: job.image_build,
             },
         );
     }
@@ -1123,7 +1160,11 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
         let mut ci_jobs = Vec::with_capacity(jobs.len());
         for (job_position, job) in jobs.into_iter().enumerate() {
             let job_position = job_position as i32;
-            let command = v1_runtime_command(&job.commands);
+            let command = if job.image_build.is_some() {
+                "forge:image-build".into()
+            } else {
+                v1_runtime_command(&job.commands)
+            };
             ci_jobs.push(CiJob {
                 name: job.key.clone(),
                 image: job.image.clone(),
@@ -1149,6 +1190,7 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
                 timeout_seconds: job.timeout_seconds,
                 allow_failure: job.allow_failure,
                 needs: job.needs,
+                image_build: job.image_build,
             });
         }
         stages.push(CiStage {
@@ -1179,6 +1221,68 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
 
 fn v1_runtime_command(commands: &[String]) -> String {
     format!("set -e\n{}", commands.join("\n"))
+}
+
+#[cfg(test)]
+mod image_build_parser_tests {
+    use super::*;
+
+    const BUILD: &str = "version: 1\njobs:\n  package:\n    image_build:\n      context: .\n      dockerfile: Dockerfile\n      descriptor_artifact: output/image.json\n      readable_schema_versions: [1]\n";
+
+    #[test]
+    fn typed_image_build_freezes_action_and_declares_only_its_descriptor() {
+        let parsed = parse_pipeline_config(Some(BUILD)).unwrap();
+        assert!(parsed.has_image_build());
+        let job = &parsed.stages[0].jobs[0];
+        assert_eq!(job.command, "forge:image-build");
+        assert_eq!(job.image, "forge:backend-image-build");
+        assert_eq!(job.artifact_paths, ["output/image.json"]);
+        assert!(job.required_secrets.is_empty() && job.required_tags.is_empty());
+        assert!(!job.allow_failure);
+        let snapshot = build_pipeline_plan_snapshot(
+            &"a".repeat(40),
+            Some(&"a".repeat(40)),
+            "repository",
+            BUILD.into(),
+            &parsed,
+        );
+        let frozen = &snapshot.plan["jobs"][0];
+        assert_eq!(frozen["image_build"]["context"], ".");
+        assert_eq!(frozen["image_build"]["dockerfile"], "Dockerfile");
+        assert_eq!(frozen["commands"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn image_build_rejects_mixed_commands_or_job_level_execution_overrides() {
+        for extra in [
+            "commands: [echo mixed]",
+            "image: alpine:3.21",
+            "tags: [privileged]",
+            "secrets: [TOKEN]",
+            "artifacts: {paths: [extra.txt]}",
+            "allow_failure: true",
+        ] {
+            let raw = BUILD.replace("  package:\n", &format!("  package:\n    {extra}\n"));
+            assert!(parse_pipeline_config(Some(&raw)).is_err(), "{extra}");
+        }
+        let raw = BUILD.replace("jobs:\n", "defaults:\n  tags: [external]\njobs:\n");
+        assert!(parse_pipeline_config(Some(&raw)).is_err());
+    }
+
+    #[test]
+    fn ordinary_v1_plan_keeps_its_existing_fields_and_shell_sentinel_is_not_an_action() {
+        let raw = "version: 1\njobs:\n  test:\n    commands: [forge:image-build]\n";
+        let parsed = parse_pipeline_config(Some(raw)).unwrap();
+        assert!(!parsed.has_image_build());
+        let snapshot =
+            build_pipeline_plan_snapshot("main", None, "repository", raw.into(), &parsed);
+        let job = snapshot.plan["jobs"][0].as_object().unwrap();
+        assert_eq!(job.len(), 13);
+        assert!(!job.contains_key("image_build"));
+        assert_eq!(job["command"], "set -e\nforge:image-build");
+        assert_eq!(job["image"], "alpine:3.21");
+        assert_eq!(job["commands"], serde_json::json!(["forge:image-build"]));
+    }
 }
 
 fn compute_v1_job_levels(

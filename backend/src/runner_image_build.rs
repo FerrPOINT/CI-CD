@@ -342,7 +342,7 @@ impl PreparedImageBuild {
     }
 
     pub(crate) fn hold_unknown(&self) -> BuildCompletion {
-        BuildCompletion::Held(BuildHoldReason::Unknown)
+        BuildCompletion::Held(hold_reason(BuildExit::Unknown).expect("unknown cannot complete"))
     }
 
     /// ONLY after MAIN has durably acknowledged the exact DB job/attempt/lease completion.

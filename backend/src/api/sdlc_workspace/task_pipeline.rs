@@ -308,6 +308,32 @@ pub(crate) async fn before_spawn(
     Ok(Spawn::Permit(until))
 }
 
+/// Verify an already submitted task attempt without claiming or replaying it.
+pub(crate) async fn verify_submitted_attempt(
+    pool: &PgPool,
+    pipeline: Uuid,
+    attempt: Uuid,
+    config: &SdlcWorkspaceConfig,
+) -> Result<Instant, ApiError> {
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+    let record = ledger::find_task_pipeline(&mut tx, pipeline, false)
+        .await
+        .map_err(ApiError::internal)?
+        .ok_or_else(|| ApiError::conflict("Task pipeline отсутствует"))?;
+    if !ledger::task_attempt_submitted(&mut tx, pipeline, attempt)
+        .await
+        .map_err(ApiError::internal)?
+    {
+        return Err(ApiError::conflict(
+            "Исходная task submission не подтверждена",
+        ));
+    }
+    authorize_saved(&mut tx, config, &record).await?;
+    let until = tracker(config, &record.intent).await?;
+    tx.commit().await.map_err(ApiError::internal)?;
+    Ok(until)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn prepare(
     pool: &PgPool,

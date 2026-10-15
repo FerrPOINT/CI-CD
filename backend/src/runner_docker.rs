@@ -87,6 +87,11 @@ async fn retry_unconfirmed_at(
     daemon: &str,
     control_volume: &str,
 ) -> io::Result<bool> {
+    if crate::runner_image_build::retry_unconfirmed(root, job, attempt)
+        .map_err(|_| invalid("image build recovery custody is unavailable"))?
+    {
+        return Ok(true);
+    }
     let project = format!("sdlc-build-job-{}", attempt.simple());
     for path in [root.to_path_buf(), root.join(&project)] {
         match tokio::fs::symlink_metadata(&path).await {
