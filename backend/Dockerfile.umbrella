@@ -36,7 +36,11 @@ COPY CI-CD/backend/migration/src migration/src
 COPY CI-CD/backend/migrations ./migrations
 # Compile-time delivery witnesses must come from the same pinned source set.
 COPY CI-CD/scripts/postgres-delivery.py /scripts/postgres-delivery.py
-COPY services-base/scripts/platform_backup.py services-base/scripts/platform_postgres.py services-base/scripts/compose_helpers.py /services-base/scripts/
+COPY services-base/scripts/platform_backup.py \
+     services-base/scripts/platform_postgres.py \
+     services-base/scripts/compose_helpers.py \
+     services-base/scripts/platform_namespace.py \
+     services-base/scripts/_platform_namespace_contract.py /services-base/scripts/
 RUN find src domain app infra api cli migration -name '*.rs' -exec touch {} + \
  && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server -p cicd-cli
 
