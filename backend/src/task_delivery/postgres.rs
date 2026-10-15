@@ -12,7 +12,10 @@ pub const GUARD_KEY: i64 = 0x464f524745504744;
 // Pin transitive Python policy imports together with their privileged callers.
 macro_rules! pinned_base_helper {
     ($path:literal) => {
-        ($path, include_bytes!(concat!("../../../../services-base/", $path)) as &[u8])
+        (
+            $path,
+            include_bytes!(concat!("../../../../services-base/", $path)) as &[u8],
+        )
     };
 }
 
