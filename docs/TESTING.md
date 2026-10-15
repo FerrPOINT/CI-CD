@@ -21,6 +21,12 @@ integration/slow/full coverage и browser/live — вручную перед р�
 ### Разработка и сборка
 
 Backend: `cargo test --locked -p cicd-domain --lib` из backend/.
+Cache protocol: `cargo test --locked --manifest-path tests/cache-protocol/Cargo.toml --lib`
+из backend/. Этот маленький target проверяет production `runner_cache.rs` напрямую,
+без компиляции HTTP/PostgreSQL server. `python scripts/check_cache_tooling.py`
+проверяет exact Base packet и совпадение dependency versions с application lockfile.
+Оба unit target обязательны в обычной сборке; native Docker boundary qualification
+выполняется отдельно перед активацией по [ADR-0025](adr/0025-readonly-cargo-seeds.md).
 
 Frontend из frontend/: `pnpm test:unit`, `pnpm build` включает unit.
 `pnpm test` — unit alias, `pnpm test:all` — прежний полный набор.

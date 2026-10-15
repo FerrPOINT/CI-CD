@@ -1098,7 +1098,7 @@ async fn run_job_inner(
         let mut cmd = remote_job
             .as_mut()
             .expect("Docker preparation required")
-            .job_command(&args, &envs)
+            .job_command(&args, &envs, job.project_id, &workspace)
             .await
             .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
         cmd.current_dir(&workspace)

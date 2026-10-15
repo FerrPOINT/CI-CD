@@ -34,12 +34,19 @@ FROM dependencies AS unit
 ARG TARGETARCH
 ARG CARGO_REGISTRY_CACHE_ID=pdlc-operator-downloads-v1-cargo188
 COPY CI-CD/backend/domain ./domain
+COPY CI-CD/backend/src/runner_cache.rs ./src/runner_cache.rs
+COPY CI-CD/backend/tests/cache-protocol ./tests/cache-protocol
+COPY CI-CD/scripts/vendor/base_forge_job_cache.py CI-CD/scripts/vendor/base-build-cache-policy.json CI-CD/scripts/vendor/base-forge-cache-tooling.json /scripts/vendor/
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked /usr/local/cargo/bin/cargo test --locked --release -p cicd-domain --lib
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked CARGO_TARGET_DIR=/app/target /usr/local/cargo/bin/cargo test --locked --release --manifest-path tests/cache-protocol/Cargo.toml --lib && printf 'passed\n' > /tmp/rust-unit-check
 
-FROM unit AS build
+FROM dependencies AS build
 ARG TARGETARCH
 ARG CARGO_REGISTRY_CACHE_ID=pdlc-operator-downloads-v1-cargo188
+RUN --mount=type=bind,from=unit,source=/tmp/rust-unit-check,target=/tmp/rust-unit-check test "$(cat /tmp/rust-unit-check)" = passed
+RUN rm -rf -- src domain/src app/src infra/src api/src cli/src migration/src
 COPY CI-CD/backend/src ./src
+COPY CI-CD/scripts/vendor/base_forge_job_cache.py CI-CD/scripts/vendor/base-build-cache-policy.json CI-CD/scripts/vendor/base-forge-cache-tooling.json /scripts/vendor/
 COPY CI-CD/backend/build.rs ./build.rs
 COPY CI-CD/backend/domain/src domain/src
 COPY CI-CD/backend/app/src app/src

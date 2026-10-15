@@ -1,0 +1,16 @@
+[package]
+name = "forge-cache-protocol-tests"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+
+# A small standalone unit target consumes the production source directly. It
+# does not compile the PostgreSQL/HTTP server just to test cache policy.
+[workspace]
+
+[dependencies]
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+sha2 = "=0.10.9"
+uuid = { version = "=1.26.0", features = ["v4"] }

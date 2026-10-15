@@ -19,3 +19,6 @@ backend/migrations/0033_aggregation_quiet_hours.sql text eol=crlf
 backend/migrations/0038_platform_messaging.sql text eol=crlf
 backend/tests/fixtures/historical_platform_messaging.sql text eol=crlf
 scripts/task-delivery-qa.sh text eol=lf
+scripts/vendor/base_forge_job_cache.py -text
+scripts/vendor/base-build-cache-policy.json -text
+scripts/vendor/base-forge-cache-tooling.json -text

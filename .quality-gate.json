@@ -258,7 +258,7 @@
         "-euo",
         "pipefail",
         "-c",
-        "cargo fmt --all -- --check; cargo test --locked -p cicd-domain --lib"
+        "cargo fmt --all -- --check; cargo test --locked -p cicd-domain --lib; cargo test --locked --manifest-path tests/cache-protocol/Cargo.toml --lib"
       ],
       "cwd": "backend",
       "inputs": [

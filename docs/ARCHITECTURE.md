@@ -1,5 +1,9 @@
 # Архитектура Forge CI/CD
 
+Публичные dependency downloads для Docker jobs: [ADR-0025](adr/0025-readonly-cargo-seeds.md).
+Typed read-only seed дополняет attempt-private registry; activation требует
+отдельной native qualification. Source implementation не меняет текущий runtime.
+
 Owner-local OCI CLI поддерживает preloaded immutable image и read-only data
 snapshot без migrations/restore. Actual container/mount/network, served manifest,
 schema/bytes compatibility и application acceptance отделены от desired Compose

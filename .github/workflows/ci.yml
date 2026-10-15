@@ -72,6 +72,7 @@ jobs:
         run: python3 scripts/generate_sbom.py --check
       - name: script checks
         run: |
+          python3 scripts/check_cache_tooling.py
           python3 -m py_compile scripts/verify_docs.py scripts/generate_sbom.py scripts/scan_secrets.py scripts/forge_backup.py
           bash -n scripts/backup.sh scripts/backup-stand.sh scripts/restore.sh scripts/verify-backup.sh scripts/scan_container_images.sh
   minimum-rust:
@@ -149,6 +150,7 @@ jobs:
         run: |-
           cargo fmt --all -- --check
           cargo test --locked -p cicd-domain --lib
+          cargo test --locked --manifest-path tests/cache-protocol/Cargo.toml --lib
       - name: Build changed application after isolated units
         if: needs.changes.outputs.backend_build == 'true'
         run: cargo build --locked --workspace

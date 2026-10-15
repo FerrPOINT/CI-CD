@@ -1,0 +1,30 @@
+{
+  "schema": "base-build-cache-policy/v1",
+  "id": "pdlc-operator-downloads-v1",
+  "trust": "trusted-operator-builds-only",
+  "download_pool_bytes": 6442450944,
+  "forge_seed_pool_bytes": 2147483648,
+  "managed_dependency_bytes_per_workspace": 6442450944,
+  "native_frontend_minimum_free_bytes": 32212254720,
+  "minimum_free_bytes": 10737418240,
+  "admission_reserve_bytes": 1073741824,
+  "namespaces": {
+    "pnpm_node22": "pdlc-operator-downloads-v1-pnpm10-node22",
+    "pnpm_node26": "pdlc-operator-downloads-v1-pnpm10-node26",
+    "cargo_188": "pdlc-operator-downloads-v1-cargo188",
+    "cargo_199": "pdlc-operator-downloads-v1-cargo199",
+    "uv_cp311": "pdlc-operator-downloads-v1-uv011-cp311",
+    "pip_cp311": "pdlc-operator-downloads-v1-pip-cp311"
+  },
+  "compiler_cache_bytes": 2147483648,
+  "native_artifact_bytes_per_product": 1073741824,
+  "unpinned_export_bytes": 2147483648,
+  "ordinary_evidence_bytes": 1073741824,
+  "success_log_days": 7,
+  "failure_log_days": 14,
+  "automatic_deletion": false,
+  "gradle": {
+    "shared_between_wrappers": false,
+    "versions": ["9.6.1", "9.8.0"]
+  }
+}
