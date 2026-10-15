@@ -1,9 +1,9 @@
-import { LoadingState } from '@sdlc/ui/ui'
+import { LoadingState } from '@pdlc/ui/ui'
 // K2: layout route guard driven by AuthProvider.
 
 import { Navigate, Outlet, useLocation } from 'react-router'
 import { useAuth } from './auth-provider'
-import { getPlatformProduct } from '@sdlc/ui/platform'
+import { getPlatformProduct } from '@pdlc/ui/platform'
 
 export function ProtectedRoute() {
   const { status, error, invalidate } = useAuth()

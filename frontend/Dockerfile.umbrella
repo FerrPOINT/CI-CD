@@ -1,12 +1,12 @@
-# Umbrella build for the SDLC fleet root compose (context = /opt/dev/sdlc).
-# Stages the sibling services-base frontend so the `@sdlc/ui` file dependency
-# (../../services-base/frontend) resolves.
+# Umbrella build for PDLC root Compose (context = the parent source workspace).
+# Stages the sibling services-base frontend so the `@pdlc/ui` file dependency
+# (../../services-base/base-modules/ui) resolves.
 FROM node:22.20.0-bookworm-slim AS build
 WORKDIR /app
 COPY CI-CD/openapi/openapi.yaml /workspace/openapi/openapi.yaml
 COPY CI-CD/frontend/package.json CI-CD/frontend/pnpm-lock.yaml* CI-CD/frontend/pnpm-workspace.yaml ./
 COPY CI-CD/frontend/scripts/generate-openapi.mjs scripts/generate-openapi.mjs
-COPY services-base/frontend /services-base/frontend
+COPY services-base/base-modules/ui /services-base/base-modules/ui
 ENV CI=true
 ENV SPEC=/workspace/openapi/openapi.yaml
 RUN corepack enable && corepack prepare pnpm@10.28.1 --activate && pnpm install --frozen-lockfile
@@ -19,6 +19,8 @@ ARG VITE_PLATFORM_SERVICES_URL=""
 ENV VITE_PLATFORM_SERVICES_URL=${VITE_PLATFORM_SERVICES_URL}
 ARG VITE_AUTH_ISSUER="http://localhost:7701"
 ENV VITE_AUTH_ISSUER=${VITE_AUTH_ISSUER}
+ARG VITE_AUTH_NAMESPACE="sdlc"
+ENV VITE_AUTH_NAMESPACE=${VITE_AUTH_NAMESPACE}
 ARG VITE_ADMIN_UI_URL="http://localhost:7772"
 ENV VITE_ADMIN_UI_URL=${VITE_ADMIN_UI_URL}
 ARG VITE_PLATFORM_ORIGIN=""

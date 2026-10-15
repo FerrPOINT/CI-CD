@@ -506,7 +506,7 @@ impl IntoResponse for ApiError {
         let request_id = REQUEST_ID
             .try_with(|u| u.to_string())
             .unwrap_or_else(|_| uuid::Uuid::nil().to_string());
-        sdlc_shared::error::error_response(
+        pdlc_shared::error::error_response(
             self.status,
             serde_json::json!({
                 "error": {

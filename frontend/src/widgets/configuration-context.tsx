@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { Fragment, type ReactNode } from 'react'
 import { useParams, useLocation } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -6,8 +6,8 @@ import {
   ProjectAvatar,
   SectionNavigation,
   SectionNavigationItem,
-} from '@sdlc/ui/ui'
-import { withNamespaceLocation } from '@sdlc/ui/lib'
+} from '@pdlc/ui/ui'
+import { withNamespaceLocation } from '@pdlc/ui/lib'
 import { api } from '@/api/client'
 import {
   useWorkspace,
@@ -148,7 +148,7 @@ export function ConfigurationContext({
           ))}
         </SectionNavigation>
       )}
-      {children}
+      <Fragment key={projectId}>{children}</Fragment>
     </div>
   )
 }

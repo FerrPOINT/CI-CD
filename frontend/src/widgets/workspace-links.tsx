@@ -1,5 +1,5 @@
-import { usePlatformServices } from '@sdlc/ui/ui'
-import { withNamespaceLocation, type NamespaceLocation } from '@sdlc/ui/lib'
+import { usePlatformServices } from '@pdlc/ui/ui'
+import { withNamespaceLocation, type NamespaceLocation } from '@pdlc/ui/lib'
 import { useLocation } from 'react-router'
 export function WorkspaceLinks({ namespace }: { namespace?: NamespaceLocation }) {
   const { services } = usePlatformServices()

@@ -3,7 +3,7 @@ import {
   NamespaceLink as Link,
   ResourceList,
   ResourceListRow,
-} from "@sdlc/ui/ui";
+} from "@pdlc/ui/ui";
 import { useParams, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import {
@@ -23,9 +23,9 @@ import { currentSession } from "@/api/auth";
 import type { PullRequest, PullRequestStatus } from "@/api/types";
 import { formatDate } from "@/shared/lib/format";
 import { QueryState } from "@/shared/ui/query-state";
-import { UserAvatar } from "@/shared/ui/user-avatar";
-import { useDebouncedValue } from "@/shared/lib/use-debounced-value";
-import { Button, Input, Label, Textarea } from "@sdlc/ui/ui";
+import { InitialsAvatar as UserAvatar } from "@pdlc/ui/ui";
+import { useDebouncedValue } from "@pdlc/ui/lib";
+import { Button, Input, Label, Textarea } from "@pdlc/ui/ui";
 import { PullRequestActions } from "./actions";
 
 const pageSize = 20;

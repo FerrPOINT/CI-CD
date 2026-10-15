@@ -8,7 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router";
-import { ThemeProvider } from "@sdlc/ui/lib";
+import { ThemeProvider } from "@pdlc/ui/lib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const authState = vi.hoisted(() => ({
@@ -34,9 +34,9 @@ vi.mock("@/shared/auth/auth-provider", () => ({
   }),
 }));
 
-vi.mock("@sdlc/ui/ui", async () => {
+vi.mock("@pdlc/ui/ui", async () => {
   const actual =
-    await vi.importActual<typeof import("@sdlc/ui/ui")>("@sdlc/ui/ui");
+    await vi.importActual<typeof import("@pdlc/ui/ui")>("@pdlc/ui/ui");
   return {
     ...actual,
     PlatformMark: () => <span aria-hidden>mark</span>,

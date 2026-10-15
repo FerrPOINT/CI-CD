@@ -1,11 +1,11 @@
 // K2: 403 UX — rendered whenever the API answers forbidden for the current
 // identity (server-enforced role policy, see AUTHZ_CONTRACT).
 
-import { NamespaceLink as Link } from '@sdlc/ui/ui'
+import { NamespaceLink as Link } from '@pdlc/ui/ui'
 
 import { useTranslation } from 'react-i18next'
 import { ShieldAlert } from 'lucide-react'
-import { Button } from '@sdlc/ui/ui'
+import { Button } from '@pdlc/ui/ui'
 
 export function ForbiddenPage() {
   const { t } = useTranslation()

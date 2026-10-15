@@ -11,8 +11,8 @@ import {
   DialogDescription,
   ResourceList,
   ResourceListRow,
-} from "@sdlc/ui/ui";
-import { type NamespaceLocation, withNamespaceLocation } from "@sdlc/ui/lib";
+} from "@pdlc/ui/ui";
+import { type NamespaceLocation, withNamespaceLocation } from "@pdlc/ui/lib";
 import type { components } from "@/api/schema";
 import { api, ApiError } from "@/api/client";
 import { workspaceKey, workspacePath } from "@/api/workspaces";

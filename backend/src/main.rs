@@ -7,8 +7,8 @@ use sqlx::postgres::PgPoolOptions;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Fleet-standard tracing setup (JSON in prod via SDLC_LOG_JSON).
-    sdlc_telemetry::init_tracing("forge-cicd");
+    // Fleet-standard tracing setup (JSON in prod via PDLC_LOG_JSON).
+    pdlc_telemetry::init_tracing("forge-cicd");
     // Wire the storage-layer enqueue hook to the in-process dispatch signal
     // (the storage crate itself is transport-agnostic; ADR-0012).
     let config = RuntimeConfig::from_env()?;

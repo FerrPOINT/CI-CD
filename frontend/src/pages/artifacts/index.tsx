@@ -12,7 +12,7 @@ import {
   Input,
   ResourceList,
   ResourceListRow,
-} from "@sdlc/ui/ui";
+} from "@pdlc/ui/ui";
 import { QueryState } from "@/shared/ui/query-state";
 
 const pageSize = 20;

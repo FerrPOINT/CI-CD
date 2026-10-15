@@ -1,12 +1,12 @@
 //! Forge CI/CD wiring of the shared central-auth bridge.
 //!
 //! JWKS validation and the login proxy live in
-//! `sdlc_auth_core::service_bridge`; this file maps the central identity
+//! `pdlc_auth_core::service_bridge`; this file maps the central identity
 //! to a local profile keyed by the immutable central subject.
 
 use crate::auth::AccessClaims;
-use sdlc_auth_core::AuthContext;
-use sdlc_auth_core::service_bridge::{BridgeOutcome, ServiceBridge};
+use pdlc_auth_core::AuthContext;
+use pdlc_auth_core::service_bridge::{BridgeOutcome, ServiceBridge};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -91,7 +91,7 @@ pub async fn link_central_user(
 pub async fn try_login(
     username: &str,
     password: &str,
-) -> Option<sdlc_auth_core::service_bridge::CentralTokenPair> {
+) -> Option<pdlc_auth_core::service_bridge::CentralTokenPair> {
     // The central server authenticates by email; extend the bare username
     // with the configured domain, if any.
     let email = if username.contains('@') {

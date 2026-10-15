@@ -16,8 +16,8 @@ import {
   Label,
   ResourceList,
   ResourceListRow,
-} from "@sdlc/ui/ui";
-import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
+} from "@pdlc/ui/ui";
+import { ConfirmDialog } from "@pdlc/ui/ui";
 import { QueryState } from "@/shared/ui/query-state";
 
 const pageSize = 20;
@@ -389,9 +389,10 @@ export function SchedulesPage() {
         }
         description={t("schedules.deleteWarning")}
         error={deleteError || undefined}
-        pending={deleteSchedule.isPending}
+        isPending={deleteSchedule.isPending}
         closeOnConfirm={false}
-        onCancel={() => {
+        onOpenChange={(open) => {
+          if (open) return;
           setPendingDelete(null);
           setDeleteError("");
         }}
@@ -406,6 +407,8 @@ export function SchedulesPage() {
             onError: () => setDeleteError(t("schedules.deleteError")),
           });
         }}
+        confirmLabel={t("common.delete")}
+        pendingLabel={t("common.delete")}
       />
     </div>
   );

@@ -15,7 +15,7 @@ const authMod = vi.hoisted(() => ({
 
 vi.mock('@/api/auth', () => authMod)
 const sso = vi.hoisted(() => ({ endSso: vi.fn(), restoreSso: vi.fn() }))
-vi.mock('@sdlc/ui/sso', async importOriginal => ({ ...await importOriginal<typeof import('@sdlc/ui/sso')>(), ...sso }))
+vi.mock('@pdlc/ui/sso', async importOriginal => ({ ...await importOriginal<typeof import('@pdlc/ui/sso')>(), ...sso }))
 
 function Probe() {
   const { status, logout } = useAuth()

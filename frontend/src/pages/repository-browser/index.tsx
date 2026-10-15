@@ -1,9 +1,10 @@
+import { PageNavigation } from "@pdlc/ui/ui";
 import { useEffect, useState } from "react";
 import {
   NamespaceLink as Link,
   ResourceList,
   ResourceListRow,
-} from "@sdlc/ui/ui";
+} from "@pdlc/ui/ui";
 import { useParams, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import {
@@ -41,16 +42,16 @@ import {
   DialogHeader,
   DialogTitle,
   DialogFooter,
-} from "@sdlc/ui/ui";
-import { Input } from "@sdlc/ui/ui";
-import { Label } from "@sdlc/ui/ui";
-import { Textarea } from "@sdlc/ui/ui";
-import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
+} from "@pdlc/ui/ui";
+import { Input } from "@pdlc/ui/ui";
+import { Label } from "@pdlc/ui/ui";
+import { Textarea } from "@pdlc/ui/ui";
+import { ConfirmDialog } from "@pdlc/ui/ui";
 import { QueryState } from "@/shared/ui/query-state";
-import { useDebouncedValue } from "@/shared/lib/use-debounced-value";
+import { useDebouncedValue } from "@pdlc/ui/lib";
 import type { Release, RepositoryRef } from "@/api/types";
-import { Button } from "@sdlc/ui/ui";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@sdlc/ui/ui";
+import { Button } from "@pdlc/ui/ui";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@pdlc/ui/ui";
 
 const browserTabs = [
   "code",
@@ -473,53 +474,6 @@ function RefListSearch({
   );
 }
 
-function RefPagination({
-  page,
-  hasNext,
-  onPage,
-}: {
-  page: number;
-  hasNext: boolean;
-  onPage: (page: number) => void;
-}) {
-  const { t } = useTranslation();
-  if (page <= 1 && !hasNext) return null;
-  return (
-    <nav
-      aria-label={t("repositoryBrowser.refPagination")}
-      className="flex items-center justify-center gap-3 border-t border-border pt-2"
-    >
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="h-10 w-10 p-0"
-        disabled={page <= 1}
-        aria-label={t("repositoryBrowser.previousRefPage")}
-        title={t("repositoryBrowser.previousRefPage")}
-        onClick={() => onPage(page - 1)}
-      >
-        <ChevronLeft className="h-4 w-4" aria-hidden />
-      </Button>
-      <span className="text-sm text-text-secondary">
-        {t("repositoryBrowser.refPage", { page })}
-      </span>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="h-10 w-10 p-0"
-        disabled={!hasNext}
-        aria-label={t("repositoryBrowser.nextRefPage")}
-        title={t("repositoryBrowser.nextRefPage")}
-        onClick={() => onPage(page + 1)}
-      >
-        <ChevronRight className="h-4 w-4" aria-hidden />
-      </Button>
-    </nav>
-  );
-}
-
 function BranchesList({
   repo,
   page,
@@ -596,12 +550,18 @@ function BranchesList({
           </ResourceList>
         )}
       </QueryState>
-      <RefPagination
+      <PageNavigation
         page={page}
         hasNext={hasNext}
-        onPage={(nextPage) =>
+        onPageChange={(nextPage) =>
           onNavigate({ refPage: nextPage > 1 ? String(nextPage) : null })
         }
+        compact
+        hideSinglePage
+        label={t("repositoryBrowser.refPagination")}
+        previousLabel={t("repositoryBrowser.previousRefPage")}
+        nextLabel={t("repositoryBrowser.nextRefPage")}
+        className="justify-center border-t border-border pt-2"
       />
     </div>
   );
@@ -1129,12 +1089,18 @@ function TagsList({
           </ResourceList>
         )}
       </QueryState>
-      <RefPagination
+      <PageNavigation
         page={page}
         hasNext={hasNext}
-        onPage={(nextPage) =>
+        onPageChange={(nextPage) =>
           onNavigate({ refPage: nextPage > 1 ? String(nextPage) : null })
         }
+        compact
+        hideSinglePage
+        label={t("repositoryBrowser.refPagination")}
+        previousLabel={t("repositoryBrowser.previousRefPage")}
+        nextLabel={t("repositoryBrowser.nextRefPage")}
+        className="justify-center border-t border-border pt-2"
       />
     </div>
   );
@@ -1438,9 +1404,12 @@ function ReleasesList({ repo }: { repo: string }) {
             : ""
         }
         description={t("releases.deleteConfirm")}
-        pending={deleteRelease.isPending}
+        isPending={deleteRelease.isPending}
         closeOnConfirm={false}
-        onCancel={() => setPendingDelete(null)}
+        onOpenChange={(open) => {
+          if (open) return;
+          setPendingDelete(null);
+        }}
         onConfirm={() => {
           if (!pendingDelete) return;
           deleteRelease.mutate(pendingDelete, {
@@ -1451,6 +1420,8 @@ function ReleasesList({ repo }: { repo: string }) {
             onError: (error) => toast.error(error.message),
           });
         }}
+        confirmLabel={t("common.delete")}
+        pendingLabel={t("common.delete")}
       />
     </div>
   );

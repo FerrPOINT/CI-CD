@@ -44,7 +44,7 @@ pub struct CatalogRepository {
     pub public_name: String,
     pub visibility: String,
     pub storage_name: Option<String>,
-    pub namespace: Option<sdlc_shared::resource_context::NamespaceRef>,
+    pub namespace: Option<pdlc_shared::resource_context::NamespaceRef>,
     pub state: Option<String>,
     pub clone_url: Option<String>,
     pub availability: Option<String>,
@@ -107,7 +107,7 @@ pub struct NamespaceQuery {
 }
 #[derive(Serialize, Deserialize, utoipa::ToSchema)]
 pub struct VerifiedRepository {
-    pub namespace: sdlc_shared::resource_context::NamespaceRef,
+    pub namespace: pdlc_shared::resource_context::NamespaceRef,
     pub forge_instance_id: Uuid,
     pub repository_id: Uuid,
     pub public_name: String,
@@ -122,7 +122,7 @@ pub async fn verified_repositories(
     let rows=sqlx::query("SELECT r.id,r.kind,g.slug||'/'||r.slug AS public_name,b.command FROM repository_catalog r JOIN git_groups g ON g.id=r.group_id JOIN forge_namespace_bindings b ON b.resource_id=g.id WHERE b.registry_instance_id=$1 AND b.namespace_id=$2 AND r.ready ORDER BY r.slug,r.id LIMIT 50 OFFSET $3").bind(query.registry_instance_id).bind(query.namespace_id).bind(i64::from(query.offset.unwrap_or(0))).fetch_all(pool).await.map_err(catalog_database_error)?;
     let mut result = Vec::new();
     for row in rows {
-        let command: sdlc_shared::resource_context::OwnerCommand =
+        let command: pdlc_shared::resource_context::OwnerCommand =
             serde_json::from_value(row.get("command"))
                 .map_err(|_| ApiError::service_unavailable("invalid_namespace_projection"))?;
         crate::namespace::validate_projection(&command)?;
@@ -147,7 +147,7 @@ pub async fn verified_repository(
 ) -> Result<Json<VerifiedRepository>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     let row=sqlx::query("SELECT r.kind,g.slug||'/'||r.slug AS public_name,b.command FROM repository_catalog r JOIN git_groups g ON g.id=r.group_id JOIN forge_namespace_bindings b ON b.resource_id=g.id WHERE r.id=$1 AND r.ready").bind(id).fetch_optional(pool).await.map_err(catalog_database_error)?.ok_or_else(ApiError::not_found)?;
-    let command: sdlc_shared::resource_context::OwnerCommand =
+    let command: pdlc_shared::resource_context::OwnerCommand =
         serde_json::from_value(row.get("command"))
             .map_err(|_| ApiError::service_unavailable("invalid_namespace_projection"))?;
     crate::namespace::validate_projection(&command)?;

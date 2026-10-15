@@ -4,8 +4,8 @@ use std::{path::PathBuf, time::Duration};
 use support::ErrorFormat;
 
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use pdlc_cli_core::{ApiClient as CoreApiClient, CliError};
 use reqwest::{Method, RequestBuilder, Url, header};
-use sdlc_cli_core::{ApiClient as CoreApiClient, CliError};
 use serde_json::{Map, Value, json};
 
 const LEGACY_HEARTBEAT_MESSAGE: &str =
@@ -660,7 +660,7 @@ impl ApiClient {
         let secrets = token
             .clone()
             .into_iter()
-            .chain(std::env::var("SDLC_API_TOKEN").ok())
+            .chain(pdlc_cli_core::platform_env("API_TOKEN")?)
             .flat_map(|value| [value.trim().to_owned(), value])
             .filter(|value| !value.is_empty())
             .collect();

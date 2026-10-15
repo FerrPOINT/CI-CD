@@ -1,3 +1,4 @@
+import { PageNavigation } from "@pdlc/ui/ui";
 import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams, useSearchParams } from "react-router";
@@ -28,8 +29,8 @@ import {
   Select,
   ResourceList,
   ResourceListRow,
-} from "@sdlc/ui/ui";
-import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
+} from "@pdlc/ui/ui";
+import { ConfirmDialog } from "@pdlc/ui/ui";
 import { QueryState } from "@/shared/ui/query-state";
 
 const pageSize = 20;
@@ -411,13 +412,13 @@ export function EnvironmentsPage() {
               </ResourceList>
             )}
             {filtered.length > pageSize && (
-              <Pagination
+              <PageNavigation
                 label={t("environments.pages")}
-                current={currentPage}
-                total={totalPages}
-                previous={t("environments.previous")}
-                next={t("environments.next")}
-                onPage={setPage}
+                page={currentPage}
+                pageCount={totalPages}
+                previousLabel={t("environments.previous")}
+                nextLabel={t("environments.next")}
+                onPageChange={setPage}
               />
             )}
           </section>
@@ -439,12 +440,15 @@ export function EnvironmentsPage() {
         description={t("environments.deleteWarning")}
         error={deleteError ?? undefined}
         closeOnConfirm={false}
-        pending={deleteEnv.isPending}
-        onCancel={() => {
+        isPending={deleteEnv.isPending}
+        onOpenChange={(open) => {
+          if (open) return;
           setPendingEnv(null);
           setDeleteError(null);
         }}
         onConfirm={deleteEnvironment}
+        confirmLabel={t("common.delete")}
+        pendingLabel={t("common.delete")}
       />
     </div>
   );
@@ -719,13 +723,13 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
               </ResourceList>
             )}
             {filtered.length > pageSize && (
-              <Pagination
+              <PageNavigation
                 label={t("deployments.pages")}
-                current={currentPage}
-                total={totalPages}
-                previous={t("deployments.previous")}
-                next={t("deployments.next")}
-                onPage={setPage}
+                page={currentPage}
+                pageCount={totalPages}
+                previousLabel={t("deployments.previous")}
+                nextLabel={t("deployments.next")}
+                onPageChange={setPage}
               />
             )}
           </div>
@@ -753,12 +757,23 @@ function DeploymentsSection({ environmentId }: { environmentId: string }) {
             : ""
         }
         closeOnConfirm={false}
-        pending={actionPending}
-        onCancel={() => {
+        isPending={actionPending}
+        onOpenChange={(open) => {
+          if (open) return;
           setAction(null);
           setActionError(null);
         }}
         onConfirm={confirmAction}
+        pendingLabel={
+          action
+            ? t(
+                action.kind === "rollback"
+                  ? "deployments.rollback"
+                  : "deployments." +
+                      (action.kind === "approved" ? "approve" : "reject"),
+              )
+            : ""
+        }
       />
     </section>
   );
@@ -773,50 +788,6 @@ function InlineError({ message }: { message: string }) {
       <AlertCircle className="h-4 w-4 shrink-0 text-danger" aria-hidden />
       {message}
     </p>
-  );
-}
-
-function Pagination({
-  label,
-  current,
-  total,
-  previous,
-  next,
-  onPage,
-}: {
-  label: string;
-  current: number;
-  total: number;
-  previous: string;
-  next: string;
-  onPage: (page: number) => void;
-}) {
-  return (
-    <nav aria-label={label} className="flex items-center justify-end gap-2">
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        className="min-h-10 sm:min-h-10"
-        disabled={current === 1}
-        onClick={() => onPage(current - 1)}
-      >
-        {previous}
-      </Button>
-      <span className="text-sm text-text-muted">
-        {current} / {total}
-      </span>
-      <Button
-        type="button"
-        size="sm"
-        variant="outline"
-        className="min-h-10 sm:min-h-10"
-        disabled={current === total}
-        onClick={() => onPage(current + 1)}
-      >
-        {next}
-      </Button>
-    </nav>
   );
 }
 

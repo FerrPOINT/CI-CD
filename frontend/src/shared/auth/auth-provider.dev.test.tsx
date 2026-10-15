@@ -9,8 +9,8 @@ vi.mock('@/api/auth', () => ({
   currentSession: () => session.current,
   acceptSso: vi.fn(),
 }))
-vi.mock('@sdlc/ui/sso', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@sdlc/ui/sso')>()),
+vi.mock('@pdlc/ui/sso', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@pdlc/ui/sso')>()),
   ...sso,
 }))
 
@@ -33,8 +33,10 @@ describe('deployment-owned SSO client', () => {
   it.each([
     { configured: undefined, expected: 'ci-cd' },
     { configured: 'ci-cd-dev', expected: 'ci-cd-dev' },
-  ])('restores SSO with $expected', async ({ configured, expected }) => {
+    { configured: 'ci-cd-dev', expected: 'ci-cd-dev', namespace: 'pdlc' },
+  ])('restores SSO with $expected', async ({ configured, expected, namespace }) => {
     vi.stubEnv('VITE_AUTH_CLIENT_ID', configured)
+    vi.stubEnv('VITE_AUTH_NAMESPACE', namespace)
     const { AuthProvider } = await import('./auth-provider')
     render(
       <AuthProvider>
@@ -45,6 +47,7 @@ describe('deployment-owned SSO client', () => {
       expect(sso.restoreSso).toHaveBeenCalledWith({
         issuer: 'http://localhost:8701',
         clientId: expected,
+        namespace: namespace ?? 'sdlc',
       }),
     )
   })
@@ -67,6 +70,7 @@ describe('deployment-owned SSO client', () => {
       expect(sso.endSso).toHaveBeenCalledWith({
         issuer: 'http://localhost:8701',
         clientId: 'ci-cd-dev',
+        namespace: 'sdlc',
       }),
     )
     expect(sso.restoreSso).not.toHaveBeenCalled()

@@ -78,7 +78,7 @@ Human identity, браузерные сессии и личные API-токен
 
 ### Infrastructure
 
-Dashboard использует общий `PlatformHeader` из `@sdlc/ui`: он располагается
+Dashboard использует общий `PlatformHeader` из `@pdlc/ui`: он располагается
 перед sidebar-offset и занимает всю ширину viewport. Leading принадлежит
 продукту (drawer + PlatformMark), services общему UI (шесть UI из runtime),
 actions содержит тему и аккаунт с central logout. Sidebar начинается под

@@ -3,7 +3,7 @@ import {
   NamespaceLink as Link,
   ResourceList,
   ResourceListRow,
-} from "@sdlc/ui/ui";
+} from "@pdlc/ui/ui";
 import { useParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { ApiError } from "@/api/client";
@@ -19,7 +19,7 @@ import {
   useTestReport,
   useJobAttempts,
 } from "@/api/hooks";
-import { Card } from "@sdlc/ui/ui";
+import { Card } from "@pdlc/ui/ui";
 import {
   Table,
   TableBody,
@@ -27,7 +27,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@sdlc/ui/ui";
+} from "@pdlc/ui/ui";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -37,10 +37,10 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from "@sdlc/ui/ui";
+} from "@pdlc/ui/ui";
 import type { Job, TestReport } from "@/api/types";
-import { Button } from "@sdlc/ui/ui";
-import { Input } from "@sdlc/ui/ui";
+import { Button } from "@pdlc/ui/ui";
+import { Input } from "@pdlc/ui/ui";
 import {
   ChevronRight,
   Terminal,
