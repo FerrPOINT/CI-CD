@@ -20,3 +20,5 @@ backend/migrations/0038_platform_messaging.sql text eol=crlf
 backend/tests/fixtures/historical_platform_messaging.sql text eol=crlf
 scripts/task-delivery-qa.sh text eol=lf
 scripts/postgres-delivery.py text eol=lf
+# Generated API snapshots match the Linux generator byte for byte.
+/openapi/openapi.yaml text eol=lf
