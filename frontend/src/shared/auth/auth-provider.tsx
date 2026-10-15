@@ -26,7 +26,7 @@ export type AuthStatus = 'checking' | 'authenticated' | 'anonymous' | 'unavailab
 
 export const ssoConfig = {
   issuer: import.meta.env.VITE_AUTH_ISSUER ?? 'http://localhost:7701',
-  clientId: 'ci-cd',
+  clientId: import.meta.env.VITE_AUTH_CLIENT_ID ?? 'ci-cd',
 }
 
 interface AuthContextValue {

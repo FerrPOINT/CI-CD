@@ -13,6 +13,10 @@
 
 ## [Unreleased]
 
+- Frontend Dev использует OIDC client ID и API backend из workspace-профиля:
+  dev callback больше не отправляется с production client ID, а Vite proxy не
+  игнорирует адрес собственного backend.
+
 - Retry после рестарта backend проверяет существующий Compose recovery journal и не публикует новую попытку до подтверждённой очистки прежнего исполнения.
 
 - Retry встроенного executor возвращает `409`, пока прежняя job удерживает слот подготовки, выполнения или очистки; повторы других jobs не блокируются.

@@ -623,6 +623,19 @@ path не должен проходить symlink/junction. При утрате 
 и trusted SDLC receipt ещё не реализованы; физическая retention не объявляет их.
 Shell/embedded runner не становятся sandbox этим механизмом (ADR-0007).
 
+## Frontend Dev в SDLC workspace
+
+Из корня своего workspace запускать `pwsh -File ./workspace.ps1 Dev -Service cicd`.
+Helper задаёт `VITE_AUTH_ISSUER`, `VITE_AUTH_CLIENT_ID` и `VITE_API_BASE_URL` из
+профиля стенда. Frontend использует один OIDC client ID для восстановления
+сессии, входа, callback и выхода. Его callback должен быть заранее зарегистрирован
+в собственном Auth для точного dev origin; production client не подменяет dev client.
+
+Vite направляет `/api` на заданный backend. Необязательный суффикс `/api/v1/`
+в `VITE_API_BASE_URL` нормализуется до server origin. Без workspace-переменных
+сохраняются standalone defaults: client `ci-cd` и proxy `http://localhost:22801`.
+После изменения переменных нужно перезапустить собственный Dev-процесс.
+
 ## Связанные документы
 
 - [CURRENT_STATE.md](CURRENT_STATE.md) -- единственный снимок фактически реализованных возможностей.
