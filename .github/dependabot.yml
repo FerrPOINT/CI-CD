@@ -2,8 +2,8 @@ version: 2
 updates:
   # NOTE: cargo (/backend) and npm (/frontend) ecosystems are intentionally NOT
   # configured. Backend path-depends on the sibling services-base checkout
-  # (sdlc-shared, sdlc-auth-core) and frontend on @sdlc/ui
-  # (file:../../services-base/frontend); GitHub Dependabot clones only this
+  # (pdlc-shared, pdlc-auth-core) and frontend on @pdlc/ui
+  # (file:../../services-base/base-modules/ui); GitHub Dependabot clones only this
   # repository, so manifest resolution always fails (dependency_file_not_resolvable /
   # ENOENT services-base). Cargo/npm dependency updates are done manually with
   # the full backend+frontend gate.

@@ -2,12 +2,13 @@ import {
   NamespaceLink as Link,
   ResourceList,
   ResourceListRow,
-} from "@sdlc/ui/ui";
+  DiffBlock,
+} from "@pdlc/ui/ui";
 import { useParams, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { usePullRequest, useRepositoryComparison } from "@/api/hooks";
 import { ApiError } from "@/api/client";
-import { Button } from "@sdlc/ui/ui";
+import { Button } from "@pdlc/ui/ui";
 import {
   ChevronRight,
   GitPullRequest,
@@ -18,7 +19,7 @@ import type { PullRequest, PullRequestStatus } from "@/api/types";
 import { formatDate } from "@/shared/lib/format";
 import { QueryState } from "@/shared/ui/query-state";
 import { PullRequestActions } from "@/pages/pull-requests/actions";
-import { UserAvatar } from "@/shared/ui/user-avatar";
+import { InitialsAvatar as UserAvatar } from "@pdlc/ui/ui";
 
 export function buildCompareHref(
   pr: Pick<PullRequest, "repository_name" | "source_branch" | "target_branch">,
@@ -32,74 +33,6 @@ export function buildPrDiffHref(
   return `/repositories/${encodeURIComponent(pr.repository_name)}/pulls/${pr.number}?view=diff`;
 }
 
-function PatchView({
-  patch,
-  truncated,
-}: {
-  patch: string;
-  truncated: boolean;
-}) {
-  const { t } = useTranslation();
-  return (
-    <div className="space-y-2">
-      {truncated && (
-        <p role="status" className="text-sm text-text-muted">
-          {t("compare.patchTruncated")}
-        </p>
-      )}
-      <pre
-        tabIndex={0}
-        aria-label={t("compare.patch")}
-        className="max-h-[48rem] overflow-auto rounded-md bg-zinc-950 p-4 text-xs leading-relaxed"
-      >
-        {patch.split("\n").map((line, index) => {
-          const key = `${index}-${line}`;
-          if (line.startsWith("+++") || line.startsWith("---"))
-            return (
-              <span key={key} className="block font-mono text-indigo-300">
-                {line}
-              </span>
-            );
-          if (line.startsWith("@@"))
-            return (
-              <span key={key} className="block font-mono text-sky-400">
-                {line}
-              </span>
-            );
-          if (line.startsWith("+"))
-            return (
-              <span
-                key={key}
-                className="block bg-green-500/10 font-mono text-green-400"
-              >
-                {line}
-              </span>
-            );
-          if (line.startsWith("-"))
-            return (
-              <span
-                key={key}
-                className="block bg-red-500/10 font-mono text-red-400"
-              >
-                {line}
-              </span>
-            );
-          if (line.startsWith("diff --git") || line.startsWith("index "))
-            return (
-              <span key={key} className="block font-mono text-zinc-400">
-                {line}
-              </span>
-            );
-          return (
-            <span key={key} className="block font-mono text-zinc-300">
-              {line}
-            </span>
-          );
-        })}
-      </pre>
-    </div>
-  );
-}
 
 const statusStyles: Record<PullRequestStatus, string> = {
   open: "bg-accent/15 text-accent",
@@ -305,9 +238,10 @@ export function PullRequestDetailPage() {
                 <h2 className="text-sm font-semibold uppercase tracking-wide">
                   {t("compare.patch")}
                 </h2>
-                <PatchView
+                <DiffBlock
                   patch={comparison.patch}
-                  truncated={comparison.patch_truncated}
+                  aria-label={t("compare.patch")}
+                  notice={comparison.patch_truncated ? t("compare.patchTruncated") : undefined}
                 />
               </>
             )}

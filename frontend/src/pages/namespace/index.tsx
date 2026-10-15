@@ -1,7 +1,7 @@
-import { LoadingState } from '@sdlc/ui/ui'
+import { LoadingState } from '@pdlc/ui/ui'
 import { useState, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router'
-import { NamespaceLink as Link } from '@sdlc/ui/ui'
+import { NamespaceLink as Link } from '@pdlc/ui/ui'
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -12,8 +12,8 @@ import {
   Dialog,
   DialogContent,
   DialogTitle,
-} from '@sdlc/ui/ui'
-import { useSessionCommand, withNamespaceLocation } from '@sdlc/ui/lib'
+} from '@pdlc/ui/ui'
+import { useSessionCommand, withNamespaceLocation } from '@pdlc/ui/lib'
 import { api } from '@/api/client'
 import { catalogErrorMessage } from '@/api/catalog-errors'
 import { useAuth } from '@/shared/auth/auth-provider'

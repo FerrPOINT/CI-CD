@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import { NamespaceLink as Link } from '@sdlc/ui/ui'
+import { NamespaceLink as Link } from '@pdlc/ui/ui'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PipelinesPage } from './index'

@@ -354,7 +354,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "jsonwebtoken",
- "sdlc-auth-core",
+ "pdlc-auth-core",
  "serde",
  "sha2",
  "sqlx",
@@ -373,8 +373,8 @@ dependencies = [
  "cicd-server",
  "clap",
  "clap_complete",
+ "pdlc-cli-core",
  "reqwest 0.12.28",
- "sdlc-cli-core",
  "serde_json",
  "sqlx",
  "tempfile",
@@ -437,11 +437,11 @@ dependencies = [
  "jsonwebtoken",
  "lettre",
  "libc",
+ "pdlc-auth-core",
+ "pdlc-shared",
+ "pdlc-telemetry",
  "rand_core 0.6.4",
  "reqwest 0.12.28",
- "sdlc-auth-core",
- "sdlc-shared",
- "sdlc-telemetry",
  "serde",
  "serde_json",
  "sha1",
@@ -1668,6 +1668,66 @@ dependencies = [
 ]
 
 [[package]]
+name = "pdlc-auth-core"
+version = "0.1.0"
+dependencies = [
+ "argon2",
+ "axum",
+ "chrono",
+ "jsonwebtoken",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tower",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "pdlc-cli-core"
+version = "0.1.0"
+dependencies = [
+ "pdlc-shared",
+ "reqwest 0.12.28",
+ "serde_json",
+ "thiserror",
+ "url",
+]
+
+[[package]]
+name = "pdlc-shared"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tower-http 0.7.1",
+ "tracing",
+ "utoipa",
+ "uuid",
+]
+
+[[package]]
+name = "pdlc-telemetry"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "pdlc-shared",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "pem-rfc7468"
 version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2185,64 +2245,6 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
-
-[[package]]
-name = "sdlc-auth-core"
-version = "0.1.0"
-dependencies = [
- "argon2",
- "axum",
- "chrono",
- "jsonwebtoken",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tower",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "sdlc-cli-core"
-version = "0.1.0"
-dependencies = [
- "reqwest 0.12.28",
- "serde_json",
- "thiserror",
- "url",
-]
-
-[[package]]
-name = "sdlc-shared"
-version = "0.1.0"
-dependencies = [
- "axum",
- "serde",
- "serde_json",
- "thiserror",
- "tower-http 0.7.1",
- "tracing",
- "utoipa",
- "uuid",
-]
-
-[[package]]
-name = "sdlc-telemetry"
-version = "0.1.0"
-dependencies = [
- "axum",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
- "tokio",
- "tower",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "uuid",
-]
 
 [[package]]
 name = "serde"

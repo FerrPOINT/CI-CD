@@ -1,4 +1,4 @@
-import { useProjectDisclosures as useDisclosures } from '@sdlc/ui/lib'
+import { useProjectDisclosures as useDisclosures } from '@pdlc/ui/lib'
 import { NavLink, useLocation } from 'react-router'
 import {
   FolderGit2,
@@ -7,8 +7,8 @@ import {
   Play,
   Rocket,
 } from 'lucide-react'
-import { ProjectNavigationGroup, SidebarItem } from '@sdlc/ui/ui'
-import { withNamespaceLocation } from '@sdlc/ui/lib'
+import { ProjectNavigationGroup, SidebarItem } from '@pdlc/ui/ui'
+import { withNamespaceLocation } from '@pdlc/ui/lib'
 import {
   useWorkspaceCatalog,
   workspaceKey,

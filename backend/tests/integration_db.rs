@@ -9414,7 +9414,7 @@ async fn migration_catalog_39_does_not_backfill_historical_terminal_authority() 
 
 #[tokio::test]
 async fn namespace_git_shares_human_access_without_project_memberships() {
-    use sdlc_shared::resource_context::{NamespaceRef, OwnerCommand, ResourceKind, ResourceRef};
+    use pdlc_shared::resource_context::{NamespaceRef, OwnerCommand, ResourceKind, ResourceRef};
     let pool = test_pool().await;
     let group = Uuid::new_v4();
     let repository = Uuid::new_v4();
@@ -9698,8 +9698,8 @@ async fn workspace_fixture(
     pool: &sqlx::PgPool,
     namespace: Uuid,
     slug: &str,
-) -> (Uuid, Uuid, sdlc_shared::resource_context::OwnerCommand) {
-    use sdlc_shared::resource_context::{NamespaceRef, OwnerCommand, ResourceKind, ResourceRef};
+) -> (Uuid, Uuid, pdlc_shared::resource_context::OwnerCommand) {
+    use pdlc_shared::resource_context::{NamespaceRef, OwnerCommand, ResourceKind, ResourceRef};
     let group = Uuid::new_v4();
     let repository = Uuid::new_v4();
     let registry: Uuid = std::env::var("CICD_NAMESPACE__REGISTRY_INSTANCE_ID")

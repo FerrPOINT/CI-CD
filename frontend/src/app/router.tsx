@@ -1,5 +1,5 @@
-import { LoadingState } from '@sdlc/ui/ui'
-import { createProductRouter, PlatformRoute } from '@sdlc/ui/platform'
+import { LoadingState } from '@pdlc/ui/ui'
+import { createProductRouter, PlatformRoute } from '@pdlc/ui/platform'
 import { ConfigurationContext } from '@/widgets/configuration-context'
 import { CatalogRepositoryPage } from '@/pages/catalog-repository'
 import { CatalogPullPage } from '@/pages/catalog-pull'

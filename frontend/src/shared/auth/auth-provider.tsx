@@ -14,8 +14,8 @@ import {
   type ReactNode,
 } from 'react'
 import { onTerminalAuthError } from '@/api/client'
-import { applySsoSession, endSso, restoreSso, isSsoLoginRequired, isSsoNavigationInterruption, type SsoSession } from '@sdlc/ui/sso'
-import { getPlatformProduct } from '@sdlc/ui/platform'
+import { ssoNamespace, applySsoSession, endSso, restoreSso, isSsoLoginRequired, isSsoNavigationInterruption, type SsoSession } from '@pdlc/ui/sso'
+import { getPlatformProduct } from '@pdlc/ui/platform'
 import {
   acceptSso as acceptApiSso,
   currentSession,
@@ -26,7 +26,8 @@ export type AuthStatus = 'checking' | 'authenticated' | 'anonymous' | 'unavailab
 
 export const ssoConfig = {
   issuer: import.meta.env.VITE_AUTH_ISSUER ?? 'http://localhost:7701',
-  clientId: 'ci-cd',
+  clientId: import.meta.env.VITE_AUTH_CLIENT_ID ?? 'ci-cd',
+  namespace: ssoNamespace(import.meta.env.VITE_AUTH_NAMESPACE),
 }
 
 interface AuthContextValue {

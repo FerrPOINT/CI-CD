@@ -5,7 +5,7 @@ import {
   NamespaceLink as Link,
   ResourceList,
   ResourceListRow,
-} from "@sdlc/ui/ui";
+} from "@pdlc/ui/ui";
 import { useConfigurations } from "@/api/workspaces";
 export function DeliveryConfigurationsPage() {
   const [offset, setOffset] = useState(0);

@@ -1,11 +1,11 @@
 import { useLocation, useMatch, useNavigate } from 'react-router'
 import { useQuery } from '@tanstack/react-query'
-import { NamespacePicker } from '@sdlc/ui/ui'
+import { NamespacePicker } from '@pdlc/ui/ui'
 import {
   projectNavigationScope,
   parseNamespaceLocation,
   withNamespaceLocation,
-} from '@sdlc/ui/lib'
+} from '@pdlc/ui/lib'
 import type { components } from '@/api/schema'
 import { api } from '@/api/client'
 import {

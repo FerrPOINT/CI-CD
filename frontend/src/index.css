@@ -1,6 +1,6 @@
 @import 'tailwindcss';
-@import '@sdlc/ui/tokens.css';
-@source "../../../services-base/frontend/src";
+@import '@pdlc/ui/tokens.css';
+@source "../../../services-base/base-modules/ui/src";
 
 @theme {
   --color-accent-foreground: #000000;

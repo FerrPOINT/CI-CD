@@ -1,1 +1,1 @@
-export { cn } from '@sdlc/ui/lib'
+export { cn } from '@pdlc/ui/lib'

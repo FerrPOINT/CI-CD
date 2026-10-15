@@ -29,7 +29,7 @@ pub(crate) async fn request_id_mw(
     REQUEST_ID
         .scope(
             id,
-            sdlc_telemetry::run_with_request_id(req, next, id.to_string()),
+            pdlc_telemetry::run_with_request_id(req, next, id.to_string()),
         )
         .await
 }
@@ -180,7 +180,9 @@ pub(crate) async fn require_auth(
         .headers()
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.starts_with("Bearer sdlc_pat_"));
+        .is_some_and(|value| {
+            pdlc_auth_core::bearer_from_header(value).is_some_and(pdlc_auth_core::is_personal_token)
+        });
     let claims = bearer_identity(pool, auth_secret, req.headers()).await?;
     if is_platform_token {
         let required = if matches!(method.as_str(), "GET" | "HEAD" | "OPTIONS") {

@@ -16,7 +16,7 @@ integration = []
 [dependencies]
 urlencoding = "2"
 tempfile = "3"
-sdlc-cli-core = { path = "../../../services-base/crates/sdlc-cli-core" }
+pdlc-cli-core = { path = "../../../services-base/crates/pdlc-cli-core" }
 anyhow.workspace = true
 clap.workspace = true
 clap_complete = "4"

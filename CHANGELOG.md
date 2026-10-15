@@ -1,5 +1,7 @@
 # Changelog
 
+- Платформенные UI/SDK imports и пути переведены на PDLC и `base-modules/ui`; совместимые readers сохраняют прежние credentials/транзакции. Нормативные термины и границы описаны в `docs/PDLC_BASE_INTEGRATION.md`; установка и включение новых writers выполняются отдельно.
+
 ## 2026-10-12 — проектная навигация
 
 Общие Base helpers, единый порядок и статусы подключения проектов.
@@ -28,6 +30,12 @@
   DevOps assignment/lease, принятым Developer result и заранее опубликованным
   target policy. Штатный CLI получает workspace prepare/readback/delivery;
   обычные protected deployments и approvals не меняются. Live-квалификация pending.
+- Frontend Dev использует OIDC client ID и API backend из workspace-профиля:
+  dev callback больше не отправляется с production client ID, а Vite proxy не
+  игнорирует адрес собственного backend.
+- При смене CI-конфигурации сбрасываются открытые формы, введённые значения
+  секретов и подтверждения действий прежней конфигурации. Обновление данных той
+  же конфигурации сохраняет черновик.
 
 - Retry после рестарта backend проверяет существующий Compose recovery journal и не публикует новую попытку до подтверждённой очистки прежнего исполнения.
 

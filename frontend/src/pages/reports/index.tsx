@@ -1,4 +1,4 @@
-import { NamespaceLink as Link } from '@sdlc/ui/ui'
+import { NamespaceLink as Link } from '@pdlc/ui/ui'
 import { useParams } from 'react-router'
 import { useTranslation } from 'react-i18next'
 import { useProjectReport } from '@/api/hooks'
