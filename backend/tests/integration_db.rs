@@ -31,6 +31,9 @@ mod sdlc_workspace;
 #[path = "support/task_pipeline_http.rs"]
 mod task_pipeline_http;
 
+#[path = "support/task_pipeline_migration.rs"]
+mod task_pipeline_migration;
+
 type CanceledExternalLeaseState = (
     String,
     String,
@@ -9053,7 +9056,7 @@ async fn migration_catalog_contains_exact_historical_36_and_37() {
     let catalog = cicd::migrations().await.unwrap();
     assert_eq!(
         catalog.iter().map(|m| m.version).collect::<Vec<_>>(),
-        (1..=40).chain([90, 91]).collect::<Vec<_>>()
+        (1..=40).chain([90, 91, 92]).collect::<Vec<_>>()
     );
     for (version, description, sql, checksum) in HISTORICAL_DEPLOYMENT_MIGRATIONS {
         let migration = catalog
@@ -9086,7 +9089,7 @@ async fn migration_catalog_fresh_and_prior_35_or_37_upgrade() {
                 .fetch_all(&pool)
                 .await
                 .unwrap();
-        assert_eq!(versions, (1..=40).chain([90, 91]).collect::<Vec<_>>());
+        assert_eq!(versions, (1..=40).chain([90, 91, 92]).collect::<Vec<_>>());
         let history = migration_catalog_history(&pool).await;
         catalog.run(&pool).await.unwrap();
         assert_eq!(migration_catalog_history(&pool).await, history);
