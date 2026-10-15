@@ -13,6 +13,11 @@
 
 ## [Unreleased]
 
+- Owner-only `CICD_LOCAL_DELIVERY_KIND=static|oci` подключает существующий OCI
+  executor к task delivery API с текущими SAT/Tracker/environment guards.
+  Static wire/local CLI сохраняются; OCI fixture paths изолированы без удаления
+  retained journals. Source опубликован, compile/OCI/live qualification pending.
+
 - Task intent связывает существующий pipeline с одной задачей Tracker; embedded
   runner сохраняет исходный workspace receipt до исполнения и cleanup. CLI
   получает typed submit/readback без runner credentials. Миграция0092 добавляет
