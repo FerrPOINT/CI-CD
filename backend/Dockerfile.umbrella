@@ -91,15 +91,13 @@ RUN case "${TARGETARCH:-amd64}" in \
 
 FROM runtime-base AS compose-preloaded
 ARG TARGETARCH
-COPY --from=forge-compose /docker-compose /tmp/docker-compose
-RUN case "${TARGETARCH:-amd64}" in \
+RUN --mount=type=bind,from=forge-compose,source=/docker-compose,target=/tmp/docker-compose case "${TARGETARCH:-amd64}" in \
       amd64) compose_arch=x86_64; compose_sha=db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576 ;; \
       arm64) compose_arch=aarch64; compose_sha=732e3a84c1a0f67256ce80bc2598a24546b10ca05f9faa97efceb1171ece2ef7 ;; \
       *) exit 1 ;; esac \
  && mkdir -p /usr/local/lib/docker/cli-plugins \
  && echo "${compose_sha}  /tmp/docker-compose" | sha256sum -c - \
  && install -m 0755 /tmp/docker-compose /usr/local/lib/docker/cli-plugins/docker-compose \
- && rm /tmp/docker-compose \
  && docker compose version
 
 FROM compose-${FORGE_COMPOSE_SOURCE} AS runtime
