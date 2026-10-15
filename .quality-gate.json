@@ -438,5 +438,9 @@
       "live"
     ],
     "release_required": true
-  }
+  },
+  "backend_unit_inputs": [
+    "backend/tests/**",
+    "backend/**/tests/**"
+  ]
 }

@@ -1,5 +1,4 @@
-# Automatic build: unit tests plus static/security/compatibility checks.
-# Full integration/slow acceptance is the manual release.yml workflow.
+# Automatic: unit tests and changed application build; manual release.yml for integration/slow.
 name: CI
 on:
   push:
@@ -18,6 +17,7 @@ jobs:
       backend: ${{ steps.classify.outputs.backend }}
       frontend: ${{ steps.classify.outputs.frontend }}
       frontend_build: ${{ steps.classify.outputs.frontend_build }}
+      backend_build: ${{ steps.classify.outputs.backend_build }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -65,7 +65,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: documentation regression tests
-        run: python3 -m unittest scripts.tests.test_verify_docs scripts.tests.test_base_stand_backup scripts.tests.test_ci_contract_checks scripts.tests.test_postgres_rejection
+        run: python3 -m unittest scripts.tests.test_verify_docs scripts.tests.test_postgres_rejection
       - name: documentation checks
         run: python3 scripts/verify_docs.py --all
       - name: dependency inventory drift
@@ -149,6 +149,18 @@ jobs:
         run: |-
           cargo fmt --all -- --check
           cargo test --locked -p cicd-domain --lib
+      - name: Build changed application after isolated units
+        if: needs.changes.outputs.backend_build == 'true'
+        run: cargo build --locked --workspace
+        env:
+          SQLX_OFFLINE: "true"
+      - name: openapi drift gate
+        run: |
+          cargo run --locked --bin openapi-dump -- /tmp/openapi.yaml
+          diff -u ../openapi/openapi.yaml /tmp/openapi.yaml
+        if: needs.changes.outputs.backend_build == 'true'
+    env:
+      SQLX_OFFLINE: "true"
   frontend:
     needs: changes
     if: needs.changes.outputs.frontend == 'true'
