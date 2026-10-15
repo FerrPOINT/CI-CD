@@ -444,6 +444,37 @@ if __name__ == '__main__':
         sys.exit('OCI_OFFLINE_BASE_GUARD_FAILED:' + PHASE + ':' + reason)
 "#;
 
+fn oci_fixture_paths(id: Uuid, compose_parent: &std::path::Path) -> (PathBuf, PathBuf, PathBuf) {
+    let suffix = id.simple();
+    (
+        PathBuf::from(format!("/delivery-qa/oci-root-{suffix}")),
+        PathBuf::from(format!("/delivery-qa/oci-data-{suffix}.json")),
+        compose_parent.join(format!("oci-{suffix}")),
+    )
+}
+
+#[test]
+fn oci_fixture_paths_isolate_retained_journals_data_and_compose_within_existing_mappings() {
+    let volume = std::path::Path::new("/delivery-qa");
+    let compose_parent = std::path::Path::new("/owned/oci-compose");
+    let first = oci_fixture_paths(Uuid::from_u128(1), compose_parent);
+    let second = oci_fixture_paths(Uuid::from_u128(2), compose_parent);
+    assert_eq!(first, oci_fixture_paths(Uuid::from_u128(1), compose_parent));
+    for paths in [&first, &second] {
+        assert_eq!(paths.0.parent(), Some(volume));
+        assert_eq!(paths.1.parent(), Some(volume));
+        assert!(!paths.1.starts_with(&paths.0));
+        assert_eq!(paths.2.parent(), Some(compose_parent));
+    }
+    for first_path in [&first.0, &first.1, &first.2] {
+        for second_path in [&second.0, &second.1, &second.2] {
+            assert_ne!(first_path, second_path);
+            assert!(!first_path.starts_with(second_path));
+            assert!(!second_path.starts_with(first_path));
+        }
+    }
+}
+
 struct Oci {
     t: ActualDelivery,
     root: PathBuf,
@@ -457,8 +488,7 @@ struct Oci {
 }
 impl Drop for Oci {
     fn drop(&mut self) {
-        if let Ok(entries) = std::fs::read_dir(std::env::var("CICD_TEST_OCI_COMPOSE_ROOT").unwrap())
-        {
+        if let Ok(entries) = std::fs::read_dir(&self.compose_root) {
             let mut files = entries
                 .flatten()
                 .map(|e| e.path())
@@ -487,13 +517,22 @@ impl Oci {
             .create(t.temp.join("oci-build-progress"))
             .unwrap();
         t.runner_timeout_diagnostic = Some(oci_build_timeout_diagnostic);
-        let root = PathBuf::from("/delivery-qa/oci-root");
-        let data = PathBuf::from("/delivery-qa/oci-data.json");
-        std::fs::write(
-            &data,
-            br#"{"schemaVersion":1,"records":[{"id":"task-1","state":"queued"}]}"#,
-        )
-        .unwrap();
+        let compose_parent = PathBuf::from(std::env::var("CICD_TEST_OCI_COMPOSE_ROOT").unwrap());
+        let (root, data, compose_root) = oci_fixture_paths(t.f.project, &compose_parent);
+        std::fs::DirBuilder::new()
+            .mode(0o755)
+            .create(&compose_root)
+            .unwrap();
+        let mut data_file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&data)
+            .unwrap();
+        data_file
+            .write_all(br#"{"schemaVersion":1,"records":[{"id":"task-1","state":"queued"}]}"#)
+            .unwrap();
+        drop(data_file);
         std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o444)).unwrap();
         let project = std::env::var("CICD_TEST_OCI_PROJECT").unwrap();
         let id = std::process::Command::new("/usr/local/bin/docker")
@@ -519,7 +558,6 @@ impl Oci {
             .unwrap();
         assert!(prepared.success(), "offline OCI base preparation failed");
         let policy = t.temp.join("oci-policy.json");
-        let compose_root = PathBuf::from(std::env::var("CICD_TEST_OCI_COMPOSE_ROOT").unwrap());
         std::fs::write(&policy,serde_json::to_vec(&serde_json::json!({"projectName":project,"networkName":std::env::var("CICD_TEST_OCI_NETWORK").unwrap(),"daemonId":daemon,"dockerBin":"/usr/local/bin/docker","composeBin":"/usr/local/bin/docker-compose","composeRoot":compose_root,"volumeName":std::env::var("CICD_TEST_OCI_VOLUME").unwrap(),"volumeRoot":"/delivery-qa","dataFile":data,"dataSha256":hash(&std::fs::read(&data).unwrap()),"checks":{"origin":"http://127.0.0.1:8000","healthPath":"/health","healthBodySha256":hash(b"ok\n"),"acceptancePath":"/acceptance","acceptanceBodySha256":hash(b"accepted:task-1:queued\n")}})).unwrap()).unwrap();
         Self {
             t,
