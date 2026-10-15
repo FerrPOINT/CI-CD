@@ -1,5 +1,27 @@
 # Task Workspace Local Qualification
 
+## Текущая Квалификация ce47
+
+Source `ce47d4f8dc473f1e6fd61669444fc149142eb424`, SDK33ce: fmt и strict Clippy
+`--locked --workspace --all-targets --features integration --keep-going -- -D warnings`
+прошли. Base-v2 project `sdlc-qa-single-task-forge-cfda417ed767` завершился с exit0;
+очистка собственных inputs, контейнеров и disposable volumes подтверждена.
+Предыдущие отказы Clippy ниже сохраняются как история, не текущий blocker.
+
+Полный frontend этого source, BaseUI8e, Node22.20/pnpm10.28: lint/semantic,
+218/218 tests в40 файлах без failures/skips, TSC/Vite build прошли. Отдельный
+formatter gate не настроен; whitespace check не выдаётся за formatter.
+OpenAPI/client hashes ниже не изменились.
+
+Три PG aggregates прошли на6493. Последующийce47 меняет только тестовый
+initializer; production и CLI closure сохраняются. PG batch имел итоговый exit1
+из-за прежнего Clippy, и новый отдельный PASS не переписывает его receipt.
+
+На packaging85b реально собран Forge6493 CLI; все8 non-root/offline nested help
+paths прошли (вместе с15 Tracker help paths, всего23). Собственные tags и Compose
+probes удалены. Итоговый Fleet/Hermes image, установка, backend release image,
+Compose smoke и live SDLC/deployment acceptance этим не подтверждаются.
+
 ## Follow-Up: 6493 Source
 
 Immutable source6493fe891c39e640bcdf6542212d823463a65ff8 passes all three
