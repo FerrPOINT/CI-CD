@@ -247,10 +247,20 @@ enum PipelineCommand {
         idempotency_key: Option<String>,
         #[arg(long="variable",value_parser=commands::parse_variable)]
         variables: Vec<(String, String)>,
+        /// Exact task intent JSON; requires an explicit original idempotency key.
+        #[arg(long)]
+        task_intent: Option<String>,
     },
     Show {
         #[arg(long)]
         id: String,
+    },
+    /// Read the original task workspace receipt; null means preparation is pending.
+    TaskWorkspace {
+        #[arg(long)]
+        project: uuid::Uuid,
+        #[arg(long)]
+        id: uuid::Uuid,
     },
 }
 
@@ -1009,17 +1019,40 @@ async fn pipeline(api: &ApiClient, command: PipelineCommand) -> anyhow::Result<V
             git_ref,
             idempotency_key,
             variables,
+            task_intent,
         } => {
+            if task_intent.is_some() && idempotency_key.is_none() {
+                anyhow::bail!("Task intent требует explicit original --idempotency-key");
+            }
+            let mut body = json!({"git_ref":git_ref,"variables":variables.into_iter().collect::<std::collections::BTreeMap<_,_>>()});
+            if let Some(file) = task_intent {
+                let raw = support::read_text(&file)?;
+                if raw.len() > 16 * 1024 {
+                    anyhow::bail!("Task intent превышает16KiB");
+                }
+                let value: serde_json::Value = serde_json::from_str(&raw)
+                    .map_err(|_| anyhow::anyhow!("Некорректный task intent JSON"))?;
+                if !value.is_object() {
+                    anyhow::bail!("Ожидается task intent object");
+                }
+                body["task_intent"] = value;
+            }
             let idempotency_key =
                 idempotency_key.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             api.json(
                 api.post(&format!("/projects/{project}/pipelines"))
                     .header("Idempotency-Key", idempotency_key)
-                    .json(&json!({"git_ref": git_ref,"variables":variables.into_iter().collect::<std::collections::BTreeMap<_,_>>()})),
+                    .json(&body),
             )
             .await
         }
         PipelineCommand::Show { id } => api.json(api.get(&format!("/pipelines/{id}"))).await,
+        PipelineCommand::TaskWorkspace { project, id } => {
+            api.json(api.get(&format!(
+                "/projects/{project}/pipelines/{id}/task-workspace"
+            )))
+            .await
+        }
     }
 }
 

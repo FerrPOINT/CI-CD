@@ -857,6 +857,140 @@ async fn task_delivery_file_input_keeps_rollback_and_missing_fence_unchanged() {
     assert_eq!(server.requests().len(), 2);
 }
 
+#[tokio::test]
+async fn task_pipeline_cli_preserves_supplied_intent_key_and_authenticated_locator() {
+    let project = uuid::Uuid::new_v4().to_string();
+    let pipeline = uuid::Uuid::new_v4().to_string();
+    let key = uuid::Uuid::new_v4().to_string();
+    let task = uuid::Uuid::new_v4();
+    let intent = json!({"operationKey":"workspace:original","repositoryId":uuid::Uuid::new_v4(),
+        "sourceCommit":"a".repeat(40),"role":"developer","agentId":uuid::Uuid::new_v4(),
+        "trackerLeaseId":uuid::Uuid::new_v4(),"holderSubject":"scheduler","expectedLeaseVersion":1,
+        "binding":{"trackerInstanceId":uuid::Uuid::new_v4().to_string(),
+            "trackerProjectId":uuid::Uuid::new_v4(),"taskId":task,"rootTaskId":task,
+            "assignmentId":uuid::Uuid::new_v4(),"executionId":uuid::Uuid::new_v4(),
+            "routingSnapshotId":uuid::Uuid::new_v4(),"requirementRevision":1,"fencingToken":1,
+            "assignmentHash":"b".repeat(64),"workflowTaskRef":"SDLC-7"}});
+    let server = Server::start(vec![
+        (200, json!({"pipeline":{"id":pipeline}})),
+        (200, Value::Null),
+    ])
+    .await;
+    let raw = intent.to_string();
+    success(
+        &server
+            .run(
+                &[
+                    "--output",
+                    "json",
+                    "pipeline",
+                    "run",
+                    "--project",
+                    &project,
+                    "--git-ref",
+                    &"a".repeat(40),
+                    "--idempotency-key",
+                    &key,
+                    "--task-intent",
+                    "-",
+                ],
+                Some(&raw),
+            )
+            .await,
+    );
+    assert_eq!(
+        success(
+            &server
+                .run(
+                    &[
+                        "--output",
+                        "json",
+                        "pipeline",
+                        "task-workspace",
+                        "--project",
+                        &project,
+                        "--id",
+                        &pipeline
+                    ],
+                    None
+                )
+                .await
+        ),
+        Value::Null
+    );
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].method, "POST");
+    assert_eq!(requests[0].key.as_deref(), Some(key.as_str()));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&requests[0].body).unwrap()["task_intent"],
+        intent
+    );
+    assert_eq!(requests[1].method, "GET");
+    assert_eq!(
+        requests[1].path,
+        format!("/api/v1/projects/{project}/pipelines/{pipeline}/task-workspace")
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|r| r.authorization.as_deref() == Some("Bearer fixture-token"))
+    );
+}
+
+#[tokio::test]
+async fn task_pipeline_cli_no_generated_key_malformed_input_or_http_retry() {
+    let server = Server::start(vec![(409, json!({"error":"held"}))]).await;
+    let args = [
+        "pipeline",
+        "run",
+        "--project",
+        "00000000-0000-4000-8000-000000000001",
+        "--task-intent",
+        "-",
+    ];
+    let output = server.run(&args, Some("{}")).await;
+    assert!(!output.status.success());
+    assert!(server.requests().is_empty());
+    for input in ["private-invalid-json", "[]", "null"] {
+        let output = server
+            .run(
+                &[
+                    "pipeline",
+                    "run",
+                    "--project",
+                    "00000000-0000-4000-8000-000000000001",
+                    "--idempotency-key",
+                    "00000000-0000-4000-8000-000000000002",
+                    "--task-intent",
+                    "-",
+                ],
+                Some(input),
+            )
+            .await;
+        assert!(!output.status.success());
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("private-invalid-json"));
+        assert!(server.requests().is_empty());
+    }
+    let output = server
+        .run(
+            &[
+                "pipeline",
+                "run",
+                "--project",
+                "00000000-0000-4000-8000-000000000001",
+                "--idempotency-key",
+                "00000000-0000-4000-8000-000000000002",
+                "--task-intent",
+                "-",
+            ],
+            Some("{}"),
+        )
+        .await;
+    assert!(!output.status.success());
+    assert_eq!(server.requests().len(), 1);
+}
+
 #[test]
 fn help_hides_token_environment_value() {
     let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
