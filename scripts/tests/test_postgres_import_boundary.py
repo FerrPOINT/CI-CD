@@ -1,6 +1,7 @@
 """Privileged imports execute only the compiled Base helper closure."""
 import json
 import importlib.util
+import importlib.machinery
 from pathlib import Path
 import py_compile
 import re
@@ -15,7 +16,7 @@ BASE = ROOT.parent / 'services-base'
 
 
 class PostgresImportBoundaryTests(unittest.TestCase):
-    def check_import(self, shadow=None, bytecode=False):
+    def check_import(self, shadow=None, bytecode=False, native=False):
         with tempfile.TemporaryDirectory(prefix='forge-pg-import-') as temporary:
             root = Path(temporary)
             bundle = root / 'base'
@@ -45,6 +46,9 @@ class PostgresImportBoundaryTests(unittest.TestCase):
                 cached = importlib.util.cache_from_source(str(bundle / 'scripts/_operator_compat.py'))
                 py_compile.compile(str(poison), cfile=cached, doraise=True,
                                    invalidation_mode=py_compile.PycInvalidationMode.UNCHECKED_HASH)
+            if native:
+                extension = bundle / ('scripts/platform_backup' + importlib.machinery.EXTENSION_SUFFIXES[0])
+                extension.write_bytes(b'unreviewed native extension')
             owner_root = root / 'owner'
             owner_root.mkdir()
             compose = root / 'compose.json'
@@ -98,6 +102,9 @@ print(owner.base.__file__)
 
     def test_unpinned_bytecode_cannot_replace_a_pinned_source(self):
         self.check_import(bytecode=True)
+
+    def test_native_sidecar_cannot_replace_a_pinned_source(self):
+        self.check_import(native=True)
 
 
 if __name__ == '__main__':

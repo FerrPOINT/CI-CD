@@ -5,6 +5,8 @@ import argparse
 import ctypes
 import fcntl
 import hashlib
+import importlib.machinery
+import importlib.util
 import json
 import math
 import os
@@ -13,10 +15,8 @@ import signal
 import stat
 import subprocess
 import sys
-import tempfile
 import time
 import traceback
-import types
 from pathlib import Path
 from urllib.parse import quote
 from urllib.request import Request, HTTPRedirectHandler, ProxyHandler, build_opener
@@ -153,6 +153,33 @@ def parent_death():
             'coordinator_parent_unavailable')
 
 
+def bind_base_sources(root):
+    class SourceLoader(importlib.machinery.SourceFileLoader):
+        def get_code(self, fullname):
+            # Compile verified source instead of trusting an existing .pyc.
+            return self.source_to_code(self.get_data(self.path), self.path)
+
+    class SourceFinder:
+        def find_spec(self, fullname, path=None, target=None):
+            parts = fullname.split('.')
+            if parts[0] not in ('scripts', 'pdlc_operator'):
+                return None
+            if fullname == 'scripts':
+                spec = importlib.machinery.ModuleSpec(fullname, None, is_package=True)
+                spec.submodule_search_locations = [str(root / 'scripts')]
+                return spec
+            source_root = root if parts[0] == 'scripts' else root / 'base-operator/src'
+            source = source_root.joinpath(*parts)
+            source = source / '__init__.py' if source.is_dir() else source.with_suffix('.py')
+            if not source.is_file():
+                raise ModuleNotFoundError('pinned Base source module unavailable')
+            return importlib.util.spec_from_file_location(
+                fullname, source, loader=SourceLoader(fullname, str(source)))
+
+    # Scope the source loader to Base, leaving system package imports unchanged.
+    sys.meta_path.insert(0, SourceFinder())
+
+
 class Owner:
     def __init__(self, packet):
         self.packet = packet
@@ -189,14 +216,7 @@ class Owner:
             compose_file=[plain(p['composeFile'])], env_file=[], layout='legacy',
             _docker=['/usr/local/bin/docker'], _daemon_id=p['daemonId'])
         base_root = plain(p['baseRoot'])
-        # -B prevents cache writes, but still reads existing unchecked bytecode.
-        self.import_cache = tempfile.TemporaryDirectory(prefix='forge-pg-source-')
-        sys.pycache_prefix = self.import_cache.name
-        sys.path.insert(0, str(base_root))
-        # Base scripts is a namespace, not an executable unpinned package or module.
-        namespace = types.ModuleType('scripts')
-        namespace.__path__ = [str(base_root / 'scripts')]
-        sys.modules['scripts'] = namespace
+        bind_base_sources(base_root)
         from scripts import platform_backup, platform_postgres
         self.base, self.pg = platform_backup, platform_postgres
         require(Path(self.base.__file__).resolve().is_relative_to(Path(p['baseRoot']).resolve()), 'pinned_utility_import_mismatch')
