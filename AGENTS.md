@@ -81,3 +81,13 @@ sdlc1, sdlc2 и sdlc-common; временные sdlc-qa-/sdlc-build- имеют 
 labels и общий prune запрещены. Rootless runner проверяет TLS и daemon ID без
 Desktop fallback. Pulse — приватный Git/pipeline только в CI/CD sdlc1.
 Подробности: [Compose runner](docs/COMPOSE_RUNNER.md).
+
+## Быстрые проверки и сборка
+
+Перед тестами, build и CI читать обязательный [стандарт Base](https://github.com/FerrPOINT/services-base/blob/2a8b5e905ab2a6fd4c12d0d2a70d9436e745765d/docs/BUILD_PERFORMANCE.md).
+Scoped checks во время реализации; полный gate на одной интегрированной вехе.
+Сохранять полезный cache, не переустанавливать неизменные dependencies и не
+пересобирать приложение из-за test-only. До повторного тяжёлого запуска назвать
+изменившиеся inputs/недостающее evidence; передавать один artifact между этапами.
+Required security/data/compatibility/live checks и product toolchains сохраняются.
+Компоненты и команды: `.quality-gate.json`; общие правила не копировать.

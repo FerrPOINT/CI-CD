@@ -11,6 +11,46 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.classify.outputs.backend }}
+      frontend: ${{ steps.classify.outputs.frontend }}
+      frontend_build: ${{ steps.classify.outputs.frontend_build }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: CI-CD
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Fetch exact comparison commits
+        working-directory: CI-CD
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ] && [ "$BASE_SHA" != 0000000000000000000000000000000000000000 ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA" "$HEAD_SHA"
+          fi
+      - name: Verify packaged Base selector
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,re
+          from pathlib import Path
+          root=Path('CI-CD')
+          pin=(root/'.quality-tooling-revision').read_text().strip()
+          receipt=json.loads((root/'scripts/vendor/base-quality-tooling.json').read_text())
+          if not re.fullmatch(r'[0-9a-f]{40}',pin) or receipt['schema']!='base-quality-tooling/v1' or receipt['revision']!=pin:
+              raise SystemExit('Packaged Base revision mismatch')
+          if hashlib.sha256((root/'scripts/vendor/base_quality_selection.py').read_bytes()).hexdigest()!=receipt['sha256']:
+              raise SystemExit('Packaged Base selector checksum mismatch')
+          PY
+      - id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 CI-CD/scripts/vendor/base_quality_selection.py --root CI-CD
+
   docs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -36,6 +76,8 @@ jobs:
           bash -n scripts/backup.sh scripts/backup-stand.sh scripts/restore.sh scripts/verify-backup.sh scripts/scan_container_images.sh
 
   backend:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -112,6 +154,8 @@ jobs:
           diff -u ../openapi/openapi.yaml /tmp/openapi.yaml
 
   frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -161,15 +205,19 @@ jobs:
       - name: Generated contract and lockfile stay unchanged
         run: git diff --exit-code -- pnpm-lock.yaml src/api/generated.ts src/api/schema.d.ts
       - run: pnpm build
+        if: needs.changes.outputs.frontend_build == 'true'
       - name: Packed Base consumer
         run: python ../../services-base/scripts/check_ui_consumer.py
       - name: Effective themes in the built consumer
+        if: needs.changes.outputs.frontend_build == 'true'
         run: |
           pnpm exec playwright install --with-deps chromium
           pnpm exec vite preview --host 127.0.0.1 --port 4173 --strictPort > /tmp/theme-preview.log 2>&1 &
           pnpm theme:check http://127.0.0.1:4173
 
   minimum-rust:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

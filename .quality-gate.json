@@ -1,0 +1,347 @@
+{
+  "schema": "base-quality-product/v1",
+  "product": "CI-CD",
+  "components": {
+    "docs": [
+      "docs/**",
+      "*.md",
+      "LICENSE"
+    ],
+    "frontend": [
+      "frontend/**",
+      "openapi/**",
+      ".base-ui-revision",
+      ".github/**",
+      ".base-revision",
+      ".namespace-base-revision"
+    ],
+    "backend": [
+      "backend/**",
+      "crates/**",
+      "Cargo.*",
+      "rust-toolchain*",
+      ".base-revision",
+      ".namespace-base-revision",
+      ".github/**",
+      "openapi/**"
+    ]
+  },
+  "gates": [
+    {
+      "id": "frontend:types",
+      "component": "frontend",
+      "profiles": [
+        "fast",
+        "integrated",
+        "build"
+      ],
+      "argv": [
+        "{python}",
+        "-B",
+        "scripts/verify_docs.py",
+        "--all"
+      ],
+      "cwd": "frontend",
+      "inputs": [
+        "frontend/**",
+        "openapi/**",
+        ".base-ui-revision",
+        ".gitattributes"
+      ],
+      "cacheable": true,
+      "tools": [
+        {
+          "argv": [
+            "node",
+            "--version"
+          ],
+          "pattern": "^v22\\.20\\.0\\s*$"
+        },
+        {
+          "argv": [
+            "pnpm",
+            "--version"
+          ],
+          "pattern": "^10\\.28\\.1\\s*$"
+        }
+      ],
+      "prepare_frontend": "22.20.0"
+    },
+    {
+      "id": "frontend:tests",
+      "component": "frontend",
+      "profiles": [
+        "fast",
+        "integrated"
+      ],
+      "argv": [
+        "pnpm",
+        "test"
+      ],
+      "cwd": "frontend",
+      "inputs": [
+        "frontend/**",
+        "openapi/**",
+        ".base-ui-revision",
+        ".gitattributes"
+      ],
+      "cacheable": true,
+      "tools": [
+        {
+          "argv": [
+            "node",
+            "--version"
+          ],
+          "pattern": "^v22\\.20\\.0\\s*$"
+        },
+        {
+          "argv": [
+            "pnpm",
+            "--version"
+          ],
+          "pattern": "^10\\.28\\.1\\s*$"
+        }
+      ],
+      "prepare_frontend": "22.20.0"
+    },
+    {
+      "id": "frontend:lint",
+      "component": "frontend",
+      "profiles": [
+        "integrated"
+      ],
+      "argv": [
+        "pnpm",
+        "lint"
+      ],
+      "cwd": "frontend",
+      "inputs": [
+        "frontend/**",
+        "openapi/**",
+        ".base-ui-revision",
+        ".gitattributes"
+      ],
+      "cacheable": true,
+      "tools": [
+        {
+          "argv": [
+            "node",
+            "--version"
+          ],
+          "pattern": "^v22\\.20\\.0\\s*$"
+        },
+        {
+          "argv": [
+            "pnpm",
+            "--version"
+          ],
+          "pattern": "^10\\.28\\.1\\s*$"
+        }
+      ],
+      "prepare_frontend": "22.20.0"
+    },
+    {
+      "id": "frontend:build",
+      "component": "frontend",
+      "profiles": [
+        "build"
+      ],
+      "argv": [
+        "pnpm",
+        "exec",
+        "vite",
+        "build"
+      ],
+      "cwd": "frontend",
+      "inputs": [
+        "frontend/**",
+        "openapi/**",
+        ".base-ui-revision",
+        ".gitattributes"
+      ],
+      "cacheable": true,
+      "tools": [
+        {
+          "argv": [
+            "node",
+            "--version"
+          ],
+          "pattern": "^v22\\.20\\.0\\s*$"
+        },
+        {
+          "argv": [
+            "pnpm",
+            "--version"
+          ],
+          "pattern": "^10\\.28\\.1\\s*$"
+        }
+      ],
+      "prepare_frontend": "22.20.0",
+      "outputs": [
+        "frontend/dist"
+      ],
+      "environment_inputs": [
+        "VITE_NAMESPACE_ENABLED",
+        "VITE_PLATFORM_ORIGIN",
+        "VITE_AUTH_ISSUER",
+        "VITE_PLATFORM_BRANDING_URL",
+        "VITE_PLATFORM_SERVICES_URL"
+      ],
+      "kind": "artifact",
+      "exclude_inputs": [
+        "frontend/src/**/*.test.ts",
+        "frontend/src/**/*.test.tsx",
+        "frontend/src/**/*.spec.ts",
+        "frontend/src/**/*.spec.tsx",
+        "frontend/src/**/*.test.mjs",
+        "frontend/src/**/*.test.cjs",
+        "frontend/src/*.test.ts",
+        "frontend/src/*.test.tsx",
+        "frontend/src/*.spec.ts",
+        "frontend/src/*.spec.tsx",
+        "frontend/src/*.test.mjs",
+        "frontend/src/*.test.cjs",
+        "frontend/e2e/**"
+      ]
+    },
+    {
+      "id": "backend:unit",
+      "component": "backend",
+      "profiles": [
+        "fast"
+      ],
+      "argv": [
+        "bash",
+        "{base}/scripts/run_rust_gate.sh",
+        "--",
+        "bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        "cargo fmt --all -- --check; cargo test --locked -p cicd-domain --lib"
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": true,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "rustc",
+            "--version"
+          ],
+          "pattern": "^rustc 1\\.88\\.0\\b"
+        }
+      ],
+      "sdk_revision": ".namespace-base-revision"
+    },
+    {
+      "id": "backend:quality",
+      "component": "backend",
+      "profiles": [
+        "integrated"
+      ],
+      "argv": [
+        "bash",
+        "{base}/scripts/run_rust_gate.sh",
+        "--",
+        "bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        "cargo fmt --all -- --check; cargo clippy --locked --workspace --all-targets -- -D warnings; cargo test --locked --workspace"
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "**"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "external_state": true,
+      "requires_env": [
+        "CICD_TEST_DATABASE_URL"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "rustc",
+            "--version"
+          ],
+          "pattern": "^rustc 1\\.88\\.0\\b"
+        }
+      ],
+      "sdk_revision": ".namespace-base-revision"
+    },
+    {
+      "id": "backend:build",
+      "component": "backend",
+      "profiles": [
+        "build"
+      ],
+      "argv": [
+        "bash",
+        "{base}/scripts/run_rust_gate.sh",
+        "--",
+        "bash",
+        "-euo",
+        "pipefail",
+        "-c",
+        "cargo build --locked --release --workspace; mkdir -p \"$BASE_QUALITY_ARTIFACTS\"; find \"$CARGO_TARGET_DIR/release\" -maxdepth 1 -type f -executable -exec cp {} \"$BASE_QUALITY_ARTIFACTS/\" \\;"
+      ],
+      "cwd": "backend",
+      "inputs": [
+        "backend/**",
+        "crates/**",
+        "Cargo.*",
+        "rust-toolchain*",
+        ".cargo/**",
+        ".base-revision",
+        ".namespace-base-revision",
+        ".gitattributes"
+      ],
+      "cacheable": false,
+      "platforms": [
+        "linux"
+      ],
+      "tools": [
+        {
+          "argv": [
+            "rustc",
+            "--version"
+          ],
+          "pattern": "^rustc 1\\.88\\.0\\b"
+        }
+      ],
+      "sdk_revision": ".namespace-base-revision",
+      "kind": "artifact",
+      "exclude_inputs": [
+        "backend/**/tests/**",
+        "crates/**/tests/**"
+      ]
+    }
+  ],
+  "additional_acceptance": "Existing product CI/CONTRIBUTING: MSRV/features, ignored DB, OpenAPI/packed consumer/themes, security and live acceptance remain separate mandatory gates where applicable.",
+  "frontend_generated": [
+    "src/shared/api/schema.d.ts"
+  ],
+  "frontend_unit_inputs": [
+    "frontend/src/**/*.test.ts",
+    "frontend/src/**/*.test.tsx",
+    "frontend/src/**/*.spec.ts",
+    "frontend/src/**/*.spec.tsx",
+    "frontend/src/**/*.test.mjs",
+    "frontend/src/**/*.test.cjs",
+    "frontend/src/*.test.ts",
+    "frontend/src/*.test.tsx",
+    "frontend/src/*.spec.ts",
+    "frontend/src/*.spec.tsx",
+    "frontend/src/*.test.mjs",
+    "frontend/src/*.test.cjs"
+  ]
+}
