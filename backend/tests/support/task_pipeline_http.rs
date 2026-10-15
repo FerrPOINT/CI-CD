@@ -24,6 +24,9 @@ struct TaskPipeline {
     intent: TaskWorkspaceIntent,
     yaml: String,
     tracker: Arc<Mutex<serde_json::Value>>,
+    running: cicd::runner::RunningJobs,
+    worker: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    quiescent: bool,
     peer: tokio::task::JoinHandle<()>,
     server: tokio::task::JoinHandle<()>,
 }
@@ -32,14 +35,12 @@ impl Drop for TaskPipeline {
     fn drop(&mut self) {
         self.peer.abort();
         self.server.abort();
-        let _ = std::fs::remove_dir_all(&self.temp);
-    }
-}
-
-struct Worker(tokio::task::JoinHandle<()>);
-impl Drop for Worker {
-    fn drop(&mut self) {
-        self.0.abort();
+        if let Some(worker) = self.worker.get_mut().take() {
+            worker.abort();
+        }
+        if self.quiescent {
+            let _ = std::fs::remove_dir_all(&self.temp);
+        }
     }
 }
 
@@ -75,6 +76,96 @@ fn canonical(value: serde_json::Value) -> serde_json::Value {
 }
 
 impl TaskPipeline {
+    async fn cleanup(&mut self) -> anyhow::Result<()> {
+        let released = std::fs::write(&self.barrier, b"release\n");
+        if let Some(mut worker) = self.worker.get_mut().take() {
+            match tokio::time::timeout(StdDuration::from_secs(25), &mut worker).await {
+                Ok(_) => (),
+                Err(_) => {
+                    worker.abort();
+                    let _ = tokio::time::timeout(StdDuration::from_secs(5), &mut worker)
+                        .await
+                        .map_err(|_| anyhow::anyhow!("owned runner cancellation timed out"))?;
+                }
+            }
+        }
+        let pids: Vec<u32> = self
+            .running
+            .lock()
+            .await
+            .values()
+            .copied()
+            .filter(|pid| *pid != 0)
+            .collect();
+        // Cancellation/panic drops production Child (kill_on_drop); observe actual exit too.
+        tokio::time::timeout(StdDuration::from_secs(5), async {
+            loop {
+                let mut alive = false;
+                for pid in &pids {
+                    let pid = libc::pid_t::try_from(*pid)?;
+                    // Signal zero observes this retained PID; it cannot stop any process.
+                    let result = unsafe { libc::kill(pid, 0) };
+                    alive |= result == 0
+                        || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH);
+                }
+                if !alive {
+                    break Ok::<(), anyhow::Error>(());
+                }
+                tokio::time::sleep(StdDuration::from_millis(20)).await;
+            }
+        })
+        .await
+        .map_err(|_| anyhow::anyhow!("owned shell exit remains unknown"))??;
+        self.quiescent = true;
+        self.peer.abort();
+        self.server.abort();
+        let _ = tokio::time::timeout(StdDuration::from_secs(5), &mut self.peer)
+            .await
+            .map_err(|_| anyhow::anyhow!("owned Tracker peer cancellation timed out"))?;
+        let _ = tokio::time::timeout(StdDuration::from_secs(5), &mut self.server)
+            .await
+            .map_err(|_| anyhow::anyhow!("owned HTTP server cancellation timed out"))?;
+        released?;
+        let request: Option<Option<serde_json::Value>> = sqlx::query_scalar(
+            "SELECT preparation_request FROM task_pipeline_intents WHERE project_id=$1 AND operation_key=$2",
+        ).bind(self.project).bind(&self.intent.operation_key).fetch_optional(&self.pool).await?;
+        if let Some(Some(request)) = request {
+            let request: cicd::domain::sdlc_workspace::WorkspaceOperationRequest =
+                serde_json::from_value(request)?;
+            request.validate().map_err(anyhow::Error::msg)?;
+            anyhow::ensure!(
+                request.binding == self.intent.binding
+                    && request.repository_id == self.intent.repository_id
+                    && request.source_commit == self.intent.source_commit
+                    && request.operation_key == self.intent.operation_key
+                    && request.role == self.intent.role,
+                "foreign cleanup custody"
+            );
+            let root = std::env::temp_dir().canonicalize()?;
+            let path = root.join(&request.workspace_id);
+            match std::fs::symlink_metadata(&path) {
+                Ok(_) => {
+                    let owned = cicd::runner_workspace::OwnedWorkspace::reopen(
+                        &root,
+                        &request.workspace_id,
+                    )?;
+                    owned.verify_identity(
+                        request.attempt_id,
+                        request.lease_id,
+                        request.workspace_generation,
+                    )?;
+                    // Disposable test teardown after quiescence, never fabricated product ACK.
+                    tokio::fs::remove_dir_all(&path).await?;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+                Err(error) => return Err(error.into()),
+            }
+        }
+        fixture_cleanup::projects(&self.pool).await;
+        self.pool.close().await;
+        Ok(())
+    }
+
     async fn new() -> Self {
         let url = reqwest::Url::parse(&std::env::var("CICD_TEST_DATABASE_URL").unwrap()).unwrap();
         assert!(
@@ -295,6 +386,9 @@ impl TaskPipeline {
             intent,
             yaml,
             tracker,
+            running: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            worker: Mutex::new(None),
+            quiescent: false,
             peer,
             server,
         }
@@ -336,7 +430,25 @@ impl TaskPipeline {
 #[tokio::test]
 #[ignore = "requires disposable CICD_TEST_DATABASE_URL, configured QA namespace IDs, Git and sh"]
 async fn task_http_trigger_embedded_checkout_shell_ack_artifact_and_original_candidate() {
-    let f = TaskPipeline::new().await;
+    let f = Arc::new(TaskPipeline::new().await);
+    let case_fixture = f.clone();
+    // Tokio captures assertion panics while the owner retains teardown handles.
+    let result = tokio::spawn(async move { case(&case_fixture).await }).await;
+    let mut f = Arc::try_unwrap(f).unwrap_or_else(|_| panic!("fixture still borrowed after case"));
+    let cleanup = f.cleanup().await;
+    if let Err(error) = result {
+        if cleanup.is_err() {
+            eprintln!("owned task pipeline cleanup failed; disposable resources retained");
+        }
+        if error.is_panic() {
+            std::panic::resume_unwind(error.into_panic());
+        }
+        panic!("task pipeline case was unexpectedly cancelled");
+    }
+    cleanup.expect("owned task pipeline cleanup");
+}
+
+async fn case(f: &TaskPipeline) {
     // No caller-fabricated Forge pipeline/job/attempt/lease or receipt fixtures.
     f.tracker.lock().await["receipt"]["lease"]["version"] = serde_json::json!(1);
     assert_eq!(f.trigger(&f.intent).await.0, StatusCode::CONFLICT);
@@ -377,8 +489,8 @@ async fn task_http_trigger_embedded_checkout_shell_ack_artifact_and_original_can
     let (status, pending) = f.request("GET", &locator, serde_json::Value::Null).await;
     assert_eq!(status, StatusCode::OK);
     assert!(pending.is_null());
-    let running: cicd::runner::RunningJobs = Arc::new(Mutex::new(std::collections::HashMap::new()));
-    let worker = Worker(tokio::spawn(cicd::runner::run_job_with_config(
+    let running = f.running.clone();
+    *f.worker.lock().await = Some(tokio::spawn(cicd::runner::run_job_with_config(
         f.pool.clone(),
         job,
         running.clone(),
@@ -392,7 +504,7 @@ async fn task_http_trigger_embedded_checkout_shell_ack_artifact_and_original_can
             break value;
         }
         assert!(
-            !worker.0.is_finished(),
+            !f.worker.lock().await.as_ref().unwrap().is_finished(),
             "real embedded runner stopped before receipt"
         );
         assert!(
@@ -425,7 +537,7 @@ async fn task_http_trigger_embedded_checkout_shell_ack_artifact_and_original_can
     );
     while !running.lock().await.get(&job).is_some_and(|pid| *pid != 0) {
         assert!(
-            !worker.0.is_finished(),
+            !f.worker.lock().await.as_ref().unwrap().is_finished(),
             "shell stopped before barrier release"
         );
         assert!(std::time::Instant::now() < deadline, "shell did not start");
@@ -452,11 +564,16 @@ async fn task_http_trigger_embedded_checkout_shell_ack_artifact_and_original_can
         "no terminal fabrication from preparation"
     );
     std::fs::write(&f.barrier, b"release\n").unwrap();
-    let mut worker = worker;
-    tokio::time::timeout(StdDuration::from_secs(25), &mut worker.0)
-        .await
-        .expect("bounded embedded runner")
-        .unwrap();
+    let completed = {
+        let mut worker = f.worker.lock().await;
+        let completed =
+            tokio::time::timeout(StdDuration::from_secs(25), worker.as_mut().unwrap()).await;
+        if completed.is_ok() {
+            worker.take();
+        }
+        completed
+    };
+    completed.expect("bounded embedded runner").unwrap();
     assert!(running.lock().await.is_empty());
     let terminal: (String,String,Option<i32>,String,bool,bool) = sqlx::query_as("SELECT p.status,a.status,a.exit_code,l.terminal_status,l.completion_received_at IS NOT NULL,l.completed_at IS NOT NULL FROM execution_attempts a JOIN job_leases l ON l.attempt_id=a.id JOIN jobs j ON j.id=a.job_id JOIN stages s ON s.id=j.stage_id JOIN pipelines p ON p.id=s.pipeline_id WHERE a.id=$1").bind(r.attempt_id).fetch_one(&f.pool).await.unwrap();
     assert_eq!(
@@ -538,6 +655,4 @@ async fn task_http_trigger_embedded_checkout_shell_ack_artifact_and_original_can
     assert!(tampered["artifacts"].as_array().unwrap().is_empty());
     assert!(!evidence.to_string().contains(&f.token));
     assert!(!evidence.to_string().contains("qa-tracker-reader"));
-    fixture_cleanup::projects(&f.pool).await;
-    f.pool.close().await;
 }
