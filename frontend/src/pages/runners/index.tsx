@@ -10,8 +10,8 @@ import {
   Label,
   ResourceList,
   ResourceListRow,
-} from "@sdlc/ui/ui";
-import { ConfirmDialog } from "@sdlc/ui/ui";
+} from "@pdlc/ui/ui";
+import { ConfirmDialog } from "@pdlc/ui/ui";
 import { QueryState } from "@/shared/ui/query-state";
 
 const pageSize = 20;

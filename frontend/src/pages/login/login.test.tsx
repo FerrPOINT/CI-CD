@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
-import { SsoLogoutPendingError } from '@sdlc/ui/sso'
+import { SsoLogoutPendingError } from '@pdlc/ui/sso'
 import { LoginPage } from './'
 
 const beginSso = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<void>>(async () => {}))
-vi.mock('@sdlc/ui/sso', async (importOriginal) => ({
-  ...await importOriginal<typeof import('@sdlc/ui/sso')>(), beginSso,
+vi.mock('@pdlc/ui/sso', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@pdlc/ui/sso')>(), beginSso,
 }))
-vi.mock('@sdlc/ui/ui', async (importOriginal) => ({
-  ...await importOriginal<typeof import('@sdlc/ui/ui')>(),
+vi.mock('@pdlc/ui/ui', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@pdlc/ui/ui')>(),
   PlatformMark: () => <span>SDLC</span>,
 }))
 vi.mock('@/shared/auth/auth-provider', () => ({

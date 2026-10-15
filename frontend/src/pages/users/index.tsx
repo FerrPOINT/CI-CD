@@ -1,5 +1,5 @@
 import { ExternalLink, Users } from 'lucide-react'
-import { Button } from '@sdlc/ui/ui'
+import { Button } from '@pdlc/ui/ui'
 
 const adminUrl = import.meta.env.VITE_ADMIN_UI_URL ?? 'http://localhost:7772'
 

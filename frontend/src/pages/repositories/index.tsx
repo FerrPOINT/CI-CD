@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Button, Input, NamespaceLink as Link } from '@sdlc/ui/ui'
-import { withNamespaceLocation } from '@sdlc/ui/lib'
+import { Button, Input, NamespaceLink as Link } from '@pdlc/ui/ui'
+import { withNamespaceLocation } from '@pdlc/ui/lib'
 import { api } from '@/api/client'
 import type { components } from '@/api/schema'
 export function RepositoriesPage() {

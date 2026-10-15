@@ -1,9 +1,9 @@
-import { LoadingState, PageHeader } from '@sdlc/ui/ui'
+import { LoadingState, PageHeader } from '@pdlc/ui/ui'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/api/client'
 import type { components } from '@/api/schema'
 import { ExecutionList } from '@/widgets/execution-list'
-import { NamespaceLink as Link } from '@sdlc/ui/ui'
+import { NamespaceLink as Link } from '@pdlc/ui/ui'
 import type { Runner } from '@/api/types'
 export function DashboardPage() {
   const runners = useQuery({

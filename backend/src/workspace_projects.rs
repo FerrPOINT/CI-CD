@@ -5,7 +5,7 @@ use axum::{
     extract::{Path, Query, State},
 };
 use chrono::{DateTime, Utc};
-use sdlc_shared::resource_context::{ResourceContextSummary, ResourceKind};
+use pdlc_shared::resource_context::{ResourceContextSummary, ResourceKind};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{PgPool, Row};
@@ -71,7 +71,7 @@ pub struct WorkspaceSummary {
 }
 #[derive(Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ExecutionRow {
-    pub namespace: sdlc_shared::resource_context::NamespaceRef,
+    pub namespace: pdlc_shared::resource_context::NamespaceRef,
     pub id: Uuid,
     pub repository_id: Uuid,
     pub repository_name: String,
@@ -96,7 +96,7 @@ pub struct ExecutionPage {
 pub async fn validate_catalog(pool: &PgPool) -> Result<(), ApiError> {
     let rows=sqlx::query("SELECT b.* FROM forge_namespace_bindings b JOIN forge_workspace_projects w ON w.registry_instance_id=b.registry_instance_id AND w.namespace_id=b.namespace_id").fetch_all(pool).await.map_err(ApiError::internal)?;
     for row in rows {
-        let command: sdlc_shared::resource_context::OwnerCommand =
+        let command: pdlc_shared::resource_context::OwnerCommand =
             serde_json::from_value(row.get("command"))
                 .map_err(|_| ApiError::service_unavailable("invalid_namespace_projection"))?;
         crate::namespace::validate_projection(&command)?;

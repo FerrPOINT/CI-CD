@@ -3,12 +3,12 @@ import {
   ResourceList,
   ResourceListRow,
   DiffBlock,
-} from "@sdlc/ui/ui";
+} from "@pdlc/ui/ui";
 import { useParams, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { usePullRequest, useRepositoryComparison } from "@/api/hooks";
 import { ApiError } from "@/api/client";
-import { Button } from "@sdlc/ui/ui";
+import { Button } from "@pdlc/ui/ui";
 import {
   ChevronRight,
   GitPullRequest,
@@ -19,7 +19,7 @@ import type { PullRequest, PullRequestStatus } from "@/api/types";
 import { formatDate } from "@/shared/lib/format";
 import { QueryState } from "@/shared/ui/query-state";
 import { PullRequestActions } from "@/pages/pull-requests/actions";
-import { InitialsAvatar as UserAvatar } from "@sdlc/ui/ui";
+import { InitialsAvatar as UserAvatar } from "@pdlc/ui/ui";
 
 export function buildCompareHref(
   pr: Pick<PullRequest, "repository_name" | "source_branch" | "target_branch">,

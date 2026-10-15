@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Base owns canonical/legacy environment resolution.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../services-base/scripts" && pwd)/platform-namespace.sh"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 : "${SDLC_WORKSPACE_DIR:?Select the source workspace}"
 : "${SDLC_DOCKER_CONTEXT:?Select the Docker context}"

@@ -1,10 +1,10 @@
-import { PageNavigation } from "@sdlc/ui/ui";
+import { PageNavigation } from "@pdlc/ui/ui";
 import { useEffect, useState } from "react";
 import {
   NamespaceLink as Link,
   ResourceList,
   ResourceListRow,
-} from "@sdlc/ui/ui";
+} from "@pdlc/ui/ui";
 import { useParams, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import {
@@ -42,16 +42,16 @@ import {
   DialogHeader,
   DialogTitle,
   DialogFooter,
-} from "@sdlc/ui/ui";
-import { Input } from "@sdlc/ui/ui";
-import { Label } from "@sdlc/ui/ui";
-import { Textarea } from "@sdlc/ui/ui";
-import { ConfirmDialog } from "@sdlc/ui/ui";
+} from "@pdlc/ui/ui";
+import { Input } from "@pdlc/ui/ui";
+import { Label } from "@pdlc/ui/ui";
+import { Textarea } from "@pdlc/ui/ui";
+import { ConfirmDialog } from "@pdlc/ui/ui";
 import { QueryState } from "@/shared/ui/query-state";
-import { useDebouncedValue } from "@sdlc/ui/lib";
+import { useDebouncedValue } from "@pdlc/ui/lib";
 import type { Release, RepositoryRef } from "@/api/types";
-import { Button } from "@sdlc/ui/ui";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@sdlc/ui/ui";
+import { Button } from "@pdlc/ui/ui";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@pdlc/ui/ui";
 
 const browserTabs = [
   "code",

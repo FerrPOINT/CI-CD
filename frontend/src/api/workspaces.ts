@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { sortProjectNavigation, type NamespaceLocation } from '@sdlc/ui/lib'
+import { sortProjectNavigation, type NamespaceLocation } from '@pdlc/ui/lib'
 import type { components } from './schema'
 import { api } from './client'
 

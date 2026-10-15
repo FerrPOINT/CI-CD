@@ -128,7 +128,7 @@ jobs:
           pin=.base-ui-revision
           echo "sha=$(cat "$pin")" >> "$GITHUB_OUTPUT"
           echo "pin=$pin" >> "$GITHUB_OUTPUT"
-      - name: Check out services-base sibling (@sdlc/ui file dep)
+      - name: Check out services-base sibling (@pdlc/ui file dep)
         uses: actions/checkout@v4
         with:
           repository: FerrPOINT/services-base

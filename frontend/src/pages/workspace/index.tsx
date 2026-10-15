@@ -6,8 +6,8 @@ import {
   SectionNavigation,
   SectionNavigationItem,
   Button,
-} from '@sdlc/ui/ui'
-import { withNamespaceLocation } from '@sdlc/ui/lib'
+} from '@pdlc/ui/ui'
+import { withNamespaceLocation } from '@pdlc/ui/lib'
 import { useWorkspace, workspaceKey, workspacePath } from '@/api/workspaces'
 import { api } from '@/api/client'
 import type { components } from '@/api/schema'

@@ -1,3 +1,4 @@
+import { platformEnv } from '@pdlc/ui/environment'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -6,18 +7,18 @@ import { fileURLToPath } from 'node:url'
 import AxeBuilder from '@axe-core/playwright'
 import { expect, test } from '@playwright/test'
 
-test.skip(process.env.SDLC_LIVE_QA !== '1', 'Requires live CI/CD and Central Auth')
+test.skip(platformEnv('LIVE_QA') !== '1', 'Requires live CI/CD and Central Auth')
 test.skip(({ browserName }) => browserName !== 'chromium', 'Single browser live acceptance')
 test.use({ trace: 'off', video: 'off', screenshot: 'off', hasTouch: true })
 
-const account = process.env.SDLC_LIVE_QA === '1'
-  ? JSON.parse(readFileSync(process.env.SDLC_QA_SESSION_FILE ?? fileURLToPath(
+const account = platformEnv('LIVE_QA') === '1'
+  ? JSON.parse(readFileSync(platformEnv('QA_SESSION_FILE') ?? fileURLToPath(
     new URL('../../../services-base/deploy/.local/qa-session.json', import.meta.url),
   ), 'utf8')) as { email: string; password: string }
   : { email: '', password: '' }
 const base = process.env.E2E_BASE_URL ?? 'http://localhost:7712'
 const apiBase = process.env.E2E_API_URL ?? 'http://localhost:7711/api/v1'
-const authBase = process.env.SDLC_AUTH_URL ?? 'http://localhost:7701'
+const authBase = platformEnv('AUTH_URL') ?? 'http://localhost:7701'
 const screenshots = fileURLToPath(new URL('../../../.local/screenshots/cicd-detail-layout/', import.meta.url))
 
 function removeOwnWorkspace(work: string) {

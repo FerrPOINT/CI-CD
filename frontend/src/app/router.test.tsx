@@ -2,12 +2,12 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ThemeProvider } from '@sdlc/ui/lib'
+import { ThemeProvider } from '@pdlc/ui/lib'
 import { appRoutes } from './router'
 import { acceptSso, clearSession } from '@/api/auth'
 
-vi.mock('@sdlc/ui/sso', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@sdlc/ui/sso')>()),
+vi.mock('@pdlc/ui/sso', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@pdlc/ui/sso')>()),
   beginSso: vi.fn().mockResolvedValue(undefined),
 }))
 

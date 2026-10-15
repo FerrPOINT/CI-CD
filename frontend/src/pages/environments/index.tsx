@@ -1,4 +1,4 @@
-import { PageNavigation } from "@sdlc/ui/ui";
+import { PageNavigation } from "@pdlc/ui/ui";
 import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams, useSearchParams } from "react-router";
@@ -29,8 +29,8 @@ import {
   Select,
   ResourceList,
   ResourceListRow,
-} from "@sdlc/ui/ui";
-import { ConfirmDialog } from "@sdlc/ui/ui";
+} from "@pdlc/ui/ui";
+import { ConfirmDialog } from "@pdlc/ui/ui";
 import { QueryState } from "@/shared/ui/query-state";
 
 const pageSize = 20;

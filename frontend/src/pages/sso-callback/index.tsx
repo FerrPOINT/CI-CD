@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
-import { useNamespaceNavigate as useNavigate } from '@sdlc/ui/ui'
+import { useNamespaceNavigate as useNavigate } from '@pdlc/ui/ui'
 
-import { completeSso } from '@sdlc/ui/sso'
-import { SsoCallbackView } from '@sdlc/ui/ui'
+import { completeSso } from '@pdlc/ui/sso'
+import { SsoCallbackView } from '@pdlc/ui/ui'
 import { ssoConfig, useAuth } from '@/shared/auth/auth-provider'
-import { finishPlatformLogin } from '@sdlc/ui/platform'
+import { finishPlatformLogin } from '@pdlc/ui/platform'
 
 let pending: ReturnType<typeof completeSso> | null = null
 function completion() {

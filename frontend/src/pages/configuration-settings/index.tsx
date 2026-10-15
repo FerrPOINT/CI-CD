@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { useParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Input, Label } from '@sdlc/ui/ui'
+import { Button, Input, Label } from '@pdlc/ui/ui'
 import { api } from '@/api/client'
 import { useNamespaceRef } from '@/widgets/namespace-context'
 import type { components } from '@/api/schema'

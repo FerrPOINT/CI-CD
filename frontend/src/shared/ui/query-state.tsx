@@ -1,7 +1,7 @@
 import {
   QueryState as BaseQueryState,
   type QueryStateProps,
-} from "@sdlc/ui/ui";
+} from "@pdlc/ui/ui";
 import { ApiError } from "@/api/client";
 import { ForbiddenPage } from "@/pages/forbidden";
 

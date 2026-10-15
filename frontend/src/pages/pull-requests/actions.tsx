@@ -4,8 +4,8 @@ import { GitMerge, RotateCcw, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { usePullRequestAction } from '@/api/hooks'
 import type { PullRequest } from '@/api/types'
-import { ConfirmDialog } from '@sdlc/ui/ui'
-import { Button } from '@sdlc/ui/ui'
+import { ConfirmDialog } from '@pdlc/ui/ui'
+import { Button } from '@pdlc/ui/ui'
 
 type ConfirmedAction = 'merge' | 'close'
 

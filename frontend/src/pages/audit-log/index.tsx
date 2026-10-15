@@ -5,7 +5,7 @@ import { ChevronLeft, ChevronRight, History, Search, X } from "lucide-react";
 
 import { useAuditLog } from "@/api/hooks";
 import { QueryState } from "@/shared/ui/query-state";
-import { InitialsAvatar as UserAvatar } from "@sdlc/ui/ui";
+import { InitialsAvatar as UserAvatar } from "@pdlc/ui/ui";
 import {
   Button,
   Card,
@@ -13,7 +13,7 @@ import {
   Label,
   ResourceList,
   ResourceListRow,
-} from "@sdlc/ui/ui";
+} from "@pdlc/ui/ui";
 import {
   Table,
   TableBody,
@@ -21,7 +21,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@sdlc/ui/ui";
+} from "@pdlc/ui/ui";
 
 const pageSize = 20;
 const maxAuditPage = Math.floor(2_147_483_647 / pageSize) + 1;

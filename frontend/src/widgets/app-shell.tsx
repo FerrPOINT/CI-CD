@@ -1,5 +1,5 @@
-import { SidebarNavigationGroup, useSidebarDisclosure, NamespaceNavLink as NavLink } from '@sdlc/ui/ui'
-import { SidebarItem } from '@sdlc/ui/ui'
+import { SidebarNavigationGroup, useSidebarDisclosure, NamespaceNavLink as NavLink } from '@pdlc/ui/ui'
+import { SidebarItem } from '@pdlc/ui/ui'
 import { NamespaceShellContext } from './namespace-context'
 import { useProjectDisclosures, WorkspaceNavigation } from './workspace-navigation'
 import { useEffect, useState } from 'react'
@@ -32,7 +32,7 @@ import {
   PlatformHeader,
   PlatformMark,
   ThemeMenuItems,
-} from '@sdlc/ui/ui'
+} from '@pdlc/ui/ui'
 import { useAuth } from '@/shared/auth/auth-provider'
 
 type NavigationListProps = {

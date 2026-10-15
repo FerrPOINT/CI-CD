@@ -6,15 +6,15 @@ import {
   NamespaceLink as Link,
   ResourceList,
   ResourceListRow,
-} from "@sdlc/ui/ui";
-import { useNamespaceNavigate as useNavigate } from "@sdlc/ui/ui";
+} from "@pdlc/ui/ui";
+import { useNamespaceNavigate as useNavigate } from "@pdlc/ui/ui";
 import { useParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { ChevronRight, Clock, Play } from "lucide-react";
 import { toast } from "sonner";
 import { usePipelines, useTriggerPipeline } from "@/api/hooks";
 import { QueryState } from "@/shared/ui/query-state";
-import { Button, Input, Label } from "@sdlc/ui/ui";
+import { Button, Input, Label } from "@pdlc/ui/ui";
 
 const pageSize = 20;
 const statusColors: Record<string, string> = {

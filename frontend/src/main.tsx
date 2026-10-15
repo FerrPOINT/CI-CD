@@ -10,15 +10,15 @@ import {
   useTheme,
   PlatformProvider,
   PlatformServicesProvider,
-} from '@sdlc/ui/lib'
+} from '@pdlc/ui/lib'
 import { router } from './app/router'
 import './index.css'
-import { relaySsoCallback } from '@sdlc/ui/sso'
+import { relaySsoCallback, ssoNamespace } from '@pdlc/ui/sso'
 import {
   capturePlatformReturn,
   getPlatformProduct,
   setPlatformQueryClient,
-} from '@sdlc/ui/platform'
+} from '@pdlc/ui/platform'
 
 const queryClient = new QueryClient()
 setPlatformQueryClient(queryClient)
@@ -29,7 +29,7 @@ function AppToaster() {
   return <Toaster theme={theme === 'light' ? 'light' : 'dark'} />
 }
 
-if (!relaySsoCallback()) {
+if (!relaySsoCallback(ssoNamespace(import.meta.env.VITE_AUTH_NAMESPACE))) {
   const root = createRoot(document.getElementById('root')!)
   getPlatformProduct()?.onRetire(() => {
     root.unmount()

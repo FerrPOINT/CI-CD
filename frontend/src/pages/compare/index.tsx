@@ -4,15 +4,15 @@ import {
   ResourceList,
   ResourceListRow,
   DiffBlock,
-} from "@sdlc/ui/ui";
+} from "@pdlc/ui/ui";
 import { useParams, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { ChevronRight, FileDiff, GitCompareArrows } from "lucide-react";
 import { useRepositoryComparison, useRepositoryRefs } from "@/api/hooks";
 import type { ChangeStatus, Comparison } from "@/api/types";
 import { QueryState } from "@/shared/ui/query-state";
-import { useDebouncedValue } from "@sdlc/ui/lib";
-import { Button, Input, Label } from "@sdlc/ui/ui";
+import { useDebouncedValue } from "@pdlc/ui/lib";
+import { Button, Input, Label } from "@pdlc/ui/ui";
 
 const changeStatusStyles: Record<ChangeStatus, string> = {
   added: "bg-success/15 text-text-primary",

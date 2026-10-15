@@ -108,11 +108,11 @@ fn decoding_secret(secret: &str) -> DecodingKey {
 }
 
 pub fn hash_password(password: &str) -> Result<String, AuthError> {
-    sdlc_auth_core::password::hash_password(password).map_err(|_| AuthError::Invalid)
+    pdlc_auth_core::password::hash_password(password).map_err(|_| AuthError::Invalid)
 }
 
 pub fn verify_password(hash: &str, password: &str) -> bool {
-    sdlc_auth_core::password::verify_password(password, hash).unwrap_or(false)
+    pdlc_auth_core::password::verify_password(password, hash).unwrap_or(false)
 }
 
 pub fn issue_access(user_id: Uuid, role: &str, session_id: Uuid) -> Result<TokenPair, AuthError> {

@@ -1,5 +1,5 @@
 import { currentSession } from './auth'
-import { getPlatformProduct } from '@sdlc/ui/platform'
+import { getPlatformProduct } from '@pdlc/ui/platform'
 
 const BASE = '/api/v1'
 

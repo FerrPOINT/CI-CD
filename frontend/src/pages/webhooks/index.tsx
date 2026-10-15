@@ -12,11 +12,11 @@ import {
   useNotificationEvents,
   useSaveNotifications,
 } from "@/api/hooks";
-import { Card, ResourceList, ResourceListRow } from "@sdlc/ui/ui";
-import { Button } from "@sdlc/ui/ui";
-import { Input } from "@sdlc/ui/ui";
-import { Label } from "@sdlc/ui/ui";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@sdlc/ui/ui";
+import { Card, ResourceList, ResourceListRow } from "@pdlc/ui/ui";
+import { Button } from "@pdlc/ui/ui";
+import { Input } from "@pdlc/ui/ui";
+import { Label } from "@pdlc/ui/ui";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@pdlc/ui/ui";
 import {
   Table,
   TableBody,
@@ -24,7 +24,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@sdlc/ui/ui";
+} from "@pdlc/ui/ui";
 import {
   ChevronLeft,
   ChevronRight,
@@ -35,7 +35,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
-import { ConfirmDialog } from "@sdlc/ui/ui";
+import { ConfirmDialog } from "@pdlc/ui/ui";
 import { QueryState } from "@/shared/ui/query-state";
 import type {
   NotificationConfig,

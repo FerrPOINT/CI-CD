@@ -1,6 +1,6 @@
 import { Navigate, useLocation } from 'react-router'
-import { useSsoEntry } from '@sdlc/ui/auth'
-import { PlatformLogin } from '@sdlc/ui/ui'
+import { useSsoEntry } from '@pdlc/ui/auth'
+import { PlatformLogin } from '@pdlc/ui/ui'
 import { useAuth, ssoConfig } from '@/shared/auth/auth-provider'
 
 export function LoginPage() {

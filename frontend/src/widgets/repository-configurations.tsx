@@ -11,8 +11,8 @@ import {
   DialogTitle,
   ResourceList,
   ResourceListRow,
-} from "@sdlc/ui/ui";
-import { useSessionCommand } from "@sdlc/ui/lib";
+} from "@pdlc/ui/ui";
+import { useSessionCommand } from "@pdlc/ui/lib";
 import { api, ApiError } from "@/api/client";
 import { catalogErrorMessage } from "@/api/catalog-errors";
 import { useConfigurations, type Configuration } from "@/api/workspaces";
