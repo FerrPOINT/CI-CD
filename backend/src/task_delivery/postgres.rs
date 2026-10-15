@@ -252,6 +252,11 @@ pub async fn local_command(
             "compose_helpers.py",
             include_bytes!("../../../../services-base/scripts/compose_helpers.py").as_slice(),
         ),
+        #[cfg(base_private_acl_witness)]
+        (
+            "private_acl.py",
+            include_bytes!("../../../../services-base/scripts/private_acl.py").as_slice(),
+        ),
     ] {
         ensure!(
             read_bytes(&policy.base_root.join("scripts").join(name), 256 * 1024)? == bytes,

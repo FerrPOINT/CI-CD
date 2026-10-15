@@ -1,7 +1,9 @@
 # Umbrella build for the SDLC fleet root compose (context = /opt/dev/sdlc).
 # Stages the sibling services-base checkout so the sdlc-auth-core path
 # dependency (../../../services-base/...) resolves.
-FROM rust:1.88.0-slim-bookworm AS build
+FROM rust:1.88.0-slim-bookworm@sha256:38bc5a86d998772d4aec2348656ed21438d20fcdce2795b56ca434cf21430d89 AS build
+ARG TARGETARCH
+ARG CARGO_REGISTRY_CACHE_ID=pdlc-operator-downloads-v1-cargo188
 WORKDIR /app
 # backend/Cargo.toml: sdlc-auth-core = { path = "../../../services-base/..." }
 # /app/../../services-base == /services-base (WORKDIR is repo backend/).
@@ -14,7 +16,7 @@ COPY CI-CD/backend/infra/Cargo.toml infra/Cargo.toml
 COPY CI-CD/backend/api/Cargo.toml api/Cargo.toml
 COPY CI-CD/backend/cli/Cargo.toml cli/Cargo.toml
 COPY CI-CD/backend/migration/Cargo.toml migration/Cargo.toml
-RUN mkdir -p src/bin domain/src app/src infra/src api/src cli/src migration/src \
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked mkdir -p src/bin domain/src app/src infra/src api/src cli/src migration/src \
  && printf 'fn main() {}\n' > src/main.rs && printf '' > src/lib.rs \
  && printf 'fn main() {}\n' > src/bin/openapi-dump.rs && printf 'fn main() {}\n' > src/bin/forge-runner.rs \
  && printf 'fn main() {}\n' > src/bin/forge-delivery.rs && printf 'fn main() {}\n' > src/bin/forge-pg-migrate.rs \
@@ -27,6 +29,7 @@ RUN mkdir -p src/bin domain/src app/src infra/src api/src cli/src migration/src 
  && /usr/local/cargo/bin/cargo build --locked --release \
  && /usr/local/cargo/bin/cargo clean -p cicd-server -p cicd-domain -p cicd-app -p cicd-infra -p cicd-api -p cicd-cli -p cicd-migrate
 COPY CI-CD/backend/src ./src
+COPY CI-CD/backend/build.rs ./build.rs
 COPY CI-CD/backend/domain/src domain/src
 COPY CI-CD/backend/app/src app/src
 COPY CI-CD/backend/infra/src infra/src
@@ -36,11 +39,11 @@ COPY CI-CD/backend/migration/src migration/src
 COPY CI-CD/backend/migrations ./migrations
 # Compile-time delivery witnesses must come from the same pinned source set.
 COPY CI-CD/scripts/postgres-delivery.py /scripts/postgres-delivery.py
-COPY services-base/scripts/platform_backup.py services-base/scripts/platform_postgres.py services-base/scripts/compose_helpers.py /services-base/scripts/
-RUN find src domain app infra api cli migration -name '*.rs' -exec touch {} + \
+COPY services-base/scripts /services-base/scripts
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked find src domain app infra api cli migration -name '*.rs' -exec touch {} + \
  && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server -p cicd-cli
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
 # docker-cli only (DooD): embedded runner spawns job containers through the
 # mounted host docker socket; no daemon runs inside this image. The static
 # official CLI is pinned because bookworm's docker.io is too old for the
