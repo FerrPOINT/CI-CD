@@ -10,6 +10,8 @@ import {
 import { MemoryRouter, Route, Routes } from "react-router";
 import { ThemeProvider } from "@sdlc/ui/lib";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactNode } from "react";
 
 const authState = vi.hoisted(() => ({
   logout: vi.fn(),
@@ -48,6 +50,10 @@ vi.mock("@sdlc/ui/ui", async () => {
 import { AppShell } from "./app-shell";
 
 function renderShell(path = "/") {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: 0 } },
+  });
+  client.setQueryData(["workspace-catalog"], []);
   return render(
     <ThemeProvider>
       <MemoryRouter initialEntries={[path]}>
@@ -58,6 +64,11 @@ function renderShell(path = "/") {
         </Routes>
       </MemoryRouter>
     </ThemeProvider>,
+    {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      ),
+    },
   );
 }
 
@@ -225,7 +236,12 @@ describe("AppShell navigation", () => {
       [...header.querySelectorAll("[data-platform-header-slot]")].map((slot) =>
         slot.getAttribute("data-platform-header-slot"),
       ),
-    ).toEqual(["leading", "services", "actions"]);
+    ).toEqual([
+      "leading",
+      "services",
+      ...(import.meta.env.VITE_NAMESPACE_ENABLED === "true" ? ["context"] : []),
+      "actions",
+    ]);
     expect(header.parentElement).toBe(container.firstElementChild);
     expect(
       within(header).getByRole("button", {

@@ -16,3 +16,8 @@ Runtime и package build scripts сохраняют прежние публич�
 
 Frontend CI handoff: один `dist` с manifest/digests, затем verified nginx packaging.
 Команда self-check и product flags: [DEVELOPMENT_GUIDE](../DEVELOPMENT_GUIDE.md#передача-frontend-artifact). SDK/UI/skills pins сохраняются.
+
+Shell unit работает с реальным QueryClientProvider и отдельным fresh
+workspace-catalog cache без сети. Native qualification проверяет false/true:
+Namespace context добавляет header slot только в enabled mode. Production
+source, SDK/UI pins и release набор не меняются.
