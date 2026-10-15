@@ -45,6 +45,18 @@ jobs:
           if hashlib.sha256((root/'scripts/vendor/base_quality_selection.py').read_bytes()).hexdigest()!=receipt['sha256']:
               raise SystemExit('Packaged Base selector checksum mismatch')
           PY
+      - name: Verify the frontend artifact CI contract
+        run: |
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path('CI-CD')
+          packet=json.loads((root/'scripts/vendor/base-quality-tooling.json').read_text())
+          helper=packet['frontend_artifact']
+          assert helper['file']=='base_frontend_artifact.py'
+          assert hashlib.sha256((root/'scripts/vendor'/helper['file']).read_bytes()).hexdigest()==helper['sha256']
+          PY
+          python3 CI-CD/scripts/vendor/base_frontend_artifact.py check-ci --root CI-CD
       - id: classify
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -166,6 +178,9 @@ jobs:
   frontend:
     needs: changes
     if: needs.changes.outputs.frontend == 'true'
+    outputs:
+      manifest_sha256: ${{ steps.frontend_artifact.outputs.manifest_sha256 }}
+      checksums_sha256: ${{ steps.frontend_artifact.outputs.checksums_sha256 }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -175,6 +190,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: CI-CD
+          ref: ${{ github.sha }}
       - name: Read pinned Base revision
         id: base
         working-directory: CI-CD
@@ -218,3 +234,91 @@ jobs:
         run: git diff --exit-code -- pnpm-lock.yaml src/api/generated.ts src/api/schema.d.ts
       - run: pnpm exec vite build
         if: needs.changes.outputs.frontend_build == 'true'
+      - name: Verify exact frontend tooling packet
+        if: needs.changes.outputs.frontend_build == 'true'
+        working-directory: CI-CD
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,re
+          from pathlib import Path
+          root=Path('.')
+          pin=(root/'.quality-tooling-revision').read_text().strip()
+          packet=json.loads((root/'scripts/vendor/base-quality-tooling.json').read_text())
+          assert re.fullmatch(r'[a-f0-9]{40}',pin) and packet['schema']=='base-quality-tooling/v1' and packet['revision']==pin
+          helper=packet['frontend_artifact']; recipe=packet['frontend_recipe']
+          assert helper['file']=='base_frontend_artifact.py' and recipe['file']=='frontend/Dockerfile.prebuilt'
+          for name,expected in [('scripts/vendor/'+helper['file'],helper['sha256']), (recipe['file'],recipe['sha256']), (recipe['file']+'.dockerignore',recipe['ignore_sha256'])]:
+              assert hashlib.sha256((root/name).read_bytes()).hexdigest()==expected,name
+          PY
+      - name: Seal the tested frontend dist
+        id: frontend_artifact
+        if: needs.changes.outputs.frontend_build == 'true'
+        working-directory: CI-CD
+        run: python3 scripts/vendor/base_frontend_artifact.py seal --root . --dist frontend/dist --artifact .local/frontend-artifact --node-version 22.20.0 --pnpm-version 10.28.1
+      - name: Preserve the single tested frontend artifact
+        if: needs.changes.outputs.frontend_build == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: tested-frontend-dist
+          path: CI-CD/.local/frontend-artifact
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  frontend-package:
+    name: Package the tested frontend without recompilation
+    needs: [changes, frontend]
+    if: needs.changes.outputs.frontend_build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: CI-CD
+    env:
+      EXPECTED_FRONTEND_MANIFEST_SHA256: ${{ needs.frontend.outputs.manifest_sha256 }}
+      EXPECTED_FRONTEND_CHECKSUMS_SHA256: ${{ needs.frontend.outputs.checksums_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: CI-CD
+          ref: ${{ github.sha }}
+      - name: Receive the tested frontend packet
+        uses: actions/download-artifact@v8
+        with:
+          name: tested-frontend-dist
+          path: CI-CD/.local/frontend-artifact
+      - name: Verify candidate and payload before packaging
+        run: |
+          python3 scripts/vendor/base_frontend_artifact.py verify --root . --artifact .local/frontend-artifact --manifest-sha256 "$EXPECTED_FRONTEND_MANIFEST_SHA256" --node-version 22.20.0 --pnpm-version 10.28.1 > .local/frontend-verified.json
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          report=json.loads(Path('.local/frontend-verified.json').read_text())
+          assert report['checksums_sha256']==os.environ['EXPECTED_FRONTEND_CHECKSUMS_SHA256']
+          PY
+      - name: Package the verified dist with the product nginx runtime
+        run: |
+          docker buildx build --load --iidfile .local/frontend-image.id \
+          --build-context tested_frontend=.local/frontend-artifact \
+          --build-arg FRONTEND_CHECKSUMS_SHA256="$EXPECTED_FRONTEND_CHECKSUMS_SHA256" \
+          --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" \
+          --build-arg VITE_NAMESPACE_ENABLED="${VITE_NAMESPACE_ENABLED:-false}" \
+          --file frontend/Dockerfile.prebuilt frontend
+          python3 - <<'PY'
+          import json,re
+          from pathlib import Path
+          report=json.loads(Path('.local/frontend-verified.json').read_text())
+          image=Path('.local/frontend-image.id').read_text().strip()
+          assert re.fullmatch(r'sha256:[a-f0-9]{64}',image)
+          report.update(image_id=image,application_recompiled=False)
+          Path('.local/frontend-package.json').write_text(json.dumps(report,indent=2)+'\n')
+          PY
+      - name: Preserve the artifact and image identity
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-packaging-receipt
+          path: CI-CD/.local/frontend-package.json
+          if-no-files-found: error
+          retention-days: 7

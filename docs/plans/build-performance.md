@@ -13,3 +13,6 @@ TypeScript проверяется один раз в обязательном un
 production COPY исключает тесты. Frozen dependencies сохраняют общий совместимый
 pnpm download store. Dockerfile syntax 1.19 и parent digests закреплены.
 Runtime и package build scripts сохраняют прежние публичные команды.
+
+Frontend CI handoff: один `dist` с manifest/digests, затем verified nginx packaging.
+Команда self-check и product flags: [DEVELOPMENT_GUIDE](../DEVELOPMENT_GUIDE.md#передача-frontend-artifact). SDK/UI/skills pins сохраняются.

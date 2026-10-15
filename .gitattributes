@@ -22,3 +22,9 @@ scripts/task-delivery-qa.sh text eol=lf
 scripts/vendor/base_forge_job_cache.py -text
 scripts/vendor/base-build-cache-policy.json -text
 scripts/vendor/base-forge-cache-tooling.json -text
+
+# Canonical bytes for the exact Base frontend tooling packet.
+scripts/vendor/base_quality_selection.py text eol=lf
+scripts/vendor/base_frontend_artifact.py text eol=lf
+frontend/Dockerfile.prebuilt text eol=lf
+frontend/Dockerfile.prebuilt.dockerignore text eol=lf

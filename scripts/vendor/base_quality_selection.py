@@ -43,9 +43,14 @@ def matches(name, patterns):
 
 
 def load(root):
-    manifest = json.loads(
-        inside(root, ".quality-gate.json").read_text(encoding="utf-8-sig")
-    )
+    path = inside(root, ".quality-gate.json")
+    if not path.is_file():
+        raise ValueError(
+            "Missing product-owned .quality-gate.json; adopt the reviewed test-tier "
+            "manifest in this source checkout before running quality profiles. "
+            "No legacy full suite is selected automatically."
+        )
+    manifest = json.loads(path.read_text(encoding="utf-8-sig"))
     if manifest.get("schema") != SCHEMA or not isinstance(
         manifest.get("components"), dict
     ):
@@ -122,9 +127,9 @@ def load(root):
             tier = gate.get("test_tier")
             if tier not in ("unit", "integration", "slow", "static", "artifact"):
                 raise ValueError("Every gate requires an explicit test tier")
-            if set(gate["profiles"]) & {"fast", "unit", "build"}:
-                if tier in ("integration", "slow") or gate.get("external_state"):
-                    raise ValueError("Automatic build profiles cannot run boundary or slow tests")
+            if (set(gate["profiles"]) & {"fast", "unit", "build"}
+                    and (tier in ("integration", "slow") or gate.get("external_state"))):
+                raise ValueError("Automatic build profiles cannot run boundary or slow tests")
     return manifest
 
 
