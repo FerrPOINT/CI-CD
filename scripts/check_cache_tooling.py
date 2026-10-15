@@ -1,5 +1,6 @@
 """Check standalone cache artifacts without fetching a new SDK checkout."""
 
+import fnmatch
 import hashlib
 import json
 import re
@@ -8,7 +9,25 @@ from pathlib import Path
 import tomllib
 
 
+def check_build_scope(root):
+    root = Path(root).resolve()
+    manifest = json.loads((root / ".quality-gate.json").read_text(encoding="utf-8"))
+    compiled = re.findall(r'include_str!\("([^"]+)"\)', (root / "backend/src/runner_cache.rs").read_text(encoding="utf-8"))
+    if not compiled:
+        raise ValueError("Cache bootstrap has no reviewed compiled inputs")
+    artifact = next(gate for gate in manifest["gates"] if gate["id"] == "backend:build")
+    for source in compiled:
+        path = (root / "backend/src" / source).resolve().relative_to(root).as_posix()
+        def matches(patterns):
+            return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
+        if not matches(manifest["components"]["backend"]) or matches(manifest["components"]["frontend"]):
+            raise ValueError("Compiled cache input must select backend only: " + path)
+        if not matches(artifact["inputs"]) or matches(artifact.get("exclude_inputs", [])):
+            raise ValueError("Compiled cache input is absent from artifact identity: " + path)
+
+
 def check(root):
+    check_build_scope(root)
     directory = Path(root) / "scripts/vendor"
     receipt = json.loads((directory / "base-forge-cache-tooling.json").read_text(encoding="utf-8"))
     expected = {"base_forge_job_cache.py": "scripts/forge_job_cache.py",

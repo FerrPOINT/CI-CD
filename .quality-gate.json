@@ -16,6 +16,11 @@
       ".namespace-base-revision"
     ],
     "backend": [
+      "scripts/check_cache_tooling.py",
+      "scripts/tests/test_cache_tooling.py",
+      "scripts/vendor/base_forge_job_cache.py",
+      "scripts/vendor/base-build-cache-policy.json",
+      "scripts/vendor/base-forge-cache-tooling.json",
       "backend/**",
       "crates/**",
       "Cargo.*",
@@ -27,6 +32,26 @@
     ]
   },
   "gates": [
+    {
+      "id": "backend:cache-tooling-unit",
+      "component": "backend",
+      "profiles": ["fast", "unit", "build", "release"],
+      "argv": ["{python}", "-B", "-m", "unittest", "discover", "-s", "scripts/tests", "-p", "test_cache_tooling.py", "-q"],
+      "cwd": ".",
+      "inputs": ["scripts/check_cache_tooling.py", "scripts/tests/test_cache_tooling.py", ".quality-gate.json", "backend/src/runner_cache.rs"],
+      "cacheable": true,
+      "test_tier": "unit"
+    },
+    {
+      "id": "backend:cache-tooling",
+      "component": "backend",
+      "profiles": ["fast", "unit", "build", "release"],
+      "argv": ["{python}", "-B", "scripts/check_cache_tooling.py"],
+      "cwd": ".",
+      "inputs": ["scripts/check_cache_tooling.py", "scripts/vendor/base_forge_job_cache.py", "scripts/vendor/base-build-cache-policy.json", "scripts/vendor/base-forge-cache-tooling.json", "backend/src/runner_cache.rs", "backend/Cargo.lock", "backend/Cargo.toml", "backend/tests/cache-protocol/Cargo.toml", ".quality-gate.json"],
+      "cacheable": true,
+      "test_tier": "static"
+    },
     {
       "id": "docs:contracts",
       "component": "docs",
@@ -340,6 +365,9 @@
       ],
       "cwd": "backend",
       "inputs": [
+        "scripts/vendor/base_forge_job_cache.py",
+        "scripts/vendor/base-build-cache-policy.json",
+        "scripts/vendor/base-forge-cache-tooling.json",
         "backend/**",
         ".base-revision",
         ".namespace-base-revision",

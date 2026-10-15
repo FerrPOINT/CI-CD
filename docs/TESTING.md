@@ -47,3 +47,7 @@ Cache bootstrap включается в server через `include_str!`. Пос
 под UID 10001 с `deploy/forge-job-seccomp.json`, без изменения runtime/pins.
 Текущий packet использует разрешённый directory-relative `linkat` и сохраняет
 атомарность/no-overwrite; sandbox ради cache hit не расширяется.
+`check_cache_tooling.py` также сверяет реальные `include_str!` с backend scope и
+artifact inputs. Unit: `python -B -m unittest discover -s scripts/tests -p test_cache_tooling.py -q`.
+Изменение cache packet обязано менять native artifact identity и не выбирает
+frontend. Неизвестные остальные изменения по-прежнему расширяют проверку продукта.
