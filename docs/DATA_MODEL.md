@@ -1,5 +1,16 @@
 # Дата-модель Forge CI/CD
 
+Task pipeline source candidate требует одну MAIN-owned additive unreleased
+migration `task_pipeline_intents`. Одна строка на pipeline связывает project,
+исходный service account/token UUID (не bearer), выбранную preparation job,
+immutable typed intent и unique project/operation key. Nullable original
+`preparation_request` заполняется ровно один раз настоящими embedded identities
+до Git IO; append-only `submitted_attempts` запрещает повтор неизвестной command
+submission. Это custody существующих jobs, не business queue/scheduler.
+Receipt остаётся в прежнем immutable `sdlc_workspace_operations`; cleanup не
+меняет его. Released migrations не редактируются. DDL companion и actual PG
+qualification принадлежат MAIN; table не считается уже установленной.
+
 Source candidate2026-10-13: optional `DeliveryCommand.taskFence` сохраняет текущий
 DevOps context и accepted Developer result ID в прежнем filesystem intent.
 `DeliveryPolicy.taskExecution` явно разрешает task-bound nonproduction HTTP effect

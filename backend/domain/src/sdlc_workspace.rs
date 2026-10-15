@@ -56,6 +56,103 @@ pub struct WorkspaceOperationRequest {
     pub access: WorkspaceAccess,
 }
 
+/// Task input only. Runner lease/attempt/workspace identities are never caller supplied.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TaskWorkspaceIntent {
+    pub operation_key: String,
+    pub binding: WorkspaceTaskBinding,
+    pub repository_id: Uuid,
+    pub source_commit: String,
+    pub role: WorkspaceRole,
+    pub agent_id: Uuid,
+    pub tracker_lease_id: Uuid,
+    pub holder_subject: String,
+    pub expected_lease_version: i64,
+}
+
+impl TaskWorkspaceIntent {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        let b = &self.binding;
+        let instance = Uuid::parse_str(&b.tracker_instance_id)
+            .map_err(|_| "canonical mapped Tracker instance required")?;
+        if instance.is_nil()
+            || instance.to_string() != b.tracker_instance_id
+            || [
+                b.tracker_project_id,
+                b.task_id,
+                b.root_task_id,
+                b.assignment_id,
+                b.execution_id,
+                b.routing_snapshot_id,
+                self.repository_id,
+                self.agent_id,
+                self.tracker_lease_id,
+            ]
+            .iter()
+            .any(Uuid::is_nil)
+            || b.task_id != b.root_task_id
+        {
+            return Err("exact single-task identities required");
+        }
+        if !lower_hex(&b.assignment_hash, 64)
+            || !lower_hex(&self.source_commit, 40)
+            || ![
+                b.requirement_revision,
+                b.fencing_token,
+                self.expected_lease_version,
+            ]
+            .iter()
+            .all(|n| (1..=9007199254740991).contains(n))
+        {
+            return Err("invalid task source or fence");
+        }
+        let ordinal = b.workflow_task_ref.strip_prefix("SDLC-").unwrap_or("");
+        if !ordinal
+            .parse::<i64>()
+            .is_ok_and(|n| n > 0 && n.to_string() == ordinal)
+            || self.operation_key.is_empty()
+            || self.operation_key.len() > 128
+            || !self
+                .operation_key
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"-_.:".contains(&c))
+            || self.holder_subject.is_empty()
+            || self.holder_subject.len() > 256
+            || self.holder_subject.trim() != self.holder_subject
+            || self.holder_subject.chars().any(char::is_control)
+        {
+            return Err("invalid task operation identity");
+        }
+        Ok(())
+    }
+
+    pub fn request(
+        &self,
+        lease: Uuid,
+        attempt: Uuid,
+        generation: i64,
+        workspace: String,
+    ) -> Result<WorkspaceOperationRequest, &'static str> {
+        self.validate()?;
+        let request = WorkspaceOperationRequest {
+            contract_version: 1,
+            operation_key: self.operation_key.clone(),
+            binding: self.binding.clone(),
+            repository_id: self.repository_id,
+            source_commit: self.source_commit.clone(),
+            lease_id: lease,
+            attempt_id: attempt,
+            workspace_generation: generation,
+            workspace_id: workspace,
+            role: self.role,
+            access: WorkspaceAccess::ReadOnly,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+}
+
 fn lower_hex(value: &str, length: usize) -> bool {
     value.len() == length
         && value
