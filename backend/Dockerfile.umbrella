@@ -41,7 +41,7 @@ COPY CI-CD/backend/migrations ./migrations
 COPY CI-CD/scripts/postgres-delivery.py /scripts/postgres-delivery.py
 COPY services-base/scripts /services-base/scripts
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked find src domain app infra api cli migration -name '*.rs' -exec touch {} + \
- && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server -p cicd-cli
+ && /usr/local/cargo/bin/cargo test --locked --release -p cicd-domain --lib && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server -p cicd-cli
 
 FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
 # docker-cli only (DooD): embedded runner spawns job containers through the
