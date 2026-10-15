@@ -57,3 +57,19 @@ Frontend job CI проверяет UI checkout независимо от backend
 bridge. Продукт сохраняет собственные API, профиль, permissions и формы.
 [Оболочка Base](https://github.com/FerrPOINT/services-base/blob/2523e7ac1b56a14e9038f41472df4ce7a114dc1e/frontend/platform/README.md) описывает
 конфигурацию, подготовку кадра и отдельную runtime-приёмку.
+
+## Реорганизация source Base
+
+Общие Rust SDK находятся в `services-base/base-modules/rust`, Python SDK —
+в `services-base/base-modules/python/cli-core`, UI — в `services-base/base-modules/ui`.
+Auth, оператор, host и справочник имеют собственные корневые каталоги приложений.
+Имена пакетов, HTTP/wire-контракты, данные и credentials этим переносом не меняются.
+UI/SDK/skills pins независимы; source-комплект проверяется по точным revisions.
+[Карта Base](https://github.com/FerrPOINT/services-base/blob/a4dea438ec99103ca83b51540d11de548b1ee82d/docs/platform/ARCHITECTURE.md)
+и [ADR 0006](https://github.com/FerrPOINT/services-base/blob/a4dea438ec99103ca83b51540d11de548b1ee82d/docs/adr/0006-base-repository-layout.md)
+определяют расположение и направление зависимостей. Установка выполняется отдельно.
+
+Privileged PostgreSQL consumer проверяет полный транзитивный операторский пакет
+и общий compatibility bootstrap вместе с вызывающими скриптами. Builder получает
+тот же source closure; изменение внутреннего файла должно отклоняться guard.
+SQL transport подменяется на канонической границе, без дополнительной реализации.

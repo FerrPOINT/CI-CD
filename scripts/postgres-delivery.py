@@ -191,8 +191,8 @@ class Owner:
         self.base, self.pg = platform_backup, platform_postgres
         require(Path(self.base.__file__).resolve().is_relative_to(Path(p['baseRoot']).resolve()), 'pinned_utility_import_mismatch')
         # Bind the pinned utility consumer to bounded, fixed-daemon subprocess transport.
-        self.base._run = self.base_run
-        self.pg._run = self.base_run
+        from pdlc_operator.backup import primitives as transport
+        transport._run = self.base_run
         self.pg.sql = lambda args, database, statement: self.sql(database.name, statement)
         self.intent = None
         self.lease = None

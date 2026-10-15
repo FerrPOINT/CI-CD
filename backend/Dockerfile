@@ -6,7 +6,7 @@ WORKDIR /app
 # backend/Cargo.toml: pdlc-auth-core = { path = "../../../services-base/..." }
 # /app/../../services-base == /services-base (WORKDIR is repo backend/).
 COPY services-base/Cargo.toml /services-base/Cargo.toml
-COPY services-base/crates /services-base/crates
+COPY services-base/base-modules/rust /services-base/base-modules/rust
 COPY CI-CD/backend/Cargo.toml CI-CD/backend/Cargo.lock* ./
 COPY CI-CD/backend/domain/Cargo.toml domain/Cargo.toml
 COPY CI-CD/backend/app/Cargo.toml app/Cargo.toml
@@ -36,7 +36,8 @@ COPY CI-CD/backend/migration/src migration/src
 COPY CI-CD/backend/migrations ./migrations
 # Compile-time delivery witnesses must come from the same pinned source set.
 COPY CI-CD/scripts/postgres-delivery.py /scripts/postgres-delivery.py
-COPY services-base/scripts/platform_backup.py services-base/scripts/platform_postgres.py services-base/scripts/compose_helpers.py /services-base/scripts/
+COPY services-base/scripts /services-base/scripts
+COPY services-base/base-operator/src /services-base/base-operator/src
 RUN find src domain app infra api cli migration -name '*.rs' -exec touch {} + \
  && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server -p cicd-cli
 
