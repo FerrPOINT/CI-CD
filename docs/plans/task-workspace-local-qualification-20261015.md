@@ -1,5 +1,26 @@
 # Task Workspace Local Qualification
 
+## Follow-Up: 6493 Source
+
+Immutable source6493fe891c39e640bcdf6542212d823463a65ff8 passes all three
+remaining PostgreSQL aggregates: original journal/custody/locator/cleanup,
+populated0091-to0092 preservation, and actual HTTP-to-embedded-runner Git/shell/
+artifact/terminal-ACK/candidate flow. The source delta from qualified5038 is
+test-only; generated API and client inputs are unchanged.
+
+Strict all-target Clippy with the integration feature reaches one nonminimal
+boolean expression in the new runner fixture. Publishedf78f947 uses the equivalent
+Option::is_none_or PID predicate, preserving the same awaited lock, deadline and
+ownership checks. This last cosmetic correction is not yet Clippy-qualified;
+the original failure remains recorded, not a whole-gate pass.
+
+Project sdlc-qa-single-task-forge-e7e310aff328, own disposable volumes and immutable
+inputs are verified cleaned by Base v2. No installed image, protected stand,
+deployment, health or acceptance result is inferred from the controlled Tracker
+peer and real Git/runner test.
+
+## Earlier 5038 Source
+
 ## Qualified Source
 
 Rust source `5038a848ebab056cf917ec86891834dded54df39`, Base SDK33ce and
