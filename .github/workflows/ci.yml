@@ -196,6 +196,8 @@ jobs:
       - name: dependency advisories
         run: pnpm audit --audit-level low
       - run: pnpm openapi:check
+      - name: Typecheck independently of application build
+        run: pnpm exec tsc --noEmit
       - run: pnpm test -- --run
       - run: pnpm lint
       - name: OpenAPI compatibility against target branch
@@ -204,7 +206,7 @@ jobs:
           pnpm openapi:compat
       - name: Generated contract and lockfile stay unchanged
         run: git diff --exit-code -- pnpm-lock.yaml src/api/generated.ts src/api/schema.d.ts
-      - run: pnpm build
+      - run: pnpm exec vite build
         if: needs.changes.outputs.frontend_build == 'true'
       - name: Packed Base consumer
         run: python ../../services-base/scripts/check_ui_consumer.py
