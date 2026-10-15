@@ -1,9 +1,10 @@
 # Umbrella build for the SDLC fleet root compose (context = /opt/dev/sdlc).
 # Stages the sibling services-base checkout so the sdlc-auth-core path
 # dependency (../../../services-base/...) resolves.
-FROM rust:1.88.0-slim-bookworm@sha256:38bc5a86d998772d4aec2348656ed21438d20fcdce2795b56ca434cf21430d89 AS build
+FROM rust:1.88.0-slim-bookworm@sha256:38bc5a86d998772d4aec2348656ed21438d20fcdce2795b56ca434cf21430d89 AS dependencies
 ARG TARGETARCH
 ARG CARGO_REGISTRY_CACHE_ID=pdlc-operator-downloads-v1-cargo188
+ARG CARGO_BUILD_JOBS=2
 WORKDIR /app
 # backend/Cargo.toml: sdlc-auth-core = { path = "../../../services-base/..." }
 # /app/../../services-base == /services-base (WORKDIR is repo backend/).
@@ -28,6 +29,16 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACH
  && printf 'fn main() {}\n' > migration/src/main.rs \
  && /usr/local/cargo/bin/cargo build --locked --release \
  && /usr/local/cargo/bin/cargo clean -p cicd-server -p cicd-domain -p cicd-app -p cicd-infra -p cicd-api -p cicd-cli -p cicd-migrate
+
+FROM dependencies AS unit
+ARG TARGETARCH
+ARG CARGO_REGISTRY_CACHE_ID=pdlc-operator-downloads-v1-cargo188
+COPY CI-CD/backend/domain ./domain
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked /usr/local/cargo/bin/cargo test --locked --release -p cicd-domain --lib
+
+FROM unit AS build
+ARG TARGETARCH
+ARG CARGO_REGISTRY_CACHE_ID=pdlc-operator-downloads-v1-cargo188
 COPY CI-CD/backend/src ./src
 COPY CI-CD/backend/build.rs ./build.rs
 COPY CI-CD/backend/domain/src domain/src
@@ -41,7 +52,7 @@ COPY CI-CD/backend/migrations ./migrations
 COPY CI-CD/scripts/postgres-delivery.py /scripts/postgres-delivery.py
 COPY services-base/scripts /services-base/scripts
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked find src domain app infra api cli migration -name '*.rs' -exec touch {} + \
- && /usr/local/cargo/bin/cargo test --locked --release -p cicd-domain --lib && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server -p cicd-cli
+ && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server -p cicd-cli
 
 FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
 # docker-cli only (DooD): embedded runner spawns job containers through the
