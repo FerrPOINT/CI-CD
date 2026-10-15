@@ -13,6 +13,12 @@
 
 ## [Unreleased]
 
+- Task intent связывает существующий pipeline с одной задачей Tracker; embedded
+  runner сохраняет исходный workspace receipt до исполнения и cleanup. CLI
+  получает typed submit/readback без runner credentials. Миграция0092 добавляет
+  неизменяемый journal; lease deadline проверяется перед Git effects. Source
+  candidate: PostgreSQL, runner и installed-image qualification ещё требуются.
+
 - Task-bound nonproduction delivery подключается к существующему API с текущим
   DevOps assignment/lease, принятым Developer result и заранее опубликованным
   target policy. Штатный CLI получает workspace prepare/readback/delivery;
