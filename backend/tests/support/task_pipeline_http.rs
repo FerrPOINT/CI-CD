@@ -11,6 +11,10 @@ use std::{
 };
 use tokio::sync::Mutex;
 
+#[cfg(feature = "oci-integration")]
+#[path = "task_pipeline_image_build_native.rs"]
+mod image_build_native;
+
 struct TaskPipeline {
     pool: sqlx::PgPool,
     http: reqwest::Client,
