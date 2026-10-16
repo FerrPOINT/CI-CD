@@ -171,7 +171,7 @@ jobs:
           SQLX_OFFLINE: "true"
       - name: openapi drift gate
         run: |
-          cargo run --locked --bin openapi-dump -- /tmp/openapi.yaml
+          "${CARGO_TARGET_DIR:-target}/debug/openapi-dump" /tmp/openapi.yaml
           diff -u ../openapi/openapi.yaml /tmp/openapi.yaml
         if: needs.changes.outputs.backend_build == 'true'
     env:
