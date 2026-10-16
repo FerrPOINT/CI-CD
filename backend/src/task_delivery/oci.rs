@@ -376,9 +376,9 @@ impl Owner {
             plain(path)?;
         }
         if create {
-            directory(&root)?;
+            directory(root)?;
         }
-        plain(&root)?;
+        plain(root)?;
         let root = root.canonicalize()?;
         ensure!(
             !policy.data_file.canonicalize()?.starts_with(&root),
@@ -1167,7 +1167,7 @@ impl Owner {
 
 fn check_owner_root(state: &AppState, root: &Path) -> anyhow::Result<()> {
     let resolved = if root.exists() {
-        plain(&root)?;
+        plain(root)?;
         root.canonicalize()?
     } else {
         let parent = root.parent().context("OCI parent missing")?;
