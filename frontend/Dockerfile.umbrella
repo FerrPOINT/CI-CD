@@ -2,21 +2,32 @@
 # Umbrella build for the SDLC fleet root compose (context = /opt/dev/sdlc).
 # Stages the sibling services-base frontend so the `@sdlc/ui` file dependency
 # (../../services-base/frontend) resolves.
-FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS dependencies
+FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS toolchain
 ARG TARGETARCH
 ARG PNPM_CACHE_ID=pdlc-operator-downloads-v1-pnpm10-node22
 RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
 WORKDIR /app
-COPY CI-CD/openapi/openapi.yaml /workspace/openapi/openapi.yaml
-COPY CI-CD/frontend/package.json CI-CD/frontend/pnpm-lock.yaml* CI-CD/frontend/pnpm-workspace.yaml ./
-COPY CI-CD/frontend/scripts/generate-openapi.mjs scripts/generate-openapi.mjs
+
+FROM toolchain AS install-manifest
+RUN --mount=type=bind,source=CI-CD/frontend/package.json,target=/tmp/product-package.json node -e 'const fs = require("node:fs"); const pkg = JSON.parse(fs.readFileSync("/tmp/product-package.json", "utf8")); if (!pkg || Array.isArray(pkg) || typeof pkg !== "object") throw new Error("Package manifest must be an object"); delete pkg.scripts; fs.writeFileSync("package.json", JSON.stringify(pkg) + "\n");'
+
+FROM toolchain AS dependencies
+COPY --from=install-manifest /app/package.json ./
+COPY CI-CD/frontend/pnpm-lock.yaml* CI-CD/frontend/pnpm-workspace.yaml ./
 COPY services-base/frontend /services-base/frontend
 ENV CI=true
 ENV SPEC=/workspace/openapi/openapi.yaml
-RUN --mount=type=cache,id=${PNPM_CACHE_ID}-${TARGETARCH},target=/pnpm/store,sharing=locked pnpm install --store-dir=/pnpm/store --frozen-lockfile
+RUN --mount=type=cache,id=${PNPM_CACHE_ID}-${TARGETARCH},target=/pnpm/store,sharing=locked pnpm install --store-dir=/pnpm/store --frozen-lockfile --ignore-scripts
+
+FROM dependencies AS generated
+COPY CI-CD/frontend/package.json ./
+COPY CI-CD/openapi/openapi.yaml /workspace/openapi/openapi.yaml
+COPY CI-CD/frontend/scripts/generate-openapi.mjs scripts/generate-openapi.mjs
+RUN pnpm run postinstall && test -s src/api/schema.d.ts
 
 FROM dependencies AS unit
 COPY --exclude=Dockerfile* --exclude=**/Dockerfile* --exclude=.dockerignore --exclude=**/.dockerignore --exclude=nginx.conf --exclude=**/nginx.conf CI-CD/frontend/ ./
+COPY --from=generated /app/src/api/schema.d.ts ./src/api/schema.d.ts
 ARG VITE_NAMESPACE_ENABLED="false"
 ENV VITE_NAMESPACE_ENABLED=${VITE_NAMESPACE_ENABLED}
 ARG VITE_PLATFORM_BRANDING_URL=""
@@ -33,6 +44,7 @@ RUN pnpm test:unit && pnpm exec tsc --noEmit && printf 'passed\n' > /tmp/fronten
 
 FROM dependencies AS build
 COPY --exclude=Dockerfile* --exclude=**/Dockerfile* --exclude=.dockerignore --exclude=**/.dockerignore --exclude=nginx.conf --exclude=**/nginx.conf --exclude=**/*.test.* --exclude=**/*.spec.* --exclude=**/__tests__/** --exclude=**/test-setup.ts CI-CD/frontend/ ./
+COPY --from=generated /app/src/api/schema.d.ts ./src/api/schema.d.ts
 ARG VITE_NAMESPACE_ENABLED="false"
 ENV VITE_NAMESPACE_ENABLED=${VITE_NAMESPACE_ENABLED}
 ARG VITE_PLATFORM_BRANDING_URL=""

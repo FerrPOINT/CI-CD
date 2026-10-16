@@ -27,3 +27,13 @@ source, SDK/UI pins и release набор не меняются.
 объявленные пути допускают пропуск CI compilation; общий `vite.config.ts`
 с aliases/plugins остаётся полноценным build input. Ошибка unit блокирует
 получение нового образа даже при сохранённой production compilation.
+
+Docker installation получает manifest без `scripts` через отдельный cheap
+BuildKit stage и content-addressed COPY. Установка выполняется с
+`--frozen-lockfile --ignore-scripts`, сохраняет lock/workspace и настоящий Base
+package. Полный product manifest возвращается перед проверками и compilation.
+OpenAPI postinstall выполняется один раз в отдельном generated stage; spec,
+generator и полный manifest определяют его cache key. Непустые outputs
+проверяются и копируются после frontend sources в unit/application stages.
+Изменение scripts/spec не запускает повторный install; отсутствие output или
+ошибка generation блокируют результат, включая прогретый compile cache.
