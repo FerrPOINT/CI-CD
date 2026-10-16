@@ -24,8 +24,15 @@ Private evidence находится под
 `.local/single-task-sdlc-20261013/forge-native-inputs-20261016/evidence-8c94daa5a999414d-staged/`.
 SHA256 redacted native diagnostic0024:
 `3e75aeda6d71f35dafe5f9056d89b00db7fbdb84806751b8834453c31a7af2d2`.
-После отказа scopes сохранены для original readback; их cleanup пока не заявлен.
-Отсутствие deployment receipt не заменяется фактом существования image.
+После отказа scopes сохранены для original readback. Затем Main явно прекратил
+synthetic QA: private snapshots workspaces/data/remote volumes и PG dump
+сохранены и проверены по SHA256. Только его ресурсы удалены после проверки v2
+owner labels, manifest hash, daemon и отсутствия foreign refs, без force.
+Образ и evidence сохранены. Held-журналы не переписаны в SDK `cleaned`,
+продуктовый ACK не создан; отдельный manual cleanup receipt имеет SHA256
+`36dbd716f3a567418ce72cfa45c2ae0d54a3fc0b79d2f6714eb52a198db8047c`.
+Это не native PASS или бизнес-завершение. Отсутствие deployment receipt
+не заменяется фактом существования image.
 
 ## Предыдущая Квалификация 67fe990
 
