@@ -5,6 +5,8 @@ import argparse
 import ctypes
 import fcntl
 import hashlib
+import importlib.machinery
+import importlib.util
 import json
 import math
 import os
@@ -151,6 +153,40 @@ def parent_death():
             'coordinator_parent_unavailable')
 
 
+def bind_base_sources(root, sources):
+    modules = {}
+    for source in sources:
+        require(source.endswith('.py') and source.startswith(
+            ('scripts/', 'base-operator/src/pdlc_operator/')), 'unknown_base_source')
+        name = source.removeprefix('base-operator/src/').removesuffix('.py').replace('/', '.')
+        name = name.removesuffix('.__init__')
+        require(name not in modules, 'duplicate_base_source')
+        modules[name] = root / source
+
+    class SourceLoader(importlib.machinery.SourceFileLoader):
+        def get_code(self, fullname):
+            # Compile verified source instead of trusting an existing .pyc.
+            return self.source_to_code(self.get_data(self.path), self.path)
+
+    class SourceFinder:
+        def find_spec(self, fullname, path=None, target=None):
+            parts = fullname.split('.')
+            if parts[0] not in ('scripts', 'pdlc_operator'):
+                return None
+            if fullname == 'scripts':
+                spec = importlib.machinery.ModuleSpec(fullname, None, is_package=True)
+                spec.submodule_search_locations = [str(root / 'scripts')]
+                return spec
+            source = modules.get(fullname)
+            if source is None or not source.is_file():
+                raise ModuleNotFoundError('pinned Base source module unavailable')
+            return importlib.util.spec_from_file_location(
+                fullname, source, loader=SourceLoader(fullname, str(source)))
+
+    # Scope the source loader to Base, leaving system package imports unchanged.
+    sys.meta_path.insert(0, SourceFinder())
+
+
 class Owner:
     def __init__(self, packet):
         self.packet = packet
@@ -186,13 +222,14 @@ class Owner:
         self.args = argparse.Namespace(project=self.project, project_directory=plain(p['composeRoot']),
             compose_file=[plain(p['composeFile'])], env_file=[], layout='legacy',
             _docker=['/usr/local/bin/docker'], _daemon_id=p['daemonId'])
-        sys.path.insert(0, str(plain(p['baseRoot'])))
+        base_root = plain(p['baseRoot'])
+        bind_base_sources(base_root, packet['baseSources'])
         from scripts import platform_backup, platform_postgres
         self.base, self.pg = platform_backup, platform_postgres
         require(Path(self.base.__file__).resolve().is_relative_to(Path(p['baseRoot']).resolve()), 'pinned_utility_import_mismatch')
         # Bind the pinned utility consumer to bounded, fixed-daemon subprocess transport.
-        self.base._run = self.base_run
-        self.pg._run = self.base_run
+        from pdlc_operator.backup import primitives as transport
+        transport._run = self.base_run
         self.pg.sql = lambda args, database, statement: self.sql(database.name, statement)
         self.intent = None
         self.lease = None
