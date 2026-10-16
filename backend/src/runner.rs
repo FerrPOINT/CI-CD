@@ -1093,7 +1093,39 @@ async fn finish_image_build_success(
     if std::time::Instant::now() >= until {
         return Ok(false);
     }
-    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+    #[cfg(test)]
+    let started = std::time::Instant::now();
+    let sql_error = |_step: &'static str, error: sqlx::Error| {
+        #[cfg(test)]
+        {
+            let category = match &error {
+                sqlx::Error::Database(_) => "database",
+                sqlx::Error::PoolTimedOut => "pool_timed_out",
+                sqlx::Error::PoolClosed => "pool_closed",
+                _ => "non_database",
+            };
+            let state = error
+                .as_database_error()
+                .and_then(|db| db.code())
+                .map(|code| code.into_owned())
+                .filter(|code| {
+                    code.len() == 5
+                        && code
+                            .bytes()
+                            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+                })
+                .unwrap_or_else(|| "none".to_owned());
+            eprintln!(
+                "image_terminal_sql step={_step} category={category} sqlstate={state} elapsed_ms={}",
+                started.elapsed().as_millis()
+            );
+        }
+        ApiError::internal(error)
+    };
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|error| sql_error("begin", error))?;
     // Use reconciliation's lease -> attempt -> job order. A failed predicate rolls back all writes.
     let changed = sqlx::query(
         "UPDATE job_leases l SET lease_status='completed',completed_at=clock_timestamp(), \
@@ -1113,41 +1145,47 @@ async fn finish_image_build_success(
     .bind(lease.generation)
     .execute(&mut *tx)
     .await
-    .map_err(ApiError::internal)?
+    .map_err(|error| sql_error("lease", error))?
     .rows_affected();
     if changed != 1 {
-        tx.rollback().await.map_err(ApiError::internal)?;
+        tx.rollback()
+            .await
+            .map_err(|error| sql_error("rollback", error))?;
         return Ok(false);
     }
     let attempt = sqlx::query(
         "UPDATE execution_attempts SET status='success',finished_at=clock_timestamp(),exit_code=$3,error_tail=NULL \
          WHERE id=$1 AND job_id=$2 AND status='running'",
     ).bind(lease.attempt_id).bind(job).bind(exit_code).execute(&mut *tx).await
-        .map_err(ApiError::internal)?.rows_affected();
+        .map_err(|error| sql_error("attempt", error))?.rows_affected();
     let job_changed = sqlx::query(
         "UPDATE jobs SET status='success',finished_at=clock_timestamp() WHERE id=$1 AND status='running'",
-    ).bind(job).execute(&mut *tx).await.map_err(ApiError::internal)?.rows_affected();
+    ).bind(job).execute(&mut *tx).await.map_err(|error| sql_error("job", error))?.rows_affected();
     let queue = sqlx::query(
         "UPDATE job_queue SET state='completed',completed_at=clock_timestamp(),updated_at=clock_timestamp() \
          WHERE lease_id=$1 AND attempt_id=$2 AND job_id=$3 AND state='leased'",
     ).bind(lease.id).bind(lease.attempt_id).bind(job).execute(&mut *tx).await
-        .map_err(ApiError::internal)?.rows_affected();
+        .map_err(|error| sql_error("queue", error))?.rows_affected();
     let deadline_live: bool =
         sqlx::query_scalar("SELECT lease_expires_at>clock_timestamp() FROM job_leases WHERE id=$1")
             .bind(lease.id)
             .fetch_one(&mut *tx)
             .await
-            .map_err(ApiError::internal)?;
+            .map_err(|error| sql_error("deadline_read", error))?;
     if attempt != 1
         || job_changed != 1
         || queue != 1
         || !deadline_live
         || std::time::Instant::now() >= until
     {
-        tx.rollback().await.map_err(ApiError::internal)?;
+        tx.rollback()
+            .await
+            .map_err(|error| sql_error("rollback", error))?;
         return Ok(false);
     }
-    tx.commit().await.map_err(ApiError::internal)?;
+    tx.commit()
+        .await
+        .map_err(|error| sql_error("commit", error))?;
     Ok(true)
 }
 
