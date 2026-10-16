@@ -9,6 +9,8 @@ use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use uuid::Uuid;
 
+const IMAGE_BUILD_INSPECT_FORMAT: &str = r#"{"id":{{json .Id}},"revision":{{json (index .Config.Labels "org.opencontainers.image.revision")}},"attempt":{{json (index .Config.Labels "sdlc.attempt")}},"request":{{json (index .Config.Labels "forge.image-build-request")}},"os":{{json .Os}},"volumes":{{json (index .Config "Volumes")}}}"#;
+
 #[derive(Clone)]
 pub(crate) struct Client {
     host: String,
@@ -347,12 +349,17 @@ impl Client {
             return Err(invalid("build did not return an immutable image ID"));
         }
         self.verify_image_build_daemon(docker_config).await?;
-        let format = r#"{"id":{{json .Id}},"revision":{{json (index .Config.Labels "org.opencontainers.image.revision")}},"attempt":{{json (index .Config.Labels "sdlc.attempt")}},"request":{{json (index .Config.Labels "forge.image-build-request")}},"os":{{json .Os}},"volumes":{{json .Config.Volumes}}}"#;
         let value: Value = serde_json::from_str(
             &self
                 .image_build_read(
                     docker_config,
-                    &["image", "inspect", image, "--format", format],
+                    &[
+                        "image",
+                        "inspect",
+                        image,
+                        "--format",
+                        IMAGE_BUILD_INSPECT_FORMAT,
+                    ],
                 )
                 .await?,
         )?;
@@ -1209,6 +1216,27 @@ mod tests {
         wrong["volumes"] = json!({"/implicit":{}});
         assert!(!image_build_inspection_matches(
             &wrong, &image, &source, attempt, &hash
+        ));
+    }
+
+    #[test]
+    fn image_build_inspection_allows_omitted_optional_config_volumes() {
+        // Docker 29 omits Config.Volumes; Go template index returns null for it.
+        assert!(
+            IMAGE_BUILD_INSPECT_FORMAT.contains(r#""volumes":{{json (index .Config "Volumes")}}"#)
+        );
+        assert!(!IMAGE_BUILD_INSPECT_FORMAT.contains(".Config.Volumes"));
+        let config = json!({"Labels": {}});
+        assert!(config.get("Volumes").is_none());
+        let attempt = Uuid::new_v4();
+        let image = format!("sha256:{}", "a".repeat(64));
+        let source = "b".repeat(40);
+        let hash = "c".repeat(64);
+        let value = json!({"id":image,"revision":source,"attempt":attempt.to_string(),
+            "request":hash,"os":"linux","volumes":config.get("Volumes")});
+        assert!(value["volumes"].is_null());
+        assert!(image_build_inspection_matches(
+            &value, &image, &source, attempt, &hash
         ));
     }
 
