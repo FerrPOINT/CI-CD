@@ -3030,6 +3030,33 @@ export interface components {
             /** @description {{event}}/{{pipeline_id}}/{{project_id}}/{{status}} placeholders. */
             subject_template?: string | null;
         };
+        OciDeliveryReadback: {
+            confirmedManifestSha256?: string | null;
+            currentManifestSha256?: string | null;
+            receipt: components["schemas"]["OciDeliveryReceipt"];
+            reconciledReceipt?: null | components["schemas"]["OciDeliveryReceipt"];
+            reconciliationNeeded: boolean;
+        };
+        OciDeliveryReceipt: {
+            acceptance?: null | components["schemas"]["DeliveryProbe"];
+            command: components["schemas"]["DeliveryCommand"];
+            commandSha256: string;
+            compatibility?: null | components["schemas"]["DeliveryProbe"];
+            containerId?: string | null;
+            dataSha256?: string | null;
+            dispatchAllowed: boolean;
+            health?: null | components["schemas"]["DeliveryProbe"];
+            imageId?: string | null;
+            manifestSha256?: string | null;
+            originalOperation: components["schemas"]["WorkspaceOperationReceipt"];
+            previousManifestSha256?: string | null;
+            reason: string;
+            schema: string;
+            scope: string;
+            sdlcAcceptanceVerified: boolean;
+            status: components["schemas"]["DeliveryStatus"];
+            version?: null | components["schemas"]["DeliveryProbe"];
+        };
         OutboxDelivery: {
             /** Format: uuid */
             aggregate_id: string;
@@ -3610,6 +3637,7 @@ export interface components {
             /** Format: uuid */
             leaseId: string;
         };
+        TaskDeliveryReadback: components["schemas"]["DeliveryReadback"] | components["schemas"]["OciDeliveryReadback"];
         TaskPullEvidence: {
             checks: components["schemas"]["RepositoryCheckRef"][];
             commits: string[];
@@ -7226,7 +7254,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeliveryReadback"];
+                    "application/json": components["schemas"]["TaskDeliveryReadback"];
                 };
             };
             400: {
@@ -7293,7 +7321,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeliveryReadback"];
+                    "application/json": components["schemas"]["TaskDeliveryReadback"];
                 };
             };
             400: {

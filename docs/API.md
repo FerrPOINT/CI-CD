@@ -2,7 +2,9 @@
 
 ## Typed Image Build In Task Pipeline
 
-Source candidate; actual Rust/PG/TLS build/deployment qualification pending.
+Source candidate: 34 unit-теста и atomic-terminal PG aggregate проходят.
+All-target gate и настоящий TLS build/deployment ещё не подтверждены;
+[точные границы проверки](IMAGE_BUILD_QUALIFICATION_20261016.md).
 В repository `.forge-ci.yml` v1 job может использовать `image_build` вместо
 `commands`:
 

@@ -2,7 +2,9 @@
 
 ## Status
 
-Source candidate. Rust/PG/TLS qualification и live deployment ещё не подтверждены.
+Source candidate. 34 целевых unit-теста и atomic-terminal PG aggregate проходят;
+all-target gate, TLS build и live deployment ещё не подтверждены.
+[Фактическая проверка и ограничения](../IMAGE_BUILD_QUALIFICATION_20261016.md).
 Hermes и его upstream-протокол не изменяются.
 
 ## Context

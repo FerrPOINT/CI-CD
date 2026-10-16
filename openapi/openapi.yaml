@@ -3390,7 +3390,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DeliveryReadback'
+                $ref: '#/components/schemas/TaskDeliveryReadback'
         '400':
           description: ''
         '401':
@@ -3466,7 +3466,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DeliveryReadback'
+                $ref: '#/components/schemas/TaskDeliveryReadback'
         '400':
           description: ''
         '401':
@@ -7388,6 +7388,96 @@ components:
           - string
           - 'null'
           description: '{{event}}/{{pipeline_id}}/{{project_id}}/{{status}} placeholders.'
+    OciDeliveryReadback:
+      type: object
+      required:
+      - receipt
+      - reconciliationNeeded
+      properties:
+        confirmedManifestSha256:
+          type:
+          - string
+          - 'null'
+        currentManifestSha256:
+          type:
+          - string
+          - 'null'
+        receipt:
+          $ref: '#/components/schemas/OciDeliveryReceipt'
+        reconciledReceipt:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/OciDeliveryReceipt'
+        reconciliationNeeded:
+          type: boolean
+    OciDeliveryReceipt:
+      type: object
+      required:
+      - schema
+      - scope
+      - command
+      - commandSha256
+      - originalOperation
+      - status
+      - reason
+      - dispatchAllowed
+      - sdlcAcceptanceVerified
+      properties:
+        acceptance:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/DeliveryProbe'
+        command:
+          $ref: '#/components/schemas/DeliveryCommand'
+        commandSha256:
+          type: string
+        compatibility:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/DeliveryProbe'
+        containerId:
+          type:
+          - string
+          - 'null'
+        dataSha256:
+          type:
+          - string
+          - 'null'
+        dispatchAllowed:
+          type: boolean
+        health:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/DeliveryProbe'
+        imageId:
+          type:
+          - string
+          - 'null'
+        manifestSha256:
+          type:
+          - string
+          - 'null'
+        originalOperation:
+          $ref: '#/components/schemas/WorkspaceOperationReceipt'
+        previousManifestSha256:
+          type:
+          - string
+          - 'null'
+        reason:
+          type: string
+        schema:
+          type: string
+        scope:
+          type: string
+        sdlcAcceptanceVerified:
+          type: boolean
+        status:
+          $ref: '#/components/schemas/DeliveryStatus'
+        version:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/DeliveryProbe'
+      additionalProperties: false
     OutboxDelivery:
       type: object
       required:
@@ -8777,6 +8867,10 @@ components:
           type: string
           format: uuid
       additionalProperties: false
+    TaskDeliveryReadback:
+      oneOf:
+      - $ref: '#/components/schemas/DeliveryReadback'
+      - $ref: '#/components/schemas/OciDeliveryReadback'
     TaskPullEvidence:
       type: object
       required:
