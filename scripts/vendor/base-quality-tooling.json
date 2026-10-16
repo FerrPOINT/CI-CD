@@ -1,9 +1,14 @@
 {
   "schema": "base-quality-tooling/v1",
   "repository": "https://github.com/FerrPOINT/services-base",
-  "revision": "60a6591510ced91b5c5e27bef454245a1b88e6e7",
+  "revision": "94e403109dd3c5eca080d2da7e571a9921313292",
   "source": "scripts/quality_selection.py",
   "sha256": "d4ed10f1c09ddca7fd3fe3f380d1e284aa30a7b1154c5f03eb9553bea6d24f1e",
+  "rust_target_cache": {
+    "source": "scripts/rust_target_cache.py",
+    "file": "base_rust_target_cache.py",
+    "sha256": "4fd16eca526cb22f451803e7fd52fe67c650cd22ce70259d0fe1c61178a41027"
+  },
   "frontend_artifact": {
     "source": "scripts/frontend_artifact.py",
     "file": "base_frontend_artifact.py",

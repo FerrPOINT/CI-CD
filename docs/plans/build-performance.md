@@ -42,3 +42,5 @@ generator и полный manifest определяют его cache key. Неп
 проверяются и копируются после frontend sources в unit/application stages.
 Изменение scripts/spec не запускает повторный install; отсутствие output или
 ошибка generation блокируют результат, включая прогретый compile cache.
+
+CI Rust target после restore готовится через `python3 ../scripts/vendor/base_rust_target_cache.py` из `backend/`; версия и checksum включены в отдельный Base quality packet.

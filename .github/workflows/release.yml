@@ -40,6 +40,9 @@ jobs:
               raise SystemExit('Packaged Base revision mismatch')
           if hashlib.sha256((root/'scripts/vendor/base_quality_selection.py').read_bytes()).hexdigest()!=receipt['sha256']:
               raise SystemExit('Packaged Base selector checksum mismatch')
+          cache=receipt['rust_target_cache']
+          assert cache['file']=='base_rust_target_cache.py'
+          assert hashlib.sha256((root/'scripts/vendor'/cache['file']).read_bytes()).hexdigest()==cache['sha256']
           PY
       - id: classify
         env:
@@ -124,7 +127,10 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: backend
+          workspaces: CI-CD/backend
+      - name: Reset restored local crates once; keep compiled external dependencies
+        working-directory: CI-CD/backend
+        run: python3 ../scripts/vendor/base_rust_target_cache.py
       - name: fmt
         run: cargo fmt --all -- --check
       - name: clippy
@@ -246,6 +252,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: CI-CD/backend
+      - name: Reset restored local crates once; keep compiled external dependencies
+        working-directory: CI-CD/backend
+        run: python3 ../scripts/vendor/base_rust_target_cache.py
       - name: Check declared minimum independently of release builds
         working-directory: CI-CD/backend
         run: cargo check --locked --workspace --all-targets
