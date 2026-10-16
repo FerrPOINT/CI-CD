@@ -1,7 +1,7 @@
 {
   "schema": "base-quality-tooling/v1",
   "repository": "https://github.com/FerrPOINT/services-base",
-  "revision": "a9b1ae9869784676957c193a75bd92a2a0480dc1",
+  "revision": "b528f00145f7ba2d43cac36436b48596b711af8d",
   "source": "scripts/quality_selection.py",
   "sha256": "05ab10683da423eb2a0778b2fc1156b0711fa21a3a8a3f46966ab80c6f442c56",
   "frontend_artifact": {
@@ -12,7 +12,7 @@
   "frontend_recipe": {
     "source": "deploy/images/frontend-prebuilt.Dockerfile.in",
     "file": "frontend/Dockerfile.prebuilt",
-    "sha256": "36b46980ebb4fb613805afbf74b0eb6b822230cb71c15f731f020f3016a7c9a4",
+    "sha256": "b6ba2efa3904ec157948b35c67520121e38cbf4edb65f5601244dea6f90745ec",
     "ignore_sha256": "cf98f38b2b45a58eb307563167e03123b779afdc12c16cd54d9039820a32391d"
   }
 }

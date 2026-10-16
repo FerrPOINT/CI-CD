@@ -64,6 +64,7 @@ RUN pnpm exec vite build
 
 
 FROM nginx:1.31.4-alpine@sha256:db35bfc6b2951e7f8a72db5db120288c127ffaeeb4a6d4b95a26fead017d5913
+ENV NGINX_ENTRYPOINT_WORKER_PROCESSES_AUTOTUNE=1
 ARG VITE_NAMESPACE_ENABLED="false"
 LABEL io.pdlc.namespace-ui.enabled=${VITE_NAMESPACE_ENABLED}
 COPY CI-CD/frontend/nginx.conf /etc/nginx/conf.d/default.conf
