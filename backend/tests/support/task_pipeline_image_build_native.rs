@@ -1,5 +1,19 @@
 //! Opt-in native backend component proof. Tracker authority is a controlled HTTP peer.
 //! MAIN owns the enclosing Base ComposeHelper v2 and exact TLS-resource cleanup.
+//! Backend placement evidence is captured on Desktop by MAIN, never via the TLS engine.
+//! Required additions: CICD_TEST_NATIVE_BACKEND_EVIDENCE(_SHA256),
+//! CICD_TEST_NATIVE_BACKEND_DAEMON_ID/PROJECT/WORKSPACE_VOLUME/DATA_VOLUME,
+//! CICD_TEST_NATIVE_SOURCE_COMMIT and CICD_TEST_OCI_TRANSPORT_IMAGE.
+//! Evidence is a bounded, hash-pinned, read-only JSON file with daemonId,
+//! sourceCommit, binarySha256 and container (the single Desktop inspect object).
+//! MAIN captures it after starting the exact qualified backend, before test exec.
+//! BACKEND_CONTAINER is its full ID; BACKEND_*_VOLUME names belong to BACKEND_PROJECT.
+//! Existing DOCKER_* and RUNNER_DOCKER_DAEMON_ID/NETWORK/WORKSPACE_VOLUME inputs
+//! refer only to the remote TLS engine. /workspaces and /delivery-qa are Desktop
+//! staging paths, not shared storage. MAIN retains source/binary qualification
+//! and rechecks Desktop identity after execution with its existing authority.
+//! TRANSPORT_IMAGE must equal NATIVE_CANDIDATE_IMAGE and already exist remotely;
+//! the fixture never imports images, starts helpers, or changes the predecessor.
 use super::*;
 use cicd::domain::{
     image_build::OciCandidateDescriptor,
@@ -19,6 +33,11 @@ struct NativeInputs {
     daemon: String,
     backend: String,
     candidate_image: String,
+    transport_image: String,
+    backend_project: String,
+    backend_workspace_volume: String,
+    backend_data_volume: String,
+    backend_evidence: BackendEvidence,
     reachability_container: String,
     reachability_url: reqwest::Url,
     reachability_sha256: String,
@@ -30,6 +49,15 @@ struct NativeInputs {
     volume_root: PathBuf,
     compose_root: PathBuf,
     base: String,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct BackendEvidence {
+    daemon_id: String,
+    source_commit: String,
+    binary_sha256: String,
+    container: Value,
 }
 
 fn required(name: &str) -> String {
@@ -178,6 +206,11 @@ impl NativeInputs {
         );
         let candidate_image = required("CICD_TEST_NATIVE_CANDIDATE_IMAGE");
         assert!(cicd::domain::image_build::valid_image_id(&candidate_image));
+        let transport_image = required("CICD_TEST_OCI_TRANSPORT_IMAGE");
+        assert_eq!(
+            transport_image, candidate_image,
+            "only MAIN's qualified backend image, pre-imported by Base QA, is a transport input"
+        );
         let binary_sha256 = required("CICD_TEST_NATIVE_BINARY_SHA256");
         assert!(cicd::domain::task_delivery::digest(&binary_sha256));
         let executable = std::env::current_exe().unwrap();
@@ -186,6 +219,51 @@ impl NativeInputs {
         let mut digest = Sha256::new();
         std::io::copy(&mut binary, &mut digest).unwrap();
         assert_eq!(format!("{:x}", digest.finalize()), binary_sha256);
+        let evidence_file = PathBuf::from(required("CICD_TEST_NATIVE_BACKEND_EVIDENCE"));
+        anchored(&evidence_file);
+        let metadata = std::fs::metadata(&evidence_file).unwrap();
+        assert!(metadata.is_file() && metadata.len() <= 65536);
+        assert_eq!(metadata.permissions().mode() & 0o222, 0);
+        let evidence_hash = required("CICD_TEST_NATIVE_BACKEND_EVIDENCE_SHA256");
+        assert!(cicd::domain::task_delivery::digest(&evidence_hash));
+        let bytes = std::fs::read(&evidence_file).unwrap();
+        assert!(bytes.len() <= 65536);
+        assert_eq!(sha(&bytes), evidence_hash);
+        let backend_evidence: BackendEvidence = serde_json::from_slice(&bytes).unwrap();
+        let source = required("CICD_TEST_NATIVE_SOURCE_COMMIT");
+        assert!(
+            source.len() == 40
+                && source
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        );
+        assert_eq!(backend_evidence.source_commit, source);
+        assert_eq!(backend_evidence.binary_sha256, binary_sha256);
+        assert_eq!(
+            backend_evidence.daemon_id,
+            required("CICD_TEST_NATIVE_BACKEND_DAEMON_ID")
+        );
+        assert_ne!(
+            backend_evidence.daemon_id,
+            required("CICD_RUNNER_DOCKER_DAEMON_ID"),
+            "this aggregate qualifies Desktop backend plus a distinct TLS application engine"
+        );
+        let backend_project = required("CICD_TEST_NATIVE_BACKEND_PROJECT");
+        assert!(
+            backend_project.starts_with("sdlc-qa-")
+                && backend_project
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        );
+        let backend_workspace_volume = required("CICD_TEST_NATIVE_BACKEND_WORKSPACE_VOLUME");
+        let backend_data_volume = required("CICD_TEST_NATIVE_BACKEND_DATA_VOLUME");
+        for volume in [&backend_workspace_volume, &backend_data_volume] {
+            assert!(
+                volume.starts_with(&format!("{backend_project}_")),
+                "Desktop staging volumes must belong to the explicit Desktop QA project"
+            );
+        }
+        assert_ne!(backend_workspace_volume, backend_data_volume);
         let reachability_url =
             reqwest::Url::parse(&required("CICD_TEST_NATIVE_REACHABILITY_URL")).unwrap();
         assert!(
@@ -196,7 +274,23 @@ impl NativeInputs {
                 && reachability_url.password().is_none()
                 && reachability_url.query().is_none()
                 && reachability_url.fragment().is_none(),
-            "explicit direct container-IP:8000 reachability URL required"
+            "explicit remote predecessor IP:8000 URL required"
+        );
+        reachability_url
+            .host_str()
+            .unwrap()
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse::<std::net::IpAddr>()
+            .expect("inspected predecessor IP, never DNS");
+        let path = reachability_url.path();
+        assert!(
+            path.len() <= 128
+                && !path.contains("//")
+                && !path.contains("..")
+                && path
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"/-_.".contains(&b))
         );
         let reachability_sha256 = required("CICD_TEST_NATIVE_REACHABILITY_SHA256");
         assert!(cicd::domain::task_delivery::digest(&reachability_sha256));
@@ -206,6 +300,11 @@ impl NativeInputs {
             daemon: required("CICD_RUNNER_DOCKER_DAEMON_ID"),
             backend: required("CICD_TEST_NATIVE_BACKEND_CONTAINER"),
             candidate_image,
+            transport_image,
+            backend_project,
+            backend_workspace_volume,
+            backend_data_volume,
+            backend_evidence,
             reachability_container: required("CICD_TEST_NATIVE_REACHABILITY_CONTAINER"),
             reachability_url,
             reachability_sha256,
@@ -268,17 +367,22 @@ impl NativeInputs {
             .expect("native metadata JSON unavailable")
     }
 
-    async fn verify_ownership(&self) {
+    async fn verify_ownership(&self) -> Value {
         let id = self.metadata(&["info", "--format", "{{.ID}}"]).await;
         assert!(
             std::str::from_utf8(&id).unwrap().trim() == self.daemon,
             "actual TLS daemon mismatch"
         );
-        let backend = self.json(&["container", "inspect", &self.backend]).await;
-        let backend = &backend[0];
+        // No Desktop socket/credentials are granted to this process for self-inspection.
+        let backend = &self.backend_evidence.container;
+        assert!(cicd::domain::task_delivery::digest(&self.backend));
+        assert_eq!(
+            backend["Id"], self.backend,
+            "MAIN must supply the full Desktop backend ID"
+        );
         let labels = &backend["Config"]["Labels"];
         assert!(
-            labels["com.docker.compose.project"] == self.parent
+            labels["com.docker.compose.project"] == self.backend_project
                 && labels["sdlc.task"] == "forge-task-delivery"
                 && labels["com.docker.compose.service"]
                     .as_str()
@@ -316,8 +420,11 @@ impl NativeInputs {
         );
         let mounts = &backend["Mounts"];
         for (destination, volume) in [
-            ("/workspaces", &self.workspace_volume),
-            (self.volume_root.to_str().unwrap(), &self.volume),
+            ("/workspaces", &self.backend_workspace_volume),
+            (
+                self.volume_root.to_str().unwrap(),
+                &self.backend_data_volume,
+            ),
         ] {
             assert!(
                 mounts
@@ -328,14 +435,9 @@ impl NativeInputs {
                         && m["Name"] == *volume
                         && m["Destination"] == destination
                         && m["RW"] == true),
-                "own same-engine backend volume mapping required"
+                "own Desktop staging/control volume mapping required, not remote volume identity"
             );
         }
-        let networks = &backend["NetworkSettings"]["Networks"];
-        assert!(
-            networks.get(&self.network).is_some(),
-            "backend must share the actual internal OCI network for probes"
-        );
         let network = self.json(&["network", "inspect", &self.network]).await;
         assert!(
             network[0]["Internal"] == true,
@@ -357,7 +459,8 @@ impl NativeInputs {
                     && object["Labels"]["sdlc.cleanup-id"]
                         .as_str()
                         .is_some_and(|s| !s.is_empty())
-                    && object["Labels"]["sdlc.cleanup-id"] == labels["sdlc.cleanup-id"]
+                    && object["Labels"]["sdlc.cleanup-id"]
+                        == network[0]["Labels"]["sdlc.cleanup-id"]
                     && object["Labels"]["sdlc.lifecycle"] == "disposable",
                 "resource owner labels mismatch"
             );
@@ -367,6 +470,17 @@ impl NativeInputs {
         assert!(
             base[0]["Os"] == "linux",
             "pinned native application base must already exist on this engine"
+        );
+        let transport = self
+            .json(&["image", "inspect", &self.transport_image])
+            .await;
+        assert_eq!(transport[0]["Id"], self.candidate_image);
+        assert_eq!(transport[0]["Os"], "linux");
+        assert!(
+            transport[0]["Config"]["Volumes"].is_null()
+                || transport[0]["Config"]["Volumes"]
+                    .as_object()
+                    .is_some_and(|v| v.is_empty())
         );
         let probe = self
             .json(&["container", "inspect", &self.reachability_container])
@@ -386,14 +500,17 @@ impl NativeInputs {
                 .unwrap()
                 .parse()
                 .unwrap();
-        let host: std::net::IpAddr = self.reachability_url.host_str().unwrap().parse().unwrap();
+        let host: std::net::IpAddr = self
+            .reachability_url
+            .host_str()
+            .unwrap()
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .parse()
+            .unwrap();
         assert_eq!(
             ip, host,
-            "reachability must use the inspected same-engine container IP"
-        );
-        assert_eq!(
-            sha(&http_bytes(self.reachability_url.clone()).await),
-            self.reachability_sha256
+            "predecessor URL must use its inspected remote container IP"
         );
         assert!(
             self.metadata(&[
@@ -409,29 +526,208 @@ impl NativeInputs {
             .all(u8::is_ascii_whitespace),
             "application project must be empty before first HTTP publication"
         );
+        probe[0].clone()
     }
 }
 
-async fn http_bytes(url: reqwest::Url) -> Vec<u8> {
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
-        .retry(reqwest::retry::never())
-        .timeout(StdDuration::from_secs(3))
-        .build()
-        .unwrap();
-    let mut response = client
-        .get(url)
-        .send()
-        .await
-        .expect("direct same-engine HTTP reachability required");
-    assert_eq!(response.status(), StatusCode::OK);
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.unwrap() {
-        assert!(bytes.len() + chunk.len() <= 128 * 1024);
-        bytes.extend_from_slice(&chunk);
+// Independent readback uses the already-owned Python candidate, not another helper
+// or the backend's unreachable remote IP route. Only bounded hash metadata leaves it.
+const HTTP_READBACK: &str = r#"import hashlib,json,signal,sys,urllib.request
+signal.alarm(3)
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+client = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+request = urllib.request.Request(sys.argv[1], headers={'Cache-Control':'no-cache'})
+with client.open(request, timeout=3) as response:
+    body = response.read(131073)
+    if len(body) > 131072:
+        raise ValueError('response exceeds fixture bound')
+    print(json.dumps({'status':response.status,'size':len(body),'sha256':hashlib.sha256(body).hexdigest()}))
+"#;
+
+fn application_url(ip: std::net::IpAddr, path: &str) -> String {
+    let host = match ip {
+        std::net::IpAddr::V4(ip) => ip.to_string(),
+        std::net::IpAddr::V6(ip) => format!("[{ip}]"),
+    };
+    format!("http://{host}:8000{path}")
+}
+
+impl NativeInputs {
+    async fn http_readback(&self, reader: &str, url: &str, hash: &str, size: Option<usize>) {
+        let observed = self
+            .json(&[
+                "exec",
+                "--",
+                reader,
+                "python",
+                "-B",
+                "-c",
+                HTTP_READBACK,
+                url,
+            ])
+            .await;
+        assert_eq!(observed.as_object().unwrap().len(), 3);
+        assert_eq!(observed["status"], 200);
+        assert_eq!(observed["sha256"], hash);
+        assert!(observed["size"].as_u64().unwrap() <= 128 * 1024);
+        if let Some(size) = size {
+            assert_eq!(observed["size"], size as u64);
+        }
     }
-    bytes
+
+    async fn predecessor_unchanged(&self, before: &Value, reader: &str) {
+        let after = self
+            .json(&["container", "inspect", &self.reachability_container])
+            .await;
+        for field in [
+            "Id",
+            "Image",
+            "Config",
+            "HostConfig",
+            "Mounts",
+            "NetworkSettings",
+            "RestartCount",
+        ] {
+            assert_eq!(
+                after[0][field], before[field],
+                "predecessor {field} changed"
+            );
+        }
+        assert_eq!(after[0]["State"]["Running"], true);
+        assert_eq!(after[0]["State"]["StartedAt"], before["State"]["StartedAt"]);
+        self.http_readback(
+            reader,
+            self.reachability_url.as_str(),
+            &self.reachability_sha256,
+            None,
+        )
+        .await;
+    }
+
+    async fn transport_cleaned(&self, directory: &Path, compose_file: &Path, receipt: &Value) {
+        let compose = std::fs::read(compose_file).unwrap();
+        assert_eq!(
+            std::fs::read(directory.join("compose.json")).unwrap(),
+            compose
+        );
+        let definition: Value = serde_json::from_slice(&compose).unwrap();
+        assert_eq!(definition["services"].as_object().unwrap().len(), 2);
+        let transport = &definition["services"]["transport"];
+        assert_eq!(transport["image"], self.transport_image);
+        assert_eq!(transport["pull_policy"], "never");
+        assert_eq!(transport["networks"], json!(["owner"]));
+        assert_eq!(
+            transport["volumes"],
+            json!([{"type":"volume","source":"data","target":"/target","read_only":false,"volume":{"nocopy":true}}])
+        );
+        assert_eq!(
+            transport["tmpfs"],
+            json!(["/tmp:rw,noexec,nosuid,nodev,size=4m,mode=0700"])
+        );
+        assert_eq!(transport["read_only"], true);
+        assert_eq!(transport["cap_drop"], json!(["ALL"]));
+        assert_eq!(
+            transport["environment"],
+            json!({"PATH":"/usr/local/bin:/usr/bin:/bin"})
+        );
+        assert_eq!(transport["labels"]["sdlc.task"], "forge-task-delivery");
+        assert_eq!(
+            transport["labels"]["sdlc.purpose"],
+            "disposable-oci-transport"
+        );
+        assert_eq!(
+            transport["labels"]["forge.oci-operation"],
+            directory.file_name().unwrap().to_str().unwrap()
+        );
+        for key in [
+            "ports",
+            "privileged",
+            "secrets",
+            "devices",
+            "volumes_from",
+            "build",
+        ] {
+            assert!(
+                transport.get(key).is_none(),
+                "unexpected transport authority: {key}"
+            );
+        }
+        assert_eq!(
+            definition["volumes"]["data"],
+            json!({"external":true,"name":self.volume})
+        );
+        assert_eq!(
+            definition["networks"]["owner"],
+            json!({"external":true,"name":self.network})
+        );
+        let read = |name: &str| -> Value {
+            serde_json::from_slice(&std::fs::read(directory.join(name)).unwrap()).unwrap()
+        };
+        let ready = read("transport-ready.json");
+        assert_eq!(ready.as_object().unwrap().len(), 5);
+        assert_eq!(ready, read("transport-up/identity.json"));
+        assert_eq!(ready["image_id"], self.transport_image);
+        assert_eq!(ready["compose_sha256"], sha(&compose));
+        assert_eq!(ready["manifest_sha256"], receipt["manifestSha256"]);
+        assert_eq!(ready["data_sha256"], receipt["dataSha256"]);
+        let helper = ready["container_id"].as_str().unwrap();
+        assert!(cicd::domain::task_delivery::digest(helper));
+        assert_eq!(read("transport-down/removed.json"), helper);
+        for action in ["stop", "remove"] {
+            assert_eq!(
+                read(&format!("transport-down/{action}/child-stopped.json")),
+                true
+            );
+        }
+        assert_eq!(read("result.json"), *receipt);
+        assert_eq!(read("verified-checks.json"), *receipt);
+        for filter in [
+            "label=com.docker.compose.service=transport".to_owned(),
+            format!("id={helper}"),
+        ] {
+            let remaining = self
+                .metadata(&[
+                    "ps",
+                    "-a",
+                    "--quiet",
+                    "--no-trunc",
+                    "--filter",
+                    &format!("label=com.docker.compose.project={}", self.project),
+                    "--filter",
+                    &filter,
+                ])
+                .await;
+            assert!(
+                remaining.iter().all(u8::is_ascii_whitespace),
+                "owned transport remains after terminal cleanup"
+            );
+        }
+        let application = self
+            .metadata(&[
+                "ps",
+                "-a",
+                "--quiet",
+                "--no-trunc",
+                "--filter",
+                &format!("label=com.docker.compose.project={}", self.project),
+            ])
+            .await;
+        assert_eq!(
+            std::str::from_utf8(&application).unwrap().trim(),
+            receipt["containerId"].as_str().unwrap(),
+            "only the original application may survive helper cleanup"
+        );
+        assert_eq!(
+            self.json(&["volume", "inspect", &self.volume]).await[0]["Name"],
+            self.volume
+        );
+        assert_eq!(
+            self.json(&["network", "inspect", &self.network]).await[0]["Name"],
+            self.network
+        );
+    }
 }
 
 fn private_dir(path: &Path) {
@@ -468,6 +764,8 @@ struct PublishedPolicy {
     volume_root: PathBuf,
     data_file: PathBuf,
     data_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    transport_image: Option<String>,
     checks: cicd::task_delivery::DeliveryPolicy,
 }
 
@@ -513,6 +811,7 @@ fn configure_native(
         volume_root: inputs.volume_root,
         data_file,
         data_sha256: sha(data),
+        transport_image: Some(inputs.transport_image),
         checks,
     };
     let bytes = serde_json::to_vec(&policy).unwrap();
@@ -835,7 +1134,7 @@ async fn install_devops_peer(f: &TaskPipeline, built: &Built) -> DeliveryCommand
     command
 }
 
-async fn deliver(f: &TaskPipeline, inputs: &NativeInputs, built: &Built) {
+async fn deliver(f: &TaskPipeline, inputs: &NativeInputs, built: &Built, predecessor: &Value) {
     let command = install_devops_peer(f, built).await;
     let policy: Value = serde_json::from_slice(
         &std::fs::read(
@@ -849,6 +1148,7 @@ async fn deliver(f: &TaskPipeline, inputs: &NativeInputs, built: &Built) {
     )
     .unwrap();
     let data_file = Path::new(policy["dataFile"].as_str().unwrap());
+    assert_eq!(policy["transportImage"], inputs.transport_image);
     let data_before = std::fs::read(data_file).unwrap();
     let path = format!(
         "/api/v1/projects/{}/sdlc/workspace-operations/{}/delivery-operations",
@@ -973,9 +1273,16 @@ async fn deliver(f: &TaskPipeline, inputs: &NativeInputs, built: &Built) {
         ("/acceptance", b"accepted:task-1:queued\n".as_slice()),
         ("/compatibility", data_before.as_slice()),
     ] {
-        let url = reqwest::Url::parse(&format!("http://{ip}:8000{path}")).unwrap();
-        assert_eq!(http_bytes(url).await, expected);
+        inputs
+            .http_readback(
+                container,
+                &application_url(ip, path),
+                &sha(expected),
+                Some(expected.len()),
+            )
+            .await;
     }
+    inputs.predecessor_unchanged(predecessor, container).await;
     assert_eq!(std::fs::read(data_file).unwrap(), data_before);
     let lookup = &command.original;
     let get = format!(
@@ -1013,6 +1320,9 @@ async fn deliver(f: &TaskPipeline, inputs: &NativeInputs, built: &Built) {
         .compose_root
         .join(format!("{}.json", sha(command.operation_key.as_bytes())));
     let compose_before = std::fs::read(&compose_file).unwrap();
+    inputs
+        .transport_cleaned(&directory, &compose_file, latest)
+        .await;
     let mut denied = command.clone();
     denied.operation_key = "native:stale-fence".into();
     denied.expected_manifest_sha256 = Some(manifest_hash.into());
@@ -1075,6 +1385,10 @@ async fn deliver(f: &TaskPipeline, inputs: &NativeInputs, built: &Built) {
     );
     assert_eq!(after[0]["Image"], actual[0]["Image"]);
     assert_eq!(std::fs::read(data_file).unwrap(), data_before);
+    inputs
+        .transport_cleaned(&directory, &compose_file, latest)
+        .await;
+    inputs.predecessor_unchanged(predecessor, container).await;
     // Same pipeline/worker replay cannot create a second build attempt.
     assert_eq!(
         f.trigger(&f.intent).await.1["pipeline"]["id"],
@@ -1115,10 +1429,10 @@ async fn deliver(f: &TaskPipeline, inputs: &NativeInputs, built: &Built) {
 }
 
 #[tokio::test]
-#[ignore = "requires explicit owned TLS backend/Compose v2 resources, pinned base, fresh PG and namespace; never silently skips"]
+#[ignore = "requires qualified Desktop backend evidence plus distinct owned TLS engine/Compose v2 resources, pinned transport/base, fresh PG and namespace; never silently skips"]
 async fn task_http_backend_image_build_tls_artifact_oci_health_and_acceptance() {
     let inputs = NativeInputs::read();
-    inputs.verify_ownership().await;
+    let predecessor = inputs.verify_ownership().await;
     let dockerfile = format!(
         "FROM {}\nCOPY app.py /app.py\nCOPY app-version /app-version\nEXPOSE 8000\nENTRYPOINT [\"python\",\"-B\",\"/app.py\"]\n",
         inputs.base
@@ -1135,7 +1449,7 @@ async fn task_http_backend_image_build_tls_artifact_oci_health_and_acceptance() 
     let case = f.clone();
     let result = tokio::spawn(async move {
         let built = build(&case, &inputs).await;
-        deliver(&case, &inputs, &built).await;
+        deliver(&case, &inputs, &built, &predecessor).await;
     })
     .await;
     let mut f = Arc::try_unwrap(f).unwrap_or_else(|_| panic!("native fixture still borrowed"));
@@ -1151,6 +1465,7 @@ async fn task_http_backend_image_build_tls_artifact_oci_health_and_acceptance() 
     f.cleanup()
         .await
         .expect("known terminal native fixture cleanup");
-    // MAIN finally closes the exact native:deploy Compose file on the SAME TLS daemon,
-    // before deleting its QA volumes. The image and retained receipts are not pruned here.
+    // MAIN finally closes the exact native:deploy file on the configured TLS engine,
+    // then each engine's own Base v2 project/volumes under its separate journal.
+    // Desktop backend staging is not remote data. Images/receipts/predecessor are not pruned here.
 }
