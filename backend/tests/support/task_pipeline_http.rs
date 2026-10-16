@@ -3,7 +3,7 @@ use super::*;
 use cicd::domain::sdlc_workspace::{
     TaskWorkspaceIntent, WorkspaceOperationReceipt, WorkspaceRole, WorkspaceTaskBinding,
 };
-use sdlc_shared::resource_context::{NamespaceRef, OwnerCommand, ResourceKind, ResourceRef};
+use pdlc_shared::resource_context::{NamespaceRef, OwnerCommand, ResourceKind, ResourceRef};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,

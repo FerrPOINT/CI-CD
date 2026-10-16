@@ -5,7 +5,7 @@ use cicd::domain::sdlc_workspace::{
     WorkspaceOperationRequest, WorkspaceOperationStatus, WorkspaceRole, WorkspaceTaskBinding,
 };
 use cicd::store::sdlc_workspace as ledger;
-use sdlc_shared::resource_context::{NamespaceRef, OwnerCommand, ResourceKind, ResourceRef};
+use pdlc_shared::resource_context::{NamespaceRef, OwnerCommand, ResourceKind, ResourceRef};
 
 // Full values, including nullable completion provenance and original JSON, not just row counts.
 const SNAPSHOT: &str = "SELECT jsonb_build_object(
