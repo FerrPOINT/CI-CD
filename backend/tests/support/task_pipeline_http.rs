@@ -1,4 +1,4 @@
-//! Actual Forge HTTP/PG/embedded shell path. Only Tracker authority is a controlled HTTP peer.
+//! Actual Forge HTTP/PG/embedded runner path. Only Tracker authority is a controlled HTTP peer.
 use super::*;
 use cicd::domain::sdlc_workspace::{
     TaskWorkspaceIntent, WorkspaceOperationReceipt, WorkspaceRole, WorkspaceTaskBinding,
@@ -30,6 +30,9 @@ struct TaskPipeline {
     peer: tokio::task::JoinHandle<()>,
     server: tokio::task::JoinHandle<()>,
 }
+
+type ConfigureTaskPipeline =
+    fn(&mut cicd::config::RuntimeConfig, Uuid, &TaskWorkspaceIntent, &Path);
 
 impl Drop for TaskPipeline {
     fn drop(&mut self) {
@@ -139,7 +142,12 @@ impl TaskPipeline {
                     && request.role == self.intent.role,
                 "foreign cleanup custody"
             );
-            let root = std::env::temp_dir().canonicalize()?;
+            let root = if self.config.runner.mode == cicd::config::RunnerMode::Docker {
+                PathBuf::from("/workspaces")
+            } else {
+                std::env::temp_dir()
+            }
+            .canonicalize()?;
             let path = root.join(&request.workspace_id);
             match std::fs::symlink_metadata(&path) {
                 Ok(_) => {
@@ -171,6 +179,14 @@ impl TaskPipeline {
     }
 
     async fn new() -> Self {
+        Self::new_with_source(None, &[], None).await
+    }
+
+    async fn new_with_source(
+        yaml: Option<String>,
+        files: &[(&str, &[u8])],
+        configure: Option<ConfigureTaskPipeline>,
+    ) -> Self {
         let url = reqwest::Url::parse(&std::env::var("CICD_TEST_DATABASE_URL").unwrap()).unwrap();
         assert!(
             url.path().trim_start_matches('/').starts_with("forge_test"),
@@ -199,10 +215,19 @@ impl TaskPipeline {
             "n=0; while test ! -f '{}'; do n=$((n+1)); test \"$n\" -lt 200 || exit 71; sleep 0.05; done; test \"$(cat source.txt)\" = pinned || exit 72; printf 'actual task artifact\\n' > product.txt",
             barrier.display()
         );
-        let yaml = serde_yaml::to_string(&serde_json::json!({"version":1,"jobs":{"build":{"commands":[command],"timeout":"20s","artifacts":{"paths":["product.txt"]}}}})).unwrap();
+        let yaml = yaml.unwrap_or_else(|| serde_yaml::to_string(&serde_json::json!({"version":1,"jobs":{"build":{"commands":[command],"timeout":"20s","artifacts":{"paths":["product.txt"]}}}})).unwrap());
         git(&source, &["init", "--initial-branch=main"]);
         std::fs::write(source.join("source.txt"), "pinned\n").unwrap();
         std::fs::write(source.join(".forge-ci.yml"), &yaml).unwrap();
+        for (name, bytes) in files {
+            assert!(
+                cicd::domain::image_build::valid_relative_path(name, false),
+                "fixture source path must be relative"
+            );
+            let path = source.join(name);
+            assert!(!path.exists(), "fixture source is create-new");
+            std::fs::write(path, bytes).unwrap();
+        }
         git(&source, &["add", "."]);
         git(
             &source,
@@ -320,7 +345,10 @@ impl TaskPipeline {
                 workflow_task_ref: "SDLC-27".into(),
             },
         };
-        let routing = serde_json::json!({"tracker_instance_id":tracker_instance,"project_id":tracker_project,"task_id":task,"root_task_id":task,"snapshot_id":intent.binding.routing_snapshot_id,"requirement_revision":1,"policy":{"tracker_instance_id":tracker_instance,"project_id":tracker_project,"routes":{"developer":{"agent_id":intent.agent_id}}}});
+        let mut routing = serde_json::json!({"tracker_instance_id":tracker_instance,"project_id":tracker_project,"task_id":task,"root_task_id":task,"snapshot_id":intent.binding.routing_snapshot_id,"requirement_revision":1,"policy":{"tracker_instance_id":tracker_instance,"project_id":tracker_project,"routes":{"developer":{"agent_id":intent.agent_id}}}});
+        if configure.is_some() {
+            routing["policy"]["routes"]["devops"] = serde_json::json!({"agent_id":Uuid::new_v4()});
+        }
         let mut assignment = serde_json::json!({"task_id":task,"assignment_id":intent.binding.assignment_id,"execution_id":intent.binding.execution_id,"execution":{"ordinal":"27","key":"SDLC-27"},"agent_id":intent.agent_id,"lease_id":intent.tracker_lease_id,"role":"developer","stage":"Development","cycle":0,"attempt":1,"owner_subject":"qa-owner","fencing_token":3,"routing":routing});
         intent.binding.assignment_hash =
             sha(&serde_json::to_vec(&canonical(assignment.clone())).unwrap());
@@ -333,6 +361,7 @@ impl TaskPipeline {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
         let data = tracker.clone();
+        let refresh_lease = configure.is_some();
         let peer_app = axum::Router::new().route(
             &format!("/api/v1/issues/{task}/sdlc/lifecycle"),
             axum::routing::get(move |headers: HeaderMap| {
@@ -340,12 +369,37 @@ impl TaskPipeline {
                 async move {
                     assert_eq!(headers["authorization"], "Bearer qa-tracker-reader");
                     let mut value = data.lock().await.clone();
-                    // Observation advances, not the retained lease expiry or heartbeat.
-                    value["observed_at"] = serde_json::json!(Utc::now());
+                    let now = Utc::now();
+                    value["observed_at"] = serde_json::json!(now);
+                    if refresh_lease {
+                        // Only native fixture: the controlled Tracker peer maintains its 30s lease.
+                        value["receipt"]["lease"]["heartbeat_at"] = serde_json::json!(now);
+                        value["receipt"]["lease"]["expires_at"] =
+                            serde_json::json!(now + Duration::seconds(30));
+                    }
+                    value.as_object_mut().unwrap().remove("native_result");
                     axum::Json(value)
                 }
             }),
         );
+        #[cfg(feature = "oci-integration")]
+        let peer_app = {
+            let result = tracker.clone();
+            peer_app.route(
+                &format!("/api/v1/issues/{task}/sdlc/lifecycle/results/{{result_id}}"),
+                axum::routing::get(move |headers: HeaderMap, axum::extract::Path(result_id): axum::extract::Path<Uuid>| {
+                    let result = result.clone();
+                    async move {
+                        assert_eq!(headers["authorization"], "Bearer qa-tracker-reader");
+                        let value = result.lock().await["native_result"].clone();
+                        if value["receipt"]["result_id"] != serde_json::json!(result_id) {
+                            return Err(StatusCode::NOT_FOUND);
+                        }
+                        Ok(axum::Json(value))
+                    }
+                }),
+            )
+        };
         let peer = tokio::spawn(async move { axum::serve(listener, peer_app).await.unwrap() });
         let mut config = cicd::config::RuntimeConfig::test_default()
             .with_auth_secret(Some("task-http-test-secret".into()));
@@ -356,6 +410,9 @@ impl TaskPipeline {
         config.sdlc_workspace.operation_subject = Some(subject);
         config.sdlc_workspace.tracker_read_url = Some(origin);
         config.sdlc_workspace.tracker_read_token = Some("qa-tracker-reader".into());
+        if let Some(configure) = configure {
+            configure(&mut config, project, &intent, &temp);
+        }
         let app = cicd::api::app_with_git_and_config(
             Some(pool.clone()),
             cicd::git_host::GitConfig {
@@ -374,7 +431,11 @@ impl TaskPipeline {
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
             .retry(reqwest::retry::never())
-            .timeout(StdDuration::from_secs(10))
+            .timeout(StdDuration::from_secs(if configure.is_some() {
+                90
+            } else {
+                10
+            }))
             .build()
             .unwrap();
         Self {
