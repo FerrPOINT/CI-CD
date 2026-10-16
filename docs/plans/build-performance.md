@@ -21,3 +21,9 @@ Shell unit работает с реальным QueryClientProvider и отде�
 workspace-catalog cache без сети. Native qualification проверяет false/true:
 Namespace context добавляет header slot только в enabled mode. Production
 source, SDK/UI pins и release набор не меняются.
+
+Отдельные test setup исключены из production COPY
+и `frontend:build` inputs, но остаются входами unit/static. Только эти явно
+объявленные пути допускают пропуск CI compilation; общий `vite.config.ts`
+с aliases/plugins остаётся полноценным build input. Ошибка unit блокирует
+получение нового образа даже при сохранённой production compilation.

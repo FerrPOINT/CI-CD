@@ -262,7 +262,8 @@
         "frontend/src/*.spec.tsx",
         "frontend/src/*.test.mjs",
         "frontend/src/*.test.cjs",
-        "frontend/e2e/**"
+        "frontend/e2e/**",
+        "frontend/src/test-setup.ts"
       ],
       "test_tier": "artifact"
     },
@@ -452,7 +453,8 @@
     "frontend/src/*.spec.ts",
     "frontend/src/*.spec.tsx",
     "frontend/src/*.test.mjs",
-    "frontend/src/*.test.cjs"
+    "frontend/src/*.test.cjs",
+    "frontend/src/test-setup.ts"
   ],
   "test_policy": {
     "automatic": [
