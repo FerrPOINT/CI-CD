@@ -11,7 +11,8 @@ deterministic exact-candidate проверок.
 Docker frontend: раздельные unit/compile stages, unit/static перед compilation;
 TypeScript проверяется один раз в обязательном unit stage; compile запускает Vite.
 production COPY исключает тесты. Frozen dependencies сохраняют общий совместимый
-pnpm download store. Dockerfile syntax 1.19 и parent digests закреплены.
+pnpm download store. Parent digests закреплены; Dockerfile frontend, общий RUN slot и
+ограничения Windows producers определяет стандарт Base.
 Runtime и package build scripts сохраняют прежние публичные команды.
 
 Frontend CI handoff: один `dist` с manifest/digests, затем verified nginx packaging.
