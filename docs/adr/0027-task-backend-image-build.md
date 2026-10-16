@@ -2,8 +2,9 @@
 
 ## Status
 
-Source candidate. 34 целевых unit-теста и atomic-terminal PG aggregate проходят;
-all-target gate, TLS build и live deployment ещё не подтверждены.
+Source candidate. 34 целевых unit-теста, atomic-terminal PG, HTTP shell regression,
+OCI compile и strict all-target Clippy проходят; backend candidate image собран.
+Task TLS image build и live deployment ещё не подтверждены.
 [Фактическая проверка и ограничения](../IMAGE_BUILD_QUALIFICATION_20261016.md).
 Hermes и его upstream-протокол не изменяются.
 

@@ -1,5 +1,43 @@
 # Проверка backend image build: 16 октября 2026
 
+## Текущий Кандидат d3a0bbe
+
+Исходник `d3a0bbef79764587f21ad819f412d1e0f73fa95e`, SDK7c7b24c:
+закрытый локальный QA завершился с exit0 и verified cleanup.
+Проходят fmt, metadata, компиляция lib и integration target с `oci-integration`,
+34 целевых unit-теста, atomic-terminal PG1 (19.75s), прежний настоящий HTTP
+shell regression1 (1.94s), Rust OpenAPI export и строгий workspace/all-target
+Clippy с `oci-integration`. Это не полный workspace test suite.
+
+Скомпилирован, но не запущен opt-in native aggregate
+`task_pipeline_http::image_build_native::task_http_backend_image_build_tls_artifact_oci_health_and_acceptance`.
+SHA256 сохранённого integration executable:
+`7609be921319628ca02fbe6577e0d5edf405644830e4e55e40e7ce51a14bab2a`.
+Бинарник сам по себе не доказывает native build/deployment.
+
+SHA256 текущего QA result.json:
+`845212ff9a817f8ebe9d4dcf9af52d293e3b02471d0f04cae8d84f0e8bce823c`.
+SHA256 group-results:
+`691f58238f4a65e8f67348f325935e29d98afe22de0e18b031914ab8649c8030`.
+Временные ресурсы этого QA удалены; source inputs также убраны.
+
+Отдельно существующий Base44 Build собрал backend-кандидат из exact d3a0bbe
+и SDK7c, с сохранённым consumed-source receipt. Image ID:
+`sha256:b3eedae7fd06ad81ae91ebd88b2e0cde5027325c75cf21a39cc53fe8bb3beadb`.
+SHA256 build receipt:
+`41cd4e1777b9a095164f1a5ec8dc2d418096626388a0db5a8c6914d9936abe29`.
+Образ имеет non-root user `cicd`; Buildx0.37.2 checksum/version проверены при
+упаковке. `complete=false` относится к partial workspace build из одного сервиса.
+
+Этот backend image не установлен и не является образом результата задачи.
+Task HTTP -> image build на configured TLS daemon -> artifact -> OCI deployment
+-> health/acceptance ещё не выполнен. Реальная placement/data mapping должна
+быть проверена; одинаковое имя volume на разных daemon не доказывает общие bytes.
+Прежний PG500 остаётся неклассифицированным: два последующих PASS подтверждают
+воспроизводимость на этих inputs, а не установленную причину старого отказа.
+
+## Предыдущая Проверка aaad
+
 ## Подтверждено
 
 Локальный временный Compose проверял исходник
