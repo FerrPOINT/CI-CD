@@ -31,6 +31,31 @@ read-only mounts, daemon/network/volume ownership и verified rollback сохр�
 GET не исполняет effect. Local CLI остаётся local-verification и отвергает taskFence;
 исторические receipts не получают новый scope или authority задним числом.
 
+### Разные Docker Engines
+
+Backend и настроенный TLS runner могут использовать разные Docker engines.
+Одинаковое имя volume не означает общие данные, а адрес контейнера runner
+не обязан быть доступен напрямую из backend. Task-bound executor передаёт
+immutable manifest/data через Compose transport service на настроенном engine;
+проверки HTTP выполняются из этого сервиса в существующей owner network.
+Используются прежние Docker/TLS authority, process wrapper и operation journal,
+без нового controller, scheduler, Docker socket у приложения или агента.
+
+Приватный owner policy задаёт `transportImage` как точный доступный image ID
+с `/bin/sh`, coreutils и curl. Агент не выбирает этот образ. Legacy local CLI
+не требует поле; при его отсутствии сериализация и policy hash не меняются.
+Transport получает только immutable snapshots, не backend credentials или
+исходники. Публикация проверяет пути, symlinks, hashes и права; существующие
+несовпадающие файлы не перезаписываются. Remote bytes проверяются до и после
+application checks, а HTTP response ограничен по времени и размеру.
+
+Сначала сохраняется фактический application result, затем удаляется transport.
+Unknown outcome сохраняет helper для reconciliation, но не допускает повторный
+deploy. Ошибка cleanup не превращает подтверждённый application result в
+доказательство cleanup: остаток блокирует следующий новый deployment до
+разрешения через существующую owner-процедуру. Это source implementation;
+compile, native cross-engine proof и installation проверяются отдельно.
+
 ## Consequences
 
 Поддерживается существующий bounded OCI contract: preloaded immutable image,

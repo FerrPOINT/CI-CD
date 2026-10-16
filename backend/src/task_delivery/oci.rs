@@ -4,6 +4,11 @@ use super::*;
 use std::{process::Stdio, time::Duration};
 use tokio::{io::AsyncReadExt, process::Command};
 
+#[path = "oci_probe.rs"]
+mod remote_probe;
+#[path = "oci_transport.rs"]
+mod transport;
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Descriptor {
@@ -28,6 +33,8 @@ struct Policy {
     volume_root: PathBuf,
     data_file: PathBuf,
     data_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    transport_image: Option<String>,
     checks: DeliveryPolicy,
 }
 
@@ -365,6 +372,13 @@ impl Owner {
             "isolated QA network required"
         );
         ensure!(digest(&policy.data_sha256), "exact data snapshot required");
+        ensure!(
+            policy
+                .transport_image
+                .as_deref()
+                .is_none_or(crate::domain::image_build::valid_image_id),
+            "owner transport image must be immutable"
+        );
         policy.checks.validate()?;
         for path in [
             &policy.docker_bin,
@@ -797,6 +811,26 @@ impl Owner {
         immutable(&dir.join("child-stopped.json"), &true)
     }
 
+    async fn probe_application(
+        &self,
+        helper: Option<&str>,
+        ip: std::net::IpAddr,
+        path: &str,
+        expected: &str,
+        limit: u64,
+    ) -> DeliveryProbe {
+        if let Some(helper) = helper {
+            self.probe_remote(helper, ip, path, expected, limit).await
+        } else {
+            let mut checks = self.policy.checks.clone();
+            checks.origin = match ip {
+                std::net::IpAddr::V4(_) => format!("http://{ip}:8000"),
+                std::net::IpAddr::V6(_) => format!("http://[{ip}]:8000"),
+            };
+            probes::probe(&checks, path, expected, limit).await
+        }
+    }
+
     async fn observe(&self, mut receipt: Receipt, manifest: &Manifest) -> Receipt {
         let result = async {
             self.engine().await?;
@@ -853,33 +887,74 @@ impl Owner {
                 .as_str()
                 .context("serving address missing")?;
             let parsed: std::net::IpAddr = ip.parse()?;
-            let mut checks = self.policy.checks.clone();
-            checks.origin = format!("http://{parsed}:8000");
+            let checks = &self.policy.checks;
+            let helper = if self.task_client.is_some() {
+                Some(self.validate_transport(&receipt).await?)
+            } else {
+                None
+            };
             let hash = receipt.manifest_sha256.as_ref().unwrap();
-            let mut version = probes::probe(&checks, "/.forge/version", hash, 128 * 1024).await;
+            let manifest_file = self.root.join("manifests").join(format!("{hash}.json"));
+            let mut version = self
+                .probe_application(
+                    helper.as_deref(),
+                    parsed,
+                    "/.forge/version",
+                    hash,
+                    128 * 1024,
+                )
+                .await;
             for _ in 0..10 {
                 if version.status != DeliveryStatus::Unavailable {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                version = probes::probe(&checks, "/.forge/version", hash, 128 * 1024).await;
+                version = self
+                    .probe_application(
+                        helper.as_deref(),
+                        parsed,
+                        "/.forge/version",
+                        hash,
+                        128 * 1024,
+                    )
+                    .await;
             }
-            let health = probes::probe(
-                &checks,
-                &checks.health_path,
-                &checks.health_body_sha256,
-                64 * 1024,
-            )
-            .await;
-            let acceptance = probes::probe(
-                &checks,
-                &checks.acceptance_path,
-                &checks.acceptance_body_sha256,
-                64 * 1024,
-            )
-            .await;
-            let compatibility = probes::probe(&checks, "/compatibility", &data, 1024 * 1024).await;
-            let end_version = probes::probe(&checks, "/.forge/version", hash, 128 * 1024).await;
+            let health = self
+                .probe_application(
+                    helper.as_deref(),
+                    parsed,
+                    &checks.health_path,
+                    &checks.health_body_sha256,
+                    64 * 1024,
+                )
+                .await;
+            let acceptance = self
+                .probe_application(
+                    helper.as_deref(),
+                    parsed,
+                    &checks.acceptance_path,
+                    &checks.acceptance_body_sha256,
+                    64 * 1024,
+                )
+                .await;
+            let compatibility = self
+                .probe_application(
+                    helper.as_deref(),
+                    parsed,
+                    "/compatibility",
+                    &data,
+                    1024 * 1024,
+                )
+                .await;
+            let end_version = self
+                .probe_application(
+                    helper.as_deref(),
+                    parsed,
+                    "/.forge/version",
+                    hash,
+                    128 * 1024,
+                )
+                .await;
             let end = self.docker(&["container", "inspect", &name]).await?;
             ensure!(
                 end[0]["Id"] == c["Id"]
@@ -888,6 +963,10 @@ impl Owner {
                     && self.data(&manifest.descriptor)?.1 == data,
                 "container/data changed during checks"
             );
+            if let Some(helper) = helper.as_deref() {
+                self.verify_remote_snapshots(helper, &manifest_file, &receipt)
+                    .await?;
+            }
             receipt.status = if version.status == DeliveryStatus::Unavailable
                 || end_version.status == DeliveryStatus::Unavailable
             {
@@ -974,6 +1053,13 @@ impl Owner {
                                 replace_pointer(&self.root, "confirmed.json", &hash)?;
                             }
                             immutable(&dir.join("reconciled.json"), &receipt)?;
+                            if self.task_client.is_some() {
+                                let execution_file = self.policy.compose_root.join(format!(
+                                    "{}.json",
+                                    sha(command.operation_key.as_bytes())
+                                ));
+                                self.stop_transport(&execution_file, &dir, &receipt).await?;
+                            }
                         }
                     }
                 }
@@ -981,6 +1067,11 @@ impl Owner {
             return self.readback(command, &original);
         }
         ensure!(!reconcile, "original OCI operation unavailable");
+        let transport_image = if task.is_some() {
+            Some(self.remote_transport_image().await?)
+        } else {
+            None
+        };
         let mut count = 0;
         for entry in std::fs::read_dir(self.root.join("operations"))? {
             count += 1;
@@ -1112,7 +1203,13 @@ impl Owner {
         }
         let host_manifest = self.host_path(&manifest_file).await?;
         let host_data = self.host_path(&self.policy.data_file).await?;
-        let compose = serde_json::json!({"services":{"application":{"image":manifest.descriptor.image_id,"pull_policy":"never","user":"65532:65532","read_only":true,"cap_drop":["ALL"],"security_opt":["no-new-privileges:true"],"pids_limit":64,"mem_limit":"128m","cpus":0.5,"labels":{"sdlc.task":"forge-task-delivery","sdlc.purpose":"disposable-oci-application"},"volumes":[{"type":"bind","source":host_manifest,"target":"/forge/manifest.json","read_only":true},{"type":"bind","source":host_data,"target":"/forge/data.json","read_only":true}],"networks":["owner"]}},"networks":{"owner":{"external":true,"name":self.policy.network_name}}});
+        let mut compose = serde_json::json!({"services":{"application":{"image":manifest.descriptor.image_id,"pull_policy":"never","user":"65532:65532","read_only":true,"cap_drop":["ALL"],"security_opt":["no-new-privileges:true"],"pids_limit":64,"mem_limit":"128m","cpus":0.5,"labels":{"sdlc.task":"forge-task-delivery","sdlc.purpose":"disposable-oci-application"},"volumes":[{"type":"bind","source":host_manifest,"target":"/forge/manifest.json","read_only":true},{"type":"bind","source":host_data,"target":"/forge/data.json","read_only":true}],"networks":["owner"]}},"networks":{"owner":{"external":true,"name":self.policy.network_name}}});
+        if let Some(image) = &transport_image {
+            compose["services"]["transport"] =
+                self.transport_service(image, &sha(command.operation_key.as_bytes()));
+            compose["volumes"] =
+                serde_json::json!({"data":{"external":true,"name":self.policy.volume_name}});
+        }
         let compose_file = dir.join("compose.json");
         immutable(&compose_file, &compose)?;
         let execution_file = self
@@ -1120,6 +1217,10 @@ impl Owner {
             .compose_root
             .join(format!("{}.json", sha(command.operation_key.as_bytes())));
         immutable(&execution_file, &compose)?;
+        if transport_image.is_some() {
+            self.transfer_snapshots(&execution_file, &dir, &manifest_file, &receipt, &mut task)
+                .await?;
+        }
         let args = vec![
             "-p".into(),
             self.policy.project_name.clone(),
@@ -1161,6 +1262,9 @@ impl Owner {
             replace_pointer(&self.root, "confirmed.json", &hash)?;
         }
         immutable(&dir.join("result.json"), &receipt)?;
+        if transport_image.is_some() && receipt.status != DeliveryStatus::Unknown {
+            self.stop_transport(&execution_file, &dir, &receipt).await?;
+        }
         self.readback(command, &original)
     }
 }
@@ -1420,6 +1524,7 @@ mod tests {
                 volume_root: root.clone(),
                 data_file: root.join("data.json"),
                 data_sha256: sha(b"data"),
+                transport_image: None,
                 checks: DeliveryPolicy {
                     origin: "http://127.0.0.1:8000".into(),
                     health_path: "/health".into(),
