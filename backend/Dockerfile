@@ -31,7 +31,18 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACH
  && /usr/local/cargo/bin/cargo build --locked --release \
  && /usr/local/cargo/bin/cargo clean -p cicd-server -p cicd-domain -p cicd-app -p cicd-infra -p cicd-api -p cicd-cli -p cicd-migrate
 
-FROM dependencies AS unit
+FROM dependencies AS unit-dependencies
+# Keep both unit graphs' external compilation independent of their source files.
+COPY CI-CD/backend/tests/cache-protocol/Cargo.toml CI-CD/backend/tests/cache-protocol/Cargo.lock ./tests/cache-protocol/
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked \
+    /usr/local/cargo/bin/cargo test --locked --release -p cicd-domain --lib --no-run \
+    && /usr/local/cargo/bin/cargo clean --release -p cicd-server -p cicd-domain -p cicd-app -p cicd-infra -p cicd-api -p cicd-cli -p cicd-migrate \
+    && mkdir -p tests/cache-protocol/src && printf '\n' > tests/cache-protocol/src/lib.rs \
+    && CARGO_TARGET_DIR=/app/target /usr/local/cargo/bin/cargo test --locked --release --manifest-path tests/cache-protocol/Cargo.toml --lib --no-run \
+    && CARGO_TARGET_DIR=/app/target /usr/local/cargo/bin/cargo clean --release --manifest-path tests/cache-protocol/Cargo.toml -p forge-cache-protocol-tests \
+    && rm -rf -- tests/cache-protocol/src
+
+FROM unit-dependencies AS unit
 ARG TARGETARCH
 ARG CARGO_REGISTRY_CACHE_ID=pdlc-operator-downloads-v1-cargo188
 COPY CI-CD/backend/domain ./domain
