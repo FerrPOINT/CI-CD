@@ -2,8 +2,8 @@
 
 ## Typed Image Build In Task Pipeline
 
-Source candidate: 34 unit-теста, atomic-terminal PG, HTTP shell regression,
-OCI integration compile и strict all-target Clippy проходят.
+Cross-engine candidate67fe990: 51 unit-тест, atomic-terminal PG, HTTP shell
+regression, OCI integration compile и strict all-target Clippy проходят.
 Настоящий task TLS build/deployment ещё не подтверждён;
 [точные границы проверки](IMAGE_BUILD_QUALIFICATION_20261016.md).
 В repository `.forge-ci.yml` v1 job может использовать `image_build` вместо

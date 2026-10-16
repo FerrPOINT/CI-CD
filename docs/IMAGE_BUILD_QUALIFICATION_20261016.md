@@ -1,6 +1,44 @@
 # Проверка backend image build: 16 октября 2026
 
-## Текущий Кандидат d3a0bbe
+## Текущий Cross-Engine Кандидат 67fe990
+
+Исходник `67fe990a0de34f42796241a0fcb6cacb61f6588d`, SDK7c7b24c:
+отдельный локальный QA закрыт с exit0, journal `cleaned`, verified cleanup.
+Независимый Docker readback не обнаружил собственных контейнеров или volumes;
+disposable source inputs также удалены.
+
+Проходят fmt, metadata, lib/integration compile с `oci-integration`, прежние34
+unit-теста и новые probe10/transport7. Их exact listing/name inventory проверен:
+policy test учитывается в собственном `policy_tests`, а не теряется в фильтре.
+Atomic-terminal PG1 проходит за11.51s, прежний HTTP shell1 за1.78s; Rust OpenAPI
+export и strict workspace/all-target Clippy с `oci-integration` проходят.
+Это не полный workspace test suite и не native task deployment.
+
+```text
+QA result:   7dbd51e2864cd5f543cdce7ec02fd04e4a8e7e4fb2d0dd15eb8af065d7416e18
+group ledger: 0fbef175787a99269e107a4e21057c159013530310f703b3902e2a97f00d3b44
+native binary: a7f6324061c7cb67ad4be768df513eb3c027dc09861ab2360edd81a2dabc7dad
+```
+
+Бинарник включает адаптированный cross-engine native aggregate, но он пока
+только скомпилирован. Контролируемый Tracker peer в этом тесте не будет live
+evidence семи профессий.
+
+Отдельный штатный Base44 Build из exact67fe990/SDK7c создал backend-кандидат:
+
+```text
+image: sha256:d04ba18a729ab48702a284ad5ac3478fa6bdb7604e18310cb63d414e0cc61130
+source archive: 0517cf971d7b4d8c00412f3f883d807be2c2fd85c88a2d8e7e97c7d6f49e23fc
+build receipt: eaec24bf4006d95baaa47031251d2847ef51d99ad5db29ee500a1d9af2e3ea3c
+```
+
+`complete=false` означает сборку одного сервиса, а не отказ. Образ не установлен
+и не является image результата задачи. Фактический task TLS build, передача
+snapshot между engines, native HTTP OCI/health/acceptance и полный live SDLC
+остаются открытыми. Неизменные wire/API/client сохраняют отдельную codegen
+проверку; новая публичная DTO-схема этим пакетом не вводится.
+
+## Предыдущий Кандидат d3a0bbe
 
 Исходник `d3a0bbef79764587f21ad819f412d1e0f73fa95e`, SDK7c7b24c:
 закрытый локальный QA завершился с exit0 и verified cleanup.

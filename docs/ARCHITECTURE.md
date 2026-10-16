@@ -4,7 +4,7 @@ Typed task image-build source использует existing embedded runner и b
 Docker/TLS authority без передачи её jobs/agents. Exact Git export и generated
 OCI descriptor отделены от mutable job checkout. Source не заменяет actual
 build/deployment qualification: [ADR-0027](adr/0027-task-backend-image-build.md).
-34 unit-теста и atomic-terminal PG aggregate проверены отдельно от native
+51 unit-тест и atomic-terminal PG aggregate проверены отдельно от native
 build/deployment: [границы evidence](IMAGE_BUILD_QUALIFICATION_20261016.md).
 
 Owner-local OCI CLI поддерживает preloaded immutable image и read-only data
