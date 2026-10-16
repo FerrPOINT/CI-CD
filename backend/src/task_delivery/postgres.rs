@@ -10,33 +10,88 @@ use tokio::{
 pub const GUARD_KEY: i64 = 0x464f524745504744;
 
 // Pin transitive Python policy imports together with their privileged callers.
-const BASE_PG_HELPERS: [(&str, &[u8]); 5] = [
-    (
-        "platform_backup.py",
-        include_bytes!("../../../../services-base/scripts/platform_backup.py"),
-    ),
-    (
-        "platform_postgres.py",
-        include_bytes!("../../../../services-base/scripts/platform_postgres.py"),
-    ),
-    (
-        "compose_helpers.py",
-        include_bytes!("../../../../services-base/scripts/compose_helpers.py"),
-    ),
-    (
-        "platform_namespace.py",
-        include_bytes!("../../../../services-base/scripts/platform_namespace.py"),
-    ),
-    (
-        "_platform_namespace_contract.py",
-        include_bytes!("../../../../services-base/scripts/_platform_namespace_contract.py"),
-    ),
+macro_rules! pinned_base_helper {
+    ($path:literal) => {
+        (
+            $path,
+            include_bytes!(concat!("../../../../services-base/", $path)) as &[u8],
+        )
+    };
+}
+
+const BASE_PG_HELPERS: &[(&str, &[u8])] = &[
+    pinned_base_helper!("scripts/workspace_control.py"),
+    pinned_base_helper!("scripts/workspace_install.py"),
+    pinned_base_helper!("scripts/workspace_prepare.py"),
+    pinned_base_helper!("scripts/workspace_qualification.py"),
+    pinned_base_helper!("scripts/workspace_extended.py"),
+    pinned_base_helper!("scripts/workspace_workflow.py"),
+    pinned_base_helper!("scripts/workspace_backup.py"),
+    pinned_base_helper!("scripts/platform_backup.py"),
+    pinned_base_helper!("scripts/platform_postgres.py"),
+    pinned_base_helper!("scripts/ai_backup_state.py"),
+    pinned_base_helper!("scripts/native_jetstream.py"),
+    pinned_base_helper!("scripts/runtime_boundary.py"),
+    pinned_base_helper!("scripts/runtime_bootstrap.py"),
+    pinned_base_helper!("scripts/runtime_control.py"),
+    pinned_base_helper!("scripts/runtime_replacement.py"),
+    pinned_base_helper!("scripts/platform_runtime.py"),
+    pinned_base_helper!("scripts/runner_relay.py"),
+    pinned_base_helper!("scripts/platform_messaging.py"),
+    pinned_base_helper!("scripts/platform_namespace.py"),
+    pinned_base_helper!("scripts/service_names.py"),
+    pinned_base_helper!("scripts/workflow_image_probe.py"),
+    pinned_base_helper!("scripts/check_docker_invocations.py"),
+    pinned_base_helper!("scripts/_operator_compat.py"),
+    pinned_base_helper!("scripts/compose_helpers.py"),
+    pinned_base_helper!("scripts/_platform_namespace_contract.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/__init__.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/adapters/__init__.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/adapters/cli_cohort.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/adapters/docker_policy.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/adapters/messaging.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/adapters/runner_relay.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/adapters/source_context.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/adapters/workflow_probe.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/backup/__init__.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/backup/ai_state.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/backup/cli.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/backup/context.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/backup/jetstream.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/backup/migration.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/backup/platform.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/backup/postgres.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/backup/primitives.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/backup/storage.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/backup/workspace.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/cli.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/config.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/errors.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/namespace.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/paths.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/runtime/__init__.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/runtime/bootstrap.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/runtime/boundary.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/runtime/control.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/runtime/replacement.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/runtime/snapshot.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/runtime/worker.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/workspace/__init__.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/workspace/assets.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/workspace/control.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/workspace/extended.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/workspace/install.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/workspace/prepare.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/workspace/qualification.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/workspace/scope.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/workspace/services.py"),
+    pinned_base_helper!("base-operator/src/pdlc_operator/workspace/workflow.py"),
 ];
 
 fn verify_base_utilities(base_root: &Path) -> anyhow::Result<()> {
-    for (name, bytes) in BASE_PG_HELPERS {
+    for &(name, bytes) in BASE_PG_HELPERS {
         ensure!(
-            read_bytes(&base_root.join("scripts").join(name), 256 * 1024)? == bytes,
+            read_bytes(&base_root.join(name), 256 * 1024)? == bytes,
             "pinned Base utility differs"
         );
     }
@@ -340,7 +395,8 @@ pub async fn local_command(
     }
     let packet = serde_json::json!({"projectId":project,"root":resolved,"policy":policy,"policySha256":policy_hash,
         "command":command,"originalOperation":original,"sealedCandidate":candidate,
-        "readOnly":read_only,"reconcile":reconcile,"guardPid":guard_pid,"guardKey":GUARD_KEY});
+        "readOnly":read_only,"reconcile":reconcile,"guardPid":guard_pid,"guardKey":GUARD_KEY,
+        "baseSources":BASE_PG_HELPERS.iter().map(|(name, _)| *name).collect::<Vec<_>>()});
     let mut process = Command::new(&policy.python_bin);
     process
         .arg("-B")
@@ -422,12 +478,14 @@ mod tests {
         let root =
             Fixture(std::env::temp_dir().join(format!("forge-base-helpers-{}", Uuid::new_v4())));
         std::fs::create_dir_all(root.0.join("scripts")).unwrap();
-        for (name, bytes) in BASE_PG_HELPERS {
-            std::fs::write(root.0.join("scripts").join(name), bytes).unwrap();
+        for &(name, bytes) in BASE_PG_HELPERS {
+            let path = root.0.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, bytes).unwrap();
         }
         verify_base_utilities(&root.0).unwrap();
-        for name in ["platform_namespace.py", "_platform_namespace_contract.py"] {
-            let path = root.0.join("scripts").join(name);
+        for &(name, _) in BASE_PG_HELPERS {
+            let path = root.0.join(name);
             let original = std::fs::read(&path).unwrap();
             std::fs::write(&path, b"raise RuntimeError('unreviewed policy')").unwrap();
             assert_eq!(
