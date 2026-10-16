@@ -1,6 +1,33 @@
 # Проверка backend image build: 16 октября 2026
 
-## Текущий Cross-Engine Кандидат 67fe990
+## Текущее Исправление 7cf6afc
+
+Native aggregate реально запущен на исходнике67 с сохранённым binary a7f632
+в non-root backend D04 и отдельном TLS engine. Buildx создал образ; журналы
+содержат финальные export/unpack DONE. Но pipeline terminal receipt не получен:
+тест завершился101 на проверке known terminal custody, до OCI deployment.
+Это не успешный native build/deployment gate.
+
+Подтверждена конкретная несовместимость Docker29: `Config.Volumes` отсутствует
+у собранного image, поэтому прежний Go template `.Config.Volumes` завершается
+ошибкой. Read-only вызов из того же backend с `index .Config "Volumes"` возвращает
+null и совпадающие image/revision/attempt/request/OS. Никакой повтор build или
+ручной terminal ACK при диагностике не выполнялся.
+
+Исправление `7cf6afc427eb75f1e1af27aee725a54ce588f745` меняет только чтение
+необязательного поля и добавляет регрессию. Проверки exact image/source/attempt/
+request/daemon и запрет непустых volumes сохранены. Rustfmt/diff PASS; новая
+компиляция, unit/native и runtime image qualification ещё не выполнены.
+Исходник Hermes, CLI и публичные API/DTO не меняются.
+
+Private evidence находится под
+`.local/single-task-sdlc-20261013/forge-native-inputs-20261016/evidence-8c94daa5a999414d-staged/`.
+SHA256 redacted native diagnostic0024:
+`3e75aeda6d71f35dafe5f9056d89b00db7fbdb84806751b8834453c31a7af2d2`.
+После отказа scopes сохранены для original readback; их cleanup пока не заявлен.
+Отсутствие deployment receipt не заменяется фактом существования image.
+
+## Предыдущая Квалификация 67fe990
 
 Исходник `67fe990a0de34f42796241a0fcb6cacb61f6588d`, SDK7c7b24c:
 отдельный локальный QA закрыт с exit0, journal `cleaned`, verified cleanup.
@@ -20,9 +47,9 @@ group ledger: 0fbef175787a99269e107a4e21057c159013530310f703b3902e2a97f00d3b44
 native binary: a7f6324061c7cb67ad4be768df513eb3c027dc09861ab2360edd81a2dabc7dad
 ```
 
-Бинарник включает адаптированный cross-engine native aggregate, но он пока
-только скомпилирован. Контролируемый Tracker peer в этом тесте не будет live
-evidence семи профессий.
+На момент этого отдельного compile receipt бинарник был только скомпилирован.
+Последующий неуспешный native запуск описан выше и не изменяет старый receipt.
+Контролируемый Tracker peer не является live evidence семи профессий.
 
 Отдельный штатный Base44 Build из exact67fe990/SDK7c создал backend-кандидат:
 
