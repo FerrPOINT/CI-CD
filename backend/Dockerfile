@@ -1,8 +1,10 @@
+# syntax=docker/dockerfile:1.27.1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 # Umbrella build for the SDLC fleet root compose (context = /opt/dev/sdlc).
 # Stages the sibling services-base checkout so the sdlc-auth-core path
 # dependency (../../../services-base/...) resolves.
 ARG FORGE_COMPOSE_SOURCE=download
 FROM rust:1.88.0-slim-bookworm@sha256:38bc5a86d998772d4aec2348656ed21438d20fcdce2795b56ca434cf21430d89 AS dependencies
+ARG PDLC_RUN_SLOT_SHARING=locked
 ARG TARGETARCH
 ARG CARGO_REGISTRY_CACHE_ID=pdlc-operator-downloads-v1-cargo188
 ARG CARGO_BUILD_JOBS=2
@@ -18,7 +20,7 @@ COPY CI-CD/backend/infra/Cargo.toml infra/Cargo.toml
 COPY CI-CD/backend/api/Cargo.toml api/Cargo.toml
 COPY CI-CD/backend/cli/Cargo.toml cli/Cargo.toml
 COPY CI-CD/backend/migration/Cargo.toml migration/Cargo.toml
-RUN --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked mkdir -p src/bin domain/src app/src infra/src api/src cli/src migration/src \
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked mkdir -p src/bin domain/src app/src infra/src api/src cli/src migration/src \
  && printf 'fn main() {}\n' > src/main.rs && printf '' > src/lib.rs \
  && printf 'fn main() {}\n' > src/bin/openapi-dump.rs && printf 'fn main() {}\n' > src/bin/forge-runner.rs \
  && printf 'fn main() {}\n' > src/bin/forge-delivery.rs && printf 'fn main() {}\n' > src/bin/forge-pg-migrate.rs \
@@ -32,9 +34,10 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACH
  && /usr/local/cargo/bin/cargo clean -p cicd-server -p cicd-domain -p cicd-app -p cicd-infra -p cicd-api -p cicd-cli -p cicd-migrate
 
 FROM dependencies AS unit-dependencies
+ARG PDLC_RUN_SLOT_SHARING=locked
 # Keep both unit graphs' external compilation independent of their source files.
 COPY CI-CD/backend/tests/cache-protocol/Cargo.toml CI-CD/backend/tests/cache-protocol/Cargo.lock ./tests/cache-protocol/
-RUN --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked \
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked \
     /usr/local/cargo/bin/cargo test --locked --release -p cicd-domain --lib --no-run \
     && /usr/local/cargo/bin/cargo clean --release -p cicd-server -p cicd-domain -p cicd-app -p cicd-infra -p cicd-api -p cicd-cli -p cicd-migrate \
     && mkdir -p tests/cache-protocol/src && printf '\n' > tests/cache-protocol/src/lib.rs \
@@ -43,20 +46,22 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACH
     && rm -rf -- tests/cache-protocol/src
 
 FROM unit-dependencies AS unit
+ARG PDLC_RUN_SLOT_SHARING=locked
 ARG TARGETARCH
 ARG CARGO_REGISTRY_CACHE_ID=pdlc-operator-downloads-v1-cargo188
 COPY CI-CD/backend/domain ./domain
 COPY CI-CD/backend/src/runner_cache.rs ./src/runner_cache.rs
 COPY CI-CD/backend/tests/cache-protocol ./tests/cache-protocol
 COPY CI-CD/scripts/vendor/base_forge_job_cache.py CI-CD/scripts/vendor/base-build-cache-policy.json CI-CD/scripts/vendor/base-forge-cache-tooling.json /scripts/vendor/
-RUN --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked /usr/local/cargo/bin/cargo test --locked --release -p cicd-domain --lib
-RUN --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked CARGO_TARGET_DIR=/app/target /usr/local/cargo/bin/cargo test --locked --release --manifest-path tests/cache-protocol/Cargo.toml --lib && printf 'passed\n' > /tmp/rust-unit-check
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked /usr/local/cargo/bin/cargo test --locked --release -p cicd-domain --lib
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked CARGO_TARGET_DIR=/app/target /usr/local/cargo/bin/cargo test --locked --release --manifest-path tests/cache-protocol/Cargo.toml --lib && printf 'passed\n' > /tmp/rust-unit-check
 
 FROM dependencies AS build
+ARG PDLC_RUN_SLOT_SHARING=locked
 ARG TARGETARCH
 ARG CARGO_REGISTRY_CACHE_ID=pdlc-operator-downloads-v1-cargo188
-RUN --mount=type=bind,from=unit,source=/tmp/rust-unit-check,target=/tmp/rust-unit-check test "$(cat /tmp/rust-unit-check)" = passed
-RUN rm -rf -- src domain/src app/src infra/src api/src cli/src migration/src
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=bind,from=unit,source=/tmp/rust-unit-check,target=/tmp/rust-unit-check test "$(cat /tmp/rust-unit-check)" = passed
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} rm -rf -- src domain/src app/src infra/src api/src cli/src migration/src
 COPY CI-CD/backend/src ./src
 COPY CI-CD/scripts/vendor/base_forge_job_cache.py CI-CD/scripts/vendor/base-build-cache-policy.json CI-CD/scripts/vendor/base-forge-cache-tooling.json /scripts/vendor/
 COPY CI-CD/backend/build.rs ./build.rs
@@ -72,24 +77,26 @@ COPY CI-CD/scripts/postgres-delivery.py /scripts/postgres-delivery.py
 COPY services-base/scripts /services-base/scripts
 # Only the server and external runner ship in this image. The standalone CLI
 # has its own Fleet producer; workspace CI and release retain its checks.
-RUN --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked find src domain app infra api cli migration -name '*.rs' -exec touch {} + \
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=cache,target=/usr/local/cargo/registry,id=${CARGO_REGISTRY_CACHE_ID}-${TARGETARCH},sharing=locked find src domain app infra api cli migration -name '*.rs' -exec touch {} + \
  && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server --bin cicd-server --bin forge-runner
 
 FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS runtime-base
+ARG PDLC_RUN_SLOT_SHARING=locked
 # docker-cli only (DooD): embedded runner spawns job containers through the
 # mounted host docker socket; no daemon runs inside this image. The static
 # official CLI is pinned because bookworm's docker.io is too old for the
 # host daemon API (>=1.44).
 ARG DOCKER_CLI_VERSION=29.5.0
-RUN apt-get update && apt-get install -y --no-install-recommends curl git git-lfs unzip xz-utils ca-certificates && rm -rf /var/lib/apt/lists/* \
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} apt-get update && apt-get install -y --no-install-recommends curl git git-lfs unzip xz-utils ca-certificates && rm -rf /var/lib/apt/lists/* \
  && curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_CLI_VERSION}.tgz \
   | tar -xz --strip-components=1 -C /usr/local/bin docker/docker \
  && useradd --create-home --uid 10001 cicd
 
 FROM runtime-base AS compose-download
+ARG PDLC_RUN_SLOT_SHARING=locked
 # Official Compose v5.5.1 release checksums (not downloaded mutable checksums).
 ARG TARGETARCH
-RUN case "${TARGETARCH:-amd64}" in \
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} case "${TARGETARCH:-amd64}" in \
       amd64) compose_arch=x86_64; compose_sha=db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576 ;; \
       arm64) compose_arch=aarch64; compose_sha=732e3a84c1a0f67256ce80bc2598a24546b10ca05f9faa97efceb1171ece2ef7 ;; \
       *) exit 1 ;; esac \
@@ -101,8 +108,9 @@ RUN case "${TARGETARCH:-amd64}" in \
  && docker compose version
 
 FROM runtime-base AS compose-preloaded
+ARG PDLC_RUN_SLOT_SHARING=locked
 ARG TARGETARCH
-RUN --mount=type=bind,from=forge-compose,source=/docker-compose,target=/tmp/docker-compose case "${TARGETARCH:-amd64}" in \
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} --mount=type=bind,from=forge-compose,source=/docker-compose,target=/tmp/docker-compose case "${TARGETARCH:-amd64}" in \
       amd64) compose_arch=x86_64; compose_sha=db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576 ;; \
       arm64) compose_arch=aarch64; compose_sha=732e3a84c1a0f67256ce80bc2598a24546b10ca05f9faa97efceb1171ece2ef7 ;; \
       *) exit 1 ;; esac \
@@ -112,12 +120,13 @@ RUN --mount=type=bind,from=forge-compose,source=/docker-compose,target=/tmp/dock
  && docker compose version
 
 FROM compose-${FORGE_COMPOSE_SOURCE} AS runtime
+ARG PDLC_RUN_SLOT_SHARING=locked
 
 WORKDIR /app
 COPY --from=build /app/target/release/cicd-server /usr/local/bin/cicd-server
 COPY --from=build /app/target/release/forge-runner /usr/local/bin/forge-runner
 COPY --from=build /app/migrations /app/migrations
-RUN mkdir -p /var/lib/forge/git /var/lib/forge/artifacts /workspaces \
+RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sharing=${PDLC_RUN_SLOT_SHARING} mkdir -p /var/lib/forge/git /var/lib/forge/artifacts /workspaces \
  && chown -R cicd:cicd /var/lib/forge /workspaces
 USER cicd
 EXPOSE 22801

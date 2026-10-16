@@ -14,6 +14,17 @@ from pathlib import Path
 SCHEMA = "base-quality-product/v1"
 
 
+def validate_gate_slot(gate):
+    mode = gate.get("execution_slot")
+    if mode not in (None, "host", "none", "command"):
+        raise ValueError("Unsupported execution slot policy")
+    if mode == "none" and (gate.get("test_tier") not in ("unit", "static")
+                           or gate.get("prepare_frontend") or gate.get("kind") == "artifact"):
+        raise ValueError("Only independent unit/static commands may omit the execution slot")
+    if mode == "command" and (gate.get("prepare_frontend") or gate.get("artifact_outputs")):
+        raise ValueError("Command-owned gates own their preparation and artifact namespace")
+
+
 def inside(root, relative):
     path = Path(relative)
     if path.is_absolute() or ".." in path.parts:
@@ -80,6 +91,7 @@ def load(root):
             raise ValueError("Invalid component path pattern")
     identifiers = set()
     for gate in manifest["gates"]:
+        validate_gate_slot(gate)
         identifier = gate["id"]
         if (
             not re.fullmatch(r"[a-zA-Z0-9:_-]+", identifier)
@@ -225,6 +237,28 @@ def plan(
     }
 
 
+def plan_summary(candidate):
+    """Bound human-facing output without changing the executable plan."""
+    files = candidate["changed"]
+    return {
+        "schema": "base-quality-plan-summary/v1",
+        **{name: candidate[name] for name in ("product", "head", "profile", "components", "manifest_sha256")},
+        "changed_count": len(files),
+        "changed_sample": files[:20],
+        "changed_omitted": max(0, len(files) - 20),
+        "reasons": {
+            component: {"matched_files": len(paths), "sample": paths[:3]}
+            for component, paths in candidate["reasons"].items()
+        },
+        "gates": [
+            {name: gate[name] for name in ("id", "component", "test_tier") if name in gate}
+            for gate in candidate["gates"]
+        ],
+        "additional_acceptance": candidate.get("additional_acceptance"),
+        "full_plan": "Omit --summary; root launcher: -PlanOnly -DetailedPlan",
+    }
+
+
 def ci_components(root, event, base, head, manifest_root=None):
     manifest = load(manifest_root or root)
     if event not in ("pull_request", "push") or (
@@ -260,13 +294,18 @@ def ci_outputs(event, base, head, *, repo, manifest_root=None):
         files = git(
             repo, "diff", "--name-only", "--no-renames", base, head
         ).splitlines()
-        # Browser tests and unknown paths remain conservative. Only declared unit-test
-        # inputs can omit the production artifact and its unchanged browser checks.
-        unit_only = bool(files) and all(
-            matches(name, manifest.get("frontend_unit_inputs", [])) for name in files
+        # Decide each producer from its own affected paths. An unrelated backend
+        # change must not turn a frontend test-only change into an asset rebuild.
+        # Unknown paths and explicit shared impacts still expand through the map.
+        _, reasons = components_for_paths(manifest, files)
+        frontend_files = set(reasons.get("frontend", []))
+        backend_files = {name for component in ("backend", "shared", "bot", "cli")
+                         for name in reasons.get(component, [])}
+        unit_only = bool(frontend_files) and all(
+            matches(name, manifest.get("frontend_unit_inputs", [])) for name in frontend_files
         )
-        backend_unit_only = bool(files) and all(
-            matches(name, manifest.get("backend_unit_inputs", [])) for name in files
+        backend_unit_only = bool(backend_files) and all(
+            matches(name, manifest.get("backend_unit_inputs", [])) for name in backend_files
         )
     else:
         unit_only = False
