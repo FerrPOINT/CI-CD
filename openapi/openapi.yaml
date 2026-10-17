@@ -1811,7 +1811,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/GitPushEvent'
+              $ref: '#/components/schemas/PushRequest'
         required: true
       responses:
         '200':
@@ -2409,15 +2409,44 @@ paths:
           - 'null'
           format: int32
           minimum: 0
+      - name: base_ref
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: base_commit
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: delivery_configuration_name
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
       responses:
         '200':
           description: ''
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/VerifiedRepository'
+                $ref: '#/components/schemas/RepositoryReadback'
+        '400':
+          description: ''
         '403':
-          description: Foreign namespace
+          description: ''
+        '404':
+          description: ''
+        '409':
+          description: ''
+        '503':
+          description: ''
   /api/v1/namespace-resources/git_group/{id}:
     get:
       tags:
@@ -6219,6 +6248,14 @@ components:
           type: integer
           format: int64
       additionalProperties: false
+    CandidateCheck:
+      type: object
+      required:
+      - task_candidate
+      properties:
+        task_candidate:
+          $ref: '#/components/schemas/GitContext'
+      additionalProperties: false
     CandidateEvidenceReadback:
       type: object
       description: Fresh local observation tied to an immutable blocked operation, never a delivery receipt.
@@ -6724,6 +6761,25 @@ components:
           - 'null'
         repository_url:
           type: string
+    DeliveryConfigurationReadback:
+      type: object
+      required:
+      - id
+      - name
+      - repository_id
+      - repository_name
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        repository_id:
+          type: string
+          format: uuid
+        repository_name:
+          type: string
+      additionalProperties: false
     DeliveryManifest:
       type: object
       required:
@@ -7139,6 +7195,46 @@ components:
           format: date-time
         status:
           type: string
+    GitContext:
+      type: object
+      required:
+      - version
+      - projectId
+      - repository
+      - source
+      - intent
+      - runId
+      - chatId
+      - machineSubject
+      - oldOid
+      - newOid
+      properties:
+        chatId:
+          type: string
+          format: uuid
+        intent:
+          $ref: '#/components/schemas/TaskWorkspaceIntent'
+        machineSubject:
+          type: string
+        newOid:
+          type: string
+        oldOid:
+          type: string
+        projectId:
+          type: string
+          format: uuid
+        repository:
+          type: string
+        runId:
+          type: string
+          format: uuid
+        source:
+          $ref: '#/components/schemas/SourceBinding'
+        version:
+          type: integer
+          format: int32
+          minimum: 0
+      additionalProperties: false
     GitPushEvent:
       type: object
       required:
@@ -8322,6 +8418,10 @@ components:
           - 'null'
           format: uuid
       additionalProperties: false
+    PushRequest:
+      oneOf:
+      - $ref: '#/components/schemas/CandidateCheck'
+      - $ref: '#/components/schemas/GitPushEvent'
     Readiness:
       type: object
       required:
@@ -8488,6 +8588,10 @@ components:
           format: uuid
         status:
           type: string
+    RepositoryReadback:
+      oneOf:
+      - $ref: '#/components/schemas/VerifiedRepository'
+      - $ref: '#/components/schemas/VerifiedSource'
     RepositoryRef:
       type: object
       required:
@@ -9391,6 +9495,83 @@ components:
           format: uuid
         name:
           type: string
+    SourceBinding:
+      type: object
+      required:
+      - contract_version
+      - tracker_instance_id
+      - project_id
+      - task_id
+      - root_task_id
+      - confirmation_id
+      - requirement_revision
+      - content_hash
+      - routing_snapshot_id
+      - namespace
+      - forge_instance_id
+      - repository_id
+      - base_ref
+      - base_commit
+      - candidate_ref
+      - source_revision
+      - policy_hash
+      - source_hash
+      - owner_subject
+      - created_at
+      properties:
+        base_commit:
+          type: string
+        base_ref:
+          type: string
+        candidate_ref:
+          type: string
+        confirmation_id:
+          type: string
+          format: uuid
+        content_hash:
+          type: string
+        contract_version:
+          type: integer
+          format: int32
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+        forge_instance_id:
+          type: string
+          format: uuid
+        namespace:
+          $ref: '#/components/schemas/NamespaceRef'
+        owner_subject:
+          type: string
+        policy_hash:
+          type: string
+        project_id:
+          type: string
+          format: uuid
+        repository_id:
+          type: string
+          format: uuid
+        requirement_revision:
+          type: integer
+          format: int64
+        root_task_id:
+          type: string
+          format: uuid
+        routing_snapshot_id:
+          type: string
+          format: uuid
+        source_hash:
+          type: string
+        source_revision:
+          type: integer
+          format: int64
+        task_id:
+          type: string
+          format: uuid
+        tracker_instance_id:
+          type: string
+      additionalProperties: false
     Stage:
       type: object
       required:
@@ -9437,6 +9618,41 @@ components:
           type: string
         sha:
           type: string
+    TaskCredentialContext:
+      type: object
+      required:
+      - version
+      - projectId
+      - intent
+      - runId
+      - chatId
+      - machineSubject
+      - triggerId
+      - variablesSha256
+      properties:
+        chatId:
+          type: string
+          format: uuid
+        intent:
+          $ref: '#/components/schemas/TaskWorkspaceIntent'
+        machineSubject:
+          type: string
+        projectId:
+          type: string
+          format: uuid
+        runId:
+          type: string
+          format: uuid
+        triggerId:
+          type: string
+          format: uuid
+        variablesSha256:
+          type: string
+        version:
+          type: integer
+          format: int32
+          minimum: 0
+      additionalProperties: false
     TaskDeliveryFence:
       type: object
       required:
@@ -9528,6 +9744,10 @@ components:
       type: object
       description: Additive task branch; legacy field types/defaults and ordinary trigger remain unchanged.
       properties:
+        credential_context:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/TaskCredentialContext'
         git_ref:
           type:
           - string
@@ -9829,6 +10049,47 @@ components:
         repository_id:
           type: string
           format: uuid
+    VerifiedSource:
+      type: object
+      required:
+      - namespace
+      - forge_instance_id
+      - repository_id
+      - public_name
+      - base_ref
+      - base_commit
+      - default_ref
+      - protected_refs
+      - observed_at
+      properties:
+        base_commit:
+          type: string
+        base_ref:
+          type: string
+        default_ref:
+          type: string
+        delivery_configuration:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/DeliveryConfigurationReadback'
+        forge_instance_id:
+          type: string
+          format: uuid
+        namespace:
+          $ref: '#/components/schemas/NamespaceRef'
+        observed_at:
+          type: string
+          format: date-time
+        protected_refs:
+          type: array
+          items:
+            type: string
+        public_name:
+          type: string
+        repository_id:
+          type: string
+          format: uuid
+      additionalProperties: false
     Webhook:
       type: object
       required:
