@@ -15,6 +15,10 @@
 
 ## [Unreleased]
 
+- Native QA Compose использует явно выбранные host-side context, daemon ID и
+  hash maintenance SDK вместо подключения к конкретному чужому стенду.
+  Recovery сверяет те же значения с журналом; автоматического fallback нет.
+
 - Обычный Compose retry без image-build custody не требует Unix/private
   каталога новой функции. Проверки journal/daemon/job/stop/cleanup сохраняются;
   незавершённая либо чужая image-build попытка по-прежнему блокирует повтор.

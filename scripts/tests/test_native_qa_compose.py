@@ -26,6 +26,10 @@ IMAGE = 'sha256:' + 'a' * 64
 IMAGE2 = 'sha256:' + 'b' * 64
 PG = 'sdlc-qa-forge-pg-' + '1' * 12
 OCI = 'sdlc-qa-forge-oci-' + '1' * 12
+CONTEXT = 'qa-workspace-2'
+DAEMON_ID = '00000000-0000-0000-0000-000000000002'
+SDK_SHA256 = os.environ.get('SDLC_MAINTENANCE_SDK_SHA256')
+TARGET = dict(docker_context=CONTEXT, daemon_id=DAEMON_ID, sdk_sha256=SDK_SHA256)
 
 
 class DockerModel:
@@ -36,11 +40,11 @@ class DockerModel:
 
     def checked(self, command, *, text=False, **_):
         self.commands.append(command)
-        assert command[:3] == ['docker', '--context', 'rootless']
+        assert command[:3] == ['docker', '--context', CONTEXT]
         args = command[3:]
         value = ''
         if args[0] == 'info':
-            value = q.DAEMON_ID
+            value = DAEMON_ID
         elif args[:2] == ['image', 'inspect']:
             value = args[2]
         elif args[0] in self.items:
@@ -110,7 +114,7 @@ class NativeSdkTests(unittest.TestCase):
         path = os.environ.get('SDLC_MAINTENANCE_BASE')
         if not path:
             raise RuntimeError('Pure SDK integration requires explicit SDLC_MAINTENANCE_BASE; no old Base fallback')
-        cls.sdk = q.load_sdk(path)
+        cls.sdk = q.load_sdk(path, sdk_sha256=SDK_SHA256)
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -126,7 +130,7 @@ class NativeSdkTests(unittest.TestCase):
         patch.object(self.sdk.shutil, 'disk_usage', return_value=type('Usage', (), {'free': 200 * 1024 ** 3})()).start()
         patch.dict(os.environ, {'SDLC_RESOURCE_REGISTRY': str(self.root / 'registry'), 'SDLC_MIN_FREE_GIB': '30'}).start()
         self.bridge = q.NativeComposeBridge(sdk=self.sdk, children=self.children,
-            pg_project=PG, oci_project=OCI, registry=self.root / 'registry')
+            pg_project=PG, oci_project=OCI, registry=self.root / 'registry', **TARGET)
         self.data = self.root / 'data.json'
         self.data.write_bytes(b'{}')
 
@@ -172,7 +176,9 @@ class NativeSdkTests(unittest.TestCase):
         self.assertIsInstance(operation, self.sdk.ComposeHelper)
         journal = q.read(operation.journal)
         self.assertEqual(journal['version'], 2)
-        self.assertEqual(journal['daemon_id'], q.DAEMON_ID)
+        self.assertEqual(journal['daemon_id'], DAEMON_ID)
+        self.assertEqual(journal['docker'], ['docker', '--context', CONTEXT])
+        self.assertEqual(journal['sdk_sha256'], SDK_SHA256)
         self.assertEqual(journal['owner_pid'], os.getpid())
         self.assertEqual(journal['manifest_sha256'], q.digest(operation.path.read_bytes()))
         self.assertEqual(len(journal['generations']), 1)
@@ -310,7 +316,7 @@ class NativeSdkTests(unittest.TestCase):
             self.up('oci', source, 'application')
 
     def test_application_cannot_add_capabilities_or_writable_mount(self):
-        validator = q.session_class(self.sdk).__new__(q.session_class(self.sdk))
+        validator = q.session_class(self.sdk, SDK_SHA256).__new__(q.session_class(self.sdk, SDK_SHA256))
         validator.kind, validator.project = 'oci', OCI
         for key, value in [('cap_add', ['ALL']), ('devices', ['/dev/null'])]:
             app = self.app('oci')
@@ -399,24 +405,24 @@ class NativeSdkTests(unittest.TestCase):
     def test_v2_recovery_requires_dead_owner(self):
         operation = self.expired_journal()
         with patch.object(q, 'owner_dead', return_value=False), self.assertRaises(ValueError):
-            q.recover_session(self.sdk, operation.journal, self.root)
+            q.recover_session(self.sdk, operation.journal, self.root, **TARGET)
 
     def test_v2_recovery_requires_24_hours(self):
         operation, _ = self.start_pg()
         with patch.object(q, 'owner_dead', return_value=True), self.assertRaises(ValueError):
-            q.recover_session(self.sdk, operation.journal, self.root)
+            q.recover_session(self.sdk, operation.journal, self.root, **TARGET)
 
     def test_v2_recovery_requires_stopped_containers(self):
         operation = self.expired_journal()
         for item in self.model.items['container'].values():
             item['State']['Running'] = True
         with patch.object(q, 'owner_dead', return_value=True), self.assertRaises(ValueError):
-            q.recover_session(self.sdk, operation.journal, self.root)
+            q.recover_session(self.sdk, operation.journal, self.root, **TARGET)
 
     def test_v2_recovery_applies_sdk_exact_cleanup_only_after_guards(self):
         operation = self.expired_journal()
         with patch.object(q, 'owner_dead', return_value=True):
-            report = q.recover_session(self.sdk, operation.journal, self.root, apply=True)
+            report = q.recover_session(self.sdk, operation.journal, self.root, apply=True, **TARGET)
         self.assertEqual(report['status'], 'cleaned')
         self.assertFalse(self.model.items['volume'])
         self.assertIn('parent_qa', self.model.items['network'])
@@ -425,7 +431,55 @@ class NativeSdkTests(unittest.TestCase):
         operation = self.expired_journal()
         operation.path.write_text('{}')
         with patch.object(q, 'owner_dead', return_value=True), self.assertRaises(ValueError):
-            q.recover_session(self.sdk, operation.journal, self.root, apply=True)
+            q.recover_session(self.sdk, operation.journal, self.root, apply=True, **TARGET)
+
+    def test_target_requires_explicit_valid_identity(self):
+        for key, values in (
+                ('docker_context', (None, '', '--host', 'ctx --host=x')),
+                ('daemon_id', (None, '', 'current', DAEMON_ID + 'x')),
+                ('sdk_sha256', (None, '', 'a' * 63, 'a' * 65))):
+            for value in values:
+                with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                    q.validate_target(**dict(TARGET, **{key: value}))
+
+    def test_wrong_daemon_refused_before_compose_mutation(self):
+        self.bridge.daemon_id = '00000000-0000-0000-0000-000000000001'
+        source = self.source('pg', self.pg())
+        with self.assertRaisesRegex(RuntimeError, 'Daemon identity mismatch'):
+            self.up('pg', source, 'database')
+        self.assertFalse(self.model.items['container'])
+        self.assertFalse(self.model.items['volume'])
+        self.assertFalse(any('up' in command for command in self.model.commands))
+
+    def test_no_session_down_still_checks_exact_daemon(self):
+        self.bridge.daemon_id = '00000000-0000-0000-0000-000000000001'
+        source = self.source('pg', self.pg())
+        with self.assertRaisesRegex(RuntimeError, 'Daemon identity mismatch'):
+            self.bridge.execute(['-p', PG, '-f', str(source), 'down', '--remove-orphans'])
+        self.assertEqual(self.model.commands, [
+            ['docker', '--context', CONTEXT, 'info', '--format', '{{.ID}}']])
+
+    def test_recovery_rejects_other_context_or_daemon_without_contacting_it(self):
+        operation = self.expired_journal()
+        for changed in ({'docker_context': 'qa-workspace-1'},
+                        {'daemon_id': '00000000-0000-0000-0000-000000000001'}):
+            with self.subTest(changed=changed), patch.object(q, 'owner_dead', return_value=True):
+                self.model.commands.clear()
+                with self.assertRaisesRegex(ValueError, 'Native recovery identity mismatch'):
+                    q.recover_session(self.sdk, operation.journal, self.root, apply=True,
+                                      **dict(TARGET, **changed))
+                self.assertFalse(self.model.commands)
+
+    def test_wrong_sdk_hash_refused_before_import(self):
+        with patch.object(q.importlib, 'import_module') as imported, self.assertRaisesRegex(ValueError, 'SDK hash mismatch'):
+            q.load_sdk(Path(self.sdk.__file__).parents[1], sdk_sha256='0' * 64)
+        imported.assert_not_called()
+
+    def test_bridge_rejects_loaded_sdk_with_different_hash(self):
+        with self.assertRaisesRegex(ValueError, 'SDK hash mismatch'):
+            q.NativeComposeBridge(sdk=self.sdk, children=self.children,
+                pg_project=PG, oci_project=OCI, registry=self.root / 'registry',
+                **dict(TARGET, sdk_sha256='0' * 64))
 
     def test_recovery_never_uses_windows_kill(self):
         with patch.object(q.os, 'name', 'nt'), patch.object(q.os, 'kill') as kill, self.assertRaises(ValueError):
