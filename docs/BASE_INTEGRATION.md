@@ -52,6 +52,18 @@ Frontend job CI проверяет UI checkout независимо от backend
 на точном SHA. Совместную пересборку backend и UI с разными pins выполняйте
 отдельно, сохраняя исходный SDK checkout.
 
+UI pin `e0759e070326c905f365182d0107f8c87a2e67f6` принимает Base #245:
+до получения runtime-каталога меню сохраняет названия сервисов без ссылок.
+Ошибка или пустой каталог не разрешают переходы по встроенным адресам другого
+стенда. Полученный каталог задаёт точные URL; продуктовая навигация и project
+scope сохраняются. Регрессия рендерит настоящий `AppShell` и Base provider,
+проверяя ожидание, отказ и получение каталога. SDK/Rust pin, API, данные,
+credentials и `VITE_NAMESPACE_ENABLED` этим UI-обновлением не меняются.
+Прежний переход `/users` использует тот же каталог и переносит namespace в
+Admin, сохраняя UI base path. Пока адрес не подтверждён, действие недоступно.
+Неиспользуемый build argument `VITE_ADMIN_UI_URL` удалён: настройка назначения
+выполняется через `VITE_PLATFORM_SERVICES_URL` и собственный каталог Admin.
+
 `VITE_PLATFORM_ORIGIN` передаётся как Docker build argument. Пустое значение
 сохраняет standalone; настроенное включает memory router, silent SSO и общий
 bridge. Продукт сохраняет собственные API, профиль, permissions и формы.

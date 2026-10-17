@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router'
+import { PlatformServicesProvider } from '@pdlc/ui/lib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ProjectsPage } from './index'
 import { api } from '@/api/client'
@@ -24,19 +25,26 @@ function project(index: number) {
   }
 }
 function mount() {
+  vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+    services: [{ key: 'admin-panel', label: 'Own Admin', url: 'http://localhost:8771',
+      ui_url: 'http://localhost:8772', health: 'unknown' }],
+  })))))
   return render(
     <QueryClientProvider
       client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}
     >
-      <MemoryRouter initialEntries={['/projects?project_scope=all']}>
-        <ProjectsPage />
-      </MemoryRouter>
+      <PlatformServicesProvider catalogUrl="https://admin.own.test/api/v1/runtime/services">
+        <MemoryRouter initialEntries={['/projects?project_scope=all']}>
+          <ProjectsPage />
+        </MemoryRouter>
+      </PlatformServicesProvider>
     </QueryClientProvider>,
   )
 }
 afterEach(() => {
   cleanup()
   vi.resetAllMocks()
+  vi.unstubAllGlobals()
 })
 describe('shared workspace catalog', () => {
   it('uses Tracker keys and stable Namespace routes for equally named projects', async () => {
@@ -52,8 +60,8 @@ describe('shared workspace catalog', () => {
       expect(link.querySelector(`[data-project-avatar="${index ? 'TWO' : 'ONE'}"]`)).not.toBeNull()
     })
     expect(screen.queryByRole('button', { name: /Удалить|Создать/ })).toBeNull()
-    expect(screen.getByRole('link', { name: 'Создать проект' }).getAttribute('href')).toContain(
-      '/namespaces',
+    expect(await screen.findByRole('link', { name: 'Создать проект' })).toHaveAttribute(
+      'href', 'http://localhost:8772/namespaces?project_scope=all',
     )
   })
   it('searches and paginates on the server beyond the first page', async () => {
