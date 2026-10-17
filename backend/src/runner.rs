@@ -1365,8 +1365,49 @@ async fn run_job_inner(
     }
     envs.extend(secrets.iter().cloned());
 
+    let deployment = crate::runner_image_build::workspace_deploy::prepare_requested(
+        &pool,
+        crate::runner_image_build::ImageBuildScope {
+            project_id: job.project_id,
+            pipeline_id: job.pipeline_id,
+            job_id,
+            attempt_id,
+            lease_id: lease.id,
+            generation: lease.generation,
+        },
+        config,
+        &workspace_root(config).join(".compose-control"),
+        &secrets,
+    )
+    .await?;
+    let deployment_until = if deployment.is_some() {
+        match crate::api::sdlc_workspace::task_pipeline::before_spawn(
+            &pool,
+            job.pipeline_id,
+            attempt_id,
+            &config.sdlc_workspace,
+            &config.secrets,
+        )
+        .await
+        {
+            Ok(crate::api::sdlc_workspace::task_pipeline::Spawn::Permit(until)) => Some(until),
+            _ => return Ok(ExecutionOutcome::Held),
+        }
+    } else {
+        None
+    };
+
     let mut remote_job = if image_build.is_none() && config.mode == RunnerMode::Docker {
-        Some(
+        Some(if let Some(deployment) = &deployment {
+            match crate::runner_docker::RemoteJob::prepare_deployment(
+                job_id, attempt_id, &workspace, deployment, &pool, config,
+            )
+            .await
+            {
+                Ok(remote) => remote,
+                Err(_) => return Ok(ExecutionOutcome::Held),
+            }
+        } else {
             crate::runner_docker::RemoteJob::prepare(job_id, attempt_id, &workspace)
                 .await
                 .map_err(|error| {
@@ -1374,8 +1415,8 @@ async fn run_job_inner(
                         &format!("runner: isolated Docker preparation failed: {error}"),
                         &masks,
                     ))
-                })?,
-        )
+                })?
+        })
     } else {
         None
     };
@@ -1443,13 +1484,20 @@ async fn run_job_inner(
         cmd
     };
 
-    let task_until = crate::api::sdlc_workspace::task_pipeline::before_spawn(
-        &pool,
-        job.pipeline_id,
-        attempt_id,
-        &config.sdlc_workspace,
-    )
-    .await;
+    let task_until = if let Some(until) = deployment_until {
+        Ok(crate::api::sdlc_workspace::task_pipeline::Spawn::Permit(
+            until,
+        ))
+    } else {
+        crate::api::sdlc_workspace::task_pipeline::before_spawn(
+            &pool,
+            job.pipeline_id,
+            attempt_id,
+            &config.sdlc_workspace,
+            &config.secrets,
+        )
+        .await
+    };
     let task_until = match task_until {
         Err(_) | Ok(crate::api::sdlc_workspace::task_pipeline::Spawn::Held) => {
             return Ok(ExecutionOutcome::Held);
@@ -1469,7 +1517,9 @@ async fn run_job_inner(
     .fetch_one(&pool)
     .await
     .map_err(ApiError::internal)?;
-    if image_build.is_some() && (!active || !image_build_attempt_active(&pool, &lease).await?) {
+    if (image_build.is_some() || deployment.is_some())
+        && (!active || !image_build_attempt_active(&pool, &lease).await?)
+    {
         return Ok(ExecutionOutcome::Held);
     }
     if !active {
@@ -1491,10 +1541,55 @@ async fn run_job_inner(
             return Ok(ExecutionOutcome::Held);
         }
     }
+    let mut deployment_deadline = None;
+    if let Some(deployment) = &deployment {
+        drop(guard);
+        if remote_job
+            .as_mut()
+            .expect("Docker deployment owner")
+            .start_deployment(deployment, &pool, config)
+            .await
+            .is_err()
+        {
+            return Ok(ExecutionOutcome::Held);
+        }
+        match deployment.effect_deadline(&pool, config).await {
+            Ok(until) => deployment_deadline = Some(until),
+            Err(_) => {
+                let _ = remote_job
+                    .as_mut()
+                    .expect("Docker deployment owner")
+                    .stop_execution()
+                    .await;
+                return Ok(ExecutionOutcome::Held);
+            }
+        }
+        guard = running.lock().await;
+        if !image_build_attempt_active(&pool, &lease).await?
+            || deployment_deadline.is_some_and(|until| std::time::Instant::now() >= until)
+        {
+            drop(guard);
+            let _ = remote_job
+                .as_mut()
+                .expect("Docker deployment owner")
+                .stop_execution()
+                .await;
+            return Ok(ExecutionOutcome::Held);
+        }
+    }
     let mut child = match child.spawn() {
         Ok(child) => child,
         Err(_) if image_build.is_some() => {
             let _ = image_build.as_ref().expect("build scope").hold_unknown();
+            return Ok(ExecutionOutcome::Held);
+        }
+        Err(_) if deployment.is_some() => {
+            drop(guard);
+            let _ = remote_job
+                .as_mut()
+                .expect("Docker deployment owner")
+                .stop_execution()
+                .await;
             return Ok(ExecutionOutcome::Held);
         }
         Err(error) => return Err(ApiError::internal(sqlx::Error::Io(error))),
@@ -1522,10 +1617,16 @@ async fn run_job_inner(
             stream_output_to_attempt(pool, job_id, attempt_id, stderr, masks).await
         })
     });
+    let command_timeout = std::time::Duration::from_secs(timeout_secs as u64);
+    let command_timeout = deployment_deadline.map_or(command_timeout, |until| {
+        command_timeout.min(until.saturating_duration_since(std::time::Instant::now()))
+    });
     let exit_status = tokio::select! {
         status = child.wait() => status,
-        _ = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs as u64)) => {
-            let message = format!("runner: job timed out after {timeout_secs}s, killing");
+        _ = tokio::time::sleep(command_timeout) => {
+            let message = if deployment_deadline.is_some_and(|until|std::time::Instant::now()>=until) {
+                "runner: original deployment authority deadline reached; stopping owned services".to_owned()
+            } else { format!("runner: job timed out after {timeout_secs}s, killing") };
             let _ = child.start_kill();
             if confirmed_process_exit(child.wait().await, job_id, attempt_id).is_none() {
                 return Ok(ExecutionOutcome::Held);
@@ -1590,7 +1691,12 @@ async fn run_job_inner(
         return Ok(ExecutionOutcome::Held);
     };
     if let Some(remote) = &mut remote_job {
-        if let Err(error) = remote.confirm_stopped().await {
+        let stopped = if let Some(deployment) = &deployment {
+            remote.complete_deployment(deployment, exit_status).await
+        } else {
+            remote.confirm_stopped().await
+        };
+        if let Err(error) = stopped {
             tracing::error!(%job_id, %attempt_id, %error, "Compose process exit has no stopped-container readback; resources retained");
             return Ok(ExecutionOutcome::Held);
         }
@@ -1614,6 +1720,18 @@ async fn run_job_inner(
     let mut final_status = final_status;
     let mut exit_code = exit_code;
     let mut error_tail = error_tail;
+    if image_build.is_none()
+        && crate::api::sdlc_workspace::task_pipeline::before_delegated_effect(
+            &pool,
+            job.pipeline_id,
+            attempt_id,
+            &config,
+        )
+        .await
+        .is_err()
+    {
+        return Ok(ExecutionOutcome::Held);
+    }
     if let Some(remote) = &mut remote_job {
         if let Err(error) = remote.copy_back(&workspace).await {
             final_status = "failed";
@@ -1660,12 +1778,23 @@ async fn run_job_inner(
     // The build runs under the original submission once; this is readonly authority readback.
     let mut publication_guard = None;
     let mut publication_until = None;
+    if let Some(deployment) = &deployment {
+        let until = match deployment.effect_deadline(&pool, config).await {
+            Ok(until) => until,
+            Err(_) => return Ok(ExecutionOutcome::Held),
+        };
+        if final_status == "success" {
+            publication_guard = Some(running.lock().await);
+            publication_until = Some(until);
+        }
+    }
     if completed_build.is_some() {
         let until = match crate::api::sdlc_workspace::task_pipeline::verify_submitted_attempt(
             &pool,
             job.pipeline_id,
             attempt_id,
             &config.sdlc_workspace,
+            &config.secrets,
         )
         .await
         {
@@ -1679,9 +1808,26 @@ async fn run_job_inner(
         publication_guard = Some(guard);
         publication_until = Some(until);
     }
-    let artifact_root = completed_build
-        .as_ref()
-        .map_or(workspace.as_path(), |b| b.artifact_root.as_path());
+    let artifact_root = if let Some(build) = &completed_build {
+        build.artifact_root.as_path()
+    } else {
+        remote_job
+            .as_ref()
+            .and_then(|remote| remote.deployment_artifacts())
+            .unwrap_or(workspace.as_path())
+    };
+    if image_build.is_none()
+        && crate::api::sdlc_workspace::task_pipeline::before_delegated_effect(
+            &pool,
+            job.pipeline_id,
+            attempt_id,
+            &config,
+        )
+        .await
+        .is_err()
+    {
+        return Ok(ExecutionOutcome::Held);
+    }
     let artifact_error = collect_declared_artifacts(
         &pool,
         &config.artifacts,
@@ -1692,7 +1838,7 @@ async fn run_job_inner(
     )
     .await
     .err();
-    if image_build.is_some() && artifact_error.is_some() {
+    if (image_build.is_some() || deployment.is_some()) && artifact_error.is_some() {
         return Ok(ExecutionOutcome::Held);
     }
     if final_status == "success" {
@@ -1715,19 +1861,34 @@ async fn run_job_inner(
         }
         drop(publication_guard);
         refresh_stage(pool.clone(), job.id).await?;
-        let outcome =
-            finish_workspace_retention(&pool, &lease, owned_workspace, None, config.keep_workspace)
-                .await;
+        let outcome = finish_workspace_retention(
+            &pool,
+            &lease,
+            owned_workspace,
+            remote_job.as_mut(),
+            config.keep_workspace,
+        )
+        .await;
         if outcome == ExecutionOutcome::Finished
             && image_build
                 .as_ref()
-                .expect("typed completion scope")
-                .acknowledge_and_cleanup()
-                .is_err()
+                .is_some_and(|build| build.acknowledge_and_cleanup().is_err())
         {
             return Ok(ExecutionOutcome::Held);
         }
         return Ok(outcome);
+    }
+    if image_build.is_none()
+        && crate::api::sdlc_workspace::task_pipeline::before_delegated_effect(
+            &pool,
+            job.pipeline_id,
+            attempt_id,
+            &config,
+        )
+        .await
+        .is_err()
+    {
+        return Ok(ExecutionOutcome::Held);
     }
     let updated = sqlx::query(
         "UPDATE jobs SET status = $2, finished_at = now() \

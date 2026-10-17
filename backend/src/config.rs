@@ -97,6 +97,7 @@ impl LocalDeliveryKind {
 #[derive(Clone, Default, PartialEq, Eq)]
 pub struct SdlcWorkspaceConfig {
     pub operation_subject: Option<uuid::Uuid>,
+    pub delegated_subject: Option<uuid::Uuid>,
     /// A deployment-owned local mount. No caller-authored path or URL.
     pub observation_root: Option<PathBuf>,
     pub local_delivery_root: Option<PathBuf>,
@@ -110,6 +111,7 @@ impl std::fmt::Debug for SdlcWorkspaceConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SdlcWorkspaceConfig")
             .field("operation_subject", &self.operation_subject)
+            .field("delegated_subject", &self.delegated_subject)
             .field("observation_root", &self.observation_root)
             .field("local_delivery_root", &self.local_delivery_root)
             .field("local_delivery_policy", &self.local_delivery_policy)
@@ -361,6 +363,20 @@ impl RuntimeConfig {
             secrets,
             smtp,
             sdlc_workspace: SdlcWorkspaceConfig {
+                delegated_subject: optional_trimmed(get("CICD_SDLC_DELEGATED_SUBJECT"))
+                    .map(|value| {
+                        value
+                            .parse::<uuid::Uuid>()
+                            .ok()
+                            .filter(|id| !id.is_nil() && id.to_string() == value)
+                            .ok_or_else(|| {
+                                ConfigError::invalid(
+                                    "CICD_SDLC_DELEGATED_SUBJECT",
+                                    "expected canonical non-nil UUID",
+                                )
+                            })
+                    })
+                    .transpose()?,
                 local_delivery_kind: LocalDeliveryKind::from_env(get("CICD_LOCAL_DELIVERY_KIND"))?,
                 tracker_read_url: optional_trimmed(get("CICD_TASK_TRACKER_URL")),
                 tracker_read_token: optional_secret_value(get("CICD_TASK_TRACKER_READ_TOKEN")),

@@ -195,6 +195,16 @@ async fn workspace(api: &ApiClient, command: WorkspaceCommand) -> Result<Value> 
 }
 #[derive(Subcommand)]
 pub enum RepositoryCommand {
+    PushCandidate {
+        #[arg(long)]
+        context_file: std::path::PathBuf,
+        #[arg(long)]
+        child_token_file: std::path::PathBuf,
+        #[arg(long)]
+        checkout: std::path::PathBuf,
+        #[arg(long)]
+        readback: bool,
+    },
     List,
     Create {
         #[arg(long)]
@@ -320,6 +330,7 @@ pub async fn execute(api: &ApiClient, command: WorkCommand) -> Result<Value> {
     match command {
         WorkCommand::Workspace { command } => workspace(api, command).await,
         WorkCommand::Repository {command}=>match command {
+            RepositoryCommand::PushCandidate {context_file,child_token_file,checkout,readback}=>crate::task_git::run(&api.api_origin,context_file,child_token_file,checkout,readback).await,
             RepositoryCommand::List=>api.json(api.get("/repositories")).await,
             RepositoryCommand::Create {name,visibility}=>api.json(api.post("/repositories").json(&json!({"name":name,"visibility":visibility}))).await,
             RepositoryCommand::Delete {name}=>api.json(api.delete(&format!("/repositories/{}",enc(&name)))).await,

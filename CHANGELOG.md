@@ -15,6 +15,33 @@
 
 ## [Unreleased]
 
+- New delegated-custody migration uses0094 without changing its SQL, avoiding
+  the already-applied repository-sync0093 in another workspace. That foundation
+  must be published and combined-history qualified before upgrading that family;
+  no applied migration or ledger is rewritten. Git wrong-CAS fixture seeds its
+  state before installing the real guard, preserving all rejection assertions.
+
+- Opt-in own-task candidate Git connects confirmed Tracker source bindings to
+  exact Developer/ref/OID authority, private child credentials and single-attempt
+  CLI push/readback. Legacy SAT and pipeline-only children do not gain Git rights;
+  source wiring is integrated, execution qualification remains pending.
+
+- Task workspace deploy отклоняет не-DevOps intent до enqueue и повторно
+  проверяет исходный authority deadline после ожидания spawn mutex. Добавлены
+  unit custody и HTTP/PG admission regressions; execution qualification pending.
+
+- Task pipeline получает source-only opt-in для ограниченного delegated credential:
+  отдельная зашифрованная async custody, live reauthorization и сохранение legacy SAT.
+  Обновление child не включено; Git ограничен отдельным own-task grant.
+  Полная Rust/PG и live-приёмка остаются открытыми.
+
+- Source candidate временного task workspace deploy переиспользует RemoteJob:
+  exact Git recipe, upstream image-build extension, private project secrets,
+  owned volume preparation, all-service stop и historical validation receipt.
+  Общие parser/runner подключения и backend image sources включены;
+  Rust/PG/native qualification pending;
+  readonly OCI и Pulse business logic не меняются.
+
 - Task OCI delivery передаёт manifest/data в transport с read-only rootfs
   через bounded stdin, сохраняя tmpfs, capabilities и запрет перезаписи.
   Исправлен отказ Docker archive upload до запуска приложения.

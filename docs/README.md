@@ -5,6 +5,7 @@
 ## С чего начать
 
 - [CURRENT_STATE](CURRENT_STATE.md) — что реально работает сейчас и где границы MVP.
+- [Task workspace/Git:65 локальных случаев и remaining gates](FORGE_TASK_DEPLOYMENT_LOCAL_20261017.md).
 - [PRODUCT_REQUIREMENTS](PRODUCT_REQUIREMENTS.md) — требования, REQ/NFR-ID и baseline scope.
 - [ARCHITECTURE_INDEX](ARCHITECTURE_INDEX.md) — вход в архитектурные решения и bounded contexts.
 - [USER_GUIDE](USER_GUIDE.md) — пользовательские сценарии Dashboard.

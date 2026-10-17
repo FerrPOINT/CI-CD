@@ -15,6 +15,9 @@ use tokio::sync::Mutex;
 #[path = "task_pipeline_image_build_native.rs"]
 mod image_build_native;
 
+#[path = "task_pipeline_workspace_deploy.rs"]
+mod workspace_deploy;
+
 struct TaskPipeline {
     pool: sqlx::PgPool,
     http: reqwest::Client,

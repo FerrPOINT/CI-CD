@@ -215,6 +215,15 @@ impl ReceiveHooks {
         format!("core.hooksPath={}", self.directory.display())
     }
 
+    pub(super) fn task_candidate(
+        &self,
+        authorization: &crate::task_git::Authorization,
+        internal: &str,
+        port: u16,
+    ) -> Result<(), ApiError> {
+        crate::task_git::hooks::install(&self.directory, authorization, internal, port)
+    }
+
     // No Drop cleanup: an interrupted/unknown native writer must retain its hook files.
     pub(super) fn cleanup(self) {
         if let Err(error) = fs::remove_dir_all(&self.directory) {

@@ -1,5 +1,10 @@
 # Git Hosting — Forge CI/CD
 
+Opt-in source-only [own-task candidate Git](OWN_TASK_CANDIDATE_GIT.md) проверяет
+confirmed source/current Developer и exact OID CAS через native hooks. Только
+этот child-вариант подавляет post-receive auto-pipeline; обычный human/SAT поток
+ниже не меняется. Qualification/installation не заявлены.
+
 Удаление repository с immutable SDLC workspace operation history возвращает409;
 owner FK RESTRICT сохраняет DB identity, bare repository и workspace. Проверка
 выполняется атомарным DELETE; filesystem cleanup начинается только после успешного
