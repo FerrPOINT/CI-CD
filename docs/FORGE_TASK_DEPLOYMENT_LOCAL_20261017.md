@@ -1,5 +1,35 @@
 # Task Workspace И Candidate Git: Локальные Проверки
 
+## Backend 6072: 18 октября 2026
+
+Source `6072c5158a16c518d8f00446059085760ed64d2e`, SDK
+`2ad0834d06d3aa703fa1791a932bfc76650c8e42`, Rust 1.88.0. Изолированный
+ComposeHelper v2 QA подтвердил 129 PostgreSQL случаев: 6 catalog, 115 остальных
+обычных integration и 8 явно включённых task-pipeline cases. Оба ранее
+ожидавших catalog-теста прошли, включая fresh/prior-schema upgrade до0094,
+проверку checksum и populated history. Ещё 11 opt-in RepoSync/live-provider
+случаев не запускались; они не включены в PASS.
+
+Fmt, строгий workspace Clippy и отдельный Clippy server/CLI integration targets
+прошли. Два CLI HTTP/PostgreSQL integration случая прошли. Первый общий
+`cargo test --workspace` завершился отказом wall-clock проверки CLI deadline;
+исходный failed receipt сохранён. Неизменённый целевой тест и остальные CLI
+workflows затем прошли; оставшийся workspace проверен отдельно с исключением
+CLI. Это совокупность отдельных результатов, не PASS первоначальной команды.
+
+Канонический Dockerfile собран из Git-exported source, без dirty checkout и
+локальных credentials. Builder:
+`sha256:16f74c80642802ce7af5bbef7e6ba57e51cd50034d77d078060e2f98a7bcc8b9`;
+runtime:
+`sha256:94bb8d7d56c0edf9681f05ceab7d36b62058f296421cc8d9173f4edb5e0c0a5d`.
+`cargo build --locked --offline --release --workspace` в этом builder прошёл.
+Оба Compose scope удалили свои disposable resources; runtime и metadata
+постоянных контейнеров не изменились. Образ не установлен в SDLC2.
+
+Полный producer/deployment сценарий, внешние provider cases и применимые
+hosted security/e2e gates этим не подтверждены. Исторические результаты ниже
+сохраняются с исходными границами проверки.
+
 ## Frontend f259/UIe075: 18 октября 2026
 
 Exact source `f2597dcdb640e62ecdb93c7c2a68b5d11cb31783` включает upstream124;
@@ -37,12 +67,13 @@ Packed Base consumer/build/themes также подтверждены отдел
 а не объявлены заново выполненными на f259. Это ограниченная frontend closure
 qualification, не полный repository gate или production-ready source.
 
-Две исправленные catalog expectations до0094 ещё требуют своих exact PG результатов:
+На этом frontend checkpoint две исправленные catalog expectations до0094 ещё
+требовали своих exact PG результатов:
 `migration_catalog_contains_exact_historical_36_and_37` и
 `migration_catalog_fresh_and_prior_35_or_37_upgrade`. QA42 на source828cf ниже
 остаётся самостоятельным Rust evidence и не подменяет эти два случая. Новый
-backend image/Compose, полный release gate и live producer/deployment acceptance
-по-прежнему не закрыты.
+backend image/Compose и release workspace build закрыты отдельным Backend 6072
+выше. Live producer/deployment acceptance остаётся незавершённой.
 
 ## Explicit Routes: Проверенный Source 828cf
 
@@ -131,15 +162,16 @@ HTTP verifier; PG admission использует настоящий isolated Pos
 
 ## До Выпуска
 
-Остаются полный repository release gate, image/Compose и настоящий scoped
-producer/deployment сценарий. Целевые Clippy/codegen/compatibility и populated
+Остаются применимые hosted gates и настоящий scoped producer/deployment
+сценарий. Release workspace build и image/Compose подтверждены Backend 6072
+выше. Целевые Clippy/codegen/compatibility и populated
 history закрыты новым828cf QA, не старым checkpoint9b.
 Единственная новая миграция0094 не меняет свой SQL при перенумерации. Уже
 применённая repository-sync0093 теперь опубликована в main и совпадает с прежним
 foundation по точному Git blob/checksum. Целевой populated-history upgrade до0094
 подтверждён QA828cf. Полная repository qualification и отдельные fresh/prior-schema
-catalog проверки этим не заменяются; две исправленные catalog expectations ещё
-ожидают целевого прогона. Ignore-missing запрещён.
+catalog проверки этим не заменяются; обе исправленные catalog expectations
+прошли отдельный целевой прогон Backend 6072. Ignore-missing запрещён.
 
 Base introspection expiry metadata и Tracker source binding являются явными
 зависимостями. Child renewal, legitimate server readers, окончательные delivery
