@@ -252,6 +252,17 @@ describe('pull request workflow', () => {
     expect(screen.getByRole('link', { name: '#1' })).toHaveAttribute('href', '/repositories/platform/pulls/1')
   })
 
+  it('loads the PR diff using branch refs when a tag has the same short name', () => {
+    setup([pullRequest(1)], '/repositories/platform/pulls/1?view=diff', {
+      comparison: { from: 'refs/heads/main', to: 'refs/heads/feature/1', merge_base: 'base',
+        patch: '+actual branch change', patch_truncated: false,
+        files: [{ path: 'source.txt', status: 'modified', additions: 1, deletions: 0 }] },
+    })
+    expect(mocks.comparison).toHaveBeenCalledWith('platform', 'refs/heads/main', 'refs/heads/feature/1')
+    expect(screen.getByText('source.txt')).toBeInTheDocument()
+    expect(screen.getByLabelText('compare.patch')).toHaveTextContent('+actual branch change')
+  })
+
   it('labels binary changes instead of presenting invented line counts', () => {
     setup([pullRequest(1)], '/repositories/platform/pulls/1?view=diff', {
       comparison: {

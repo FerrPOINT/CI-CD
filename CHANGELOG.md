@@ -15,6 +15,11 @@
 
 ## [Unreleased]
 
+- PR merge фиксирует точные branch SHA, игнорирует одноимённые tags и проверяет
+  source/target refs при публикации. Конкурирующий writer не теряет изменения;
+  PR row lock и owner waiter сохраняют итог при close/HTTP disconnect.
+  PR diff использует полные branch refs; общий compare сохраняет tags.
+
 - Git Smart HTTP принимает project-bound service-account token с отдельными
   Git scopes и защищает default/protected refs native pre-receive hook до
   изменения refs, сохраняя custom hooks и прежние human ACL. Source fix;

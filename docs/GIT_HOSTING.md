@@ -100,6 +100,14 @@ curl -fsS -X POST http://127.0.0.1:22801/api/v1/projects \
 
 ## 6. Pull requests и refs
 
+PR merge разрешает именно branch refs, фиксирует source/target SHA до проверки
+pipeline и публикует результат через native source verification + target CAS.
+Одинаково названный tag не меняет merge или PR diff. При изменении любой ветки
+возвращается 409 без закрытия PR; неизвестная публикация требует readback, без
+автоматического retry. Merge/close/reopen сериализованы по строке PR, принятую
+операцию завершает owner waiter при отключении HTTP caller.
+Границы PG/Git атомарности: [ADR-0029](adr/0029-pr-merge-branch-snapshots.md).
+
 Основной каталог pull requests читается страницами через
 `GET /api/v1/repos/{repo}/pulls/page`. Сервер применяет `limit`, `offset`, фильтр
 `status` и регистронезависимый `search` до выборки; ответ возвращает `items` и

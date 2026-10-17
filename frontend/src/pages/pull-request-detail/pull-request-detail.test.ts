@@ -15,11 +15,16 @@ const pr: PullRequest = {
 
 describe('pull request navigation', () => {
   it('links to compare with from=target and to=source', () => {
-    expect(buildCompareHref(pr)).toBe('/repositories/platform-core/compare?from=main&to=feature%2Fcache')
+    expect(buildCompareHref(pr)).toBe('/repositories/platform-core/compare?from=refs%2Fheads%2Fmain&to=refs%2Fheads%2Ffeature%2Fcache')
   })
 
   it('encodes repository name in a branch comparison link', () => {
-    expect(buildCompareHref({ ...pr, repository_name: 'web app' })).toBe('/repositories/web%20app/compare?from=main&to=feature%2Fcache')
+    expect(buildCompareHref({ ...pr, repository_name: 'web app' })).toBe('/repositories/web%20app/compare?from=refs%2Fheads%2Fmain&to=refs%2Fheads%2Ffeature%2Fcache')
+  })
+
+  it('keeps already qualified PR branches without adding another namespace', () => {
+    expect(buildCompareHref({ ...pr, source_branch: 'refs/heads/feature/cache', target_branch: 'refs/heads/main' }))
+      .toBe(buildCompareHref(pr))
   })
 
   it('keeps the pull request context when opening its inline diff', () => {

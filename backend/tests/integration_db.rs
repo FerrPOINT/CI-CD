@@ -38,6 +38,10 @@ mod task_pipeline_migration;
 #[path = "support/git_sat_receive.rs"]
 mod git_sat_receive;
 
+#[cfg(unix)]
+#[path = "support/pull_merge_fencing.rs"]
+mod pull_merge_fencing;
+
 type CanceledExternalLeaseState = (
     String,
     String,
