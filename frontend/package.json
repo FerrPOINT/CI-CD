@@ -6,8 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "tsc --noEmit && vite build",
-    "test": "vitest run",
+    "build": "pnpm run test:unit && tsc --noEmit && vite build",
+    "test": "pnpm run test:unit",
     "lint": "eslint src && pnpm lint:semantic",
     "lint:semantic": "node scripts/pdlc-semantic-classes-check.mjs --css src/index.css --src src",
     "e2e": "playwright test --config playwright.config.ts",
@@ -18,7 +18,9 @@
     "openapi:check": "node node_modules/@pdlc/ui/scripts/pdlc-openapi-check.mjs",
     "openapi:compat": "node scripts/base-openapi-compat.mjs",
     "postinstall": "pnpm run openapi:generate",
-    "theme:check": "node ../../services-base/base-modules/ui/scripts/pdlc-effective-theme-check.mjs"
+    "theme:check": "node ../../services-base/base-modules/ui/scripts/pdlc-effective-theme-check.mjs",
+    "test:unit": "vitest run --exclude \"**/*.integration.test.*\" --exclude \"**/*.slow.test.*\" --exclude \"**/*.e2e.test.*\"",
+    "test:all": "vitest run"
   },
   "dependencies": {
     "@pdlc/ui": "file:../../services-base/base-modules/ui",

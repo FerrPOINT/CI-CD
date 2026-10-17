@@ -369,3 +369,10 @@ script witnesses также копируются из того же закреп
 postgres-delivery.py и три Base helper, сравниваемые через `include_bytes!`.
 Текущая корректировка:
 [план проверки](../plans/2026-10-10-production-backend-build.md).
+
+## Передача frontend artifact
+
+CI `frontend` передаёт `tested-frontend-dist` в `frontend-package`; отдельный consumer не устанавливает Node/dependencies.
+Проверка графа: `python scripts/vendor/base_frontend_artifact.py check-ci --root .`.
+[Формат/команды Base](https://github.com/FerrPOINT/services-base/blob/a9b1ae9869784676957c193a75bd92a2a0480dc1/docs/BUILD_PERFORMANCE.md#передача-frontend-artifact); packet pin — `.quality-tooling-revision`.
+Node 22.20.0; OpenAPI generation/checks сохраняются в producer.

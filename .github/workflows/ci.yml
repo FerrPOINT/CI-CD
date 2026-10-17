@@ -1,22 +1,78 @@
+# Automatic: unit tests and changed application build; manual release.yml for integration/slow.
 name: CI
-
 on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       git_receive_only:
         description: 'Addressed native receive races; reuse separately verified unchanged production gates'
         type: boolean
         default: false
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.classify.outputs.backend }}
+      frontend: ${{ steps.classify.outputs.frontend }}
+      frontend_build: ${{ steps.classify.outputs.frontend_build }}
+      backend_build: ${{ steps.classify.outputs.backend_build }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: CI-CD
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Fetch exact comparison commits
+        working-directory: CI-CD
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ] && [ "$BASE_SHA" != 0000000000000000000000000000000000000000 ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_SHA" "$HEAD_SHA"
+          fi
+      - name: Verify packaged Base selector
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,re
+          from pathlib import Path
+          root=Path('CI-CD')
+          pin=(root/'.quality-tooling-revision').read_text().strip()
+          receipt=json.loads((root/'scripts/vendor/base-quality-tooling.json').read_text())
+          if not re.fullmatch(r'[0-9a-f]{40}',pin) or receipt['schema']!='base-quality-tooling/v1' or receipt['revision']!=pin:
+              raise SystemExit('Packaged Base revision mismatch')
+          if hashlib.sha256((root/'scripts/vendor/base_quality_selection.py').read_bytes()).hexdigest()!=receipt['sha256']:
+              raise SystemExit('Packaged Base selector checksum mismatch')
+          cache=receipt['rust_target_cache']
+          assert cache['file']=='base_rust_target_cache.py'
+          assert hashlib.sha256((root/'scripts/vendor'/cache['file']).read_bytes()).hexdigest()==cache['sha256']
+          PY
+      - name: Verify the frontend artifact CI contract
+        run: |
+          python3 - <<'PY'
+          import hashlib,json
+          from pathlib import Path
+          root=Path('CI-CD')
+          packet=json.loads((root/'scripts/vendor/base-quality-tooling.json').read_text())
+          helper=packet['frontend_artifact']
+          assert helper['file']=='base_frontend_artifact.py'
+          assert hashlib.sha256((root/'scripts/vendor'/helper['file']).read_bytes()).hexdigest()==helper['sha256']
+          PY
+          python3 CI-CD/scripts/vendor/base_frontend_artifact.py check-ci --root CI-CD
+      - id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 CI-CD/scripts/vendor/base_quality_selection.py --root CI-CD
+    if: ${{ !inputs.git_receive_only }}
   docs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -60,10 +116,253 @@ jobs:
         run: python3 scripts/generate_sbom.py --check
       - name: script checks
         run: |
+          python3 scripts/check_cache_tooling.py
+          python3 -B -m unittest discover -s scripts/tests -p 'test_cache_tooling.py' -q
           python3 -m py_compile scripts/verify_docs.py scripts/generate_sbom.py scripts/scan_secrets.py scripts/forge_backup.py
           bash -n scripts/backup.sh scripts/backup-stand.sh scripts/restore.sh scripts/verify-backup.sh scripts/scan_container_images.sh
-
+  minimum-rust:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: CI-CD
+      - name: Read pinned Base revision
+        id: base
+        working-directory: CI-CD
+        run: |
+          pin=.base-revision
+          if [ -f .namespace-base-revision ]; then pin=.namespace-base-revision; fi
+          echo "sha=$(cat "$pin")" >> "$GITHUB_OUTPUT"
+          echo "pin=$pin" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v7
+        with:
+          repository: FerrPOINT/services-base
+          path: services-base
+          ref: ${{ steps.base.outputs.sha }}
+          token: ${{ secrets.SERVICES_BASE_TOKEN }}
+      - name: Verify pinned Base checkout
+        working-directory: CI-CD
+        run: python3 ../services-base/scripts/verify_base_revision.py --revision "${{ steps.base.outputs.pin }}" --base ../services-base
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.88.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: CI-CD/backend
+      - name: Reset restored local crates once; keep compiled external dependencies
+        working-directory: CI-CD/backend
+        run: python3 ../scripts/vendor/base_rust_target_cache.py
+      - name: Check declared minimum independently of release builds
+        working-directory: CI-CD/backend
+        run: cargo check --locked --workspace --all-targets
   backend:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: CI-CD/backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: CI-CD
+      - name: Read pinned Base revision
+        id: base
+        working-directory: CI-CD
+        run: |
+          pin=.base-revision
+          if [ -f .namespace-base-revision ]; then pin=.namespace-base-revision; fi
+          echo "sha=$(cat "$pin")" >> "$GITHUB_OUTPUT"
+          echo "pin=$pin" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: FerrPOINT/services-base
+          path: services-base
+          token: ${{ secrets.SERVICES_BASE_TOKEN }}
+          ref: ${{ steps.base.outputs.sha }}
+      - name: Verify pinned Base checkout
+        working-directory: CI-CD
+        run: python3 ../services-base/scripts/verify_base_revision.py --revision "${{ steps.base.outputs.pin }}" --base ../services-base
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.88.0
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: CI-CD/backend
+      - name: Reset restored local crates once; keep compiled external dependencies
+        working-directory: CI-CD/backend
+        run: python3 ../scripts/vendor/base_rust_target_cache.py
+      - name: Fast isolated domain units (no PostgreSQL)
+        run: |-
+          cargo fmt --all -- --check
+          cargo test --locked -p cicd-domain --lib
+          cargo test --locked --manifest-path tests/cache-protocol/Cargo.toml --lib
+      - name: Build changed application after isolated units
+        if: needs.changes.outputs.backend_build == 'true'
+        run: cargo build --locked --workspace
+        env:
+          SQLX_OFFLINE: "true"
+      - name: openapi drift gate
+        run: |
+          "${CARGO_TARGET_DIR:-target}/debug/openapi-dump" /tmp/openapi.yaml
+          diff -u ../openapi/openapi.yaml /tmp/openapi.yaml
+        if: needs.changes.outputs.backend_build == 'true'
+    env:
+      SQLX_OFFLINE: "true"
+  frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    outputs:
+      manifest_sha256: ${{ steps.frontend_artifact.outputs.manifest_sha256 }}
+      checksums_sha256: ${{ steps.frontend_artifact.outputs.checksums_sha256 }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: CI-CD/frontend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: CI-CD
+          ref: ${{ github.sha }}
+      - name: Read pinned Base revision
+        id: base
+        working-directory: CI-CD
+        run: |
+          pin=.base-ui-revision
+          echo "sha=$(cat "$pin")" >> "$GITHUB_OUTPUT"
+          echo "pin=$pin" >> "$GITHUB_OUTPUT"
+      - name: Check out services-base sibling (@pdlc/ui file dep)
+        uses: actions/checkout@v4
+        with:
+          repository: FerrPOINT/services-base
+          path: services-base
+          token: ${{ secrets.SERVICES_BASE_TOKEN }}
+          ref: ${{ steps.base.outputs.sha }}
+      - name: Verify pinned Base checkout
+        working-directory: CI-CD
+        run: python3 ../services-base/scripts/verify_base_revision.py --revision "${{ steps.base.outputs.pin }}" --base ../services-base
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.1
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.20.0
+          cache: pnpm
+          cache-dependency-path: CI-CD/frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile --ignore-scripts=false
+        env:
+          CI: "true"
+      - name: Verify postinstall-generated contract and lockfile
+        run: |
+          git ls-files --error-unmatch pnpm-lock.yaml src/api/schema.d.ts > /dev/null
+          git diff --exit-code -- pnpm-lock.yaml src/api/schema.d.ts
+      - name: dependency advisories
+        run: pnpm audit --audit-level low
+      - name: Typecheck independently of application build
+        run: pnpm exec tsc --noEmit
+      - run: pnpm test:unit
+      - run: pnpm lint
+      - name: OpenAPI compatibility against target branch
+        run: |
+          git fetch origin main --depth=1
+          pnpm openapi:compat
+      - run: pnpm exec vite build
+        if: needs.changes.outputs.frontend_build == 'true'
+      - name: Verify exact frontend tooling packet
+        if: needs.changes.outputs.frontend_build == 'true'
+        working-directory: CI-CD
+        run: |
+          python3 - <<'PY'
+          import hashlib,json,re
+          from pathlib import Path
+          root=Path('.')
+          pin=(root/'.quality-tooling-revision').read_text().strip()
+          packet=json.loads((root/'scripts/vendor/base-quality-tooling.json').read_text())
+          assert re.fullmatch(r'[a-f0-9]{40}',pin) and packet['schema']=='base-quality-tooling/v1' and packet['revision']==pin
+          helper=packet['frontend_artifact']; recipe=packet['frontend_recipe']
+          assert helper['file']=='base_frontend_artifact.py' and recipe['file']=='frontend/Dockerfile.prebuilt'
+          for name,expected in [('scripts/vendor/'+helper['file'],helper['sha256']), (recipe['file'],recipe['sha256']), (recipe['file']+'.dockerignore',recipe['ignore_sha256'])]:
+              assert hashlib.sha256((root/name).read_bytes()).hexdigest()==expected,name
+          PY
+      - name: Seal the tested frontend dist
+        id: frontend_artifact
+        if: needs.changes.outputs.frontend_build == 'true'
+        working-directory: CI-CD
+        run: python3 scripts/vendor/base_frontend_artifact.py seal --root . --dist frontend/dist --artifact .local/frontend-artifact --node-version 22.20.0 --pnpm-version 10.28.1
+      - name: Preserve the single tested frontend artifact
+        if: needs.changes.outputs.frontend_build == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: tested-frontend-dist
+          path: CI-CD/.local/frontend-artifact
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+
+  frontend-package:
+    name: Package the tested frontend without recompilation
+    needs: [changes, frontend]
+    if: needs.changes.outputs.frontend_build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: CI-CD
+    env:
+      EXPECTED_FRONTEND_MANIFEST_SHA256: ${{ needs.frontend.outputs.manifest_sha256 }}
+      EXPECTED_FRONTEND_CHECKSUMS_SHA256: ${{ needs.frontend.outputs.checksums_sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: CI-CD
+          ref: ${{ github.sha }}
+      - name: Receive the tested frontend packet
+        uses: actions/download-artifact@v8
+        with:
+          name: tested-frontend-dist
+          path: CI-CD/.local/frontend-artifact
+      - name: Verify candidate and payload before packaging
+        run: |
+          python3 scripts/vendor/base_frontend_artifact.py verify --root . --artifact .local/frontend-artifact --manifest-sha256 "$EXPECTED_FRONTEND_MANIFEST_SHA256" --node-version 22.20.0 --pnpm-version 10.28.1 > .local/frontend-verified.json
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          report=json.loads(Path('.local/frontend-verified.json').read_text())
+          assert report['checksums_sha256']==os.environ['EXPECTED_FRONTEND_CHECKSUMS_SHA256']
+          PY
+      - name: Package the verified dist with the product nginx runtime
+        run: |
+          docker buildx build --load --iidfile .local/frontend-image.id \
+          --build-context tested_frontend=.local/frontend-artifact \
+          --build-arg FRONTEND_CHECKSUMS_SHA256="$EXPECTED_FRONTEND_CHECKSUMS_SHA256" \
+          --build-arg SOURCE_REVISION="$(git rev-parse HEAD)" \
+          --build-arg VITE_NAMESPACE_ENABLED="${VITE_NAMESPACE_ENABLED:-false}" \
+          --file frontend/Dockerfile.prebuilt frontend
+          python3 - <<'PY'
+          import json,re
+          from pathlib import Path
+          report=json.loads(Path('.local/frontend-verified.json').read_text())
+          image=Path('.local/frontend-image.id').read_text().strip()
+          assert re.fullmatch(r'sha256:[a-f0-9]{64}',image)
+          report.update(image_id=image,application_recompiled=False)
+          Path('.local/frontend-package.json').write_text(json.dumps(report,indent=2)+'\n')
+          PY
+      - name: Preserve the artifact and image identity
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-packaging-receipt
+          path: CI-CD/.local/frontend-package.json
+          if-no-files-found: error
+          retention-days: 7
+  git-receive:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     defaults:
@@ -78,10 +377,7 @@ jobs:
           POSTGRES_DB: forge_test_cicd
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U forge_owner"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+          --health-cmd "pg_isready -U forge_owner" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       CICD_TEST_DATABASE_URL: postgres://forge_owner:forge_test_owner@localhost:5432/forge_test_cicd
       CICD_NAMESPACE__INSTANCE_ID: 75b72b83-2897-4114-a2d1-d9cd40aee232
@@ -114,16 +410,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: CI-CD/backend
+      - name: Reset restored local crates once; keep compiled external dependencies
+        working-directory: CI-CD/backend
+        run: python3 ../scripts/vendor/base_rust_target_cache.py
       - name: fmt
         run: cargo fmt --all -- --check
-      - name: clippy
-        if: ${{ !inputs.git_receive_only }}
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Integration target clippy
         run: cargo clippy --locked --features integration --test integration_db -- -D warnings
-      - name: unit tests
-        if: ${{ !inputs.git_receive_only }}
-        run: cargo test --locked --workspace
       - name: integration tests (real PostgreSQL)
         env:
           GIT_RECEIVE_ONLY: ${{ inputs.git_receive_only }}
@@ -138,118 +431,7 @@ jobs:
           else
             cargo test --locked --features integration --test integration_db -- --test-threads=1
           fi
-      - name: Create isolated CLI test database
-        if: ${{ !inputs.git_receive_only }}
-        env:
-          PGPASSWORD: forge_test_owner
-        run: createdb -h 127.0.0.1 -p 5432 -U forge_owner forge_test_cli
-      - name: CLI tests (real PostgreSQL)
-        if: ${{ !inputs.git_receive_only }}
-        env:
-          CICD_TEST_DATABASE_URL: postgres://forge_owner:forge_test_owner@localhost:5432/forge_test_cli
-        run: cargo test --locked -p cicd-cli --features integration --test cli_real_api -- --test-threads=1
-      - name: CLI integration clippy
-        if: ${{ !inputs.git_receive_only }}
-        run: cargo clippy --locked -p cicd-cli --all-targets --features integration -- -D warnings
-      - name: release build
-        if: ${{ !inputs.git_receive_only }}
-        run: cargo build --locked --release --workspace
-      - name: openapi drift gate
-        if: ${{ !inputs.git_receive_only }}
-        run: |
-          cargo run --locked --bin openapi-dump -- /tmp/openapi.yaml
-          diff -u ../openapi/openapi.yaml /tmp/openapi.yaml
-
-  frontend:
-    if: ${{ !inputs.git_receive_only }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: CI-CD/frontend
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          path: CI-CD
-      - name: Read pinned Base revision
-        id: base
-        working-directory: CI-CD
-        run: |
-          pin=.base-ui-revision
-          echo "sha=$(cat "$pin")" >> "$GITHUB_OUTPUT"
-          echo "pin=$pin" >> "$GITHUB_OUTPUT"
-      - name: Check out services-base sibling (@pdlc/ui file dep)
-        uses: actions/checkout@v4
-        with:
-          repository: FerrPOINT/services-base
-          path: services-base
-          token: ${{ secrets.SERVICES_BASE_TOKEN }}
-          ref: ${{ steps.base.outputs.sha }}
-      - name: Verify pinned Base checkout
-        working-directory: CI-CD
-        run: python3 ../services-base/scripts/verify_base_revision.py --revision "${{ steps.base.outputs.pin }}" --base ../services-base
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.28.1
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "22.20.0"
-          cache: pnpm
-          cache-dependency-path: CI-CD/frontend/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
-        env:
-          CI: "true"
-      - name: dependency advisories
-        run: pnpm audit --audit-level low
-      - run: pnpm openapi:check
-      - run: pnpm test -- --run
-      - run: pnpm lint
-      - name: OpenAPI compatibility against target branch
-        run: |
-          git fetch origin main --depth=1
-          pnpm openapi:compat
-      - name: Generated contract and lockfile stay unchanged
-        run: git diff --exit-code -- pnpm-lock.yaml src/api/generated.ts src/api/schema.d.ts
-      - run: pnpm build
-      - name: Packed Base consumer
-        run: python ../../services-base/scripts/check_ui_consumer.py
-      - name: Effective themes in the built consumer
-        run: |
-          pnpm exec playwright install --with-deps chromium
-          pnpm exec vite preview --host 127.0.0.1 --port 4173 --strictPort > /tmp/theme-preview.log 2>&1 &
-          pnpm theme:check http://127.0.0.1:4173
-
-  minimum-rust:
-    if: ${{ !inputs.git_receive_only }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          path: CI-CD
-      - name: Read pinned Base revision
-        id: base
-        working-directory: CI-CD
-        run: |
-          pin=.base-revision
-          if [ -f .namespace-base-revision ]; then pin=.namespace-base-revision; fi
-          echo "sha=$(cat "$pin")" >> "$GITHUB_OUTPUT"
-          echo "pin=$pin" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v7
-        with:
-          repository: FerrPOINT/services-base
-          path: services-base
-          ref: ${{ steps.base.outputs.sha }}
-          token: ${{ secrets.SERVICES_BASE_TOKEN }}
-      - name: Verify pinned Base checkout
-        working-directory: CI-CD
-        run: python3 ../services-base/scripts/verify_base_revision.py --revision "${{ steps.base.outputs.pin }}" --base ../services-base
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: "1.88.0"
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: CI-CD/backend
-      - name: Check declared minimum independently of release builds
-        working-directory: CI-CD/backend
-        run: cargo check --locked --workspace --all-targets
+    name: Manual Git receive race qualification
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.git_receive_only }}
+    needs:
+      - docs

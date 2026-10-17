@@ -7,6 +7,10 @@ build/deployment qualification: [ADR-0027](adr/0027-task-backend-image-build.md)
 51 unit-тест и atomic-terminal PG aggregate проверены отдельно от native
 build/deployment: [границы evidence](IMAGE_BUILD_QUALIFICATION_20261016.md).
 
+Публичные dependency downloads для Docker jobs: [ADR-0025](adr/0025-readonly-cargo-seeds.md).
+Typed read-only seed дополняет attempt-private registry; activation требует
+отдельной native qualification. Source implementation не меняет текущий runtime.
+
 Owner-local OCI CLI поддерживает preloaded immutable image и read-only data
 snapshot без migrations/restore. Actual container/mount/network, served manifest,
 schema/bytes compatibility и application acceptance отделены от desired Compose

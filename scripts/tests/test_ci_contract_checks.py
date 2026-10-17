@@ -11,9 +11,31 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
+class ManualGitReceiveGateTests(unittest.TestCase):
+    def test_postgres_receive_races_remain_explicit_and_isolated(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        backend = workflow.split("\n  backend:\n", 1)[1].split("\n  frontend:\n", 1)[0]
+        receive = workflow.split("\n  git-receive:\n", 1)[1]
+        self.assertNotIn("services:", backend)
+        self.assertNotIn("--test integration_db", backend)
+        self.assertIn("cargo test --locked -p cicd-domain --lib", backend)
+        self.assertIn("cargo test --locked --manifest-path tests/cache-protocol/Cargo.toml --lib", backend)
+        self.assertIn("github.event_name == 'workflow_dispatch' && inputs.git_receive_only", receive)
+        self.assertIn("services:", receive)
+        self.assertIn("cargo clippy --locked --features integration --test integration_db -- -D warnings", receive)
+        self.assertIn("--test integration_db git_sat_receive:: -- --test-threads=1", receive)
+        self.assertIn("test result: ok. 4 passed; 0 failed; 0 ignored;", receive)
+        for name in (
+            "cancelled_http_receive_keeps_native_child_and_namespace_lease_until_exit",
+            "concurrent_bootstrap_and_receive_finish_around_waiting_namespace_archive",
+        ):
+            self.assertIn(name, receive)
+        self.assertEqual(receive.count("run: python3 ../scripts/vendor/base_rust_target_cache.py"), 1)
+
+
 class CliIntegrationGateTests(unittest.TestCase):
     def test_cli_database_is_scoped_to_cli_step(self) -> None:
-        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
         backend = workflow.split("\n  backend:\n", 1)[1].split("\n  frontend:\n", 1)[0]
         job_env = backend.split("\n    env:\n", 1)[1].split("\n    steps:\n", 1)[0]
         self.assertIn("/forge_test_cicd", job_env)
@@ -32,7 +54,7 @@ class CliIntegrationGateTests(unittest.TestCase):
         self.assertIn("cargo test --locked --features integration --test integration_db -- --test-threads=1", backend)
 
     def test_docs_job_runs_cli_gate_regressions(self) -> None:
-        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
         docs = workflow.split("\n  docs:\n", 1)[1].split("\n  backend:\n", 1)[0]
         self.assertIn("scripts.tests.test_ci_contract_checks", docs)
 

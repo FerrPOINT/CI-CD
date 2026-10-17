@@ -1,0 +1,341 @@
+"""Canonical Base selector; product copies are generated, immutable tool artifacts."""
+
+from __future__ import annotations
+
+import argparse
+import fnmatch
+import hashlib
+import json
+import os
+import re
+import subprocess
+from pathlib import Path
+
+SCHEMA = "base-quality-product/v1"
+
+
+def validate_gate_slot(gate):
+    mode = gate.get("execution_slot")
+    if mode not in (None, "host", "none", "command"):
+        raise ValueError("Unsupported execution slot policy")
+    if mode == "none" and (gate.get("test_tier") not in ("unit", "static")
+                           or gate.get("prepare_frontend") or gate.get("kind") == "artifact"):
+        raise ValueError("Only independent unit/static commands may omit the execution slot")
+    if mode == "command" and (gate.get("prepare_frontend") or gate.get("artifact_outputs")):
+        raise ValueError("Command-owned gates own their preparation and artifact namespace")
+
+
+def inside(root, relative):
+    path = Path(relative)
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError("Paths must stay inside the product")
+    result = (root / path).resolve()
+    if not result.is_relative_to(root):
+        raise ValueError("Path leaves the product")
+    return result
+
+
+def digest(value):
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def git(root, *args):
+    return (
+        subprocess.check_output(["git", "-C", str(root), *args], stderr=subprocess.PIPE)
+        .decode("utf-8")
+        .strip()
+    )
+
+
+def matches(name, patterns):
+    return any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns)
+
+
+def load(root):
+    path = inside(root, ".quality-gate.json")
+    if not path.is_file():
+        raise ValueError(
+            "Missing product-owned .quality-gate.json; adopt the reviewed test-tier "
+            "manifest in this source checkout before running quality profiles. "
+            "No legacy full suite is selected automatically."
+        )
+    manifest = json.loads(path.read_text(encoding="utf-8-sig"))
+    if manifest.get("schema") != SCHEMA or not isinstance(
+        manifest.get("components"), dict
+    ):
+        raise ValueError("Unsupported quality manifest")
+    if not manifest["components"] or not isinstance(manifest.get("gates"), list):
+        raise ValueError("Components and gate list are required")
+    if manifest.get("test_policy") and (root / ".github/workflows/ci.yml").is_file():
+        # A literal canonical header is a lint contract, not a general YAML parser.
+        # Fail closed on any extra event; CRLF is normalized by read_text.
+        release = inside(root, ".github/workflows/release.yml")
+        content = release.read_text(encoding="utf-8")
+        marker = "\non:\n"
+        header = content.split(marker, 1)[1].split("\n\n", 1)[0] if marker in content else ""
+        if header.strip() != "workflow_dispatch:":
+            raise ValueError("Release workflow must use only the canonical manual workflow_dispatch header")
+    for component, patterns in manifest["components"].items():
+        if (
+            not re.fullmatch(r"[a-zA-Z0-9_-]+", component)
+            or not isinstance(patterns, list)
+            or not patterns
+        ):
+            raise ValueError("Components require explicit path patterns")
+        if not all(
+            isinstance(pattern, str) and pattern and ".." not in Path(pattern).parts
+            for pattern in patterns
+        ):
+            raise ValueError("Invalid component path pattern")
+    identifiers = set()
+    for gate in manifest["gates"]:
+        validate_gate_slot(gate)
+        identifier = gate["id"]
+        if (
+            not re.fullmatch(r"[a-zA-Z0-9:_-]+", identifier)
+            or identifier in identifiers
+        ):
+            raise ValueError("Invalid or duplicate gate id")
+        identifiers.add(identifier)
+        if not gate.get("profiles") or set(gate["profiles"]) - {
+            "fast",
+            "integrated",
+            "build",
+            "unit",
+            "integration",
+            "slow",
+            "release",
+        }:
+            raise ValueError("Unsupported gate profile")
+        if not isinstance(gate.get("inputs"), list) or not gate["inputs"]:
+            raise ValueError("Gate requires explicit inputs")
+        if gate["component"] not in manifest["components"]:
+            raise ValueError("Unknown gate component")
+        if not gate.get("argv") or not all(
+            isinstance(arg, str) and "\0" not in arg for arg in gate["argv"]
+        ):
+            raise ValueError("Command must be an argument array")
+        inside(root, gate.get("cwd", "."))
+        for name in gate.get("outputs", []):
+            inside(root, name)
+        if "artifact_outputs" in gate:
+            if not isinstance(gate["artifact_outputs"], list) or not gate["artifact_outputs"]:
+                raise ValueError("Managed artifact outputs require a nonempty path list")
+            if gate.get("kind") != "artifact" or gate.get("outputs"):
+                raise ValueError("Managed artifact outputs require an artifact gate")
+            for name in gate["artifact_outputs"]:
+                if not isinstance(name, str) or not name:
+                    raise ValueError("Managed artifact output must be a relative path")
+                inside(root, name)
+        if gate.get("artifact_toolchain") not in (None, "pinned-image"):
+            raise ValueError("Unsupported artifact toolchain qualification")
+        if gate.get("cacheable") and (
+            gate.get("requires_env") or gate.get("external_state")
+        ):
+            raise ValueError("External-state gates cannot reuse receipts")
+        if manifest.get("test_policy"):
+            tier = gate.get("test_tier")
+            if tier not in ("unit", "integration", "slow", "static", "artifact"):
+                raise ValueError("Every gate requires an explicit test tier")
+            if (set(gate["profiles"]) & {"fast", "unit", "build"}
+                    and (tier in ("integration", "slow") or gate.get("external_state"))):
+                raise ValueError("Automatic build profiles cannot run boundary or slow tests")
+    return manifest
+
+
+def changed_files(root, base):
+    files = subprocess.check_output(
+        [
+            "git",
+            "-C",
+            str(root),
+            "diff",
+            "--name-only",
+            "--no-renames",
+            "-z",
+            base,
+            "--",
+        ]
+    )
+    files += subprocess.check_output(
+        ["git", "-C", str(root), "ls-files", "--others", "--exclude-standard", "-z"]
+    )
+    return sorted({name.decode("utf-8") for name in files.split(b"\0") if name})
+
+
+def components_for_paths(manifest, files, components=None):
+    selected = set(components or [])
+    reasons = {}
+    if selected - manifest["components"].keys():
+        raise ValueError("Unknown selected component")
+    for name in files:
+        owners = [
+            component
+            for component, paths in manifest["components"].items()
+            if matches(name, paths)
+        ]
+        if not owners:
+            owners = list(manifest["components"])
+        for owner in owners:
+            selected.add(owner)
+            reasons.setdefault(owner, []).append(name)
+        for impact in manifest.get("impacts", []):
+            if matches(name, impact["paths"]):
+                for owner in impact["components"]:
+                    if owner not in manifest["components"]:
+                        raise ValueError("Unknown impact component")
+                    selected.add(owner)
+                    reasons.setdefault(owner, []).append(name)
+    return sorted(selected), reasons
+
+
+def plan(
+    root, profile="fast", base="HEAD", changed=None, components=None, manifest=None
+):
+    manifest = load(root) if manifest is None else manifest
+    files = (
+        ([] if components else changed_files(root, base))
+        if changed is None
+        else changed
+    )
+    selected, reasons = components_for_paths(manifest, files, components)
+    gates = [
+        gate
+        for gate in manifest["gates"]
+        if gate["component"] in selected and profile in gate["profiles"]
+    ]
+    if files and not components:
+        # A test-only change still selects checks, but cannot invalidate application inputs.
+        gates = [
+            gate
+            for gate in gates
+            if gate.get("kind") != "artifact"
+            or any(
+                (
+                    matches(name, gate["inputs"])
+                    and not matches(name, gate.get("exclude_inputs", []))
+                )
+                or not any(
+                    matches(name, paths) for paths in manifest["components"].values()
+                )
+                for name in files
+            )
+        ]
+    return {
+        "schema": "base-quality-plan/v1",
+        "product": manifest["product"],
+        "head": git(root, "rev-parse", "HEAD"),
+        "profile": profile,
+        "components": sorted(selected),
+        "changed": files,
+        "reasons": reasons,
+        "gates": gates,
+        "manifest_sha256": digest(manifest),
+        "additional_acceptance": manifest.get("additional_acceptance"),
+    }
+
+
+def plan_summary(candidate):
+    """Bound human-facing output without changing the executable plan."""
+    files = candidate["changed"]
+    return {
+        "schema": "base-quality-plan-summary/v1",
+        **{name: candidate[name] for name in ("product", "head", "profile", "components", "manifest_sha256")},
+        "changed_count": len(files),
+        "changed_sample": files[:20],
+        "changed_omitted": max(0, len(files) - 20),
+        "reasons": {
+            component: {"matched_files": len(paths), "sample": paths[:3]}
+            for component, paths in candidate["reasons"].items()
+        },
+        "gates": [
+            {name: gate[name] for name in ("id", "component", "test_tier") if name in gate}
+            for gate in candidate["gates"]
+        ],
+        "additional_acceptance": candidate.get("additional_acceptance"),
+        "full_plan": "Omit --summary; root launcher: -PlanOnly -DetailedPlan",
+    }
+
+
+def ci_components(root, event, base, head, manifest_root=None):
+    manifest = load(manifest_root or root)
+    if event not in ("pull_request", "push") or (
+        event == "push" and (not base or base == "0" * 40)
+    ):
+        return list(manifest["components"])
+    if not re.fullmatch(r"[0-9a-f]{40}", base or "") or not re.fullmatch(
+        r"[0-9a-f]{40}", head or ""
+    ):
+        raise ValueError(
+            "Pull request classification requires exact source base/head SHAs"
+        )
+    # Direct comparison needs only the two exact commits, not an entire history.
+    # Diverged target changes may overselect, but can never omit a source change.
+    files = git(root, "diff", "--name-only", "--no-renames", base, head).splitlines()
+    return components_for_paths(manifest, files)[0]
+
+
+def classify(event, base, head, *, repo, manifest_root=None):
+    components = ci_components(repo, event, base, head, manifest_root)
+    return {
+        "backend": str(
+            any(c in components for c in ("backend", "shared", "bot", "cli"))
+        ).lower(),
+        "frontend": str("frontend" in components).lower(),
+    }
+
+
+def ci_outputs(event, base, head, *, repo, manifest_root=None):
+    values = classify(event, base, head, repo=repo, manifest_root=manifest_root)
+    manifest = load(manifest_root or repo)
+    if event in ("pull_request", "push") and base and base != "0" * 40:
+        files = git(
+            repo, "diff", "--name-only", "--no-renames", base, head
+        ).splitlines()
+        # Decide each producer from its own affected paths. An unrelated backend
+        # change must not turn a frontend test-only change into an asset rebuild.
+        # Unknown paths and explicit shared impacts still expand through the map.
+        _, reasons = components_for_paths(manifest, files)
+        frontend_files = set(reasons.get("frontend", []))
+        backend_files = {name for component in ("backend", "shared", "bot", "cli")
+                         for name in reasons.get(component, [])}
+        unit_only = bool(frontend_files) and all(
+            matches(name, manifest.get("frontend_unit_inputs", [])) for name in frontend_files
+        )
+        backend_unit_only = bool(backend_files) and all(
+            matches(name, manifest.get("backend_unit_inputs", [])) for name in backend_files
+        )
+    else:
+        unit_only = False
+        backend_unit_only = False
+    values["frontend_build"] = str(
+        values["frontend"] == "true" and not unit_only
+    ).lower()
+    values["backend_build"] = str(
+        values["backend"] == "true" and not backend_unit_only
+    ).lower()
+    return values
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, required=True)
+    args = parser.parse_args()
+    values = ci_outputs(
+        os.environ.get("EVENT_NAME", ""),
+        os.environ.get("BASE_SHA", ""),
+        os.environ.get("HEAD_SHA", ""),
+        repo=args.root.resolve(),
+    )
+    output = "".join(name + "=" + value + "\n" for name, value in values.items())
+    if os.environ.get("GITHUB_OUTPUT"):
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as stream:
+            stream.write(output)
+    else:
+        print(output, end="")
+
+
+if __name__ == "__main__":
+    main()

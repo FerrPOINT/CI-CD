@@ -11,6 +11,9 @@ use uuid::Uuid;
 
 const IMAGE_BUILD_INSPECT_FORMAT: &str = r#"{"id":{{json .Id}},"revision":{{json (index .Config.Labels "org.opencontainers.image.revision")}},"attempt":{{json (index .Config.Labels "sdlc.attempt")}},"request":{{json (index .Config.Labels "forge.image-build-request")}},"os":{{json .Os}},"volumes":{{json (index .Config "Volumes")}}}"#;
 
+#[path = "runner_cache.rs"]
+mod cache;
+
 #[derive(Clone)]
 pub(crate) struct Client {
     host: String,
@@ -735,6 +738,8 @@ impl RemoteJob {
         &mut self,
         args: &[String],
         envs: &[(String, String)],
+        project_id: Uuid,
+        workspace_path: &Path,
     ) -> io::Result<Command> {
         let source = std::env::var("CICD_RUNNER_SHARED_SOURCES_VOLUME").unwrap_or_default();
         if source.is_empty() {
@@ -756,6 +761,57 @@ impl RemoteJob {
                 .await?
         );
         service["labels"] = self.manifest["services"]["transfer"]["labels"].clone();
+        if cache::configured() {
+            let image_id = service["image"].as_str().unwrap();
+            let images: Value =
+                serde_json::from_str(&self.client.run(&["image", "inspect", image_id]).await?)?;
+            let platform = format!(
+                "{}/{}",
+                images[0]["Os"].as_str().unwrap_or_default(),
+                images[0]["Architecture"].as_str().unwrap_or_default()
+            );
+            let lookup = cache::from_env(
+                workspace_path,
+                cache::Identity {
+                    workspace: workspace.clone(),
+                    project: project_id.to_string(),
+                    daemon: self.client.daemon_id.clone(),
+                    image: image_id.to_string(),
+                    base_revision: revision.clone(),
+                    lock_sha256: String::new(),
+                    platform,
+                },
+            )?;
+            let explicit = service["entrypoint"]
+                .as_array()
+                .is_some_and(|arguments| !arguments.is_empty());
+            let mut evidence = json!({"status":"MISS", "reason":lookup.reason});
+            if let Some(seed) = lookup.seed.filter(|_| explicit) {
+                let actual: Value = serde_json::from_str(
+                    &self
+                        .client
+                        .run(&["volume", "inspect", &seed.volume])
+                        .await?,
+                )?;
+                if !cache::volume_matches(&seed, &actual) {
+                    return Err(invalid(
+                        "registered cache volume ownership/content identity differs",
+                    ));
+                }
+                cache::attach(&mut service, &seed)?;
+                self.manifest["volumes"]["cache-seed"] =
+                    json!({"external":true,"name":seed.volume});
+                evidence = json!({"status":"REGISTERED", "reason":lookup.reason,
+                    "key":seed.key, "seed_manifest_sha256":seed.manifest, "bytes":seed.bytes,
+                    "project":project_id.to_string(), "image":seed.identity.image,
+                    "lock_sha256":seed.identity.lock_sha256});
+            } else if !explicit {
+                evidence["reason"] = json!(
+                    "cache requires an explicit executable; ordinary image entrypoint preserved"
+                );
+            }
+            write_private(&self.directory.join("dependency-cache.json"), &evidence)?;
+        }
         self.manifest["services"]["job"] = service;
         self.manifest["volumes"]["sources"] = json!({"external":true,"name":source});
         self.save_manifest()?;

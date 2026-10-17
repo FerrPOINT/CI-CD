@@ -48,12 +48,12 @@ cd frontend && pnpm build
 
 Не использовать `docker compose restart` для применения нового образа или env: пересоздавать сервисы через `docker compose up -d` либо `docker compose up --build -d`.
 
-## Checklist перед завершением
+## Проверка завершения и отдельный release gate
 
 - [ ] Изменения соответствуют существующей архитектуре и не затёрли чужую работу.
-- [ ] Backend-проверки проходят: fmt, clippy, test, release build.
-- [ ] Frontend-проверки проходят: `pnpm openapi:check`, `pnpm openapi:compat --base-ref origin/main`, `pnpm test`, `pnpm build`.
-- [ ] `docker compose config` и `docker compose build` успешны при изменении контейнеров.
+- [ ] Пройдены scoped unit/static затронутых компонентов по `.quality-gate.json`; подходящие проверенные outputs/receipts переиспользованы.
+- [ ] На интегрированной вехе проверен один application artifact. Config/build контейнеров выполняются при изменении соответствующих inputs, без повторной компиляции неизменного кода.
+- [ ] Для релиза отдельно подтверждены полный backend/frontend набор, integration/slow/coverage и необходимые security/data/live gates на exact candidate; невыполненные проверки обозначены NOT RUN.
 - [ ] Для новых endpoint выполнена curl-проверка; для UI-изменений сделаны актуальные screenshots при необходимости.
 - [ ] Документация, `.env.example` и ADR обновлены, если изменились контракт, конфигурация или решение.
 - [ ] В diff отсутствуют credentials, токены, `.env` и другие чувствительные данные.
@@ -87,3 +87,39 @@ Desktop fallback. Pulse — приватный Git/pipeline только в CI/C
 Перед изменением платформенных имён прочитайте [интеграцию с Base](docs/PDLC_BASE_INTEGRATION.md) и канонические TERMS/BRANDING.
 Для UI: `pnpm --dir frontend exec pdlc-ui search "задача"` → `show ExportName` → один нужный `example`. В Workflow SSR используйте штатный exporter Base.
 Не переносите продуктовые запросы, DTO и права в общий UI. SDK/UI/skills pins независимы; новое имя платформы не меняет SDLC IDs/scopes или Hermes upstream.
+
+## Быстрые проверки и сборка
+
+Перед тестами, build и CI читать обязательный [стандарт Base](https://github.com/FerrPOINT/services-base/blob/197ead9d9b6cf6901e8f9dd31f43f719885502c3/docs/BUILD_PERFORMANCE.md).
+При разработке и сборке unit/static. Integration/slow/full coverage —
+ручной gate при подготовке релиза по docs/TESTING.md.
+Сохранять полезный cache, не переустанавливать неизменные dependencies и не
+пересобирать приложение из-за test-only. До повторного тяжёлого запуска назвать
+изменившиеся inputs/недостающее evidence; передавать один artifact между этапами.
+Required security/data/compatibility/live checks и product toolchains сохраняются.
+Компоненты и команды: `.quality-gate.json`; общие правила не копировать.
+
+Уровни и команды: [TESTING](docs/TESTING.md). Полный `.github/workflows/release.yml`
+запускается вручную на exact ref; зелёный unit build не означает release acceptance.
+
+Root candidate producer может переиспользовать локальный public Compose 5.5.1
+artifact через named context `forge-compose` и `FORGE_COMPOSE_SOURCE=preloaded`.
+Он закреплён repository digest; recipe проверяет официальный SHA-256 до исполнения.
+Самостоятельный build сохраняет default download с ограничением ожидания. Команда
+подготовки — Base `scripts/compose_tool.py`; SDK/runtime/operator pins не меняются.
+
+## Выбор сборки и повторное использование
+
+Перед build/test/install определить нужные компоненты и изменившиеся реальные
+inputs; проверить готовый artifact, environment и cache. Неизменные inputs и
+проверенный artifact означают отсутствие повторных install/compile/source export.
+Docs/test-only не пересобирают приложение без изменения его build inputs.
+Во время работы выполнять scoped unit/static; полный gate — на согласованной
+вехе. Integration/slow/full coverage — вручную перед релизом; необходимые
+security/data/compatibility/live gates сохраняются. Полные команды в этом
+документе — каталог проверок, а не требование выполнять всё после каждой правки.
+Перед повторным heavy назвать changed inputs или missing proof; REUSED не
+выдавать за новый тест. Полезный прогретый cache сохранять в его бюджете.
+В source workspace читать `docs/BUILD_PERFORMANCE.md` из `qualityTooling.path`
+в `../source-workspace.json` и правила workspace в `../AGENTS.md`.
+В standalone checkout использовать стандарт принятой версии Base.
