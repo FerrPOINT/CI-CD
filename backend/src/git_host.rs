@@ -138,6 +138,11 @@ enum GitOperation {
     Write,
 }
 
+enum GitPrincipal {
+    HumanOrLegacy,
+    ProjectServiceAccount,
+}
+
 fn post_receive_hook(name: &str, internal_token: Option<&str>) -> String {
     // A blank rendered line under a backslash continuation used to truncate
     // the curl command before `-d`: pushes silently failed with HTTP 400 on
@@ -317,7 +322,7 @@ async fn check_repo_access(
     repo: &str,
     headers: &HeaderMap,
     operation: GitOperation,
-) -> Result<(), ApiError> {
+) -> Result<GitPrincipal, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     let name = crate::repository_catalog::resolve_storage(pool, repo).await?;
     if operation == GitOperation::Write {
@@ -331,12 +336,12 @@ async fn check_repo_access(
             .map_err(ApiError::internal)?;
 
     if operation == GitOperation::Read && visibility.as_deref() == Some("public") {
-        return Ok(());
+        return Ok(GitPrincipal::HumanOrLegacy);
     }
 
     if legacy_git_token_matches(&state.git, headers)? {
         return if visibility.is_some() {
-            Ok(())
+            Ok(GitPrincipal::HumanOrLegacy)
         } else {
             Err(ApiError::not_found())
         };
@@ -346,7 +351,7 @@ async fn check_repo_access(
         if configured_git_token(&state.git).is_none() && visibility.is_none() {
             return Err(ApiError::not_found());
         }
-        return check_git_auth(&state.git, headers);
+        return check_git_auth(&state.git, headers).map(|()| GitPrincipal::HumanOrLegacy);
     };
     let token = bearer_or_basic_password(headers)?.ok_or_else(ApiError::unauthorized)?;
     let claims = crate::api::identity_for_bearer_token(pool, auth_secret, token.trim()).await?;
@@ -367,7 +372,9 @@ async fn check_repo_access(
     }
     if claims.role == "service_account" {
         return match claims.token_project_id {
-            Some(project_id) => git_repository_linked_to_project(pool, &name, project_id).await,
+            Some(project_id) => git_repository_linked_to_project(pool, &name, project_id)
+                .await
+                .map(|()| GitPrincipal::ProjectServiceAccount),
             None => Err(ApiError::forbidden()),
         };
     }
@@ -376,18 +383,20 @@ async fn check_repo_access(
         && crate::repository_catalog::shared_human_repository(pool, &name, claims.token_project_id)
             .await?
     {
-        return Ok(());
+        return Ok(GitPrincipal::HumanOrLegacy);
     }
     if global_role == crate::authz::Role::Admin {
         return match claims.token_project_id {
-            Some(project_id) => git_repository_linked_to_project(pool, &name, project_id).await,
-            None => Ok(()),
+            Some(project_id) => git_repository_linked_to_project(pool, &name, project_id)
+                .await
+                .map(|()| GitPrincipal::HumanOrLegacy),
+            None => Ok(GitPrincipal::HumanOrLegacy),
         };
     }
 
     if git_project_access_allows(pool, &name, claims.sub, min_role, claims.token_project_id).await?
     {
-        Ok(())
+        Ok(GitPrincipal::HumanOrLegacy)
     } else {
         Err(ApiError::forbidden())
     }
@@ -706,9 +715,10 @@ pub async fn git_service_endpoint(
         "receive-pack" => (service, GitOperation::Write),
         _ => return ApiError::bad_request("unsupported git service").into_response(),
     };
-    if let Err(e) = check_repo_access(&state, &repo, &headers, operation).await {
-        return e.into_response();
-    }
+    let principal = match check_repo_access(&state, &repo, &headers, operation).await {
+        Ok(principal) => principal,
+        Err(error) => return error.into_response(),
+    };
     let pool = match state.pool.as_ref() {
         Some(pool) => pool,
         None => return ApiError::unavailable().into_response(),
@@ -730,7 +740,9 @@ pub async fn git_service_endpoint(
         Ok(body) => body,
         Err(e) => return e.into_response(),
     };
-    let hooks = if operation == GitOperation::Write {
+    let hooks = if operation == GitOperation::Write
+        && matches!(principal, GitPrincipal::ProjectServiceAccount)
+    {
         match receive_hooks::ReceiveHooks::prepare(pool, &path).await {
             Ok(hooks) => Some(hooks),
             Err(error) => return error.into_response(),

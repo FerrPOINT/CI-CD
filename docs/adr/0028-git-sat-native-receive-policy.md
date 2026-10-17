@@ -15,7 +15,7 @@ Git SAT переиспользует существующий API repository/pro
 обычной проверки active credential и exact operation scope. Human ACL, public
 read и legacy credential semantics сохраняются; новых scopes/DTO/migrations нет.
 
-Перед receive читается snapshot exact default/protected branch names всех
+Перед SAT receive читается snapshot exact default/protected branch names всех
 связанных CI-конфигураций. Git `check-ref-format` валидирует полученные refs.
 Native `pre-receive` получает стандартный список old/new/ref от самого Git;
 wire pkt-lines и pack не разбираются приложением. Любой запрещённый ref
@@ -32,13 +32,18 @@ unknown writer outcome сохраняет files, без нового recovery co
 ## Границы и проверки
 
 Прямое создание/update/delete configured default/protected branch запрещено
-для всех Smart HTTP writers; PR merge использует прежний gate. Непривязанный
+для project-bound SAT. Human/legacy receive сохраняет исходные ACL, initial push
+и custom hooks без нового guard; тип principal вычисляет только сервер после
+identity/project/scope checks. PR merge использует прежний gate. Непривязанный
 bare repository не приобретает выдуманную CI branch policy. Политика фиксируется
 на начале receive, не является новой транзакцией с последующими config edits.
 Git scopes repository-wide, не task-branch credential или Tracker admission.
+Guard directory находится внутри bare repository, не на потенциально noexec `/tmp`.
 
-Добавлены три native Git unit regressions для protected/default refs, all-or-none
-denial, task branch и custom hooks; один ignored real-PG/HTTP/Git aggregate для
+Добавлены четыре native Git unit regressions для repository-local placement,
+protected/default refs, all-or-none denial, task branch и custom hooks;
+один ignored real-PG/HTTP/Git aggregate для
 correct/foreign/unbound SAT, read-only/API-only/disabled credentials и ref outcomes.
+Aggregate также проверяет human initial/default push и сохранение viewer deny.
 Heavy Rust/PG execution выполняется отдельно после Main admission; source и
 hook-script checks не объявляют installed qualification.

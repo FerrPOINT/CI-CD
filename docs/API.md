@@ -2,9 +2,10 @@
 
 Git Smart HTTP source fix: project-bound SAT проверяет существующую UUID связь
 repository/project и отдельные `git:read`/`git:write` scopes. Native pre-receive
-отклоняет весь push, затрагивающий configured default/protected branch, до
+отклоняет весь SAT push, затрагивающий configured default/protected branch, до
 изменения refs; ответ сохраняет стандартный Git report-status, не новый JSON DTO.
-Custom hooks и human ACL сохраняются. [Git hosting](GIT_HOSTING.md#8-аутентификация).
+Custom hooks, human ACL и human initial push сохраняются: guard применяется
+только к серверно authenticated project-bound SAT. [Git hosting](GIT_HOSTING.md#8-аутентификация).
 Новые routes/credentials/scopes не вводятся; Rust/PG и installed-image qualification pending.
 
 ## Typed Image Build In Task Pipeline

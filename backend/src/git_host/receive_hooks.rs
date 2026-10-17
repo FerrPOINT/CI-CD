@@ -306,6 +306,15 @@ mod tests {
     }
 
     #[test]
+    fn native_receive_guard_is_inside_repository_not_system_temp() {
+        let f = Fixture::new();
+        let hooks = f.install();
+        assert_eq!(hooks.directory.parent(), Some(f.bare.as_path()));
+        assert!(hooks.directory.join("pre-receive").is_file());
+        hooks.cleanup();
+    }
+
+    #[test]
     fn native_pre_receive_blocks_entire_push_before_default_or_protected_ref_changes() {
         let f = Fixture::new();
         let original = f.reference("refs/heads/main").unwrap();

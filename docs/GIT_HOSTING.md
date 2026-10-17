@@ -138,13 +138,15 @@ Git Smart HTTP различает read и write:
 Связь hosted repository → project проверяется через `repository_catalog.id`,
 `storage_name` и `projects.repository_id`, не через URL tail.
 
-Smart HTTP receive использует native `pre-receive` до изменения refs: прямые
+Smart HTTP receive для project-bound SAT использует native `pre-receive` до изменения refs: прямые
 создание/update/delete default branch или точного имени из `protected_branches`
-любой связанной CI-конфигурации запрещают весь push. Изменение этих branches
-проходит через существующий PR merge gate; operator/legacy credential не отменяет
-receive policy. Task branches продолжают работать по прежним ACL/scopes.
+любой связанной CI-конфигурации запрещают весь SAT push. Human/legacy receive
+сохраняет прежние ACL, initial push и effective custom hooks без нового guard.
+Различие определяется только серверным authenticated principal, не параметром
+запроса. SAT task branches продолжают работать по project binding и Git scopes.
 Новый task-bound credential не выдаётся, `git:write` остаётся repository-wide.
 
+SAT guard создаётся внутри bare repository на его Git volume, не в `/tmp`.
 Временный private `core.hooksPath` делегирует executable custom hooks исходного
 effective hook directory с прежними argv/stdin. Repo hooks и Git config не
 перезаписываются. При известном завершении Git удаляется только собственный

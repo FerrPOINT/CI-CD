@@ -149,6 +149,33 @@ async fn git_sat_project_scope_and_native_receive_protect_refs_without_bypassing
             .bind(Uuid::new_v4()).bind(cicd::auth::hash_token(&token)).bind(account).bind(bound).bind(scopes).execute(&pool).await.unwrap();
         tokens.push(token);
     }
+    let human = Uuid::new_v4();
+    let viewer = Uuid::new_v4();
+    for (user, role) in [(human, "developer"), (viewer, "viewer")] {
+        sqlx::query("INSERT INTO users(id,username,role) VALUES($1,$2,$3)")
+            .bind(user)
+            .bind(format!("git-human-{user}"))
+            .bind(role)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO user_credentials(user_id,password_hash) VALUES($1,$2)")
+            .bind(user)
+            .bind(cicd::auth::hash_password("SyntheticGitPass1!").unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO project_memberships(project_id,user_id,role) VALUES($1,$3,$4),($2,$3,$4)",
+        )
+        .bind(project)
+        .bind(foreign)
+        .bind(user)
+        .bind(role)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
     let app = cicd::api::app_with_git_and_auth_secret(
         Some(pool.clone()),
         cicd::git_host::GitConfig {
@@ -157,6 +184,22 @@ async fn git_sat_project_scope_and_native_receive_protect_refs_without_bypassing
             internal_token: None,
         },
         Some(format!("synthetic-secret-{account}")),
+    );
+    let human_token = login_access_token(
+        app.clone(),
+        &format!("git-human-{human}"),
+        "SyntheticGitPass1!",
+    )
+    .await;
+    let viewer_token = login_access_token(
+        app.clone(),
+        &format!("git-human-{viewer}"),
+        "SyntheticGitPass1!",
+    )
+    .await;
+    assert_eq!(
+        discovery(&app, &name, &viewer_token, "git-receive-pack").await,
+        StatusCode::FORBIDDEN
     );
     assert_eq!(
         discovery(&app, &name, &tokens[0], "git-upload-pack").await,
@@ -200,7 +243,8 @@ async fn git_sat_project_scope_and_native_receive_protect_refs_without_bypassing
     fs::write(source.join("data"), "second\n").unwrap();
     assert!(git(&source, &["commit", "-am", "second"]).status.success());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = format!("http://{}/git/{name}.git", listener.local_addr().unwrap());
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let url = format!("{origin}/git/{name}.git");
     let server = tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
@@ -242,6 +286,84 @@ async fn git_sat_project_scope_and_native_receive_protect_refs_without_bypassing
                 "refs/heads/task/accepted"
             ]
         )
+        .status
+        .success()
+    );
+    // Human initial/default push keeps the pre-existing ACL and hook path, not the SAT guard.
+    let initial_name = format!("human-initial-{}", Uuid::new_v4().simple());
+    let initial_bare = root.join(format!("{initial_name}.git"));
+    assert!(
+        git(
+            &source,
+            &[
+                "init",
+                "--bare",
+                "--initial-branch=main",
+                initial_bare.to_str().unwrap()
+            ]
+        )
+        .status
+        .success()
+    );
+    let initial_repository = Uuid::new_v4();
+    sqlx::query("INSERT INTO repositories(id,name,visibility) VALUES($1,$2,'private')")
+        .bind(initial_repository)
+        .bind(&initial_name)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE projects SET repository_id=$1 WHERE id=$2")
+        .bind(initial_repository)
+        .bind(foreign)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let initial_url = format!("{origin}/git/{initial_name}.git");
+    assert!(
+        !push(&source, &initial_url, &tokens[1], &["HEAD:refs/heads/main"])
+            .await
+            .status
+            .success()
+    );
+    assert!(
+        !git(
+            &source,
+            &[
+                "--git-dir",
+                initial_bare.to_str().unwrap(),
+                "show-ref",
+                "--verify",
+                "refs/heads/main"
+            ]
+        )
+        .status
+        .success()
+    );
+    assert!(
+        push(
+            &source,
+            &initial_url,
+            &human_token,
+            &["HEAD:refs/heads/main"]
+        )
+        .await
+        .status
+        .success()
+    );
+    assert!(
+        push(&source, &url, &human_token, &["HEAD:refs/heads/main"])
+            .await
+            .status
+            .success()
+    );
+    assert!(
+        !push(
+            &source,
+            &url,
+            &viewer_token,
+            &["HEAD:refs/heads/task/viewer-denied"]
+        )
+        .await
         .status
         .success()
     );
