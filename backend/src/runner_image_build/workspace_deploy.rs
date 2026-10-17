@@ -838,9 +838,7 @@ pub(crate) async fn prepare_requested(
             != vec![artifact.to_owned()]
         || planned["allow_failure"] != false
         || planned["image_build"].is_object()
-        || !planned["commands"]
-            .as_array()
-            .is_some_and(|v| !v.is_empty())
+        || planned["commands"].as_array().is_none_or(|v| v.is_empty())
     {
         return Err(ApiError::conflict(
             "Deployment job differs from immutable plan",
@@ -1107,7 +1105,7 @@ async fn read_registry(
     selection: &BTreeMap<String, Uuid>,
 ) -> anyhow::Result<VerifiedImageRegistry> {
     ensure!(
-        1 <= selection.len() && selection.len() <= 8,
+        !selection.is_empty() && selection.len() <= 8,
         "service selection bound"
     );
     let (control_root, artifact_root) = roots;

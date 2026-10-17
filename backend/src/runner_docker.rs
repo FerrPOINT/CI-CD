@@ -1421,9 +1421,9 @@ impl RemoteJob {
                 .as_str()
                 .is_some_and(|id| id.len() == 64 && id.bytes().all(|c| c.is_ascii_hexdigit()))
             || network["Internal"] != false
-            || !network["IPAM"]["Config"]
+            || network["IPAM"]["Config"]
                 .as_array()
-                .is_some_and(|v| !v.is_empty())
+                .is_none_or(|v| v.is_empty())
         {
             return Err(invalid("owned deployment network differs"));
         }

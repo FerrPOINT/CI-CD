@@ -347,7 +347,7 @@ pub struct CandidateCheck {
 #[derive(utoipa::ToSchema)]
 #[serde(untagged)]
 pub enum PushRequest {
-    Candidate(CandidateCheck),
+    Candidate(Box<CandidateCheck>),
     Legacy(crate::git_host::GitPushEvent),
 }
 

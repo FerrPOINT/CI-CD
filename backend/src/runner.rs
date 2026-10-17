@@ -1725,7 +1725,7 @@ async fn run_job_inner(
             &pool,
             job.pipeline_id,
             attempt_id,
-            &config,
+            config,
         )
         .await
         .is_err()
@@ -1821,7 +1821,7 @@ async fn run_job_inner(
             &pool,
             job.pipeline_id,
             attempt_id,
-            &config,
+            config,
         )
         .await
         .is_err()
@@ -1883,7 +1883,7 @@ async fn run_job_inner(
             &pool,
             job.pipeline_id,
             attempt_id,
-            &config,
+            config,
         )
         .await
         .is_err()

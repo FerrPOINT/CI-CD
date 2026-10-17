@@ -952,7 +952,7 @@ pub async fn internal_git_push(
 ) -> Result<axum::Json<serde_json::Value>, ApiError> {
     let event = match request {
         crate::task_git::PushRequest::Candidate(request) => {
-            return crate::task_git::check_callback(&state, &headers, request)
+            return crate::task_git::check_callback(&state, &headers, *request)
                 .await
                 .map(axum::Json);
         }
