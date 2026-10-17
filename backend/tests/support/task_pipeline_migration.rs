@@ -279,7 +279,7 @@ async fn populated_0091_to_0092_preserves_workspace_pipeline_history_and_old_gua
     binding.tracker_instance_id = Uuid::new_v4().to_string();
     binding.root_task_id = binding.task_id;
     let legacy_intent = cicd::domain::sdlc_workspace::TaskWorkspaceIntent {
-        operation_key: "legacy:before-0093".into(),
+        operation_key: "legacy:before-0094".into(),
         binding,
         repository_id: repository,
         source_commit: receipt.request.source_commit.clone(),
@@ -302,7 +302,7 @@ async fn populated_0091_to_0092_preserves_workspace_pipeline_history_and_old_gua
     .await
     .unwrap();
     drop(conn);
-    let task_before_93: serde_json::Value =
+    let task_before_94: serde_json::Value =
         sqlx::query_scalar("SELECT to_jsonb(t) FROM task_pipeline_intents t WHERE pipeline_id=$1")
             .bind(pipeline)
             .fetch_one(&pool)
@@ -310,26 +310,26 @@ async fn populated_0091_to_0092_preserves_workspace_pipeline_history_and_old_gua
             .unwrap();
     let current = cicd::migrations().await.unwrap();
     current.run(&pool).await.unwrap();
-    let mut task_after_93: serde_json::Value =
+    let mut task_after_94: serde_json::Value =
         sqlx::query_scalar("SELECT to_jsonb(t) FROM task_pipeline_intents t WHERE pipeline_id=$1")
             .bind(pipeline)
             .fetch_one(&pool)
             .await
             .unwrap();
     assert_eq!(
-        task_after_93
+        task_after_94
             .as_object_mut()
             .unwrap()
             .remove("delegated_credential"),
         Some(serde_json::Value::Null)
     );
     assert_eq!(
-        task_after_93, task_before_93,
+        task_after_94, task_before_94,
         "populated legacy SAT task custody is byte-identical"
     );
-    let mut after_93: serde_json::Value =
+    let mut after_94: serde_json::Value =
         sqlx::query_scalar(SNAPSHOT).fetch_one(&pool).await.unwrap();
-    for row in after_93["receipts"].as_array_mut().unwrap() {
+    for row in after_94["receipts"].as_array_mut().unwrap() {
         let row = row.as_object_mut().unwrap();
         assert_eq!(
             row.remove("delegated_subject"),
@@ -341,18 +341,18 @@ async fn populated_0091_to_0092_preserves_workspace_pipeline_history_and_old_gua
         );
     }
     assert_eq!(
-        after_93, before,
-        "0093 adds only nullable custody columns; old receipt/data bytes remain"
+        after_94, before,
+        "0094 adds only nullable custody columns; old receipt/data bytes remain"
     );
     let fks: i64=sqlx::query_scalar("SELECT count(*) FROM pg_constraint WHERE connamespace=current_schema()::regnamespace AND contype='f' AND conname IN ('task_pipeline_intents_service_account_id_fkey','task_pipeline_intents_api_token_id_fkey','sdlc_workspace_operations_service_account_id_fkey')")
         .fetch_one(&pool).await.unwrap();
     assert_eq!(fks, 3, "all original SAT FKs remain installed");
-    let history_93 = migration_catalog_history(&pool).await;
+    let history_94 = migration_catalog_history(&pool).await;
     current.run(&pool).await.unwrap();
     assert_eq!(
         migration_catalog_history(&pool).await,
-        history_93,
-        "0093 restart does not rewrite history"
+        history_94,
+        "0094 restart does not rewrite history"
     );
     migration_catalog_cleanup(pool, admin, schema).await;
 }

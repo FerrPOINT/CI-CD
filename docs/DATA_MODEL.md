@@ -1,6 +1,6 @@
 # Дата-модель Forge CI/CD
 
-Source additive0093 вводит disjoint encrypted central-child custody в existing
+Source additive0094 вводит disjoint encrypted central-child custody в existing
 task pipeline/workspace journals. Legacy SAT rows, original FK/checksum history,
 unique operation keys и immutable receipt/attempt guards сохранены. Новой
 очереди/issuer таблицы нет. [Контракт](FORGE_DELEGATED_CREDENTIAL_CONTRACT.md).

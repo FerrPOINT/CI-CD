@@ -109,9 +109,14 @@ slice НЕ поддержан: другой live child, даже с тем же 
 
 ## Хранение и совместимость
 
-Единственная additive SQLx migration `0093_delegated_task_credentials.sql`
-выбрана после fresh main history, заканчивающейся0092. Автоматическая регистрация
-через existing SQLx migrations directory. Исторические файлы не изменены.
+Единственная новая additive SQLx migration `0094_delegated_task_credentials.sql`
+не занимает номер0093, уже применённый repository-sync foundation в соседнем
+workspace. SQL новой миграции не изменён при перенумерации. Автоматическая
+регистрация через existing SQLx migrations directory. Исторические файлы не изменены.
+Установка поверх repository-sync0093 требует отдельного опубликованного
+foundation-пакета с точной применённой историей; отсутствие этого файла нельзя
+обходить через ignore-missing или переписывание ledger. До объединённой проверки
+такой upgrade не квалифицирован.
 
 Existing task_pipeline_intents получает private delegated_credential JSONB:
 subject, child SHA256 fingerprint, canonical context/hash и encrypted_child.
@@ -166,5 +171,5 @@ Task child не проходит Git bearer identity и не получает `g
 splice, repeated live verifier denial, trigger/replay/native binding), HTTP Tracker
 peer regression, CLI wire/negative cases и PG custody variant regression.
 Historical0091→0092 regression сохраняет исходную границу и дополнительно проверяет
-0093 nullable-only legacy data/receipt projection, прежние3SAT FK и replay catalog.
+0094 nullable-only legacy data/receipt projection, прежние3SAT FK и replay catalog.
 Existing catalog tests требуют точно093. Это source tests, не заявленный PASS.
