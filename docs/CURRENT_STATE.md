@@ -1,5 +1,15 @@
 # CURRENT STATE — Forge CI/CD
 
+## Task Workspace И Git: 17 октября 2026
+
+PR122 source9b5d/SDK2ad прошёл typed server/integration/CLI compilation и65 выбранных
+deployment/Git/PG случаев:64 в основном прогоне и один ordinary-task PG follow-up
+на том же SHA. Исходный failed aggregate receipt сохранён: его grammar assertion
+не запустил последний тест, а не обнаружил product failure. Оба временных QA
+очищены. Clippy/OpenAPI, populated migration, image и live rollout ещё открыты;
+это не полный release gate и не установленный runtime.
+[Точные проверки и границы](FORGE_TASK_DEPLOYMENT_LOCAL_20261017.md).
+
 > **Производный снимок текущего состояния.** Сверяется с кодом и evidence; authority — код и коммит, не этот файл. Обновлять при каждом изменении capability.
 > Снято: `2026-10-11`, candidate `fix/forge-runtime-main-integration-20261011`, не установленный runtime; visual evidence перечислено в `docs/assets/screens/manifest.md`.
 
