@@ -1,5 +1,11 @@
 # Дата-модель Forge CI/CD
 
+Git receive читает branch policy из существующих `projects.default_branch`
+и `projects.protected_branches` по `projects.repository_id` и stable repository
+UUID. Human/SAT credentials и project scope используют прежнюю модель.
+Namespace advisory write lease покрывает snapshot и native receive; private
+per-invocation hook files не являются новой таблицей или миграцией.
+
 Task pipeline source candidate содержит additive unreleased migration
 `0092_task_pipeline_intents.sql`. Одна строка на pipeline связывает project,
 исходный service account/token UUID (не bearer), выбранную preparation job,
