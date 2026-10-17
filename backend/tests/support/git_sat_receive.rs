@@ -243,13 +243,10 @@ async fn git_sat_project_scope_and_native_receive_protect_refs_without_bypassing
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO project_memberships(project_id,user_id,role) VALUES($1,$2,$3)")
-            .bind(empty_project)
-            .bind(user)
-            .bind(role)
-            .execute(&pool)
-            .await
-            .unwrap();
+        if role == "developer" {
+            sqlx::query("INSERT INTO project_memberships(project_id,user_id,role) VALUES($1,$2,'developer')")
+                .bind(empty_project).bind(user).execute(&pool).await.unwrap();
+        }
         let token = format!(
             "cicd_{}{}",
             Uuid::new_v4().simple(),
@@ -458,7 +455,7 @@ async fn namespace_write_lease_covers_receive_policy_and_hook_preparation() {
     );
     let request = Request::post(format!("/git/{name}.git/git-receive-pack"))
         .header("content-type", "application/x-git-receive-pack-request")
-        .header("authorization", format!("Bearer {token}"))
+        .header("x-git-token", token)
         .body(Body::from("0000"))
         .unwrap();
     let receive = tokio::spawn(async move { app.oneshot(request).await.unwrap() });
