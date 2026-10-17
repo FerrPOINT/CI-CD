@@ -154,6 +154,7 @@ fn old_catalog_wire_shape_is_unchanged_and_source_has_no_git_grant() {
         default_ref: "refs/heads/main".into(),
         protected_refs: vec!["refs/heads/main".into()],
         observed_at: Utc::now(),
+        delivery_configuration: None,
     };
     let value = serde_json::to_value(RepositoryReadback::Source(source)).unwrap();
     assert_eq!(value.as_object().unwrap().len(), 9);

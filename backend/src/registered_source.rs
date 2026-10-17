@@ -16,12 +16,25 @@ pub struct RepositoryQuery {
     pub offset: Option<u32>,
     pub base_ref: Option<String>,
     pub base_commit: Option<String>,
+    pub delivery_configuration_name: Option<String>,
 }
 
 impl RepositoryQuery {
     pub fn source(&self) -> Result<Option<ExpectedSource>, ApiError> {
+        if self
+            .delivery_configuration_name
+            .as_deref()
+            .is_some_and(|name| {
+                name.is_empty()
+                    || name.len() > 256
+                    || name.trim() != name
+                    || name.chars().any(char::is_control)
+            })
+        {
+            return Err(ApiError::bad_request("invalid_delivery_configuration_name"));
+        }
         match (&self.base_ref, &self.base_commit) {
-            (None, None) => Ok(None),
+            (None, None) if self.delivery_configuration_name.is_none() => Ok(None),
             (Some(reference), Some(commit)) if full_branch(reference) && sha1(commit) => {
                 Ok(Some(ExpectedSource {
                     reference: reference.clone(),
@@ -58,6 +71,41 @@ pub struct VerifiedSource {
     pub default_ref: String,
     pub protected_refs: Vec<String>,
     pub observed_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery_configuration: Option<DeliveryConfigurationReadback>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeliveryConfigurationReadback {
+    pub id: Uuid,
+    pub name: String,
+    pub repository_id: Uuid,
+    pub repository_name: String,
+}
+
+fn exact_delivery_configuration(
+    rows: Vec<(Uuid, String, Uuid)>,
+    repository: Uuid,
+    public_name: &str,
+    name: &str,
+) -> Result<DeliveryConfigurationReadback, ApiError> {
+    if rows.is_empty() {
+        return Err(ApiError::not_found());
+    }
+    if rows.len() != 1 {
+        return Err(ApiError::conflict("delivery_configuration_ambiguous"));
+    }
+    let (id, actual_name, actual_repository) = rows.into_iter().next().ok_or_else(unavailable)?;
+    if id.is_nil() || actual_name != name || actual_repository != repository {
+        return Err(ApiError::forbidden());
+    }
+    Ok(DeliveryConfigurationReadback {
+        id,
+        name: actual_name,
+        repository_id: actual_repository,
+        repository_name: public_name.to_owned(),
+    })
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -211,6 +259,7 @@ pub async fn observe(
     repository: Uuid,
     namespace: NamespaceRef,
     expected: ExpectedSource,
+    delivery_configuration_name: Option<&str>,
 ) -> Result<VerifiedSource, ApiError> {
     // Existing reader auth stays on the existing route; this lease closes catalog/namespace relocation.
     let mut tx = crate::repository_catalog::catalog_write_lease(state, repository).await?;
@@ -255,6 +304,25 @@ pub async fn observe(
         .bind(repository).fetch_all(&mut *tx).await.map_err(ApiError::internal)?;
     let (commit, default) = native_source(&path, &expected).await?;
     let protected_refs = protected_refs(&default, policies)?;
+    // Same catalog/namespace fence, exact repo and name; never a human catalog listing.
+    let delivery_configuration = if let Some(name) = delivery_configuration_name {
+        let rows = sqlx::query_as::<_, (Uuid, String, Uuid)>(
+            "SELECT id,name,repository_id FROM projects WHERE repository_id=$1 AND name=$2 ORDER BY id LIMIT 2",
+        )
+        .bind(repository)
+        .bind(name)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+        Some(exact_delivery_configuration(
+            rows,
+            repository,
+            &public_name,
+            name,
+        )?)
+    } else {
+        None
+    };
     let observation = VerifiedSource {
         namespace,
         forge_instance_id: command.resource.instance_id,
@@ -265,6 +333,7 @@ pub async fn observe(
         default_ref: default,
         protected_refs,
         observed_at: Utc::now(),
+        delivery_configuration,
     };
     tx.commit().await.map_err(ApiError::internal)?;
     Ok(observation)
@@ -273,3 +342,7 @@ pub async fn observe(
 #[cfg(test)]
 #[path = "registered_source_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "registered_source_delivery_tests.rs"]
+mod delivery_configuration_tests;

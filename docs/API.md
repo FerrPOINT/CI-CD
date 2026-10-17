@@ -1,5 +1,9 @@
 # API v1 Specification — Forge CI/CD
 
+Существующий namespace GET registered-reader поддерживает optional exact readback
+delivery configuration того же repository. Default bytes и human catalogs не
+меняются. [Контракт reader](NAMESPACE_DELIVERY_CONFIGURATION_READER.md).
+
 Existing Smart HTTP and internal/git-push support an opt-in own-task candidate
 variant with exact confirmed source binding, fresh Developer authority and
 single-ref CAS. Legacy authentication and ordinary post-receive remain separate;

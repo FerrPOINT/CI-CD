@@ -160,8 +160,14 @@ pub async fn verified_repository(
         axum::http::HeaderValue::from_static("no-store"),
     );
     if let Some(expected) = query.source()? {
-        let observed =
-            crate::registered_source::observe(&state, id, query.namespace(), expected).await?;
+        let observed = crate::registered_source::observe(
+            &state,
+            id,
+            query.namespace(),
+            expected,
+            query.delivery_configuration_name.as_deref(),
+        )
+        .await?;
         return Ok((headers, Json(RepositoryReadback::Source(observed))));
     }
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
