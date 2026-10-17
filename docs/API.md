@@ -5,6 +5,13 @@
 queue, пока trusted deployment adapter отсутствует. Это не доступная deployment
 capability. Обычные jobs и readonly OCI не меняются; [точная граница](contracts/WORKSPACE_DEPLOY_ADMISSION.md).
 
+Source-only opt-in delegated task credential добавляет optional
+`TaskTriggerPipeline.credential_context` и отдельную child identity только для
+task-trigger/task-workspace readback. Legacy SAT и default auth не меняются;
+Git/delivery/admin права child закрыты. Exact scope/wire и private async custody:
+[delegated task credential](FORGE_DELEGATED_CREDENTIAL_CONTRACT.md).
+Rust/PG qualification и installation этого slice не заявлены.
+
 PR `action=merge` использует только branch refs и фиксированные SHA для pipeline
 gate и native merge. Короткие и `refs/heads/...` имена эквивалентны; tag/HEAD/revision
 expressions не заменяют отсутствующую ветку. Stale source/target возвращает 409,

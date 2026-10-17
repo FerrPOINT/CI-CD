@@ -939,6 +939,98 @@ async fn task_pipeline_cli_preserves_supplied_intent_key_and_authenticated_locat
 }
 
 #[tokio::test]
+async fn delegated_task_pipeline_cli_publishes_exact_context_without_mint_or_generated_key() {
+    let server = Server::start(vec![(200, json!({"id":"fixture"}))]).await;
+    let temp = tempfile::tempdir().unwrap();
+    let file = temp.path().join("context.json");
+    let context = json!({"version":1,"runId":uuid::Uuid::new_v4(),"chatId":uuid::Uuid::new_v4(),"machineSubject":"native-fixture"});
+    std::fs::write(&file, context.to_string()).unwrap();
+    let key = uuid::Uuid::new_v4().to_string();
+    let intent = json!({"operationKey":"retained:original"});
+    success(
+        &server
+            .run(
+                &[
+                    "pipeline",
+                    "run",
+                    "--project",
+                    "fixture-project",
+                    "--git-ref",
+                    &"a".repeat(40),
+                    "--idempotency-key",
+                    &key,
+                    "--task-intent",
+                    "-",
+                    "--credential-context",
+                    file.to_str().unwrap(),
+                ],
+                Some(&intent.to_string()),
+            )
+            .await,
+    );
+    let requests = server.requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].key.as_deref(), Some(key.as_str()));
+    assert_eq!(
+        requests[0].authorization.as_deref(),
+        Some("Bearer fixture-token")
+    );
+    let body: Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(body["credential_context"], context);
+    assert_eq!(body["task_intent"], intent);
+    assert_eq!(body.as_object().unwrap().len(), 4);
+    assert!(!body.to_string().contains("fixture-token"));
+}
+
+#[tokio::test]
+async fn delegated_context_cli_rejects_missing_original_inputs_and_bad_context_without_http() {
+    let server = Server::start(vec![]).await;
+    let temp = tempfile::tempdir().unwrap();
+    let intent = temp.path().join("intent.json");
+    std::fs::write(&intent, "{}").unwrap();
+    let missing = server
+        .run(
+            &[
+                "pipeline",
+                "run",
+                "--project",
+                "fixture-project",
+                "--credential-context",
+                "-",
+            ],
+            Some("{}"),
+        )
+        .await;
+    assert!(!missing.status.success());
+    for input in [
+        "private-invalid-json".to_owned(),
+        "[]".to_owned(),
+        "x".repeat(16 * 1024 + 1),
+    ] {
+        let output = server
+            .run(
+                &[
+                    "pipeline",
+                    "run",
+                    "--project",
+                    "fixture-project",
+                    "--idempotency-key",
+                    "00000000-0000-4000-8000-000000000001",
+                    "--task-intent",
+                    intent.to_str().unwrap(),
+                    "--credential-context",
+                    "-",
+                ],
+                Some(&input),
+            )
+            .await;
+        assert!(!output.status.success());
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("private-invalid-json"));
+    }
+    assert!(server.requests().is_empty());
+}
+
+#[tokio::test]
 async fn task_pipeline_cli_no_generated_key_malformed_input_or_http_retry() {
     let server = Server::start(vec![(409, json!({"error":"held"}))]).await;
     let args = [

@@ -1,5 +1,71 @@
 use super::*;
 
+#[tokio::test]
+async fn delegated_tracker_readback_requires_exact_native_tuple_and_current_assignment() {
+    use axum::{Router, routing::get};
+    use std::sync::{Arc, RwLock};
+    let (intent, value) = fixture(WorkspaceRole::Developer, "Development");
+    let context = TaskCredentialContext {
+        version: 1,
+        project_id: Uuid::new_v4(),
+        intent: intent.clone(),
+        run_id: serde_json::from_value(value["receipt"]["binding"]["run_id"].clone()).unwrap(),
+        chat_id: serde_json::from_value(value["receipt"]["binding"]["chat_id"].clone()).unwrap(),
+        machine_subject: value["receipt"]["binding"]["machine_subject"]
+            .as_str()
+            .unwrap()
+            .into(),
+        trigger_id: Uuid::new_v4(),
+        variables_sha256: "a".repeat(64),
+    };
+    let state = Arc::new(RwLock::new(value.clone()));
+    let peer = state.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let config = SdlcWorkspaceConfig {
+        tracker_read_url: Some(format!("http://{}", listener.local_addr().unwrap())),
+        tracker_read_token: Some("fixture-reader".into()),
+        ..Default::default()
+    };
+    let path = format!("/api/v1/issues/{}/sdlc/lifecycle", intent.binding.task_id);
+    let app = Router::new().route(
+        &path,
+        get(move |headers: axum::http::HeaderMap| {
+            let peer = peer.clone();
+            async move {
+                assert_eq!(headers["authorization"], "Bearer fixture-reader");
+                let value = peer.read().unwrap().clone();
+                Json(value)
+            }
+        }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    assert!(
+        tracker_bound(&config, &intent, Some(&context))
+            .await
+            .is_ok()
+    );
+    for (path, replacement) in [
+        ("/receipt/binding/run_id", json!(Uuid::new_v4())),
+        ("/receipt/binding/chat_id", json!(Uuid::new_v4())),
+        ("/receipt/binding/machine_subject", json!("other-native")),
+        ("/receipt/assignment/fencing_token", json!(4)),
+        ("/receipt/assignment/assignment_id", json!(Uuid::new_v4())),
+        ("/receipt/task/status", json!("Ready")),
+        ("/receipt/lease/expires_at", value["observed_at"].clone()),
+    ] {
+        let mut changed = value.clone();
+        *changed.pointer_mut(path).unwrap() = replacement;
+        *state.write().unwrap() = changed;
+        assert!(
+            tracker_bound(&config, &intent, Some(&context))
+                .await
+                .is_err(),
+            "{path}"
+        );
+    }
+    server.abort();
+}
+
 fn fixture(role: WorkspaceRole, stage: &str) -> (TaskWorkspaceIntent, Value) {
     let task = Uuid::new_v4();
     let now = Utc::now();

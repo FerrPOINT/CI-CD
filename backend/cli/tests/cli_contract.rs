@@ -62,6 +62,7 @@ fn cli_exposes_pipeline_run_idempotency_key() {
     let stdout = cli_help(&["pipeline", "run", "--help"]);
     assert_contains(&stdout, "--idempotency-key");
     assert_contains(&stdout, "--task-intent");
+    assert_contains(&stdout, "--credential-context");
     let readback = cli_help(&["pipeline", "task-workspace", "--help"]);
     assert_contains(&readback, "--project");
     assert_contains(&readback, "--id");

@@ -26,6 +26,8 @@ pub(crate) struct TaskTriggerPipeline {
     variables: Option<BTreeMap<String, String>>,
     #[serde(default)]
     task_intent: Option<crate::domain::sdlc_workspace::TaskWorkspaceIntent>,
+    #[serde(default)]
+    credential_context: Option<crate::delegated_credentials::TaskCredentialContext>,
 }
 
 #[utoipa::path(
@@ -44,6 +46,7 @@ pub(crate) async fn trigger_pipeline(
     Path(project_id): Path<Uuid>,
     headers: HeaderMap,
     claims: Option<Extension<crate::auth::AccessClaims>>,
+    child: Option<Extension<crate::delegated_credentials::Identity>>,
     Json(input): Json<TaskTriggerPipeline>,
 ) -> Result<(HeaderMap, Json<PipelineDetail>), ApiError> {
     let idempotency_key = pipeline_idempotency_key(&headers)?;
@@ -52,6 +55,7 @@ pub(crate) async fn trigger_pipeline(
         git_ref,
         variables,
         task_intent,
+        credential_context,
     } = input;
     let legacy = TriggerPipeline { git_ref, variables };
     let submission = match task_intent {
@@ -61,13 +65,31 @@ pub(crate) async fn trigger_pipeline(
                     "Task trigger требует original Idempotency-Key",
                 ));
             }
-            let Extension(claims) = claims.ok_or_else(ApiError::forbidden)?;
-            Some(
-                super::sdlc_workspace::task_pipeline::admit(&state, &claims, project_id, intent)
-                    .await?,
-            )
+            Some(match (child, claims, credential_context) {
+                (Some(Extension(identity)), None, Some(context)) => {
+                    context.bind_trigger(
+                        idempotency_key.as_deref().ok_or_else(ApiError::forbidden)?,
+                        legacy.git_ref.as_deref(),
+                        &legacy.variables.clone().unwrap_or_default(),
+                    )?;
+                    super::sdlc_workspace::task_pipeline::admit_delegated(
+                        &state, &identity, project_id, intent, context,
+                    )
+                    .await?
+                }
+                (None, Some(Extension(claims)), None) => {
+                    super::sdlc_workspace::task_pipeline::admit(&state, &claims, project_id, intent)
+                        .await?
+                }
+                _ => return Err(ApiError::forbidden()),
+            })
         }
-        None => None,
+        None => {
+            if child.is_some() || credential_context.is_some() {
+                return Err(ApiError::forbidden());
+            }
+            None
+        }
     };
     let git_ref = legacy.git_ref.unwrap_or_else(|| "main".into());
     let outcome = create_pipeline_bound(
@@ -156,8 +178,10 @@ async fn create_pipeline_bound(
         raw_config,
         &parsed_config,
     );
-    let fingerprint =
-        task_trigger_fingerprint(&git_ref, &variables, task.map(|s| (s.subject, &s.intent)));
+    let fingerprint = crate::delegated_credentials::trigger_fingerprint(
+        task_trigger_fingerprint(&git_ref, &variables, task.map(|s| (s.subject, &s.intent))),
+        task.and_then(|s| s.delegated.as_ref()),
+    )?;
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
 
     if let Some(idempotency_key) = idempotency_key {
@@ -184,6 +208,15 @@ async fn create_pipeline_bound(
                 return Err(ApiError::conflict(
                     "idempotency key was already used for a different pipeline trigger",
                 ));
+            }
+            if let Some(task) = task.filter(|task| task.delegated.is_some()) {
+                let until = super::sdlc_workspace::task_pipeline::verify_submission(
+                    &mut tx, project_id, task,
+                )
+                .await?;
+                if std::time::Instant::now() >= until {
+                    return Err(ApiError::conflict("Tracker lease expired during replay"));
+                }
             }
             let pipeline = sqlx::query_as::<_, Pipeline>(
                 "SELECT id, project_id, git_ref, status, created_at, started_at, finished_at \
@@ -287,17 +320,30 @@ async fn create_pipeline_bound(
     if let Some(task) = task {
         let job =
             preparation_job.ok_or_else(|| ApiError::conflict("Task pipeline не содержит jobs"))?;
-        crate::store::sdlc_workspace::append_task_pipeline(
-            &mut tx,
-            pipeline.id,
-            project_id,
-            task.subject,
-            task.token,
-            job,
-            &task.intent,
-        )
-        .await
-        .map_err(ApiError::internal)?;
+        if let Some(stored) = &task.delegated {
+            crate::store::sdlc_workspace::append_delegated_task_pipeline(
+                &mut tx,
+                pipeline.id,
+                project_id,
+                &stored.value()?,
+                job,
+                &task.intent,
+            )
+            .await
+            .map_err(ApiError::internal)?;
+        } else {
+            crate::store::sdlc_workspace::append_task_pipeline(
+                &mut tx,
+                pipeline.id,
+                project_id,
+                task.subject,
+                task.token.ok_or_else(ApiError::forbidden)?,
+                job,
+                &task.intent,
+            )
+            .await
+            .map_err(ApiError::internal)?;
+        }
     }
     if let Some(idempotency_key) = idempotency_key {
         sqlx::query(
@@ -441,8 +487,9 @@ mod task_trigger_tests {
             assert_eq!(typed["properties"][field], original["properties"][field]);
         }
         assert_eq!(typed.get("required"), original.get("required"));
-        assert_eq!(typed["properties"].as_object().unwrap().len(), 3);
+        assert_eq!(typed["properties"].as_object().unwrap().len(), 4);
         assert!(typed["properties"].get("task_intent").is_some());
+        assert!(typed["properties"].get("credential_context").is_some());
     }
 
     #[test]

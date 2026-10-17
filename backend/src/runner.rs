@@ -1448,6 +1448,7 @@ async fn run_job_inner(
         job.pipeline_id,
         attempt_id,
         &config.sdlc_workspace,
+        &config.secrets,
     )
     .await;
     let task_until = match task_until {
@@ -1614,6 +1615,18 @@ async fn run_job_inner(
     let mut final_status = final_status;
     let mut exit_code = exit_code;
     let mut error_tail = error_tail;
+    if image_build.is_none()
+        && crate::api::sdlc_workspace::task_pipeline::before_delegated_effect(
+            &pool,
+            job.pipeline_id,
+            attempt_id,
+            &config,
+        )
+        .await
+        .is_err()
+    {
+        return Ok(ExecutionOutcome::Held);
+    }
     if let Some(remote) = &mut remote_job {
         if let Err(error) = remote.copy_back(&workspace).await {
             final_status = "failed";
@@ -1666,6 +1679,7 @@ async fn run_job_inner(
             job.pipeline_id,
             attempt_id,
             &config.sdlc_workspace,
+            &config.secrets,
         )
         .await
         {
@@ -1682,6 +1696,18 @@ async fn run_job_inner(
     let artifact_root = completed_build
         .as_ref()
         .map_or(workspace.as_path(), |b| b.artifact_root.as_path());
+    if image_build.is_none()
+        && crate::api::sdlc_workspace::task_pipeline::before_delegated_effect(
+            &pool,
+            job.pipeline_id,
+            attempt_id,
+            &config,
+        )
+        .await
+        .is_err()
+    {
+        return Ok(ExecutionOutcome::Held);
+    }
     let artifact_error = collect_declared_artifacts(
         &pool,
         &config.artifacts,
@@ -1728,6 +1754,18 @@ async fn run_job_inner(
             return Ok(ExecutionOutcome::Held);
         }
         return Ok(outcome);
+    }
+    if image_build.is_none()
+        && crate::api::sdlc_workspace::task_pipeline::before_delegated_effect(
+            &pool,
+            job.pipeline_id,
+            attempt_id,
+            &config,
+        )
+        .await
+        .is_err()
+    {
+        return Ok(ExecutionOutcome::Held);
     }
     let updated = sqlx::query(
         "UPDATE jobs SET status = $2, finished_at = now() \

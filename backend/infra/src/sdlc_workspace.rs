@@ -9,8 +9,9 @@ use uuid::Uuid;
 pub struct TaskPipelineJournal {
     pub pipeline_id: Uuid,
     pub project_id: Uuid,
-    pub service_account_id: Uuid,
-    pub api_token_id: Uuid,
+    pub service_account_id: Option<Uuid>,
+    pub api_token_id: Option<Uuid>,
+    pub delegated_credential: Option<sqlx::types::Json<serde_json::Value>>,
     pub preparation_job_id: Uuid,
     pub intent: sqlx::types::Json<TaskWorkspaceIntent>,
     pub preparation_request: Option<sqlx::types::Json<WorkspaceOperationRequest>>,
@@ -21,7 +22,7 @@ pub async fn find_task_pipeline(
     pipeline: Uuid,
     lock: bool,
 ) -> Result<Option<TaskPipelineJournal>, sqlx::Error> {
-    let mut sql = "SELECT pipeline_id,project_id,service_account_id,api_token_id,preparation_job_id,intent,preparation_request FROM task_pipeline_intents WHERE pipeline_id=$1".to_string();
+    let mut sql = "SELECT pipeline_id,project_id,service_account_id,api_token_id,delegated_credential,preparation_job_id,intent,preparation_request FROM task_pipeline_intents WHERE pipeline_id=$1".to_string();
     if lock {
         sql.push_str(" FOR UPDATE");
     }
@@ -42,6 +43,20 @@ pub async fn append_task_pipeline(
 ) -> Result<(), sqlx::Error> {
     sqlx::query("INSERT INTO task_pipeline_intents(pipeline_id,project_id,service_account_id,api_token_id,preparation_job_id,operation_key,intent) VALUES($1,$2,$3,$4,$5,$6,$7)")
         .bind(pipeline).bind(project).bind(subject).bind(token).bind(job)
+        .bind(&intent.operation_key).bind(sqlx::types::Json(intent)).execute(conn).await?;
+    Ok(())
+}
+
+pub async fn append_delegated_task_pipeline(
+    conn: &mut PgConnection,
+    pipeline: Uuid,
+    project: Uuid,
+    credential: &serde_json::Value,
+    job: Uuid,
+    intent: &TaskWorkspaceIntent,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO task_pipeline_intents(pipeline_id,project_id,delegated_credential,preparation_job_id,operation_key,intent) VALUES($1,$2,$3,$4,$5,$6)")
+        .bind(pipeline).bind(project).bind(sqlx::types::Json(credential)).bind(job)
         .bind(&intent.operation_key).bind(sqlx::types::Json(intent)).execute(conn).await?;
     Ok(())
 }
@@ -100,14 +115,46 @@ pub async fn append_receipt(
     subject: Uuid,
     receipt: &WorkspaceOperationReceipt,
 ) -> Result<(), sqlx::Error> {
+    append_owned_receipt(conn, Some(subject), None, None, receipt).await
+}
+
+pub async fn find_delegated_receipt(
+    conn: &mut PgConnection,
+    project: Uuid,
+    subject: Uuid,
+    context_hash: &str,
+    key: &str,
+) -> Result<Option<WorkspaceOperationReceipt>, sqlx::Error> {
+    sqlx::query_scalar::<_, sqlx::types::Json<WorkspaceOperationReceipt>>(
+        "SELECT receipt FROM sdlc_workspace_operations WHERE project_id=$1 AND delegated_subject=$2 AND delegated_context_hash=$3 AND operation_key=$4 AND service_account_id IS NULL")
+        .bind(project).bind(subject).bind(context_hash).bind(key).fetch_optional(conn).await.map(|r| r.map(|r| r.0))
+}
+
+pub async fn append_delegated_receipt(
+    conn: &mut PgConnection,
+    subject: Uuid,
+    context_hash: &str,
+    receipt: &WorkspaceOperationReceipt,
+) -> Result<(), sqlx::Error> {
+    append_owned_receipt(conn, None, Some(subject), Some(context_hash), receipt).await
+}
+
+async fn append_owned_receipt(
+    conn: &mut PgConnection,
+    subject: Option<Uuid>,
+    delegated_subject: Option<Uuid>,
+    delegated_context_hash: Option<&str>,
+    receipt: &WorkspaceOperationReceipt,
+) -> Result<(), sqlx::Error> {
     let r = &receipt.request;
     let b = &r.binding;
-    sqlx::query("INSERT INTO sdlc_workspace_operations (id,project_id,service_account_id,operation_key,request_hash,task_id,root_task_id,assignment_id,execution_id,fencing_token,lease_id,attempt_id,workspace_generation,repository_id,source_commit,receipt,recorded_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)")
+    sqlx::query("INSERT INTO sdlc_workspace_operations (id,project_id,service_account_id,operation_key,request_hash,task_id,root_task_id,assignment_id,execution_id,fencing_token,lease_id,attempt_id,workspace_generation,repository_id,source_commit,receipt,recorded_at,delegated_subject,delegated_context_hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)")
         .bind(receipt.operation_id).bind(receipt.project_id).bind(subject).bind(&r.operation_key)
         .bind(&receipt.request_hash).bind(b.task_id).bind(b.root_task_id).bind(b.assignment_id)
         .bind(b.execution_id).bind(b.fencing_token).bind(r.lease_id).bind(r.attempt_id)
         .bind(r.workspace_generation).bind(r.repository_id).bind(&r.source_commit)
-        .bind(sqlx::types::Json(receipt)).bind(receipt.recorded_at).execute(conn).await?;
+        .bind(sqlx::types::Json(receipt)).bind(receipt.recorded_at)
+        .bind(delegated_subject).bind(delegated_context_hash).execute(conn).await?;
     Ok(())
 }
 

@@ -2,6 +2,207 @@ use super::*;
 use cicd::store::sdlc_workspace as ledger;
 use serde_json::json;
 
+#[tokio::test]
+#[ignore = "requires disposable CICD_TEST_DATABASE_URL; credential custody only, no runner"]
+async fn delegated_task_credential_variant_preserves_sat_fks_and_immutable_custody() {
+    let mut f = Fixture::new().await;
+    f.request.binding.tracker_instance_id = Uuid::new_v4().to_string();
+    f.request.binding.root_task_id = f.request.binding.task_id;
+    let intent = TaskWorkspaceIntent {
+        operation_key: f.request.operation_key.clone(),
+        binding: f.request.binding.clone(),
+        repository_id: f.request.repository_id,
+        source_commit: f.request.source_commit.clone(),
+        role: f.request.role,
+        agent_id: Uuid::new_v4(),
+        tracker_lease_id: Uuid::new_v4(),
+        holder_subject: "fixture-scheduler".into(),
+        expected_lease_version: 1,
+    };
+    let (job,pipeline):(Uuid,Uuid)=sqlx::query_as("SELECT j.id,s.pipeline_id FROM job_leases l JOIN jobs j ON j.id=l.job_id JOIN stages s ON s.id=j.stage_id WHERE l.id=$1")
+        .bind(f.request.lease_id).fetch_one(&f.pool).await.unwrap();
+    sqlx::query("UPDATE job_leases SET runner_name='embedded' WHERE id=$1")
+        .bind(f.request.lease_id)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    let subject = Uuid::new_v4();
+    let context = cicd::delegated_credentials::TaskCredentialContext {
+        version: 1,
+        project_id: f.project,
+        intent: intent.clone(),
+        run_id: Uuid::new_v4(),
+        chat_id: Uuid::new_v4(),
+        machine_subject: "fixture-native-machine".into(),
+        trigger_id: Uuid::new_v4(),
+        variables_sha256: "a".repeat(64),
+    };
+    let request =
+        cicd::delegated_credentials::delegation_request(&context, "fixture:command", 900).unwrap();
+    let hash = request["scopes"][2]
+        .as_str()
+        .unwrap()
+        .strip_prefix("ci-cd:sdlc:task:v1:")
+        .unwrap();
+    // Synthetic ciphertext exercises DB shapes only; it is NOT a live Base credential.
+    let credential = json!({"subject":subject,"fingerprint":"b".repeat(64),"context_hash":hash,
+        "context":context,"encrypted_child":"v1:AAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAA=="});
+    for (field, value) in [
+        ("subject", json!(Uuid::nil())),
+        ("fingerprint", json!("invalid")),
+        ("context", json!({})),
+        ("encrypted_child", json!("sdlc_pat_raw")),
+    ] {
+        let mut invalid = credential.clone();
+        invalid[field] = value;
+        let mut tx = f.pool.begin().await.unwrap();
+        let result = ledger::append_delegated_task_pipeline(
+            &mut tx, pipeline, f.project, &invalid, job, &intent,
+        )
+        .await;
+        assert!(result.is_err(), "invalid {field} must fail");
+        tx.rollback().await.unwrap();
+    }
+    let mut tx = f.pool.begin().await.unwrap();
+    let error=sqlx::query("INSERT INTO task_pipeline_intents(pipeline_id,project_id,service_account_id,api_token_id,delegated_credential,preparation_job_id,operation_key,intent) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
+        .bind(pipeline).bind(f.project).bind(f.subject).bind(f.token_id).bind(&credential).bind(job).bind(&intent.operation_key).bind(serde_json::to_value(&intent).unwrap())
+        .execute(&mut *tx).await.unwrap_err();
+    assert_eq!(
+        error.as_database_error().unwrap().code().as_deref(),
+        Some("23514")
+    );
+    tx.rollback().await.unwrap();
+    let mut tx = f.pool.begin().await.unwrap();
+    let error = ledger::append_task_pipeline(
+        &mut tx,
+        pipeline,
+        f.project,
+        f.subject,
+        Uuid::new_v4(),
+        job,
+        &intent,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        error.as_database_error().unwrap().code().as_deref(),
+        Some("23503"),
+        "legacy token FK remains"
+    );
+    tx.rollback().await.unwrap();
+    let mut conn = f.pool.acquire().await.unwrap();
+    ledger::append_delegated_task_pipeline(
+        &mut conn,
+        pipeline,
+        f.project,
+        &credential,
+        job,
+        &intent,
+    )
+    .await
+    .unwrap();
+    let saved = ledger::find_task_pipeline(&mut conn, pipeline, false)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(saved.service_account_id.is_none() && saved.api_token_id.is_none());
+    assert_eq!(saved.delegated_credential.unwrap().0, credential);
+    assert!(
+        ledger::claim_task_preparation(&mut conn, pipeline, &f.request)
+            .await
+            .unwrap()
+    );
+    let receipt = WorkspaceOperationReceipt {
+        schema: "forge/workspace-operation-receipt/v1".into(),
+        operation_id: Uuid::new_v4(),
+        project_id: f.project,
+        request_hash: format!(
+            "{:x}",
+            Sha256::digest(serde_json::to_vec(&f.request).unwrap())
+        ),
+        request: f.request.clone(),
+        recorded_at: Utc::now(),
+        status: WorkspaceOperationStatus::Blocked,
+        blockers: vec![
+            WorkspaceOperationBlocker::TrackerAdmissionUnavailable,
+            WorkspaceOperationBlocker::TrackerWorkspaceBindingUnavailable,
+        ],
+        physical_source_observed: false,
+        dispatch_allowed: false,
+    };
+    drop(conn);
+    let mut tx = f.pool.begin().await.unwrap();
+    assert!(
+        ledger::append_delegated_receipt(&mut tx, Uuid::new_v4(), hash, &receipt)
+            .await
+            .is_err()
+    );
+    tx.rollback().await.unwrap();
+    let mut conn = f.pool.acquire().await.unwrap();
+    ledger::append_delegated_receipt(&mut conn, subject, hash, &receipt)
+        .await
+        .unwrap();
+    assert!(
+        ledger::claim_task_submission(&mut conn, pipeline, f.request.attempt_id)
+            .await
+            .unwrap(),
+        "central receipt matches original attempt guard"
+    );
+    assert!(
+        !ledger::claim_task_submission(&mut conn, pipeline, f.request.attempt_id)
+            .await
+            .unwrap()
+    );
+    assert!(
+        ledger::find_delegated_receipt(
+            &mut conn,
+            f.project,
+            Uuid::new_v4(),
+            hash,
+            &intent.operation_key
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
+    assert!(
+        ledger::find_delegated_receipt(
+            &mut conn,
+            f.project,
+            subject,
+            &"c".repeat(64),
+            &intent.operation_key
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
+    assert_eq!(
+        ledger::find_delegated_receipt(&mut conn, f.project, subject, hash, &intent.operation_key)
+            .await
+            .unwrap()
+            .unwrap(),
+        receipt
+    );
+    drop(conn);
+    for sql in [
+        "UPDATE task_pipeline_intents SET delegated_credential=jsonb_set(delegated_credential,'{fingerprint}',to_jsonb(repeat('c',64))) WHERE pipeline_id=$1",
+        "UPDATE task_pipeline_intents SET preparation_request=NULL WHERE pipeline_id=$1",
+        "UPDATE task_pipeline_intents SET submitted_attempts='{}' WHERE pipeline_id=$1",
+        "DELETE FROM task_pipeline_intents WHERE pipeline_id=$1",
+    ] {
+        let mut tx = f.pool.begin().await.unwrap();
+        assert!(
+            sqlx::query(sql)
+                .bind(pipeline)
+                .execute(&mut *tx)
+                .await
+                .is_err()
+        );
+        tx.rollback().await.unwrap();
+    }
+}
+
 /// Journal/HTTP locator fixture, not a claimed Tracker-admitted production runner execution.
 #[tokio::test]
 #[ignore = "requires disposable CICD_TEST_DATABASE_URL and MAIN task_pipeline_intents migration"]

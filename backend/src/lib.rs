@@ -6,6 +6,7 @@ mod authz_route_coverage;
 pub(crate) mod body_limits;
 pub mod central_auth;
 pub mod config;
+pub mod delegated_credentials;
 pub mod dispatch_signal;
 pub mod metrics;
 pub mod outbox;

@@ -1,5 +1,10 @@
 # Архитектура Forge CI/CD
 
+Opt-in central child для existing task pipeline отделён от legacy SAT identity
+и хранится в прежнем journal с live reauthorization перед effects, без нового
+issuer/controller. [ADR-0030](adr/0030-delegated-task-credential-custody.md).
+Это source slice, не установленный credential/Git write capability.
+
 Typed task image-build source использует existing embedded runner и backend
 Docker/TLS authority без передачи её jobs/agents. Exact Git export и generated
 OCI descriptor отделены от mutable job checkout. Source не заменяет actual

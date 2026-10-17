@@ -1,7 +1,8 @@
 //! Existing pipeline/embedded-runner bridge. No runner credential or effect authority in readback.
 use super::*;
 use crate::{
-    config::SdlcWorkspaceConfig,
+    config::{SdlcWorkspaceConfig, SecretsConfig},
+    delegated_credentials::{Identity, StoredCredential, TaskCredentialContext},
     runner_workspace::{OwnedWorkspace, preparation},
 };
 use serde_json::{Value, json};
@@ -10,9 +11,11 @@ use std::{path::Path as FsPath, time::Instant};
 
 pub(crate) struct Submission {
     pub subject: Uuid,
-    pub token: Uuid,
+    pub token: Option<Uuid>,
+    pub delegated: Option<StoredCredential>,
     pub intent: TaskWorkspaceIntent,
     pub config: SdlcWorkspaceConfig,
+    pub secrets: SecretsConfig,
 }
 
 fn hash(value: &impl serde::Serialize) -> Result<String, ApiError> {
@@ -155,8 +158,19 @@ async fn tracker(
     config: &SdlcWorkspaceConfig,
     intent: &TaskWorkspaceIntent,
 ) -> Result<Instant, ApiError> {
+    tracker_bound(config, intent, None).await
+}
+
+async fn tracker_bound(
+    config: &SdlcWorkspaceConfig,
+    intent: &TaskWorkspaceIntent,
+    context: Option<&TaskCredentialContext>,
+) -> Result<Instant, ApiError> {
     let (start, value) =
         crate::task_delivery::tracker::read_lifecycle(config, intent.binding.task_id).await?;
+    if context.is_some_and(|context| !context.native_matches(&value)) {
+        return Err(ApiError::conflict("Original native task run changed"));
+    }
     let until = start
         + current(&value, intent).map_err(|_| {
             ApiError::conflict("Текущий Tracker task assignment или lease не совпадает")
@@ -171,16 +185,88 @@ async fn authorize_saved(
     conn: &mut sqlx::PgConnection,
     config: &SdlcWorkspaceConfig,
     record: &ledger::TaskPipelineJournal,
-) -> Result<(), ApiError> {
+    secrets: &SecretsConfig,
+) -> Result<Instant, ApiError> {
+    if let Some(credential) = &record.delegated_credential {
+        if record.service_account_id.is_some() || record.api_token_id.is_some() {
+            return Err(ApiError::forbidden());
+        }
+        let stored = StoredCredential::from_value(&credential.0)?;
+        return authorize_child(
+            conn,
+            config,
+            secrets,
+            record.project_id,
+            &record.intent,
+            &stored,
+        )
+        .await;
+    }
     authorize_keys(
         conn,
         config,
-        record.service_account_id,
-        record.api_token_id,
+        record.service_account_id.ok_or_else(ApiError::forbidden)?,
+        record.api_token_id.ok_or_else(ApiError::forbidden)?,
         record.project_id,
         &record.intent,
     )
-    .await
+    .await?;
+    tracker(config, &record.intent).await
+}
+
+async fn authorize_child(
+    conn: &mut sqlx::PgConnection,
+    config: &SdlcWorkspaceConfig,
+    secrets: &SecretsConfig,
+    project: Uuid,
+    intent: &TaskWorkspaceIntent,
+    stored: &StoredCredential,
+) -> Result<Instant, ApiError> {
+    stored.verify(config, secrets, project, intent).await?;
+    if !ledger::task_project_matches(conn, project, intent)
+        .await
+        .map_err(ApiError::internal)?
+    {
+        return Err(ApiError::conflict(
+            "Task project/repository mapping changed",
+        ));
+    }
+    tracker_bound(config, intent, Some(&stored.context)).await
+}
+
+pub(crate) async fn admit_delegated(
+    state: &AppState,
+    identity: &Identity,
+    project: Uuid,
+    intent: TaskWorkspaceIntent,
+    context: TaskCredentialContext,
+) -> Result<Submission, ApiError> {
+    if !state.config.runner.embedded_enabled {
+        return Err(ApiError::service_unavailable(
+            "Task preparation requires embedded runner",
+        ));
+    }
+    identity.bind(&context, project, &intent)?;
+    let stored = identity.store(context, &state.config.secrets)?;
+    let mut tx = pool(state)?.begin().await.map_err(ApiError::internal)?;
+    authorize_child(
+        &mut tx,
+        &state.config.sdlc_workspace,
+        &state.config.secrets,
+        project,
+        &intent,
+        &stored,
+    )
+    .await?;
+    tx.commit().await.map_err(ApiError::internal)?;
+    Ok(Submission {
+        subject: identity.subject,
+        token: None,
+        delegated: Some(stored),
+        intent,
+        config: state.config.sdlc_workspace.clone(),
+        secrets: state.config.secrets.clone(),
+    })
 }
 
 async fn authorize_keys(
@@ -236,9 +322,11 @@ pub(crate) async fn admit(
     tx.commit().await.map_err(ApiError::internal)?;
     Ok(Submission {
         subject: claims.sub,
-        token: claims.token_id.ok_or_else(ApiError::forbidden)?,
+        token: Some(claims.token_id.ok_or_else(ApiError::forbidden)?),
+        delegated: None,
         intent,
         config: state.config.sdlc_workspace.clone(),
+        secrets: state.config.secrets.clone(),
     })
 }
 
@@ -247,11 +335,25 @@ pub(crate) async fn verify_submission(
     project: Uuid,
     submission: &Submission,
 ) -> Result<Instant, ApiError> {
+    if let Some(stored) = &submission.delegated {
+        if submission.token.is_some() || stored.subject != submission.subject {
+            return Err(ApiError::forbidden());
+        }
+        return authorize_child(
+            conn,
+            &submission.config,
+            &submission.secrets,
+            project,
+            &submission.intent,
+            stored,
+        )
+        .await;
+    }
     authorize_keys(
         conn,
         &submission.config,
         submission.subject,
-        submission.token,
+        submission.token.ok_or_else(ApiError::forbidden)?,
         project,
         &submission.intent,
     )
@@ -282,6 +384,7 @@ pub(crate) async fn before_spawn(
     pipeline: Uuid,
     attempt: Uuid,
     config: &SdlcWorkspaceConfig,
+    secrets: &SecretsConfig,
 ) -> Result<Spawn, ApiError> {
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
     let Some(record) = ledger::find_task_pipeline(&mut tx, pipeline, true)
@@ -296,8 +399,7 @@ pub(crate) async fn before_spawn(
     {
         return Ok(Spawn::Held);
     }
-    authorize_saved(&mut tx, config, &record).await?;
-    let until = tracker(config, &record.intent).await?;
+    let until = authorize_saved(&mut tx, config, &record, secrets).await?;
     if !ledger::claim_task_submission(&mut tx, pipeline, attempt)
         .await
         .map_err(ApiError::internal)?
@@ -308,12 +410,48 @@ pub(crate) async fn before_spawn(
     Ok(Spawn::Permit(until))
 }
 
+/// Reauthorize central child at ordinary publication boundaries; local SAT behavior is unchanged.
+pub(crate) async fn before_delegated_effect(
+    pool: &PgPool,
+    pipeline: Uuid,
+    attempt: Uuid,
+    config: &crate::runner::RuntimeRunnerConfig,
+) -> Result<(), ApiError> {
+    let mut tx = pool.begin().await.map_err(ApiError::internal)?;
+    let Some(record) = ledger::find_task_pipeline(&mut tx, pipeline, false)
+        .await
+        .map_err(ApiError::internal)?
+    else {
+        return Ok(());
+    };
+    if record.delegated_credential.is_none() {
+        return Ok(());
+    }
+    if !ledger::task_attempt_submitted(&mut tx, pipeline, attempt)
+        .await
+        .map_err(ApiError::internal)?
+    {
+        return Err(ApiError::conflict(
+            "Original task submission is not confirmed",
+        ));
+    }
+    let until = authorize_saved(&mut tx, &config.sdlc_workspace, &record, &config.secrets).await?;
+    if Instant::now() >= until {
+        return Err(ApiError::conflict(
+            "Tracker lease expired before publication",
+        ));
+    }
+    tx.commit().await.map_err(ApiError::internal)?;
+    Ok(())
+}
+
 /// Verify an already submitted task attempt without claiming or replaying it.
 pub(crate) async fn verify_submitted_attempt(
     pool: &PgPool,
     pipeline: Uuid,
     attempt: Uuid,
     config: &SdlcWorkspaceConfig,
+    secrets: &SecretsConfig,
 ) -> Result<Instant, ApiError> {
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
     let record = ledger::find_task_pipeline(&mut tx, pipeline, false)
@@ -328,8 +466,7 @@ pub(crate) async fn verify_submitted_attempt(
             "Исходная task submission не подтверждена",
         ));
     }
-    authorize_saved(&mut tx, config, &record).await?;
-    let until = tracker(config, &record.intent).await?;
+    let until = authorize_saved(&mut tx, config, &record, secrets).await?;
     tx.commit().await.map_err(ApiError::internal)?;
     Ok(until)
 }
@@ -352,8 +489,7 @@ pub(crate) async fn prepare(
     else {
         return Ok(None);
     };
-    authorize_saved(&mut tx, &config.sdlc_workspace, &record).await?;
-    let until = tracker(&config.sdlc_workspace, &record.intent).await?;
+    let until = authorize_saved(&mut tx, &config.sdlc_workspace, &record, &config.secrets).await?;
     if job != record.preparation_job_id {
         return Ok(None);
     }
@@ -406,19 +542,10 @@ pub(crate) async fn prepare(
         preparation::readback(root, &source, &request).await
     };
     result.map_err(|_| ApiError::conflict("Preparation удержана; требуется original readback"))?;
-    let until = tracker(&config.sdlc_workspace, &record.intent).await?;
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
-    authorize_saved(&mut tx, &config.sdlc_workspace, &record).await?;
+    let until = authorize_saved(&mut tx, &config.sdlc_workspace, &record, &config.secrets).await?;
     verify_lease(&mut tx, record.project_id, job, &request).await?;
-    if let Some(receipt) = ledger::find_receipt(
-        &mut tx,
-        record.project_id,
-        record.service_account_id,
-        &request.operation_key,
-    )
-    .await
-    .map_err(ApiError::internal)?
-    {
+    if let Some(receipt) = find_owned_receipt(&mut tx, &record).await? {
         if receipt.request != request || receipt.request_hash != hash(&request)? {
             return Err(ApiError::conflict("Original receipt не совпадает"));
         }
@@ -438,9 +565,25 @@ pub(crate) async fn prepare(
             physical_source_observed: true,
             dispatch_allowed: false,
         };
-        ledger::append_receipt(&mut tx, record.service_account_id, &receipt)
+        if let Some(credential) = &record.delegated_credential {
+            let stored = StoredCredential::from_value(&credential.0)?;
+            ledger::append_delegated_receipt(
+                &mut tx,
+                stored.subject,
+                &stored.context_hash,
+                &receipt,
+            )
             .await
             .map_err(ApiError::internal)?;
+        } else {
+            ledger::append_receipt(
+                &mut tx,
+                record.service_account_id.ok_or_else(ApiError::forbidden)?,
+                &receipt,
+            )
+            .await
+            .map_err(ApiError::internal)?;
+        }
     }
     if Instant::now() >= until {
         return Err(ApiError::conflict("Lease истёк до receipt"));
@@ -487,21 +630,45 @@ async fn verify_lease(
     responses((status=200,body=Option<WorkspaceOperationReceipt>),(status=403),(status=404)))]
 pub(crate) async fn read_receipt(
     State(state): State<Arc<AppState>>,
-    Extension(claims): Extension<AccessClaims>,
+    claims: Option<Extension<AccessClaims>>,
+    child: Option<Extension<Identity>>,
     Path((project, pipeline)): Path<(Uuid, Uuid)>,
 ) -> ApiResult<Option<WorkspaceOperationReceipt>> {
     let mut tx = pool(&state)?.begin().await.map_err(ApiError::internal)?;
-    authorize(&mut tx, &state, &claims, project, "api:read").await?;
+    if child.is_none() {
+        let claims = claims.as_ref().ok_or_else(ApiError::forbidden)?;
+        authorize(&mut tx, &state, &claims.0, project, "api:read").await?;
+    }
     let record = ledger::find_task_pipeline(&mut tx, pipeline, false)
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(ApiError::not_found)?;
-    if record.project_id != project || record.service_account_id != claims.sub {
+    if record.project_id != project {
         return Err(ApiError::forbidden());
     }
-    let receipt = ledger::find_receipt(&mut tx, project, claims.sub, &record.intent.operation_key)
-        .await
-        .map_err(ApiError::internal)?;
+    match (child, claims, &record.delegated_credential) {
+        (Some(Extension(identity)), None, Some(credential)) => {
+            let stored = StoredCredential::from_value(&credential.0)?;
+            if stored.subject != identity.subject || stored.fingerprint != identity.fingerprint() {
+                return Err(ApiError::forbidden());
+            }
+            identity.bind(&stored.context, project, &record.intent)?;
+            authorize_saved(
+                &mut tx,
+                &state.config.sdlc_workspace,
+                &record,
+                &state.config.secrets,
+            )
+            .await?;
+        }
+        (None, Some(Extension(claims)), None) => {
+            if record.service_account_id != Some(claims.sub) {
+                return Err(ApiError::forbidden());
+            }
+        }
+        _ => return Err(ApiError::forbidden()),
+    }
+    let receipt = find_owned_receipt(&mut tx, &record).await?;
     if let Some(receipt) = &receipt {
         if record.preparation_request.as_ref().map(|r| &r.0) != Some(&receipt.request)
             || receipt.request_hash != hash(&receipt.request)?
@@ -511,6 +678,33 @@ pub(crate) async fn read_receipt(
     }
     tx.commit().await.map_err(ApiError::internal)?;
     Ok(Json(receipt))
+}
+
+async fn find_owned_receipt(
+    conn: &mut sqlx::PgConnection,
+    record: &ledger::TaskPipelineJournal,
+) -> Result<Option<WorkspaceOperationReceipt>, ApiError> {
+    if let Some(credential) = &record.delegated_credential {
+        let stored = StoredCredential::from_value(&credential.0)?;
+        ledger::find_delegated_receipt(
+            conn,
+            record.project_id,
+            stored.subject,
+            &stored.context_hash,
+            &record.intent.operation_key,
+        )
+        .await
+        .map_err(ApiError::internal)
+    } else {
+        ledger::find_receipt(
+            conn,
+            record.project_id,
+            record.service_account_id.ok_or_else(ApiError::forbidden)?,
+            &record.intent.operation_key,
+        )
+        .await
+        .map_err(ApiError::internal)
+    }
 }
 
 #[cfg(test)]
