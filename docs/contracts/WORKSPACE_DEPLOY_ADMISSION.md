@@ -71,3 +71,30 @@ Repo-owned commands/acceptance определяются только после 
 Forge не знает бизнес API Pulse и не вводит ему migration flag. Существующий
 readonly OCI executor, PG engine, common registrations, Fleet consumer, Auth
 и task workflow transitions этим пакетом не меняются.
+
+## Unconnected Owner Units
+
+`runner_image_build/workspace_deploy.rs` — неподключённый child module существующего
+image-build owner. Он читает реальные terminal upstream job/attempt/artifact records,
+private intent/completion/cleanup ACK, сверяет Git config/plan и actual built image
+прежним Client. Returned registry связан также с consumer attempt/source/daemon;
+чтение не выдаёт permission, не обновляет lease и ничего не запускает. Constructor
+из repo JSON/caller `verified` отсутствует. Общая registration остаётся у владельца.
+
+`scripts/workspace_deploy_adapter.py` — pure owner-side assembly private service
+fragment после проверки recipe. Он подставляет только разрешённые project secrets,
+owner UID/quotas/tmpfs, explicit subnet и resource names; запрещает shadowing job/
+transfer/workspace/cargo/sources, implicit undeclared image volumes, writable root
+и пересекающиеся mounts. Fragment содержит секреты и не является public artifact.
+Финальный literal escaping должен выполнять прежний `RemoteJob.save_manifest`
+ровно один раз; передачи неразрешённого repo JSON в Docker здесь нет.
+
+Файлы не подключены к dispatch, Python invocation или lifecycle. Rust/DB/Engine
+qualification пока нет. Начальный registry reader принимает только реальные
+upstream backend image-build receipts той же pipeline/source; owner dependency
+images (например PostgreSQL с image-declared volumes) требуют отдельного actual
+owner readback, а не fake source/attempt labels. Этот полный DB-stack путь здесь
+не объявлен готовым. Необходимы также verified Compose Git bytes, async private
+journal integration и exact-service stop/readback перед будущим enablement.
+Существующий readonly descriptor подтверждает здесь только image provenance:
+он не перелэйбливается и не доказывает совместимость с изменяемой БД/migrations.
