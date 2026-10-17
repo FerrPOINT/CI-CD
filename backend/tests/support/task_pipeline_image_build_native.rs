@@ -1176,7 +1176,11 @@ async fn deliver(f: &TaskPipeline, inputs: &NativeInputs, built: &Built, predece
     let (status, delivered) = f
         .request("POST", &path, serde_json::to_value(&command).unwrap())
         .await;
-    assert_eq!(status, StatusCode::OK, "native OCI HTTP delivery failed");
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "native OCI HTTP delivery failed: {delivered}"
+    );
     let latest = if delivered["reconciledReceipt"].is_null() {
         &delivered["receipt"]
     } else {

@@ -6,6 +6,9 @@ use serde_json::{Value, json};
 const PURPOSE: &str = "disposable-oci-transport";
 const OPERATION_LABEL: &str = "forge.oci-operation";
 const TRANSPORT_COMMAND: &str = "umask 077; exec sleep 86400";
+// Docker archive upload rejects a read-only rootfs even when its target is writable tmpfs.
+// Exec stays inside the existing container's mount namespace; never replace an earlier stage.
+const STAGE_SNAPSHOT: &str = "set -eu; umask 077; set -C; if test -e \"$1\" || test -L \"$1\"; then exit 1; fi; cat > \"$1\"";
 
 // Arguments are data, never shell source. Check mode performs no filesystem writes.
 // Publication uses a same-directory hard link with -T, never replacement or a symlink walk.
@@ -404,6 +407,7 @@ impl Owner {
         receipt: &Receipt,
         task: &mut Option<TaskAuthority<'_>>,
         compose: bool,
+        input: Option<&[u8]>,
     ) -> anyhow::Result<Vec<u8>> {
         let authority = task
             .as_mut()
@@ -416,7 +420,7 @@ impl Owner {
         plain(step)?;
         sync_dir(step.parent().context("transport step parent absent")?)?;
         authority.permit.check()?;
-        self.run(
+        self.run_input(
             if compose {
                 &self.policy.compose_bin
             } else {
@@ -424,6 +428,7 @@ impl Owner {
             },
             args,
             Some(step),
+            input,
         )
         .await
     }
@@ -458,14 +463,14 @@ impl Owner {
         let snapshots = [
             (
                 "manifest",
-                manifest_file,
+                manifest.as_slice(),
                 relative_snapshot(&self.policy.volume_root, manifest_file)?,
                 hash,
                 manifest.len(),
             ),
             (
                 "data",
-                self.policy.data_file.as_path(),
+                data.as_slice(),
                 relative_snapshot(&self.policy.volume_root, &self.policy.data_file)?,
                 self.policy.data_sha256.as_str(),
                 data.len(),
@@ -541,6 +546,7 @@ impl Owner {
             receipt,
             task,
             true,
+            None,
         )
         .await?;
         let id = self.inspect_transport(receipt, &file, None).await?;
@@ -549,23 +555,29 @@ impl Owner {
         // Fail before copying unless the trusted image really provides the fixed tools.
         self.run(&self.policy.docker_bin, &[
             "exec".into(),id.clone(),"/bin/sh".into(),"-ec".into(),
-            "for tool in stat id sha256sum mktemp cp chmod sync ln rm mkdir curl; do command -v \"$tool\" >/dev/null || exit 1; done; test ! -e /tmp/manifest && test ! -L /tmp/manifest && test ! -e /tmp/data && test ! -L /tmp/data".into(),
+            "for tool in stat id sha256sum mktemp cp cat chmod sync ln rm mkdir curl; do command -v \"$tool\" >/dev/null || exit 1; done; test ! -e /tmp/manifest && test ! -L /tmp/manifest && test ! -e /tmp/data && test ! -L /tmp/data".into(),
         ], None).await?;
-        for (name, source, relative, hash, size) in snapshots {
+        for (name, bytes, relative, hash, size) in snapshots {
             self.inspect_transport(receipt, &file, Some(&id)).await?;
             if self.snapshot_check(&id, &relative, hash, size).await? {
                 continue;
             }
             self.transport_write(
                 &[
-                    "cp".into(),
-                    source.to_string_lossy().into_owned(),
-                    format!("{id}:/tmp/{name}"),
+                    "exec".into(),
+                    "--interactive".into(),
+                    id.clone(),
+                    "/bin/sh".into(),
+                    "-ec".into(),
+                    STAGE_SNAPSHOT.into(),
+                    "snapshot".into(),
+                    format!("/tmp/{name}"),
                 ],
                 &up.join(format!("{name}-copy")),
                 receipt,
                 task,
                 false,
+                Some(bytes),
             )
             .await?;
             self.inspect_transport(receipt, &file, Some(&id)).await?;
@@ -589,6 +601,7 @@ impl Owner {
                     receipt,
                     task,
                     false,
+                    None,
                 )
                 .await?;
             ensure!(
@@ -794,6 +807,7 @@ mod policy_tests {
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
+    use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
 
     struct Files {
@@ -803,6 +817,25 @@ mod tests {
     }
 
     impl Files {
+        fn stage(&self, path: &Path, bytes: &[u8]) -> std::process::Output {
+            let mut child = std::process::Command::new("/bin/sh")
+                .args(["-ec", STAGE_SNAPSHOT, "snapshot"])
+                .arg(path)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let mut input = child.stdin.take().unwrap();
+            let written = input.write_all(bytes);
+            drop(input);
+            let output = child.wait_with_output().unwrap();
+            if output.status.success() {
+                written.unwrap();
+            }
+            output
+        }
+
         fn new() -> Self {
             let base = std::env::temp_dir().join(format!("forge-oci-transport-{}", Uuid::new_v4()));
             std::fs::create_dir(&base).unwrap();
@@ -836,6 +869,39 @@ mod tests {
         fn drop(&mut self) {
             std::fs::remove_dir_all(&self.base).unwrap();
         }
+    }
+
+    #[test]
+    fn streamed_snapshot_is_exact_private_and_never_replaced() {
+        let files = Files::new();
+        let target = files.base.join("streamed");
+        let bytes = b"bounded\0snapshot\n";
+        assert!(files.stage(&target, bytes).status.success());
+        assert_eq!(std::fs::read(&target).unwrap(), bytes);
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(!files.stage(&target, b"replacement").status.success());
+        assert_eq!(std::fs::read(&target).unwrap(), bytes);
+    }
+
+    #[test]
+    fn streamed_snapshot_rejects_existing_links_and_directories() {
+        let files = Files::new();
+        let outside = files.base.join("outside");
+        std::fs::write(&outside, b"preserved").unwrap();
+        for (name, target) in [
+            ("link", &outside),
+            ("dangling", &files.base.join("missing")),
+        ] {
+            let link = files.base.join(name);
+            std::os::unix::fs::symlink(target, &link).unwrap();
+            assert!(!files.stage(&link, b"replacement").status.success());
+        }
+        assert!(!files.stage(&files.root, b"replacement").status.success());
+        assert_eq!(std::fs::read(&outside).unwrap(), b"preserved");
+        assert!(!files.base.join("missing").exists());
     }
 
     #[test]

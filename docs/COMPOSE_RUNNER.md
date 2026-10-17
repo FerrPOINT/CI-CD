@@ -77,6 +77,13 @@ Serialization conflict оставляет job queued без запуска; ли
 
 ## Native QA Compose transport
 
+Штатный task OCI transport передаёт snapshot через ограниченный stdin
+`docker exec --interactive` в собственный writable tmpfs. Read-only rootfs,
+отключённые capabilities, create-new staging и проверка hash сохраняются.
+Docker archive upload отвергает такую rootfs даже для tmpfs; writable rootfs
+для передачи данных не требуется. Input ограничен 1 MiB и общим deadline
+дочернего процесса; неполная передача сохраняет исходную custody без replay.
+
 `scripts/native_qa_compose.py` используется только для временной native QA.
 Host harness передаёт `docker_context`, ожидаемый `daemon_id` и проверенный
 `sdk_sha256` в `NativeComposeBridge` и `recover_session` явно. `load_sdk`

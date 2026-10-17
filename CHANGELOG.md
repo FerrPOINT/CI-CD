@@ -15,6 +15,10 @@
 
 ## [Unreleased]
 
+- Task OCI delivery передаёт manifest/data в transport с read-only rootfs
+  через bounded stdin, сохраняя tmpfs, capabilities и запрет перезаписи.
+  Исправлен отказ Docker archive upload до запуска приложения.
+
 - Native QA Compose принимает read-only daemon paths из явно привязанного
   собственного disposable volume; owner/mountpoint повторно проверяются,
   journal v2 сохраняет привязку для recovery без присвоения чужого ресурса.
