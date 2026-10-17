@@ -190,6 +190,9 @@ mod tests {
                     .unwrap()
             }
             fn new() -> Self {
+                Self::with_seeded_candidate(false)
+            }
+            fn with_seeded_candidate(seed_candidate: bool) -> Self {
                 let root = std::env::temp_dir().join(format!("forge-task-hook-{}", Uuid::new_v4()));
                 let source = root.join("source");
                 let bare = root.join("repo.git");
@@ -260,6 +263,20 @@ mod tests {
                     quote(&f.root.join("checks")).unwrap()
                 );
                 write(&f.root.join("bin/curl"), curl.as_bytes(), true).unwrap();
+                if seed_candidate {
+                    let old_main = f.reference("refs/heads/main").unwrap();
+                    assert!(
+                        f.git(&[
+                            "--git-dir",
+                            f.bare.to_str().unwrap(),
+                            "update-ref",
+                            &f.authorization.context.source.candidate_ref,
+                            &old_main
+                        ])
+                        .status
+                        .success()
+                    );
+                }
                 install(&f.hooks, &f.authorization, "fixture-internal", 22801).unwrap();
                 assert!(
                     f.git(&[
@@ -355,17 +372,9 @@ mod tests {
                     Some(old_main.as_str())
                 );
             }
-            assert!(
-                f.git(&[
-                    "--git-dir",
-                    f.bare.to_str().unwrap(),
-                    "update-ref",
-                    &f.authorization.context.source.candidate_ref,
-                    &old_main
-                ])
-                .status
-                .success()
-            );
+            let f = Fixture::with_seeded_candidate(true);
+            let candidate = f.candidate();
+            let old_main = f.reference("refs/heads/main").unwrap();
             assert!(!f.push(&[&candidate]).status.success());
             assert_eq!(
                 f.reference(&f.authorization.context.source.candidate_ref)
