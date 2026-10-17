@@ -22,6 +22,14 @@ fn private_file(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
         .context("Не удалось создать private Git file")?;
     file.write_all(contents)?;
     file.sync_all()?;
+    #[cfg(unix)]
+    {
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        fs::File::open(parent)?.sync_all()?;
+    }
     Ok(())
 }
 
