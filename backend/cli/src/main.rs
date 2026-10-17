@@ -1,5 +1,6 @@
 mod commands;
 mod support;
+mod task_git;
 use std::{path::PathBuf, time::Duration};
 use support::ErrorFormat;
 
@@ -250,6 +251,9 @@ enum PipelineCommand {
         /// Exact task intent JSON; requires an explicit original idempotency key.
         #[arg(long)]
         task_intent: Option<String>,
+        /// Retained delegated credential context, not a token or caller-issued permission.
+        #[arg(long, requires_all = ["task_intent", "idempotency_key"])]
+        credential_context: Option<String>,
     },
     Show {
         #[arg(long)]
@@ -658,6 +662,7 @@ enum TokenCommand {
 }
 
 struct ApiClient {
+    api_origin: String,
     transport: CoreApiClient,
     secrets: Vec<String>,
     request_timeout: Duration,
@@ -675,6 +680,7 @@ impl ApiClient {
             .filter(|value| !value.is_empty())
             .collect();
         Ok(Self {
+            api_origin: api_url.clone(),
             secrets,
             request_timeout: timeout,
             transport: CoreApiClient::new(
@@ -1020,9 +1026,13 @@ async fn pipeline(api: &ApiClient, command: PipelineCommand) -> anyhow::Result<V
             idempotency_key,
             variables,
             task_intent,
+            credential_context,
         } => {
             if task_intent.is_some() && idempotency_key.is_none() {
                 anyhow::bail!("Task intent требует explicit original --idempotency-key");
+            }
+            if task_intent.as_deref() == Some("-") && credential_context.as_deref() == Some("-") {
+                anyhow::bail!("Task intent и credential context требуют разные input streams");
             }
             let mut body = json!({"git_ref":git_ref,"variables":variables.into_iter().collect::<std::collections::BTreeMap<_,_>>()});
             if let Some(file) = task_intent {
@@ -1036,6 +1046,18 @@ async fn pipeline(api: &ApiClient, command: PipelineCommand) -> anyhow::Result<V
                     anyhow::bail!("Ожидается task intent object");
                 }
                 body["task_intent"] = value;
+            }
+            if let Some(file) = credential_context {
+                let raw = support::read_text(&file)?;
+                if raw.len() > 16 * 1024 {
+                    anyhow::bail!("Credential context превышает16KiB");
+                }
+                let value: Value = serde_json::from_str(&raw)
+                    .map_err(|_| anyhow::anyhow!("Некорректный credential context JSON"))?;
+                if !value.is_object() {
+                    anyhow::bail!("Ожидается credential context object");
+                }
+                body["credential_context"] = value;
             }
             let idempotency_key =
                 idempotency_key.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());

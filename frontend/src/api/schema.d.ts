@@ -728,6 +728,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/internal/task-git-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["forge_task_git_check"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/jobs/{job_id}/artifacts": {
         parameters: {
             query?: never;
@@ -981,6 +997,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["forge_verify_repository_ref"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/namespace-repositories/{id}/source": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_namespace_repository_source"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2521,6 +2553,13 @@ export interface components {
             /** Format: int64 */
             sizeBytes: number;
         };
+        CandidateCheck: {
+            task_candidate: components["schemas"]["GitContext"];
+        };
+        CandidateCheckReadback: {
+            triggered: boolean;
+            verified: boolean;
+        };
         /** @description Fresh local observation tied to an immutable blocked operation, never a delivery receipt. */
         CandidateEvidenceReadback: {
             acceptanceVerified: boolean;
@@ -2718,6 +2757,14 @@ export interface components {
             repository_name?: string | null;
             repository_url: string;
         };
+        DeliveryConfigurationReadback: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /** Format: uuid */
+            repository_id: string;
+            repository_name: string;
+        };
         DeliveryManifest: {
             /** Format: uuid */
             artifactAttemptId: string;
@@ -2876,6 +2923,22 @@ export interface components {
             /** Format: date-time */
             started_at?: string | null;
             status: string;
+        };
+        GitContext: {
+            /** Format: uuid */
+            chatId: string;
+            intent: components["schemas"]["TaskWorkspaceIntent"];
+            machineSubject: string;
+            newOid: string;
+            oldOid: string;
+            /** Format: uuid */
+            projectId: string;
+            repository: string;
+            /** Format: uuid */
+            runId: string;
+            source: components["schemas"]["SourceBinding"];
+            /** Format: int32 */
+            version: number;
         };
         GitPushEvent: {
             new_rev?: string | null;
@@ -3791,6 +3854,39 @@ export interface components {
             id: string;
             name: string;
         };
+        SourceBinding: {
+            base_commit: string;
+            base_ref: string;
+            candidate_ref: string;
+            /** Format: uuid */
+            confirmation_id: string;
+            content_hash: string;
+            /** Format: int32 */
+            contract_version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            forge_instance_id: string;
+            namespace: components["schemas"]["NamespaceRef"];
+            owner_subject: string;
+            policy_hash: string;
+            /** Format: uuid */
+            project_id: string;
+            /** Format: uuid */
+            repository_id: string;
+            /** Format: int64 */
+            requirement_revision: number;
+            /** Format: uuid */
+            root_task_id: string;
+            /** Format: uuid */
+            routing_snapshot_id: string;
+            source_hash: string;
+            /** Format: int64 */
+            source_revision: number;
+            /** Format: uuid */
+            task_id: string;
+            tracker_instance_id: string;
+        };
         Stage: {
             /** Format: uuid */
             id: string;
@@ -3808,6 +3904,21 @@ export interface components {
             message: string;
             name: string;
             sha: string;
+        };
+        TaskCredentialContext: {
+            /** Format: uuid */
+            chatId: string;
+            intent: components["schemas"]["TaskWorkspaceIntent"];
+            machineSubject: string;
+            /** Format: uuid */
+            projectId: string;
+            /** Format: uuid */
+            runId: string;
+            /** Format: uuid */
+            triggerId: string;
+            variablesSha256: string;
+            /** Format: int32 */
+            version: number;
         };
         TaskDeliveryFence: {
             /** Format: uuid */
@@ -3847,6 +3958,7 @@ export interface components {
         };
         /** @description Additive task branch; legacy field types/defaults and ordinary trigger remain unchanged. */
         TaskTriggerPipeline: {
+            credential_context?: null | components["schemas"]["TaskCredentialContext"];
             git_ref?: string | null;
             task_intent?: null | components["schemas"]["TaskWorkspaceIntent"];
             /** @description Optional run variables; exposed to every job as CICD_VAR_<KEY>. */
@@ -3973,6 +4085,21 @@ export interface components {
             forge_instance_id: string;
             kind: string;
             namespace: components["schemas"]["NamespaceRef"];
+            public_name: string;
+            /** Format: uuid */
+            repository_id: string;
+        };
+        VerifiedSource: {
+            base_commit: string;
+            base_ref: string;
+            default_ref: string;
+            delivery_configuration?: null | components["schemas"]["DeliveryConfigurationReadback"];
+            /** Format: uuid */
+            forge_instance_id: string;
+            namespace: components["schemas"]["NamespaceRef"];
+            /** Format: date-time */
+            observed_at: string;
+            protected_refs: string[];
             public_name: string;
             /** Format: uuid */
             repository_id: string;
@@ -5713,6 +5840,65 @@ export interface operations {
             };
         };
     };
+    forge_task_git_check: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CandidateCheck"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CandidateCheckReadback"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     list_artifacts: {
         parameters: {
             query?: never;
@@ -6267,6 +6453,69 @@ export interface operations {
             };
             /** @description Foreign namespace */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    forge_namespace_repository_source: {
+        parameters: {
+            query: {
+                registry_instance_id: string;
+                namespace_id: string;
+                base_ref: string;
+                base_commit: string;
+                delivery_configuration_name?: string | null;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerifiedSource"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

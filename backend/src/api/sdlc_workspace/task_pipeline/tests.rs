@@ -1,5 +1,109 @@
 use super::*;
 
+#[tokio::test]
+async fn delegated_child_expiring_during_tracker_await_has_zero_effects() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let effects = AtomicUsize::new(0);
+    let tracker_entered = AtomicBool::new(false);
+    let child_until = Instant::now() + Duration::from_millis(100);
+    let result = bound_child_authority(child_until, async {
+        tracker_entered.store(true, Ordering::SeqCst);
+        tokio::time::sleep_until(tokio::time::Instant::from_std(child_until)).await;
+        Ok(Instant::now() + Duration::from_secs(30))
+    })
+    .await;
+    if result.is_ok() {
+        effects.fetch_add(1, Ordering::SeqCst);
+    }
+    assert!(result.is_err());
+    assert!(tracker_entered.load(Ordering::SeqCst));
+    assert_eq!(effects.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn delegated_authority_deadline_is_minimum_of_child_and_tracker() {
+    let soon = Instant::now() + Duration::from_secs(1);
+    let later = soon + Duration::from_secs(29);
+    assert_eq!(
+        bound_child_authority(soon, async { Ok(later) })
+            .await
+            .unwrap(),
+        soon
+    );
+    assert_eq!(
+        bound_child_authority(later, async { Ok(soon) })
+            .await
+            .unwrap(),
+        soon
+    );
+}
+
+#[tokio::test]
+async fn delegated_tracker_readback_requires_exact_native_tuple_and_current_assignment() {
+    use axum::{Router, routing::get};
+    use std::sync::{Arc, RwLock};
+    let (intent, value) = fixture(WorkspaceRole::Developer, "Development");
+    let context = TaskCredentialContext {
+        version: 1,
+        project_id: Uuid::new_v4(),
+        intent: intent.clone(),
+        run_id: serde_json::from_value(value["receipt"]["binding"]["run_id"].clone()).unwrap(),
+        chat_id: serde_json::from_value(value["receipt"]["binding"]["chat_id"].clone()).unwrap(),
+        machine_subject: value["receipt"]["binding"]["machine_subject"]
+            .as_str()
+            .unwrap()
+            .into(),
+        trigger_id: Uuid::new_v4(),
+        variables_sha256: "a".repeat(64),
+    };
+    let state = Arc::new(RwLock::new(value.clone()));
+    let peer = state.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let config = SdlcWorkspaceConfig {
+        tracker_read_url: Some(format!("http://{}", listener.local_addr().unwrap())),
+        tracker_read_token: Some("fixture-reader".into()),
+        ..Default::default()
+    };
+    let path = format!("/api/v1/issues/{}/sdlc/lifecycle", intent.binding.task_id);
+    let app = Router::new().route(
+        &path,
+        get(move |headers: axum::http::HeaderMap| {
+            let peer = peer.clone();
+            async move {
+                assert_eq!(headers["authorization"], "Bearer fixture-reader");
+                let value = peer.read().unwrap().clone();
+                Json(value)
+            }
+        }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    assert!(
+        tracker_bound(&config, &intent, Some(&context))
+            .await
+            .is_ok()
+    );
+    for (path, replacement) in [
+        ("/receipt/binding/run_id", json!(Uuid::new_v4())),
+        ("/receipt/binding/chat_id", json!(Uuid::new_v4())),
+        ("/receipt/binding/machine_subject", json!("other-native")),
+        ("/receipt/assignment/fencing_token", json!(4)),
+        ("/receipt/assignment/assignment_id", json!(Uuid::new_v4())),
+        ("/receipt/task/status", json!("Ready")),
+        ("/receipt/lease/expires_at", value["observed_at"].clone()),
+    ] {
+        let mut changed = value.clone();
+        *changed.pointer_mut(path).unwrap() = replacement;
+        *state.write().unwrap() = changed;
+        assert!(
+            tracker_bound(&config, &intent, Some(&context))
+                .await
+                .is_err(),
+            "{path}"
+        );
+    }
+    server.abort();
+}
+
 fn fixture(role: WorkspaceRole, stage: &str) -> (TaskWorkspaceIntent, Value) {
     let task = Uuid::new_v4();
     let now = Utc::now();

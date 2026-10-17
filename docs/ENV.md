@@ -72,6 +72,7 @@ version/journals128KiB, health/acceptance64KiB. Origin принадлежит о
 | `CICD_TLS_HTTPS_PORT` | `22443` | Loopback host/container порт Caddy TLS profile; frontend/API direct ports в этом профиле удалены |
 | `CICD_SECRETS_KEY` | — | Base64 32-byte ключ AES-256-GCM (обязателен для secrets) |
 | `CICD_SDLC_WORKSPACE_SUBJECT` | — | Non-nil UUID выделенного existing Forge service account; project-bound `api:write/read` только для blocked workspace operation POST/GET; без настройки API закрыт |
+| `CICD_SDLC_DELEGATED_SUBJECT` | — | Опциональный canonical non-nil UUID отдельного Central Auth machine subject для exact task-grant child; не local SAT и не namespace owner/reader. Без настройки delegated path закрыт; human/admin/Git authority не выдаётся. Требуется существующий `CICD_SECRETS_KEY` для private async custody; live qualification ещё не выполнена |
 | `CICD_SDLC_WORKSPACE_OBSERVATION_ROOT` | — | Опциональный absolute owner-local mount existing OwnedWorkspace для bounded read-only origin/SHA/clean preflight; не prepare/admission/dispatch |
 | `CICD_ARTIFACTS_DIR` | `/var/lib/forge/artifacts` | Локальное хранилище артефактов |
 | `CICD_ARTIFACT_RETENTION_DAYS` | `30` | TTL новых артефактов в днях (`1..3650`); backend retention worker удаляет expired local files и помечает metadata `purged_at` |

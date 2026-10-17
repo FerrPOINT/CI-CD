@@ -1,5 +1,13 @@
 # Дата-модель Forge CI/CD
 
+Source additive0094 вводит disjoint encrypted central-child custody в existing
+task pipeline/workspace journals. Legacy SAT rows, original FK/checksum history,
+unique operation keys и immutable receipt/attempt guards сохранены. Новой
+очереди/issuer таблицы нет. [Контракт](FORGE_DELEGATED_CREDENTIAL_CONTRACT.md).
+Миграция0094 проверена на изолированном PostgreSQL, включая fresh/prior-schema
+upgrade и populated history; рабочая БД не менялась.
+[Состав проверки](FORGE_TASK_DEPLOYMENT_LOCAL_20261017.md).
+
 PR actions получают namespace admission перед `pull_requests FOR UPDATE`.
 Merge/close/reopen читают актуальное состояние под одной row lock; Git publication
 подтверждается до `status=merged`/`merge_commit_sha`. Branch SHA фиксируется

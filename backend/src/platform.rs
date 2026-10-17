@@ -2962,7 +2962,7 @@ fn sha256(value: &str) -> String {
     sha256_bytes(value.as_bytes())
 }
 
-fn decrypt_secret(stored: &str, secrets: &SecretsConfig) -> Result<String, String> {
+pub(crate) fn decrypt_secret(stored: &str, secrets: &SecretsConfig) -> Result<String, String> {
     use cicd_app::repository_sync::Crypto;
     cicd_infra::secrets::Secrets(Some(secret_key(secrets)?))
         .open(stored)
@@ -3020,7 +3020,7 @@ fn schedule_next_fire_at(cron: &str, enabled: bool) -> Result<Option<DateTime<Ut
         .map(Some)
         .map_err(ApiError::bad_request)
 }
-fn encrypt_secret(value: &str, secrets: &SecretsConfig) -> Result<String, String> {
+pub(crate) fn encrypt_secret(value: &str, secrets: &SecretsConfig) -> Result<String, String> {
     use cicd_app::repository_sync::Crypto;
     cicd_infra::secrets::Secrets(Some(secret_key(secrets)?))
         .seal(value)

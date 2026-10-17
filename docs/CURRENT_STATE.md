@@ -1,5 +1,38 @@
 # CURRENT STATE — Forge CI/CD
 
+## Frontend f259/UIe075: 18 октября 2026
+
+Source `f2597dc` включает upstream124. Его frontend dependency/source closure с
+UIe075 проверен: exact frozen graph и412 UI files,8/8 целевых Vitest случаев,
+generated-client parity и Base compatibility против main00ba828 проходят.
+Отдельный cached `tsc --noEmit` на том же source завершился exit0; cleanup и
+удаление inputs подтверждены, install/build/live в этом прогоне не выполнялись.
+Все67 production source blobs совпадают со старым build tree65b7098; переиспользован
+его настоящий Vite build, а не заявлена новая сборка f259. Новые declarations
+проверены отдельно. Два catalog PG selectors ещё ожидают прогона; полный release
+gate, новый backend image/Compose и live rollout этим не закрыты.
+[Source-bound evidence и точные границы](FORGE_TASK_DEPLOYMENT_LOCAL_20261017.md#frontend-f259uie075-18-октября-2026).
+
+## Task Workspace И Git: 17 октября 2026
+
+Exact source828cf/SDK2ad прошёл typed compilation, fmt/metadata, все42 целевых
+случая и strict affected Clippy. Включены исправленные populated-history/Task Git
+PG fixtures, новые маршруты, native hooks, auth/namespace и cancellation guards.
+Rust OpenAPI, generated-client parity, TypeScript и неизменённый Base compatibility
+gate проходят. Старые контракты сохранены отдельными source/task-callback routes;
+waiver не применялся. QA очищен, receipt runner_exit0. Image/Compose и live rollout
+остаются отдельными gates; PR122 ещё Draft и этот пакет не установлен.
+
+Следующий абзац сохраняет предыдущий checkpoint9b, не новый aggregate release gate.
+
+PR122 source9b5d/SDK2ad прошёл typed server/integration/CLI compilation и65 выбранных
+deployment/Git/PG случаев:64 в основном прогоне и один ordinary-task PG follow-up
+на том же SHA. Исходный failed aggregate receipt сохранён: его grammar assertion
+не запустил последний тест, а не обнаружил product failure. Оба временных QA
+очищены. Clippy/OpenAPI, populated migration, image и live rollout ещё открыты;
+это не полный release gate и не установленный runtime.
+[Точные проверки и границы](FORGE_TASK_DEPLOYMENT_LOCAL_20261017.md).
+
 > **Производный снимок текущего состояния.** Сверяется с кодом и evidence; authority — код и коммит, не этот файл. Обновлять при каждом изменении capability.
 > Снято: `2026-10-11`, candidate `fix/forge-runtime-main-integration-20261011`, не установленный runtime; visual evidence перечислено в `docs/assets/screens/manifest.md`.
 

@@ -1,5 +1,39 @@
 # API v1 Specification — Forge CI/CD
 
+Registered-reader `GET /api/v1/namespace-repositories/{id}/source` возвращает
+exact source readback и optional delivery configuration того же repository.
+Прежний GET без `/source` сохраняет catalog object с обязательным `kind`.
+Human catalogs не меняются. [Контракт reader](NAMESPACE_DELIVERY_CONFIGURATION_READER.md).
+
+Existing Smart HTTP and `/api/v1/internal/task-git-check` support an opt-in own-task candidate
+variant with exact confirmed source binding, fresh Developer authority and
+single-ref CAS. Legacy authentication and ordinary post-receive remain separate;
+pipeline-only child credentials do not grant Git access. Wiring is integrated in
+source; typed/native qualification and generated OpenAPI refresh remain pending.
+[Own-task candidate Git](OWN_TASK_CANDIDATE_GIT.md).
+
+`workspace_deploy` source candidate связывает exact Git Compose, retained upstream
+`image_build` и existing RemoteJob temporary app/DB lifecycle с repo commands.
+Common wiring включает task-only planning/runner path. Receipt исторический
+`stopped-after-validation`, не current
+healthy или business acceptance. Rust/PG/native qualification pending; обычные
+jobs и readonly OCI сохраняются. [Контракт](contracts/WORKSPACE_DEPLOY_ADMISSION.md).
+
+Source-only opt-in delegated task credential добавляет optional
+`TaskTriggerPipeline.credential_context` и отдельную child identity только для
+task-trigger/task-workspace readback. Legacy SAT и default auth не меняются;
+Git/delivery/admin права child закрыты. Exact scope/wire и private async custody:
+[delegated task credential](FORGE_DELEGATED_CREDENTIAL_CONTRACT.md).
+Async effect permit ограничен минимумом authoritative child expiry из additive
+Base introspection metadata (только `include_lifetime=true`) и current Tracker
+lease; отсутствие metadata закрывает delegated effects без изменения SDK/SAT
+или продления исходного child.
+Rust/PG qualification и installation этого slice не заявлены.
+
+Отдельная source-проверка сохраняет обычный catalog GET/JSON и использует тот же
+registered reader auth: [контракт](REGISTERED_SOURCE_READER.md).
+Модуль — source candidate; общий wiring/qualification выполняет Main.
+
 PR `action=merge` использует только branch refs и фиксированные SHA для pipeline
 gate и native merge. Короткие и `refs/heads/...` имена эквивалентны; tag/HEAD/revision
 expressions не заменяют отсутствующую ветку. Stale source/target возвращает 409,
@@ -484,8 +518,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 93,
-    "latest_required_version": 93,
+    "latest_applied_version": 94,
+    "latest_required_version": 94,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],
@@ -571,7 +605,7 @@ In-process fixed-window limiter выполняется до auth/handler и во
 | `auth-login` | `POST /api/v1/auth/login` | 30/min |
 | `auth-refresh` | `POST /api/v1/auth/refresh` | 120/min |
 | `auth-logout` | `POST /api/v1/auth/logout` | 120/min |
-| `internal-git-push` | `POST /api/v1/internal/git-push` | 120/min |
+| `internal-git-push` | `POST /api/v1/internal/git-push`, `POST /api/v1/internal/task-git-check` | общий лимит 120/min |
 | `git-read` / `git-push` | `/git/*` Smart HTTP | 240/min |
 | `artifact-upload` | `POST /api/v1/jobs/{job_id}/artifacts` | 60/min |
 | `api-read` / `api-write` | прочие `/api/*` routes | 1200/min read, 600/min write |
@@ -1928,6 +1962,13 @@ Git Smart HTTP допускает unauthenticated read только для `repo
 ### Internal Git hook
 
 `POST /api/v1/internal/git-push` вызывается generated `post-receive` hook. Заголовок `X-Internal-Token` обязан совпадать с `CICD_GIT_INTERNAL_TOKEN`, когда токен сконфигурирован.
+
+Этот legacy endpoint принимает только `GitPushEvent`; `task_candidate`, включая
+mixed payload, отклоняется до enqueue, без fallback. Task-only pre-receive и
+prepared reference-transaction используют отдельный
+`POST /api/v1/internal/task-git-check` с `CandidateCheck`. Он требует exact internal
+header И fresh central Git child/current context, возвращает
+`{"verified":true,"triggered":false}` и никогда не создаёт pipeline.
 
 ```json
 {

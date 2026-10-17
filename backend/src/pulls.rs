@@ -1050,10 +1050,10 @@ async fn pr_action_owned(
 // ─── helpers ───
 
 #[derive(Debug)]
-struct BranchSnapshot {
+pub(crate) struct BranchSnapshot {
     name: String,
-    reference: String,
-    oid: String,
+    pub(crate) reference: String,
+    pub(crate) oid: String,
 }
 
 async fn branch_reference(branch: &str) -> Result<(String, String), ApiError> {
@@ -1078,7 +1078,10 @@ async fn branch_reference(branch: &str) -> Result<(String, String), ApiError> {
     Ok((name.into(), reference))
 }
 
-async fn branch_snapshot(path: &std::path::Path, branch: &str) -> Result<BranchSnapshot, ApiError> {
+pub(crate) async fn branch_snapshot(
+    path: &std::path::Path,
+    branch: &str,
+) -> Result<BranchSnapshot, ApiError> {
     let (name, reference) = branch_reference(branch).await?;
     let observed = tokio::process::Command::new("git")
         .arg("--git-dir")

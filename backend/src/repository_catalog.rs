@@ -169,6 +169,36 @@ pub async fn verified_repository(
     }))
 }
 
+#[utoipa::path(get,operation_id="forge_namespace_repository_source",path="/api/v1/namespace-repositories/{id}/source",tag="namespaces",
+    params(("id"=Uuid,Path),crate::registered_source::RepositoryQuery),
+    responses((status=200,body=crate::registered_source::VerifiedSource),(status=400),(status=401),(status=403),(status=404),(status=409),(status=503)))]
+pub async fn verified_repository_source(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<Uuid>,
+    Query(query): Query<crate::registered_source::RepositoryQuery>,
+) -> Result<
+    (
+        axum::http::HeaderMap,
+        Json<crate::registered_source::VerifiedSource>,
+    ),
+    ApiError,
+> {
+    let observed = crate::registered_source::observe(
+        &state,
+        id,
+        query.namespace(),
+        query.source()?,
+        query.delivery_configuration_name.as_deref(),
+    )
+    .await?;
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    Ok((headers, Json(observed)))
+}
+
 pub async fn resolve_storage(pool: &PgPool, raw: &str) -> Result<String, ApiError> {
     let name = raw.trim_end_matches(".git");
     if name.contains('/') {

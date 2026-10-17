@@ -85,7 +85,10 @@ pub(crate) fn rate_limit_rule(method: &Method, path: &str) -> Option<RateLimitRu
             window_secs: 60,
         });
     }
-    if path == "/api/v1/internal/git-push" {
+    if matches!(
+        path,
+        "/api/v1/internal/git-push" | "/api/v1/internal/task-git-check"
+    ) {
         return Some(RateLimitRule {
             class: "internal-git-push",
             limit: 120,
@@ -176,6 +179,33 @@ pub(crate) async fn require_auth(
         ));
     };
     let pool = pool(&state)?;
+    let bearer = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(pdlc_auth_core::bearer_from_header);
+    let mut checked_central = None;
+    if let Some(token) = bearer.filter(|token| pdlc_auth_core::is_personal_token(token))
+        && let Some(central) = crate::central_auth::try_central(token).await?
+    {
+        if crate::delegated_credentials::has_grant(&central)
+            || state
+                .config
+                .sdlc_workspace
+                .delegated_subject
+                .is_some_and(|id| id.to_string() == central.user_id)
+        {
+            let identity = crate::delegated_credentials::Identity::verified(
+                &central,
+                &state.config.sdlc_workspace,
+            )?;
+            identity.route(&method, req.uri().path())?;
+            let mut req = req;
+            req.extensions_mut().insert(identity);
+            return Ok(next.run(req).await);
+        }
+        checked_central = Some(central_identity(pool, &central).await?);
+    }
     let is_platform_token = req
         .headers()
         .get(axum::http::header::AUTHORIZATION)
@@ -183,7 +213,10 @@ pub(crate) async fn require_auth(
         .is_some_and(|value| {
             pdlc_auth_core::bearer_from_header(value).is_some_and(pdlc_auth_core::is_personal_token)
         });
-    let claims = bearer_identity(pool, auth_secret, req.headers()).await?;
+    let claims = match checked_central {
+        Some(claims) => claims,
+        None => bearer_identity(pool, auth_secret, req.headers()).await?,
+    };
     if is_platform_token {
         let required = if matches!(method.as_str(), "GET" | "HEAD" | "OPTIONS") {
             "ci-cd:read"
@@ -672,6 +705,20 @@ pub(crate) async fn bearer_identity(
     identity_for_bearer_token(pool, auth_secret, token).await
 }
 
+async fn central_identity(
+    pool: &PgPool,
+    central: &pdlc_auth_core::AuthContext,
+) -> Result<crate::auth::AccessClaims, ApiError> {
+    if crate::namespace::registered_machine(&central.user_id)
+        || central.role.as_deref() == Some("service_account")
+        || crate::delegated_credentials::has_grant(central)
+        || crate::delegated_credentials::configured_subject(&central.user_id)
+    {
+        return Err(ApiError::forbidden());
+    }
+    crate::central_auth::link_central_user(pool, central).await
+}
+
 pub(crate) async fn identity_for_bearer_token(
     pool: &PgPool,
     auth_secret: &str,
@@ -680,12 +727,7 @@ pub(crate) async fn identity_for_bearer_token(
     // Central fleet auth-server first (ES256 via JWKS); legacy session JWTs
     // and cicd_ PATs remain valid during the migration window.
     if let Some(central) = crate::central_auth::try_central(token).await? {
-        if crate::namespace::registered_machine(&central.user_id)
-            || central.role.as_deref() == Some("service_account")
-        {
-            return Err(ApiError::forbidden());
-        }
-        return crate::central_auth::link_central_user(pool, &central).await;
+        return central_identity(pool, &central).await;
     }
     if token.starts_with("forge_sat_") {
         let hash = crate::auth::hash_token(token);

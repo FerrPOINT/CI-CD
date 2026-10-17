@@ -47,6 +47,7 @@ async fn machine_auth(req: Request, next: Next, key: &str) -> Result<Response, A
         .map(str::trim)
         .any(|s| !s.is_empty() && s == ctx.user_id);
     if ctx.session_id.is_some()
+        || crate::delegated_credentials::has_grant(&ctx)
         || !registered
         || !ctx.allows_service("ci-cd", req.method().as_str())
     {
@@ -216,6 +217,10 @@ pub fn routes() -> axum::Router<Arc<AppState>> {
                 .route(
                     "/api/v1/namespace-repositories/{id}",
                     axum::routing::get(crate::repository_catalog::verified_repository),
+                )
+                .route(
+                    "/api/v1/namespace-repositories/{id}/source",
+                    axum::routing::get(crate::repository_catalog::verified_repository_source),
                 )
                 .route(
                     "/api/v1/namespace-repositories",

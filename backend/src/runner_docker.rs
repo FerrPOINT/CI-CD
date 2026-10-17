@@ -3,6 +3,10 @@ use serde_json::{Value, json};
 use std::{
     io,
     path::{Path, PathBuf},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 use tokio::io::AsyncReadExt;
@@ -10,6 +14,111 @@ use tokio::process::Command;
 use uuid::Uuid;
 
 const IMAGE_BUILD_INSPECT_FORMAT: &str = r#"{"id":{{json .Id}},"revision":{{json (index .Config.Labels "org.opencontainers.image.revision")}},"attempt":{{json (index .Config.Labels "sdlc.attempt")}},"request":{{json (index .Config.Labels "forge.image-build-request")}},"os":{{json .Os}},"volumes":{{json (index .Config "Volumes")}}}"#;
+const RUNTIME_IMAGE_FORMAT: &str = r#"{"image_id":{{json .Id}},"os":{{json .Os}},"architecture":{{json .Architecture}},"default_user":{{json (index .Config "User")}},"volumes":{{json (index .Config "Volumes")}}}"#;
+
+#[derive(Clone, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct RuntimeImageFacts {
+    image_id: String,
+    os: String,
+    architecture: String,
+    default_user: Option<String>,
+    volumes: std::collections::BTreeSet<String>,
+}
+
+fn architecture(value: &str) -> Option<&'static str> {
+    match value {
+        "amd64" | "x86_64" => Some("amd64"),
+        "arm64" | "aarch64" => Some("arm64"),
+        _ => None,
+    }
+}
+
+fn runtime_image_facts(
+    value: &Value,
+    image: &str,
+    platform: &str,
+) -> io::Result<RuntimeImageFacts> {
+    let platform =
+        architecture(platform).ok_or_else(|| invalid("unsupported dependency platform"))?;
+    if !crate::domain::image_build::valid_image_id(image)
+        || value["image_id"] != image
+        || value["os"] != "linux"
+        || value["architecture"].as_str().and_then(architecture) != Some(platform)
+    {
+        return Err(invalid("runtime image identity/platform mismatch"));
+    }
+    let user = match &value["default_user"] {
+        Value::Null => None,
+        Value::String(user) if user.len() <= 128 && !user.chars().any(char::is_control) => {
+            Some(user.clone())
+        }
+        _ => return Err(invalid("invalid image Config.User")),
+    };
+    let mut volumes = std::collections::BTreeSet::new();
+    if !value["volumes"].is_null() {
+        let declared = value["volumes"]
+            .as_object()
+            .ok_or_else(|| invalid("invalid image Config.Volumes"))?;
+        if declared.len() > 8 {
+            return Err(invalid("image volume bound"));
+        }
+        for (path, options) in declared {
+            if path.len() > 256
+                || !path.starts_with('/')
+                || path == "/"
+                || path.contains(['\\', ':', '$'])
+                || path.chars().any(char::is_control)
+                || !path[1..]
+                    .split('/')
+                    .all(|part| !part.is_empty() && part != "." && part != "..")
+                || !options.as_object().is_some_and(|v| v.is_empty())
+            {
+                return Err(invalid("invalid image volume declaration"));
+            }
+            volumes.insert(path.clone());
+        }
+    }
+    Ok(RuntimeImageFacts {
+        image_id: image.into(),
+        os: "linux".into(),
+        architecture: platform.into(),
+        default_user: user,
+        volumes,
+    })
+}
+
+async fn bounded_image_read(mut command: Command, args: &[&str]) -> io::Result<String> {
+    let mut child = command
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        let mut bytes = Vec::new();
+        child
+            .stdout
+            .take()
+            .ok_or_else(|| invalid("missing Docker readback"))?
+            .take(65537)
+            .read_to_end(&mut bytes)
+            .await?;
+        if bytes.len() > 65536 || !child.wait().await?.success() {
+            return Err(invalid("bounded Docker image-build readback failed"));
+        }
+        String::from_utf8(bytes)
+            .map(|v| v.trim().to_owned())
+            .map_err(|_| invalid("invalid Docker image-build readback encoding"))
+    })
+    .await;
+    match result {
+        Ok(Ok(value)) => Ok(value),
+        _ => {
+            let _ = child.kill().await;
+            Err(invalid("Docker image-build readback unavailable"))
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct Client {
@@ -197,37 +306,47 @@ impl Client {
     }
 
     async fn image_build_read(&self, docker_config: &Path, args: &[&str]) -> io::Result<String> {
-        let mut child = self
-            .image_build_control_command(docker_config)
-            .args(args)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()?;
-        let result = tokio::time::timeout(Duration::from_secs(30), async {
-            let mut bytes = Vec::new();
-            child
-                .stdout
-                .take()
-                .ok_or_else(|| invalid("missing Docker readback"))?
-                .take(65537)
-                .read_to_end(&mut bytes)
-                .await?;
-            if bytes.len() > 65536 || !child.wait().await?.success() {
-                return Err(invalid("bounded Docker image-build readback failed"));
-            }
-            String::from_utf8(bytes)
-                .map(|v| v.trim().to_owned())
-                .map_err(|_| invalid("invalid Docker image-build readback encoding"))
-        })
-        .await;
-        match result {
-            Ok(Ok(value)) => Ok(value),
-            _ => {
-                let _ = child.kill().await;
-                Err(invalid("Docker image-build readback unavailable"))
-            }
+        bounded_image_read(self.image_build_control_command(docker_config), args).await
+    }
+
+    /// An immutable selector is not proof: resolve through the existing owner inventory,
+    /// then inspect actual Config on the same verified daemon. Never pull dependencies.
+    pub(crate) async fn runtime_image(&self, image: &str) -> io::Result<RuntimeImageFacts> {
+        if !crate::domain::image_build::valid_image_id(image) {
+            return Err(invalid("runtime dependency requires an immutable image ID"));
         }
+        let format =
+            r#"{"id":{{json .ID}},"os":{{json .OSType}},"architecture":{{json .Architecture}}}"#;
+        let before: Value = serde_json::from_str(
+            &bounded_image_read(self.command(), &["info", "--format", format]).await?,
+        )?;
+        if before["id"] != self.daemon_id
+            || before["os"] != "linux"
+            || self.image(image).await? != image
+        {
+            return Err(invalid("dependency owner inventory differs"));
+        }
+        let value: Value = serde_json::from_str(
+            &bounded_image_read(
+                self.command(),
+                &["image", "inspect", image, "--format", RUNTIME_IMAGE_FORMAT],
+            )
+            .await?,
+        )?;
+        let facts = runtime_image_facts(
+            &value,
+            image,
+            before["architecture"]
+                .as_str()
+                .ok_or_else(|| invalid("daemon platform missing"))?,
+        )?;
+        let after: Value = serde_json::from_str(
+            &bounded_image_read(self.command(), &["info", "--format", format]).await?,
+        )?;
+        if after != before {
+            return Err(invalid("dependency daemon changed during readback"));
+        }
+        Ok(facts)
     }
 
     async fn verify_image_build_daemon(&self, docker_config: &Path) -> io::Result<()> {
@@ -507,6 +626,28 @@ pub(crate) struct RemoteJob {
     manifest: Value,
     active: bool,
     stopped: bool,
+    writes: Arc<PrivateWrites>,
+    deployment_output: Option<PathBuf>,
+    deployment_witness: Option<(Value, bool)>,
+}
+
+#[derive(Default)]
+struct PrivateWrites {
+    requested: AtomicU64,
+    closed: Mutex<bool>,
+}
+
+impl PrivateWrites {
+    fn write(&self, path: &Path, value: &Value, sequence: u64) -> io::Result<()> {
+        let closed = self
+            .closed
+            .lock()
+            .map_err(|_| invalid("private journal lock poisoned"))?;
+        if *closed || self.requested.load(Ordering::SeqCst) != sequence {
+            return Err(invalid("private journal write superseded or owner dropped"));
+        }
+        write_private(path, value)
+    }
 }
 
 fn literal(value: &mut Value) {
@@ -531,6 +672,20 @@ fn write_private(path: &Path, value: &Value) -> io::Result<()> {
     file.write_all(serde_json::to_string_pretty(value)?.as_bytes())?;
     file.sync_all()?;
     std::fs::rename(temp, path)
+}
+
+async fn write_private_async(
+    path: PathBuf,
+    value: Value,
+    writes: Arc<PrivateWrites>,
+) -> io::Result<()> {
+    let sequence = writes
+        .requested
+        .fetch_add(1, Ordering::SeqCst)
+        .wrapping_add(1);
+    tokio::task::spawn_blocking(move || writes.write(&path, &value, sequence))
+        .await
+        .map_err(|_| invalid("private journal write worker failed"))?
 }
 
 fn process_owner() -> String {
@@ -636,8 +791,331 @@ fn storage_users_owned(users: &[&str], containers: &[Value]) -> bool {
         })
 }
 
+/// Ownership inspection precedes this selection. Only the transfer helper is exempt.
+fn execution_containers<'a>(
+    manifest: &Value,
+    containers: &'a [Value],
+) -> io::Result<Vec<&'a Value>> {
+    let services = manifest["services"]
+        .as_object()
+        .ok_or_else(|| invalid("services missing"))?;
+    if !services.get("transfer").is_some_and(Value::is_object) {
+        return Err(invalid("transfer service missing"));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut execution = Vec::new();
+    for container in containers {
+        let service = container["Config"]["Labels"]["com.docker.compose.service"]
+            .as_str()
+            .ok_or_else(|| invalid("container service missing"))?;
+        if !services.get(service).is_some_and(Value::is_object) || !seen.insert(service) {
+            return Err(invalid("unknown or duplicate execution service"));
+        }
+        if service != "transfer" {
+            let id = container["Id"]
+                .as_str()
+                .ok_or_else(|| invalid("container ID missing"))?;
+            if id.len() != 64 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(invalid("invalid execution container ID"));
+            }
+            execution.push(container);
+        }
+    }
+    // Missing containers are allowed after partial creation/removal; no absent service is replayed.
+    Ok(execution)
+}
+
+fn execution_stopped(manifest: &Value, containers: &[Value]) -> io::Result<()> {
+    for container in execution_containers(manifest, containers)? {
+        if container["State"]["Running"].as_bool() != Some(false)
+            || container["State"]["Paused"].as_bool() != Some(false)
+            || container["State"]["Restarting"].as_bool() != Some(false)
+        {
+            return Err(invalid("execution service termination is unconfirmed"));
+        }
+    }
+    Ok(())
+}
+
+const VOLUME_INITIALIZE: &str = r#"test "$#" -eq 2
+test -d "$1" && test ! -L "$1"
+test -z "$(find "$1" -mindepth 1 -maxdepth 1 -print -quit)"
+chown "$2" "$1"
+chmod 700 "$1"
+test "$(stat -c '%u:%g:%a' "$1")" = "$2:700"
+"#;
+
+fn merge_deployment(
+    manifest: &mut Value,
+    fragment: &Value,
+    users: &std::collections::BTreeMap<String, String>,
+) -> io::Result<()> {
+    let project = manifest["name"]
+        .as_str()
+        .ok_or_else(|| invalid("project missing"))?
+        .to_owned();
+    let labels = manifest["services"]["transfer"]["labels"].clone();
+    if fragment["name"] != project
+        || fragment["networks"]["job"]["name"] != format!("{project}_job")
+        || fragment["networks"]["job"]["internal"] != false
+        || fragment["networks"]["job"]["labels"] != labels
+        || fragment["networks"]["job"]
+            .as_object()
+            .is_none_or(|v| v.len() != 3)
+    {
+        return Err(invalid(
+            "deployment cannot replace the existing owner network",
+        ));
+    }
+    let services = fragment["services"]
+        .as_object()
+        .ok_or_else(|| invalid("services missing"))?;
+    let volumes = fragment["volumes"]
+        .as_object()
+        .ok_or_else(|| invalid("volumes missing"))?;
+    if services.is_empty()
+        || services.len() > 8
+        || volumes.len() > 8
+        || volumes.len() != users.len()
+    {
+        return Err(invalid("deployment resource bound"));
+    }
+    for (name, service) in services {
+        if name == "job"
+            || name == "transfer"
+            || service["labels"] != labels
+            || service["container_name"] != format!("{project}-{name}")
+            || !service["image"]
+                .as_str()
+                .is_some_and(crate::domain::image_build::valid_image_id)
+            || service.get("x-forge-image-build").is_some()
+        {
+            return Err(invalid("unsealed deployment service"));
+        }
+        manifest["services"][name] = service.clone();
+    }
+    for (name, volume) in volumes {
+        let user = users
+            .get(name)
+            .ok_or_else(|| invalid("volume user missing"))?;
+        if ["workspace", "cargo", "sources"].contains(&name.as_str())
+            || volume["labels"] != labels
+            || volume["name"] != format!("{project}_{name}")
+            || !user.split_once(':').is_some_and(|(uid, gid)| {
+                [uid, gid].into_iter().all(|id| {
+                    id.parse::<u32>()
+                        .is_ok_and(|n| n > 0 && n <= i32::MAX as u32)
+                })
+            })
+        {
+            return Err(invalid("unsealed disposable volume"));
+        }
+        manifest["volumes"][name] = volume.clone();
+        manifest["services"]["transfer"]["volumes"].as_array_mut().ok_or_else(||invalid("helper mounts missing"))?
+            .push(json!({"type":"volume","source":name,"target":format!("/forge-data/{name}"),"volume":{"nocopy":true}}));
+    }
+    Ok(())
+}
+
+fn mounts_match(manifest: &Value, service: &str, container: &Value) -> bool {
+    let expected = manifest["services"][service]["volumes"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let Some(actual) = container["Mounts"].as_array() else {
+        return false;
+    };
+    let tmpfs: Vec<_> = manifest["services"][service]["tmpfs"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|v| {
+            v.as_str()
+                .and_then(|v| v.split_once(':'))
+                .map(|(path, _)| path)
+        })
+        .collect();
+    actual.iter().all(|mount| {
+        mount["Type"] == "volume"
+            || (mount["Type"] == "tmpfs"
+                && mount["Destination"]
+                    .as_str()
+                    .is_some_and(|path| tmpfs.contains(&path)))
+    }) && expected.len()
+        == actual
+            .iter()
+            .filter(|mount| mount["Type"] == "volume")
+            .count()
+        && expected.iter().all(|mount| {
+            let Some(logical) = mount["source"].as_str() else {
+                return false;
+            };
+            let name = manifest["volumes"][logical]["name"]
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    format!(
+                        "{}_{}",
+                        manifest["name"].as_str().unwrap_or_default(),
+                        logical
+                    )
+                });
+            actual
+                .iter()
+                .filter(|observed| {
+                    observed["Type"] == "volume"
+                        && observed["Name"] == name
+                        && observed["Destination"] == mount["target"]
+                        && observed["RW"] == !mount["read_only"].as_bool().unwrap_or(false)
+                })
+                .count()
+                == 1
+        })
+}
+
+#[derive(Clone, Copy)]
+enum DeploymentState {
+    Created,
+    Running,
+    Stopped,
+    BeforeStop,
+}
+
+fn deployment_containers(
+    manifest: &Value,
+    containers: &[Value],
+    state: DeploymentState,
+) -> io::Result<Value> {
+    let mut result = serde_json::Map::new();
+    let services = manifest["services"]
+        .as_object()
+        .ok_or_else(|| invalid("services missing"))?;
+    for (name, spec) in services
+        .iter()
+        .filter(|(name, _)| !matches!(name.as_str(), "job" | "transfer"))
+    {
+        let found: Vec<_> = containers
+            .iter()
+            .filter(|c| c["Config"]["Labels"]["com.docker.compose.service"] == *name)
+            .collect();
+        if found.len() != 1 {
+            return Err(invalid("exact deployment service readback missing"));
+        }
+        let container = found[0];
+        let running = if matches!(state, DeploymentState::BeforeStop) {
+            container["State"]["Running"]
+                .as_bool()
+                .ok_or_else(|| invalid("running state missing"))?
+        } else {
+            matches!(state, DeploymentState::Running)
+        };
+        let host = &container["HostConfig"];
+        if container["Image"] != spec["image"]
+            || !container["Id"]
+                .as_str()
+                .is_some_and(|id| id.len() == 64 && id.bytes().all(|c| c.is_ascii_hexdigit()))
+            || container["Config"]["User"] != spec["user"]
+            || container["State"]["Running"] != running
+            || container["State"]["Paused"] != false
+            || container["State"]["Restarting"] != false
+            || container["State"]["Dead"] != false
+            || !container["State"]["Pid"]
+                .as_i64()
+                .is_some_and(|pid| if running { pid > 0 } else { pid == 0 })
+            || (running && container["State"]["Status"] != "running")
+            || (running
+                && !container["State"]["StartedAt"]
+                    .as_str()
+                    .is_some_and(|start| !start.is_empty() && !start.starts_with("0001-")))
+            || (matches!(state, DeploymentState::Created)
+                && container["State"]["Status"] != "created")
+            || host["Privileged"] != false
+            || host["PidMode"] != ""
+            || !host["IpcMode"]
+                .as_str()
+                .is_some_and(|mode| matches!(mode, "" | "private"))
+            || host["RestartPolicy"]["Name"] != "no"
+            || !host["SecurityOpt"].as_array().is_some_and(|opts| {
+                opts.len() == 1
+                    && matches!(
+                        opts[0].as_str(),
+                        Some("no-new-privileges:true" | "no-new-privileges")
+                    )
+            })
+            || host["ReadonlyRootfs"] != true
+            || host["PublishAllPorts"] != false
+            || host["NetworkMode"]
+                != format!("{}_job", manifest["name"].as_str().unwrap_or_default())
+            || host["Memory"] != spec["mem_limit"]
+            || host["PidsLimit"] != spec["pids_limit"]
+            || host["NanoCpus"].as_i64()
+                != spec["cpus"]
+                    .as_f64()
+                    .map(|cpu| (cpu * 1_000_000_000.0).round() as i64)
+            || ![
+                "Binds",
+                "Devices",
+                "DeviceRequests",
+                "ExtraHosts",
+                "PortBindings",
+                "CapAdd",
+            ]
+            .iter()
+            .all(|key| {
+                host[*key].is_null()
+                    || host[*key].as_array().is_some_and(|v| v.is_empty())
+                    || host[*key].as_object().is_some_and(|v| v.is_empty())
+            })
+            || host["CapDrop"] != json!(["ALL"])
+            || !mounts_match(manifest, name, container)
+        {
+            return Err(invalid(
+                "actual deployment container differs from sealed owner manifest",
+            ));
+        }
+        result.insert(name.clone(),json!({"id":container["Id"],"image":container["Image"],
+            "state":container["State"]["Status"],"started_at":container["State"]["StartedAt"],
+            "pid":container["State"]["Pid"],"mounts":container["Mounts"].as_array().unwrap().iter().map(|mount|
+                json!({"name":mount["Name"],"destination":mount["Destination"],"rw":mount["RW"]})).collect::<Vec<_>>()}));
+    }
+    if result.is_empty() {
+        return Err(invalid("deployment service set empty"));
+    }
+    Ok(result.into())
+}
+
 impl RemoteJob {
     pub(crate) async fn prepare(id: Uuid, attempt: Uuid, workspace: &Path) -> io::Result<Self> {
+        Self::prepare_inner(id, attempt, workspace, None).await
+    }
+
+    pub(crate) async fn prepare_deployment(
+        id: Uuid,
+        attempt: Uuid,
+        workspace: &Path,
+        deployment: &crate::runner_image_build::workspace_deploy::PreparedDeployment,
+        pool: &sqlx::PgPool,
+        config: &crate::runner::RuntimeRunnerConfig,
+    ) -> io::Result<Self> {
+        let until = deployment
+            .effect_deadline(pool, config)
+            .await
+            .map_err(|_| invalid("task preparation authority unavailable"))?;
+        tokio::time::timeout_at(
+            tokio::time::Instant::from_std(until),
+            Self::prepare_inner(id, attempt, workspace, Some(deployment)),
+        )
+        .await
+        .map_err(|_| invalid("deployment preparation outcome unknown; original journal retained"))?
+    }
+
+    async fn prepare_inner(
+        id: Uuid,
+        attempt: Uuid,
+        workspace: &Path,
+        deployment: Option<&crate::runner_image_build::workspace_deploy::PreparedDeployment>,
+    ) -> io::Result<Self> {
         let client = Client::from_env()?;
         client.verify().await?;
         let root = PathBuf::from(
@@ -655,16 +1133,30 @@ impl RemoteJob {
         // A persisted invocation is never replayed, even if no container is currently visible.
         std::fs::create_dir(&directory)
             .map_err(|_| invalid("attempt journal exists; reconcile instead of reexecuting"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
+        }
         let helper = format!("forge-transfer-{attempt}");
         let labels = json!({"sdlc.task": format!("job-{id}"), "sdlc.purpose":"cicd-job", "sdlc.job":id.to_string(), "sdlc.attempt":attempt.to_string(),
             "sdlc.control-volume":std::env::var("CICD_RUNNER_WORKSPACE_VOLUME").unwrap_or_default()});
         let helper_image = client.image("alpine:3.21").await?;
-        let manifest = json!({"name":project, "services":{"transfer":{
+        let mut manifest = json!({"name":project, "services":{"transfer":{
             "image":helper_image, "container_name":helper, "pull_policy":"never", "restart":"no",
             "entrypoint":["/bin/sh"], "command":["-c","sleep 86400"], "network_mode":"none",
             "read_only":true, "tmpfs":["/tmp:mode=700"], "security_opt":["no-new-privileges:true"],
             "labels":labels, "volumes":[{"type":"volume","source":"workspace","target":"/workspace"},{"type":"volume","source":"cargo","target":"/cache"}]
         }}, "volumes":{"workspace":{"labels":labels}, "cargo":{"labels":labels}}, "networks":{"job":{"labels":labels}}});
+        let volume_users = if let Some(deployment) = deployment {
+            let (fragment, users) = deployment
+                .services_for(id, attempt)
+                .map_err(|_| invalid("deployment consumer differs"))?;
+            merge_deployment(&mut manifest, fragment, users)?;
+            users.clone()
+        } else {
+            std::collections::BTreeMap::new()
+        };
         let job = Self {
             client,
             helper,
@@ -673,10 +1165,34 @@ impl RemoteJob {
             manifest,
             active: true,
             stopped: false,
+            writes: Arc::default(),
+            deployment_output: None,
+            deployment_witness: None,
         };
-        job.record("prepared")?;
+        job.record("prepared").await?;
         let prepared = async {
-            job.save_manifest()?;
+            if deployment.is_some() {
+                let names = bounded_image_read(
+                    job.client.command(),
+                    &["volume", "ls", "--format", "{{.Name}}"],
+                )
+                .await?;
+                let planned: Vec<_> = job.manifest["volumes"]
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .map(|name| format!("{}_{}", job.project, name))
+                    .collect();
+                if names
+                    .lines()
+                    .any(|name| planned.iter().any(|planned| planned == name))
+                {
+                    return Err(invalid(
+                        "disposable deployment volume already exists; no adoption permitted",
+                    ));
+                }
+            }
+            job.save_manifest().await?;
             job.compose(&["up", "-d", "--no-build", "--pull", "never", "transfer"])
                 .await?;
             let parent = workspace
@@ -689,6 +1205,7 @@ impl RemoteJob {
                     &format!("{}:/workspace", job.helper),
                 ])
                 .await?;
+            job.initialize_data_volumes(&volume_users).await?;
             job.client
                 .run(&[
                     "exec",
@@ -706,17 +1223,236 @@ impl RemoteJob {
         prepared?;
         Ok(job)
     }
-    fn record(&self, phase: &str) -> io::Result<()> {
-        write_private(
-            &self.directory.join("journal.json"),
-            &json!({"project":self.project,
-            "daemon_id":self.client.daemon_id, "phase":phase, "owner":process_owner(), "stopped":self.stopped, "manifest":self.directory.join("compose.json")}),
+
+    async fn initialize_data_volumes(
+        &self,
+        users: &std::collections::BTreeMap<String, String>,
+    ) -> io::Result<()> {
+        if users.is_empty() {
+            return Ok(());
+        }
+        let containers = self.owned_resources().await?;
+        let helper = containers
+            .iter()
+            .find(|item| item["Name"] == format!("/{}", self.helper))
+            .ok_or_else(|| invalid("trusted transfer helper missing"))?;
+        if helper["Image"] != self.manifest["services"]["transfer"]["image"]
+            || !mounts_match(&self.manifest, "transfer", helper)
+        {
+            return Err(invalid("trusted helper image/mount readback differs"));
+        }
+        for (volume, user) in users {
+            let inspected: Value = serde_json::from_str(
+                &self
+                    .client
+                    .run(&["volume", "inspect", &format!("{}_{}", self.project, volume)])
+                    .await?,
+            )?;
+            let actual = inspected
+                .as_array()
+                .filter(|v| v.len() == 1)
+                .and_then(|v| v.first())
+                .ok_or_else(|| invalid("data volume readback missing"))?;
+            if !resource_owned(
+                "volume",
+                actual,
+                &self.manifest,
+                &self.project,
+                &self.directory.join("compose.json"),
+            ) {
+                return Err(invalid("foreign data volume blocks initialization"));
+            }
+            self.client
+                .run(&[
+                    "exec",
+                    &self.helper,
+                    "sh",
+                    "-ec",
+                    VOLUME_INITIALIZE,
+                    "forge-volume-init",
+                    &format!("/forge-data/{volume}"),
+                    user,
+                ])
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn start_deployment(
+        &mut self,
+        deployment: &crate::runner_image_build::workspace_deploy::PreparedDeployment,
+        pool: &sqlx::PgPool,
+        config: &crate::runner::RuntimeRunnerConfig,
+    ) -> io::Result<()> {
+        let (fragment, _) = deployment
+            .services_for(self.job_id()?, self.attempt_id()?)
+            .map_err(|_| invalid("deployment consumer differs"))?;
+        let names: Vec<&str> = fragment["services"]
+            .as_object()
+            .ok_or_else(|| invalid("services missing"))?
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let manifest = self.manifest_bytes().await?;
+        deployment
+            .record_started(&self.directory, manifest)
+            .await
+            .map_err(|_| invalid("original deployment intent unavailable"))?;
+        for action in ["create", "start"] {
+            let until = deployment
+                .effect_deadline(pool, config)
+                .await
+                .map_err(|_| invalid("task start authority unavailable"))?;
+            let containers = self.owned_resources().await?;
+            self.verify_deployment_custody(&containers, DeploymentState::BeforeStop)?;
+            let mut arguments = if action == "create" {
+                vec![
+                    "up",
+                    "--no-start",
+                    "--no-deps",
+                    "--no-build",
+                    "--pull",
+                    "never",
+                ]
+            } else {
+                vec!["start"]
+            };
+            arguments.extend(names.iter().copied());
+            tokio::time::timeout_at(
+                tokio::time::Instant::from_std(until),
+                self.compose(&arguments),
+            )
+            .await
+            .map_err(|_| {
+                invalid("deployment action outcome unknown; original journal retained")
+            })??;
+            let observation = self
+                .observe_deployment(if action == "create" {
+                    DeploymentState::Created
+                } else {
+                    DeploymentState::Running
+                })
+                .await?;
+            deployment
+                .record_observation(
+                    &self.directory,
+                    if action == "create" {
+                        "deployment-created.json"
+                    } else {
+                        "deployment-running.json"
+                    },
+                    observation.clone(),
+                )
+                .await
+                .map_err(|_| invalid("original deployment observation cannot be recorded"))?;
+            self.deployment_witness = Some((observation, action == "start"));
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn complete_deployment(
+        &mut self,
+        deployment: &crate::runner_image_build::workspace_deploy::PreparedDeployment,
+        status: std::process::ExitStatus,
+    ) -> io::Result<()> {
+        deployment
+            .services_for(self.job_id()?, self.attempt_id()?)
+            .map_err(|_| invalid("deployment completion consumer differs"))?;
+        self.stop_execution().await?;
+        let observed = self.observe_deployment(DeploymentState::Stopped).await?;
+        let output = deployment
+            .record_validation(
+                &self.directory,
+                self.manifest_bytes().await?,
+                observed,
+                status,
+            )
+            .await
+            .map_err(|_| invalid("historical deployment receipt unavailable"))?;
+        self.deployment_output = Some(output);
+        Ok(())
+    }
+
+    pub(crate) fn deployment_artifacts(&self) -> Option<&Path> {
+        self.deployment_output.as_deref()
+    }
+
+    fn job_id(&self) -> io::Result<Uuid> {
+        self.manifest["services"]["transfer"]["labels"]["sdlc.job"]
+            .as_str()
+            .and_then(|id| Uuid::parse_str(id).ok())
+            .ok_or_else(|| invalid("job identity missing"))
+    }
+    fn attempt_id(&self) -> io::Result<Uuid> {
+        self.manifest["services"]["transfer"]["labels"]["sdlc.attempt"]
+            .as_str()
+            .and_then(|id| Uuid::parse_str(id).ok())
+            .ok_or_else(|| invalid("attempt identity missing"))
+    }
+    async fn manifest_bytes(&self) -> io::Result<Vec<u8>> {
+        let path = self.directory.join("compose.json");
+        tokio::task::spawn_blocking(move || std::fs::read(path))
+            .await
+            .map_err(|_| invalid("manifest read failed"))?
+    }
+
+    async fn observe_deployment(&self, state: DeploymentState) -> io::Result<Value> {
+        let containers = self.owned_resources().await?;
+        let observed = deployment_containers(&self.manifest, &containers, state)?;
+        let network: Value = serde_json::from_str(
+            &self
+                .client
+                .run(&["network", "inspect", &format!("{}_job", self.project)])
+                .await?,
+        )?;
+        let network = network
+            .as_array()
+            .filter(|v| v.len() == 1)
+            .and_then(|v| v.first())
+            .ok_or_else(|| invalid("deployment network readback missing"))?;
+        if !resource_owned(
+            "network",
+            network,
+            &self.manifest,
+            &self.project,
+            &self.directory.join("compose.json"),
+        ) || network["Driver"] != "bridge"
+            || !network["Id"]
+                .as_str()
+                .is_some_and(|id| id.len() == 64 && id.bytes().all(|c| c.is_ascii_hexdigit()))
+            || network["Internal"] != false
+            || network["IPAM"]["Config"]
+                .as_array()
+                .is_none_or(|v| v.is_empty())
+        {
+            return Err(invalid("owned deployment network differs"));
+        }
+        Ok(
+            json!({"containers":observed,"network":{"id":network["Id"],"name":network["Name"],
+            "ipam":network["IPAM"]["Config"]}}),
         )
     }
-    fn save_manifest(&self) -> io::Result<()> {
+    fn journal(&self, phase: &str) -> Value {
+        json!({"project":self.project,
+            "daemon_id":self.client.daemon_id, "phase":phase, "owner":process_owner(), "stopped":self.stopped, "manifest":self.directory.join("compose.json")})
+    }
+    async fn record(&self, phase: &str) -> io::Result<()> {
+        write_private_async(
+            self.directory.join("journal.json"),
+            self.journal(phase),
+            Arc::clone(&self.writes),
+        )
+        .await
+    }
+    async fn save_manifest(&self) -> io::Result<()> {
         let mut value = self.manifest.clone();
         literal(&mut value);
-        write_private(&self.directory.join("compose.json"), &value)
+        write_private_async(
+            self.directory.join("compose.json"),
+            value,
+            Arc::clone(&self.writes),
+        )
+        .await
     }
     async fn compose(&self, tail: &[&str]) -> io::Result<String> {
         let file = self.directory.join("compose.json");
@@ -758,9 +1494,9 @@ impl RemoteJob {
         service["labels"] = self.manifest["services"]["transfer"]["labels"].clone();
         self.manifest["services"]["job"] = service;
         self.manifest["volumes"]["sources"] = json!({"external":true,"name":source});
-        self.save_manifest()?;
+        self.save_manifest().await?;
         self.compose(&["config", "--quiet"]).await?;
-        self.record("execution-started")?;
+        self.record("execution-started").await?;
         let mut cmd = self.client.command();
         cmd.args([
             "compose",
@@ -896,28 +1632,56 @@ impl RemoteJob {
     }
 
     pub(crate) async fn confirm_stopped(&mut self) -> io::Result<()> {
+        self.stopped = false;
         let containers = self.owned_resources().await?;
-        for container in containers {
-            if container["Config"]["Labels"]["com.docker.compose.service"] == "job"
-                && container["State"]["Running"].as_bool() != Some(false)
-            {
-                return Err(invalid("job termination is unconfirmed"));
-            }
+        self.verify_deployment_custody(&containers, DeploymentState::Stopped)?;
+        execution_stopped(&self.manifest, &containers)?;
+        if let Some((witness, started)) = &self.deployment_witness {
+            let current = self.observe_deployment(DeploymentState::Stopped).await?;
+            crate::runner_image_build::workspace_deploy::verify_observation(
+                witness, &current, *started,
+            )
+            .map_err(|_| invalid("deployment identity changed before cleanup"))?;
         }
         self.stopped = true;
-        self.record("execution-stopped")
+        self.record("execution-stopped").await
     }
 
     pub(crate) async fn stop_execution(&mut self) -> io::Result<()> {
-        for container in self.owned_resources().await? {
-            if container["Config"]["Labels"]["com.docker.compose.service"] == "job" {
-                let id = container["Id"]
-                    .as_str()
-                    .ok_or_else(|| invalid("container ID missing"))?;
-                self.client.run(&["stop", "-t", "2", id]).await?;
-            }
+        self.stopped = false;
+        let containers = self.owned_resources().await?;
+        self.verify_deployment_custody(&containers, DeploymentState::BeforeStop)?;
+        for container in execution_containers(&self.manifest, &containers)? {
+            let id = container["Id"]
+                .as_str()
+                .ok_or_else(|| invalid("container ID missing"))?;
+            self.client.run(&["stop", "-t", "2", id]).await?;
         }
         self.confirm_stopped().await
+    }
+
+    fn verify_deployment_custody(
+        &self,
+        containers: &[Value],
+        state: DeploymentState,
+    ) -> io::Result<()> {
+        if let Some((witness, started)) = &self.deployment_witness {
+            let current =
+                json!({"containers":deployment_containers(&self.manifest,containers,state)?});
+            crate::runner_image_build::workspace_deploy::verify_container_custody(
+                witness, &current, *started,
+            )
+            .map_err(|_| invalid("deployment container replaced; original journal retained"))?;
+        } else if containers.iter().any(|c| {
+            c["Config"]["Labels"]["com.docker.compose.service"]
+                .as_str()
+                .is_some_and(|s| !matches!(s, "job" | "transfer"))
+        }) {
+            return Err(invalid(
+                "deployment has no original create observation; hold",
+            ));
+        }
+        Ok(())
     }
 
     pub(crate) async fn cleanup(&mut self, pool: &sqlx::PgPool) -> io::Result<()> {
@@ -941,7 +1705,7 @@ impl RemoteJob {
         if !acknowledged {
             return Err(invalid("terminal receipt missing; resources retained"));
         }
-        self.owned_resources().await?;
+        self.confirm_stopped().await?;
         self.compose(&["down", "--remove-orphans", "--volumes"])
             .await?;
         if !self.owned_resources().await?.is_empty() {
@@ -963,7 +1727,7 @@ impl RemoteJob {
                 return Err(invalid("Compose storage remains after cleanup"));
             }
         }
-        self.record("cleaned")?;
+        self.record("cleaned").await?;
         self.active = false;
         // Erase per-job environment only after successful cleanup. Keep safe recovery journal.
         for service in self.manifest["services"]
@@ -973,14 +1737,22 @@ impl RemoteJob {
         {
             service.as_object_mut().unwrap().remove("environment");
         }
-        self.save_manifest()?;
+        self.save_manifest().await?;
         Ok(())
     }
 }
 impl Drop for RemoteJob {
     fn drop(&mut self) {
         if self.active {
-            let _ = self.record("cleanup-required");
+            // No detached write can overwrite this marker after Drop. Keep the original
+            // synchronous failure fallback; normal lifecycle writes are awaited/offloaded.
+            if let Ok(mut closed) = self.writes.closed.lock() {
+                *closed = true;
+                let _ = write_private(
+                    &self.directory.join("journal.json"),
+                    &self.journal("cleanup-required"),
+                );
+            }
             // Unwinding is not termination or completion authority. Recovery must
             // read fresh Engine state and the terminal lease before deletion.
         }
@@ -1047,6 +1819,12 @@ pub(crate) async fn reconcile(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
                 "journal endpoint/project ownership differs",
             )));
         }
+        let deployment_witness =
+            crate::runner_image_build::workspace_deploy::read_observation(&directory)
+                .await
+                .map_err(|_| {
+                    sqlx::Error::Io(invalid("deployment observation unavailable; dispatch held"))
+                })?;
         let mut job = RemoteJob {
             helper: manifest["services"]["transfer"]["container_name"]
                 .as_str()
@@ -1058,6 +1836,9 @@ pub(crate) async fn reconcile(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
             manifest,
             active: true,
             stopped: false,
+            writes: Arc::default(),
+            deployment_output: None,
+            deployment_witness,
         };
         // Fresh Engine termination precedes releasing the project's lease.
         job.stop_execution().await.map_err(sqlx::Error::Io)?;
@@ -1151,6 +1932,384 @@ fn compose_job(args: &[String], envs: &[(String, String)]) -> io::Result<Value> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn deployment_fixture() -> (Value, Value, Vec<Value>) {
+        let labels = json!({"sdlc.task":"fixture"});
+        let project = "sdlc-build-job-fixture";
+        let service = json!({"image":format!("sha256:{}","a".repeat(64)),"user":"999:999",
+            "mem_limit":16777216,"cpus":0.5,"pids_limit":16,"labels":labels,
+            "container_name":format!("{project}-db"),"volumes":[{"type":"volume","source":"data","target":"/data"}]});
+        let fragment = json!({"name":project,"services":{"db":service},"volumes":{"data":{"name":format!("{project}_data"),"labels":labels}},
+            "networks":{"job":{"name":format!("{project}_job"),"internal":false,"labels":labels}}});
+        let mut manifest = json!({"name":project,"services":{"transfer":{"labels":labels,"volumes":[]}},
+            "volumes":{},"networks":{"job":{"labels":labels}}});
+        merge_deployment(
+            &mut manifest,
+            &fragment,
+            &std::collections::BTreeMap::from([("data".into(), "999:999".into())]),
+        )
+        .unwrap();
+        let container = json!({"Id":"b".repeat(64),"Image":service["image"],
+            "Config":{"User":"999:999","Labels":{"com.docker.compose.service":"db"}},
+            "State":{"Running":true,"Paused":false,"Restarting":false,"Dead":false,"Pid":42,"Status":"running","StartedAt":"2026-10-17T01:02:03Z"},
+            "HostConfig":{"Privileged":false,"PidMode":"","IpcMode":"private","RestartPolicy":{"Name":"no"},
+                "SecurityOpt":["no-new-privileges:true"],"ReadonlyRootfs":true,"PublishAllPorts":false,"NetworkMode":format!("{project}_job"),
+                "Memory":16777216,"PidsLimit":16,"NanoCpus":500000000,"CapDrop":["ALL"]},
+            "Mounts":[{"Type":"volume","Name":format!("{project}_data"),"Destination":"/data","RW":true}]});
+        (manifest, fragment, vec![container])
+    }
+
+    #[test]
+    fn deployment_stop_requires_original_container_and_start_epoch_not_matching_labels() {
+        let (manifest, _, containers) = deployment_fixture();
+        let observed = json!({"containers":deployment_containers(&manifest,&containers,DeploymentState::Running).unwrap()});
+        let mut job = RemoteJob {
+            client: Client {
+                host: "not-contacted".into(),
+                cert_path: "not-opened".into(),
+                daemon_id: "fixture-daemon".into(),
+            },
+            helper: String::new(),
+            project: "fixture".into(),
+            directory: PathBuf::new(),
+            manifest,
+            active: false,
+            stopped: false,
+            writes: Arc::default(),
+            deployment_output: None,
+            deployment_witness: None,
+        };
+        assert!(
+            job.verify_deployment_custody(&containers, DeploymentState::BeforeStop)
+                .is_err(),
+            "matching service labels cannot invent the original create ACK"
+        );
+        job.deployment_witness = Some((observed.clone(), true));
+        job.verify_deployment_custody(&containers, DeploymentState::BeforeStop)
+            .unwrap();
+        let mut replaced = containers.clone();
+        replaced[0]["Id"] = json!("c".repeat(64));
+        assert!(
+            job.verify_deployment_custody(&replaced, DeploymentState::BeforeStop)
+                .is_err()
+        );
+        let mut restarted = containers.clone();
+        restarted[0]["State"]["StartedAt"] = json!("2026-10-17T01:02:04Z");
+        assert!(
+            job.verify_deployment_custody(&restarted, DeploymentState::BeforeStop)
+                .is_err()
+        );
+        // An unknown start ACK permits stopping only the exact previously Created ID;
+        // it does not manufacture a Running observation or a validation receipt.
+        job.deployment_witness = Some((observed, false));
+        job.verify_deployment_custody(&restarted, DeploymentState::BeforeStop)
+            .unwrap();
+        assert!(
+            job.verify_deployment_custody(&replaced, DeploymentState::BeforeStop)
+                .is_err()
+        );
+        assert!(job.deployment_artifacts().is_none());
+        assert!(!job.stopped);
+    }
+
+    #[test]
+    fn deployment_merge_preserves_existing_network_and_rejects_control_resource_shadowing() {
+        let (manifest, fragment, _) = deployment_fixture();
+        assert!(manifest["networks"]["job"].get("ipam").is_none());
+        assert_eq!(
+            manifest["services"]["transfer"]["volumes"][0]["target"],
+            "/forge-data/data"
+        );
+        let users = std::collections::BTreeMap::from([("data".into(), "999:999".into())]);
+        for key in ["name", "internal", "labels", "ipam"] {
+            let mut wrong = fragment.clone();
+            wrong["networks"]["job"][key] = json!("foreign");
+            assert!(merge_deployment(&mut manifest.clone(), &wrong, &users).is_err());
+        }
+        let mut wrong = fragment.clone();
+        wrong["services"]["job"] = wrong["services"]["db"].clone();
+        assert!(merge_deployment(&mut manifest.clone(), &wrong, &users).is_err());
+        assert!(
+            merge_deployment(
+                &mut manifest.clone(),
+                &fragment,
+                &std::collections::BTreeMap::from([("data".into(), "0:0".into())])
+            )
+            .is_err()
+        );
+        assert!(VOLUME_INITIALIZE.contains("-mindepth 1 -maxdepth 1"));
+        assert!(VOLUME_INITIALIZE.contains("chown \"$2\" \"$1\""));
+        assert!(!VOLUME_INITIALIZE.contains("chown -R"));
+    }
+
+    #[test]
+    fn deployment_readback_rejects_actual_privilege_mount_image_and_start_drift() {
+        let (manifest, _, containers) = deployment_fixture();
+        deployment_containers(&manifest, &containers, DeploymentState::Running).unwrap();
+        for (key, value) in [
+            ("Privileged", json!(true)),
+            ("ReadonlyRootfs", json!(false)),
+            ("PublishAllPorts", json!(true)),
+            ("NetworkMode", json!("host")),
+            ("PidMode", json!("host")),
+            ("Memory", json!(0)),
+            ("CapAdd", json!(["SYS_ADMIN"])),
+            ("ExtraHosts", json!(["host:gateway"])),
+        ] {
+            let mut wrong = containers.clone();
+            wrong[0]["HostConfig"][key] = value;
+            assert!(
+                deployment_containers(&manifest, &wrong, DeploymentState::Running).is_err(),
+                "{key}"
+            );
+        }
+        for (key, value) in [
+            ("Id", json!("short")),
+            ("Image", json!("tag")),
+            (
+                "Mounts",
+                json!([{"Type":"bind","Destination":"/data","RW":true}]),
+            ),
+        ] {
+            let mut wrong = containers.clone();
+            wrong[0][key] = value;
+            assert!(
+                deployment_containers(&manifest, &wrong, DeploymentState::Running).is_err(),
+                "{key}"
+            );
+        }
+        for (key, value) in [
+            ("Pid", json!(0)),
+            ("StartedAt", json!("0001-01-01T00:00:00Z")),
+            ("Running", json!(false)),
+        ] {
+            let mut wrong = containers.clone();
+            wrong[0]["State"][key] = value;
+            assert!(
+                deployment_containers(&manifest, &wrong, DeploymentState::Running).is_err(),
+                "{key}"
+            );
+        }
+        let mut stopped = containers.clone();
+        stopped[0]["State"]["Running"] = json!(false);
+        stopped[0]["State"]["Pid"] = json!(0);
+        stopped[0]["State"]["Status"] = json!("exited");
+        deployment_containers(&manifest, &stopped, DeploymentState::BeforeStop).unwrap();
+        deployment_containers(&manifest, &stopped, DeploymentState::Stopped).unwrap();
+        assert!(deployment_containers(&manifest, &containers, DeploymentState::Stopped).is_err());
+    }
+
+    #[test]
+    fn dependency_inventory_preserves_actual_user_and_implicit_volumes_without_build_labels() {
+        let id = format!("sha256:{}", "a".repeat(64));
+        let value = json!({"image_id":id,"os":"linux","architecture":"amd64",
+            "default_user":"999:999","volumes":{"/var/lib/database":{}}});
+        let facts = runtime_image_facts(&value, &id, "x86_64").unwrap();
+        let projection = serde_json::to_value(&facts).unwrap();
+        assert_eq!(projection["image_id"], id);
+        assert_eq!(projection["default_user"], "999:999");
+        assert_eq!(projection["volumes"], json!(["/var/lib/database"]));
+        assert!(projection.get("revision").is_none());
+        assert!(projection.get("attempt").is_none());
+    }
+
+    #[test]
+    fn dependency_inventory_docker29_optional_user_and_volumes_do_not_invent_a_uid() {
+        let id = format!("sha256:{}", "a".repeat(64));
+        let value = json!({"image_id":id,"os":"linux","architecture":"arm64"});
+        let facts = runtime_image_facts(&value, &id, "aarch64").unwrap();
+        let projection = serde_json::to_value(&facts).unwrap();
+        assert_eq!(projection["default_user"], Value::Null);
+        assert_eq!(projection["volumes"], json!([]));
+        assert!(RUNTIME_IMAGE_FORMAT.contains(r#"index .Config "Volumes""#));
+        assert!(RUNTIME_IMAGE_FORMAT.contains(r#"index .Config "User""#));
+    }
+
+    #[test]
+    fn dependency_inventory_rejects_mutable_ids_platform_drift_and_malformed_config() {
+        let id = format!("sha256:{}", "a".repeat(64));
+        let value = json!({"image_id":id,"os":"linux","architecture":"amd64",
+            "default_user":"","volumes":null});
+        for (key, changed) in [
+            ("image_id", json!("tag:latest")),
+            ("os", json!("windows")),
+            ("architecture", json!("arm64")),
+            ("default_user", json!({"verified":true})),
+            ("volumes", json!(["/data"])),
+        ] {
+            let mut wrong = value.clone();
+            wrong[key] = changed;
+            assert!(runtime_image_facts(&wrong, &id, "amd64").is_err());
+        }
+        assert!(runtime_image_facts(&value, "tag:latest", "amd64").is_err());
+        assert!(runtime_image_facts(&value, &id, "unknown").is_err());
+        for path in ["/", "relative", "/data/../host", "/data//x", "/data\\x"] {
+            let mut wrong = value.clone();
+            wrong["volumes"] = json!({(path):{}});
+            assert!(runtime_image_facts(&wrong, &id, "amd64").is_err());
+        }
+        let facts = runtime_image_facts(&value, &id, "amd64").unwrap();
+        assert_eq!(serde_json::to_value(facts).unwrap()["default_user"], "");
+    }
+
+    fn execution_fixture() -> (Value, Vec<Value>) {
+        let manifest = json!({"services":{"transfer":{},"job":{},"application":{},"database":{}}});
+        let containers = ["transfer", "job", "application", "database"]
+            .iter()
+            .enumerate()
+            .map(|(index, service)| {
+                json!({"Id":format!("{index:064x}"),
+                "Config":{"Labels":{"com.docker.compose.service":service}},
+                "State":{"Running":*service=="transfer","Paused":false,"Restarting":false}})
+            })
+            .collect();
+        (manifest, containers)
+    }
+
+    #[test]
+    fn termination_covers_all_application_services_but_not_transfer() {
+        let (manifest, containers) = execution_fixture();
+        assert_eq!(
+            execution_containers(&manifest, &containers).unwrap().len(),
+            3
+        );
+        execution_stopped(&manifest, &containers).unwrap();
+        for index in 1..containers.len() {
+            for field in ["Running", "Paused", "Restarting"] {
+                let mut changed = containers.clone();
+                changed[index]["State"][field] = json!(true);
+                assert!(
+                    execution_stopped(&manifest, &changed).is_err(),
+                    "{index} {field}"
+                );
+                changed[index]["State"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove(field);
+                assert!(execution_stopped(&manifest, &changed).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn partial_creation_is_not_replayed_and_unknown_inventory_is_not_ignored() {
+        let (manifest, mut containers) = execution_fixture();
+        execution_stopped(&manifest, &[]).unwrap();
+        execution_stopped(&manifest, &containers[..1]).unwrap();
+        containers[3]["Config"]["Labels"]["com.docker.compose.service"] = json!("foreign");
+        assert!(execution_containers(&manifest, &containers).is_err());
+        containers[3]["Config"]["Labels"]["com.docker.compose.service"] = json!("application");
+        assert!(execution_containers(&manifest, &containers).is_err());
+        let (manifest, mut containers) = execution_fixture();
+        containers[2]["Id"] = json!("short");
+        assert!(execution_containers(&manifest, &containers).is_err());
+    }
+
+    #[tokio::test]
+    async fn private_journal_async_write_is_awaited_and_preserves_mode() {
+        let directory =
+            std::env::temp_dir().join(format!("forge-private-write-{}", Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("journal.json");
+        let writes = Arc::new(PrivateWrites::default());
+        for phase in ["prepared", "execution-stopped"] {
+            write_private_async(path.clone(), json!({"phase":phase}), Arc::clone(&writes))
+                .await
+                .unwrap();
+            let value: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(value["phase"], phase);
+            assert!(!path.with_extension("tmp").exists());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn closed_owner_refuses_late_write_without_overwriting_cleanup_required() {
+        let directory =
+            std::env::temp_dir().join(format!("forge-private-closed-{}", Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("journal.json");
+        let writes = Arc::new(PrivateWrites::default());
+        let job = RemoteJob {
+            client: Client {
+                host: "not-contacted".into(),
+                cert_path: "not-opened".into(),
+                daemon_id: "fixture-daemon".into(),
+            },
+            helper: String::new(),
+            project: "fixture".into(),
+            directory: directory.clone(),
+            manifest: json!({}),
+            active: true,
+            stopped: false,
+            writes: Arc::clone(&writes),
+            deployment_output: None,
+            deployment_witness: None,
+        };
+        let pending =
+            write_private_async(path.clone(), json!({"phase":"execution-started"}), writes);
+        drop(job);
+        assert!(pending.await.is_err());
+        let marker: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(marker["phase"], "cleanup-required");
+        assert_eq!(marker["stopped"], false);
+        assert!(!path.with_extension("tmp").exists());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn async_private_write_failure_does_not_replace_existing_evidence() {
+        let directory = std::env::temp_dir().join(format!("forge-private-held-{}", Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("journal.json");
+        let marker = json!({"phase":"prepared","stopped":false});
+        write_private(&path, &marker).unwrap();
+        std::fs::write(path.with_extension("tmp"), b"unknown previous write").unwrap();
+        assert!(
+            write_private_async(path.clone(), json!({"phase":"cleaned"}), Arc::default())
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap(),
+            marker
+        );
+        assert_eq!(
+            std::fs::read(path.with_extension("tmp")).unwrap(),
+            b"unknown previous write"
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn superseded_queued_write_cannot_overwrite_newer_journal_phase() {
+        let directory =
+            std::env::temp_dir().join(format!("forge-private-order-{}", Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("journal.json");
+        let writes = PrivateWrites::default();
+        writes.requested.store(2, Ordering::SeqCst);
+        let marker = json!({"phase":"execution-stopped"});
+        writes.write(&path, &marker, 2).unwrap();
+        assert!(
+            writes
+                .write(&path, &json!({"phase":"execution-started"}), 1)
+                .is_err()
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap(),
+            marker
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn image_build_requires_pinned_buildx_and_same_daemon_default_driver() {
