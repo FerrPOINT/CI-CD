@@ -389,6 +389,36 @@ impl TaskPipeline {
                 }
             }),
         );
+        let source_data = tracker.clone();
+        let peer_app = peer_app.route(
+            &format!("/api/v1/issues/{task}/sdlc/source-binding"),
+            axum::routing::get(move |headers: HeaderMap| {
+                let data = source_data.clone();
+                async move {
+                    assert_eq!(headers["authorization"], "Bearer qa-tracker-reader");
+                    let mut data = data.lock().await;
+                    let source = data
+                        .get("git_source")
+                        .cloned()
+                        .ok_or(StatusCode::NOT_FOUND)?;
+                    let reads = data["git_reads"].as_u64().unwrap_or(0);
+                    data["git_reads"] = serde_json::json!(reads + 1);
+                    let mut current = data.clone();
+                    current.as_object_mut().unwrap().remove("git_source");
+                    current.as_object_mut().unwrap().remove("git_reads");
+                    let now = Utc::now();
+                    current["observed_at"] = serde_json::json!(now);
+                    if refresh_lease {
+                        current["receipt"]["lease"]["heartbeat_at"] = serde_json::json!(now);
+                        current["receipt"]["lease"]["expires_at"] =
+                            serde_json::json!(now + Duration::seconds(30));
+                    }
+                    Ok::<_, StatusCode>(axum::Json(serde_json::json!({
+                        "state":"bound", "binding":source, "current":current
+                    })))
+                }
+            }),
+        );
         #[cfg(feature = "oci-integration")]
         let peer_app = {
             let result = tracker.clone();
@@ -420,19 +450,22 @@ impl TaskPipeline {
         if let Some(configure) = configure {
             configure(&mut config, project, &intent, &temp);
         }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let api_url = format!("http://{}", listener.local_addr().unwrap());
+        if config.git.internal_token.is_some() {
+            config.http.bind = listener.local_addr().unwrap().to_string();
+        }
         let app = cicd::api::app_with_git_and_config(
             Some(pool.clone()),
             cicd::git_host::GitConfig {
                 root: git_root,
                 token: None,
-                internal_token: None,
+                internal_token: config.git.internal_token.clone(),
             },
             None,
             config.clone(),
         )
         .unwrap();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let api_url = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let http = reqwest::Client::builder()
             .no_proxy()
@@ -518,6 +551,249 @@ async fn task_http_trigger_embedded_checkout_shell_ack_artifact_and_original_can
         panic!("task pipeline case was unexpectedly cancelled");
     }
     cleanup.expect("owned task pipeline cleanup");
+}
+
+#[tokio::test]
+#[ignore = "requires disposable CICD_TEST_DATABASE_URL, configured QA namespace IDs, Git and curl"]
+async fn task_git_receive_waits_for_busy_repository_sync_guard_without_pipeline_dispatch() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    const SELECTOR: &str = "task_pipeline_http::task_git_receive_waits_for_busy_repository_sync_guard_without_pipeline_dispatch";
+    const CHILD: &str = "FORGE_TASK_GIT_SYNC_GUARD_TEST_PROCESS";
+    const SUBJECT: &str = "00000000-0000-0000-0000-000000000003";
+    if std::env::var_os(CHILD).is_none() {
+        // Isolate central-auth environment from every other server/PG test.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counted = calls.clone();
+        let app = axum::Router::new().route(
+            "/auth/tokens/introspect",
+            axum::routing::get(move |uri: axum::http::Uri, headers: HeaderMap| {
+                let calls = counted.clone();
+                async move {
+                    assert_eq!(uri.query(), Some("include_lifetime=true"));
+                    let digest = headers["authorization"]
+                        .to_str()
+                        .unwrap()
+                        .strip_prefix("Bearer sdlc_pat_")
+                        .unwrap();
+                    assert_eq!(digest.len(), 64);
+                    assert!(digest.bytes().all(|b| b.is_ascii_hexdigit()));
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    let now = Utc::now();
+                    axum::Json(
+                        serde_json::json!({"sub":SUBJECT,"email":"fixture@example.invalid",
+                        "scopes":["ci-cd:read","ci-cd:write",format!("ci-cd:sdlc:git:v1:{digest}")],
+                        "observed_at":now,"expires_at":now+Duration::seconds(30)}),
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let uri = format!("http://{}/oidc/jwks", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", SELECTOR, "--ignored", "--nocapture"])
+            .env(CHILD, "1")
+            .env("CICD_AUTH__CENTRAL_JWKS_URI", uri)
+            .env("CICD_AUTH__CENTRAL_TIMEOUT_SECS", "5")
+            .env("NO_PROXY", "127.0.0.1,localhost")
+            .env("no_proxy", "127.0.0.1,localhost")
+            .kill_on_drop(true);
+        let result = tokio::time::timeout(StdDuration::from_secs(120), command.output()).await;
+        server.abort();
+        let output = result
+            .expect("isolated Task Git guard test timed out")
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        // Discovery + receive admission + real pre-receive/reference-transaction callbacks.
+        assert!(calls.load(Ordering::SeqCst) >= 4);
+        return;
+    }
+
+    fn configure(
+        config: &mut cicd::config::RuntimeConfig,
+        _: Uuid,
+        _: &TaskWorkspaceIntent,
+        _: &Path,
+    ) {
+        config.sdlc_workspace.delegated_subject = Some(SUBJECT.parse().unwrap());
+        config.git.internal_token = Some("task-git-sync-test-internal".into());
+    }
+    let f = Arc::new(TaskPipeline::new_with_source(None, &[], Some(configure)).await);
+    let case_fixture = f.clone();
+    let result = tokio::spawn(async move { task_git_sync_guard_case(&case_fixture).await }).await;
+    let mut f = Arc::try_unwrap(f).unwrap_or_else(|_| panic!("fixture still borrowed after case"));
+    let cleanup = f.cleanup().await;
+    if let Err(error) = result {
+        if error.is_panic() {
+            std::panic::resume_unwind(error.into_panic());
+        }
+        panic!("Task Git guard case was unexpectedly cancelled");
+    }
+    cleanup.expect("owned task Git fixture cleanup");
+}
+
+async fn task_git_sync_guard_case(f: &TaskPipeline) {
+    use cicd::task_git::{GitContext, SourceBinding};
+    use cicd_infra::sync_git::MutationGuard;
+
+    let (repository, command): (String, serde_json::Value) = sqlx::query_as(
+        "SELECT g.slug||'/'||r.slug,b.command FROM repository_catalog r JOIN git_groups g ON g.id=r.group_id JOIN forge_namespace_bindings b ON b.resource_id=g.id WHERE r.id=$1",
+    ).bind(f.intent.repository_id).fetch_one(&f.pool).await.unwrap();
+    let command: OwnerCommand = serde_json::from_value(command).unwrap();
+    let current = f.tracker.lock().await.clone();
+    let mut source = SourceBinding {
+        contract_version: 1,
+        tracker_instance_id: f.intent.binding.tracker_instance_id.clone(),
+        project_id: f.intent.binding.tracker_project_id,
+        task_id: f.intent.binding.task_id,
+        root_task_id: f.intent.binding.root_task_id,
+        confirmation_id: Uuid::new_v4(),
+        requirement_revision: f.intent.binding.requirement_revision,
+        content_hash: "c".repeat(64),
+        routing_snapshot_id: f.intent.binding.routing_snapshot_id,
+        namespace: command.namespace,
+        forge_instance_id: command.resource.instance_id,
+        repository_id: f.intent.repository_id,
+        base_ref: "refs/heads/main".into(),
+        base_commit: f.intent.source_commit.clone(),
+        candidate_ref: format!("refs/heads/sdlc/{}", f.intent.binding.task_id),
+        source_revision: 1,
+        policy_hash: "d".repeat(64),
+        source_hash: String::new(),
+        owner_subject: "qa-owner".into(),
+        created_at: Utc::now(),
+    };
+    let mut sealed = serde_json::to_value(&source).unwrap();
+    sealed.as_object_mut().unwrap().remove("source_hash");
+    source.source_hash = sha(&serde_json::to_vec(&canonical(sealed)).unwrap());
+    let context = GitContext {
+        version: 1,
+        project_id: f.project,
+        repository: repository.clone(),
+        source,
+        intent: f.intent.clone(),
+        run_id: serde_json::from_value(current["receipt"]["binding"]["run_id"].clone()).unwrap(),
+        chat_id: serde_json::from_value(current["receipt"]["binding"]["chat_id"].clone()).unwrap(),
+        machine_subject: "qa-role".into(),
+        old_oid: "0".repeat(40),
+        new_oid: f.intent.source_commit.clone(),
+    };
+    let grant = context.grant().unwrap();
+    f.tracker.lock().await["git_source"] = serde_json::to_value(&context.source).unwrap();
+    let storage: String =
+        sqlx::query_scalar("SELECT storage_name FROM repository_catalog WHERE id=$1")
+            .bind(f.intent.repository_id)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    let bare = f.config.git.root.join(format!("{storage}.git"));
+    let refs_before = git(&f.temp, &["--git-dir", bare.to_str().unwrap(), "show-ref"]);
+    let sync_guard = MutationGuard::acquire(&f.config.git.root, f.intent.repository_id)
+        .await
+        .unwrap();
+    let mut command = tokio::process::Command::new("git");
+    command
+        .current_dir(f.temp.join("source"))
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .kill_on_drop(true)
+        .args([
+            "-c",
+            &format!(
+                "http.extraHeader=Authorization: Bearer sdlc_pat_{}",
+                grant.strip_prefix("ci-cd:sdlc:git:v1:").unwrap()
+            ),
+            "-c",
+            &format!(
+                "http.extraHeader={}: {}",
+                cicd::task_git::HEADER,
+                serde_json::to_string(&context).unwrap()
+            ),
+            "push",
+            &format!("{}/git/{repository}.git", f.api_url),
+            &format!("HEAD:{}", context.source.candidate_ref),
+        ]);
+    let mut push = Box::pin(command.output());
+    // Both real admissions reached Tracker; an auth rejection cannot satisfy this test.
+    tokio::time::timeout(StdDuration::from_secs(5), async {
+        loop {
+            tokio::select! {
+                _ = &mut push => panic!("Task Git receive bypassed the busy sync guard or failed admission"),
+                _ = tokio::time::sleep(StdDuration::from_millis(10)) => {
+                    if f.tracker.lock().await["git_reads"].as_u64().unwrap_or(0) >= 2 { break; }
+                }
+            }
+        }
+    }).await.expect("Task Git discovery and receive must reach source admission");
+    assert!(
+        tokio::time::timeout(StdDuration::from_millis(250), &mut push)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        git(&f.temp, &["--git-dir", bare.to_str().unwrap(), "show-ref"]),
+        refs_before
+    );
+    drop(sync_guard);
+    let output = tokio::time::timeout(StdDuration::from_secs(20), &mut push)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        git(
+            &f.temp,
+            &[
+                "--git-dir",
+                bare.to_str().unwrap(),
+                "rev-parse",
+                &context.source.candidate_ref
+            ]
+        ),
+        context.new_oid
+    );
+    assert_eq!(
+        git(
+            &f.temp,
+            &[
+                "--git-dir",
+                bare.to_str().unwrap(),
+                "rev-parse",
+                "refs/heads/main"
+            ]
+        ),
+        context.source.base_commit
+    );
+    assert!(f.tracker.lock().await["git_reads"].as_u64().unwrap() >= 4);
+    assert!(
+        MutationGuard::try_acquire(&f.config.git.root, f.intent.repository_id)
+            .unwrap()
+            .is_some()
+    );
+    let pipelines: i64 = sqlx::query_scalar("SELECT count(*) FROM pipelines WHERE project_id=$1")
+        .bind(f.project)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    let intents: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM task_pipeline_intents WHERE project_id=$1")
+            .bind(f.project)
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!((pipelines, intents), (0, 0));
 }
 
 async fn case(f: &TaskPipeline) {
