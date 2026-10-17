@@ -1,5 +1,49 @@
 # Task Workspace И Candidate Git: Локальные Проверки
 
+## Frontend f259/UIe075: 18 октября 2026
+
+Exact source `f2597dcdb640e62ecdb93c7c2a68b5d11cb31783` включает upstream124;
+backend SDK2ad сохранён отдельно от UI pin
+`e0759e070326c905f365182d0107f8c87a2e67f6`. Node22.20.0/pnpm10.28.1 source-only
+проверка подтвердила frozen/offline dependency graph, exact412 файлов установленного
+UI package, generated-client parity и неизменённый Base compatibility checker
+против main `00ba828f5f18f9d8d8f249f18e01ff025a5c6a93`.
+Все8 целевых Vitest случаев из users, projects и app-shell catalog isolation PASS,
+без failed/skipped. Inputs неизменны, cleanup подтверждён; browser/build/live не
+выполнялись. Receipt SHA256:
+`1285c0e42b7cf0c1bef5e7e46e172b99159b4e0234850082084405a0c1df11ca`.
+
+Отдельная TypeScript-only проверка того же f259 использовала существующие
+dependencies immutable builder, readonly Git-exported source и `tsc --noEmit`.
+Checksum checks до и после связали mounted declarations/OpenAPI и cached configs/
+lock с Git bytes. Result: status=passed, exit_code=0, cleanup_verified=true,
+inputs_cleaned=true; build=false, install=false, live=false. Receipt SHA256:
+`cdeb06d1ce432f24bb33629cde44ad55eda929830796480c79f18561d753cd79`.
+
+Это точное reuse старого Vite production build, не сборка нового HEAD. Все67
+production `frontend/src` blobs и прочие frontend runtime/config/package/lock inputs
+совпадают с исходным build tree `65b70989c47db007862aa168e622c8fb11a55dde`.
+Отличаются только `projects.test.tsx`, generated `schema.d.ts` и OpenAPI YAML;
+новые declarations проверены указанным TSC, а runtime JavaScript не менялся.
+Сохранены первоначальные identities и build args:
+
+- Builder `sha256:b6ea2ec9e257675aeb086e8cc724813c143a1cd72e34f044ec2164dd5b6da8d4`.
+- Web `sha256:ace1bac4f3f2f0f45f83b2dd8947e73ab5d150d5c61d8a0f8c5ac956a9378e49`.
+
+Original build receipt не переписан; его SHA256:
+`563f0eb9708ed12aedd9e81656eff08ecd233c59ed9aabfdf0e972c5f9d69c2a`.
+Packed Base consumer/build/themes также подтверждены отдельным
+[hosted PR124 run на e026ac2](https://github.com/FerrPOINT/CI-CD/actions/runs/39068410430/job/117500760204),
+а не объявлены заново выполненными на f259. Это ограниченная frontend closure
+qualification, не полный repository gate или production-ready source.
+
+Две исправленные catalog expectations до0094 ещё требуют своих exact PG результатов:
+`migration_catalog_contains_exact_historical_36_and_37` и
+`migration_catalog_fresh_and_prior_35_or_37_upgrade`. QA42 на source828cf ниже
+остаётся самостоятельным Rust evidence и не подменяет эти два случая. Новый
+backend image/Compose, полный release gate и live producer/deployment acceptance
+по-прежнему не закрыты.
+
 ## Explicit Routes: Проверенный Source 828cf
 
 `828cf811a186109e4d5a4e2d64b7fa26538e4c3a`, SDK2ad, прошёл один новый целевой
@@ -99,5 +143,5 @@ catalog проверки этим не заменяются; две исправ
 
 Base introspection expiry metadata и Tracker source binding являются явными
 зависимостями. Child renewal, legitimate server readers, окончательные delivery
-receipts и live rollout остаются отдельными gates. UI, принятые образы, чужие
-данные, production и default branch приложения не менялись. PR остаётся Draft.
+receipts и live rollout остаются отдельными gates. Проверки не меняли принятые
+образы, чужие данные, production или default branch приложения. PR остаётся Draft.

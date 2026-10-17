@@ -1,5 +1,18 @@
 # CURRENT STATE — Forge CI/CD
 
+## Frontend f259/UIe075: 18 октября 2026
+
+Source `f2597dc` включает upstream124. Его frontend dependency/source closure с
+UIe075 проверен: exact frozen graph и412 UI files,8/8 целевых Vitest случаев,
+generated-client parity и Base compatibility против main00ba828 проходят.
+Отдельный cached `tsc --noEmit` на том же source завершился exit0; cleanup и
+удаление inputs подтверждены, install/build/live в этом прогоне не выполнялись.
+Все67 production source blobs совпадают со старым build tree65b7098; переиспользован
+его настоящий Vite build, а не заявлена новая сборка f259. Новые declarations
+проверены отдельно. Два catalog PG selectors ещё ожидают прогона; полный release
+gate, новый backend image/Compose и live rollout этим не закрыты.
+[Source-bound evidence и точные границы](FORGE_TASK_DEPLOYMENT_LOCAL_20261017.md#frontend-f259uie075-18-октября-2026).
+
 ## Task Workspace И Git: 17 октября 2026
 
 Exact source828cf/SDK2ad прошёл typed compilation, fmt/metadata, все42 целевых
