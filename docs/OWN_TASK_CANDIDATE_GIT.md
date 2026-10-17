@@ -50,12 +50,15 @@ bootstrap, default/protected refs всех связанных проектов �
 nonzero old. Нет tag/delete/non-FF/multiref/foreign-ref; префикс не является
 доказательством authority.
 
-После unpack pre-receive и затем reference-transaction/prepared вызывают закрытый
-вариант прежнего `/api/v1/internal/git-push` с `{task_candidate: GitContext}`.
+После unpack pre-receive и затем reference-transaction/prepared вызывают отдельный
+`POST /api/v1/internal/task-git-check` с `{task_candidate: GitContext}`.
 Он проверяет existing internal header, live Base introspection/expiry, exact
 context, namespace/repository mapping и fresh Tracker source/current Developer
 readback. Malformed/mixed task variant не падает в legacy pipeline branch.
 Проверка только читает authority и не создает pipeline.
+Прежний `/api/v1/internal/git-push` остаётся legacy-only с `GitPushEvent`:
+candidate/mixed payload отклоняется, а не маршрутизируется в pipeline. Callback
+не переобретает MutationGuard, который уже удерживает native receive owner.
 
 Bearer/internal headers находятся в mode0600 файле внутри существующего private
 receive directory; curl использует `--header @file`, без bearer argv/env/log.

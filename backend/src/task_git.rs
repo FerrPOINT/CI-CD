@@ -344,11 +344,20 @@ pub struct CandidateCheck {
     pub task_candidate: GitContext,
 }
 
-#[derive(utoipa::ToSchema)]
-#[serde(untagged)]
 pub enum PushRequest {
     Candidate(Box<CandidateCheck>),
     Legacy(crate::git_host::GitPushEvent),
+}
+
+impl PushRequest {
+    pub(crate) fn legacy(self) -> Result<crate::git_host::GitPushEvent, ApiError> {
+        match self {
+            Self::Legacy(event) => Ok(event),
+            Self::Candidate(_) => Err(ApiError::bad_request(
+                "task_candidate_requires_task_git_check",
+            )),
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for PushRequest {
@@ -367,11 +376,29 @@ impl<'de> Deserialize<'de> for PushRequest {
     }
 }
 
+#[derive(Serialize, utoipa::ToSchema)]
+pub struct CandidateCheckReadback {
+    pub verified: bool,
+    pub triggered: bool,
+}
+
+#[utoipa::path(post,operation_id="forge_task_git_check",path="/api/v1/internal/task-git-check",tag="git",
+    request_body=CandidateCheck,responses((status=200,body=CandidateCheckReadback),(status=400),(status=401),(status=403),(status=409),(status=422),(status=503)))]
+pub async fn callback(
+    axum::extract::State(state): axum::extract::State<std::sync::Arc<AppState>>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<CandidateCheck>,
+) -> Result<axum::Json<CandidateCheckReadback>, ApiError> {
+    check_callback(&state, &headers, request)
+        .await
+        .map(axum::Json)
+}
+
 pub(crate) async fn check_callback(
     state: &AppState,
     headers: &HeaderMap,
     request: CandidateCheck,
-) -> Result<Value, ApiError> {
+) -> Result<CandidateCheckReadback, ApiError> {
     let internal = state
         .git
         .internal_token
@@ -386,7 +413,10 @@ pub(crate) async fn check_callback(
         .ok_or_else(ApiError::forbidden)?;
     verify(state, &request.task_candidate, token).await?;
     // Verification only. NEVER enter the legacy push_decision/create_pipeline branch.
-    Ok(json!({"verified":true,"triggered":false}))
+    Ok(CandidateCheckReadback {
+        verified: true,
+        triggered: false,
+    })
 }
 
 #[cfg(test)]

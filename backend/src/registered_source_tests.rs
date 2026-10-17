@@ -4,28 +4,39 @@ use serde_json::json;
 
 fn query() -> RepositoryQuery {
     serde_json::from_value(
-        json!({"registry_instance_id":Uuid::new_v4(),"namespace_id":Uuid::new_v4()}),
+        json!({"registry_instance_id":Uuid::new_v4(),"namespace_id":Uuid::new_v4(),
+            "base_ref":"refs/heads/main","base_commit":"a".repeat(40)}),
     )
     .unwrap()
 }
 
 #[test]
 fn old_reader_query_remains_metadata_only_and_source_requires_both_fields() {
-    let mut query = query();
-    assert!(query.source().unwrap().is_none());
-    query.base_ref = Some("refs/heads/main".into());
-    assert!(query.source().is_err());
-    query.base_commit = Some("a".repeat(40));
-    assert!(query.source().unwrap().is_some());
-    query.base_ref = None;
-    assert!(query.source().is_err());
+    let metadata = json!({"registry_instance_id":Uuid::new_v4(),"namespace_id":Uuid::new_v4()});
+    assert!(
+        serde_json::from_value::<crate::repository_catalog::NamespaceQuery>(metadata.clone())
+            .is_ok()
+    );
+    assert!(serde_json::from_value::<RepositoryQuery>(metadata.clone()).is_err());
+    let mut source = metadata;
+    source["base_ref"] = json!("refs/heads/main");
+    assert!(serde_json::from_value::<RepositoryQuery>(source.clone()).is_err());
+    source["base_commit"] = json!("a".repeat(40));
+    assert!(
+        serde_json::from_value::<RepositoryQuery>(source.clone())
+            .unwrap()
+            .source()
+            .is_ok()
+    );
+    source.as_object_mut().unwrap().remove("base_ref");
+    assert!(serde_json::from_value::<RepositoryQuery>(source).is_err());
 }
 
 #[test]
 fn source_query_is_exact_branch_sha_not_a_caller_observation_or_path() {
     let mut query = query();
-    query.base_ref = Some("refs/heads/main".into());
-    query.base_commit = Some("a".repeat(40));
+    query.base_ref = "refs/heads/main".into();
+    query.base_commit = "a".repeat(40);
     for reference in [
         "main",
         "HEAD",
@@ -35,20 +46,21 @@ fn source_query_is_exact_branch_sha_not_a_caller_observation_or_path() {
         "refs/heads/a.lock",
         "refs/heads/a\nb",
     ] {
-        query.base_ref = Some(reference.into());
+        query.base_ref = reference.into();
         assert!(query.source().is_err(), "{reference}");
     }
-    query.base_ref = Some("refs/heads/main".into());
+    query.base_ref = "refs/heads/main".into();
     for commit in [
         "A".repeat(40),
         "a".repeat(39),
         "a".repeat(64),
         "main".into(),
     ] {
-        query.base_commit = Some(commit);
+        query.base_commit = commit;
         assert!(query.source().is_err());
     }
-    let raw = json!({"registry_instance_id":Uuid::new_v4(),"namespace_id":Uuid::new_v4()});
+    let raw = json!({"registry_instance_id":Uuid::new_v4(),"namespace_id":Uuid::new_v4(),
+        "base_ref":"refs/heads/main","base_commit":"a".repeat(40)});
     for field in [
         "storage_name",
         "default_ref",
@@ -142,7 +154,8 @@ fn old_catalog_wire_shape_is_unchanged_and_source_has_no_git_grant() {
     let raw = serde_json::to_value(&old).unwrap();
     assert_eq!(
         raw,
-        serde_json::to_value(RepositoryReadback::Catalog(old)).unwrap()
+        json!({"namespace":old.namespace,"forge_instance_id":old.forge_instance_id,
+            "repository_id":old.repository_id,"public_name":old.public_name,"kind":"hosted"})
     );
     let source = VerifiedSource {
         namespace: query().namespace(),
@@ -156,7 +169,7 @@ fn old_catalog_wire_shape_is_unchanged_and_source_has_no_git_grant() {
         observed_at: Utc::now(),
         delivery_configuration: None,
     };
-    let value = serde_json::to_value(RepositoryReadback::Source(source)).unwrap();
+    let value = serde_json::to_value(source).unwrap();
     assert_eq!(value.as_object().unwrap().len(), 9);
     for field in [
         "token",

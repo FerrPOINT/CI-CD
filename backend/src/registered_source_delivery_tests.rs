@@ -24,13 +24,16 @@ fn delivery_configuration_selector_is_bounded_exact_and_source_only() {
         assert!(value.source().is_err());
     }
     value.delivery_configuration_name = Some("pipeline".into());
-    assert!(value.source().unwrap().is_some());
-    value.base_commit = None;
+    assert!(value.source().is_ok());
+    value.base_commit.clear();
     assert!(value.source().is_err());
-    value.base_ref = None;
+    value.base_ref.clear();
     assert!(value.source().is_err());
     value.delivery_configuration_name = None;
-    assert!(value.source().unwrap().is_none());
+    assert!(value.source().is_err());
+    value.base_ref = "refs/heads/main".into();
+    value.base_commit = "a".repeat(40);
+    assert!(value.source().is_ok());
 }
 
 #[test]
@@ -133,7 +136,7 @@ fn default_source_response_is_byte_identical_and_only_optin_adds_four_fields() {
         )
         .unwrap(),
     );
-    let value = serde_json::to_value(RepositoryReadback::Source(source)).unwrap();
+    let value = serde_json::to_value(source).unwrap();
     assert_eq!(value.as_object().unwrap().len(), 10);
     assert_eq!(
         value["delivery_configuration"].as_object().unwrap().len(),
@@ -159,15 +162,13 @@ async fn namespace_delivery_reader_middleware_preserves_machine_and_human_bounda
     const FOREIGN: &str = "00000000-0000-0000-0000-000000000008";
     // Synthetic test-only ES256 material, never a deployed signing key.
     const TEST_KEY: &str = "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgKX9P+FoJSDeTucv5++s77pW0E1Cxb7psEcXcHctu0/uhRANCAARdYQguyhhd0okqeh45rjc8IjgA+QBKkmGgTaWnnGyrq0maxz4o+qemr3hNKATX3eFZYN3kMhUglf9o6EVM0S8Z";
-    let path = "/api/v1/namespace-repositories/00000000-0000-0000-0000-000000000003";
+    let path = "/api/v1/namespace-repositories/00000000-0000-0000-0000-000000000003/source";
     let query = "?registry_instance_id=00000000-0000-0000-0000-000000000001&namespace_id=00000000-0000-0000-0000-000000000002&base_ref=refs%2Fheads%2Fmain&base_commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa&delivery_configuration_name=";
     if std::env::var_os(CHILD).is_some() {
         async fn fixture(
             Query(query): Query<RepositoryQuery>,
         ) -> Result<Json<DeliveryConfigurationReadback>, ApiError> {
-            query
-                .source()?
-                .ok_or_else(|| ApiError::bad_request("exact_source_required"))?;
+            query.source()?;
             let name = query
                 .delivery_configuration_name
                 .as_deref()
@@ -183,7 +184,7 @@ async fn namespace_delivery_reader_middleware_preserves_machine_and_human_bounda
             exact_delivery_configuration(rows, repository, "fixture/repo", name).map(Json)
         }
         let app = Router::new()
-            .route("/api/v1/namespace-repositories/{id}", get(fixture))
+            .route("/api/v1/namespace-repositories/{id}/source", get(fixture))
             .route_layer(axum::middleware::from_fn(crate::namespace::reader_auth));
         for (token, name, expected) in [
             ("sdlc_pat_reader", "pipeline", StatusCode::OK),

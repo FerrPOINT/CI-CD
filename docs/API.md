@@ -1,10 +1,11 @@
 # API v1 Specification — Forge CI/CD
 
-Существующий namespace GET registered-reader поддерживает optional exact readback
-delivery configuration того же repository. Default bytes и human catalogs не
-меняются. [Контракт reader](NAMESPACE_DELIVERY_CONFIGURATION_READER.md).
+Registered-reader `GET /api/v1/namespace-repositories/{id}/source` возвращает
+exact source readback и optional delivery configuration того же repository.
+Прежний GET без `/source` сохраняет catalog object с обязательным `kind`.
+Human catalogs не меняются. [Контракт reader](NAMESPACE_DELIVERY_CONFIGURATION_READER.md).
 
-Existing Smart HTTP and internal/git-push support an opt-in own-task candidate
+Existing Smart HTTP and `/api/v1/internal/task-git-check` support an opt-in own-task candidate
 variant with exact confirmed source binding, fresh Developer authority and
 single-ref CAS. Legacy authentication and ordinary post-receive remain separate;
 pipeline-only child credentials do not grant Git access. Wiring is integrated in
@@ -29,8 +30,8 @@ lease; отсутствие metadata закрывает delegated effects без
 или продления исходного child.
 Rust/PG qualification и installation этого slice не заявлены.
 
-Опциональная source-проверка на прежнем registered repository GET сохраняет
-обычный catalog JSON и reader auth: [контракт](REGISTERED_SOURCE_READER.md).
+Отдельная source-проверка сохраняет обычный catalog GET/JSON и использует тот же
+registered reader auth: [контракт](REGISTERED_SOURCE_READER.md).
 Модуль — source candidate; общий wiring/qualification выполняет Main.
 
 PR `action=merge` использует только branch refs и фиксированные SHA для pipeline
@@ -604,7 +605,7 @@ In-process fixed-window limiter выполняется до auth/handler и во
 | `auth-login` | `POST /api/v1/auth/login` | 30/min |
 | `auth-refresh` | `POST /api/v1/auth/refresh` | 120/min |
 | `auth-logout` | `POST /api/v1/auth/logout` | 120/min |
-| `internal-git-push` | `POST /api/v1/internal/git-push` | 120/min |
+| `internal-git-push` | `POST /api/v1/internal/git-push`, `POST /api/v1/internal/task-git-check` | общий лимит 120/min |
 | `git-read` / `git-push` | `/git/*` Smart HTTP | 240/min |
 | `artifact-upload` | `POST /api/v1/jobs/{job_id}/artifacts` | 60/min |
 | `api-read` / `api-write` | прочие `/api/*` routes | 1200/min read, 600/min write |
@@ -1961,6 +1962,13 @@ Git Smart HTTP допускает unauthenticated read только для `repo
 ### Internal Git hook
 
 `POST /api/v1/internal/git-push` вызывается generated `post-receive` hook. Заголовок `X-Internal-Token` обязан совпадать с `CICD_GIT_INTERNAL_TOKEN`, когда токен сконфигурирован.
+
+Этот legacy endpoint принимает только `GitPushEvent`; `task_candidate`, включая
+mixed payload, отклоняется до enqueue, без fallback. Task-only pre-receive и
+prepared reference-transaction используют отдельный
+`POST /api/v1/internal/task-git-check` с `CandidateCheck`. Он требует exact internal
+header И fresh central Git child/current context, возвращает
+`{"verified":true,"triggered":false}` и никогда не создаёт pipeline.
 
 ```json
 {

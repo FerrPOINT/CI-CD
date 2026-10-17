@@ -15,6 +15,10 @@
 
 ## [Unreleased]
 
+- Source readback и task Git callback вынесены в отдельные typed routes
+  `/namespace-repositories/{id}/source` и `/internal/task-git-check`; прежние
+  catalog/legacy callback object contracts сохранены без union и fallback.
+
 - New delegated-custody migration uses0094 without changing its SQL, avoiding
   the already-applied repository-sync0093 in another workspace. That foundation
   must be published and combined-history qualified before upgrading that family;

@@ -1,13 +1,16 @@
 # Проверка источника registered reader
 
-Source candidate: модуль и тесты ещё не прошли Rust/PG/HTTP qualification;
-runtime не изменён. Общий wiring передаётся Main отдельным неприменённым patch.
+Текущий route split — source candidate без нового Rust/PG/HTTP PASS;
+runtime не изменён. Typed routes и общий wiring интегрированы в source;
+итоговую qualification и генерацию OpenAPI выполняет Main.
 
 Прежний `GET /api/v1/namespace-repositories/{id}` сохраняет reader auth и обычный
-catalog JSON. Парные query-поля `base_ref` и `base_commit` включают проверку
-источника: полная `refs/heads/...`, точный SHA1 из 40 lowercase hex. Частичная
+catalog JSON с `kind`. Отдельный `GET /api/v1/namespace-repositories/{id}/source`
+с тем же registered-reader auth проверяет обязательные query-поля `base_ref` и
+`base_commit`: полная `refs/heads/...`, точный SHA1 из 40 lowercase hex. Частичная
 пара, короткое имя, tag, HEAD/revision expression и caller proof отклоняются.
-Новых URL, scopes, credentials, registry, таблиц или миграций нет.
+Новых scopes, credentials, registry, таблиц или миграций нет. Старый endpoint
+никогда не возвращает source DTO вместо своего catalog object.
 
 Ответ `VerifiedSource`: namespace, Forge instance/repository UUID, public name,
 base ref/commit, default ref, protected refs и время наблюдения. Это те же девять

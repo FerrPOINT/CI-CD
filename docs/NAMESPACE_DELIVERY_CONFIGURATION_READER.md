@@ -1,18 +1,18 @@
 # Namespace delivery-configuration readback
 
-Source-only additive расширение существующего registered-reader GET. Нет нового
-endpoint, issuer, scope, controller, migration или исключения для human catalog.
+Source-only additive route использует существующий registered-reader auth.
+Нет нового issuer, scope, controller, migration или исключения для human catalog.
 Rust/PG execution, установка и live credential publication не заявлены.
 
 ## Exact request
 
 ```text
-GET /api/v1/namespace-repositories/{repository_id}?registry_instance_id={registry_id}&namespace_id={namespace_id}&base_ref={encoded_full_branch}&base_commit={exact_sha1}&delivery_configuration_name={encoded_exact_name}
+GET /api/v1/namespace-repositories/{repository_id}/source?registry_instance_id={registry_id}&namespace_id={namespace_id}&base_ref={encoded_full_branch}&base_commit={exact_sha1}&delivery_configuration_name={encoded_exact_name}
 ```
 
 `delivery_configuration_name` optional. Если указан, требуется непустое имя,
 не более 256 UTF-8 bytes, без окружающих пробелов и control characters, вместе с
-обоими прежними exact source fields. Это equality selector, не search/pattern,
+обоими обязательными exact source fields. Это equality selector, не search/pattern,
 произвольный SQL или authority от агента. Duplicate query fields и неизвестные
 query keys по-прежнему не допускаются.
 
@@ -25,8 +25,9 @@ owner O и scheduler S, и не используется вместо отдел
 
 ## Readback и custody
 
-Без нового selector старые source bytes/порядок полей и catalog variant
-не меняются. Новое optional поле отсутствует, а не сериализуется как null.
+Без selector source bytes/порядок девяти полей не меняются. Optional поле
+отсутствует, а не сериализуется как null. Прежний GET без `/source` возвращает
+только `VerifiedRepository` с `kind`; его query не переключает response variant.
 С selector в source observation добавляется:
 
 ```json
@@ -51,6 +52,8 @@ tenant/user records, credentials и прочие поля config не выбир
 Последующая Fleet caller integration должна читать этот вложенный объект вместо
 human `/delivery-configurations`, сохранив context/repository/source и lease
 checks. Reader authority не выводится из delegation parent.
+Producer меняет только URL suffix на `/source`, сохраняя query и reader token.
+Обычный Fleet execution-context catalog reader остаётся на прежнем URL.
 
 ## Тесты и оставшаяся qualification
 

@@ -231,6 +231,11 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
     },
     RoutePolicy {
         methods: GET,
+        path: "/api/v1/namespace-repositories/{id}/source",
+        access: RouteAccess::NamespaceReader,
+    },
+    RoutePolicy {
+        methods: GET,
         path: "/api/v1/namespace-task-evidence/{tracker}/{task}",
         access: RouteAccess::NamespaceReader,
     },
@@ -454,6 +459,7 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
     public(POST, "/api/v1/auth/refresh"),
     public(POST, "/api/v1/auth/logout"),
     system(POST, "/api/v1/internal/git-push"),
+    system(POST, "/api/v1/internal/task-git-check"),
     runner(POST, "/api/v1/runner/register"),
     runner(POST, "/api/v1/runner/heartbeat"),
     runner(POST, "/api/v1/runner/work:poll"),

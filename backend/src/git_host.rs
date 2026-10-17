@@ -938,7 +938,7 @@ pub async fn canonical_service(
     post,
     path = "/api/v1/internal/git-push",
     tag = "git",
-    request_body = crate::task_git::PushRequest,
+    request_body = GitPushEvent,
     responses(
         (status = 200, description = "Pipeline trigger decision"),
         (status = 400),
@@ -950,14 +950,7 @@ pub async fn internal_git_push(
     headers: HeaderMap,
     axum::Json(request): axum::Json<crate::task_git::PushRequest>,
 ) -> Result<axum::Json<serde_json::Value>, ApiError> {
-    let event = match request {
-        crate::task_git::PushRequest::Candidate(request) => {
-            return crate::task_git::check_callback(&state, &headers, *request)
-                .await
-                .map(axum::Json);
-        }
-        crate::task_git::PushRequest::Legacy(event) => event,
-    };
+    let event = request.legacy()?;
     if let Some(expected) = configured_internal_token(state.git.internal_token.as_deref()) {
         let provided = headers
             .get("x-internal-token")

@@ -247,6 +247,116 @@ fn malformed_candidate_never_decodes_as_ordinary_pipeline_event() {
     ));
 }
 
+#[tokio::test]
+async fn separate_callback_routes_reject_cross_variant_payloads_before_any_enqueue() {
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
+
+    let (context, _, _, policy) = fixture();
+    let candidate = json!({"task_candidate":context});
+    let legacy = json!({"repository":"fixture/repo","ref_name":"refs/heads/main"});
+    let mut mixed = candidate.clone();
+    mixed["repository"] = json!("fixture/repo");
+    mixed["ref_name"] = json!("refs/heads/main");
+    let mut config = crate::config::RuntimeConfig::test_default();
+    config.git.internal_token = Some("fixture-internal".into());
+    config.sdlc_workspace = policy;
+    let app = crate::api::app_with_git_and_config(None, config.git.to_git_config(), None, config)
+        .unwrap();
+    for (path, body, internal, bearer, status) in [
+        (
+            "/api/v1/internal/git-push",
+            candidate.clone(),
+            Some("fixture-internal"),
+            None,
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "/api/v1/internal/git-push",
+            mixed.clone(),
+            Some("fixture-internal"),
+            None,
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            "/api/v1/internal/git-push",
+            json!({"task_candidate":null,"repository":"fixture/repo","ref_name":"refs/heads/main"}),
+            Some("fixture-internal"),
+            None,
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            "/api/v1/internal/git-push",
+            legacy.clone(),
+            Some("fixture-internal"),
+            None,
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+        (
+            "/api/v1/internal/task-git-check",
+            legacy,
+            Some("fixture-internal"),
+            None,
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            "/api/v1/internal/task-git-check",
+            mixed,
+            Some("fixture-internal"),
+            None,
+            StatusCode::UNPROCESSABLE_ENTITY,
+        ),
+        (
+            "/api/v1/internal/task-git-check",
+            candidate.clone(),
+            None,
+            None,
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "/api/v1/internal/task-git-check",
+            candidate.clone(),
+            Some("foreign-internal"),
+            None,
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "/api/v1/internal/task-git-check",
+            candidate.clone(),
+            Some("fixture-internal"),
+            Some("forge_sat_fixture"),
+            StatusCode::FORBIDDEN,
+        ),
+    ] {
+        let mut request = Request::post(path).header("content-type", "application/json");
+        if let Some(value) = internal {
+            request = request.header("x-internal-token", value);
+        }
+        if let Some(value) = bearer {
+            request = request.header("authorization", format!("Bearer {value}"));
+        }
+        let response = app
+            .clone()
+            .oneshot(request.body(Body::from(body.to_string())).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status, "{path}");
+    }
+    let request = Request::post("/api/v1/internal/task-git-check")
+        .header("content-type", "application/json")
+        .header("x-internal-token", "fixture-internal")
+        .header("x-internal-token", "fixture-internal")
+        .body(Body::from(candidate.to_string()))
+        .unwrap();
+    assert_eq!(
+        app.oneshot(request).await.unwrap().status(),
+        StatusCode::FORBIDDEN
+    );
+}
+
 #[test]
 fn duplicate_credential_or_context_headers_are_rejected() {
     let mut h = HeaderMap::new();

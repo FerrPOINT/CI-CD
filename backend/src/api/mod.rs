@@ -123,6 +123,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::namespace::context,
         crate::namespace::readback,
         crate::repository_catalog::verified_repository,
+        crate::repository_catalog::verified_repository_source,
         crate::repository_catalog::verified_repositories,
         crate::repository_catalog::list,
         crate::repository_catalog::create,
@@ -211,6 +212,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::git_host::delete_repository,
         crate::git_host::git_info_refs, crate::git_host::git_service_endpoint,
         crate::git_host::git_receive_pack_openapi, crate::git_host::internal_git_push,
+        crate::task_git::callback,
         crate::pulls::list_refs, crate::pulls::list_tree, crate::pulls::get_blob,
         crate::pulls::list_tags, crate::pulls::list_commits, crate::pulls::compare_refs,
         crate::pulls::list_pull_requests, crate::pulls::list_pull_request_page,
@@ -223,7 +225,6 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
     ),
     components(schemas(
         crate::registered_source::VerifiedSource,
-        crate::registered_source::RepositoryReadback,
         crate::registered_source::DeliveryConfigurationReadback,
         cicd_domain::repository_sync::Provider,cicd_domain::repository_sync::Direction,
         cicd_domain::repository_sync::Settings,cicd_domain::repository_sync::SaveConnection,
@@ -236,7 +237,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::domain::sdlc_workspace::TaskWorkspaceIntent,
         crate::delegated_credentials::TaskCredentialContext,
         crate::task_git::SourceBinding, crate::task_git::GitContext,
-        crate::task_git::CandidateCheck, crate::task_git::PushRequest,
+        crate::task_git::CandidateCheck, crate::task_git::CandidateCheckReadback,
         crate::domain::sdlc_workspace::WorkspaceOperationReceipt,
         crate::domain::sdlc_workspace::WorkspaceOperationReadback,
         crate::domain::sdlc_workspace::WorkspaceOperationLookup,
@@ -748,6 +749,10 @@ mod tests {
                 .expect("internal hook limit")
                 .class,
             "internal-git-push"
+        );
+        assert_eq!(
+            rate_limit_rule(&Method::POST, "/api/v1/internal/task-git-check"),
+            rate_limit_rule(&Method::POST, "/api/v1/internal/git-push")
         );
         assert_eq!(
             rate_limit_rule(&Method::POST, "/api/v1/auth/logout")

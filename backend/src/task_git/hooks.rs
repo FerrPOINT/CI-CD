@@ -114,14 +114,14 @@ pub(crate) fn install(
         false,
     )?;
     let pre = format!(
-        "#!/bin/sh\nset -eu\numask 077\ndir={}\ncallback='http://127.0.0.1:{port}/api/v1/internal/git-push'\ncat > \"$dir/input\"\n{} < \"$dir/input\"\n{} < \"$dir/input\"\n",
+        "#!/bin/sh\nset -eu\numask 077\ndir={}\ncallback='http://127.0.0.1:{port}/api/v1/internal/task-git-check'\ncat > \"$dir/input\"\n{} < \"$dir/input\"\n{} < \"$dir/input\"\n",
         quote(directory)?,
         quote(&saved_pre)?,
         quote(&directory.join("task-check"))?
     );
     write(&directory.join("pre-receive"), pre.as_bytes(), true)?;
     let check = format!(
-        "#!/bin/sh\ndir={}\ncallback='http://127.0.0.1:{port}/api/v1/internal/git-push'\n{CHECK}",
+        "#!/bin/sh\ndir={}\ncallback='http://127.0.0.1:{port}/api/v1/internal/task-git-check'\n{CHECK}",
         quote(directory)?
     );
     write(&directory.join("task-check"), check.as_bytes(), true)?;
@@ -258,7 +258,7 @@ mod tests {
                 )
                 .unwrap();
                 let curl = format!(
-                    "#!/bin/sh\ntest ! -e {} || exit 1\nprintf 'checked\\n' >> {}\n",
+                    "#!/bin/sh\nfor last; do :; done\ntest \"$last\" = 'http://127.0.0.1:22801/api/v1/internal/task-git-check' || exit 1\ntest ! -e {} || exit 1\nprintf 'checked\\n' >> {}\n",
                     quote(&f.root.join("revoked")).unwrap(),
                     quote(&f.root.join("checks")).unwrap()
                 );

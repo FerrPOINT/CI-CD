@@ -28,6 +28,16 @@ fn namespace_owner_and_reader_routes_never_grant_human_roles() {
         ),
         (
             "GET",
+            "/api/v1/namespace-repositories/018f3c59-38f6-7c2a-bc55-081eb78cbf17/source",
+            RouteAccess::NamespaceReader,
+        ),
+        (
+            "POST",
+            "/api/v1/internal/task-git-check",
+            RouteAccess::System,
+        ),
+        (
+            "GET",
             "/api/v1/namespace-task-evidence/018f3c59-38f6-7c2a-bc55-081eb78cbf17/018f3c59-38f6-7c2a-bc55-081eb78cbf18",
             RouteAccess::NamespaceReader,
         ),
@@ -51,6 +61,72 @@ fn namespace_owner_and_reader_routes_never_grant_human_roles() {
         "PUT",
         "/api/v1/catalog/repositories/018f3c59-38f6-7c2a-bc55-081eb78cbf17/group"
     ));
+}
+
+#[test]
+fn legacy_operations_keep_object_contracts_and_new_routes_are_explicit() {
+    let doc = serde_json::to_value(<ApiDoc as utoipa::OpenApi>::openapi()).unwrap();
+    let paths = &doc["paths"];
+    let schemas = &doc["components"]["schemas"];
+    let legacy_push = &paths["/api/v1/internal/git-push"]["post"]["requestBody"]["content"]["application/json"]
+        ["schema"];
+    assert_eq!(
+        legacy_push,
+        &serde_json::json!({"$ref":"#/components/schemas/GitPushEvent"})
+    );
+    let legacy_read = &paths["/api/v1/namespace-repositories/{id}"]["get"]["responses"]["200"]["content"]
+        ["application/json"]["schema"];
+    assert_eq!(
+        legacy_read,
+        &serde_json::json!({"$ref":"#/components/schemas/VerifiedRepository"})
+    );
+    for name in [
+        "GitPushEvent",
+        "VerifiedRepository",
+        "VerifiedSource",
+        "CandidateCheck",
+        "CandidateCheckReadback",
+    ] {
+        assert_eq!(schemas[name]["type"], "object", "{name}");
+        for union in ["oneOf", "anyOf", "allOf"] {
+            assert!(schemas[name].get(union).is_none(), "{name}/{union}");
+        }
+    }
+    for (schema, field) in [
+        ("GitPushEvent", "repository"),
+        ("GitPushEvent", "ref_name"),
+        ("VerifiedRepository", "kind"),
+    ] {
+        assert!(
+            schemas[schema]["required"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!(field))
+        );
+    }
+    let source = &paths["/api/v1/namespace-repositories/{id}/source"]["get"];
+    assert_eq!(
+        source["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/VerifiedSource"
+    );
+    for field in ["base_ref", "base_commit"] {
+        assert!(
+            source["parameters"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|p| p["name"] == field && p["required"] == true)
+        );
+    }
+    let task = &paths["/api/v1/internal/task-git-check"]["post"];
+    assert_eq!(
+        task["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/CandidateCheck"
+    );
+    assert_eq!(
+        task["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+        "#/components/schemas/CandidateCheckReadback"
+    );
 }
 
 #[test]

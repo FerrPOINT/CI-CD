@@ -13,14 +13,13 @@ use uuid::Uuid;
 pub struct RepositoryQuery {
     pub registry_instance_id: Uuid,
     pub namespace_id: Uuid,
-    pub offset: Option<u32>,
-    pub base_ref: Option<String>,
-    pub base_commit: Option<String>,
+    pub base_ref: String,
+    pub base_commit: String,
     pub delivery_configuration_name: Option<String>,
 }
 
 impl RepositoryQuery {
-    pub fn source(&self) -> Result<Option<ExpectedSource>, ApiError> {
+    pub fn source(&self) -> Result<ExpectedSource, ApiError> {
         if self
             .delivery_configuration_name
             .as_deref()
@@ -33,17 +32,15 @@ impl RepositoryQuery {
         {
             return Err(ApiError::bad_request("invalid_delivery_configuration_name"));
         }
-        match (&self.base_ref, &self.base_commit) {
-            (None, None) if self.delivery_configuration_name.is_none() => Ok(None),
-            (Some(reference), Some(commit)) if full_branch(reference) && sha1(commit) => {
-                Ok(Some(ExpectedSource {
-                    reference: reference.clone(),
-                    commit: commit.clone(),
-                }))
-            }
-            _ => Err(ApiError::bad_request(
+        if full_branch(&self.base_ref) && sha1(&self.base_commit) {
+            Ok(ExpectedSource {
+                reference: self.base_ref.clone(),
+                commit: self.base_commit.clone(),
+            })
+        } else {
+            Err(ApiError::bad_request(
                 "Нужны полная ветка base_ref и точный base_commit SHA1",
-            )),
+            ))
         }
     }
     pub fn namespace(&self) -> NamespaceRef {
@@ -106,13 +103,6 @@ fn exact_delivery_configuration(
         repository_id: actual_repository,
         repository_name: public_name.to_owned(),
     })
-}
-
-#[derive(Serialize, utoipa::ToSchema)]
-#[serde(untagged)]
-pub enum RepositoryReadback {
-    Catalog(crate::repository_catalog::VerifiedRepository),
-    Source(VerifiedSource),
 }
 
 fn unavailable() -> ApiError {
@@ -261,7 +251,7 @@ pub async fn observe(
     expected: ExpectedSource,
     delivery_configuration_name: Option<&str>,
 ) -> Result<VerifiedSource, ApiError> {
-    // Existing reader auth stays on the existing route; this lease closes catalog/namespace relocation.
+    // The dedicated route keeps reader auth; this lease closes catalog/namespace relocation.
     let mut tx = crate::repository_catalog::catalog_write_lease(state, repository).await?;
     let row = sqlx::query("SELECT r.group_id,r.kind,r.ready,r.storage_name,g.slug||'/'||r.slug AS public_name,b.command
         FROM repository_catalog r JOIN git_groups g ON g.id=r.group_id

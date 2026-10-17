@@ -219,6 +219,10 @@ pub fn routes() -> axum::Router<Arc<AppState>> {
                     axum::routing::get(crate::repository_catalog::verified_repository),
                 )
                 .route(
+                    "/api/v1/namespace-repositories/{id}/source",
+                    axum::routing::get(crate::repository_catalog::verified_repository_source),
+                )
+                .route(
                     "/api/v1/namespace-repositories",
                     axum::routing::get(crate::repository_catalog::verified_repositories),
                 )

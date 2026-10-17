@@ -4,6 +4,9 @@ Opt-in source-only [own-task candidate Git](OWN_TASK_CANDIDATE_GIT.md) пров�
 confirmed source/current Developer и exact OID CAS через native hooks. Только
 этот child-вариант подавляет post-receive auto-pipeline; обычный human/SAT поток
 ниже не меняется. Qualification/installation не заявлены.
+Task-only hooks используют `/api/v1/internal/task-git-check`, не legacy
+`/api/v1/internal/git-push`. Последний сохраняет свой object contract и отвергает
+`task_candidate` до обычной pipeline обработки.
 
 Удаление repository с immutable SDLC workspace operation history возвращает409;
 owner FK RESTRICT сохраняет DB identity, bare repository и workspace. Проверка
