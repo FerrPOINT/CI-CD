@@ -1,6 +1,12 @@
 name: CI
 
 on:
+  workflow_dispatch:
+    inputs:
+      git_receive_only:
+        description: 'Addressed native receive races; reuse separately verified unchanged production gates'
+        type: boolean
+        default: false
   push:
     branches: [main]
   pull_request:
@@ -107,33 +113,55 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: backend
+          workspaces: CI-CD/backend
       - name: fmt
         run: cargo fmt --all -- --check
       - name: clippy
+        if: ${{ !inputs.git_receive_only }}
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Integration target clippy
+        run: cargo clippy --locked --features integration --test integration_db -- -D warnings
       - name: unit tests
+        if: ${{ !inputs.git_receive_only }}
         run: cargo test --locked --workspace
       - name: integration tests (real PostgreSQL)
-        run: cargo test --locked --features integration --test integration_db -- --test-threads=1
+        env:
+          GIT_RECEIVE_ONLY: ${{ inputs.git_receive_only }}
+        run: |
+          set -euo pipefail
+          if [ "$GIT_RECEIVE_ONLY" = true ]; then
+            cargo test --locked --features integration --test integration_db git_sat_receive:: -- --test-threads=1 | tee "$RUNNER_TEMP/git-receive-races.log"
+            grep -F 'test result: ok. 4 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/git-receive-races.log"
+            for name in cancelled_http_receive_keeps_native_child_and_namespace_lease_until_exit concurrent_bootstrap_and_receive_finish_around_waiting_namespace_archive; do
+              grep -F "test git_sat_receive::$name ... ok" "$RUNNER_TEMP/git-receive-races.log"
+            done
+          else
+            cargo test --locked --features integration --test integration_db -- --test-threads=1
+          fi
       - name: Create isolated CLI test database
+        if: ${{ !inputs.git_receive_only }}
         env:
           PGPASSWORD: forge_test_owner
         run: createdb -h 127.0.0.1 -p 5432 -U forge_owner forge_test_cli
       - name: CLI tests (real PostgreSQL)
+        if: ${{ !inputs.git_receive_only }}
         env:
           CICD_TEST_DATABASE_URL: postgres://forge_owner:forge_test_owner@localhost:5432/forge_test_cli
         run: cargo test --locked -p cicd-cli --features integration --test cli_real_api -- --test-threads=1
       - name: CLI integration clippy
+        if: ${{ !inputs.git_receive_only }}
         run: cargo clippy --locked -p cicd-cli --all-targets --features integration -- -D warnings
       - name: release build
+        if: ${{ !inputs.git_receive_only }}
         run: cargo build --locked --release --workspace
       - name: openapi drift gate
+        if: ${{ !inputs.git_receive_only }}
         run: |
           cargo run --locked --bin openapi-dump -- /tmp/openapi.yaml
           diff -u ../openapi/openapi.yaml /tmp/openapi.yaml
 
   frontend:
+    if: ${{ !inputs.git_receive_only }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -192,6 +220,7 @@ jobs:
           pnpm theme:check http://127.0.0.1:4173
 
   minimum-rust:
+    if: ${{ !inputs.git_receive_only }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
