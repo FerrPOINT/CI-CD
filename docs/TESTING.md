@@ -61,3 +61,14 @@ generator invocation. Проверяемые outputs: `src/api/schema.d.ts`.
 Lockfile, backward compatibility и backend OpenAPI drift gates сохраняются.
 Самостоятельный `pnpm openapi:check` остаётся проверкой для окружения, в котором
 generation ещё не выполнялась; его не добавляют повторно после postinstall.
+
+## Точные Rust artifacts обычной сборки
+
+`backend:build` в `.quality-gate.json` выбирает только package/bin targets
+поставляемого runtime: `cicd-server`, `forge-runner`.
+Outputs именованы явно; отсутствие любого required executable завершает gate
+ошибкой. Случайный соседний executable не попадает в artifact.
+Standalone CLI, delivery/migration tools и OpenAPI не включаются в server artifact; их отдельные consumers и полный ручной release остаются.
+`backend:quality` сохраняет полные workspace clippy/tests в ручном release;
+MSRV/features/OpenAPI и необходимые integration gates не сокращаются.
+Fresh target между source exports и registry/compiler-cache policy Base сохраняются.

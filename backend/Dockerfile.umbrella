@@ -30,7 +30,7 @@ RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sha
  && printf '\n' > api/src/lib.rs \
  && printf 'fn main() {}\n' > cli/src/main.rs \
  && printf 'fn main() {}\n' > migration/src/main.rs \
- && /usr/local/cargo/bin/cargo build --locked --release \
+ && /usr/local/cargo/bin/cargo build --locked --release -p cicd-server --bin cicd-server --bin forge-runner \
  && /usr/local/cargo/bin/cargo clean -p cicd-server -p cicd-domain -p cicd-app -p cicd-infra -p cicd-api -p cicd-cli -p cicd-migrate
 
 FROM dependencies AS unit-dependencies
