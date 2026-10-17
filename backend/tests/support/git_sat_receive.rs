@@ -496,12 +496,22 @@ async fn namespace_write_lease_covers_receive_policy_and_hook_preparation() {
             .to_string_lossy()
             .starts_with(".forge-receive-")
     }));
-    let released: bool =
-        sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1,3))")
-            .bind(repository.to_string())
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert!(released, "terminal receive retained namespace admission");
+    // SQLx queues rollback on Transaction drop; observe its completion rather than race it.
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let released: bool =
+                sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1,3))")
+                    .bind(repository.to_string())
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            if released {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("terminal receive retained namespace admission");
     pool.close().await;
 }
