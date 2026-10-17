@@ -1,5 +1,32 @@
 # Task Workspace И Candidate Git: Локальные Проверки
 
+## Combined Main: Тринадцать Целевых Случаев
+
+Exact `e5641b40f580700a149b7909fa7fafb80ba0a88f` включает опубликованный
+RepoSync main с неизменной исторической0093 и SDK2ad. В одном локальном QA
+проходят fmt, locked/offline metadata, typed lib/integration compilation,
+восемь auth/readback units и три native Git namespace/cancellation PG cases.
+Rust OpenAPI export также получен. Всего11/13 тестов PASS; это не aggregate PASS.
+
+Два PG-теста отказали. Исторический0091 seed ошибочно использовал текущий0094
+writer; новый Task Git fixture не публиковал canonical group/slug alias.
+Последний отказ не доказывает обход MutationGuard. Опубликованный test-only fix
+сохраняет проверки истории, refs, locks и timeouts, добавляя точный historical
+INSERT, discovery404/200 assertions и безопасную диагностику раннего Git exit.
+Отдельно исправлены семь фактических strict-Clippy diagnostics без allow-атрибутов.
+Исправленный исходник ещё не имеет нового Rust/PG/Clippy PASS.
+
+Исходный result остаётся runner_exit1, cleanup_verified=true,
+journal_phase=cleaned. SHA256:
+`117f53d08090f782a6709927e28ae9327cdb357438144cbe70957a5dfa659896`.
+Его логи, receipts и исходные отказы не переписаны.
+
+Generated OpenAPI/client parity и TypeScript проходят. Base API compatibility
+отклоняет object-to-union изменения request `/internal/git-push` и response
+`/namespace-repositories/{id}`; исправление legacy-контрактов остаётся gate.
+Ни compatibility waiver, ни фиктивная схема вместо настоящего Rust export не
+используются. Последующие API-правки требуют собственного актуального codegen.
+
 ## Точный Source
 
 Кандидат `9b5d4c633195bc5020d58504ee1bbec5e8ad2a87`, SDK
@@ -40,8 +67,9 @@ HTTP verifier; PG admission использует настоящий isolated Pos
 Остаются affected Clippy, regenerated OpenAPI/client parity, populated migration
 history case, image/Compose и настоящий scoped producer/deployment сценарий.
 Единственная новая миграция0094 не меняет свой SQL при перенумерации. Уже
-применённая repository-sync0093 в другой линии требует отдельного опубликованного
-foundation и combined-history upgrade proof; ignore-missing запрещён.
+применённая repository-sync0093 теперь опубликована в main и совпадает с прежним
+foundation по точному Git blob/checksum. Combined-history upgrade proof остаётся
+отдельным gate; ignore-missing запрещён.
 
 Base introspection expiry metadata и Tracker source binding являются явными
 зависимостями. Child renewal, legitimate server readers, окончательные delivery
