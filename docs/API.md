@@ -1,5 +1,10 @@
 # API v1 Specification — Forge CI/CD
 
+`workspace_deploy` — validation-only source slice: закрытый spec с `compose` и
+`images_manifest` распознаётся, но любой такой job отклоняется до создания plan/
+queue, пока trusted deployment adapter отсутствует. Это не доступная deployment
+capability. Обычные jobs и readonly OCI не меняются; [точная граница](contracts/WORKSPACE_DEPLOY_ADMISSION.md).
+
 PR `action=merge` использует только branch refs и фиксированные SHA для pipeline
 gate и native merge. Короткие и `refs/heads/...` имена эквивалентны; tag/HEAD/revision
 expressions не заменяют отсутствующую ветку. Stale source/target возвращает 409,

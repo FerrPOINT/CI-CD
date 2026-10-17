@@ -871,6 +871,8 @@ fn parse_legacy_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, Strin
         #[serde(default = "default_image")]
         image: String,
         command: String,
+        #[serde(default, deserialize_with = "deserialize_workspace_deploy")]
+        workspace_deploy: Option<WorkspaceDeploySpec>,
         /// e.g. "30s", "5m", "1h" — default 1h.
         #[serde(default)]
         timeout: Option<String>,
@@ -898,6 +900,14 @@ fn parse_legacy_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, Strin
 
     let parsed: YamlConfig =
         serde_yaml::from_str(raw).map_err(|error| format!("invalid .forge-ci.yml: {error}"))?;
+    if parsed
+        .stages
+        .iter()
+        .flat_map(|stage| &stage.jobs)
+        .any(|job| job.workspace_deploy.is_some())
+    {
+        return Err("workspace_deploy execution is unavailable in legacy jobs".into());
+    }
     let mut stages: Vec<CiStage> = parsed
         .stages
         .into_iter()
@@ -943,6 +953,34 @@ struct NormalizedV1Job {
     image_build: Option<crate::domain::image_build::ImageBuildSpec>,
 }
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceDeploySpec {
+    compose: String,
+    images_manifest: String,
+}
+
+impl WorkspaceDeploySpec {
+    fn validate(&self) -> Result<(), String> {
+        if !crate::domain::image_build::valid_relative_path(&self.compose, false)
+            || !crate::domain::image_build::valid_relative_path(&self.images_manifest, false)
+            || self.compose == self.images_manifest
+        {
+            return Err("workspace_deploy requires distinct portable relative files".into());
+        }
+        Ok(())
+    }
+}
+
+fn deserialize_workspace_deploy<'de, D>(
+    deserializer: D,
+) -> Result<Option<WorkspaceDeploySpec>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    <WorkspaceDeploySpec as serde::Deserialize>::deserialize(deserializer).map(Some)
+}
+
 fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
     #[derive(serde::Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -971,6 +1009,8 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
         #[serde(default)]
         commands: Vec<String>,
         image_build: Option<crate::domain::image_build::ImageBuildSpec>,
+        #[serde(default, deserialize_with = "deserialize_workspace_deploy")]
+        workspace_deploy: Option<WorkspaceDeploySpec>,
         timeout: Option<String>,
         tags: Option<Vec<String>>,
         #[serde(default)]
@@ -1017,6 +1057,11 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
             return Err(format!(
                 ".forge-ci.yml v1 job key '{key}' must match ^[a-zA-Z][a-zA-Z0-9_.-]{{0,62}}$"
             ));
+        }
+        if let Some(deployment) = &job.workspace_deploy {
+            deployment.validate()?;
+            // Parsing a recipe must not enqueue ordinary commands with deployment ignored.
+            return Err("workspace_deploy execution is unavailable: trusted sealed deployment adapter is not installed".into());
         }
         if let Some(build) = &job.image_build {
             build.validate()?;
@@ -1221,6 +1266,95 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
 
 fn v1_runtime_command(commands: &[String]) -> String {
     format!("set -e\n{}", commands.join("\n"))
+}
+
+#[cfg(test)]
+mod workspace_deploy_parser_tests {
+    use super::*;
+
+    const DEPLOY: &str = "version: 1\njobs:\n  verify:\n    commands: [echo must-not-run]\n    workspace_deploy:\n      compose: deploy/task.compose.json\n      images_manifest: reports/images.json\n";
+
+    #[test]
+    fn closed_workspace_deploy_spec_accepts_only_distinct_relative_files() {
+        let spec: WorkspaceDeploySpec = serde_yaml::from_str(
+            "compose: deploy/task.compose.json\nimages_manifest: reports/images.json\n",
+        )
+        .unwrap();
+        assert!(spec.validate().is_ok());
+        for path in ["", "/host", "../host", "C:/host", "a\\b", "a//b", "-option"] {
+            for field in ["compose", "images_manifest"] {
+                let mut spec = WorkspaceDeploySpec {
+                    compose: "compose.json".into(),
+                    images_manifest: "images.json".into(),
+                };
+                if field == "compose" {
+                    spec.compose = path.into();
+                } else {
+                    spec.images_manifest = path.into();
+                }
+                assert!(spec.validate().is_err());
+            }
+        }
+        let same = WorkspaceDeploySpec {
+            compose: "same.json".into(),
+            images_manifest: "same.json".into(),
+        };
+        assert!(same.validate().is_err());
+    }
+
+    #[test]
+    fn workspace_deploy_unknown_authority_fields_are_rejected() {
+        for field in [
+            "daemon",
+            "privileged",
+            "token",
+            "verified",
+            "network",
+            "command",
+        ] {
+            let input =
+                format!("compose: compose.json\nimages_manifest: images.json\n{field}: forged\n");
+            assert!(serde_yaml::from_str::<WorkspaceDeploySpec>(&input).is_err());
+        }
+    }
+
+    #[test]
+    fn null_workspace_deploy_is_not_an_absent_declaration() {
+        let raw = "version: 1\njobs:\n  verify:\n    commands: [echo must-not-run]\n    workspace_deploy: null\n";
+        assert!(parse_pipeline_config(Some(raw)).is_err());
+    }
+
+    #[test]
+    fn legacy_jobs_cannot_ignore_a_deployment_declaration() {
+        let raw = "stages:\n  - name: verify\n    jobs:\n      - name: verify\n        command: echo must-not-run\n        workspace_deploy:\n          compose: compose.json\n          images_manifest: images.json\n";
+        let error = parse_pipeline_config(Some(raw)).err().unwrap();
+        assert!(error.contains("workspace_deploy execution is unavailable"));
+    }
+
+    #[test]
+    fn workspace_deploy_cannot_fall_through_to_ordinary_commands() {
+        let error = parse_pipeline_config(Some(DEPLOY)).err().unwrap();
+        assert!(error.contains("workspace_deploy execution is unavailable"));
+        let mixed = DEPLOY.replace("    commands:", "    image_build: {}\n    commands:");
+        assert!(parse_pipeline_config(Some(&mixed)).is_err());
+    }
+
+    #[test]
+    fn ordinary_command_jobs_keep_their_existing_plan() {
+        let raw = "version: 1\njobs:\n  verify:\n    commands: [echo ordinary]\n";
+        let parsed = parse_pipeline_config(Some(raw)).unwrap();
+        let snapshot = build_pipeline_plan_snapshot(
+            &"a".repeat(40),
+            Some(&"a".repeat(40)),
+            "repository",
+            raw.into(),
+            &parsed,
+        );
+        let job = &snapshot.plan["jobs"][0];
+        assert_eq!(job["commands"], serde_json::json!(["echo ordinary"]));
+        assert!(job.get("workspace_deploy").is_none());
+        assert!(!parsed.has_image_build());
+    }
 }
 
 #[cfg(test)]
