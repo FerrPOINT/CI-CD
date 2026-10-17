@@ -7,8 +7,8 @@ use axum::{
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
-use tokio::io::AsyncReadExt;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
 
 use crate::api::{ApiError, AppState};
@@ -791,11 +791,15 @@ pub async fn create_pull_request(
             "title, source_branch and target_branch are required",
         ));
     }
-    if input.source_branch == input.target_branch {
+    let (source_name, source_reference) = branch_reference(&input.source_branch).await?;
+    let (target_name, target_reference) = branch_reference(&input.target_branch).await?;
+    if source_reference == target_reference {
         return Err(ApiError::bad_request(
             "source and target branches must differ",
         ));
     }
+    input.source_branch = source_name;
+    input.target_branch = target_name;
     let next_number: i32 = sqlx::query_scalar(
         "SELECT allocate_repository_pr_number(id) FROM repository_catalog WHERE storage_name=$1",
     )
@@ -855,24 +859,48 @@ pub async fn pr_action(
     AxumPath((repo, number)): AxumPath<(String, i32)>,
     Json(input): Json<PrAction>,
 ) -> Result<Json<PullRequest>, ApiError> {
+    // An accepted native merge keeps its admission and row lock if the HTTP caller disconnects.
+    tokio::spawn(pr_action_owned(state, repo, number, input))
+        .await
+        .map_err(|_| {
+            ApiError::service_unavailable(
+                "Результат операции PR не подтверждён; перечитайте состояние перед повтором",
+            )
+        })?
+}
+
+async fn pr_action_owned(
+    state: std::sync::Arc<AppState>,
+    repo: String,
+    number: i32,
+    input: PrAction,
+) -> Result<Json<PullRequest>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     let repo = crate::repository_catalog::resolve_storage(pool, &repo).await?;
+    let _namespace_lease = crate::repository_catalog::write_lease(&state, &repo).await?;
+    let path = resolve_repo_path(&state, &repo).await?;
+    let mut transaction = pool.begin().await.map_err(ApiError::internal)?;
     let pr = sqlx::query_as::<_, PullRequest>(
-        "SELECT id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha FROM pull_requests WHERE repository_name = $1 AND number = $2",
+        "SELECT id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha FROM pull_requests WHERE repository_name = $1 AND number = $2 FOR UPDATE",
     )
     .bind(&repo)
     .bind(number)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *transaction)
     .await
     .map_err(ApiError::internal)?
     .ok_or_else(ApiError::not_found)?;
 
-    let _namespace_lease =
-        crate::repository_catalog::write_lease(&state, &pr.repository_name).await?;
     match input.action.as_str() {
         "merge" => {
             if pr.status != "open" {
                 return Err(ApiError::conflict("pull request is not open"));
+            }
+            let target = branch_snapshot(&path, &pr.target_branch).await?;
+            let source = branch_snapshot(&path, &pr.source_branch).await?;
+            if target.reference == source.reference {
+                return Err(ApiError::bad_request(
+                    "Исходная и целевая ветки должны различаться",
+                ));
             }
             // P0-4 merge gate: when the target branch is protected, require a
             // success pipeline on the PR source branch head (GitLab parity).
@@ -881,23 +909,11 @@ pub async fn pr_action(
                  WHERE p.repository_id=$1",
             )
             .bind(pr.repository_id)
-            .bind(&pr.target_branch)
-            .fetch_optional(pool)
+            .bind(&target.name)
+            .fetch_optional(&mut *transaction)
             .await
             .map_err(ApiError::internal)?;
             if protected == Some(true) {
-                let source_head: Option<String> = {
-                    let path = resolve_repo_path(&state, &repo).await?;
-                    let out = tokio::process::Command::new("git")
-                        .arg(format!("--git-dir={}", path.display()))
-                        .args(["rev-parse", &pr.source_branch])
-                        .output()
-                        .await
-                        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
-                    out.status
-                        .success()
-                        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
-                };
                 let green: Option<Uuid> = sqlx::query_scalar(
                     "SELECT pl.id FROM pipelines pl \
                      JOIN projects pr2 ON pr2.id = pl.project_id \
@@ -906,9 +922,9 @@ pub async fn pr_action(
                      ORDER BY pl.created_at DESC LIMIT 1",
                 )
                 .bind(pr.repository_id)
-                .bind(&pr.source_branch)
-                .bind(source_head.clone().unwrap_or_default())
-                .fetch_optional(pool)
+                .bind(&source.name)
+                .bind(&source.oid)
+                .fetch_optional(&mut *transaction)
                 .await
                 .map_err(ApiError::internal)?;
                 if green.is_none() {
@@ -917,17 +933,10 @@ pub async fn pr_action(
                     ));
                 }
             }
-            let path = resolve_repo_path(&state, &repo).await?;
             // Use git merge-tree for bare repos (no worktree needed)
             let merge_output = tokio::process::Command::new("git")
                 .arg(format!("--git-dir={}", path.display()))
-                .args([
-                    "merge-tree",
-                    "--write-tree",
-                    "-z",
-                    &pr.target_branch,
-                    &pr.source_branch,
-                ])
+                .args(["merge-tree", "--write-tree", "-z", &target.oid, &source.oid])
                 .output()
                 .await
                 .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
@@ -952,9 +961,9 @@ pub async fn pr_action(
                     "commit-tree",
                     &tree_sha,
                     "-p",
-                    &pr.target_branch,
+                    &target.oid,
                     "-p",
-                    &pr.source_branch,
+                    &source.oid,
                     "-m",
                     &format!("Merge PR #{}: {}", pr.number, pr.title),
                 ])
@@ -969,30 +978,16 @@ pub async fn pr_action(
             let merge_sha = String::from_utf8_lossy(&commit_output.stdout)
                 .trim()
                 .to_string();
-            // Update target branch ref
-            let ref_output = tokio::process::Command::new("git")
-                .arg(format!("--git-dir={}", path.display()))
-                .args([
-                    "update-ref",
-                    &format!("refs/heads/{}", pr.target_branch),
-                    &merge_sha,
-                ])
-                .output()
-                .await
-                .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
-            if !ref_output.status.success() {
-                return Err(ApiError::bad_request(
-                    String::from_utf8_lossy(&ref_output.stderr).to_string(),
-                ));
-            }
+            publish_merge(&path, &source, &target, &merge_sha).await?;
             let updated = sqlx::query_as::<_, PullRequest>(
                 "UPDATE pull_requests SET status = 'merged', merged_at = now(), updated_at = now(), merge_commit_sha = $2 WHERE id = $1 RETURNING id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",
             )
             .bind(pr.id)
             .bind(&merge_sha)
-            .fetch_one(pool)
+            .fetch_one(&mut *transaction)
             .await
             .map_err(ApiError::internal)?;
+            transaction.commit().await.map_err(ApiError::internal)?;
             Ok(Json(updated))
         }
         "close" => {
@@ -1003,9 +998,10 @@ pub async fn pr_action(
                 "UPDATE pull_requests SET status = 'closed', updated_at = now() WHERE id = $1 RETURNING id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",
             )
             .bind(pr.id)
-            .fetch_one(pool)
+            .fetch_one(&mut *transaction)
             .await
             .map_err(ApiError::internal)?;
+            transaction.commit().await.map_err(ApiError::internal)?;
             Ok(Json(updated))
         }
         "reopen" => {
@@ -1018,9 +1014,10 @@ pub async fn pr_action(
                 "UPDATE pull_requests SET status = 'open', updated_at = now() WHERE id = $1 RETURNING id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",
             )
             .bind(pr.id)
-            .fetch_one(pool)
+            .fetch_one(&mut *transaction)
             .await
             .map_err(ApiError::internal)?;
+            transaction.commit().await.map_err(ApiError::internal)?;
             Ok(Json(updated))
         }
         _ => Err(ApiError::bad_request(
@@ -1030,6 +1027,109 @@ pub async fn pr_action(
 }
 
 // ─── helpers ───
+
+#[derive(Debug)]
+struct BranchSnapshot {
+    name: String,
+    reference: String,
+    oid: String,
+}
+
+async fn branch_reference(branch: &str) -> Result<(String, String), ApiError> {
+    let branch = branch.trim();
+    let name = branch.strip_prefix("refs/heads/").unwrap_or(branch);
+    if name.is_empty()
+        || name == "HEAD"
+        || name.starts_with("refs/")
+        || name.chars().any(char::is_control)
+    {
+        return Err(ApiError::bad_request("Требуется имя ветки Git"));
+    }
+    let reference = format!("refs/heads/{name}");
+    let checked = tokio::process::Command::new("git")
+        .args(["check-ref-format", &reference])
+        .output()
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if !checked.status.success() {
+        return Err(ApiError::bad_request("Недопустимое имя ветки Git"));
+    }
+    Ok((name.into(), reference))
+}
+
+async fn branch_snapshot(path: &std::path::Path, branch: &str) -> Result<BranchSnapshot, ApiError> {
+    let (name, reference) = branch_reference(branch).await?;
+    let observed = tokio::process::Command::new("git")
+        .arg("--git-dir")
+        .arg(path)
+        .args(["show-ref", "--verify", "--hash", &reference])
+        .output()
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if !observed.status.success() {
+        return Err(ApiError::conflict("Ветка недоступна"));
+    }
+    let oid = String::from_utf8_lossy(&observed.stdout).trim().to_string();
+    if !matches!(oid.len(), 40 | 64)
+        || !oid
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(ApiError::service_unavailable(
+            "Не удалось определить SHA ветки Git",
+        ));
+    }
+    Ok(BranchSnapshot {
+        name,
+        reference,
+        oid,
+    })
+}
+
+async fn publish_merge(
+    path: &std::path::Path,
+    source: &BranchSnapshot,
+    target: &BranchSnapshot,
+    merged: &str,
+) -> Result<(), ApiError> {
+    // Git locks/verifies both refs in one transaction; no stale source or target can be published.
+    let plan = format!(
+        "start\nverify {} {}\nupdate {} {} {}\nprepare\ncommit\n",
+        source.reference, source.oid, target.reference, merged, target.oid
+    );
+    let mut child = tokio::process::Command::new("git")
+        .arg("--git-dir")
+        .arg(path)
+        .args(["update-ref", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    let mut input = child
+        .stdin
+        .take()
+        .ok_or_else(|| ApiError::service_unavailable("Ввод Git-транзакции недоступен"))?;
+    let written = input.write_all(plan.as_bytes()).await;
+    drop(input);
+    let observed = child.wait_with_output().await.map_err(|_| {
+        ApiError::service_unavailable(
+            "Публикация merge не подтверждена; перечитайте состояние веток перед повтором",
+        )
+    })?;
+    if written.is_ok() && observed.status.success() && observed.stdout.ends_with(b"commit: ok\n") {
+        return Ok(());
+    }
+    if written.is_ok() && !observed.status.success() && observed.stdout == b"start: ok\n" {
+        return Err(ApiError::conflict(
+            "Ветки изменились или Git-транзакция не подготовлена; перечитайте состояние перед повтором",
+        ));
+    }
+    Err(ApiError::service_unavailable(
+        "Публикация merge не подтверждена; перечитайте состояние веток перед повтором",
+    ))
+}
 
 async fn resolve_repo_path(state: &AppState, raw: &str) -> Result<PathBuf, ApiError> {
     let name = crate::git_host::validate_repo_name(raw).map_err(ApiError::bad_request)?;
@@ -1490,6 +1590,10 @@ fn parse_tag_line(line: &str) -> Option<TagInfo> {
     let message = parts.next().unwrap_or("").to_string();
     Some(TagInfo { name, sha, message })
 }
+
+#[cfg(all(test, unix))]
+#[path = "pulls/merge_fencing_tests.rs"]
+mod merge_fencing_tests;
 
 #[cfg(test)]
 mod tests {

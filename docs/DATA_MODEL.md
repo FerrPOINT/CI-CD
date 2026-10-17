@@ -1,5 +1,11 @@
 # Дата-модель Forge CI/CD
 
+PR actions получают namespace admission перед `pull_requests FOR UPDATE`.
+Merge/close/reopen читают актуальное состояние под одной row lock; Git publication
+подтверждается до `status=merged`/`merge_commit_sha`. Branch SHA фиксируется
+до pipeline lookup, который сравнивает `pipelines.commit_sha` с точным source.
+Новых таблиц или миграций нет. [ADR-0029](adr/0029-pr-merge-branch-snapshots.md).
+
 Git receive читает branch policy из существующих `projects.default_branch`
 и `projects.protected_branches` по `projects.repository_id` и stable repository
 UUID. Human/SAT credentials и project scope используют прежнюю модель.

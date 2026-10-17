@@ -1,5 +1,11 @@
 # API v1 Specification — Forge CI/CD
 
+PR `action=merge` использует только branch refs и фиксированные SHA для pipeline
+gate и native merge. Короткие и `refs/heads/...` имена эквивалентны; tag/HEAD/revision
+expressions не заменяют отсутствующую ветку. Stale source/target возвращает 409,
+не закрывая PR; неизвестный результат публикации — 503 с readback до повтора.
+Публичные DTO/routes сохраняются. [ADR-0029](adr/0029-pr-merge-branch-snapshots.md).
+
 Git Smart HTTP source fix: project-bound SAT проверяет существующую UUID связь
 repository/project и отдельные `git:read`/`git:write` scopes. Native pre-receive
 отклоняет весь push, обновляющий configured default/protected branch, до

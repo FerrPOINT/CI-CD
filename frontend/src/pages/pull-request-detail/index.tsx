@@ -21,10 +21,14 @@ import { QueryState } from "@/shared/ui/query-state";
 import { PullRequestActions } from "@/pages/pull-requests/actions";
 import { InitialsAvatar as UserAvatar } from "@pdlc/ui/ui";
 
+function branchRef(branch: string): string {
+  return branch.startsWith("refs/heads/") ? branch : `refs/heads/${branch}`;
+}
+
 export function buildCompareHref(
   pr: Pick<PullRequest, "repository_name" | "source_branch" | "target_branch">,
 ): string {
-  return `/repositories/${encodeURIComponent(pr.repository_name)}/compare?from=${encodeURIComponent(pr.target_branch)}&to=${encodeURIComponent(pr.source_branch)}`;
+  return `/repositories/${encodeURIComponent(pr.repository_name)}/compare?from=${encodeURIComponent(branchRef(pr.target_branch))}&to=${encodeURIComponent(branchRef(pr.source_branch))}`;
 }
 
 export function buildPrDiffHref(
@@ -65,8 +69,8 @@ export function PullRequestDetailPage() {
     refetch: refetchDiff,
   } = useRepositoryComparison(
     repo,
-    showDiff && pr ? pr.target_branch : "",
-    showDiff && pr ? pr.source_branch : "",
+    showDiff && pr ? branchRef(pr.target_branch) : "",
+    showDiff && pr ? branchRef(pr.source_branch) : "",
   );
 
   if (!repo)
