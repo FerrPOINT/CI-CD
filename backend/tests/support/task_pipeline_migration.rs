@@ -158,11 +158,16 @@ async fn populated_0091_to_0092_preserves_workspace_pipeline_history_and_old_gua
         physical_source_observed: false,
         dispatch_allowed: false,
     };
-    let mut connection = pool.acquire().await.unwrap();
-    ledger::append_receipt(&mut connection, subject, &receipt)
-        .await
-        .unwrap();
-    drop(connection);
+    // Seed the 0091 schema using its original 0040 insert shape, not the
+    // current store writer whose delegated columns are introduced by 0094.
+    let r = &receipt.request;
+    let b = &r.binding;
+    sqlx::query("INSERT INTO sdlc_workspace_operations (id,project_id,service_account_id,operation_key,request_hash,task_id,root_task_id,assignment_id,execution_id,fencing_token,lease_id,attempt_id,workspace_generation,repository_id,source_commit,receipt,recorded_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)")
+        .bind(receipt.operation_id).bind(receipt.project_id).bind(subject).bind(&r.operation_key)
+        .bind(&receipt.request_hash).bind(b.task_id).bind(b.root_task_id).bind(b.assignment_id)
+        .bind(b.execution_id).bind(b.fencing_token).bind(r.lease_id).bind(r.attempt_id)
+        .bind(r.workspace_generation).bind(r.repository_id).bind(&r.source_commit)
+        .bind(sqlx::types::Json(&receipt)).bind(receipt.recorded_at).execute(&pool).await.unwrap();
     let before: serde_json::Value = sqlx::query_scalar(SNAPSHOT).fetch_one(&pool).await.unwrap();
     let history = migration_catalog_history(&pool).await;
     catalog.run(&pool).await.unwrap();

@@ -611,8 +611,8 @@ async fn task_git_receive_waits_for_busy_repository_sync_guard_without_pipeline_
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        // Discovery + receive admission + real pre-receive/reference-transaction callbacks.
-        assert!(calls.load(Ordering::SeqCst) >= 4);
+        // Two fixture discoveries + push discovery/receive + both native hook callbacks.
+        assert!(calls.load(Ordering::SeqCst) >= 6);
         return;
     }
 
@@ -686,6 +686,11 @@ async fn task_git_sync_guard_case(f: &TaskPipeline) {
         new_oid: f.intent.source_commit.clone(),
     };
     let grant = context.grant().unwrap();
+    let token = format!(
+        "sdlc_pat_{}",
+        grant.strip_prefix("ci-cd:sdlc:git:v1:").unwrap()
+    );
+    let context_header = serde_json::to_string(&context).unwrap();
     f.tracker.lock().await["git_source"] = serde_json::to_value(&context.source).unwrap();
     let storage: String =
         sqlx::query_scalar("SELECT storage_name FROM repository_catalog WHERE id=$1")
@@ -695,6 +700,50 @@ async fn task_git_sync_guard_case(f: &TaskPipeline) {
             .unwrap();
     let bare = f.config.git.root.join(format!("{storage}.git"));
     let refs_before = git(&f.temp, &["--git-dir", bare.to_str().unwrap(), "show-ref"]);
+    // The legacy repository INSERT creates only its storage alias. Grouping
+    // that row does not publish the canonical group/slug alias used by HTTP.
+    for mapped in [false, true] {
+        if mapped {
+            sqlx::query("INSERT INTO repository_aliases(alias,repository_id) VALUES($1,$2)")
+                .bind(&repository)
+                .bind(f.intent.repository_id)
+                .execute(&f.pool)
+                .await
+                .unwrap();
+        }
+        let response = f
+            .http
+            .get(format!(
+                "{}/git/{repository}.git/info/refs?service=git-receive-pack",
+                f.api_url
+            ))
+            .bearer_auth(&token)
+            .header(cicd::task_git::HEADER, &context_header)
+            .send()
+            .await
+            .expect("owned fixture discovery transport");
+        let status = response.status();
+        let reads = f.tracker.lock().await["git_reads"].as_u64().unwrap_or(0);
+        assert_eq!(
+            status,
+            if mapped {
+                StatusCode::OK
+            } else {
+                StatusCode::NOT_FOUND
+            },
+            "Task Git discovery HTTP {status}, canonical_alias={mapped}, source_reads={reads}"
+        );
+        assert_eq!(
+            reads,
+            if mapped { 2 } else { 1 },
+            "discovery must pass real source admission"
+        );
+        assert_eq!(
+            git(&f.temp, &["--git-dir", bare.to_str().unwrap(), "show-ref"]),
+            refs_before
+        );
+    }
+    let reads_before_push = f.tracker.lock().await["git_reads"].as_u64().unwrap();
     let sync_guard = MutationGuard::acquire(&f.config.git.root, f.intent.repository_id)
         .await
         .unwrap();
@@ -707,15 +756,12 @@ async fn task_git_sync_guard_case(f: &TaskPipeline) {
         .kill_on_drop(true)
         .args([
             "-c",
-            &format!(
-                "http.extraHeader=Authorization: Bearer sdlc_pat_{}",
-                grant.strip_prefix("ci-cd:sdlc:git:v1:").unwrap()
-            ),
+            &format!("http.extraHeader=Authorization: Bearer {token}"),
             "-c",
             &format!(
                 "http.extraHeader={}: {}",
                 cicd::task_git::HEADER,
-                serde_json::to_string(&context).unwrap()
+                context_header
             ),
             "push",
             &format!("{}/git/{repository}.git", f.api_url),
@@ -726,9 +772,18 @@ async fn task_git_sync_guard_case(f: &TaskPipeline) {
     tokio::time::timeout(StdDuration::from_secs(5), async {
         loop {
             tokio::select! {
-                _ = &mut push => panic!("Task Git receive bypassed the busy sync guard or failed admission"),
+                output = &mut push => {
+                    let output = output.expect("owned Git client transport");
+                    let stderr: String = String::from_utf8_lossy(&output.stderr)
+                        .replace(&token, "[fixture-child]")
+                        .replace(&context_header, "[fixture-context]")
+                        .chars().take(2048).collect();
+                    let reads = f.tracker.lock().await["git_reads"].as_u64().unwrap_or(0);
+                    panic!("Task Git exited before busy-lock wait: success={}, code={:?}, source_reads_since_discovery={}, stderr={stderr}",
+                        output.status.success(), output.status.code(), reads.saturating_sub(reads_before_push));
+                },
                 _ = tokio::time::sleep(StdDuration::from_millis(10)) => {
-                    if f.tracker.lock().await["git_reads"].as_u64().unwrap_or(0) >= 2 { break; }
+                    if f.tracker.lock().await["git_reads"].as_u64().unwrap_or(0) >= reads_before_push + 2 { break; }
                 }
             }
         }
@@ -776,7 +831,7 @@ async fn task_git_sync_guard_case(f: &TaskPipeline) {
         ),
         context.source.base_commit
     );
-    assert!(f.tracker.lock().await["git_reads"].as_u64().unwrap() >= 4);
+    assert!(f.tracker.lock().await["git_reads"].as_u64().unwrap() >= reads_before_push + 4);
     assert!(
         MutationGuard::try_acquire(&f.config.git.root, f.intent.repository_id)
             .unwrap()
