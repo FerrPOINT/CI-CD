@@ -108,7 +108,7 @@ async fn merge_snapshots_ignore_tags_and_preserve_both_branch_histories() {
     assert_ne!(target.oid, f.initial);
     assert_ne!(source.oid, f.initial);
     let merged = f.merged(&source, &target);
-    publish_merge(&f.bare, &source, &target, &merged)
+    publish_merge(&f.bare, &source, &target, &merged, None)
         .await
         .unwrap();
     assert_eq!(f.git(&["show", "refs/heads/main:main-data"]), "main");
@@ -135,7 +135,7 @@ async fn stale_target_cannot_overwrite_another_writer() {
     let advanced = f.advanced(&target.oid);
     f.git(&["update-ref", &target.reference, &advanced]);
     assert_eq!(
-        publish_merge(&f.bare, &source, &target, &merged)
+        publish_merge(&f.bare, &source, &target, &merged, None)
             .await
             .unwrap_err()
             .status,
@@ -154,7 +154,7 @@ async fn stale_source_cannot_publish_an_outdated_verified_commit() {
     let advanced = f.advanced(&source.oid);
     f.git(&["update-ref", &source.reference, &advanced]);
     assert_eq!(
-        publish_merge(&f.bare, &source, &target, &merged)
+        publish_merge(&f.bare, &source, &target, &merged, None)
             .await
             .unwrap_err()
             .status,

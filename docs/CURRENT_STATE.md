@@ -333,7 +333,7 @@ bash scripts/scan_container_images.sh forge-cicd-backend:ci forge-cicd-frontend:
 python3 scripts/verify_docs.py --canonical --links --current-state
 ```
 
-## Frontend: 29 маршрутов
+## Frontend: 31 маршрут
 
 Маршруты включают новые candidate-экраны сквозного проекта и CI-конфигураций.
 Этот счётчик отражает router, а не завершённую визуальную или runtime-приёмку;

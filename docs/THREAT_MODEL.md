@@ -73,6 +73,11 @@ flowchart LR
     smart -->|post-receive: internal event| hook[post-receive]
     hook -->|POST /api/v1/internal/git-push| api
 
+    api -->|CAS настроек и idempotency| sync[Worker синхронизации Git]
+    sync <-->|intents, leases, encrypted credentials| pg
+    sync <-->|namespace admission, flock и ожидаемый SHA| gitvol
+    sync -->|HTTPS без redirect, TLS verification| provider[GitHub / разрешённый GitLab]
+
     runner[Runner / user job zone] -->|Runner API: Target mTLS + lease| runnerapi[Runner API]
     runnerapi --> api
 
@@ -87,6 +92,24 @@ flowchart LR
 **Current topology:** nginx proxies `/api/` and `/git/` to the same backend; backend is также опубликован на `:22801`. `post-receive` вызывает backend по `http://127.0.0.1:22801`. Embedded runner находится в backend и может запускать Docker или host shell; при `CICD_EMBEDDED_RUNNER_ENABLED=false` работу может забирать отдельный `forge-runner` shell process через current runner API. Outbox worker уже работает для schedules/outgoing webhooks MVP.
 
 ## 3. STRIDE по границам
+
+### Синхронизация внешнего Git
+
+Новая граница: настройки API → прежний worker → внешний HTTPS Git provider.
+Приоритетные угрозы — отправка credential чужому origin, перезапись чужого ref
+и повтор неизвестного Git-эффекта. Source-контроли и их проверки:
+
+| Граница | Угроза | Контроль | Проверка |
+|---|---|---|---|
+| API → endpoint / credential | S/I/E: неоднозначный URL, расширение project scope или выдача токена | Canonical allowlist, запрет userinfo/controls/backslash; штатные bearer/project/scopes; write-only token, AES-GCM прежним secrets key | Domain URL tests, production-router `repository_sync_auth`, PG negative ACL |
+| Worker → HTTPS Git | S/I: redirect, недоверенный CA, утечка через argv/env/logs | Redirect выключен, TLS включён, только системный trust store; credential передаётся через отдельный FD, наследуемый только своим child; child environment очищается | `sync_git_tls_test`, provider/credential tests исходной ветки |
+| Worker / receive-pack / PR → bare storage | T/R/D: конкурентная запись, stale lease, crash и unknown outcome | Namespace admission перед lasting flock, child наследует guard; durable old/new SHA intent, CAS и readback; busy probe не занимает worker slot | `repository_sync`, Git/PR fencing и process fault tests |
+
+[ADR-0031](adr/0031-external-repository-synchronization.md) и
+[результаты](plans/2026-10-17-repository-sync-capabilities-results.md) фиксируют
+scope проверок. Полная приёмка объединённого runtime учитывается отдельно;
+provider branch protection и права account не выводятся из dry-run или каталога.
+Ротация прежнего secrets key требует переноса ciphertext, а не пустой замены.
 
 Статус означает: **Current** -- реализовано и подтверждено кодом; **Target** -- закреплено контрактом, но не реализовано; **отсутствует** -- требуемый контроль сейчас отсутствует. Ссылки на контракты являются нормативным целевым поведением.
 

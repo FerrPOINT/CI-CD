@@ -132,6 +132,10 @@ pipeline и публикует результат через native source verif
 
 ## 8. Аутентификация
 
+Ответ Smart HTTP `401` содержит `WWW-Authenticate: Basic realm="Forge Git"`
+для discovery и RPC. Обычный Git-клиент после challenge получает credential
+из своего helper; передавать токен в clone URL не требуется.
+
 Git Smart HTTP различает read и write:
 
 - `git-upload-pack` для repository с `visibility = public` доступен без credential.
@@ -216,3 +220,56 @@ curl -fsS -X DELETE http://127.0.0.1:22801/api/v1/repositories/smoke-repo
 ## Git в Namespace
 
 Git Group, стабильный repository UUID, aliases и archive admission описаны в [Namespace](NAMESPACE.md) и [ADR 0023](adr/0023-namespace-repository-identity.md). Старые bare paths и clone URLs сохраняются; отсутствующее storage требует восстановления исходных данных.
+
+## Внешняя синхронизация
+
+Hosted-репозиторий может иметь одно HTTPS-подключение к GitHub.com или
+разрешённому оператором GitLab. Направления: отключено, внешний → Forge,
+Forge → внешний, обе стороны. Запуск вручную или автоматически; ручная
+кнопка доступна в обоих способах. Новый connection отключён и запускается
+вручную. Общий список — «Синхронизации», контекстный переход — из репозитория.
+
+Передаются все ветки и теги с прежними именами. Удаления не распространяются.
+При расходящейся истории или изменении существующего тега фиксируется
+конфликт. Защищённая ветка Forge требует обычного PR; автоматического PR нет.
+Git LFS, SSH, issues/PR/releases, provider webhooks и создание remote отсутствуют.
+
+Для GitLab используйте read_repository / write_repository по направлению.
+Для GitHub fine-grained PAT выберите нужный репозиторий, Contents: Read для
+входящего обмена, Read and write для исходящего; если передаются workflow-файлы,
+учтите отдельное разрешение Workflows. Classic PAT для private repo требует repo,
+для workflow-файлов — workflow. Токен вводится только в защищённое поле формы.
+Проверка доступа читает refs и делает dry-run для исходящего направления;
+окончательное разрешение push проверяет провайдер при реальной записи.
+
+История показывает снимок подключения, источник запуска и каждый ref.
+«Уточняется результат» означает, что Forge сверяет фактический SHA после
+неподтверждённого эффекта. Архив приостанавливает исполнение, не удаляя историю.
+Остановку подтверждают после завершения процесса и сверки.
+
+Default branch каждого связанного проекта защищена и при пустом списке
+protected branches. Sync учитывает те же ветки, что обычный Git receive;
+входящие изменения этой ветки требуют обычного PR.
+
+См. [ADR-0031](adr/0031-external-repository-synchronization.md).
+
+Права токенов: [GitHub](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens), [GitLab](https://docs.gitlab.com/security/tokens/access_token_scopes/).
+
+Теги на blob/tree передаются, но не запускают CI: у них нет commit для checkout.
+Причина ci_non_commit_tag сохраняется в результате ref; остальные CI-события
+доставляются независимо, с повтором временных ошибок.
+
+Автоматические подключения всех трёх направлений получают сигнал после
+локального push/merge и сверяются каждые 5 минут. Сигналы объединяются в один
+следующий запуск. Занятый Git guard одного репозитория не занимает место
+исполнителя для других репозиториев; постоянный guard по-прежнему берётся
+после namespace admission и наследуется дочерним Git-процессом.
+
+Проверка доступа хранит временные объекты отдельно от запусков, в
+`.forge-sync-checks`. Следующая проверка того же repository UUID убирает
+оставшийся после прерывания scratch только после захвата его Git guard.
+
+Генератор `post-receive` сохраняет допустимую Git кавычку в имени ref через
+JSON-экранирование. Иначе обычный push такой ветки теряет событие CI и ближайший
+сигнал синхронизации. Проверка исполняет настоящий shell hook и разбирает его
+payload; Git/PR acceptance использует ветки с кавычками.

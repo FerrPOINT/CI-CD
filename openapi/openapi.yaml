@@ -440,6 +440,13 @@ paths:
           type:
           - boolean
           - 'null'
+      - name: sync_available
+        in: query
+        required: false
+        schema:
+          type:
+          - boolean
+          - 'null'
       responses:
         '200':
           description: ''
@@ -485,6 +492,13 @@ paths:
           - 'null'
           format: uuid
       - name: managed
+        in: query
+        required: false
+        schema:
+          type:
+          - boolean
+          - 'null'
+      - name: sync_available
         in: query
         required: false
         schema:
@@ -1053,6 +1067,13 @@ paths:
           type:
           - boolean
           - 'null'
+      - name: sync_available
+        in: query
+        required: false
+        schema:
+          type:
+          - boolean
+          - 'null'
       responses:
         '200':
           description: ''
@@ -1135,6 +1156,275 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PushConfig'
+  /api/v1/catalog/repositories/{id}/sync:
+    get:
+      tags:
+      - repository-sync
+      operationId: forge_repository_sync_get
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositorySyncConnection'
+        '403':
+          description: ''
+    put:
+      tags:
+      - repository-sync
+      operationId: forge_repository_sync_save
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RepositorySyncSaveConnection'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositorySyncConnection'
+        '409':
+          description: ''
+  /api/v1/catalog/repositories/{id}/sync/check:
+    post:
+      tags:
+      - repository-sync
+      operationId: forge_repository_sync_check
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RepositorySyncCheckConnection'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositorySyncCheckResult'
+        '503':
+          description: ''
+  /api/v1/catalog/repositories/{id}/sync/runs:
+    get:
+      tags:
+      - repository-sync
+      operationId: forge_repository_sync_runs
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: search
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: provider
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: state
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: group_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunPage'
+    post:
+      tags:
+      - repository-sync
+      operationId: forge_repository_sync_start
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositorySyncSyncRun'
+        '409':
+          description: ''
+        '503':
+          description: ''
+  /api/v1/catalog/repositories/{id}/sync/runs/{run_id}:
+    get:
+      tags:
+      - repository-sync
+      operationId: forge_repository_sync_run
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositorySyncSyncRun'
+        '404':
+          description: ''
+  /api/v1/catalog/repositories/{id}/sync/runs/{run_id}/refs:
+    get:
+      tags:
+      - repository-sync
+      operationId: forge_repository_sync_refs
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: search
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: provider
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: state
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: group_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefPage'
   /api/v1/delivery-configurations:
     get:
       tags:
@@ -1459,6 +1749,13 @@ paths:
           - 'null'
           format: uuid
       - name: managed
+        in: query
+        required: false
+        schema:
+          type:
+          - boolean
+          - 'null'
+      - name: sync_available
         in: query
         required: false
         schema:
@@ -4146,6 +4443,66 @@ paths:
           description: Resource retained by immutable SDLC workspace history
         '503':
           description: ''
+  /api/v1/repository-syncs:
+    get:
+      tags:
+      - repository-sync
+      operationId: forge_repository_sync_list
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type:
+          - integer
+          - 'null'
+          format: int64
+      - name: search
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: provider
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: state
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+      - name: group_id
+        in: query
+        required: false
+        schema:
+          type:
+          - string
+          - 'null'
+          format: uuid
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectionPage'
+        '403':
+          description: ''
   /api/v1/runner/heartbeat:
     post:
       tags:
@@ -6021,6 +6378,19 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/DeliveryConfig'
+        total:
+          type: integer
+          format: int64
+    ConnectionPage:
+      type: object
+      required:
+      - items
+      - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RepositorySyncConnection'
         total:
           type: integer
           format: int64
@@ -7999,6 +8369,19 @@ components:
           type: string
         target:
           type: string
+    RefPage:
+      type: object
+      required:
+      - items
+      - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RepositorySyncRefResult'
+        total:
+          type: integer
+          format: int64
     RefreshRequest:
       type: object
       required:
@@ -8118,6 +8501,216 @@ components:
           type: string
           format: uuid
       additionalProperties: false
+    RepositorySyncCheckConnection:
+      type: object
+      required:
+      - settings
+      properties:
+        settings:
+          $ref: '#/components/schemas/RepositorySyncSettings'
+        token:
+          type:
+          - string
+          - 'null'
+          writeOnly: true
+      additionalProperties: false
+    RepositorySyncCheckResult:
+      type: object
+      required:
+      - read
+      - write
+      - message
+      properties:
+        message:
+          type: string
+        read:
+          type: boolean
+        write:
+          type: string
+    RepositorySyncConnection:
+      type: object
+      required:
+      - repository_id
+      - repository_name
+      - version
+      - settings
+      - has_credential
+      - writable
+      - worker_enabled
+      properties:
+        active_run:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/RepositorySyncSyncRun'
+        has_credential:
+          type: boolean
+        last_run:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/RepositorySyncSyncRun'
+        namespace:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/RepositorySyncNamespace'
+        next_check_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        paused_reason:
+          type:
+          - string
+          - 'null'
+        repository_id:
+          type: string
+          format: uuid
+        repository_name:
+          type: string
+        settings:
+          $ref: '#/components/schemas/RepositorySyncSettings'
+        version:
+          type: integer
+          format: int64
+        worker_enabled:
+          type: boolean
+        writable:
+          type: boolean
+    RepositorySyncDirection:
+      type: string
+      enum:
+      - disabled
+      - pull
+      - push
+      - both
+    RepositorySyncNamespace:
+      type: object
+      required:
+      - registry_instance_id
+      - namespace_id
+      properties:
+        namespace_id:
+          type: string
+          format: uuid
+        registry_instance_id:
+          type: string
+          format: uuid
+    RepositorySyncProvider:
+      type: string
+      enum:
+      - gitlab
+      - github
+    RepositorySyncRefResult:
+      type: object
+      required:
+      - ref_name
+      - direction
+      - state
+      - event_delivered
+      properties:
+        direction:
+          type: string
+        event_delivered:
+          type: boolean
+        new_sha:
+          type:
+          - string
+          - 'null'
+        old_sha:
+          type:
+          - string
+          - 'null'
+        reason:
+          type:
+          - string
+          - 'null'
+        ref_name:
+          type: string
+        state:
+          type: string
+    RepositorySyncSaveConnection:
+      type: object
+      required:
+      - expected_version
+      - settings
+      properties:
+        expected_version:
+          type: integer
+          format: int64
+        settings:
+          $ref: '#/components/schemas/RepositorySyncSettings'
+        token:
+          type:
+          - string
+          - 'null'
+          description: Write-only. Omission retains the existing credential.
+          writeOnly: true
+      additionalProperties: false
+    RepositorySyncSettings:
+      type: object
+      required:
+      - provider
+      - instance_url
+      - repository_path
+      - direction
+      - automatic
+      properties:
+        automatic:
+          type: boolean
+        direction:
+          $ref: '#/components/schemas/RepositorySyncDirection'
+        instance_url:
+          type: string
+        provider:
+          $ref: '#/components/schemas/RepositorySyncProvider'
+        repository_path:
+          type: string
+      additionalProperties: false
+    RepositorySyncSyncRun:
+      type: object
+      required:
+      - id
+      - repository_id
+      - connection_version
+      - settings
+      - source
+      - state
+      - cancel_requested
+      - created_at
+      properties:
+        cancel_requested:
+          type: boolean
+        connection_version:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        finished_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        id:
+          type: string
+          format: uuid
+        message:
+          type:
+          - string
+          - 'null'
+        repository_id:
+          type: string
+          format: uuid
+        settings:
+          $ref: '#/components/schemas/RepositorySyncSettings'
+        source:
+          type: string
+        started_at:
+          type:
+          - string
+          - 'null'
+          format: date-time
+        state:
+          type: string
     RequeuedOutboxDelivery:
       type: object
       required:
@@ -8209,6 +8802,19 @@ components:
           type:
           - string
           - 'null'
+    RunPage:
+      type: object
+      required:
+      - items
+      - total
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/RepositorySyncSyncRun'
+        total:
+          type: integer
+          format: int64
     Runner:
       type: object
       required:

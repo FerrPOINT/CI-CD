@@ -1,0 +1,159 @@
+# Проверка возможностей синхронизации репозиториев
+
+Дата: 2026-10-17. Основная матрица возможностей проверена на настоящих GitHub
+и GitLab. Ниже перечислены фактические результаты и оставшиеся ограничения;
+непроверенные сценарии не считаются пройденными.
+
+Исходный commit: `178efff51a307665309901b700016d2a10385fb2`.
+Base: `2ad0834d06d3aa703fa1791a932bfc76650c8e42`.
+Ниже зафиксирована приёмка исходной feature-ветки. Её immutable code tree
+интегрируется с актуальным main; source gates объединённого кандидата
+и его установка учитываются отдельно.
+Проверки используют immutable Git tree exports, Rust 1.88.0, Node 22.20.0,
+pnpm 10.28.1 и отдельный Base ComposeHelper v2 QA-проект.
+Установленный runtime пока остаётся на исходном commit.
+
+## Найденные и исправленные дефекты
+
+- REV-04: неоднозначный GitLab URL мог проходить allowlist другого хоста.
+  Backslash, whitespace/control и userinfo отклоняются; Git получает canonical URL.
+- REV-01: HTTP middleware преждевременно запрещал sync корректному machine
+  principal. Исключение ограничено repository-scoped sync; scopes и project binding
+  проверяются полным production router, включая revoked/expired/disabled principals.
+- REV-02: история могла оставаться running после terminal статуса заголовка.
+  При завершении выполняется окончательное обновление runs и refs; есть UI regression.
+- REV-03: CORS preflight не разрешал PUT сохранения. Исправлен allowlist методов;
+  чужой origin по-прежнему не получает разрешение.
+- REV-05: два теста каталога миграций ожидали схему без 0093. Обновлены ожидания;
+  выпущенные SQL и исторические checksum fixtures сохранены.
+- Automatic pull не получал локальный сигнал. Сигнал теперь ставит dirty для
+  каждого включённого automatic направления; события объединяются.
+- Два занятых Git guard занимали всю worker capacity и задерживали третий
+  репозиторий. Неблокирующая проверка guard не занимает DB/admission/worker slot;
+  постоянный guard по-прежнему берётся после namespace admission.
+- Scratch проверки доступа не имел durable идентификатора для уборки после crash.
+  Он выделен по repository UUID; следующая проверка убирает только свой scratch
+  под тем же guard. Чужой scratch сохраняется.
+- Обычный Git HTTP клиент не получал challenge при 401 и не использовал
+  credential helper, хотя явный Basic/Bearer работал. Добавлен WWW-Authenticate
+  для discovery и RPC; проверяется реальным Git клиентом.
+- Существующий `post-receive` hook не экранировал кавычку в допустимом имени
+  Git ref. Из-за некорректного JSON терялось событие CI/ближайший sync signal.
+  Добавлено экранирование и тест настоящего shell hook с кавычкой, кириллицей
+  и буквальным `$(id)`; текст ref не исполняется как shell-код.
+
+Дополнительно исправлен Linux fixture существующего runner-теста: root создаётся
+с требуемыми 0700. Производственная проверка permissions не ослаблялась.
+
+## Уже полученные результаты
+
+| Проверка | Результат | Evidence |
+|---|---|---|
+| Frontend tests/lint/build/OpenAPI drift и compatibility | PASS: 237 тестов, 43 файла | `capabilities/fixed-frontend.log` |
+| Rust fmt/clippy workspace/all-targets/integration, workspace tests | PASS: 333 passed, 2 opt-in ignored | `capabilities/verified-backend-gates.log` |
+| Финальный Rust suite после исправления quoted ref | PASS: 334 passed, 2 opt-in ignored | `capabilities/quoted-ref-final-gates.log` |
+| Финальные fmt/clippy, sync PostgreSQL и Git HTTP PostgreSQL | PASS: 13 sync + 1 Git HTTP; все targets/integration, warnings denied | `capabilities/quoted-ref-final-gates.log` |
+| Полный normal PostgreSQL suite | PASS: 111 passed, 11 ignored | `capabilities/verified-backend-gates.log` |
+| Release workspace build и backend OpenAPI dump | PASS; YAML совпадает с исходником | `capabilities/verified-gates-summary.json` |
+| Финальный release после исправления hook | PASS; OpenAPI совпадает побайтно | `capabilities/final-gates-summary.json` |
+| TLS: неизвестный CA, private CA, hostname, expired certificate, redirect canary | PASS, настоящий GitSession | `capabilities/verified-backend-gates.log` |
+| Реальное падение worker после принятого push, живой child, потерянный ACK, offline reconciliation | PASS на GitHub и GitLab | `capabilities/live-*-process.log` |
+| Отключение после принятого push | PASS на обоих; truthful partial/applied | `capabilities/live-*-disable.log` |
+| Падение до отправки push, сверка old SHA и безопасный повтор | PASS на обоих | `capabilities/live-*-before.log` |
+| Отключение до отправки push | PASS на обоих; canceled, 0 внешних эффектов | `capabilities/live-*-cancel.log` |
+| Внешняя ветка изменена конкурентом между планом и push | PASS на обоих; conflict, внешний SHA сохранён | `capabilities/live-*-race.log` |
+| Полный живой matrix: направления, режимы, FF/no-op, annotated/blob tags, удаления, конфликты, Forge protection, CI SHA/dedupe | PASS: GitHub 469,97 с; GitLab 430,93 с | `capabilities/live-*-matrix.log` |
+| Настоящий периодический запуск | PASS: настройка 300 с; очередь через 301,30 / 301,41 с | `capabilities/actual-schedule-timing.json` |
+| Реальная защита ветки GitLab | PASS: отказ push, сохранён старый SHA; временная защита удалена | `capabilities/live-gitlab-matrix.log` |
+| Внешняя защита приватного GitHub repository | LIMIT: provider 403, ограничение тарифа; сценарий не объявляется пройденным | `capabilities/github-protection-limit.json` |
+| Настоящий Git HTTP receive-pack/generated hook и PR merge → auto sync, ветки с кавычками | PASS на обоих, developer login, независимые SHA | `capabilities/live-*-http.log` |
+| GitLab Git-only scopes и отзыв токенов | PASS; временные токены отозваны | `capabilities/live-gitlab-scopes.log` |
+| Реальный UI: создание обоих подключений, check, manual при automatic, refs/history, CAS draft | PASS на установленном Forge; найден REV-02 | `capabilities/ui-*.jpg` |
+| UI: 375/768/1026/1440, Tab, стрелки вкладок, URL/Back/Forward, provider filter | PASS; форма без document overflow, таблица имеет собственный horizontal scroll | `capabilities/ui-responsive.json`, `capabilities/ui-settings-*.jpg` |
+| Credentials: исходники, все Git objects, evidence/архивы и логи принятого runtime | PASS: 0 совпадений обоих настоящих provider tokens | `capabilities/credential-audit-*.json`, `capabilities/runtime-credential-log-audit.json` |
+| Cleanup временного QA | PASS: journal v2 cleaned, 0 containers/volumes/networks, exports удалены, shared Cargo сохранён | `capabilities/cleanup-final.json` |
+
+Пропущенные opt-in тесты normal suite запускаются отдельно с реальными
+предусловиями. Их число в normal suite не является числом непроверенных функций.
+Исходные неудачные запуски и исправленные fixture assumptions не удаляются.
+
+## Ограничения и непроверенные сценарии
+
+- GitHub read-only credential: ожидается отдельный fine-grained Contents: Read
+  токен для QA-репозитория; текущий credential имеет запись.
+- Защита приватной внешней ветки GitHub: создание правила запрещено тарифом
+  аккаунта (подтверждённый ответ provider 403). Настройки доступа репозитория
+  и тариф не менялись. Защита Forge и настоящий отказ защищённой ветки GitLab проверены.
+- Исправленный кандидат не установлен в runtime. Повтор browser-проверки
+  финального обновления history/refs на этой сборке относится к этапу поставки;
+  компонентный regression и production build нового frontend прошли.
+- Отдельные расширенные клетки плана не выполнялись: аварийный restart самой
+  PostgreSQL, заполнение диска, физическое убийство API во время check,
+  полностью пустой внешний hosted repository, отдельный browser login viewer.
+  Это не PASS; соответствующие правила частично покрыты domain/PG/component
+  tests и восстановлением scratch, что не заменяет названные отдельные опыты.
+
+Первый GitLab compound matrix прошёл за 418 секунд. Последующие попытки обоих
+providers завершились по прежнему общему test timeout после materialization
+автоматического запуска; PASS им не присваивается. Queue latency и завершение
+Git теперь проверяются раздельно. Диагностика исходных попыток сохранена в
+`capabilities/automatic-timeout-*.txt` и `capabilities/qa-db-waits.txt`.
+
+Предыдущие полные backend gates выполнены на tree
+`6adab6188b11eb7c2c879dc6171accce8aff4310`; frontend на tree
+`a07e668c7d01e340da8917bca8609fde55cc6cc4`, после него frontend не менялся.
+SHA-256 release-архива предыдущей стадии:
+`cf9a870c07072c8e28e1a4c28aaab0f6ea9b06bf887f1f5b0c8504d4bf78c100`.
+Архив содержит бинарники и migrations, отдельно от evidence и runtime backup.
+Frontend archive SHA-256:
+`20cb60e5de47a71da919909f491f27605a7793706f055e42a6fdf0c3cb1f5016`.
+В нём отсутствует `sync-preview.html`.
+Последние opt-in тесты с developer Git/PR ingress скомпилированы и прошли
+fmt/clippy на tree `9b2227d36a7e65e67d413165fd71778f08b339c1`.
+
+Окончательный проверенный code tree:
+`e953de73603e802a6fee5188a25e2412809938a8`.
+На нём повторены workspace tests, sync/Git HTTP PostgreSQL tests,
+Git/PR ingress с кавычками и все восемь process fault/cancel опытов.
+Полный normal PostgreSQL suite (111 passed) относится к предыдущему tree
+6adab6; после последнего изменения shell hook повторены затронутые PG-сценарии.
+Frontend после зелёного a07e66 не менялся.
+
+Финальный backend archive SHA-256:
+`4d82252fbefb2a3fa682ecd185666eb29671dce48a49dc4d2b2281eba242e6a1`.
+Архив точного проверенного source tree сохранён отдельно, SHA-256:
+`59d6f630bc3904f535ecb3a51cb41c8484b848b16fee53519cd4dbf829d9c961`.
+Бинарники, sources и безопасные evidence сохранены; target и synthetic DB удалены.
+
+Один предыдущий полный gate встретил flaky deadline assertion существующего
+CLI HTTP-теста под нагрузкой. Отдельный повтор и последующий полный workspace
+suite прошли; assertion не ослаблялся. Один запуск новых opt-in тестов не дошёл
+до компиляции из-за неверного пути QA-скрипта к clippy/rustfmt; путь исправлен,
+неудачный лог сохранён. Это не продуктовые PASS.
+
+Первый receive-pack opt-in использовал service account и встретил существующее
+ограничение Git Smart HTTP этой ветки. Sync API проверяется этим principal
+отдельно и успешно; обычный Git/PR сценарий повторяется с developer login.
+Принятие SAT в Git — часть пересекающихся изменений Main, а не подтверждённая
+возможность установленного commit 178efff.
+
+Во время части запусков Docker задерживал создание/завершение контейнеров;
+в гостевой системе наблюдался высокий I/O pressure при достаточной свободной
+памяти и более 30 ГиБ свободного места на хосте. Postgres durability не отключалась,
+Docker/WSL не перезапускались; чужие ресурсы не менялись.
+
+Предсуществующие main/refs внешних репозиториев сохраняются. Все новые изменения
+используют собственные `qa/<UUID>/...` refs. Два собственных runtime подключения
+отключены, active run отсутствует; настройки и история сохранены.
+Тестовые refs выделенных внешних QA-репозиториев оставлены для разбора результатов;
+их точный перечень находится в `capabilities/owned-ref-prefixes.json`.
+Credentials не входят в Git, URL, process argv, логи и build contexts.
+
+Общий Docker audit имеет exit 1 из-за трёх чужих ресурсов: одного sdlc1 agent
+runtime и двух ранее завершённых OCI transport контейнеров на sdlc2-runner.
+Собственных нарушений нет. Чужие ресурсы, runtime volumes, backups и rollback
+images не удалялись. Сохраняется journal v2 собственного очищенного проекта.
+
+Отдельно остаётся интеграция с изменившимся Main: пересекающиеся Git/auth/PR
+правки и коллизия номера ADR требуют проверки после объединения. Текущий
+результат не является утверждением о готовности ещё не собранного merge commit.
