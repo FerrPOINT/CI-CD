@@ -1811,7 +1811,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PushRequest'
+              $ref: '#/components/schemas/GitPushEvent'
         required: true
       responses:
         '200':
@@ -1819,6 +1819,36 @@ paths:
         '400':
           description: ''
         '401':
+          description: ''
+  /api/v1/internal/task-git-check:
+    post:
+      tags:
+      - git
+      operationId: forge_task_git_check
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CandidateCheck'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CandidateCheckReadback'
+        '400':
+          description: ''
+        '401':
+          description: ''
+        '403':
+          description: ''
+        '409':
+          description: ''
+        '422':
+          description: ''
+        '503':
           description: ''
   /api/v1/jobs/{job_id}/artifacts:
     get:
@@ -2409,20 +2439,49 @@ paths:
           - 'null'
           format: int32
           minimum: 0
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VerifiedRepository'
+        '403':
+          description: Foreign namespace
+  /api/v1/namespace-repositories/{id}/source:
+    get:
+      tags:
+      - namespaces
+      operationId: forge_namespace_repository_source
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: registry_instance_id
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: namespace_id
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
       - name: base_ref
         in: query
-        required: false
+        required: true
         schema:
-          type:
-          - string
-          - 'null'
+          type: string
       - name: base_commit
         in: query
-        required: false
+        required: true
         schema:
-          type:
-          - string
-          - 'null'
+          type: string
       - name: delivery_configuration_name
         in: query
         required: false
@@ -2436,8 +2495,10 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RepositoryReadback'
+                $ref: '#/components/schemas/VerifiedSource'
         '400':
+          description: ''
+        '401':
           description: ''
         '403':
           description: ''
@@ -6256,6 +6317,16 @@ components:
         task_candidate:
           $ref: '#/components/schemas/GitContext'
       additionalProperties: false
+    CandidateCheckReadback:
+      type: object
+      required:
+      - verified
+      - triggered
+      properties:
+        triggered:
+          type: boolean
+        verified:
+          type: boolean
     CandidateEvidenceReadback:
       type: object
       description: Fresh local observation tied to an immutable blocked operation, never a delivery receipt.
@@ -8418,10 +8489,6 @@ components:
           - 'null'
           format: uuid
       additionalProperties: false
-    PushRequest:
-      oneOf:
-      - $ref: '#/components/schemas/CandidateCheck'
-      - $ref: '#/components/schemas/GitPushEvent'
     Readiness:
       type: object
       required:
@@ -8588,10 +8655,6 @@ components:
           format: uuid
         status:
           type: string
-    RepositoryReadback:
-      oneOf:
-      - $ref: '#/components/schemas/VerifiedRepository'
-      - $ref: '#/components/schemas/VerifiedSource'
     RepositoryRef:
       type: object
       required:

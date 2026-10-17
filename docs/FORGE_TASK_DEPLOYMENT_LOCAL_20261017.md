@@ -1,6 +1,27 @@
 # Task Workspace И Candidate Git: Локальные Проверки
 
-## Combined Main: Тринадцать Целевых Случаев
+## Explicit Routes: Проверенный Source 828cf
+
+`828cf811a186109e4d5a4e2d64b7fa26538e4c3a`, SDK2ad, прошёл один новый целевой
+локальный QA: fmt, locked/offline metadata, typed lib/integration compilation,
+37 lib cases и5 PostgreSQL cases, strict affected Clippy и Rust OpenAPI export.
+Итого42/42 PASS без ignored/skipped. Это не полный workspace/release/native gate.
+
+Включены точные исправленные populated-history и Task Git/RepoSync сценарии,
+обе native hook проверки через новый callback, defensive legacy payload rejection,
+registered-reader права, source query/wire и namespace/cancellation interleavings.
+Новое чтение source находится на `GET /namespace-repositories/{id}/source`, а task
+callback на `POST /internal/task-git-check`; legacy object contracts сохранены.
+Generated-client parity, TypeScript и неизменённый Base compatibility checker
+проходят после фактического Rust export. Схема не редактировалась вручную.
+
+Новый receipt: runner_exit0, cleanup_verified=true, journal_phase=cleaned;
+source inputs также удалены. SHA256:
+`5a8b77cbe46eb351a46ad10cb2a46d1cc792bb044e8912819181b933de73b0bc`.
+Исходный failed e564 receipt ниже остаётся неизменным. Новый результат не
+переписывает его и не доказывает установленный Auth/Forge или выдачу credentials.
+
+## Исторический Combined Main: Тринадцать Случаев
 
 Exact `e5641b40f580700a149b7909fa7fafb80ba0a88f` включает опубликованный
 RepoSync main с неизменной исторической0093 и SDK2ad. В одном локальном QA
@@ -14,16 +35,18 @@ writer; новый Task Git fixture не публиковал canonical group/sl
 сохраняет проверки истории, refs, locks и timeouts, добавляя точный historical
 INSERT, discovery404/200 assertions и безопасную диагностику раннего Git exit.
 Отдельно исправлены семь фактических strict-Clippy diagnostics без allow-атрибутов.
-Исправленный исходник ещё не имеет нового Rust/PG/Clippy PASS.
+Этот старый прогон не квалифицирует последующие исправления; их новый результат
+приведён выше.
 
 Исходный result остаётся runner_exit1, cleanup_verified=true,
 journal_phase=cleaned. SHA256:
 `117f53d08090f782a6709927e28ae9327cdb357438144cbe70957a5dfa659896`.
 Его логи, receipts и исходные отказы не переписаны.
 
-Generated OpenAPI/client parity и TypeScript проходят. Base API compatibility
-отклоняет object-to-union изменения request `/internal/git-push` и response
-`/namespace-repositories/{id}`; исправление legacy-контрактов остаётся gate.
+На том checkpoint generated-client parity и TypeScript проходили, а Base API
+compatibility отклонял object-to-union изменения request `/internal/git-push` и
+response `/namespace-repositories/{id}`. Новый проверенный source выше закрывает
+этот блокер явными маршрутами.
 Ни compatibility waiver, ни фиктивная схема вместо настоящего Rust export не
 используются. Последующие API-правки требуют собственного актуального codegen.
 
@@ -64,8 +87,9 @@ HTTP verifier; PG admission использует настоящий isolated Pos
 
 ## До Выпуска
 
-Остаются affected Clippy, regenerated OpenAPI/client parity, populated migration
-history case, image/Compose и настоящий scoped producer/deployment сценарий.
+Остаются полный repository release gate, image/Compose и настоящий scoped
+producer/deployment сценарий. Целевые Clippy/codegen/compatibility и populated
+history закрыты новым828cf QA, не старым checkpoint9b.
 Единственная новая миграция0094 не меняет свой SQL при перенумерации. Уже
 применённая repository-sync0093 теперь опубликована в main и совпадает с прежним
 foundation по точному Git blob/checksum. Combined-history upgrade proof остаётся

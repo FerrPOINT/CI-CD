@@ -2,16 +2,15 @@
 
 ## Task Workspace И Git: 17 октября 2026
 
-После объединения с main/RepoSync проверен exact sourcee564/SDK2ad: typed
-compilation, fmt/metadata, восемь auth/readback unit-тестов и три PostgreSQL
-namespace/cancellation сценария проходят. Два PG-теста и strict Clippy завершились
-отказом; receipt сохранён, QA очищен. Исправления исторического seed, canonical
-Git alias и семи Clippy diagnostics опубликованы, но ещё требуют целевой проверки.
-OpenAPI получена из Rust; generated-client parity и TypeScript проходят.
-Compatibility gate блокирует два новых union-контракта старых endpoints; обхода
-проверки нет. PR122 остаётся Draft, runtime этого пакета не установлен.
+Exact source828cf/SDK2ad прошёл typed compilation, fmt/metadata, все42 целевых
+случая и strict affected Clippy. Включены исправленные populated-history/Task Git
+PG fixtures, новые маршруты, native hooks, auth/namespace и cancellation guards.
+Rust OpenAPI, generated-client parity, TypeScript и неизменённый Base compatibility
+gate проходят. Старые контракты сохранены отдельными source/task-callback routes;
+waiver не применялся. QA очищен, receipt runner_exit0. Image/Compose и live rollout
+остаются отдельными gates; PR122 ещё Draft и этот пакет не установлен.
 
-Следующий абзац сохраняет предыдущий checkpoint9b, не квалификацию нового HEAD.
+Следующий абзац сохраняет предыдущий checkpoint9b, не новый aggregate release gate.
 
 PR122 source9b5d/SDK2ad прошёл typed server/integration/CLI compilation и65 выбранных
 deployment/Git/PG случаев:64 в основном прогоне и один ordinary-task PG follow-up

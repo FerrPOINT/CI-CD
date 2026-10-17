@@ -728,6 +728,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/internal/task-git-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["forge_task_git_check"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/jobs/{job_id}/artifacts": {
         parameters: {
             query?: never;
@@ -981,6 +997,22 @@ export interface paths {
             cookie?: never;
         };
         get: operations["forge_verify_repository_ref"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/namespace-repositories/{id}/source": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_namespace_repository_source"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2524,6 +2556,10 @@ export interface components {
         CandidateCheck: {
             task_candidate: components["schemas"]["GitContext"];
         };
+        CandidateCheckReadback: {
+            triggered: boolean;
+            verified: boolean;
+        };
         /** @description Fresh local observation tied to an immutable blocked operation, never a delivery receipt. */
         CandidateEvidenceReadback: {
             acceptanceVerified: boolean;
@@ -3382,7 +3418,6 @@ export interface components {
             /** Format: uuid */
             configuration_id?: string | null;
         };
-        PushRequest: components["schemas"]["CandidateCheck"] | components["schemas"]["GitPushEvent"];
         Readiness: {
             database: string;
             migrations: components["schemas"]["MigrationReadiness"];
@@ -3451,7 +3486,6 @@ export interface components {
             pipeline_id: string;
             status: string;
         };
-        RepositoryReadback: components["schemas"]["VerifiedRepository"] | components["schemas"]["VerifiedSource"];
         RepositoryRef: {
             /** Format: uuid */
             forge_instance_id: string;
@@ -5781,7 +5815,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["PushRequest"];
+                "application/json": components["schemas"]["GitPushEvent"];
             };
         };
         responses: {
@@ -5799,6 +5833,65 @@ export interface operations {
                 content?: never;
             };
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    forge_task_git_check: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CandidateCheck"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CandidateCheckReadback"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -6341,8 +6434,39 @@ export interface operations {
                 registry_instance_id: string;
                 namespace_id: string;
                 offset?: number | null;
-                base_ref?: string | null;
-                base_commit?: string | null;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerifiedRepository"];
+                };
+            };
+            /** @description Foreign namespace */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    forge_namespace_repository_source: {
+        parameters: {
+            query: {
+                registry_instance_id: string;
+                namespace_id: string;
+                base_ref: string;
+                base_commit: string;
                 delivery_configuration_name?: string | null;
             };
             header?: never;
@@ -6358,10 +6482,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RepositoryReadback"];
+                    "application/json": components["schemas"]["VerifiedSource"];
                 };
             };
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
                 headers: {
                     [name: string]: unknown;
                 };
