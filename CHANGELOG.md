@@ -15,6 +15,10 @@
 
 ## [Unreleased]
 
+- Task pipeline получает source-only opt-in для ограниченного delegated credential:
+  отдельная зашифрованная async custody, live reauthorization и сохранение legacy SAT.
+  Git write и обновление child не включены; Rust/PG и live-приёмка остаются открытыми.
+
 - Pipeline распознаёт закрытый `workspace_deploy` и явно отклоняет его до
   подключения доверенного executor. Добавлена pure-проверка sealed Compose recipe;
   она не запускает контейнеры и не выдаёт deployment acceptance.
