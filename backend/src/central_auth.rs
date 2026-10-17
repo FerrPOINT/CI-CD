@@ -50,7 +50,7 @@ pub(crate) async fn try_central_child(
         return Err(unavailable());
     }
     url.set_path("/auth/tokens/introspect");
-    url.set_query(None);
+    url.set_query(Some("include_lifetime=true"));
     url.set_fragment(None);
     let timeout = std::env::var("CICD_AUTH__CENTRAL_TIMEOUT_SECS")
         .ok()
@@ -278,45 +278,120 @@ mod child_expiry_tests {
 
     #[tokio::test]
     async fn child_introspection_http_requires_authoritative_expiry_on_same_identity_response() {
-        use axum::{Json, Router, routing::get};
-        for with_expiry in [true, false] {
-            let observed = chrono::Utc::now();
-            let subject = Uuid::new_v4().to_string();
-            let mut wire = json!({"sub":subject,"email":"fixture@example.invalid",
-                "scopes":["ci-cd:read"],"display_name":"Fixture",
-                "expires_at":observed+chrono::Duration::seconds(30),"observed_at":observed});
-            if !with_expiry {
-                wire.as_object_mut().unwrap().remove("expires_at");
-                wire.as_object_mut().unwrap().remove("observed_at");
+        use axum::{Json, Router, http::HeaderMap, http::Uri, routing::get};
+        use std::sync::{Arc, atomic::AtomicUsize, atomic::Ordering};
+
+        const CHILD_PROCESS: &str = "FORGE_CHILD_INTROSPECTION_TEST_PROCESS";
+        const SUBJECT: &str = "00000000-0000-0000-0000-000000000001";
+        if std::env::var_os(CHILD_PROCESS).is_some() {
+            let token = "sdlc_pat_fixture_valid";
+            let legacy = try_central(token).await.unwrap().unwrap();
+            assert_eq!(legacy.user_id, SUBJECT);
+            assert_eq!(legacy.email.as_deref(), Some("fixture@example.invalid"));
+            assert_eq!(legacy.scopes.len(), 1);
+            assert!(legacy.scopes.contains("ci-cd:read"));
+            let (identity, until) = try_central_child(token).await.unwrap().unwrap();
+            assert_eq!(identity.user_id, legacy.user_id);
+            assert_eq!(identity.email, legacy.email);
+            assert_eq!(identity.scopes, legacy.scopes);
+            assert_eq!(identity.token, token);
+            assert!(until > Instant::now());
+            for case in [
+                "missing",
+                "no_expiry",
+                "no_observed",
+                "expired",
+                "null",
+                "malformed",
+            ] {
+                assert!(
+                    try_central_child(&format!("sdlc_pat_fixture_{case}"))
+                        .await
+                        .is_err(),
+                    "{case}"
+                );
             }
-            let router = Router::new().route(
+            return;
+        }
+
+        let legacy_calls = Arc::new(AtomicUsize::new(0));
+        let child_calls = Arc::new(AtomicUsize::new(0));
+        let legacy_count = legacy_calls.clone();
+        let child_count = child_calls.clone();
+        let router = Router::new()
+            .route("/oidc/jwks", get(|| async { Json(json!({"keys":[]})) }))
+            .route(
                 "/auth/tokens/introspect",
-                get(move || {
-                    let wire = wire.clone();
-                    async move { Json(wire) }
+                get(move |uri: Uri, headers: HeaderMap| {
+                    let legacy_count = legacy_count.clone();
+                    let child_count = child_count.clone();
+                    async move {
+                        let mut wire = json!({"sub":SUBJECT,"email":"fixture@example.invalid",
+                            "scopes":["ci-cd:read"],"display_name":"Fixture"});
+                        if uri.query().is_none() {
+                            legacy_count.fetch_add(1, Ordering::SeqCst);
+                            return Json(wire);
+                        }
+                        assert_eq!(uri.query(), Some("include_lifetime=true"));
+                        child_count.fetch_add(1, Ordering::SeqCst);
+                        let observed = chrono::Utc::now();
+                        wire["observed_at"] = json!(observed);
+                        wire["expires_at"] = json!(observed + chrono::Duration::seconds(30));
+                        match headers.get("authorization").unwrap().to_str().unwrap() {
+                            "Bearer sdlc_pat_fixture_missing" => {
+                                wire.as_object_mut().unwrap().remove("expires_at");
+                                wire.as_object_mut().unwrap().remove("observed_at");
+                            }
+                            "Bearer sdlc_pat_fixture_no_expiry" => {
+                                wire.as_object_mut().unwrap().remove("expires_at");
+                            }
+                            "Bearer sdlc_pat_fixture_no_observed" => {
+                                wire.as_object_mut().unwrap().remove("observed_at");
+                            }
+                            "Bearer sdlc_pat_fixture_expired" => {
+                                wire["expires_at"] = json!(observed)
+                            }
+                            "Bearer sdlc_pat_fixture_null" => {
+                                wire["observed_at"] = serde_json::Value::Null
+                            }
+                            "Bearer sdlc_pat_fixture_malformed" => {
+                                wire["expires_at"] = json!("not-a-clock")
+                            }
+                            "Bearer sdlc_pat_fixture_valid" => (),
+                            _ => panic!("unexpected fixture bearer"),
+                        }
+                        Json(wire)
+                    }
                 }),
             );
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let url = format!(
-                "http://{}/auth/tokens/introspect",
-                listener.local_addr().unwrap()
-            );
-            let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(5))
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .unwrap();
-            let result = introspect_child(&client, url.parse().unwrap(), "fixture-child").await;
-            server.abort();
-            if with_expiry {
-                let (identity, until) = result.unwrap().unwrap();
-                assert_eq!(identity.user_id, subject);
-                assert_eq!(identity.token, "fixture-child");
-                assert!(until > Instant::now());
-            } else {
-                assert!(result.is_err());
-            }
-        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let uri = format!(
+            "http://{}/oidc/jwks?discard=this",
+            listener.local_addr().unwrap()
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        // Isolate the SDK's env-configured OnceCell without mutating the test process env.
+        let mut command = tokio::process::Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", "central_auth::child_expiry_tests::child_introspection_http_requires_authoritative_expiry_on_same_identity_response", "--nocapture"])
+            .env(CHILD_PROCESS, "1")
+            .env("CICD_AUTH__CENTRAL_JWKS_URI", uri)
+            .env("CICD_AUTH__CENTRAL_TIMEOUT_SECS", "5")
+            .env("NO_PROXY", "127.0.0.1,localhost")
+            .env("no_proxy", "127.0.0.1,localhost")
+            .kill_on_drop(true);
+        let output = tokio::time::timeout(Duration::from_secs(30), command.output()).await;
+        server.abort();
+        let output = output
+            .expect("isolated introspection test timed out")
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(legacy_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(child_calls.load(Ordering::SeqCst), 7);
     }
 }

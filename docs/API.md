@@ -20,8 +20,9 @@ task-trigger/task-workspace readback. Legacy SAT и default auth не меняю
 Git/delivery/admin права child закрыты. Exact scope/wire и private async custody:
 [delegated task credential](FORGE_DELEGATED_CREDENTIAL_CONTRACT.md).
 Async effect permit ограничен минимумом authoritative child expiry из additive
-Base introspection metadata и current Tracker lease; отсутствие metadata закрывает
-delegated effects без изменения SDK/SAT или продления исходного child.
+Base introspection metadata (только `include_lifetime=true`) и current Tracker
+lease; отсутствие metadata закрывает delegated effects без изменения SDK/SAT
+или продления исходного child.
 Rust/PG qualification и installation этого slice не заявлены.
 
 Опциональная source-проверка на прежнем registered repository GET сохраняет

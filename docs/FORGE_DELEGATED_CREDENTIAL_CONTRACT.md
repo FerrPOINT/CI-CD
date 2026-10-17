@@ -82,8 +82,12 @@ deny/hold; cached grant/server token не подставляется.
 
 ### Lifetime: явная граница
 
-Delegated effect требует additive `expires_at` и `observed_at` из существующего
-Base `/auth/tokens/introspect`. Последнее поле — свежие PostgreSQL-часы issuer.
+Delegated effect запрашивает постоянный opt-in
+`GET /auth/tokens/introspect?include_lifetime=true` и требует `expires_at` и
+`observed_at` в том же identity response. Последнее поле — свежие
+PostgreSQL-часы issuer.
+Default introspection без query сохраняет четыре legacy поля; обычный Forge
+`try_central` через pinned SDK не запрашивает lifetime и не меняется.
 Pinned SDK не меняется: metadata читает existing Forge central-auth adapter;
 старый Base без этих полей закрывает delegated effect, а не выдаёт бесконечный
 permit. Legacy SAT/human authentication остаются прежними.
