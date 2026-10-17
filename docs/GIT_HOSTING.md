@@ -138,18 +138,24 @@ Git Smart HTTP различает read и write:
 Связь hosted repository → project проверяется через `repository_catalog.id`,
 `storage_name` и `projects.repository_id`, не через URL tail.
 
-Smart HTTP receive для project-bound SAT использует native `pre-receive` до изменения refs: прямые
-создание/update/delete default branch или точного имени из `protected_branches`
-любой связанной CI-конфигурации запрещают весь SAT push. Human/legacy receive
-сохраняет прежние ACL, initial push и effective custom hooks без нового guard.
-Различие определяется только серверным authenticated principal, не параметром
-запроса. SAT task branches продолжают работать по project binding и Git scopes.
+Smart HTTP receive использует native `pre-receive` до изменения refs: прямые
+update/delete default branch или точного имени из `protected_branches`
+любой связанной CI-конфигурации запрещают весь push. Изменение этих branches
+проходит через существующий PR merge gate. Только admin либо существующий
+операторский `CICD_GIT_TOKEN` может впервые создать один default ref в
+репозитории без любых refs, с нулевым old OID. Service account, developer,
+read-only и foreign-project credentials не получают bootstrap. Mixed push,
+создание другого protected ref, повторный update и delete запрещены и оператору.
+Custom hooks могут отказать первичной публикации. Task branches продолжают
+работать по прежним ACL/scopes.
 Новый task-bound credential не выдаётся, `git:write` остаётся repository-wide.
 
-SAT guard создаётся внутри bare repository на его Git volume, не в `/tmp`.
+Guard создаётся внутри bare repository на его Git volume, не в `/tmp`.
 Временный private `core.hooksPath` делегирует executable custom hooks исходного
 effective hook directory с прежними argv/stdin. Repo hooks и Git config не
-перезаписываются. При известном завершении Git удаляется только собственный
+перезаписываются. Namespace write lease получается до чтения policy и
+создания hook files и сохраняется до завершения native Git. При известном
+завершении Git удаляется только собственный
 guard directory; при неизвестном writer outcome он сохраняется. Подробности:
 [ADR-0028](adr/0028-git-sat-native-receive-policy.md).
 

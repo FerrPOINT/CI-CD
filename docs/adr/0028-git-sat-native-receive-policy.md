@@ -24,26 +24,33 @@ wire pkt-lines и pack не разбираются приложением. Лю�
 Per-invocation private hook directory делегирует executable hooks исходного
 effective `core.hooksPath`; guard предшествует custom pre-receive, которому
 передаются исходные stdin/argv. Остальные hooks также сохраняют stdin/argv.
-Git config и оригинальные hooks не модифицируются. Owner waiter удерживает
-namespace admission lease и hook files до завершения native Git независимо
+Git config и оригинальные hooks не модифицируются. Owner waiter получает
+namespace admission lease до чтения branch policy и создания hook files,
+удерживая её до завершения native Git независимо
 от HTTP cancellation. Известный terminal outcome допускает scoped cleanup;
 unknown writer outcome сохраняет files, без нового recovery controller.
 
 ## Границы и проверки
 
-Прямое создание/update/delete configured default/protected branch запрещено
-для project-bound SAT. Human/legacy receive сохраняет исходные ACL, initial push
-и custom hooks без нового guard; тип principal вычисляет только сервер после
-identity/project/scope checks. PR merge использует прежний gate. Непривязанный
+Прямое update/delete configured default/protected branch запрещено
+для всех Smart HTTP writers; PR merge использует прежний gate. Первичная
+публикация default branch в репозиторий без любых refs разрешена только
+существующему admin или операторскому `CICD_GIT_TOKEN`, одним ref с нулевым
+old OID. Git атомарно подтверждает отсутствие прежнего ref; следующий push
+снова проходит обычный запрет. Service account, developer, read-only либо
+foreign-project token не получают bootstrap. Custom hooks могут отказать
+и при bootstrap. Без этого исключения связанный пустой репозиторий нельзя
+инициализировать: прежний PR merge требует существующий target branch.
+Непривязанный
 bare repository не приобретает выдуманную CI branch policy. Политика фиксируется
 на начале receive, не является новой транзакцией с последующими config edits.
 Git scopes repository-wide, не task-branch credential или Tracker admission.
 Guard directory находится внутри bare repository, не на потенциально noexec `/tmp`.
 
-Добавлены четыре native Git unit regressions для repository-local placement,
-protected/default refs, all-or-none denial, task branch и custom hooks;
-один ignored real-PG/HTTP/Git aggregate для
-correct/foreign/unbound SAT, read-only/API-only/disabled credentials и ref outcomes.
-Aggregate также проверяет human initial/default push и сохранение viewer deny.
-Heavy Rust/PG execution выполняется отдельно после Main admission; source и
-hook-script checks не объявляют installed qualification.
+Добавлены шесть native Git unit regressions для repository-local placement,
+protected/default refs, all-or-none
+denial, task branch, custom hooks и ограниченного bootstrap. Два real-PG теста
+входят в обычный integration gate: HTTP/Git проверяет SAT/PAT scope, bootstrap
+и реальные refs; проверка advisory lock удерживает policy snapshot и доказывает,
+что подготовка происходит под namespace write lease. Source и hook-script
+checks не объявляют installed qualification.

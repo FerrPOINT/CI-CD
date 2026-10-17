@@ -138,11 +138,6 @@ enum GitOperation {
     Write,
 }
 
-enum GitPrincipal {
-    HumanOrLegacy,
-    ProjectServiceAccount,
-}
-
 fn post_receive_hook(name: &str, internal_token: Option<&str>) -> String {
     // A blank rendered line under a backslash continuation used to truncate
     // the curl command before `-d`: pushes silently failed with HTTP 400 on
@@ -317,12 +312,13 @@ pub async fn delete_repository_core(
 /// `CICD_GIT_TOKEN` is still accepted as an operator bypass; otherwise, when
 /// `CICD_AUTH_SECRET` is configured, Git accepts Bearer/JWT/PAT credentials
 /// from an Authorization header or Basic auth password and checks project role.
+/// The returned flag grants only initial empty-repository bootstrap to an admin/operator.
 async fn check_repo_access(
     state: &std::sync::Arc<AppState>,
     repo: &str,
     headers: &HeaderMap,
     operation: GitOperation,
-) -> Result<GitPrincipal, ApiError> {
+) -> Result<bool, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     let name = crate::repository_catalog::resolve_storage(pool, repo).await?;
     if operation == GitOperation::Write {
@@ -336,12 +332,12 @@ async fn check_repo_access(
             .map_err(ApiError::internal)?;
 
     if operation == GitOperation::Read && visibility.as_deref() == Some("public") {
-        return Ok(GitPrincipal::HumanOrLegacy);
+        return Ok(false);
     }
 
     if legacy_git_token_matches(&state.git, headers)? {
         return if visibility.is_some() {
-            Ok(GitPrincipal::HumanOrLegacy)
+            Ok(true)
         } else {
             Err(ApiError::not_found())
         };
@@ -351,7 +347,7 @@ async fn check_repo_access(
         if configured_git_token(&state.git).is_none() && visibility.is_none() {
             return Err(ApiError::not_found());
         }
-        return check_git_auth(&state.git, headers).map(|()| GitPrincipal::HumanOrLegacy);
+        return check_git_auth(&state.git, headers).map(|()| false);
     };
     let token = bearer_or_basic_password(headers)?.ok_or_else(ApiError::unauthorized)?;
     let claims = crate::api::identity_for_bearer_token(pool, auth_secret, token.trim()).await?;
@@ -374,7 +370,7 @@ async fn check_repo_access(
         return match claims.token_project_id {
             Some(project_id) => git_repository_linked_to_project(pool, &name, project_id)
                 .await
-                .map(|()| GitPrincipal::ProjectServiceAccount),
+                .map(|()| false),
             None => Err(ApiError::forbidden()),
         };
     }
@@ -383,20 +379,20 @@ async fn check_repo_access(
         && crate::repository_catalog::shared_human_repository(pool, &name, claims.token_project_id)
             .await?
     {
-        return Ok(GitPrincipal::HumanOrLegacy);
+        return Ok(global_role == crate::authz::Role::Admin);
     }
     if global_role == crate::authz::Role::Admin {
         return match claims.token_project_id {
             Some(project_id) => git_repository_linked_to_project(pool, &name, project_id)
                 .await
-                .map(|()| GitPrincipal::HumanOrLegacy),
-            None => Ok(GitPrincipal::HumanOrLegacy),
+                .map(|()| true),
+            None => Ok(true),
         };
     }
 
     if git_project_access_allows(pool, &name, claims.sub, min_role, claims.token_project_id).await?
     {
-        Ok(GitPrincipal::HumanOrLegacy)
+        Ok(false)
     } else {
         Err(ApiError::forbidden())
     }
@@ -605,23 +601,21 @@ async fn run_git_service(
     path: &Path,
     service: &str, // "upload-pack" | "receive-pack"
     body: Bytes,
-    hooks: Option<receive_hooks::ReceiveHooks>,
     storage: Option<String>,
+    allow_bootstrap: bool,
 ) -> Result<Vec<u8>, ApiError> {
     // The owner waiter retains the guard until native Git exits, even if HTTP is cancelled.
     let path = path.to_owned();
     let service = service.to_owned();
     tokio::spawn(async move {
-        let _namespace_lease = if let Some(storage) = storage {
-            match crate::repository_catalog::write_lease(&state, &storage).await {
-                Ok(lease) => Some(lease),
-                Err(error) => {
-                    if let Some(hooks) = hooks {
-                        hooks.cleanup();
-                    }
-                    return Err(error);
-                }
-            }
+        let _namespace_lease = if let Some(storage) = &storage {
+            Some(crate::repository_catalog::write_lease(&state, storage).await?)
+        } else {
+            None
+        };
+        let hooks = if storage.is_some() {
+            let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+            Some(receive_hooks::ReceiveHooks::prepare(pool, &path, allow_bootstrap).await?)
         } else {
             None
         };
@@ -715,9 +709,9 @@ pub async fn git_service_endpoint(
         "receive-pack" => (service, GitOperation::Write),
         _ => return ApiError::bad_request("unsupported git service").into_response(),
     };
-    let principal = match check_repo_access(&state, &repo, &headers, operation).await {
-        Ok(principal) => principal,
-        Err(error) => return error.into_response(),
+    let allow_bootstrap = match check_repo_access(&state, &repo, &headers, operation).await {
+        Ok(allowed) => allowed,
+        Err(e) => return e.into_response(),
     };
     let pool = match state.pool.as_ref() {
         Some(pool) => pool,
@@ -740,17 +734,16 @@ pub async fn git_service_endpoint(
         Ok(body) => body,
         Err(e) => return e.into_response(),
     };
-    let hooks = if operation == GitOperation::Write
-        && matches!(principal, GitPrincipal::ProjectServiceAccount)
+    match run_git_service(
+        state,
+        path.as_path(),
+        service,
+        body,
+        storage,
+        allow_bootstrap,
+    )
+    .await
     {
-        match receive_hooks::ReceiveHooks::prepare(pool, &path).await {
-            Ok(hooks) => Some(hooks),
-            Err(error) => return error.into_response(),
-        }
-    } else {
-        None
-    };
-    match run_git_service(state, path.as_path(), service, body, hooks, storage).await {
         Ok(out) => (
             StatusCode::OK,
             [(

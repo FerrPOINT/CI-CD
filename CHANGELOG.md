@@ -16,9 +16,20 @@
 ## [Unreleased]
 
 - Git Smart HTTP принимает project-bound service-account token с отдельными
-  Git scopes и защищает default/protected refs от SAT push native pre-receive
-  hook до изменения refs, сохраняя custom hooks, human initial push и прежние human ACL. Source fix;
+  Git scopes и защищает default/protected refs native pre-receive hook до
+  изменения refs, сохраняя custom hooks и прежние human ACL. Source fix;
   Rust/PG и installed-image qualification pending.
+  Первичную публикацию одного default ref в репозиторий без refs выполняет
+  только admin/существующий operator token. Подготовка hooks проходит под
+  namespace write lease; HTTP/Git и lease tests входят в обычный PG gate.
+
+- Native QA Compose использует явно выбранные host-side context, daemon ID и
+  hash maintenance SDK вместо подключения к конкретному чужому стенду.
+  Recovery сверяет те же значения с журналом; автоматического fallback нет.
+
+- Обычный Compose retry без image-build custody не требует Unix/private
+  каталога новой функции. Проверки journal/daemon/job/stop/cleanup сохраняются;
+  незавершённая либо чужая image-build попытка по-прежнему блокирует повтор.
 
 - Owner-only `CICD_LOCAL_DELIVERY_KIND=static|oci` подключает существующий OCI
   executor к task delivery API с текущими SAT/Tracker/environment guards.

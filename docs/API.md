@@ -2,10 +2,10 @@
 
 Git Smart HTTP source fix: project-bound SAT проверяет существующую UUID связь
 repository/project и отдельные `git:read`/`git:write` scopes. Native pre-receive
-отклоняет весь SAT push, затрагивающий configured default/protected branch, до
+отклоняет весь push, обновляющий configured default/protected branch, до
 изменения refs; ответ сохраняет стандартный Git report-status, не новый JSON DTO.
-Custom hooks, human ACL и human initial push сохраняются: guard применяется
-только к серверно authenticated project-bound SAT. [Git hosting](GIT_HOSTING.md#8-аутентификация).
+Custom hooks и human ACL сохраняются. Ограниченный initial bootstrap для
+admin/operator описан ниже; SAT его не получает. [Git hosting](GIT_HOSTING.md#8-аутентификация).
 Новые routes/credentials/scopes не вводятся; Rust/PG и installed-image qualification pending.
 
 ## Typed Image Build In Task Pipeline
@@ -478,8 +478,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 91,
-    "latest_required_version": 91,
+    "latest_applied_version": 92,
+    "latest_required_version": 92,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],
@@ -1905,7 +1905,9 @@ attempt directory. Wire API не меняется, новый SDLC receipt endpo
 | POST | `/git/{repo}/git-upload-pack` | Smart HTTP fetch/clone service |
 | POST | `/git/{repo}/git-receive-pack` | Smart HTTP push service |
 
-Git Smart HTTP допускает unauthenticated read только для `repositories.visibility = public`. Private read и receive-pack требуют legacy `CICD_GIT_TOKEN` либо, при непустом `CICD_AUTH_SECRET`, JWT/PAT principal с `project_memberships`: `viewer+` для read, `developer+` для write; PAT также требует `git:read`/`git:write` и проходит только в своём `project_id`. Связанный проект определяется по `repository_url` exact tail `/{repo}.git`, `:{repo}.git` или `{repo}.git`. Полный lifecycle — `docs/GIT_HOSTING.md`; PR merge semantics — `docs/PULL_REQUESTS.md`.
+Git Smart HTTP допускает unauthenticated read только для `repositories.visibility = public`. Private read и receive-pack требуют legacy `CICD_GIT_TOKEN` либо, при непустом `CICD_AUTH_SECRET`, JWT/PAT principal с применимым human ACL: `viewer+` для read, `developer+` для write. PAT требует `git:read`/`git:write` и соблюдает свой `project_id`. Service-account token использует те же Git scopes и точную связь CI-конфигурации с stable repository UUID, без human membership. Полный lifecycle — `docs/GIT_HOSTING.md`; PR merge semantics — `docs/PULL_REQUESTS.md`.
+
+После связывания с CI-конфигурацией direct receive не обновляет и не удаляет её default/protected branches. Только admin либо существующий операторский `CICD_GIT_TOKEN` может впервые опубликовать один default ref в репозиторий без refs; custom hooks сохраняют право отказа. Service-account, developer, read-only и чужой project token не получают bootstrap. Все последующие изменения проходят прежний PR merge gate.
 
 `GET /repos/{repo}/pulls/page` использует `limit=20` и `offset=0` по умолчанию;
 `limit` должен находиться в диапазоне `1..100`. Пустые `status` и `search`

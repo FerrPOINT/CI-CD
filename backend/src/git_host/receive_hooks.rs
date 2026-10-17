@@ -6,9 +6,24 @@ const PRE_RECEIVE: &str = r#"#!/bin/sh
 set -eu
 umask 077
 cat > "$FORGE_GUARD_UPDATES"
+bootstrap_ref=''
+if test -s "$FORGE_GUARD_BOOTSTRAP_REFS" && test "$(wc -l < "$FORGE_GUARD_UPDATES")" -eq 1; then
+    read -r first_old first_new first_ref < "$FORGE_GUARD_UPDATES"
+    case "$first_old" in ''|*[!0]*) ;; *)
+        case "$first_new" in *[!0]*)
+            if git show-ref --quiet; then :; else
+                status=$?
+                if test "$status" -ne 1; then exit "$status"; fi
+                while IFS= read -r default_ref; do
+                    if test "$first_ref" = "$default_ref"; then bootstrap_ref=$first_ref; fi
+                done < "$FORGE_GUARD_BOOTSTRAP_REFS"
+            fi
+        ;; esac
+    ;; esac
+fi
 while read -r old new ref; do
     while IFS= read -r protected; do
-        if test "$ref" = "$protected"; then
+        if test "$ref" = "$protected" && test "$ref" != "$bootstrap_ref"; then
             printf '%s\n' 'Forge: direct update of default/protected branch denied; use a pull request.' >&2
             exit 1
         fi
@@ -60,7 +75,11 @@ fn executable(path: &Path) -> bool {
 }
 
 impl ReceiveHooks {
-    pub(super) async fn prepare(pool: &PgPool, repository: &Path) -> Result<Self, ApiError> {
+    pub(super) async fn prepare(
+        pool: &PgPool,
+        repository: &Path,
+        allow_bootstrap: bool,
+    ) -> Result<Self, ApiError> {
         let repository = repository.canonicalize().map_err(io_error)?;
         let storage = repository
             .file_name()
@@ -76,7 +95,11 @@ impl ReceiveHooks {
         .await
         .map_err(ApiError::internal)?;
         let mut refs = BTreeSet::new();
+        let mut bootstrap_refs = BTreeSet::new();
         for (default, protected) in policies {
+            if allow_bootstrap {
+                bootstrap_refs.insert(format!("refs/heads/{default}"));
+            }
             for branch in std::iter::once(default).chain(protected) {
                 let reference = format!("refs/heads/{branch}");
                 let checked = Command::new("git")
@@ -114,13 +137,14 @@ impl ReceiveHooks {
                 "Absolute Git hook path required",
             ));
         }
-        Self::write(&repository, &original, &refs)
+        Self::write(&repository, &original, &refs, &bootstrap_refs)
     }
 
     fn write(
         repository: &Path,
         original: &Path,
         refs: &BTreeSet<String>,
+        bootstrap_refs: &BTreeSet<String>,
     ) -> Result<Self, ApiError> {
         let directory = repository.join(format!(".forge-receive-{}", Uuid::new_v4().simple()));
         let mut builder = fs::DirBuilder::new();
@@ -131,7 +155,7 @@ impl ReceiveHooks {
         }
         builder.create(&directory).map_err(io_error)?;
         let hooks = Self { directory };
-        let result = hooks.write_files(original, refs);
+        let result = hooks.write_files(original, refs, bootstrap_refs);
         if let Err(error) = result {
             hooks.cleanup();
             return Err(error);
@@ -139,7 +163,12 @@ impl ReceiveHooks {
         Ok(hooks)
     }
 
-    fn write_files(&self, original: &Path, refs: &BTreeSet<String>) -> Result<(), ApiError> {
+    fn write_files(
+        &self,
+        original: &Path,
+        refs: &BTreeSet<String>,
+        bootstrap_refs: &BTreeSet<String>,
+    ) -> Result<(), ApiError> {
         // Delegate all executable hooks, including custom core.hooksPath and update/post hooks.
         if original.is_dir() {
             for entry in fs::read_dir(original).map_err(io_error)? {
@@ -159,6 +188,12 @@ impl ReceiveHooks {
         }
         write_private(&self.directory.join("protected-refs"), protected.as_bytes())
             .map_err(io_error)?;
+        let bootstrap = bootstrap_refs
+            .iter()
+            .map(|reference| format!("{reference}\n"))
+            .collect::<String>();
+        write_private(&self.directory.join("bootstrap-refs"), bootstrap.as_bytes())
+            .map_err(io_error)?;
         let original_pre = original.join("pre-receive");
         let delegate = if executable(&original_pre) {
             quote(&original_pre)?
@@ -166,9 +201,10 @@ impl ReceiveHooks {
             "''".into()
         };
         let script = format!(
-            "#!/bin/sh\nexport FORGE_GUARD_UPDATES={}\nexport FORGE_GUARD_REFS={}\nexport FORGE_ORIGINAL_PRE_RECEIVE={}\n{}",
+            "#!/bin/sh\nexport FORGE_GUARD_UPDATES={}\nexport FORGE_GUARD_REFS={}\nexport FORGE_GUARD_BOOTSTRAP_REFS={}\nexport FORGE_ORIGINAL_PRE_RECEIVE={}\n{}",
             quote(&self.directory.join("updates"))?,
             quote(&self.directory.join("protected-refs"))?,
+            quote(&self.directory.join("bootstrap-refs"))?,
             delegate,
             PRE_RECEIVE.strip_prefix("#!/bin/sh\n").unwrap(),
         );
@@ -261,10 +297,19 @@ mod tests {
         }
 
         fn install(&self) -> ReceiveHooks {
+            self.install_bootstrap(false)
+        }
+
+        fn install_bootstrap(&self, allowed: bool) -> ReceiveHooks {
             let hooks = ReceiveHooks::write(
                 &self.bare,
                 &self.original,
                 &BTreeSet::from(["refs/heads/main".into(), "refs/heads/release".into()]),
+                &if allowed {
+                    BTreeSet::from(["refs/heads/main".into()])
+                } else {
+                    BTreeSet::new()
+                },
             )
             .unwrap();
             assert!(
@@ -383,6 +428,63 @@ mod tests {
                 .success()
         );
         assert!(f.reference("refs/heads/task/custom-denied").is_none());
+        hooks.cleanup();
+    }
+
+    #[test]
+    fn authorized_bootstrap_only_creates_one_default_ref_in_an_empty_repository() {
+        let f = Fixture::new();
+        assert!(
+            f.git(&[
+                "--git-dir",
+                f.bare.to_str().unwrap(),
+                "update-ref",
+                "-d",
+                "refs/heads/main"
+            ])
+            .status
+            .success()
+        );
+        let restricted = f.install();
+        assert!(!f.push(&["HEAD:refs/heads/main"]).status.success());
+        assert!(f.reference("refs/heads/main").is_none());
+        restricted.cleanup();
+        let hooks = f.install_bootstrap(true);
+        assert!(
+            !f.push(&["HEAD:refs/heads/main", "HEAD:refs/heads/task/mixed"])
+                .status
+                .success()
+        );
+        assert!(f.reference("refs/heads/task/mixed").is_none());
+        assert!(!f.push(&["HEAD:refs/heads/release"]).status.success());
+        assert!(f.push(&["HEAD:refs/heads/main"]).status.success());
+        let initial = f.reference("refs/heads/main").unwrap();
+        fs::write(f.source.join("data"), "third\n").unwrap();
+        assert!(f.git(&["commit", "-am", "third"]).status.success());
+        assert!(!f.push(&["HEAD:refs/heads/main"]).status.success());
+        assert!(!f.push(&[":refs/heads/main"]).status.success());
+        assert_eq!(f.reference("refs/heads/main").as_ref(), Some(&initial));
+        hooks.cleanup();
+    }
+
+    #[test]
+    fn bootstrap_cannot_create_default_after_any_other_ref_already_exists() {
+        let f = Fixture::new();
+        assert!(
+            f.git(&[
+                "--git-dir",
+                f.bare.to_str().unwrap(),
+                "update-ref",
+                "-d",
+                "refs/heads/main"
+            ])
+            .status
+            .success()
+        );
+        let hooks = f.install_bootstrap(true);
+        assert!(f.push(&["HEAD:refs/heads/task/existing"]).status.success());
+        assert!(!f.push(&["HEAD:refs/heads/main"]).status.success());
+        assert!(f.reference("refs/heads/main").is_none());
         hooks.cleanup();
     }
 }

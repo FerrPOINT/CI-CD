@@ -54,6 +54,11 @@ Mutable PostgreSQL delivery не становится частью этого im
 Unknown build требует reconciliation; exit клиента не доказывает stop BuildKit.
 Actual qualification обязательна отдельно от source tests и packaging parity.
 
+Retry guard применяет Unix/private custody требования только при наличии
+каталога image-build конкретной попытки. Его отсутствие оставляет обычный
+Compose retry под прежней проверкой journal/daemon/job/stop/cleanup; linked
+control paths и неполная либо чужая image-build custody по-прежнему блокируют повтор.
+
 ## Alternatives
 
 - Docker внутри job: отвергнуто из-за передачи backend authority.
