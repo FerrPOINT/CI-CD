@@ -74,3 +74,24 @@ Rust-компонентов, зависимостей и базы уязвимо
 Лимит проекта проверяется до резервирования lease в SERIALIZABLE transaction.
 Встроенный и внешний runner учитывают активные leases, включая подготовку.
 Serialization conflict оставляет job queued без запуска; лимит Pulse равен одному.
+
+## Native QA Compose transport
+
+`scripts/native_qa_compose.py` используется только для временной native QA.
+Host harness передаёт `docker_context`, ожидаемый `daemon_id` и проверенный
+`sdk_sha256` в `NativeComposeBridge` и `recover_session` явно. `load_sdk`
+принимает тот же `sdk_sha256`. Значений по умолчанию для подключения нет;
+hash берётся из квалифицированного SDK, а не вычисляется как разрешение
+доверять произвольному текущему файлу. Эти поля не принимаются через RPC.
+
+Все команды используют выбранный context. Изменение daemon за тем же context
+блокирует выполнение. Журнал v2 сохраняет endpoint, daemon ID и hash SDK;
+recovery требует точного совпадения с явно выбранным назначением, прежних
+ownership/manifest guards, мёртвого владельца и возраста от 24 часов.
+Старый журнал нельзя перепривязать к новому SDK или чужому daemon.
+
+Pure regression suite запускается отдельным процессом:
+`python3 -B scripts/tests/test_native_qa_compose.py`, с явно заданными
+`SDLC_MAINTENANCE_BASE` и `SDLC_MAINTENANCE_SDK_SHA256` в окружении host harness.
+Она использует настоящий SDK и модель Docker, не запускает контейнеры и
+не подтверждает native build/deployment или полную SDLC-приёмку.

@@ -25,8 +25,6 @@ import threading
 import time
 import uuid
 
-SDK_SHA256 = '5e74856ecbaf2bf3c21a614479ec400c8437398d0111c02397983cc9c0a6bfe6'
-DAEMON_ID = '38138e49-da1a-4f64-ba35-15cc6ef9400e'
 TASK = 'forge-task-delivery'
 PURPOSES = {
     'pg': {'database': 'disposable-postgres-target', 'application': 'disposable-postgres-application'},
@@ -155,10 +153,22 @@ def atomic(path, value, *, exclusive=False):
             temporary.unlink(missing_ok=True)
 
 
-def load_sdk(directory):
+def validate_target(*, docker_context, daemon_id, sdk_sha256):
+    # Host-owned configuration only; never accept these fields from an RPC request.
+    if not isinstance(docker_context, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}', docker_context):
+        raise ValueError('Explicit Docker context required')
+    if not isinstance(daemon_id, str) or not re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', daemon_id):
+        raise ValueError('Explicit Docker daemon identity required')
+    if not isinstance(sdk_sha256, str) or not re.fullmatch(r'[0-9a-f]{64}', sdk_sha256):
+        raise ValueError('Explicit maintenance SDK hash required')
+
+
+def load_sdk(directory, *, sdk_sha256):
+    if not isinstance(sdk_sha256, str) or not re.fullmatch(r'[0-9a-f]{64}', sdk_sha256):
+        raise ValueError('Explicit maintenance SDK hash required')
     root = plain(directory).resolve()
     source = root / 'scripts/compose_helpers.py'
-    if digest(plain(source).read_bytes()) != SDK_SHA256:
+    if digest(plain(source).read_bytes()) != sdk_sha256:
         raise ValueError('Maintenance SDK hash mismatch')
     for name in ('scripts', 'scripts.compose_helpers'):
         module = sys.modules.get(name)
@@ -170,13 +180,13 @@ def load_sdk(directory):
                 raise ValueError('Foreign scripts package already loaded')
     sys.path.insert(0, str(root))
     module = importlib.import_module('scripts.compose_helpers')
-    if Path(module.__file__).resolve() != source or digest(source.read_bytes()) != SDK_SHA256:
+    if Path(module.__file__).resolve() != source or digest(source.read_bytes()) != sdk_sha256:
         raise ValueError('Maintenance SDK import mismatch')
     bind_request_lifetime(module)
     return module
 
 
-def session_class(sdk):
+def session_class(sdk, sdk_sha256):
     class NativeSession(sdk.ComposeHelper):
         """An SDK-owned native session, not adoption of arbitrary QA resources."""
 
@@ -184,6 +194,7 @@ def session_class(sdk):
             if kind not in PURPOSES:
                 raise ValueError('Unknown native QA kind')
             self.kind = kind
+            self.sdk_sha256 = sdk_sha256
             self.source_root = plain(source_root).resolve()
             self.services = {}
             self.generations = []
@@ -197,7 +208,7 @@ def session_class(sdk):
                         updated_at=sdk.utc_now(), owner_pid=self.owner_pid, owner_host=self.owner_host,
                         phase=phase, session_kind=self.kind, source_root=str(self.source_root),
                         generations=self.generations, native_sources=self.source_records,
-                        sdk_sha256=SDK_SHA256,
+                        sdk_sha256=self.sdk_sha256,
                         adapter_sha256=digest(Path(__file__).read_bytes()))
             atomic(self.journal, data)
             self.registry.mkdir(parents=True, exist_ok=True)
@@ -405,8 +416,15 @@ def command_parts(argv):
 
 
 class NativeComposeBridge:
-    def __init__(self, *, sdk, children, pg_project, oci_project, registry):
+    def __init__(self, *, sdk, children, pg_project, oci_project, registry,
+                 docker_context, daemon_id, sdk_sha256):
+        validate_target(docker_context=docker_context, daemon_id=daemon_id, sdk_sha256=sdk_sha256)
         self.sdk = sdk
+        if digest(plain(sdk.__file__).read_bytes()) != sdk_sha256:
+            raise ValueError('Maintenance SDK hash mismatch')
+        self.docker = ['docker', '--context', docker_context]
+        self.daemon_id = daemon_id
+        self.sdk_sha256 = sdk_sha256
         self.children = plain(children).resolve()
         self.projects = {pg_project: 'pg', oci_project: 'oci'}
         self.registry = plain(registry).resolve()
@@ -419,8 +437,10 @@ class NativeComposeBridge:
     def execute(self, argv):
         project, path, tail = command_parts(argv)
         with self.lock:
+            if self.sdk.checked(self.docker + ['info', '--format', '{{.ID}}'], text=True).strip() != self.daemon_id:
+                raise RuntimeError('Daemon identity mismatch; no fallback is allowed')
             if project is None:
-                return self.sdk.checked(['docker', '--context', 'rootless', 'compose', 'version'])
+                return self.sdk.checked(self.docker + ['compose', 'version'])
             if project not in self.projects:
                 raise ValueError('Unowned native project')
             kind = self.projects[project]
@@ -432,9 +452,9 @@ class NativeComposeBridge:
             if tail[0] == 'up':
                 if operation is None:
                     directory = (source.parent if kind == 'pg' else self.children) / ('sdk-' + kind + '-' + uuid.uuid4().hex)
-                    operation = session_class(self.sdk)(kind=kind, source_root=source_root,
-                        project=project, task=TASK, docker=['docker', '--context', 'rootless'],
-                        directory=directory, daemon_id=DAEMON_ID)
+                    operation = session_class(self.sdk, self.sdk_sha256)(kind=kind, source_root=source_root,
+                        project=project, task=TASK, docker=list(self.docker),
+                        directory=directory, daemon_id=self.daemon_id)
                     self.operations[project] = operation
                     operation.start_manifest(source)
                 else:
@@ -444,7 +464,7 @@ class NativeComposeBridge:
                 operation.record('execution-started')
                 return self.sdk.checked(operation.command + tail)
             if operation is None:
-                if any(self.sdk.checked(['docker', '--context', 'rootless', kind_name, 'ls',
+                if any(self.sdk.checked(self.docker + [kind_name, 'ls',
                     '-aq' if kind_name == 'container' else '-q', '--filter',
                     'label=com.docker.compose.project=' + project], text=True).strip()
                        for kind_name in ('container', 'network', 'volume')):
@@ -544,15 +564,20 @@ def owner_dead(pid):
     return False
 
 
-def recover_session(sdk, journal, owned_root, *, apply=False, now=None):
+def recover_session(sdk, journal, owned_root, *, docker_context, daemon_id, sdk_sha256,
+                    apply=False, now=None):
     """Reconcile only this adapter's dead-owner, aged v2 journals; never adopt."""
+    validate_target(docker_context=docker_context, daemon_id=daemon_id, sdk_sha256=sdk_sha256)
+    if digest(plain(sdk.__file__).read_bytes()) != sdk_sha256:
+        raise ValueError('Maintenance SDK hash mismatch')
+    docker = ['docker', '--context', docker_context]
     owned_root, journal = plain(owned_root).resolve(), plain(journal).resolve()
     if not journal.is_relative_to(owned_root / 'children') or journal.name != 'journal.json':
         raise ValueError('Unowned native recovery journal')
     data = read(journal)
-    if (data.get('version') != 2 or data.get('sdk_sha256') != SDK_SHA256
+    if (data.get('version') != 2 or data.get('sdk_sha256') != sdk_sha256
             or data.get('adapter_sha256') != digest(Path(__file__).read_bytes())
-            or data.get('daemon_id') != DAEMON_ID or data.get('docker') != ['docker', '--context', 'rootless']
+            or data.get('daemon_id') != daemon_id or data.get('docker') != docker
             or data.get('task') != TASK or data.get('session_kind') not in PURPOSES
             or data.get('purpose') != 'native-' + data['session_kind'] + '-session'
             or not re.fullmatch('sdlc-qa-forge-' + data['session_kind'] + '-[0-9a-f]{12,32}', data.get('project', ''))
@@ -582,12 +607,13 @@ def recover_session(sdk, journal, owned_root, *, apply=False, now=None):
         if not plain(source['path']).resolve().is_relative_to(source_root):
             raise ValueError('Native recovery source path mismatch')
     config = read(path)
-    cls = session_class(sdk)
+    cls = session_class(sdk, sdk_sha256)
     operation = cls.__new__(cls)
     operation.project, operation.task, operation.purpose = data['project'], TASK, data['purpose']
     operation.kind, operation.source_root = data['session_kind'], source_root
     operation.directory, operation.path, operation.journal = journal.parent, path, journal
-    operation.identity, operation.docker = DAEMON_ID, data['docker']
+    operation.identity, operation.docker = daemon_id, docker
+    operation.sdk_sha256 = sdk_sha256
     operation.command = operation.docker + ['compose', '-p', operation.project, '-f', str(path)]
     operation.manifest_hash, operation.cleanup_id = data['manifest_sha256'], data['cleanup_id']
     operation.created_at, operation.owner_pid, operation.owner_host = data['created_at'], pid, data['owner_host']
