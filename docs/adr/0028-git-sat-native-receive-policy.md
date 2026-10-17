@@ -15,7 +15,7 @@ Git SAT переиспользует существующий API repository/pro
 обычной проверки active credential и exact operation scope. Human ACL, public
 read и legacy credential semantics сохраняются; новых scopes/DTO/migrations нет.
 
-Перед SAT receive читается snapshot exact default/protected branch names всех
+Перед receive читается snapshot exact default/protected branch names всех
 связанных CI-конфигураций. Git `check-ref-format` валидирует полученные refs.
 Native `pre-receive` получает стандартный список old/new/ref от самого Git;
 wire pkt-lines и pack не разбираются приложением. Любой запрещённый ref
