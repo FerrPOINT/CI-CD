@@ -1240,6 +1240,25 @@ async fn run_job_inner(
         return Ok(ExecutionOutcome::Held);
     }
 
+    if let Some(hold) = crate::runner_image_build::workspace_deploy::inspect_requested(
+        &pool,
+        crate::runner_image_build::ImageBuildScope {
+            project_id: job.project_id,
+            pipeline_id: job.pipeline_id,
+            job_id,
+            attempt_id,
+            lease_id: lease.id,
+            generation: lease.generation,
+        },
+        config,
+        &workspace_root(config).join(".compose-control"),
+    )
+    .await?
+    {
+        append_attempt_log(&pool, job_id, attempt_id, hold.message()).await?;
+        return Ok(ExecutionOutcome::Held);
+    }
+
     let image_input = image_build_input(&pool, &job, config).await?;
     let owned_workspace = prepare_workspace(&pool, &job, &lease, config).await?;
     let workspace = owned_workspace.checkout().to_path_buf();

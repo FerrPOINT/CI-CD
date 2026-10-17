@@ -27,6 +27,8 @@ use tokio::{
 };
 use uuid::Uuid;
 
+pub(crate) mod workspace_deploy;
+
 const MAX_TREE: usize = 32 * 1024 * 1024;
 const MAX_FILES: usize = 100_000;
 const MAX_FILE: usize = 128 * 1024 * 1024;
