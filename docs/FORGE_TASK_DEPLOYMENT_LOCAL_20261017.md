@@ -92,8 +92,10 @@ producer/deployment сценарий. Целевые Clippy/codegen/compatibilit
 history закрыты новым828cf QA, не старым checkpoint9b.
 Единственная новая миграция0094 не меняет свой SQL при перенумерации. Уже
 применённая repository-sync0093 теперь опубликована в main и совпадает с прежним
-foundation по точному Git blob/checksum. Combined-history upgrade proof остаётся
-отдельным gate; ignore-missing запрещён.
+foundation по точному Git blob/checksum. Целевой populated-history upgrade до0094
+подтверждён QA828cf. Полная repository qualification и отдельные fresh/prior-schema
+catalog проверки этим не заменяются; две исправленные catalog expectations ещё
+ожидают целевого прогона. Ignore-missing запрещён.
 
 Base introspection expiry metadata и Tracker source binding являются явными
 зависимостями. Child renewal, legitimate server readers, окончательные delivery
