@@ -13,7 +13,7 @@ import hashlib
 import importlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import select
 import signal
@@ -163,6 +163,35 @@ def validate_target(*, docker_context, daemon_id, sdk_sha256):
         raise ValueError('Explicit maintenance SDK hash required')
 
 
+def daemon_volume_binding(value):
+    """Host configuration, never a field supplied by the native RPC client."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {'project', 'volume', 'cleanup_id', 'purpose', 'mountpoint'}:
+        raise ValueError('Invalid native daemon volume binding')
+    value = copy.deepcopy(value)
+    if (not isinstance(value['project'], str)
+            or not re.fullmatch(r'sdlc-qa-forge-[0-9a-f]{12,32}', value['project'])
+            or value['volume'] != value['project'] + '_delivery-qa'
+            or not isinstance(value['cleanup_id'], str)
+            or not re.fullmatch(r'[0-9a-f]{32}', value['cleanup_id'])
+            or not isinstance(value['purpose'], str)
+            or not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,127}', value['purpose'])):
+        raise ValueError('Invalid native daemon volume owner')
+    normalized_daemon_path(value['mountpoint'])
+    return value
+
+
+def normalized_daemon_path(value):
+    if not isinstance(value, str) or any(char in value for char in ('\\', '\x00', '\n', '\r')):
+        raise ValueError('Invalid native daemon path')
+    path = PurePosixPath(value)
+    if (not path.is_absolute() or str(path) != value or value == '/'
+            or value.startswith('//') or '..' in path.parts):
+        raise ValueError('Invalid native daemon path')
+    return path
+
+
 def load_sdk(directory, *, sdk_sha256):
     if not isinstance(sdk_sha256, str) or not re.fullmatch(r'[0-9a-f]{64}', sdk_sha256):
         raise ValueError('Explicit maintenance SDK hash required')
@@ -190,12 +219,13 @@ def session_class(sdk, sdk_sha256):
     class NativeSession(sdk.ComposeHelper):
         """An SDK-owned native session, not adoption of arbitrary QA resources."""
 
-        def __init__(self, *, kind, source_root, **kwargs):
+        def __init__(self, *, kind, source_root, daemon_bind_volume=None, **kwargs):
             if kind not in PURPOSES:
                 raise ValueError('Unknown native QA kind')
             self.kind = kind
             self.sdk_sha256 = sdk_sha256
             self.source_root = plain(source_root).resolve()
+            self.daemon_bind_volume = daemon_volume_binding(daemon_bind_volume)
             self.services = {}
             self.generations = []
             self.source_records = []
@@ -210,6 +240,7 @@ def session_class(sdk, sdk_sha256):
                         generations=self.generations, native_sources=self.source_records,
                         sdk_sha256=self.sdk_sha256,
                         adapter_sha256=digest(Path(__file__).read_bytes()))
+            data['daemon_bind_volume'] = self.daemon_bind_volume
             atomic(self.journal, data)
             self.registry.mkdir(parents=True, exist_ok=True)
             sdk.restrict(self.registry)
@@ -302,10 +333,49 @@ def session_class(sdk, sdk_sha256):
             source, proof = self.source_proof(path)
             spec = self.normalize(source)
             # The installed SDK performs its original no-adoption, image, mount and network checks.
-            super().write(spec['services'], volumes=spec['volumes'], networks=spec.get('networks', {}))
+            super().write(spec['services'], volumes=spec['volumes'], networks=spec.get('networks', {}),
+                          daemon_bind_sources=self.daemon_sources(spec))
             self.publish(read(self.path), proof)
 
+        def check_daemon_volume(self):
+            binding = self.daemon_bind_volume
+            if binding is None:
+                return
+            observed = json.loads(sdk.checked(
+                self.docker + ['volume', 'inspect', binding['volume']], text=True))
+            labels = {'com.docker.compose.project': binding['project'], 'sdlc.task': TASK,
+                      'sdlc.purpose': binding['purpose'], 'sdlc.cleanup-id': binding['cleanup_id'],
+                      'sdlc.lifecycle': 'disposable'}
+            if (not isinstance(observed, list) or len(observed) != 1
+                    or observed[0].get('Name') != binding['volume']
+                    or observed[0].get('Mountpoint') != binding['mountpoint']
+                    or any((observed[0].get('Labels') or {}).get(key) != value
+                           for key, value in labels.items())):
+                raise RuntimeError('Native daemon volume owner or mountpoint changed')
+
+        def daemon_sources(self, spec):
+            self.check_daemon_volume()
+            binding = self.daemon_bind_volume
+            if binding is None:
+                return set()
+            root = normalized_daemon_path(binding['mountpoint'])
+            sources = set()
+            for service in spec['services'].values():
+                for mount in service.get('volumes', []):
+                    if mount.get('type') != 'bind':
+                        continue
+                    source = mount.get('source')
+                    # Local artifacts keep the original SDK checks. Only this exact
+                    # daemon volume enables daemon-only paths, always read-only.
+                    if isinstance(source, str) and source.startswith(binding['mountpoint'] + '/'):
+                        path = normalized_daemon_path(source)
+                        if not path.is_relative_to(root) or mount.get('read_only') is not True:
+                            raise ValueError('Native daemon bind must be owned and read-only')
+                        sources.add(source)
+            return sources
+
         def validate_transition(self, spec):
+            daemon_sources = self.daemon_sources(spec)
             if set(self.services) - set(spec['services']):
                 raise ValueError('Native transition cannot discard owned service definitions')
             if self.kind == 'pg':
@@ -344,7 +414,7 @@ def session_class(sdk, sdk_sha256):
                         raise ValueError('Native mounts require long syntax')
                     if mount.get('type') == 'bind':
                         path = plain(mount['source'])
-                        if not path.exists():
+                        if not path.exists() and mount['source'] not in daemon_sources:
                             raise ValueError('Native bind source missing')
                         mount.setdefault('bind', {})['create_host_path'] = False
                     elif mount.get('type') == 'volume' and mount.get('source') in config['volumes']:
@@ -362,6 +432,7 @@ def session_class(sdk, sdk_sha256):
             self.check_ownership()
 
         def check_ownership(self):
+            self.check_daemon_volume()
             if not self.path.is_file() or digest(plain(self.path).read_bytes()) != self.manifest_hash:
                 raise RuntimeError('Native invocation manifest changed')
             for item in self.generations:
@@ -417,7 +488,7 @@ def command_parts(argv):
 
 class NativeComposeBridge:
     def __init__(self, *, sdk, children, pg_project, oci_project, registry,
-                 docker_context, daemon_id, sdk_sha256):
+                 docker_context, daemon_id, sdk_sha256, daemon_bind_volume=None):
         validate_target(docker_context=docker_context, daemon_id=daemon_id, sdk_sha256=sdk_sha256)
         self.sdk = sdk
         if digest(plain(sdk.__file__).read_bytes()) != sdk_sha256:
@@ -425,6 +496,7 @@ class NativeComposeBridge:
         self.docker = ['docker', '--context', docker_context]
         self.daemon_id = daemon_id
         self.sdk_sha256 = sdk_sha256
+        self.daemon_bind_volume = daemon_volume_binding(daemon_bind_volume)
         self.children = plain(children).resolve()
         self.projects = {pg_project: 'pg', oci_project: 'oci'}
         self.registry = plain(registry).resolve()
@@ -453,6 +525,7 @@ class NativeComposeBridge:
                 if operation is None:
                     directory = (source.parent if kind == 'pg' else self.children) / ('sdk-' + kind + '-' + uuid.uuid4().hex)
                     operation = session_class(self.sdk, self.sdk_sha256)(kind=kind, source_root=source_root,
+                        daemon_bind_volume=self.daemon_bind_volume,
                         project=project, task=TASK, docker=list(self.docker),
                         directory=directory, daemon_id=self.daemon_id)
                     self.operations[project] = operation
@@ -565,7 +638,7 @@ def owner_dead(pid):
 
 
 def recover_session(sdk, journal, owned_root, *, docker_context, daemon_id, sdk_sha256,
-                    apply=False, now=None):
+                    daemon_bind_volume=None, apply=False, now=None):
     """Reconcile only this adapter's dead-owner, aged v2 journals; never adopt."""
     validate_target(docker_context=docker_context, daemon_id=daemon_id, sdk_sha256=sdk_sha256)
     if digest(plain(sdk.__file__).read_bytes()) != sdk_sha256:
@@ -575,6 +648,9 @@ def recover_session(sdk, journal, owned_root, *, docker_context, daemon_id, sdk_
     if not journal.is_relative_to(owned_root / 'children') or journal.name != 'journal.json':
         raise ValueError('Unowned native recovery journal')
     data = read(journal)
+    binding = daemon_volume_binding(daemon_bind_volume)
+    if data.get('daemon_bind_volume') != binding:
+        raise ValueError('Native recovery daemon volume binding mismatch')
     if (data.get('version') != 2 or data.get('sdk_sha256') != sdk_sha256
             or data.get('adapter_sha256') != digest(Path(__file__).read_bytes())
             or data.get('daemon_id') != daemon_id or data.get('docker') != docker
@@ -614,6 +690,7 @@ def recover_session(sdk, journal, owned_root, *, docker_context, daemon_id, sdk_
     operation.directory, operation.path, operation.journal = journal.parent, path, journal
     operation.identity, operation.docker = daemon_id, docker
     operation.sdk_sha256 = sdk_sha256
+    operation.daemon_bind_volume = binding
     operation.command = operation.docker + ['compose', '-p', operation.project, '-f', str(path)]
     operation.manifest_hash, operation.cleanup_id = data['manifest_sha256'], data['cleanup_id']
     operation.created_at, operation.owner_pid, operation.owner_host = data['created_at'], pid, data['owner_host']
