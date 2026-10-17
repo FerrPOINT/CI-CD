@@ -92,6 +92,7 @@ async fn git_sat_project_scope_and_native_receive_protect_refs_without_bypassing
     fs::create_dir(&hook_dir).unwrap();
     fs::write(
         hook_dir.join("post-receive"),
+        // Hook preservation only: this no-op does not prove the production callback.
         "#!/bin/sh\ncat >/dev/null\nexit 0\n",
     )
     .unwrap();
@@ -406,6 +407,417 @@ async fn git_sat_project_scope_and_native_receive_protect_refs_without_bypassing
     server.abort();
     let _ = server.await;
     pool.close().await;
+}
+
+struct ReceiveRace {
+    root: std::path::PathBuf,
+    source: std::path::PathBuf,
+    bare: std::path::PathBuf,
+    entered: std::path::PathBuf,
+    release: std::path::PathBuf,
+    name: String,
+    group: Uuid,
+    command: pdlc_shared::resource_context::OwnerCommand,
+    pool: sqlx::PgPool,
+    admission: sqlx::PgPool,
+    app: axum::Router,
+    sat: String,
+    admin: String,
+}
+
+impl Drop for ReceiveRace {
+    fn drop(&mut self) {
+        let _ = fs::write(&self.release, b"release\n");
+    }
+}
+
+impl ReceiveRace {
+    async fn new() -> Self {
+        use std::os::unix::fs::PermissionsExt;
+        let pool = test_pool().await;
+        let root = std::env::temp_dir().join(format!("forge-receive-race-{}", Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let source = root.join("source");
+        fs::create_dir(&source).unwrap();
+        for args in [
+            vec!["init", "--initial-branch=main"],
+            vec!["config", "user.email", "fixture@example.invalid"],
+            vec!["config", "user.name", "Fixture"],
+        ] {
+            assert!(git(&source, &args).status.success());
+        }
+        fs::write(source.join("data"), "first\n").unwrap();
+        assert!(git(&source, &["add", "data"]).status.success());
+        assert!(git(&source, &["commit", "-m", "first"]).status.success());
+        let slug = format!("race-{}", Uuid::new_v4().simple());
+        let (group, _, command) = workspace_fixture(&pool, Uuid::new_v4(), &slug).await;
+        let repository = Uuid::new_v4();
+        let name = format!("ns-{}", repository.simple());
+        sqlx::query("INSERT INTO repositories(id,name,visibility) VALUES($1,$2,'private')")
+            .bind(repository)
+            .bind(&name)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE repository_catalog SET group_id=$2,slug='receive-race' WHERE id=$1")
+            .bind(repository)
+            .bind(group)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let project = Uuid::new_v4();
+        sqlx::query("INSERT INTO projects(id,name,repository_url,repository_id,default_branch) VALUES($1,'Receive race','https://example.invalid/race.git',$2,'main')")
+            .bind(project).bind(repository).execute(&pool).await.unwrap();
+        let account = Uuid::new_v4();
+        sqlx::query("INSERT INTO service_accounts(id,name) VALUES($1,'receive-race')")
+            .bind(account)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let sat = format!(
+            "forge_sat_{}{}",
+            Uuid::new_v4().simple(),
+            Uuid::new_v4().simple()
+        );
+        sqlx::query("INSERT INTO api_tokens(id,name,token_hash,token_hint,principal_type,service_account_id,project_id,scopes) VALUES($1,'receive-race',$2,'synthetic-only','service_account',$3,$4,ARRAY['git:read','git:write'])")
+            .bind(Uuid::new_v4()).bind(cicd::auth::hash_token(&sat)).bind(account).bind(project).execute(&pool).await.unwrap();
+        let user = Uuid::new_v4();
+        sqlx::query("INSERT INTO users(id,username,role) VALUES($1,$2,'admin')")
+            .bind(user)
+            .bind(format!("race-{user}"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let admin = format!(
+            "cicd_{}{}",
+            Uuid::new_v4().simple(),
+            Uuid::new_v4().simple()
+        );
+        sqlx::query("INSERT INTO api_tokens(id,name,token_hash,token_hint,user_id,project_id,scopes) VALUES($1,'receive-bootstrap',$2,'synthetic-only',$3,$4,ARRAY['git:read','git:write'])")
+            .bind(Uuid::new_v4()).bind(cicd::auth::hash_token(&admin)).bind(user).bind(project).execute(&pool).await.unwrap();
+        let bare = root.join(format!("{name}.git"));
+        assert!(
+            git(
+                &root,
+                &[
+                    "init",
+                    "--quiet",
+                    "--bare",
+                    "--initial-branch=main",
+                    bare.to_str().unwrap()
+                ]
+            )
+            .status
+            .success()
+        );
+        let entered = root.join("entered");
+        let release = root.join("release");
+        // The custom hook pauses native Git, not a synthetic replacement process.
+        // A deadline bounds the child even if the test runtime is interrupted.
+        fs::write(bare.join("hooks/pre-receive"), format!(
+            "#!/bin/sh\nset -eu\ncat >/dev/null\nif mkdir '{claimed}' 2>/dev/null; then\n  printf '%s\\n' \"$PPID\" > '{entered}.tmp'\n  mv '{entered}.tmp' '{entered}'\n  i=0\n  while ! test -f '{release}'; do\n    i=$((i+1))\n    if test \"$i\" -ge 400; then exit 1; fi\n    sleep 0.05\n  done\nfi\n",
+            claimed=root.join("claimed").display(), entered=entered.display(), release=release.display()
+        )).unwrap();
+        fs::set_permissions(
+            bare.join("hooks/pre-receive"),
+            fs::Permissions::from_mode(0o700),
+        )
+        .unwrap();
+        let git_config = cicd::git_host::GitConfig {
+            root: root.clone(),
+            token: None,
+            internal_token: None,
+        };
+        let secret = format!("synthetic-race-{repository}");
+        let config = cicd::config::RuntimeConfig::from_env_source(|_| None, false)
+            .unwrap()
+            .with_git_config(git_config.clone())
+            .with_auth_secret(Some(secret.clone()));
+        let admission = pool
+            .options()
+            .clone()
+            .max_connections(2)
+            .min_connections(0)
+            .connect_lazy_with((*pool.connect_options()).clone());
+        let state = std::sync::Arc::new(cicd::api::AppState {
+            pool: Some(pool.clone()),
+            namespace_admission_pool: Some(admission.clone()),
+            auth_secret: Some(secret),
+            git: git_config,
+            config,
+            running_jobs: None,
+            rate_limiter: std::sync::Arc::new(cicd::rate_limit::RateLimiter::default()),
+        });
+        // Actual handlers and the same bounded admission pool. The local archive
+        // route supplies a trusted synthetic owner; central-auth is not under test.
+        let app = axum::Router::new()
+            .route(
+                "/git/{repo}/info/refs",
+                axum::routing::get(cicd::git_host::git_info_refs),
+            )
+            .route(
+                "/git/{repo}/git-receive-pack",
+                axum::routing::post(cicd::git_host::git_service_endpoint),
+            )
+            .route("/archive/{id}", axum::routing::put(cicd::namespace::apply))
+            .with_state(state);
+        Self {
+            root,
+            source,
+            bare,
+            entered,
+            release,
+            name,
+            group,
+            command,
+            pool,
+            admission,
+            app,
+            sat,
+            admin,
+        }
+    }
+
+    async fn native_entered(&self) {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while !self.entered.exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("native pre-receive was not reached");
+        let pid = fs::read_to_string(&self.entered).unwrap();
+        assert_eq!(
+            fs::read_to_string(format!("/proc/{}/comm", pid.trim()))
+                .unwrap()
+                .trim(),
+            "git"
+        );
+    }
+
+    async fn exclusive_available(&self) -> bool {
+        sqlx::query_scalar("SELECT pg_try_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(self.group.to_string())
+            .fetch_one(&self.pool)
+            .await
+            .unwrap()
+    }
+
+    fn release(&self) {
+        fs::write(&self.release, b"release\n").unwrap();
+    }
+
+    fn hooks_cleaned(&self) -> bool {
+        !fs::read_dir(&self.bare).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".forge-receive-")
+        })
+    }
+
+    async fn finish(&self) {
+        assert!(self.exclusive_available().await);
+        assert!(self.hooks_cleaned());
+        self.admission.close().await;
+        self.pool.close().await;
+        // Only a known terminal writer permits filesystem cleanup. On panic,
+        // Drop releases the pause but preserves files until outer QA cleanup.
+        fs::remove_dir_all(&self.root).unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelled_http_receive_keeps_native_child_and_namespace_lease_until_exit() {
+    let fixture = ReceiveRace::new().await;
+    let (cancel_tx, mut cancel_rx) = tokio::sync::mpsc::unbounded_channel();
+    let app = fixture.app.clone().layer(axum::middleware::from_fn(
+        move |request: Request<Body>, next: axum::middleware::Next| {
+            let cancel_tx = cancel_tx.clone();
+            async move {
+                if !request.uri().path().ends_with("/git-receive-pack") {
+                    return next.run(request).await;
+                }
+                let request = tokio::spawn(next.run(request));
+                cancel_tx.send(request.abort_handle()).unwrap();
+                request.await.unwrap_or_else(|_| {
+                    axum::response::Response::builder()
+                        .status(StatusCode::SERVICE_UNAVAILABLE)
+                        .body(Body::empty())
+                        .unwrap()
+                })
+            }
+        },
+    ));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!(
+        "http://{}/git/{}.git",
+        listener.local_addr().unwrap(),
+        fixture.name
+    );
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let source = fixture.source.clone();
+    let token = fixture.sat.clone();
+    let client = tokio::spawn(async move {
+        push(&source, &url, &token, &["HEAD:refs/heads/task/cancelled"]).await
+    });
+    fixture.native_entered().await;
+    assert!(!fixture.exclusive_available().await);
+    assert!(!fixture.hooks_cleaned());
+    let request = tokio::time::timeout(std::time::Duration::from_secs(10), cancel_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    request.abort();
+    let response = tokio::time::timeout(std::time::Duration::from_secs(10), client)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        !response.status.success(),
+        "cancelled request unexpectedly acknowledged success"
+    );
+    fixture.native_entered().await;
+    assert!(
+        !fixture.exclusive_available().await,
+        "HTTP cancellation released a live writer's lease"
+    );
+    assert!(
+        !fixture.hooks_cleaned(),
+        "HTTP cancellation removed live native hook files"
+    );
+    fixture.release();
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while !fixture.exclusive_available().await {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("terminal cancelled receive retained its namespace lease");
+    assert!(fixture.hooks_cleaned());
+    let head = git(&fixture.source, &["rev-parse", "HEAD"]).stdout;
+    assert_eq!(
+        git(&fixture.bare, &["rev-parse", "refs/heads/task/cancelled"]).stdout,
+        head
+    );
+    server.abort();
+    let _ = server.await;
+    fixture.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_bootstrap_and_receive_finish_around_waiting_namespace_archive() {
+    let fixture = ReceiveRace::new().await;
+    let (requests_tx, mut requests_rx) = tokio::sync::mpsc::unbounded_channel();
+    let app = fixture.app.clone().layer(axum::middleware::from_fn(
+        move |request: Request<Body>, next: axum::middleware::Next| {
+            let requests_tx = requests_tx.clone();
+            async move {
+                let _ = requests_tx.send(request.uri().path().to_owned());
+                next.run(request).await
+            }
+        },
+    ));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!(
+        "http://{}/git/{}.git",
+        listener.local_addr().unwrap(),
+        fixture.name
+    );
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let source = fixture.source.clone();
+    let token = fixture.admin.clone();
+    let bootstrap_url = url.clone();
+    let bootstrap = tokio::spawn(async move {
+        push(&source, &bootstrap_url, &token, &["HEAD:refs/heads/main"]).await
+    });
+    fixture.native_entered().await;
+    while requests_rx.try_recv().is_ok() {}
+    let mut command = fixture.command.clone();
+    command.generation += 1;
+    command.operation_id = Uuid::new_v4();
+    command.state = "archived".into();
+    let request = Request::put(format!("/archive/{}", fixture.group))
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&command).unwrap()))
+        .unwrap();
+    let archive_app = fixture.app.clone();
+    let archive = tokio::spawn(async move { archive_app.oneshot(request).await.unwrap() });
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let waiting: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND mode='ExclusiveLock' AND NOT granted AND classid=((hashtextextended($1,0)>>32)&4294967295)::oid AND objid=(hashtextextended($1,0)&4294967295)::oid AND objsubid=1)")
+                .bind(fixture.group.to_string()).fetch_one(&fixture.pool).await.unwrap();
+            if waiting { break; }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }).await.expect("archive did not queue behind native bootstrap");
+    let source = fixture.source.clone();
+    let token = fixture.sat.clone();
+    let receive = tokio::spawn(async move {
+        push(
+            &source,
+            &url,
+            &token,
+            &["HEAD:refs/heads/task/after-archive"],
+        )
+        .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while !requests_rx.recv().await.unwrap().ends_with("/info/refs") {}
+    })
+    .await
+    .expect("concurrent receive did not reach HTTP discovery");
+    assert!(!archive.is_finished());
+    assert!(!receive.is_finished());
+    assert!(
+        git(&fixture.bare, &["for-each-ref", "--format=%(refname)"])
+            .stdout
+            .is_empty()
+    );
+    fixture.release();
+    let (bootstrap, archive, receive) =
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            tokio::join!(bootstrap, archive, receive)
+        })
+        .await
+        .expect("bootstrap/receive/archive deadlocked");
+    assert!(bootstrap.unwrap().status.success());
+    assert_eq!(archive.unwrap().status(), StatusCode::OK);
+    assert!(!receive.unwrap().status.success());
+    let expected = git(&fixture.source, &["rev-parse", "HEAD"]).stdout;
+    assert_eq!(
+        git(&fixture.bare, &["rev-parse", "refs/heads/main"]).stdout,
+        expected
+    );
+    assert!(
+        !git(
+            &fixture.bare,
+            &["show-ref", "--verify", "refs/heads/task/after-archive"]
+        )
+        .status
+        .success()
+    );
+    assert_eq!(
+        git(&fixture.bare, &["for-each-ref", "--format=%(refname)"]).stdout,
+        b"refs/heads/main\n"
+    );
+    let state: String =
+        sqlx::query_scalar("SELECT state FROM forge_namespace_bindings WHERE resource_id=$1")
+            .bind(fixture.group)
+            .fetch_one(&fixture.pool)
+            .await
+            .unwrap();
+    assert_eq!(state, "archived");
+    assert!(fixture.exclusive_available().await);
+    assert!(fixture.hooks_cleaned());
+    server.abort();
+    let _ = server.await;
+    fixture.finish().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
