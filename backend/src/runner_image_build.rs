@@ -245,12 +245,13 @@ pub(crate) fn retry_unconfirmed(
     if missing(control_root)? {
         return Ok(false);
     }
-    ensure!(cfg!(unix), "image build custody filesystem is unsupported");
-    private_directory(control_root)?;
+    anchored_directory(control_root)?;
     let directory = control_root.join(format!("image-build-{}", attempt.simple()));
     if missing(&directory)? {
         return Ok(false);
     }
+    ensure!(cfg!(unix), "image build custody filesystem is unsupported");
+    private_directory(control_root)?;
     private_directory(&directory)?;
     let path = directory.join("intent.json");
     if !missing(&path)? {
@@ -994,6 +995,40 @@ fn seal_directories(path: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn legacy_retry_without_image_custody_does_not_require_image_build_permissions() {
+        let root =
+            std::env::temp_dir().join(format!("forge-legacy-image-retry-{}", Uuid::new_v4()));
+        fs::create_dir(&root).unwrap();
+        let job = Uuid::new_v4();
+        let attempt = Uuid::new_v4();
+        let result = (|| -> anyhow::Result<()> {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&root, fs::Permissions::from_mode(0o755))?;
+            }
+            assert!(!retry_unconfirmed(&root, job, attempt)?);
+            let directory = root.join(format!("image-build-{}", attempt.simple()));
+            fs::create_dir(&directory)?;
+            assert!(retry_unconfirmed(&root, job, attempt).is_err());
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&root, fs::Permissions::from_mode(0o700))?;
+                fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
+                assert!(retry_unconfirmed(&root, job, attempt)?);
+                let link = root.with_extension("link");
+                std::os::unix::fs::symlink(&root, &link)?;
+                assert!(retry_unconfirmed(&link, job, Uuid::new_v4()).is_err());
+                fs::remove_file(link)?;
+            }
+            Ok(())
+        })();
+        fs::remove_dir_all(&root).unwrap();
+        result.unwrap();
+    }
 
     fn tree(path: &str, mode: &str) -> Vec<u8> {
         format!("{mode} blob {}\t{path}\0", "a".repeat(40)).into_bytes()
