@@ -9,6 +9,7 @@ pub mod image_build;
 pub mod sdlc_workspace;
 pub mod task_delivery;
 
+pub mod repository_sync;
 pub mod repository_url;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]

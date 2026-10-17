@@ -182,3 +182,37 @@ curl -fsS -X DELETE http://127.0.0.1:22801/api/v1/repositories/smoke-repo
 ## Git в Namespace
 
 Git Group, стабильный repository UUID, aliases и archive admission описаны в [Namespace](NAMESPACE.md) и [ADR 0023](adr/0023-namespace-repository-identity.md). Старые bare paths и clone URLs сохраняются; отсутствующее storage требует восстановления исходных данных.
+
+## Внешняя синхронизация
+
+Hosted-репозиторий может иметь одно HTTPS-подключение к GitHub.com или
+разрешённому оператором GitLab. Направления: отключено, внешний → Forge,
+Forge → внешний, обе стороны. Запуск вручную или автоматически; ручная
+кнопка доступна в обоих способах. Новый connection отключён и запускается
+вручную. Общий список — «Синхронизации», контекстный переход — из репозитория.
+
+Передаются все ветки и теги с прежними именами. Удаления не распространяются.
+При расходящейся истории или изменении существующего тега фиксируется
+конфликт. Защищённая ветка Forge требует обычного PR; автоматического PR нет.
+Git LFS, SSH, issues/PR/releases, provider webhooks и создание remote отсутствуют.
+
+Для GitLab используйте read_repository / write_repository по направлению.
+Для GitHub fine-grained PAT выберите нужный репозиторий, Contents: Read для
+входящего обмена, Read and write для исходящего; если передаются workflow-файлы,
+учтите отдельное разрешение Workflows. Classic PAT для private repo требует repo,
+для workflow-файлов — workflow. Токен вводится только в защищённое поле формы.
+Проверка доступа читает refs и делает dry-run для исходящего направления;
+окончательное разрешение push проверяет провайдер при реальной записи.
+
+История показывает снимок подключения, источник запуска и каждый ref.
+«Уточняется результат» означает, что Forge сверяет фактический SHA после
+неподтверждённого эффекта. Архив приостанавливает исполнение, не удаляя историю.
+Остановку подтверждают после завершения процесса и сверки.
+
+См. [ADR-0028](adr/0028-external-repository-synchronization.md).
+
+Права токенов: [GitHub](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens), [GitLab](https://docs.gitlab.com/security/tokens/access_token_scopes/).
+
+Теги на blob/tree передаются, но не запускают CI: у них нет commit для checkout.
+Причина ci_non_commit_tag сохраняется в результате ref; остальные CI-события
+доставляются независимо, с повтором временных ошибок.

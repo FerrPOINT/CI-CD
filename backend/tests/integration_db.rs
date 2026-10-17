@@ -23,6 +23,8 @@ use tower::ServiceExt;
 use uuid::Uuid;
 #[path = "support/fixture_cleanup.rs"]
 mod fixture_cleanup;
+#[path = "support/repository_sync.rs"]
+mod repository_sync;
 
 #[path = "support/sdlc_workspace.rs"]
 mod sdlc_workspace;

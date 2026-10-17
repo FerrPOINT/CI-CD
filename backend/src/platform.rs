@@ -4,10 +4,6 @@ use std::{
     time::Duration as StdDuration,
 };
 
-use aes_gcm::{
-    Aes256Gcm, Nonce,
-    aead::{Aead, KeyInit},
-};
 use axum::{
     Json, Router,
     body::Bytes,
@@ -16,7 +12,6 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{get, patch, post},
 };
-use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -2968,24 +2963,10 @@ fn sha256(value: &str) -> String {
 }
 
 fn decrypt_secret(stored: &str, secrets: &SecretsConfig) -> Result<String, String> {
-    let key = secret_key(secrets)?;
-    let cipher =
-        Aes256Gcm::new_from_slice(&key).map_err(|_| "invalid CICD_SECRETS_KEY".to_owned())?;
-    let parts: Vec<&str> = stored.splitn(3, ':').collect();
-    if parts.len() != 3 || parts[0] != "v1" {
-        return Err("unsupported secret format".to_owned());
-    }
-    let nonce_bytes = BASE64
-        .decode(parts[1])
-        .map_err(|_| "corrupt secret nonce".to_owned())?;
-    let ciphertext = BASE64
-        .decode(parts[2])
-        .map_err(|_| "corrupt secret payload".to_owned())?;
-    let nonce = Nonce::from_slice(&nonce_bytes);
-    let plain = cipher
-        .decrypt(nonce, ciphertext.as_ref())
-        .map_err(|_| "unable to decrypt secret".to_owned())?;
-    String::from_utf8(plain).map_err(|_| "secret is not valid utf-8".to_owned())
+    use cicd_app::repository_sync::Crypto;
+    cicd_infra::secrets::Secrets(Some(secret_key(secrets)?))
+        .open(stored)
+        .map_err(|_| "unable to decrypt secret".to_owned())
 }
 
 pub(crate) async fn project_secret_pairs_for_names_with_config(
@@ -3040,20 +3021,12 @@ fn schedule_next_fire_at(cron: &str, enabled: bool) -> Result<Option<DateTime<Ut
         .map_err(ApiError::bad_request)
 }
 fn encrypt_secret(value: &str, secrets: &SecretsConfig) -> Result<String, String> {
-    let key = secret_key(secrets)?;
-    let cipher =
-        Aes256Gcm::new_from_slice(&key).map_err(|_| "invalid CICD_SECRETS_KEY".to_owned())?;
-    let source = Uuid::new_v4();
-    let nonce = Nonce::from_slice(&source.as_bytes()[..12]);
-    let ciphertext = cipher
-        .encrypt(nonce, value.as_bytes())
-        .map_err(|_| "unable to encrypt secret".to_owned())?;
-    Ok(format!(
-        "v1:{}:{}",
-        BASE64.encode(nonce),
-        BASE64.encode(ciphertext)
-    ))
+    use cicd_app::repository_sync::Crypto;
+    cicd_infra::secrets::Secrets(Some(secret_key(secrets)?))
+        .seal(value)
+        .map_err(|_| "unable to encrypt secret".to_owned())
 }
+
 fn secret_key(secrets: &SecretsConfig) -> Result<[u8; 32], String> {
     secrets
         .key

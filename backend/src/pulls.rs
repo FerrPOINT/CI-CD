@@ -857,20 +857,29 @@ pub async fn pr_action(
 ) -> Result<Json<PullRequest>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     let repo = crate::repository_catalog::resolve_storage(pool, &repo).await?;
+    let mut action_tx = crate::repository_catalog::write_lease(&state, &repo).await?;
     let pr = sqlx::query_as::<_, PullRequest>(
-        "SELECT id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha FROM pull_requests WHERE repository_name = $1 AND number = $2",
+        "SELECT id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha FROM pull_requests WHERE repository_name = $1 AND number = $2 FOR UPDATE",
     )
     .bind(&repo)
     .bind(number)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *action_tx)
     .await
     .map_err(ApiError::internal)?
     .ok_or_else(ApiError::not_found)?;
 
-    let _namespace_lease =
-        crate::repository_catalog::write_lease(&state, &pr.repository_name).await?;
     match input.action.as_str() {
         "merge" => {
+            let repository_id: Uuid =
+                sqlx::query_scalar("SELECT id FROM repository_catalog WHERE storage_name=$1")
+                    .bind(&repo)
+                    .fetch_one(pool)
+                    .await
+                    .map_err(ApiError::internal)?;
+            let mutation_guard =
+                cicd_infra::sync_git::MutationGuard::acquire(&state.git.root, repository_id)
+                    .await
+                    .map_err(crate::repository_sync::api_error)?;
             if pr.status != "open" {
                 return Err(ApiError::conflict("pull request is not open"));
             }
@@ -919,7 +928,8 @@ pub async fn pr_action(
             }
             let path = resolve_repo_path(&state, &repo).await?;
             // Use git merge-tree for bare repos (no worktree needed)
-            let merge_output = tokio::process::Command::new("git")
+            let mut merge_command = tokio::process::Command::new("git");
+            merge_command
                 .arg(format!("--git-dir={}", path.display()))
                 .args([
                     "merge-tree",
@@ -927,7 +937,11 @@ pub async fn pr_action(
                     "-z",
                     &pr.target_branch,
                     &pr.source_branch,
-                ])
+                ]);
+            mutation_guard
+                .inherit(&mut merge_command)
+                .map_err(crate::repository_sync::api_error)?;
+            let merge_output = merge_command
                 .output()
                 .await
                 .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
@@ -942,7 +956,8 @@ pub async fn pr_action(
                 .unwrap_or("")
                 .to_string();
             // Create merge commit
-            let commit_output = tokio::process::Command::new("git")
+            let mut commit_command = tokio::process::Command::new("git");
+            commit_command
                 .arg(format!("--git-dir={}", path.display()))
                 .args([
                     "-c",
@@ -957,7 +972,11 @@ pub async fn pr_action(
                     &pr.source_branch,
                     "-m",
                     &format!("Merge PR #{}: {}", pr.number, pr.title),
-                ])
+                ]);
+            mutation_guard
+                .inherit(&mut commit_command)
+                .map_err(crate::repository_sync::api_error)?;
+            let commit_output = commit_command
                 .output()
                 .await
                 .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
@@ -970,13 +989,18 @@ pub async fn pr_action(
                 .trim()
                 .to_string();
             // Update target branch ref
-            let ref_output = tokio::process::Command::new("git")
+            let mut ref_command = tokio::process::Command::new("git");
+            ref_command
                 .arg(format!("--git-dir={}", path.display()))
                 .args([
                     "update-ref",
                     &format!("refs/heads/{}", pr.target_branch),
                     &merge_sha,
-                ])
+                ]);
+            mutation_guard
+                .inherit(&mut ref_command)
+                .map_err(crate::repository_sync::api_error)?;
+            let ref_output = ref_command
                 .output()
                 .await
                 .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
@@ -990,9 +1014,11 @@ pub async fn pr_action(
             )
             .bind(pr.id)
             .bind(&merge_sha)
-            .fetch_one(pool)
+            .fetch_one(&mut *action_tx)
             .await
             .map_err(ApiError::internal)?;
+            action_tx.commit().await.map_err(ApiError::internal)?;
+            crate::repository_sync::signal(pool, repository_id).await;
             Ok(Json(updated))
         }
         "close" => {
@@ -1003,9 +1029,10 @@ pub async fn pr_action(
                 "UPDATE pull_requests SET status = 'closed', updated_at = now() WHERE id = $1 RETURNING id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",
             )
             .bind(pr.id)
-            .fetch_one(pool)
+            .fetch_one(&mut *action_tx)
             .await
             .map_err(ApiError::internal)?;
+            action_tx.commit().await.map_err(ApiError::internal)?;
             Ok(Json(updated))
         }
         "reopen" => {
@@ -1018,9 +1045,10 @@ pub async fn pr_action(
                 "UPDATE pull_requests SET status = 'open', updated_at = now() WHERE id = $1 RETURNING id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",
             )
             .bind(pr.id)
-            .fetch_one(pool)
+            .fetch_one(&mut *action_tx)
             .await
             .map_err(ApiError::internal)?;
+            action_tx.commit().await.map_err(ApiError::internal)?;
             Ok(Json(updated))
         }
         _ => Err(ApiError::bad_request(

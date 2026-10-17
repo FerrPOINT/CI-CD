@@ -594,14 +594,22 @@ async fn run_git_service(
     path: &Path,
     service: &str, // "upload-pack" | "receive-pack"
     body: Bytes,
+    guard: Option<&cicd_infra::sync_git::MutationGuard>,
 ) -> Result<Vec<u8>, ApiError> {
-    let mut child = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .arg(service)
         .arg("--stateless-rpc")
         .arg(path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
+        .stderr(Stdio::piped());
+    if let Some(guard) = guard {
+        guard
+            .inherit(&mut command)
+            .map_err(crate::repository_sync::api_error)?;
+    }
+    let mut child = command
         .spawn()
         .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
     let mut stdin = child
@@ -684,7 +692,29 @@ pub async fn git_service_endpoint(
         Ok(body) => body,
         Err(e) => return e.into_response(),
     };
-    match run_git_service(path.as_path(), service, body).await {
+    let guard = if operation == GitOperation::Write {
+        let storage = match crate::repository_catalog::resolve_storage(pool, &repo).await {
+            Ok(value) => value,
+            Err(error) => return error.into_response(),
+        };
+        let id = match sqlx::query_scalar::<_, Uuid>(
+            "SELECT id FROM repository_catalog WHERE storage_name=$1",
+        )
+        .bind(storage)
+        .fetch_one(pool)
+        .await
+        {
+            Ok(id) => id,
+            Err(error) => return ApiError::internal(error).into_response(),
+        };
+        match cicd_infra::sync_git::MutationGuard::acquire(&state.git.root, id).await {
+            Ok(guard) => Some(guard),
+            Err(error) => return crate::repository_sync::api_error(error).into_response(),
+        }
+    } else {
+        None
+    };
+    match run_git_service(path.as_path(), service, body, guard.as_ref()).await {
         Ok(out) => (
             StatusCode::OK,
             [(
@@ -816,6 +846,7 @@ pub async fn internal_git_push(
     if event.repository_id.is_some_and(|id| id != repository_id) {
         return Err(ApiError::conflict("hook_repository_identity_mismatch"));
     }
+    crate::repository_sync::signal(pool, repository_id).await;
     let short_ref = event
         .ref_name
         .strip_prefix("refs/heads/")
@@ -839,16 +870,31 @@ pub async fn internal_git_push(
             .await?;
     match project_id {
         Some(project_id) => {
-            let outcome = crate::api::create_pipeline_with_vars_idempotent(
-                pool,
-                project_id,
-                short_ref,
-                serde_json::json!({}),
-                crate::api::PIPELINE_TRIGGER_SOURCE_GIT_PUSH,
-                idempotency_key.as_deref(),
-                &state.config.git.root,
-            )
-            .await?;
+            let outcome = if let (Some(key), Some(sha)) =
+                (idempotency_key.as_deref(), event.new_rev.as_deref())
+            {
+                crate::api::pipelines_routes::create_pipeline_at_commit(
+                    pool,
+                    project_id,
+                    short_ref,
+                    crate::api::PIPELINE_TRIGGER_SOURCE_GIT_PUSH,
+                    key,
+                    &state.config.git.root,
+                    sha,
+                )
+                .await?
+            } else {
+                crate::api::create_pipeline_with_vars_idempotent(
+                    pool,
+                    project_id,
+                    short_ref,
+                    serde_json::json!({}),
+                    crate::api::PIPELINE_TRIGGER_SOURCE_GIT_PUSH,
+                    idempotency_key.as_deref(),
+                    &state.config.git.root,
+                )
+                .await?
+            };
             Ok(axum::Json(serde_json::json!({
                 "triggered": true,
                 "pipeline_id": outcome.pipeline.id,
@@ -869,7 +915,7 @@ fn is_probable_object_id(value: &str) -> bool {
     value.len() >= 40 && value.chars().all(|c| c.is_ascii_hexdigit())
 }
 
-fn git_push_idempotency_key(repository: &str, ref_name: &str, new_rev: &str) -> String {
+pub(crate) fn git_push_idempotency_key(repository: &str, ref_name: &str, new_rev: &str) -> String {
     use sha2::{Digest, Sha256};
     let payload = format!("{repository}\0{ref_name}\0{new_rev}");
     format!("git-push:{:x}", Sha256::digest(payload.as_bytes()))

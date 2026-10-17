@@ -62,9 +62,9 @@ pub async fn all(
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     let search = page.search.as_deref().unwrap_or("");
     let managed = page.managed.unwrap_or(false);
-    let total: i64 = sqlx::query_scalar("SELECT count(*) FROM repository_catalog r JOIN repositories s ON s.id=r.id LEFT JOIN git_groups g ON g.id=r.group_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=g.id WHERE ($1::uuid IS NULL OR r.group_id=$1) AND position(lower($2) in lower(COALESCE(g.slug||'/'||r.slug,r.slug)))>0 AND (NOT $3 OR b.resource_id IS NOT NULL)")
-        .bind(page.group_id).bind(search).bind(managed).fetch_one(pool).await.map_err(catalog_database_error)?;
-    let rows:Vec<serde_json::Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',r.id,'group_id',r.group_id,'slug',r.slug,'kind',r.kind,'ready',r.ready,'external_url',r.external_url,'provider_refs',r.provider_refs,'public_name',COALESCE(g.slug||'/'||r.slug,r.slug),'storage_name',r.storage_name,'visibility',s.visibility,'namespace',CASE WHEN b.resource_id IS NOT NULL THEN jsonb_build_object('registry_instance_id',b.registry_instance_id,'namespace_id',b.namespace_id) ELSE NULL END,'state',b.state) FROM repository_catalog r JOIN repositories s ON s.id=r.id LEFT JOIN git_groups g ON g.id=r.group_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=g.id WHERE ($3::uuid IS NULL OR r.group_id=$3) AND position(lower($4) in lower(COALESCE(g.slug||'/'||r.slug,r.slug)))>0 AND (NOT $5 OR b.resource_id IS NOT NULL) ORDER BY g.slug NULLS LAST,r.slug,r.id LIMIT $1 OFFSET $2").bind(page.limit.unwrap_or(50).clamp(1,100)).bind(page.offset.unwrap_or(0).max(0)).bind(page.group_id).bind(search).bind(managed).fetch_all(pool).await.map_err(catalog_database_error)?;
+    let total: i64 = sqlx::query_scalar("SELECT count(*) FROM repository_catalog r JOIN repositories s ON s.id=r.id LEFT JOIN git_groups g ON g.id=r.group_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=g.id WHERE ($1::uuid IS NULL OR r.group_id=$1) AND position(lower($2) in lower(COALESCE(g.slug||'/'||r.slug,r.slug)))>0 AND (NOT $3 OR b.resource_id IS NOT NULL) AND (NOT $4 OR (r.kind='hosted' AND r.ready AND COALESCE(b.state,'active')='active' AND NOT EXISTS(SELECT 1 FROM repository_sync_connections c WHERE c.repository_id=r.id)))")
+        .bind(page.group_id).bind(search).bind(managed).bind(page.sync_available.unwrap_or(false)).fetch_one(pool).await.map_err(catalog_database_error)?;
+    let rows:Vec<serde_json::Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',r.id,'group_id',r.group_id,'slug',r.slug,'kind',r.kind,'ready',r.ready,'external_url',r.external_url,'provider_refs',r.provider_refs,'public_name',COALESCE(g.slug||'/'||r.slug,r.slug),'storage_name',r.storage_name,'visibility',s.visibility,'namespace',CASE WHEN b.resource_id IS NOT NULL THEN jsonb_build_object('registry_instance_id',b.registry_instance_id,'namespace_id',b.namespace_id) ELSE NULL END,'state',b.state) FROM repository_catalog r JOIN repositories s ON s.id=r.id LEFT JOIN git_groups g ON g.id=r.group_id LEFT JOIN forge_namespace_bindings b ON b.resource_id=g.id WHERE ($3::uuid IS NULL OR r.group_id=$3) AND position(lower($4) in lower(COALESCE(g.slug||'/'||r.slug,r.slug)))>0 AND (NOT $5 OR b.resource_id IS NOT NULL) AND (NOT $6 OR (r.kind='hosted' AND r.ready AND COALESCE(b.state,'active')='active' AND NOT EXISTS(SELECT 1 FROM repository_sync_connections c WHERE c.repository_id=r.id))) ORDER BY g.slug NULLS LAST,r.slug,r.id LIMIT $1 OFFSET $2").bind(page.limit.unwrap_or(50).clamp(1,100)).bind(page.offset.unwrap_or(0).max(0)).bind(page.group_id).bind(search).bind(managed).bind(page.sync_available.unwrap_or(false)).fetch_all(pool).await.map_err(catalog_database_error)?;
     let mut items = Vec::new();
     for value in rows {
         let mut repo: CatalogRepository = serde_json::from_value(value)
@@ -98,6 +98,7 @@ pub struct Page {
     pub search: Option<String>,
     pub group_id: Option<Uuid>,
     pub managed: Option<bool>,
+    pub sync_available: Option<bool>,
 }
 #[derive(Deserialize, utoipa::IntoParams)]
 pub struct NamespaceQuery {
@@ -247,13 +248,17 @@ pub async fn catalog_write_lease<'a>(
     state: &'a AppState,
     repository: Uuid,
 ) -> Result<sqlx::Transaction<'a, sqlx::Postgres>, ApiError> {
-    let mut tx = state
+    let pool = state
         .namespace_admission_pool
         .as_ref()
-        .ok_or_else(ApiError::unavailable)?
-        .begin()
-        .await
-        .map_err(catalog_database_error)?;
+        .ok_or_else(ApiError::unavailable)?;
+    catalog_write_lease_on_pool(pool, repository).await
+}
+pub(crate) async fn catalog_write_lease_on_pool(
+    pool: &PgPool,
+    repository: Uuid,
+) -> Result<sqlx::Transaction<'_, sqlx::Postgres>, ApiError> {
+    let mut tx = pool.begin().await.map_err(catalog_database_error)?;
     sqlx::query("SELECT pg_advisory_xact_lock_shared(hashtextextended($1,3))")
         .bind(repository.to_string())
         .execute(&mut *tx)

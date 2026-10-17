@@ -1,0 +1,103 @@
+# Синхронизация репозиториев Forge с GitLab и GitHub
+
+Пользователь одобрил реализацию 2026-10-17. По отдельному указанию живая
+приёмка начата с GitHub. Реализация находится в feat/external-repository-sync,
+в изолированном worktree; принятый runtime и его pinned images не менялись.
+
+## Реализованный объём
+
+- Одно подключение на hosted repository UUID, GitHub.com или операторский
+  allowlist HTTPS origins собственного GitLab; external catalog entries не
+  преобразуются в hosted.
+- Направления disabled/pull/push/both, способы manual/automatic. Новое
+  подключение disabled/manual. Ручная кнопка доступна при automatic.
+- Все heads/tags, исходные имена, без удаления, изменения HEAD, merge/rebase
+  и перезаписи истории. Создание/обновление защищённой ветки Forge блокируется
+  с protected_branch; пользователь открывает обычный PR самостоятельно.
+- Settings CAS, UUID Idempotency-Key для сохранения/ручного запуска, один
+  active run на repository, полная история snapshots и постраничные refs.
+- AES-GCM с прежним CICD_SECRETS_KEY; отдельное хранение credentials,
+  HMAC команд вместо plaintext отпечатка, безопасный readback. Git child
+  получает credential helper FD, без токена в URL/argv/config/logs; TLS
+  проверяется, redirects запрещены, private CA — через системный trust store.
+- Namespace/archive admission и общая межпроцессная flock-блокировка для
+  sync/receive-pack/PR merge. Дочерний Git удерживает блокировку после потери
+  supervisor; lease не разрешает обход живого процесса.
+- Durable per-ref intents до эффекта, ожидаемый старый SHA, восстановление
+  по фактическим refs и reconciling для неизвестного результата. Отключение
+  отменяет queued и запрашивает остановку running, сохраняя историю.
+- Существующая роль worker: интервал 300 секунд и общий лимит 2, настраиваемые
+  typed config; события push/PR merge объединяются. Feature flag default false.
+- CI через прежнюю push-policy, точный SHA события, общий с обычным push
+  idempotency key; повторная доставка не создаёт второй pipeline.
+- Production список, server filters/pagination/total, URL/Back/Forward,
+  компактная форма, права чтения/записи, конфликт версии с сохранением черновика,
+  повтор неизвестного ответа с тем же ключом, история refs.
+
+Контракты и эксплуатация: [ADR-0028](../adr/0028-external-repository-synchronization.md),
+[API](../API.md), [модель данных](../DATA_MODEL.md), [Git hosting](../GIT_HOSTING.md),
+[конфигурация](../ENV.md). Миграция 0093 аддитивна; выпущенные migrations не менялись.
+
+## Проверки
+
+Закреплены Rust 1.88.0, Node 22.20.0, pnpm 10.28.1 и Base
+2ad0834d06d3aa703fa1791a932bfc76650c8e42. Источники для контейнерной QA экспортируются
+из immutable Git tree SHA, Base — из закреплённого commit. Все временные Compose
+проекты используют Base ComposeHelper v2 и finally cleanup, без доступа к runtime
+volumes или Docker socket; свободное место перед QA превышает 30 ГиБ.
+
+Подтверждены полный backend test suite и PostgreSQL проверки: обновление заполненной
+БД, CAS/idempotency, объединение сигналов, fencing, archive, смена endpoint с историей,
+HTTP-контракты/права и точный CI SHA с дедупликацией. Настоящий Git проверяет
+fast-forward, несовпадение ожидаемого ref и сохранение блокировки дочерним процессом.
+
+Живой disposable GitHub проверен через HTTPS: push/pull, annotated tags,
+fast-forward/CAS; полный worker — два исполнителя, protected main с частичным
+результатом, ручной запуск, automatic both и восстановление потерянного ACK по SHA.
+Токен взят из существующей авторизации и передан QA через stdin, не через файл.
+
+Живой disposable GitLab также прошёл HTTPS push/pull, annotated tags,
+fast-forward/CAS и полный worker: protected main, частичный результат,
+ручной запуск, automatic both, два исполнителя и восстановление потерянного ACK.
+Первый сетевой сбой QA не повторился при повторной проверке. Оба провайдера
+отклоняют неверный credential. В одноразовом контейнере Git отклоняет недоверенный
+сертификат и принимает частный CA из системного trust store с включённой TLS-проверкой.
+
+Подтверждены Rust fmt, Clippy workspace/all-targets с -D warnings, полный
+backend suite, 8 PostgreSQL tests и release workspace build. Проверены
+одновременные merge одного PR без лишнего коммита и сохранение guard дочерним
+процессом после гибели родительского Git. Frontend: 236 tests / 43 files,
+lint, production build, OpenAPI drift и compatibility на закреплённом Node.
+Generated OpenAPI совпадает с canonical; preview fixtures отсутствуют в bundle.
+Журналы, SHA256 и сборочные артефакты находятся рядом с worktree в ../evidence.
+Проверенный source tree: 65d5c5c1b84e7e3f596bec871bbfce321edda15d;
+после QA меняется только этот отчёт о приёмке. Токен не найден в исходниках,
+Git objects, журналах или артефактах; credentials не сохранялись в QA-файлы.
+
+Production компонент проверен визуально на 375/768/1026/1440 px, включая keyboard
+и сохранение. На 1026 px все настройки и действия помещаются без прокрутки.
+
+## Предпросмотр
+
+Из frontend: pnpm exec vite --config vite.sync-preview.config.ts.
+/sync-preview.html — исходный согласованный сценарий с фикстурами;
+/sync-preview.html?production=1 — визуальная проверка production-компонента
+с заменённым транспортом. Данные вымышленные, токены только вымышленные,
+состояние в памяти, API proxy отсутствует, CSP ограничивает сеть localhost.
+Отдельный entrypoint и fixtures не входят в production bundle.
+
+## Очистка и установка
+
+GitLab принял удаление созданного disposable проекта (202). Удаление приватного
+GitHub QA-репозитория отклонено: существующий token не имеет delete_repo;
+права не расширялись. Остаток для удаления владельцем:
+https://github.com/FerrPOINT/forge-sync-qa-20261017-01a14808.
+Временные Compose-проекты и собственные disposable volumes очищены Base helper;
+shared caches, evidence, runtime и backups сохраняются.
+OAuth, SSH, LFS, provider webhooks, создание remote, issues/PR/releases
+не входят в первую версию.
+
+Установка кандидата в runtime — отдельный этап: backup, migration test, smoke,
+одно тестовое подключение и только затем включение worker flag. Откат останавливает
+исполнение, сохраняя PostgreSQL, Git и историю; down migration и удаление volumes
+не выполняются. Commit/push и изменение установленного runtime не выполнялись.

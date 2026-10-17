@@ -138,3 +138,5 @@ Proposed / Accepted / Deprecated / Superseded by ADR-NNNN
 - [ADR-0020](adr/0020-owner-local-manifest-delivery.md) — privileged owner-local static manifest delivery, фактические HTTP checks и last-confirmed rollback; SDLC dispatch закрыт.
 - `docs/ROADMAP.md` — план разработки.
 - `docs/CODE_STYLE.md` — конвенции кода.
+
+- [ADR-0028](adr/0028-external-repository-synchronization.md) — Git HTTPS синхронизация, durable refs и общая mutation guard.

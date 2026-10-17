@@ -1,0 +1,297 @@
+//! External Git synchronization policy. No IO or provider API dependencies.
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[schema(as = RepositorySyncProvider)]
+pub enum Provider {
+    Gitlab,
+    Github,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[schema(as = RepositorySyncDirection)]
+pub enum Direction {
+    #[default]
+    Disabled,
+    Pull,
+    Push,
+    Both,
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+#[schema(as = RepositorySyncSettings)]
+pub struct Settings {
+    pub provider: Provider,
+    pub instance_url: String,
+    pub repository_path: String,
+    #[serde(default)]
+    #[schema(required)]
+    pub direction: Direction,
+    #[serde(default)]
+    #[schema(required)]
+    pub automatic: bool,
+}
+impl Settings {
+    pub fn validate(&mut self, allowed_gitlab_origins: &[String]) -> Result<(), String> {
+        self.instance_url = self.instance_url.trim().trim_end_matches('/').to_owned();
+        self.repository_path = self
+            .repository_path
+            .trim()
+            .trim_end_matches(".git")
+            .to_owned();
+        let url =
+            url::Url::parse(&self.instance_url).map_err(|_| "Некорректный адрес провайдера")?;
+        if url.scheme() != "https"
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+            || url.host_str().is_none()
+        {
+            return Err("Нужен HTTPS-адрес без credentials, query и fragment".into());
+        }
+        let origin = url.origin().ascii_serialization();
+        match self.provider {
+            Provider::Github if self.instance_url != "https://github.com" => {
+                return Err("Поддерживается только GitHub.com".into());
+            }
+            Provider::Gitlab if !allowed_gitlab_origins.contains(&origin) => {
+                return Err("Инстанс GitLab не разрешён оператором".into());
+            }
+            _ => {}
+        }
+        let parts: Vec<_> = self.repository_path.split('/').collect();
+        if parts.len() < 2
+            || (self.provider == Provider::Github && parts.len() != 2)
+            || parts.iter().any(|part| {
+                part.is_empty()
+                    || *part == "."
+                    || *part == ".."
+                    || part.starts_with('-')
+                    || !part
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+            })
+        {
+            return Err("Некорректный путь репозитория".into());
+        }
+        Ok(())
+    }
+    pub fn url(&self) -> String {
+        format!("{}/{}.git", self.instance_url, self.repository_path)
+    }
+    pub fn same_endpoint(&self, other: &Self) -> bool {
+        self.provider == other.provider && self.instance_url == other.instance_url
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+#[schema(as = RepositorySyncSaveConnection)]
+pub struct SaveConnection {
+    pub expected_version: i64,
+    pub settings: Settings,
+    /// Write-only. Omission retains the existing credential.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(write_only)]
+    pub token: Option<String>,
+}
+#[derive(Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+#[schema(as = RepositorySyncCheckConnection)]
+pub struct CheckConnection {
+    pub settings: Settings,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(write_only)]
+    pub token: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = RepositorySyncCheckResult)]
+pub struct CheckResult {
+    pub read: bool,
+    pub write: String,
+    pub message: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = RepositorySyncSyncRun)]
+pub struct SyncRun {
+    pub id: Uuid,
+    pub repository_id: Uuid,
+    pub connection_version: i64,
+    pub settings: Settings,
+    pub source: String,
+    pub state: String,
+    pub message: Option<String>,
+    pub cancel_requested: bool,
+    pub created_at: DateTime<Utc>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = RepositorySyncNamespace)]
+pub struct RepositoryNamespace {
+    pub registry_instance_id: Uuid,
+    pub namespace_id: Uuid,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = RepositorySyncConnection)]
+pub struct Connection {
+    pub repository_id: Uuid,
+    pub repository_name: String,
+    pub namespace: Option<RepositoryNamespace>,
+    pub version: i64,
+    pub settings: Settings,
+    pub has_credential: bool,
+    pub writable: bool,
+    pub paused_reason: Option<String>,
+    pub worker_enabled: bool,
+    pub next_check_at: Option<DateTime<Utc>>,
+    pub active_run: Option<SyncRun>,
+    pub last_run: Option<SyncRun>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[schema(as = RepositorySyncRefResult)]
+pub struct RefResult {
+    pub ref_name: String,
+    pub direction: String,
+    pub old_sha: Option<String>,
+    pub new_sha: Option<String>,
+    pub state: String,
+    pub reason: Option<String>,
+    pub event_delivered: bool,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RefPlan {
+    NoChange,
+    Pull,
+    Push,
+    Conflict,
+    Protected,
+}
+
+/// Ancestry is supplied by the Git adapter against the immutable snapshot.
+pub fn plan_ref(
+    direction: Direction,
+    tag: bool,
+    protected: bool,
+    local: Option<&str>,
+    remote: Option<&str>,
+    local_ancestor: bool,
+    remote_ancestor: bool,
+) -> RefPlan {
+    if direction == Direction::Disabled || local == remote {
+        return RefPlan::NoChange;
+    }
+    let candidate = match (direction, local, remote) {
+        (Direction::Pull | Direction::Both, None, Some(_)) => RefPlan::Pull,
+        (Direction::Push | Direction::Both, Some(_), None) => RefPlan::Push,
+        (Direction::Pull, Some(_), None) | (Direction::Push, None, Some(_)) => RefPlan::NoChange,
+        (_, Some(_), Some(_)) if !tag => match direction {
+            Direction::Pull if local_ancestor => RefPlan::Pull,
+            Direction::Push if remote_ancestor => RefPlan::Push,
+            Direction::Both if local_ancestor => RefPlan::Pull,
+            Direction::Both if remote_ancestor => RefPlan::Push,
+            _ => RefPlan::Conflict,
+        },
+        _ => RefPlan::Conflict,
+    };
+    if candidate == RefPlan::Pull && protected {
+        RefPlan::Protected
+    } else {
+        candidate
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn directional_and_bidirectional_ancestry() {
+        for (direction, a, b, expected) in [
+            (Direction::Both, true, false, RefPlan::Pull),
+            (Direction::Both, false, true, RefPlan::Push),
+            (Direction::Both, false, false, RefPlan::Conflict),
+            (Direction::Pull, false, true, RefPlan::Conflict),
+            (Direction::Push, true, false, RefPlan::Conflict),
+            (Direction::Disabled, true, false, RefPlan::NoChange),
+        ] {
+            assert_eq!(
+                plan_ref(direction, false, false, Some("a"), Some("b"), a, b),
+                expected
+            );
+        }
+    }
+    #[test]
+    fn tags_protection_and_missing_refs() {
+        assert_eq!(
+            plan_ref(
+                Direction::Both,
+                true,
+                false,
+                Some("a"),
+                Some("b"),
+                true,
+                false
+            ),
+            RefPlan::Conflict
+        );
+        assert_eq!(
+            plan_ref(Direction::Pull, false, true, None, Some("a"), false, false),
+            RefPlan::Protected
+        );
+        assert_eq!(
+            plan_ref(Direction::Push, false, false, Some("a"), None, false, false),
+            RefPlan::Push
+        );
+        assert_eq!(
+            plan_ref(Direction::Pull, false, false, Some("a"), None, false, false),
+            RefPlan::NoChange
+        );
+        assert_eq!(
+            plan_ref(
+                Direction::Both,
+                false,
+                true,
+                Some("a"),
+                Some("a"),
+                false,
+                false
+            ),
+            RefPlan::NoChange
+        );
+    }
+    #[test]
+    fn endpoints_are_explicitly_allowed_and_have_no_credentials() {
+        let mut settings = Settings {
+            provider: Provider::Gitlab,
+            instance_url: "https://git.internal/gitlab".into(),
+            repository_path: "team/sub/repo.git".into(),
+            direction: Direction::Both,
+            automatic: false,
+        };
+        assert!(settings.validate(&[]).is_err());
+        assert!(settings.validate(&["https://git.internal".into()]).is_ok());
+        assert_eq!(
+            settings.url(),
+            "https://git.internal/gitlab/team/sub/repo.git"
+        );
+        for path in ["a/../b", "a/-b", "a/%2fb", "a//b"] {
+            settings.repository_path = path.into();
+            assert!(settings.validate(&["https://git.internal".into()]).is_err());
+        }
+        settings.provider = Provider::Github;
+        settings.repository_path = "a/b".into();
+        for host in [
+            "https://github.com.evil",
+            "https://secret@github.com",
+            "http://github.com",
+            "https://github.com:443/path",
+        ] {
+            settings.instance_url = host.into();
+            assert!(settings.validate(&[]).is_err());
+        }
+    }
+}

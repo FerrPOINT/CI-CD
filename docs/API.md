@@ -2043,3 +2043,31 @@ PR merge для репозитория, ещё не связанного с CI-�
 ## Сквозной Namespace
 
 Версионированные API, данные, ownership и совместимость описаны в [Namespace](NAMESPACE.md).
+
+## Синхронизация внешнего репозитория
+
+Все пути ниже имеют префикс /api/v1; UUID id — hosted repository UUID.
+
+| Метод | Путь | Результат |
+|---|---|---|
+| GET | /repository-syncs | items/total, search/provider/state/group_id/limit/offset |
+| GET | /catalog/repositories/{id}/sync | настройки, версия, effective writable, paused_reason, active/last run; версия 0 означает отсутствие подключения |
+| PUT | /catalog/repositories/{id}/sync | сохранить expected_version/settings/необязательный token |
+| POST | /catalog/repositories/{id}/sync/check | проверить settings/token без сохранения и Git-записи |
+| POST | /catalog/repositories/{id}/sync/runs | 202 с UUID запуска; существующий active run объединяет повторный запуск |
+| GET | /catalog/repositories/{id}/sync/runs | история items/total с limit/offset |
+| GET | /catalog/repositories/{id}/sync/runs/{run_id} | состояние конкретного запуска |
+| GET | /catalog/repositories/{id}/sync/runs/{run_id}/refs | results items/total с limit/offset |
+
+PUT и POST runs требуют UUID Idempotency-Key. Повтор той же команды возвращает
+сохранённый readback; другой payload или actor/repository с тем же ключом — 409.
+Несовпадение expected_version — 409, клиент сохраняет черновик. Отсутствующий
+token сохраняет старый; пустой token ошибочен. Новый provider/instance требует
+новый token. Ответ содержит только has_credential. Во время active run изменения
+отклоняются, кроме отключения текущих настроек; queued отменяется, running
+переходит в stopping. Disabled connection запустить нельзя.
+
+Чтение проверяет доступ к repository, команды — право записи и git:write scope
+для machine/PAT principals вместе с существующим api scope/project binding.
+Archive admission применяется перед изменениями. Pagination server-side,
+сортировка истории created_at/id DESC, refs — по имени.

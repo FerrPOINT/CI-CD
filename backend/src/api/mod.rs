@@ -92,6 +92,10 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         )
     ),
     paths(
+        crate::repository_sync::list, crate::repository_sync::get_connection,
+        crate::repository_sync::save_connection, crate::repository_sync::check,
+        crate::repository_sync::start, crate::repository_sync::runs,
+        crate::repository_sync::run, crate::repository_sync::refs,
         crate::workspace_projects::all_pipelines,
         crate::workspace_projects::all_summary,
         crate::repository_catalog::all,
@@ -218,6 +222,12 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::api::pipelines_routes::get_test_report, crate::api::pipelines_routes::upload_test_report,
     ),
     components(schemas(
+        cicd_domain::repository_sync::Provider,cicd_domain::repository_sync::Direction,
+        cicd_domain::repository_sync::Settings,cicd_domain::repository_sync::SaveConnection,
+        cicd_domain::repository_sync::CheckConnection,cicd_domain::repository_sync::CheckResult,
+        cicd_domain::repository_sync::Connection,cicd_domain::repository_sync::SyncRun,
+        cicd_domain::repository_sync::RefResult,crate::repository_sync::ConnectionPage,
+        crate::repository_sync::RunPage,crate::repository_sync::RefPage,
         crate::domain::sdlc_workspace::WorkspaceOperationRequest,
         crate::domain::sdlc_workspace::WorkspaceTaskBinding,
         crate::domain::sdlc_workspace::TaskWorkspaceIntent,

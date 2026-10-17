@@ -80,6 +80,7 @@ pub(crate) async fn trigger_pipeline(
         idempotency_key.as_deref(),
         &state.config.git.root,
         submission.as_ref(),
+        None,
     )
     .await?;
     let mut response_headers = HeaderMap::new();
@@ -116,6 +117,30 @@ pub(crate) async fn create_pipeline_with_vars_idempotent(
         idempotency_key,
         git_root,
         None,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn create_pipeline_at_commit(
+    pool: &PgPool,
+    project_id: Uuid,
+    git_ref: String,
+    source: &str,
+    key: &str,
+    git_root: &FsPath,
+    sha: &str,
+) -> Result<PipelineTriggerOutcome, ApiError> {
+    create_pipeline_bound(
+        pool,
+        project_id,
+        git_ref,
+        serde_json::json!({}),
+        source,
+        Some(key),
+        git_root,
+        None,
+        Some(sha),
     )
     .await
 }
@@ -130,13 +155,29 @@ async fn create_pipeline_bound(
     idempotency_key: Option<&str>,
     git_root: &FsPath,
     task: Option<&super::sdlc_workspace::task_pipeline::Submission>,
+    expected_commit: Option<&str>,
 ) -> Result<PipelineTriggerOutcome, ApiError> {
     crate::repository_catalog::require_project_writable(pool, project_id).await?;
     let storage_name =
         crate::repository_catalog::local_storage_for_project(pool, project_id).await?;
     // Never clone here: this path is called by post-receive and must return
     // before git-receive-pack finishes. Local config is read from the bare repo.
-    let commit_sha = resolve_commit_sha(storage_name.as_deref(), &git_ref, git_root).await;
+    let commit_sha = if let Some(sha) = expected_commit {
+        if !matches!(sha.len(), 40 | 64) || !sha.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(ApiError::bad_request("invalid_push_commit"));
+        }
+        Some(
+            resolve_commit_sha(
+                storage_name.as_deref(),
+                &format!("{sha}^{{commit}}"),
+                git_root,
+            )
+            .await
+            .ok_or_else(|| ApiError::conflict("push_commit_unavailable"))?,
+        )
+    } else {
+        resolve_commit_sha(storage_name.as_deref(), &git_ref, git_root).await
+    };
     let config_ref = commit_sha.as_deref().unwrap_or(&git_ref);
     let config = read_local_forge_ci_config(storage_name.as_deref(), config_ref, git_root).await;
     let (config_source, raw_config) = match config {
@@ -158,6 +199,8 @@ async fn create_pipeline_bound(
     );
     let fingerprint =
         task_trigger_fingerprint(&git_ref, &variables, task.map(|s| (s.subject, &s.intent)));
+    // Git push keys already include the exact event SHA. Preserve the historical
+    // fingerprint so recovery also replays receipts created before this release.
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
 
     if let Some(idempotency_key) = idempotency_key {

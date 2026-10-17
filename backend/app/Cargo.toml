@@ -17,3 +17,5 @@ thiserror = { workspace = true }
 utoipa = { workspace = true }
 pdlc-auth-core = { path = "../../../services-base/base-modules/rust/pdlc-auth-core" }
 uuid.workspace = true
+cicd-domain = { path = "../domain" }
+serde_json.workspace = true
