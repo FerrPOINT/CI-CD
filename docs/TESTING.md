@@ -51,3 +51,13 @@ Cache bootstrap включается в server через `include_str!`. Пос
 artifact inputs. Unit: `python -B -m unittest discover -s scripts/tests -p test_cache_tooling.py -q`.
 Изменение cache packet обязано менять native artifact identity и не выбирает
 frontend. Неизвестные остальные изменения по-прежнему расширяют проверку продукта.
+
+## Одна OpenAPI generation в CI
+
+В frontend job автоматического CI и ручного release `postinstall` выполняет
+generation во время frozen install; project lifecycle явно включён. Сразу после
+установки Git проверяет tracked outputs и отсутствие drift, без второго
+generator invocation. Проверяемые outputs: `src/api/schema.d.ts`.
+Lockfile, backward compatibility и backend OpenAPI drift gates сохраняются.
+Самостоятельный `pnpm openapi:check` остаётся проверкой для окружения, в котором
+generation ещё не выполнялась; его не добавляют повторно после postinstall.

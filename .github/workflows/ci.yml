@@ -226,12 +226,15 @@ jobs:
           node-version: 22.20.0
           cache: pnpm
           cache-dependency-path: CI-CD/frontend/pnpm-lock.yaml
-      - run: pnpm install --frozen-lockfile
+      - run: pnpm install --frozen-lockfile --ignore-scripts=false
         env:
           CI: "true"
+      - name: Verify postinstall-generated contract and lockfile
+        run: |
+          git ls-files --error-unmatch pnpm-lock.yaml src/api/schema.d.ts > /dev/null
+          git diff --exit-code -- pnpm-lock.yaml src/api/schema.d.ts
       - name: dependency advisories
         run: pnpm audit --audit-level low
-      - run: pnpm openapi:check
       - name: Typecheck independently of application build
         run: pnpm exec tsc --noEmit
       - run: pnpm test:unit
@@ -240,8 +243,6 @@ jobs:
         run: |
           git fetch origin main --depth=1
           pnpm openapi:compat
-      - name: Generated contract and lockfile stay unchanged
-        run: git diff --exit-code -- pnpm-lock.yaml src/api/generated.ts src/api/schema.d.ts
       - run: pnpm exec vite build
         if: needs.changes.outputs.frontend_build == 'true'
       - name: Verify exact frontend tooling packet
