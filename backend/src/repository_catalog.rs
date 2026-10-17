@@ -139,12 +139,31 @@ pub async fn verified_repositories(
     }
     Ok(Json(result))
 }
-#[utoipa::path(get,operation_id="forge_verify_repository_ref",path="/api/v1/namespace-repositories/{id}",tag="namespaces",params(("id"=Uuid,Path),NamespaceQuery),responses((status=200,body=VerifiedRepository),(status=403,description="Foreign namespace")))]
+#[utoipa::path(get,operation_id="forge_verify_repository_ref",path="/api/v1/namespace-repositories/{id}",tag="namespaces",
+    params(("id"=Uuid,Path),crate::registered_source::RepositoryQuery),
+    responses((status=200,body=crate::registered_source::RepositoryReadback),(status=400),(status=403),(status=404),(status=409),(status=503)))]
 pub async fn verified_repository(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
-    Query(query): Query<NamespaceQuery>,
-) -> Result<Json<VerifiedRepository>, ApiError> {
+    Query(query): Query<crate::registered_source::RepositoryQuery>,
+) -> Result<
+    (
+        axum::http::HeaderMap,
+        Json<crate::registered_source::RepositoryReadback>,
+    ),
+    ApiError,
+> {
+    use crate::registered_source::RepositoryReadback;
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    if let Some(expected) = query.source()? {
+        let observed =
+            crate::registered_source::observe(&state, id, query.namespace(), expected).await?;
+        return Ok((headers, Json(RepositoryReadback::Source(observed))));
+    }
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     let row=sqlx::query("SELECT r.kind,g.slug||'/'||r.slug AS public_name,b.command FROM repository_catalog r JOIN git_groups g ON g.id=r.group_id JOIN forge_namespace_bindings b ON b.resource_id=g.id WHERE r.id=$1 AND r.ready").bind(id).fetch_optional(pool).await.map_err(catalog_database_error)?.ok_or_else(ApiError::not_found)?;
     let command: pdlc_shared::resource_context::OwnerCommand =
@@ -159,13 +178,16 @@ pub async fn verified_repository(
     {
         return Err(ApiError::forbidden());
     }
-    Ok(Json(VerifiedRepository {
-        namespace: command.namespace,
-        forge_instance_id: command.resource.instance_id,
-        repository_id: id,
-        public_name: row.get("public_name"),
-        kind: row.get("kind"),
-    }))
+    Ok((
+        headers,
+        Json(RepositoryReadback::Catalog(VerifiedRepository {
+            namespace: command.namespace,
+            forge_instance_id: command.resource.instance_id,
+            repository_id: id,
+            public_name: row.get("public_name"),
+            kind: row.get("kind"),
+        })),
+    ))
 }
 
 pub async fn resolve_storage(pool: &PgPool, raw: &str) -> Result<String, ApiError> {

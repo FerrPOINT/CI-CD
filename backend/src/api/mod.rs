@@ -218,6 +218,8 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::api::pipelines_routes::get_test_report, crate::api::pipelines_routes::upload_test_report,
     ),
     components(schemas(
+        crate::registered_source::VerifiedSource,
+        crate::registered_source::RepositoryReadback,
         crate::domain::sdlc_workspace::WorkspaceOperationRequest,
         crate::domain::sdlc_workspace::WorkspaceTaskBinding,
         crate::domain::sdlc_workspace::TaskWorkspaceIntent,
