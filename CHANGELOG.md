@@ -15,6 +15,10 @@
 
 ## [Unreleased]
 
+- Native QA Compose принимает read-only daemon paths из явно привязанного
+  собственного disposable volume; owner/mountpoint повторно проверяются,
+  journal v2 сохраняет привязку для recovery без присвоения чужого ресурса.
+
 - PR merge фиксирует точные branch SHA, игнорирует одноимённые tags и проверяет
   source/target refs при публикации. Конкурирующий writer не теряет изменения;
   PR row lock и owner waiter сохраняют итог при close/HTTP disconnect.
