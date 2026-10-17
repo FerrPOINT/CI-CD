@@ -94,7 +94,45 @@ qualification пока нет. Начальный registry reader принима
 upstream backend image-build receipts той же pipeline/source; owner dependency
 images (например PostgreSQL с image-declared volumes) требуют отдельного actual
 owner readback, а не fake source/attempt labels. Этот полный DB-stack путь здесь
-не объявлен готовым. Необходимы также verified Compose Git bytes, async private
-journal integration и exact-service stop/readback перед будущим enablement.
+не объявлен готовым. Verified Compose Git bytes и lifecycle plumbing описаны ниже;
+они сами не подключают deployment execution или acceptance.
 Существующий readonly descriptor подтверждает здесь только image provenance:
 он не перелэйбливается и не доказывает совместимость с изменяемой БД/migrations.
+
+## Exact Git Source And Existing Journal
+
+Неподключённый `read_owner_compose_source` получает Compose path только из
+immutable plan текущего task pipeline. Existing current-plan readback сверяет
+project/repository/source intent DevOps, active embedded attempt/lease, exact
+Git `.forge-ci.yml` bytes и plan hash. Затем existing sealed Git helpers читают
+literal path из exact commit: один regular blob, не symlink/gitlink,
+не mutable checkout. Bytes ограничены 256 KiB и проверены по Git object ID;
+после чтения plan/lease наблюдаются снова. Внешний deadline ограничивает весь IO.
+Typed result не принимает caller `verified` и не переиспользуется другой attempt.
+
+Private projection содержит job/attempt, commit, plan hash, path, Git blob ID
+и SHA-256. Pure Python assembly требует эту projection до secret resolution и
+проверяет оба byte hashes, source и attempt. Projection не является подписью или
+новой authority: её нельзя принимать из agent/job/API body. Runtime bridge к ней
+не подключён; fresh Tracker admission перед effects остаётся обязательным.
+
+У существующего `RemoteJob` штатные journal/manifest writes теперь awaited
+`spawn_blocking`, с прежними create-new private temp, file sync и rename. Один
+per-object lock и write sequence не дают отменённой queued write затереть более
+новую phase. `Drop` сохраняет прежний synchronous fail-closed marker, закрывает
+late writes и не получает права stop/delete/terminal ACK. Это прежний private
+RemoteJob journal, не Base v2 и не новая registry. Остальные filesystem reads и
+initial directory setup этим source slice не объявлены полностью async.
+
+Existing stop/readback выбирает все фактически наблюдаемые declared services,
+включая application/database, а не только `job`. Только `transfer` оставлен для
+copy-back до cleanup. Unknown/duplicate service, invalid ID и unknown/running/
+paused/restarting state удерживают termination. Partial creation/removal может
+дать отсутствующие containers: это не replay и не доказательство app readiness.
+Engine ownership/foreign-storage checks и terminal DB ACK перед scoped Compose
+down остаются прежними; lost stop ACK не превращается в success.
+
+Parser по-прежнему всегда отклоняет `workspace_deploy`. Native service creation,
+dependency-image admission, protected owner network allocation, execution
+authority/lease monitor, repo-owned acceptance и publication custody ещё не
+подключены. Rust/PG/native qualification этого расширения не заявлена.

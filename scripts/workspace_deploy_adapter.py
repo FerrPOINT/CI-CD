@@ -2,6 +2,7 @@
 
 import copy
 from dataclasses import dataclass, field
+import hashlib
 import ipaddress
 import json
 import re
@@ -28,6 +29,43 @@ class OwnerRuntime:
 
 
 @dataclass(frozen=True)
+class OwnerComposeSource:
+    """Private backend projection of VerifiedComposeSource, not request authority."""
+    job_id: UUID
+    attempt_id: UUID
+    source_commit: str
+    compose_path: str
+    blob_oid: str
+    sha256: str
+    plan_sha256: str
+
+
+def verify_compose_source(compose_bytes, seal, owner, source):
+    require(type(source) is OwnerComposeSource and type(owner) is OwnerRuntime,
+            "owner Git source projection required")
+    require(source.job_id == owner.job_id and source.attempt_id == owner.attempt_id,
+            "Compose source attempt mismatch")
+    require(type(source.source_commit) is str and type(source.plan_sha256) is str
+            and source.source_commit == seal.source_commit
+            and re.fullmatch(r"[0-9a-f]{40}", source.source_commit)
+            and re.fullmatch(r"[0-9a-f]{64}", source.plan_sha256),
+            "Compose source commit/plan mismatch")
+    require(type(source.compose_path) is str
+            and not any(ord(char) < 32 or 127 <= ord(char) <= 159
+                        or 0xD800 <= ord(char) <= 0xDFFF for char in source.compose_path)
+            and len(source.compose_path.encode("utf-8")) <= 1024
+            and not any(char in source.compose_path for char in "\\:")
+            and all(part and part not in (".", "..") and not part.startswith("-")
+                    for part in source.compose_path.split("/")), "Compose source path")
+    require(type(compose_bytes) is bytes and 0 < len(compose_bytes) <= 256 * 1024,
+            "Compose source byte bound")
+    require(source.sha256 == seal.compose_sha256 == hashlib.sha256(compose_bytes).hexdigest()
+            and source.blob_oid == hashlib.sha1(
+                b"blob " + str(len(compose_bytes)).encode("ascii") + b"\0" + compose_bytes,
+                usedforsecurity=False).hexdigest(), "Compose source bytes differ from Git blob")
+
+
+@dataclass(frozen=True)
 class PrivateServiceFragment:
     _document: dict = field(repr=False)
 
@@ -36,8 +74,9 @@ class PrivateServiceFragment:
         return copy.deepcopy(self._document)
 
 
-def resolve_services(compose_bytes, manifest_bytes, seal, owner):
+def resolve_services(compose_bytes, manifest_bytes, seal, owner, source):
     """Requires actual owner readback inputs; performs no IO or lifecycle effects."""
+    verify_compose_source(compose_bytes, seal, owner, source)
     validated = validate_recipe(compose_bytes, manifest_bytes, seal)
     compose = json.loads(compose_bytes)
     require(type(owner) is OwnerRuntime and type(owner.job_id) is UUID

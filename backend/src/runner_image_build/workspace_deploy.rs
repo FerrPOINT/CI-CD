@@ -5,6 +5,134 @@ use cicd_infra::sdlc_workspace as ledger;
 use sqlx::{PgPool, Row};
 use std::collections::BTreeMap;
 
+/// Constructed only from the current owner plan and verified Git objects, not a job report.
+pub(crate) struct VerifiedComposeSource {
+    consumer: ImageBuildScope,
+    repository: Uuid,
+    source_commit: String,
+    plan_sha256: String,
+    path: String,
+    blob_oid: String,
+    bytes: Vec<u8>,
+}
+
+impl VerifiedComposeSource {
+    pub(crate) fn owner_input(
+        &self,
+        scope: &ImageBuildScope,
+        source: &PreparationSource,
+    ) -> anyhow::Result<(serde_json::Value, &[u8])> {
+        ensure!(
+            self.consumer == *scope
+                && scope.project_id == source.project_id
+                && self.repository == source.repository_id
+                && self.source_commit == source.source_commit,
+            "Compose source consumer binding mismatch"
+        );
+        Ok((
+            serde_json::json!({
+                "job_id": scope.job_id, "attempt_id": scope.attempt_id,
+                "source_commit": self.source_commit, "compose_path": self.path,
+                "blob_oid": self.blob_oid, "sha256": digest(&self.bytes),
+                "plan_sha256": self.plan_sha256,
+            }),
+            &self.bytes,
+        ))
+    }
+}
+
+fn compose_path(plan: &serde_json::Value, current: &str) -> anyhow::Result<String> {
+    // Also validates unique keys and the current job's dependency graph.
+    upstream_jobs(plan, current)?;
+    let job = plan["jobs"]
+        .as_array()
+        .context("missing jobs")?
+        .iter()
+        .find(|job| job["key"].as_str() == Some(current))
+        .context("missing deployment job")?;
+    let spec = job["workspace_deploy"]
+        .as_object()
+        .context("missing sealed deployment spec")?;
+    ensure!(spec.len() == 2, "unknown deployment spec fields");
+    let compose = spec
+        .get("compose")
+        .and_then(serde_json::Value::as_str)
+        .context("missing Compose path")?;
+    let images = spec
+        .get("images_manifest")
+        .and_then(serde_json::Value::as_str)
+        .context("missing images manifest path")?;
+    ensure!(
+        valid_relative_path(compose, false)
+            && valid_relative_path(images, false)
+            && compose != images
+            && !excluded_source_path(compose),
+        "unsafe sealed deployment path"
+    );
+    Ok(compose.into())
+}
+
+fn compose_entry(tree: &[u8], path: &str) -> anyhow::Result<TreeEntry> {
+    let mut entries = tree_entries(tree)?;
+    ensure!(
+        entries.len() == 1 && entries[0].path == path,
+        "Compose must be one exact regular Git blob"
+    );
+    Ok(entries.remove(0))
+}
+
+/// Reads no mutable checkout. Caller must still obtain fresh execution admission before effects.
+pub(crate) async fn read_owner_compose_source(
+    pool: &PgPool,
+    source: &PreparationSource,
+    scope: &ImageBuildScope,
+    deadline: std::time::Instant,
+) -> anyhow::Result<VerifiedComposeSource> {
+    tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), async {
+        let (plan, current) = current_plan(pool, source, scope).await?;
+        let path = compose_path(&plan, &current)?;
+        let literal_path = format!(":(literal){path}");
+        let tree = git_read(
+            &source.repository,
+            &[
+                "ls-tree",
+                "-r",
+                "-z",
+                "--full-tree",
+                &source.source_commit,
+                "--",
+                &literal_path,
+            ],
+            MAX_TREE,
+        )
+        .await?;
+        let entry = compose_entry(&tree, &path)?;
+        let bytes = git_read(
+            &source.repository,
+            &["cat-file", "blob", &entry.oid],
+            256 * 1024,
+        )
+        .await?;
+        ensure!(!bytes.is_empty(), "empty Compose blob");
+        verify_blob(&bytes, &entry.oid)?;
+        ensure!(
+            current_plan(pool, source, scope).await? == (plan.clone(), current),
+            "owner attempt/source/plan changed during Git read"
+        );
+        Ok(VerifiedComposeSource {
+            consumer: scope.clone(),
+            repository: source.repository_id,
+            source_commit: source.source_commit.clone(),
+            plan_sha256: digest(&serde_json::to_vec(&plan)?),
+            path,
+            blob_oid: entry.oid,
+            bytes,
+        })
+    })
+    .await
+    .context("owner Compose source deadline")?
+}
+
 pub(crate) struct VerifiedImageRegistry {
     images: BTreeMap<String, VerifiedImage>,
     consumer: ImageBuildScope,
@@ -419,6 +547,108 @@ async fn read_registry(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn compose_path_comes_only_from_exact_unique_sealed_job() {
+        let plan = json!({"jobs":[{"key":"deploy","needs":[],"workspace_deploy":{
+            "compose":"deploy/task.compose.json","images_manifest":"reports/images.json"}}]});
+        assert_eq!(
+            compose_path(&plan, "deploy").unwrap(),
+            "deploy/task.compose.json"
+        );
+        for spec in [
+            json!(null),
+            json!({"compose":"a","images_manifest":"a"}),
+            json!({"compose":"../a","images_manifest":"b"}),
+            json!({"compose":"a","images_manifest":"b","verified":true}),
+        ] {
+            let mut changed = plan.clone();
+            changed["jobs"][0]["workspace_deploy"] = spec;
+            assert!(compose_path(&changed, "deploy").is_err());
+        }
+        assert!(compose_path(&plan, "foreign").is_err());
+    }
+
+    #[test]
+    fn compose_git_entry_rejects_symlink_gitlink_and_path_substitution() {
+        let oid = "a".repeat(40);
+        let regular = format!("100644 blob {oid}\tdeploy/task.compose.json\0");
+        assert_eq!(
+            compose_entry(regular.as_bytes(), "deploy/task.compose.json")
+                .unwrap()
+                .oid,
+            oid
+        );
+        assert!(compose_entry(regular.as_bytes(), "other.json").is_err());
+        assert!(
+            compose_entry(
+                format!("{regular}{regular}").as_bytes(),
+                "deploy/task.compose.json"
+            )
+            .is_err()
+        );
+        assert!(
+            compose_entry(
+                format!("100755 blob {oid}\tdeploy/task.compose.json\0").as_bytes(),
+                "deploy/task.compose.json"
+            )
+            .is_ok()
+        );
+        for header in ["120000 blob", "160000 commit"] {
+            assert!(
+                compose_entry(
+                    format!("{header} {oid}\tdeploy/task.compose.json\0").as_bytes(),
+                    "deploy/task.compose.json"
+                )
+                .is_err()
+            );
+        }
+        assert!(compose_entry(b"", "deploy/task.compose.json").is_err());
+    }
+
+    #[test]
+    fn compose_owner_projection_is_bound_to_repository_commit_and_attempt() {
+        let scope = ImageBuildScope {
+            project_id: Uuid::new_v4(),
+            pipeline_id: Uuid::new_v4(),
+            job_id: Uuid::new_v4(),
+            attempt_id: Uuid::new_v4(),
+            lease_id: Uuid::new_v4(),
+            generation: 1,
+        };
+        let source = PreparationSource {
+            project_id: scope.project_id,
+            repository_id: Uuid::new_v4(),
+            repository: PathBuf::from("/not-opened"),
+            source_commit: "a".repeat(40),
+        };
+        let verified = VerifiedComposeSource {
+            consumer: scope.clone(),
+            repository: source.repository_id,
+            source_commit: source.source_commit.clone(),
+            plan_sha256: "b".repeat(64),
+            path: "compose.json".into(),
+            blob_oid: "c".repeat(40),
+            bytes: b"{}".to_vec(),
+        };
+        let (projection, bytes) = verified.owner_input(&scope, &source).unwrap();
+        assert_eq!(bytes, b"{}");
+        assert_eq!(projection["sha256"], digest(bytes));
+        let mut next = scope.clone();
+        next.generation += 1;
+        assert!(verified.owner_input(&next, &source).is_err());
+        let other = PreparationSource {
+            repository_id: Uuid::new_v4(),
+            ..source
+        };
+        assert!(verified.owner_input(&scope, &other).is_err());
+        let other = PreparationSource {
+            repository_id: verified.repository,
+            source_commit: "d".repeat(40),
+            ..other
+        };
+        assert!(verified.owner_input(&scope, &other).is_err());
+    }
 
     #[test]
     fn only_transitive_declared_upstream_jobs_are_selected() {

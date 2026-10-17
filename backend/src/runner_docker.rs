@@ -3,6 +3,10 @@ use serde_json::{Value, json};
 use std::{
     io,
     path::{Path, PathBuf},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 use tokio::io::AsyncReadExt;
@@ -507,6 +511,26 @@ pub(crate) struct RemoteJob {
     manifest: Value,
     active: bool,
     stopped: bool,
+    writes: Arc<PrivateWrites>,
+}
+
+#[derive(Default)]
+struct PrivateWrites {
+    requested: AtomicU64,
+    closed: Mutex<bool>,
+}
+
+impl PrivateWrites {
+    fn write(&self, path: &Path, value: &Value, sequence: u64) -> io::Result<()> {
+        let closed = self
+            .closed
+            .lock()
+            .map_err(|_| invalid("private journal lock poisoned"))?;
+        if *closed || self.requested.load(Ordering::SeqCst) != sequence {
+            return Err(invalid("private journal write superseded or owner dropped"));
+        }
+        write_private(path, value)
+    }
 }
 
 fn literal(value: &mut Value) {
@@ -531,6 +555,20 @@ fn write_private(path: &Path, value: &Value) -> io::Result<()> {
     file.write_all(serde_json::to_string_pretty(value)?.as_bytes())?;
     file.sync_all()?;
     std::fs::rename(temp, path)
+}
+
+async fn write_private_async(
+    path: PathBuf,
+    value: Value,
+    writes: Arc<PrivateWrites>,
+) -> io::Result<()> {
+    let sequence = writes
+        .requested
+        .fetch_add(1, Ordering::SeqCst)
+        .wrapping_add(1);
+    tokio::task::spawn_blocking(move || writes.write(&path, &value, sequence))
+        .await
+        .map_err(|_| invalid("private journal write worker failed"))?
 }
 
 fn process_owner() -> String {
@@ -636,6 +674,52 @@ fn storage_users_owned(users: &[&str], containers: &[Value]) -> bool {
         })
 }
 
+/// Ownership inspection precedes this selection. Only the transfer helper is exempt.
+fn execution_containers<'a>(
+    manifest: &Value,
+    containers: &'a [Value],
+) -> io::Result<Vec<&'a Value>> {
+    let services = manifest["services"]
+        .as_object()
+        .ok_or_else(|| invalid("services missing"))?;
+    if !services.get("transfer").is_some_and(Value::is_object) {
+        return Err(invalid("transfer service missing"));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut execution = Vec::new();
+    for container in containers {
+        let service = container["Config"]["Labels"]["com.docker.compose.service"]
+            .as_str()
+            .ok_or_else(|| invalid("container service missing"))?;
+        if !services.get(service).is_some_and(Value::is_object) || !seen.insert(service) {
+            return Err(invalid("unknown or duplicate execution service"));
+        }
+        if service != "transfer" {
+            let id = container["Id"]
+                .as_str()
+                .ok_or_else(|| invalid("container ID missing"))?;
+            if id.len() != 64 || !id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(invalid("invalid execution container ID"));
+            }
+            execution.push(container);
+        }
+    }
+    // Missing containers are allowed after partial creation/removal; no absent service is replayed.
+    Ok(execution)
+}
+
+fn execution_stopped(manifest: &Value, containers: &[Value]) -> io::Result<()> {
+    for container in execution_containers(manifest, containers)? {
+        if container["State"]["Running"].as_bool() != Some(false)
+            || container["State"]["Paused"].as_bool() != Some(false)
+            || container["State"]["Restarting"].as_bool() != Some(false)
+        {
+            return Err(invalid("execution service termination is unconfirmed"));
+        }
+    }
+    Ok(())
+}
+
 impl RemoteJob {
     pub(crate) async fn prepare(id: Uuid, attempt: Uuid, workspace: &Path) -> io::Result<Self> {
         let client = Client::from_env()?;
@@ -673,10 +757,11 @@ impl RemoteJob {
             manifest,
             active: true,
             stopped: false,
+            writes: Arc::default(),
         };
-        job.record("prepared")?;
+        job.record("prepared").await?;
         let prepared = async {
-            job.save_manifest()?;
+            job.save_manifest().await?;
             job.compose(&["up", "-d", "--no-build", "--pull", "never", "transfer"])
                 .await?;
             let parent = workspace
@@ -706,17 +791,27 @@ impl RemoteJob {
         prepared?;
         Ok(job)
     }
-    fn record(&self, phase: &str) -> io::Result<()> {
-        write_private(
-            &self.directory.join("journal.json"),
-            &json!({"project":self.project,
-            "daemon_id":self.client.daemon_id, "phase":phase, "owner":process_owner(), "stopped":self.stopped, "manifest":self.directory.join("compose.json")}),
-        )
+    fn journal(&self, phase: &str) -> Value {
+        json!({"project":self.project,
+            "daemon_id":self.client.daemon_id, "phase":phase, "owner":process_owner(), "stopped":self.stopped, "manifest":self.directory.join("compose.json")})
     }
-    fn save_manifest(&self) -> io::Result<()> {
+    async fn record(&self, phase: &str) -> io::Result<()> {
+        write_private_async(
+            self.directory.join("journal.json"),
+            self.journal(phase),
+            Arc::clone(&self.writes),
+        )
+        .await
+    }
+    async fn save_manifest(&self) -> io::Result<()> {
         let mut value = self.manifest.clone();
         literal(&mut value);
-        write_private(&self.directory.join("compose.json"), &value)
+        write_private_async(
+            self.directory.join("compose.json"),
+            value,
+            Arc::clone(&self.writes),
+        )
+        .await
     }
     async fn compose(&self, tail: &[&str]) -> io::Result<String> {
         let file = self.directory.join("compose.json");
@@ -758,9 +853,9 @@ impl RemoteJob {
         service["labels"] = self.manifest["services"]["transfer"]["labels"].clone();
         self.manifest["services"]["job"] = service;
         self.manifest["volumes"]["sources"] = json!({"external":true,"name":source});
-        self.save_manifest()?;
+        self.save_manifest().await?;
         self.compose(&["config", "--quiet"]).await?;
-        self.record("execution-started")?;
+        self.record("execution-started").await?;
         let mut cmd = self.client.command();
         cmd.args([
             "compose",
@@ -896,26 +991,21 @@ impl RemoteJob {
     }
 
     pub(crate) async fn confirm_stopped(&mut self) -> io::Result<()> {
+        self.stopped = false;
         let containers = self.owned_resources().await?;
-        for container in containers {
-            if container["Config"]["Labels"]["com.docker.compose.service"] == "job"
-                && container["State"]["Running"].as_bool() != Some(false)
-            {
-                return Err(invalid("job termination is unconfirmed"));
-            }
-        }
+        execution_stopped(&self.manifest, &containers)?;
         self.stopped = true;
-        self.record("execution-stopped")
+        self.record("execution-stopped").await
     }
 
     pub(crate) async fn stop_execution(&mut self) -> io::Result<()> {
-        for container in self.owned_resources().await? {
-            if container["Config"]["Labels"]["com.docker.compose.service"] == "job" {
-                let id = container["Id"]
-                    .as_str()
-                    .ok_or_else(|| invalid("container ID missing"))?;
-                self.client.run(&["stop", "-t", "2", id]).await?;
-            }
+        self.stopped = false;
+        let containers = self.owned_resources().await?;
+        for container in execution_containers(&self.manifest, &containers)? {
+            let id = container["Id"]
+                .as_str()
+                .ok_or_else(|| invalid("container ID missing"))?;
+            self.client.run(&["stop", "-t", "2", id]).await?;
         }
         self.confirm_stopped().await
     }
@@ -963,7 +1053,7 @@ impl RemoteJob {
                 return Err(invalid("Compose storage remains after cleanup"));
             }
         }
-        self.record("cleaned")?;
+        self.record("cleaned").await?;
         self.active = false;
         // Erase per-job environment only after successful cleanup. Keep safe recovery journal.
         for service in self.manifest["services"]
@@ -973,14 +1063,22 @@ impl RemoteJob {
         {
             service.as_object_mut().unwrap().remove("environment");
         }
-        self.save_manifest()?;
+        self.save_manifest().await?;
         Ok(())
     }
 }
 impl Drop for RemoteJob {
     fn drop(&mut self) {
         if self.active {
-            let _ = self.record("cleanup-required");
+            // No detached write can overwrite this marker after Drop. Keep the original
+            // synchronous failure fallback; normal lifecycle writes are awaited/offloaded.
+            if let Ok(mut closed) = self.writes.closed.lock() {
+                *closed = true;
+                let _ = write_private(
+                    &self.directory.join("journal.json"),
+                    &self.journal("cleanup-required"),
+                );
+            }
             // Unwinding is not termination or completion authority. Recovery must
             // read fresh Engine state and the terminal lease before deletion.
         }
@@ -1058,6 +1156,7 @@ pub(crate) async fn reconcile(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
             manifest,
             active: true,
             stopped: false,
+            writes: Arc::default(),
         };
         // Fresh Engine termination precedes releasing the project's lease.
         job.stop_execution().await.map_err(sqlx::Error::Io)?;
@@ -1151,6 +1250,163 @@ fn compose_job(args: &[String], envs: &[(String, String)]) -> io::Result<Value> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn execution_fixture() -> (Value, Vec<Value>) {
+        let manifest = json!({"services":{"transfer":{},"job":{},"application":{},"database":{}}});
+        let containers = ["transfer", "job", "application", "database"]
+            .iter()
+            .enumerate()
+            .map(|(index, service)| {
+                json!({"Id":format!("{index:064x}"),
+                "Config":{"Labels":{"com.docker.compose.service":service}},
+                "State":{"Running":*service=="transfer","Paused":false,"Restarting":false}})
+            })
+            .collect();
+        (manifest, containers)
+    }
+
+    #[test]
+    fn termination_covers_all_application_services_but_not_transfer() {
+        let (manifest, containers) = execution_fixture();
+        assert_eq!(
+            execution_containers(&manifest, &containers).unwrap().len(),
+            3
+        );
+        execution_stopped(&manifest, &containers).unwrap();
+        for index in 1..containers.len() {
+            for field in ["Running", "Paused", "Restarting"] {
+                let mut changed = containers.clone();
+                changed[index]["State"][field] = json!(true);
+                assert!(
+                    execution_stopped(&manifest, &changed).is_err(),
+                    "{index} {field}"
+                );
+                changed[index]["State"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove(field);
+                assert!(execution_stopped(&manifest, &changed).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn partial_creation_is_not_replayed_and_unknown_inventory_is_not_ignored() {
+        let (manifest, mut containers) = execution_fixture();
+        execution_stopped(&manifest, &[]).unwrap();
+        execution_stopped(&manifest, &containers[..1]).unwrap();
+        containers[3]["Config"]["Labels"]["com.docker.compose.service"] = json!("foreign");
+        assert!(execution_containers(&manifest, &containers).is_err());
+        containers[3]["Config"]["Labels"]["com.docker.compose.service"] = json!("application");
+        assert!(execution_containers(&manifest, &containers).is_err());
+        let (manifest, mut containers) = execution_fixture();
+        containers[2]["Id"] = json!("short");
+        assert!(execution_containers(&manifest, &containers).is_err());
+    }
+
+    #[tokio::test]
+    async fn private_journal_async_write_is_awaited_and_preserves_mode() {
+        let directory =
+            std::env::temp_dir().join(format!("forge-private-write-{}", Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("journal.json");
+        let writes = Arc::new(PrivateWrites::default());
+        for phase in ["prepared", "execution-stopped"] {
+            write_private_async(path.clone(), json!({"phase":phase}), Arc::clone(&writes))
+                .await
+                .unwrap();
+            let value: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(value["phase"], phase);
+            assert!(!path.with_extension("tmp").exists());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn closed_owner_refuses_late_write_without_overwriting_cleanup_required() {
+        let directory =
+            std::env::temp_dir().join(format!("forge-private-closed-{}", Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("journal.json");
+        let writes = Arc::new(PrivateWrites::default());
+        let job = RemoteJob {
+            client: Client {
+                host: "not-contacted".into(),
+                cert_path: "not-opened".into(),
+                daemon_id: "fixture-daemon".into(),
+            },
+            helper: String::new(),
+            project: "fixture".into(),
+            directory: directory.clone(),
+            manifest: json!({}),
+            active: true,
+            stopped: false,
+            writes: Arc::clone(&writes),
+        };
+        let pending =
+            write_private_async(path.clone(), json!({"phase":"execution-started"}), writes);
+        drop(job);
+        assert!(pending.await.is_err());
+        let marker: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(marker["phase"], "cleanup-required");
+        assert_eq!(marker["stopped"], false);
+        assert!(!path.with_extension("tmp").exists());
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn async_private_write_failure_does_not_replace_existing_evidence() {
+        let directory = std::env::temp_dir().join(format!("forge-private-held-{}", Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("journal.json");
+        let marker = json!({"phase":"prepared","stopped":false});
+        write_private(&path, &marker).unwrap();
+        std::fs::write(path.with_extension("tmp"), b"unknown previous write").unwrap();
+        assert!(
+            write_private_async(path.clone(), json!({"phase":"cleaned"}), Arc::default())
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap(),
+            marker
+        );
+        assert_eq!(
+            std::fs::read(path.with_extension("tmp")).unwrap(),
+            b"unknown previous write"
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn superseded_queued_write_cannot_overwrite_newer_journal_phase() {
+        let directory =
+            std::env::temp_dir().join(format!("forge-private-order-{}", Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("journal.json");
+        let writes = PrivateWrites::default();
+        writes.requested.store(2, Ordering::SeqCst);
+        let marker = json!({"phase":"execution-stopped"});
+        writes.write(&path, &marker, 2).unwrap();
+        assert!(
+            writes
+                .write(&path, &json!({"phase":"execution-started"}), 1)
+                .is_err()
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap(),
+            marker
+        );
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn image_build_requires_pinned_buildx_and_same_daemon_default_driver() {

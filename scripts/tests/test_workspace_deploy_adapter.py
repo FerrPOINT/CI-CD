@@ -4,12 +4,17 @@ from dataclasses import replace
 import hashlib
 import ipaddress
 import os
+from pathlib import Path
+import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 from uuid import UUID
 
 from scripts.tests.test_workspace_deploy_admission import APP, DATABASE, SOURCE, encoded, service
-from scripts.workspace_deploy_adapter import OwnerRuntime, resolve_services
+from scripts.workspace_deploy_adapter import (
+    OwnerComposeSource, OwnerRuntime, resolve_services, verify_compose_source,
+)
 from scripts.workspace_deploy_admission import OwnerSeal, Rejected
 
 
@@ -32,12 +37,93 @@ class WorkspaceDeployAdapterTests(unittest.TestCase):
             {"APP_DB_URL": "synthetic-database-url-$literal", "DOCKER_HOST": "unused-host-credential"},
             1024**3, 2, 256)
 
-    def resolve(self, owner=None):
+    def source(self, raw):
+        return OwnerComposeSource(
+            self.owner.job_id, self.owner.attempt_id, SOURCE, "deploy/task.compose.json",
+            hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw,
+                         usedforsecurity=False).hexdigest(),
+            hashlib.sha256(raw).hexdigest(), "f" * 64)
+
+    def resolve(self, owner=None, source=None):
         raw, images = encoded(self.compose), encoded(self.images)
         seal = OwnerSeal(SOURCE, hashlib.sha256(raw).hexdigest(), hashlib.sha256(images).hexdigest(),
                          dict(self.images["images"]), {"application": frozenset(("DATABASE_URL",))},
                          frozenset(("APP_DB_URL",)))
-        return resolve_services(raw, images, seal, owner or self.owner)
+        return resolve_services(raw, images, seal, owner or self.owner, source or self.source(raw))
+
+    def test_git_projection_required_before_private_secret_resolution(self):
+        with self.assertRaisesRegex(Rejected, "source projection"):
+            self.resolve(source={"verified": True})
+
+    def test_git_projection_cannot_move_to_another_attempt_or_job(self):
+        source = self.source(encoded(self.compose))
+        for field in ("job_id", "attempt_id"):
+            with self.subTest(field=field), self.assertRaisesRegex(Rejected, "attempt mismatch"):
+                self.resolve(source=replace(source, **{field: UUID(int=9)}))
+
+    def test_wrong_source_commit_or_plan_hash_is_held(self):
+        source = self.source(encoded(self.compose))
+        for changes in ({"source_commit": "b" * 40}, {"source_commit": "main"},
+                        {"source_commit": None}, {"plan_sha256": None},
+                        {"plan_sha256": ""}, {"plan_sha256": "G" * 64}):
+            with self.subTest(changes=changes), self.assertRaisesRegex(Rejected, "commit/plan"):
+                self.resolve(source=replace(source, **changes))
+
+    def test_actual_sha256_and_git_blob_identity_are_both_required(self):
+        source = self.source(encoded(self.compose))
+        for changes in ({"sha256": "0" * 64}, {"blob_oid": "0" * 40}):
+            with self.subTest(changes=changes), self.assertRaisesRegex(Rejected, "Git blob"):
+                self.resolve(source=replace(source, **changes))
+        self.compose["services"]["application"]["cpus"] = 0.7
+        with self.assertRaisesRegex(Rejected, "Git blob"):
+            self.resolve(source=source)
+
+    def test_git_source_path_cannot_be_a_host_path_or_mutable_ref(self):
+        source = self.source(encoded(self.compose))
+        for path in ("/host", "../compose.json", "a//b", "C:/host", "a/./b", "a\\b", "",
+                     "-option", "a/\x7fb", "a/\ud800b", "a" * 1025):
+            with self.subTest(path=path), self.assertRaisesRegex(Rejected, "source path"):
+                self.resolve(source=replace(source, compose_path=path))
+
+    def test_source_path_validation_keeps_existing_portable_unicode_contract(self):
+        self.resolve(source=replace(self.source(encoded(self.compose)),
+                                    compose_path="deploy/\u0442\u0435\u0441\u0442.compose.json"))
+
+    def test_git_source_byte_bound_is_checked_before_hashing_or_secret_resolution(self):
+        raw = encoded(self.compose)
+        seal = OwnerSeal(SOURCE, hashlib.sha256(raw).hexdigest(), "0" * 64, {}, {}, frozenset())
+        for value in (b"", b"x" * (256 * 1024 + 1), raw.decode(), bytearray(raw)):
+            with self.subTest(kind=type(value)), self.assertRaisesRegex(Rejected, "byte bound"):
+                verify_compose_source(value, seal, self.owner, self.source(raw))
+
+    def test_real_git_blob_projection_is_independent_of_mutable_checkout_bytes(self):
+        # Exercises the pure bridge with actual Git objects, not the uncompiled Rust reader.
+        raw = encoded(self.compose)
+        with tempfile.TemporaryDirectory(prefix="forge-compose-source-") as temp:
+            repo = Path(temp) / "source.git"
+            environment = {key: value for key, value in os.environ.items()
+                           if not key.startswith("GIT_")}
+            environment.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
+                               GIT_AUTHOR_NAME="Fixture", GIT_AUTHOR_EMAIL="fixture@example.invalid",
+                               GIT_COMMITTER_NAME="Fixture", GIT_COMMITTER_EMAIL="fixture@example.invalid")
+
+            def git(*args, data=None):
+                return subprocess.run(["git", "--no-replace-objects", "--git-dir", str(repo),
+                                       *args], input=data, stdout=subprocess.PIPE,
+                                      stderr=subprocess.PIPE, env=environment,
+                                      check=True, timeout=10).stdout
+
+            git("init", "--bare", str(repo))
+            oid = git("hash-object", "-w", "--stdin", data=raw).decode().strip()
+            tree = git("mktree", data=f"100644 blob {oid}\ttask.compose.json\n".encode()).decode().strip()
+            commit = git("commit-tree", tree, data=b"synthetic source\n").decode().strip()
+            actual = git("cat-file", "blob", f"{commit}:task.compose.json")
+            source = replace(self.source(raw), source_commit=commit,
+                             compose_path="task.compose.json", blob_oid=oid)
+            seal = OwnerSeal(commit, hashlib.sha256(raw).hexdigest(), "0" * 64, {}, {}, frozenset())
+            verify_compose_source(actual, seal, self.owner, source)
+            with self.assertRaisesRegex(Rejected, "Git blob"):
+                verify_compose_source(actual + b" ", seal, self.owner, source)
 
     def test_owner_injects_complete_private_security_and_resource_identity(self):
         result = self.resolve()
