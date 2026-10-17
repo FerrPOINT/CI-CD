@@ -532,8 +532,14 @@ pub async fn git_info_refs(
             return ApiError::bad_request("service parameter is required").into_response();
         }
     };
-    if let Err(e) = check_repo_access(&state, &repo, &headers, operation).await {
-        return e.into_response();
+    match crate::task_git::admit(&state, &repo, &headers).await {
+        Err(e) => return e.into_response(),
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            if let Err(e) = check_repo_access(&state, &repo, &headers, operation).await {
+                return e.into_response();
+            }
+        }
     }
     let pool = match state.pool.as_ref() {
         Some(pool) => pool,
@@ -603,6 +609,7 @@ async fn run_git_service(
     body: Bytes,
     storage: Option<String>,
     allow_bootstrap: bool,
+    task: Option<crate::task_git::Authorization>,
 ) -> Result<Vec<u8>, ApiError> {
     // The owner waiter retains the guard until native Git exits, even if HTTP is cancelled.
     let path = path.to_owned();
@@ -615,11 +622,37 @@ async fn run_git_service(
         };
         let hooks = if storage.is_some() {
             let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
-            Some(receive_hooks::ReceiveHooks::prepare(pool, &path, allow_bootstrap).await?)
+            let hooks = receive_hooks::ReceiveHooks::prepare(
+                pool,
+                &path,
+                allow_bootstrap && task.is_none(),
+            )
+            .await?;
+            if let Some(task) = &task {
+                let configured = state
+                    .config
+                    .http
+                    .bind
+                    .parse::<std::net::SocketAddr>()
+                    .map(|address| address.port())
+                    .map_err(|_| ApiError::service_unavailable("Git callback bind unavailable"));
+                let installed = configured.and_then(|port| {
+                    hooks.task_candidate(
+                        task,
+                        state.git.internal_token.as_deref().unwrap_or(""),
+                        port,
+                    )
+                });
+                if let Err(error) = installed {
+                    hooks.cleanup();
+                    return Err(error);
+                }
+            }
+            Some(hooks)
         } else {
             None
         };
-        run_git_service_owned(&path, &service, body, hooks).await
+        run_git_service_owned(&path, &service, body, hooks, task.is_some()).await
     })
     .await
     .map_err(|_| ApiError::service_unavailable("Git service waiter unavailable"))?
@@ -630,9 +663,15 @@ async fn run_git_service_owned(
     service: &str,
     body: Bytes,
     hooks: Option<receive_hooks::ReceiveHooks>,
+    task_variant: bool,
 ) -> Result<Vec<u8>, ApiError> {
     let mut command = Command::new("git");
     command.kill_on_drop(true);
+    if task_variant {
+        command
+            .env("GIT_NO_REPLACE_OBJECTS", "1")
+            .env("GIT_NO_LAZY_FETCH", "1");
+    }
     if let Some(hooks) = &hooks {
         command.arg("-c").arg(hooks.config());
     }
@@ -671,6 +710,11 @@ async fn run_git_service_owned(
     }
     let _ = writer.await;
     if !output.status.success() {
+        if task_variant {
+            return Err(ApiError::service_unavailable(
+                "Git outcome unconfirmed; exact ref readback required",
+            ));
+        }
         return Err(ApiError::internal(sqlx::Error::Io(std::io::Error::other(
             String::from_utf8_lossy(&output.stderr).to_string(),
         ))));
@@ -709,9 +753,17 @@ pub async fn git_service_endpoint(
         "receive-pack" => (service, GitOperation::Write),
         _ => return ApiError::bad_request("unsupported git service").into_response(),
     };
-    let allow_bootstrap = match check_repo_access(&state, &repo, &headers, operation).await {
-        Ok(allowed) => allowed,
+    let task = match crate::task_git::admit(&state, &repo, &headers).await {
+        Ok(task) => task,
         Err(e) => return e.into_response(),
+    };
+    let allow_bootstrap = if task.is_some() {
+        false
+    } else {
+        match check_repo_access(&state, &repo, &headers, operation).await {
+            Ok(allowed) => allowed,
+            Err(e) => return e.into_response(),
+        }
     };
     let pool = match state.pool.as_ref() {
         Some(pool) => pool,
@@ -741,6 +793,7 @@ pub async fn git_service_endpoint(
         body,
         storage,
         allow_bootstrap,
+        task,
     )
     .await
     {
@@ -839,7 +892,7 @@ pub async fn canonical_service(
     post,
     path = "/api/v1/internal/git-push",
     tag = "git",
-    request_body = GitPushEvent,
+    request_body = crate::task_git::PushRequest,
     responses(
         (status = 200, description = "Pipeline trigger decision"),
         (status = 400),
@@ -849,8 +902,16 @@ pub async fn canonical_service(
 pub async fn internal_git_push(
     State(state): State<std::sync::Arc<AppState>>,
     headers: HeaderMap,
-    axum::Json(event): axum::Json<GitPushEvent>,
+    axum::Json(request): axum::Json<crate::task_git::PushRequest>,
 ) -> Result<axum::Json<serde_json::Value>, ApiError> {
+    let event = match request {
+        crate::task_git::PushRequest::Candidate(request) => {
+            return crate::task_git::check_callback(&state, &headers, request)
+                .await
+                .map(axum::Json);
+        }
+        crate::task_git::PushRequest::Legacy(event) => event,
+    };
     if let Some(expected) = configured_internal_token(state.git.internal_token.as_deref()) {
         let provided = headers
             .get("x-internal-token")

@@ -47,6 +47,7 @@ pub mod runner_protocol;
 pub mod runner_workspace;
 pub mod store;
 pub mod task_delivery;
+pub mod task_git;
 pub mod task_links;
 pub mod workspace_projects;
 

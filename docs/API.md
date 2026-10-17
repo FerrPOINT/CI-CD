@@ -1,9 +1,16 @@
 # API v1 Specification — Forge CI/CD
 
+Existing Smart HTTP and internal/git-push support an opt-in own-task candidate
+variant with exact confirmed source binding, fresh Developer authority and
+single-ref CAS. Legacy authentication and ordinary post-receive remain separate;
+pipeline-only child credentials do not grant Git access. Wiring is integrated in
+source; typed/native qualification and generated OpenAPI refresh remain pending.
+[Own-task candidate Git](OWN_TASK_CANDIDATE_GIT.md).
+
 `workspace_deploy` source candidate связывает exact Git Compose, retained upstream
 `image_build` и existing RemoteJob temporary app/DB lifecycle с repo commands.
-Отдельный common patch включает task-only planning/runner path; до него parser
-остаётся закрытым. Receipt исторический `stopped-after-validation`, не current
+Common wiring включает task-only planning/runner path. Receipt исторический
+`stopped-after-validation`, не current
 healthy или business acceptance. Rust/PG/native qualification pending; обычные
 jobs и readonly OCI сохраняются. [Контракт](contracts/WORKSPACE_DEPLOY_ADMISSION.md).
 

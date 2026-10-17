@@ -1,5 +1,6 @@
 mod commands;
 mod support;
+mod task_git;
 use std::{path::PathBuf, time::Duration};
 use support::ErrorFormat;
 
@@ -661,6 +662,7 @@ enum TokenCommand {
 }
 
 struct ApiClient {
+    api_origin: String,
     transport: CoreApiClient,
     secrets: Vec<String>,
     request_timeout: Duration,
@@ -678,6 +680,7 @@ impl ApiClient {
             .filter(|value| !value.is_empty())
             .collect();
         Ok(Self {
+            api_origin: api_url.clone(),
             secrets,
             request_timeout: timeout,
             transport: CoreApiClient::new(

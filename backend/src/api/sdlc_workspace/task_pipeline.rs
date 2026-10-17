@@ -41,7 +41,7 @@ fn canonical(value: Value) -> Value {
     }
 }
 
-fn current(value: &Value, intent: &TaskWorkspaceIntent) -> anyhow::Result<Duration> {
+pub(crate) fn current(value: &Value, intent: &TaskWorkspaceIntent) -> anyhow::Result<Duration> {
     use anyhow::ensure;
     intent.validate().map_err(anyhow::Error::msg)?;
     let b = &intent.binding;

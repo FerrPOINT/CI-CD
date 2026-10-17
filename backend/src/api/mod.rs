@@ -224,6 +224,8 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::domain::sdlc_workspace::WorkspaceTaskBinding,
         crate::domain::sdlc_workspace::TaskWorkspaceIntent,
         crate::delegated_credentials::TaskCredentialContext,
+        crate::task_git::SourceBinding, crate::task_git::GitContext,
+        crate::task_git::CandidateCheck, crate::task_git::PushRequest,
         crate::domain::sdlc_workspace::WorkspaceOperationReceipt,
         crate::domain::sdlc_workspace::WorkspaceOperationReadback,
         crate::domain::sdlc_workspace::WorkspaceOperationLookup,

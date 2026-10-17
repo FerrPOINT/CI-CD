@@ -15,6 +15,11 @@
 
 ## [Unreleased]
 
+- Opt-in own-task candidate Git connects confirmed Tracker source bindings to
+  exact Developer/ref/OID authority, private child credentials and single-attempt
+  CLI push/readback. Legacy SAT and pipeline-only children do not gain Git rights;
+  source wiring is integrated, execution qualification remains pending.
+
 - Task workspace deploy отклоняет не-DevOps intent до enqueue и повторно
   проверяет исходный authority deadline после ожидания spawn mutex. Добавлены
   unit custody и HTTP/PG admission regressions; execution qualification pending.

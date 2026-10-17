@@ -223,6 +223,21 @@ pub(crate) async fn read_lifecycle(
     config: &crate::config::SdlcWorkspaceConfig,
     task: uuid::Uuid,
 ) -> Result<(Instant, Value), ApiError> {
+    read_task(config, task, "lifecycle").await
+}
+
+pub(crate) async fn read_source_binding(
+    config: &crate::config::SdlcWorkspaceConfig,
+    task: uuid::Uuid,
+) -> Result<(Instant, Value), ApiError> {
+    read_task(config, task, "source-binding").await
+}
+
+async fn read_task(
+    config: &crate::config::SdlcWorkspaceConfig,
+    task: uuid::Uuid,
+    resource: &str,
+) -> Result<(Instant, Value), ApiError> {
     let unavailable = || ApiError::service_unavailable("Tracker lifecycle недоступен");
     let mut url = reqwest::Url::parse(config.tracker_read_url.as_deref().ok_or_else(unavailable)?)
         .map_err(|_| unavailable())?;
@@ -241,7 +256,7 @@ pub(crate) async fn read_lifecycle(
         .as_deref()
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(unavailable)?;
-    url.set_path(&format!("/api/v1/issues/{task}/sdlc/lifecycle"));
+    url.set_path(&format!("/api/v1/issues/{task}/sdlc/{resource}"));
     let client = reqwest::Client::builder()
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
