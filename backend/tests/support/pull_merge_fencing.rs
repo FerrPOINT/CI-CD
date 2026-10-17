@@ -104,15 +104,15 @@ impl Case {
             .execute(&pool)
             .await
             .unwrap();
-        let app = cicd::api::app_with_git_and_auth_secret(
-            Some(pool.clone()),
+        let app = authenticated_app_with_git(
+            pool.clone(),
             cicd::git_host::GitConfig {
                 root: root.clone(),
                 token: None,
                 internal_token: None,
             },
-            None,
-        );
+        )
+        .await;
         Self {
             root,
             bare,
