@@ -12,6 +12,10 @@ Git/delivery/admin права child закрыты. Exact scope/wire и private 
 [delegated task credential](FORGE_DELEGATED_CREDENTIAL_CONTRACT.md).
 Rust/PG qualification и installation этого slice не заявлены.
 
+Опциональная source-проверка на прежнем registered repository GET сохраняет
+обычный catalog JSON и reader auth: [контракт](REGISTERED_SOURCE_READER.md).
+Модуль — source candidate; общий wiring/qualification выполняет Main.
+
 PR `action=merge` использует только branch refs и фиксированные SHA для pipeline
 gate и native merge. Короткие и `refs/heads/...` имена эквивалентны; tag/HEAD/revision
 expressions не заменяют отсутствующую ветку. Stale source/target возвращает 409,
