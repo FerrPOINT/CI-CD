@@ -2,7 +2,10 @@
 //! Only immutable read-only data snapshots are supported. No migration execution.
 use super::*;
 use std::{process::Stdio, time::Duration};
-use tokio::{io::AsyncReadExt, process::Command};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    process::Command,
+};
 
 #[path = "oci_probe.rs"]
 mod remote_probe;
@@ -514,7 +517,27 @@ impl Owner {
         args: &[String],
         effect: Option<&Path>,
     ) -> anyhow::Result<Vec<u8>> {
-        let mut child = self.process(binary, args).spawn()?;
+        self.run_input(binary, args, effect, None).await
+    }
+
+    async fn run_input(
+        &self,
+        binary: &Path,
+        args: &[String],
+        effect: Option<&Path>,
+        input: Option<&[u8]>,
+    ) -> anyhow::Result<Vec<u8>> {
+        ensure!(
+            input.is_none_or(|bytes| bytes.len() <= 1024 * 1024),
+            "engine input exceeds bound"
+        );
+        let mut command = self.process(binary, args);
+        command.stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
+        let mut child = command.spawn()?;
         if let Some(dir) = effect {
             let pid = child.id().context("compose process missing")?;
             // A crash before this durable identity cannot be auto-reconciled.
@@ -528,6 +551,7 @@ impl Owner {
         }
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
+        let stdin = child.stdin.take();
         let task = async {
             let read = |pipe: Box<dyn tokio::io::AsyncRead + Unpin + Send>| async move {
                 let mut bytes = Vec::new();
@@ -535,10 +559,18 @@ impl Owner {
                 ensure!(bytes.len() <= 1024 * 1024, "engine output exceeds bound");
                 Ok::<_, anyhow::Error>(bytes)
             };
-            let (status, out, err) = tokio::try_join!(
+            let (status, out, err, ()) = tokio::try_join!(
                 async { Ok::<_, anyhow::Error>(child.wait().await?) },
                 read(Box::new(stdout)),
-                read(Box::new(stderr))
+                read(Box::new(stderr)),
+                async {
+                    if let Some(bytes) = input {
+                        let mut pipe = stdin.context("engine stdin unavailable")?;
+                        pipe.write_all(bytes).await?;
+                        pipe.shutdown().await?;
+                    }
+                    Ok::<_, anyhow::Error>(())
+                }
             )?;
             child_outcome(status.success(), effect.is_some(), &err)?;
             Ok::<_, anyhow::Error>(out)
@@ -1500,6 +1532,50 @@ pub async fn local_command(
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn engine_stdin_streams_beyond_pipe_capacity_and_records_terminal_child() {
+        let fixture = RecoveryFixture::new();
+        let target = fixture.owner.root.join("streamed-input");
+        let effect = fixture.owner.root.join("stream-effect");
+        directory(&effect).unwrap();
+        let bytes: Vec<u8> = (0..200_000).map(|index| (index % 251) as u8).collect();
+        let args = [
+            "-ec".into(),
+            "cat > \"$1\"".into(),
+            "stream".into(),
+            target.to_string_lossy().into_owned(),
+        ];
+        let output = fixture
+            .owner
+            .run_input(Path::new("/bin/sh"), &args, Some(&effect), Some(&bytes))
+            .await
+            .unwrap();
+        assert!(output.is_empty());
+        assert_eq!(std::fs::read(target).unwrap(), bytes);
+        assert!(read::<bool>(&effect.join("child-stopped.json")).unwrap());
+    }
+
+    #[tokio::test]
+    async fn oversized_engine_input_is_rejected_before_any_effect() {
+        let fixture = RecoveryFixture::new();
+        let target = fixture.owner.root.join("must-not-start");
+        let bytes = vec![b'x'; 1024 * 1024 + 1];
+        let args = [
+            "-ec".into(),
+            "touch \"$1\"".into(),
+            "stream".into(),
+            target.to_string_lossy().into_owned(),
+        ];
+        assert!(
+            fixture
+                .owner
+                .run_input(Path::new("/bin/sh"), &args, None, Some(&bytes))
+                .await
+                .is_err()
+        );
+        assert!(!target.exists());
+    }
 
     struct RecoveryFixture {
         owner: Owner,
