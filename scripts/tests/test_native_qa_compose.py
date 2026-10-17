@@ -14,6 +14,7 @@ import threading
 import time
 from types import SimpleNamespace
 import unittest
+import uuid
 from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location('forge_native_qa', Path(__file__).resolve().parents[1] / 'native_qa_compose.py')
@@ -480,6 +481,146 @@ class NativeSdkTests(unittest.TestCase):
             q.NativeComposeBridge(sdk=self.sdk, children=self.children,
                 pg_project=PG, oci_project=OCI, registry=self.root / 'registry',
                 **dict(TARGET, sdk_sha256='0' * 64))
+
+    def remote_binding(self):
+        project = 'sdlc-qa-forge-' + uuid.uuid4().hex
+        binding = {'project': project, 'volume': project + '_delivery-qa',
+                   'cleanup_id': uuid.uuid4().hex, 'purpose': 'native-fixture-data',
+                   'mountpoint': '/daemon-only/' + project + '/_data'}
+        self.model.items['volume'][binding['volume']] = {
+            'Name': binding['volume'], 'Mountpoint': binding['mountpoint'],
+            'Labels': {'com.docker.compose.project': project, 'sdlc.task': q.TASK,
+                       'sdlc.purpose': binding['purpose'], 'sdlc.cleanup-id': binding['cleanup_id'],
+                       'sdlc.lifecycle': 'disposable'}}
+        self.bridge = q.NativeComposeBridge(sdk=self.sdk, children=self.children,
+            pg_project=PG, oci_project=OCI, registry=self.root / 'registry',
+            daemon_bind_volume=binding, **TARGET)
+        return binding
+
+    def remote_source(self, binding, name='initial.json', image=IMAGE):
+        app = self.app('oci', image)
+        app['volumes'][0]['source'] = binding['mountpoint'] + '/data/' + name
+        self.assertFalse(Path(app['volumes'][0]['source']).exists())
+        return self.source('oci', {'services': {'application': app},
+            'networks': {'owner': {'external': True, 'name': 'parent_qa'}}}, name)
+
+    def test_checked_daemon_volume_enables_readonly_sdk_bind_without_fake_local_file(self):
+        binding = self.remote_binding()
+        source = self.remote_source(binding)
+        self.up('oci', source, 'application')
+        operation = self.bridge.operations[OCI]
+        mount = q.read(operation.path)['services']['application']['volumes'][0]
+        self.assertEqual(mount['source'], binding['mountpoint'] + '/data/initial.json')
+        self.assertEqual(mount['bind'], {'create_host_path': False})
+        self.assertIs(mount['read_only'], True)
+        self.assertEqual(q.read(operation.journal)['daemon_bind_volume'], binding)
+        self.bridge.close()
+        self.assertIn(binding['volume'], self.model.items['volume'])
+        self.assertFalse(self.model.items['container'])
+
+    def test_daemon_volume_transition_keeps_sdk_readonly_mount_guards(self):
+        binding = self.remote_binding()
+        self.up('oci', self.remote_source(binding), 'application')
+        self.up('oci', self.remote_source(binding, 'next.json', IMAGE2), 'application')
+        operation = self.bridge.operations[OCI]
+        self.assertEqual(len(operation.generations), 2)
+        mount = q.read(operation.path)['services']['application']['volumes'][0]
+        self.assertEqual(mount['source'], binding['mountpoint'] + '/data/next.json')
+        self.assertEqual(mount['bind'], {'create_host_path': False})
+        self.bridge.close()
+
+    def test_daemon_path_without_explicit_binding_still_refused(self):
+        source = self.remote_source({'mountpoint': '/unowned-daemon/' + uuid.uuid4().hex})
+        with self.assertRaisesRegex(ValueError, 'Required bind source'):
+            self.up('oci', source, 'application')
+        self.assertFalse(any('up' in command for command in self.model.commands))
+
+    def test_daemon_binding_rejects_malformed_owner_and_paths(self):
+        binding = self.remote_binding()
+        for changed in ({'volume': 'sdlc1_data'}, {'project': 'sdlc1'}, {'cleanup_id': 'unknown'},
+                        {'purpose': ''}, {'mountpoint': '/'}, {'mountpoint': '//host/path'},
+                        {'mountpoint': '/data/../foreign'}, {'mountpoint': '/data//other'},
+                        {'mountpoint': 'C:\\foreign'}, {'mountpoint': '/data\nforeign'},
+                        {'extra': True}):
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                q.daemon_volume_binding(dict(binding, **changed))
+
+    def test_daemon_volume_owner_and_mountpoint_rechecked_before_first_up(self):
+        for key, wrong in [('Name', 'foreign'), ('Mountpoint', '/foreign')]:
+            with self.subTest(key=key):
+                binding = self.remote_binding()
+                self.model.items['volume'][binding['volume']][key] = wrong
+                with self.assertRaisesRegex(RuntimeError, 'owner or mountpoint changed'):
+                    self.up('oci', self.remote_source(binding), 'application')
+        self.assertFalse(any('up' in command for command in self.model.commands))
+
+    def test_daemon_volume_each_owner_label_is_required(self):
+        for key in ('com.docker.compose.project', 'sdlc.task', 'sdlc.purpose',
+                    'sdlc.cleanup-id', 'sdlc.lifecycle'):
+            with self.subTest(key=key):
+                binding = self.remote_binding()
+                self.model.items['volume'][binding['volume']]['Labels'].pop(key)
+                with self.assertRaisesRegex(RuntimeError, 'owner or mountpoint changed'):
+                    self.up('oci', self.remote_source(binding), 'application')
+        self.assertFalse(any('up' in command for command in self.model.commands))
+
+    def test_daemon_volume_change_blocks_transition_before_publish_or_up(self):
+        binding = self.remote_binding()
+        self.up('oci', self.remote_source(binding), 'application')
+        operation = self.bridge.operations[OCI]
+        previous = operation.path.read_bytes()
+        self.model.items['volume'][binding['volume']]['Mountpoint'] = '/foreign'
+        self.model.commands.clear()
+        with self.assertRaisesRegex(RuntimeError, 'owner or mountpoint changed'):
+            self.up('oci', self.remote_source(binding, 'next.json', IMAGE2), 'application')
+        self.assertEqual(operation.path.read_bytes(), previous)
+        self.assertFalse(any('up' in command for command in self.model.commands))
+
+    def test_daemon_bind_cannot_escape_volume_or_enable_writes(self):
+        for suffix, readonly in [('/../foreign', True), ('/data//file', True),
+                                 ('/data/file', False), ('-other/file', True)]:
+            with self.subTest(suffix=suffix, readonly=readonly):
+                binding = self.remote_binding()
+                app = self.app('oci')
+                app['volumes'][0].update(source=binding['mountpoint'] + suffix, read_only=readonly)
+                source = self.source('oci', {'services': {'application': app},
+                    'networks': {'owner': {'external': True, 'name': 'parent_qa'}}})
+                with self.assertRaises(ValueError):
+                    self.up('oci', source, 'application')
+        self.assertFalse(any('up' in command for command in self.model.commands))
+
+    def test_remote_recovery_requires_same_explicit_parent_binding(self):
+        binding = self.remote_binding()
+        self.up('oci', self.remote_source(binding), 'application')
+        operation = self.bridge.operations[OCI]
+        self.model.commands.clear()
+        with self.assertRaisesRegex(ValueError, 'daemon volume binding mismatch'):
+            q.recover_session(self.sdk, operation.journal, self.root, **TARGET)
+        self.assertFalse(self.model.commands)
+
+    def test_remote_recovery_cleans_only_child_with_same_bound_parent(self):
+        binding = self.remote_binding()
+        self.up('oci', self.remote_source(binding), 'application')
+        operation = self.bridge.operations[OCI]
+        data = q.read(operation.journal)
+        data['updated_at'] = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        q.atomic(operation.journal, data)
+        for item in self.model.items['container'].values():
+            item['State']['Running'] = False
+        with patch.object(q, 'owner_dead', return_value=True):
+            report = q.recover_session(self.sdk, operation.journal, self.root, apply=True,
+                                      daemon_bind_volume=binding, **TARGET)
+        self.assertEqual(report['status'], 'cleaned')
+        self.assertIn(binding['volume'], self.model.items['volume'])
+        self.assertFalse(self.model.items['container'])
+
+    def test_daemon_binding_is_copied_from_host_configuration(self):
+        binding = self.remote_binding()
+        original = dict(binding)
+        binding['mountpoint'] = '/foreign'
+        self.up('oci', self.remote_source(original), 'application')
+        self.assertEqual(q.read(self.bridge.operations[OCI].journal)['daemon_bind_volume'], original)
+        self.bridge.close()
 
     def test_recovery_never_uses_windows_kill(self):
         with patch.object(q.os, 'name', 'nt'), patch.object(q.os, 'kill') as kill, self.assertRaises(ValueError):

@@ -90,6 +90,27 @@ recovery требует точного совпадения с явно выбр
 ownership/manifest guards, мёртвого владельца и возраста от 24 часов.
 Старый журнал нельзя перепривязать к новому SDK или чужому daemon.
 
+Если native backend и daemon используют разные файловые пространства, host
+harness может явно передать `daemon_bind_volume` в bridge и recovery. Это
+словарь с точными `project`, `volume`, `cleanup_id`, `purpose` и `mountpoint`
+родительского disposable QA volume. Project имеет вид `sdlc-qa-forge-<hex>`,
+volume — `<project>_delivery-qa`; mountpoint берётся из actual `volume inspect`
+того же daemon. RPC не принимает и не меняет эту привязку.
+
+Перед использованием adapter сверяет actual Name, Mountpoint и полные owner
+labels с host binding. Только нормализованные абсолютные POSIX paths внутри
+этого volume передаются в существующий SDK `daemon_bind_sources`; mounts
+остаются read-only с `create_host_path=false`. Остальные пути проходят прежние
+локальные проверки. Замена volume owner/mountpoint блокирует новый запуск или
+переход до изменения manifest. Binding сохраняется в journal v2; recovery
+требует той же явной привязки и повторного readback. Cleanup удаляет дочерние
+ресурсы, сохраняя родительский volume.
+
+Привязка проверяет принадлежность volume, а не содержимое удалённого файла.
+Штатный OCI snapshot transport по-прежнему отвечает за отсутствие symlinks,
+владельца, permissions, размер и hash файлов. Этот QA adapter не заменяет его
+проверки и не предоставляет произвольный daemon path через native RPC.
+
 Pure regression suite запускается отдельным процессом:
 `python3 -B scripts/tests/test_native_qa_compose.py`, с явно заданными
 `SDLC_MAINTENANCE_BASE` и `SDLC_MAINTENANCE_SDK_SHA256` в окружении host harness.
