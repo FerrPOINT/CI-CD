@@ -892,6 +892,16 @@ async fn pr_action_owned(
 
     match input.action.as_str() {
         "merge" => {
+            let repository_id: Uuid =
+                sqlx::query_scalar("SELECT id FROM repository_catalog WHERE storage_name=$1")
+                    .bind(&repo)
+                    .fetch_one(pool)
+                    .await
+                    .map_err(ApiError::internal)?;
+            let mutation_guard =
+                cicd_infra::sync_git::MutationGuard::acquire(&state.git.root, repository_id)
+                    .await
+                    .map_err(crate::repository_sync::api_error)?;
             if pr.status != "open" {
                 return Err(ApiError::conflict("pull request is not open"));
             }
@@ -934,9 +944,14 @@ async fn pr_action_owned(
                 }
             }
             // Use git merge-tree for bare repos (no worktree needed)
-            let merge_output = tokio::process::Command::new("git")
+            let mut merge_command = tokio::process::Command::new("git");
+            merge_command
                 .arg(format!("--git-dir={}", path.display()))
-                .args(["merge-tree", "--write-tree", "-z", &target.oid, &source.oid])
+                .args(["merge-tree", "--write-tree", "-z", &target.oid, &source.oid]);
+            mutation_guard
+                .inherit(&mut merge_command)
+                .map_err(crate::repository_sync::api_error)?;
+            let merge_output = merge_command
                 .output()
                 .await
                 .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
@@ -951,7 +966,8 @@ async fn pr_action_owned(
                 .unwrap_or("")
                 .to_string();
             // Create merge commit
-            let commit_output = tokio::process::Command::new("git")
+            let mut commit_command = tokio::process::Command::new("git");
+            commit_command
                 .arg(format!("--git-dir={}", path.display()))
                 .args([
                     "-c",
@@ -966,7 +982,11 @@ async fn pr_action_owned(
                     &source.oid,
                     "-m",
                     &format!("Merge PR #{}: {}", pr.number, pr.title),
-                ])
+                ]);
+            mutation_guard
+                .inherit(&mut commit_command)
+                .map_err(crate::repository_sync::api_error)?;
+            let commit_output = commit_command
                 .output()
                 .await
                 .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
@@ -978,7 +998,7 @@ async fn pr_action_owned(
             let merge_sha = String::from_utf8_lossy(&commit_output.stdout)
                 .trim()
                 .to_string();
-            publish_merge(&path, &source, &target, &merge_sha).await?;
+            publish_merge(&path, &source, &target, &merge_sha, Some(&mutation_guard)).await?;
             let updated = sqlx::query_as::<_, PullRequest>(
                 "UPDATE pull_requests SET status = 'merged', merged_at = now(), updated_at = now(), merge_commit_sha = $2 WHERE id = $1 RETURNING id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",
             )
@@ -988,6 +1008,7 @@ async fn pr_action_owned(
             .await
             .map_err(ApiError::internal)?;
             transaction.commit().await.map_err(ApiError::internal)?;
+            crate::repository_sync::signal(pool, repository_id).await;
             Ok(Json(updated))
         }
         "close" => {
@@ -1094,20 +1115,28 @@ async fn publish_merge(
     source: &BranchSnapshot,
     target: &BranchSnapshot,
     merged: &str,
+    guard: Option<&cicd_infra::sync_git::MutationGuard>,
 ) -> Result<(), ApiError> {
     // Git locks/verifies both refs in one transaction; no stale source or target can be published.
     let plan = format!(
         "start\nverify {} {}\nupdate {} {} {}\nprepare\ncommit\n",
         source.reference, source.oid, target.reference, merged, target.oid
     );
-    let mut child = tokio::process::Command::new("git")
+    let mut command = tokio::process::Command::new("git");
+    command
         .arg("--git-dir")
         .arg(path)
         .args(["update-ref", "--stdin"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
+        .kill_on_drop(true);
+    if let Some(guard) = guard {
+        guard
+            .inherit(&mut command)
+            .map_err(crate::repository_sync::api_error)?;
+    }
+    let mut child = command
         .spawn()
         .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
     let mut input = child

@@ -146,3 +146,20 @@ openssl rand -hex 32      # CICD_RUNNER_REGISTRATION_TOKEN
 - `CICD_ARTIFACT_RETENTION_DAYS` принимает `1..3650`.
 - `CICD_SECRETS_KEY` должен быть base64-encoded 32 bytes.
 - `CICD_CORS_ALLOWED_ORIGINS` не принимает explicit `*`; непустое значение должно содержать хотя бы один origin.
+
+## Repository sync (worker role)
+
+| Переменная | По умолчанию | Значение |
+|---|---|---|
+| CICD_GIT_SYNC_ENABLED | false | Разрешить новые Git-эффекты sync в существующей роли worker |
+| CICD_GIT_SYNC_INTERVAL_SECONDS | 300 | Интервал периодической сверки, 1–86400 секунд |
+| CICD_GIT_SYNC_CONCURRENCY | 2 | Общий лимит исполняемых репозиториев, 1–32, advisory slots PostgreSQL |
+| CICD_GIT_SYNC_GITLAB_ORIGINS | пусто | CSV HTTPS origins разрешённых собственных GitLab, включая private instance |
+
+CICD_SECRETS_KEY — прежний AES-256-GCM key, отдельно от credentials connections.
+Ключ нельзя менять без процедуры перешифрования. API и worker используют
+одинаковые ключ, allowlist и shared CICD_GIT_ROOT. Для Git child обязателен Unix
+flock на общем хранилище; runtime filesystem должен поддерживать flock.
+Private CA добавляется в системный trust store, TLS verification не отключается.
+Feature flag не удаляет историю и допускает наблюдение незавершённых эффектов,
+но запрещает новые ручные/автоматические передачи.

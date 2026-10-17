@@ -70,8 +70,92 @@ pub struct RuntimeConfig {
     pub runner: RunnerConfig,
     pub auth: AuthConfig,
     pub secrets: SecretsConfig,
+    pub git_sync: GitSyncConfig,
     pub smtp: SmtpConfig,
     pub sdlc_workspace: SdlcWorkspaceConfig,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GitSyncConfig {
+    pub enabled: bool,
+    pub interval_seconds: i64,
+    pub concurrency: usize,
+    pub allowed_gitlab_origins: Vec<String>,
+}
+impl Default for GitSyncConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_seconds: 300,
+            concurrency: 2,
+            allowed_gitlab_origins: Vec::new(),
+        }
+    }
+}
+impl GitSyncConfig {
+    fn from_source(get: &mut dyn FnMut(&str) -> Option<String>) -> Result<Self, ConfigError> {
+        fn number(
+            raw: Option<String>,
+            name: &'static str,
+            default: i64,
+            max: i64,
+        ) -> Result<i64, ConfigError> {
+            match optional_trimmed(raw) {
+                None => Ok(default),
+                Some(value) => value
+                    .parse::<i64>()
+                    .ok()
+                    .filter(|v| *v > 0 && *v <= max)
+                    .ok_or_else(|| {
+                        ConfigError::invalid(name, "expected a positive bounded integer")
+                    }),
+            }
+        }
+        let mut origins = Vec::new();
+        for origin in get("CICD_GIT_SYNC_GITLAB_ORIGINS")
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            let url = reqwest::Url::parse(origin).map_err(|_| {
+                ConfigError::invalid("CICD_GIT_SYNC_GITLAB_ORIGINS", "expected HTTPS origins")
+            })?;
+            if url.scheme() != "https"
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.query().is_some()
+                || url.fragment().is_some()
+                || url.path() != "/"
+                || url.host_str().is_none()
+            {
+                return Err(ConfigError::invalid(
+                    "CICD_GIT_SYNC_GITLAB_ORIGINS",
+                    "expected HTTPS origins without path or credentials",
+                ));
+            }
+            let canonical = url.origin().ascii_serialization();
+            if !origins.contains(&canonical) {
+                origins.push(canonical);
+            }
+        }
+        Ok(Self {
+            enabled: bool_from_env("CICD_GIT_SYNC_ENABLED", get("CICD_GIT_SYNC_ENABLED"), false)?,
+            interval_seconds: number(
+                get("CICD_GIT_SYNC_INTERVAL_SECONDS"),
+                "CICD_GIT_SYNC_INTERVAL_SECONDS",
+                300,
+                86400,
+            )?,
+            concurrency: number(
+                get("CICD_GIT_SYNC_CONCURRENCY"),
+                "CICD_GIT_SYNC_CONCURRENCY",
+                2,
+                32,
+            )? as usize,
+            allowed_gitlab_origins: origins,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -361,6 +445,7 @@ impl RuntimeConfig {
             runner,
             auth,
             secrets,
+            git_sync: GitSyncConfig::from_source(&mut get)?,
             smtp,
             sdlc_workspace: SdlcWorkspaceConfig {
                 delegated_subject: optional_trimmed(get("CICD_SDLC_DELEGATED_SUBJECT"))
@@ -446,6 +531,7 @@ impl RuntimeConfig {
             },
             auth: AuthConfig { secret: None },
             secrets: SecretsConfig { key: None },
+            git_sync: GitSyncConfig::default(),
             smtp: SmtpConfig::default(),
             sdlc_workspace: SdlcWorkspaceConfig::default(),
         }
@@ -680,6 +766,39 @@ fn redacted<T>(value: Option<T>) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn synchronization_defaults_and_limits_are_explicit() {
+        let config = RuntimeConfig::from_env_source(|_| None, false).unwrap();
+        assert_eq!(config.git_sync, GitSyncConfig::default());
+        for (name, value) in [
+            ("CICD_GIT_SYNC_ENABLED", "maybe"),
+            ("CICD_GIT_SYNC_INTERVAL_SECONDS", "0"),
+            ("CICD_GIT_SYNC_CONCURRENCY", "33"),
+            ("CICD_GIT_SYNC_GITLAB_ORIGINS", "http://git.internal"),
+            ("CICD_GIT_SYNC_GITLAB_ORIGINS", "https://token@git.internal"),
+        ] {
+            assert!(
+                RuntimeConfig::from_env_source(|key| (key == name).then(|| value.into()), false)
+                    .is_err()
+            );
+        }
+        let config = RuntimeConfig::from_env_source(
+            |key| match key {
+                "CICD_GIT_SYNC_ENABLED" => Some("true".into()),
+                "CICD_GIT_SYNC_GITLAB_ORIGINS" => {
+                    Some("https://git.internal,https://git.internal/".into())
+                }
+                _ => None,
+            },
+            false,
+        )
+        .unwrap();
+        assert!(config.git_sync.enabled);
+        assert_eq!(
+            config.git_sync.allowed_gitlab_origins,
+            vec!["https://git.internal"]
+        );
+    }
 
     #[test]
     fn local_delivery_kind_is_strict_and_absence_preserves_static() {

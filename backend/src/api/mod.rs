@@ -92,6 +92,10 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         )
     ),
     paths(
+        crate::repository_sync::list, crate::repository_sync::get_connection,
+        crate::repository_sync::save_connection, crate::repository_sync::check,
+        crate::repository_sync::start, crate::repository_sync::runs,
+        crate::repository_sync::run, crate::repository_sync::refs,
         crate::workspace_projects::all_pipelines,
         crate::workspace_projects::all_summary,
         crate::repository_catalog::all,
@@ -220,6 +224,13 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
     components(schemas(
         crate::registered_source::VerifiedSource,
         crate::registered_source::RepositoryReadback,
+        crate::registered_source::DeliveryConfigurationReadback,
+        cicd_domain::repository_sync::Provider,cicd_domain::repository_sync::Direction,
+        cicd_domain::repository_sync::Settings,cicd_domain::repository_sync::SaveConnection,
+        cicd_domain::repository_sync::CheckConnection,cicd_domain::repository_sync::CheckResult,
+        cicd_domain::repository_sync::Connection,cicd_domain::repository_sync::SyncRun,
+        cicd_domain::repository_sync::RefResult,crate::repository_sync::ConnectionPage,
+        crate::repository_sync::RunPage,crate::repository_sync::RefPage,
         crate::domain::sdlc_workspace::WorkspaceOperationRequest,
         crate::domain::sdlc_workspace::WorkspaceTaskBinding,
         crate::domain::sdlc_workspace::TaskWorkspaceIntent,
@@ -868,6 +879,57 @@ mod tests {
                 .unwrap(),
             "https://cicd.example.com"
         );
+    }
+
+    #[tokio::test]
+    async fn cors_allowlist_permits_sync_put_without_allowing_foreign_origin() {
+        let config = crate::config::RuntimeConfig::test_default()
+            .with_auth_secret(Some("test-auth-secret".to_string()));
+        let app = build_router_with_cors(
+            None,
+            crate::git_host::GitConfig::default(),
+            None,
+            config,
+            cors_layer_from_allowed_origins(Some("https://cicd.example.com")).unwrap(),
+        );
+        for origin in ["https://cicd.example.com", "https://evil.example.com"] {
+            let response = app.clone().oneshot(
+                axum::http::Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/api/v1/catalog/repositories/00000000-0000-4000-8000-000000000001/sync")
+                    .header(header::ORIGIN, origin)
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "PUT")
+                    .header(header::ACCESS_CONTROL_REQUEST_HEADERS, "authorization,content-type,idempotency-key")
+                    .body(Body::empty()).unwrap(),
+            ).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            if origin == "https://cicd.example.com" {
+                assert_eq!(
+                    response
+                        .headers()
+                        .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                        .unwrap(),
+                    origin
+                );
+                assert!(
+                    response
+                        .headers()
+                        .get(header::ACCESS_CONTROL_ALLOW_METHODS)
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .split(',')
+                        .any(|method| method.trim() == "PUT")
+                );
+            } else {
+                assert!(
+                    response
+                        .headers()
+                        .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                        .is_none()
+                );
+            }
+        }
     }
 
     #[tokio::test]

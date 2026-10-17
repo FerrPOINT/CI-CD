@@ -73,3 +73,38 @@ Workspace/configuration candidate добавляет `/workspaces/:registry/:nam
 | [wide.png](../../screenshots/375x812/wide.png) | `/` | `wide` | 375×812 | 375×1306 |
 | [reading.png](../../screenshots/375x812/reading.png) | `/settings` | `reading` | 375×812 | 375×1886 |
 | [detail-with-aside.png](../../screenshots/375x812/detail-with-aside.png) | `/pipelines/:id` | `detail-with-aside` | 375×812 | 375×1032 |
+
+## Синхронизация репозиториев — установленный SDLC2, 17 октября 2026
+
+Снимки Codex IAB показывают реальный установленный UI `178efff`: пустой список
+подключений и форму существующего QA-репозитория. Настройки и credentials
+не сохранялись, sync не запускался. Это evidence композиции на 375/1920/2560,
+а не подтверждение backend-исправлений объединённого кандидата или обмена с
+GitHub/GitLab. Весь токеновый ввод оставлен пустым. PNG получены непосредственно
+через browser capture; размеры — full-page, DPR 1.
+
+| Файл | Маршрут | Режим | Viewport | Размер PNG |
+|---|---|---|---|---|
+| [42-repository-syncs-375.png](../../screenshots/42-repository-syncs-375.png) | `/repository-syncs` | Пустой список | 375×812 | 375×812 |
+| [42-repository-syncs-1920.png](../../screenshots/42-repository-syncs-1920.png) | `/repository-syncs` | Пустой список | 1920×1080 | 1920×1080 |
+| [42-repository-syncs-2560.png](../../screenshots/42-repository-syncs-2560.png) | `/repository-syncs` | Пустой список | 2560×1440 | 2560×1440 |
+| [43-repository-sync-connection-375.png](../../screenshots/43-repository-sync-connection-375.png) | `/catalog/repositories/:id/sync` | Подключение отключено | 375×812 | 375×1395 |
+| [43-repository-sync-connection-1920.png](../../screenshots/43-repository-sync-connection-1920.png) | `/catalog/repositories/:id/sync` | Подключение отключено | 1920×1080 | 1920×1080 |
+| [43-repository-sync-connection-2560.png](../../screenshots/43-repository-sync-connection-2560.png) | `/catalog/repositories/:id/sync` | Подключение отключено | 2560×1440 | 2560×1440 |
+
+## Синхронизация — текущий source-компонент, 17 октября 2026
+
+Проверен настоящий `RepositorySyncEditor` из frontend tree
+`b6f62ff3ff23d6bbd11723299f9bc8732cb6b513` с Base UI `2ad0834`.
+В отдельном Chromium profile прошли сохранение, проверка доступа и переход
+к истории. Транспорт фикстурный; banner на снимках явно обозначает вымышленные
+данные. Проверка не подтверждает реальный provider или SSO нового backend.
+Статические bytes передавались из собственного QA-сервера с сохранением
+loopback browser origin; crypto API не заменялся. Внешних запросов и ошибок
+страницы нет, горизонтальной прокрутки нет. QA-проект очищен.
+
+| Файл | Маршрут | Режим | Viewport | Размер PNG |
+|---|---|---|---|---|
+| [44-repository-sync-source-375.png](../../screenshots/44-repository-sync-source-375.png) | `/sync-preview.html?production=1` | Production-компонент, fixture transport | 375×812 | 375×1486 |
+| [44-repository-sync-source-1920.png](../../screenshots/44-repository-sync-source-1920.png) | `/sync-preview.html?production=1` | Production-компонент, fixture transport | 1920×1080 | 1920×1080 |
+| [44-repository-sync-source-2560.png](../../screenshots/44-repository-sync-source-2560.png) | `/sync-preview.html?production=1` | Production-компонент, fixture transport | 2560×1440 | 2560×1440 |

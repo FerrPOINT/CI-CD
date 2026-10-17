@@ -9,6 +9,7 @@ import {
   Cpu,
   FolderGit2,
   GitFork,
+  RefreshCw,
   History,
   LayoutDashboard,
   LogOut,
@@ -61,6 +62,7 @@ function NavigationList({
     { to: "/", icon: LayoutDashboard, label: t("navigation.dashboard") },
     { to: "/projects", icon: FolderGit2, label: t("navigation.projects") },
     { to: "/repositories", icon: GitFork, label: "Все репозитории" },
+    { to: "/repository-syncs", icon: RefreshCw, label: "Синхронизации" },
   ];
   const utilityItems = [
     { to: "/runners", icon: Cpu, label: t("navigation.runners") },

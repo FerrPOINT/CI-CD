@@ -28,8 +28,9 @@ const SNAPSHOT: &str = "SELECT jsonb_build_object(
 #[tokio::test]
 #[ignore = "requires disposable CICD_TEST_DATABASE_URL; no Git, runner or stand needed"]
 async fn populated_0091_to_0092_preserves_workspace_pipeline_history_and_old_guards() {
-    // This regression owns the historical 0091 -> 0092 transition, not later additions.
-    let catalog = migration_catalog_subset(&cicd::migrations().await.unwrap(), 92);
+    let full_catalog = cicd::migrations().await.unwrap();
+    // Keep this historical 0091 -> 0092 regression exact as later migrations are added.
+    let catalog = migration_catalog_subset(&full_catalog, 92);
     assert_eq!(
         catalog.iter().map(|m| m.version).collect::<Vec<_>>(),
         (1..=40).chain([90, 91, 92]).collect::<Vec<_>>()

@@ -40,6 +40,7 @@ pub mod platform;
 pub mod pulls;
 pub mod registered_source;
 pub mod repository_catalog;
+pub mod repository_sync;
 pub mod runner;
 pub(crate) mod runner_docker;
 pub(crate) mod runner_image_build;

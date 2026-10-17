@@ -5,6 +5,7 @@ import {
   GitFork,
   LayoutDashboard,
   Play,
+  RefreshCw,
   Rocket,
 } from 'lucide-react'
 import { ProjectNavigationGroup, SidebarItem } from '@pdlc/ui/ui'
@@ -37,6 +38,7 @@ export function WorkspaceNavigation({
   const sections = [
     ['', 'Обзор', LayoutDashboard],
     ['repositories', 'Репозитории', GitFork],
+    ['syncs', 'Синхронизации', RefreshCw],
     ['pipelines', 'Пайплайны', Play],
     ['deployments', 'Деплои', Rocket],
   ] as const

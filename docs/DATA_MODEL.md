@@ -1188,3 +1188,15 @@ idx_outbox_delivery_attempts_message ON outbox_delivery_attempts(message_id, att
 ## Сквозной Namespace
 
 Версионированные API, данные, ownership и совместимость описаны в [Namespace](NAMESPACE.md).
+
+## Repository synchronization
+
+Миграция 0093: repository_sync_connections (PK repository UUID, JSON settings,
+CAS version, AES-GCM encrypted credential, next_check_at/dirty);
+repository_sync_runs (UUID, connection snapshot/version, source, state,
+owner/generation/lease, cancel, timestamps); repository_sync_refs (run/ref PK,
+direction, old/new SHA intent, state/reason, CI event delivery);
+repository_sync_operations (operation UUID PK, actor/repository/kind, keyed HMAC
+fingerprint, safe readback). Partial unique index допускает только один active
+run на repository. Namespace triggers запрещают создание работы/изменение
+настроек в архиве. История не удаляется автоматически и удерживает identity.

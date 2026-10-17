@@ -484,6 +484,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/catalog/repositories/{id}/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_repository_sync_get"];
+        put: operations["forge_repository_sync_save"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog/repositories/{id}/sync/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["forge_repository_sync_check"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog/repositories/{id}/sync/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_repository_sync_runs"];
+        put?: never;
+        post: operations["forge_repository_sync_start"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog/repositories/{id}/sync/runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_repository_sync_run"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/catalog/repositories/{id}/sync/runs/{run_id}/refs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_repository_sync_refs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/delivery-configurations": {
         parameters: {
             query?: never;
@@ -1727,6 +1807,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/repository-syncs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["forge_repository_sync_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/runner/heartbeat": {
         parameters: {
             query?: never;
@@ -2479,6 +2575,11 @@ export interface components {
         };
         ConfigPage: {
             items: components["schemas"]["DeliveryConfig"][];
+            /** Format: int64 */
+            total: number;
+        };
+        ConnectionPage: {
+            items: components["schemas"]["RepositorySyncConnection"][];
             /** Format: int64 */
             total: number;
         };
@@ -3271,6 +3372,11 @@ export interface components {
             sha: string;
             target: string;
         };
+        RefPage: {
+            items: components["schemas"]["RepositorySyncRefResult"][];
+            /** Format: int64 */
+            total: number;
+        };
         RefreshRequest: {
             /** @description The previously issued refresh token. */
             refresh_token: string;
@@ -3323,6 +3429,84 @@ export interface components {
             /** Format: uuid */
             repository_id: string;
         };
+        RepositorySyncCheckConnection: {
+            settings: components["schemas"]["RepositorySyncSettings"];
+            token?: string | null;
+        };
+        RepositorySyncCheckResult: {
+            message: string;
+            read: boolean;
+            write: string;
+        };
+        RepositorySyncConnection: {
+            active_run?: null | components["schemas"]["RepositorySyncSyncRun"];
+            has_credential: boolean;
+            last_run?: null | components["schemas"]["RepositorySyncSyncRun"];
+            namespace?: null | components["schemas"]["RepositorySyncNamespace"];
+            /** Format: date-time */
+            next_check_at?: string | null;
+            paused_reason?: string | null;
+            /** Format: uuid */
+            repository_id: string;
+            repository_name: string;
+            settings: components["schemas"]["RepositorySyncSettings"];
+            /** Format: int64 */
+            version: number;
+            worker_enabled: boolean;
+            writable: boolean;
+        };
+        /** @enum {string} */
+        RepositorySyncDirection: "disabled" | "pull" | "push" | "both";
+        RepositorySyncNamespace: {
+            /** Format: uuid */
+            namespace_id: string;
+            /** Format: uuid */
+            registry_instance_id: string;
+        };
+        /** @enum {string} */
+        RepositorySyncProvider: "gitlab" | "github";
+        RepositorySyncRefResult: {
+            direction: string;
+            event_delivered: boolean;
+            new_sha?: string | null;
+            old_sha?: string | null;
+            reason?: string | null;
+            ref_name: string;
+            state: string;
+        };
+        RepositorySyncSaveConnection: {
+            /** Format: int64 */
+            expected_version: number;
+            settings: components["schemas"]["RepositorySyncSettings"];
+            /** @description Write-only. Omission retains the existing credential. */
+            token?: string | null;
+        };
+        RepositorySyncSettings: {
+            automatic: boolean;
+            direction: components["schemas"]["RepositorySyncDirection"];
+            instance_url: string;
+            provider: components["schemas"]["RepositorySyncProvider"];
+            repository_path: string;
+        };
+        RepositorySyncSyncRun: {
+            cancel_requested: boolean;
+            /** Format: int64 */
+            connection_version: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            finished_at?: string | null;
+            /** Format: uuid */
+            id: string;
+            message?: string | null;
+            /** Format: uuid */
+            repository_id: string;
+            settings: components["schemas"]["RepositorySyncSettings"];
+            source: string;
+            /** Format: date-time */
+            started_at?: string | null;
+            state: string;
+        };
         RequeuedOutboxDelivery: {
             /** Format: uuid */
             id: string;
@@ -3361,6 +3545,11 @@ export interface components {
         };
         RollbackDeployment: {
             git_ref?: string | null;
+        };
+        RunPage: {
+            items: components["schemas"]["RepositorySyncSyncRun"][];
+            /** Format: int64 */
+            total: number;
         };
         Runner: {
             /** Format: date-time */
@@ -4437,6 +4626,7 @@ export interface operations {
                 search?: string | null;
                 group_id?: string | null;
                 managed?: boolean | null;
+                sync_available?: boolean | null;
             };
             header?: never;
             path?: never;
@@ -4462,6 +4652,7 @@ export interface operations {
                 search?: string | null;
                 group_id?: string | null;
                 managed?: boolean | null;
+                sync_available?: boolean | null;
             };
             header?: never;
             path?: never;
@@ -4811,6 +5002,7 @@ export interface operations {
                 search?: string | null;
                 group_id?: string | null;
                 managed?: boolean | null;
+                sync_available?: boolean | null;
             };
             header?: never;
             path: {
@@ -4899,6 +5091,217 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PushConfig"];
+                };
+            };
+        };
+    };
+    forge_repository_sync_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositorySyncConnection"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    forge_repository_sync_save: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepositorySyncSaveConnection"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositorySyncConnection"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    forge_repository_sync_check: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RepositorySyncCheckConnection"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositorySyncCheckResult"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    forge_repository_sync_runs: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+                offset?: number | null;
+                search?: string | null;
+                provider?: string | null;
+                state?: string | null;
+                group_id?: string | null;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunPage"];
+                };
+            };
+        };
+    };
+    forge_repository_sync_start: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositorySyncSyncRun"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    forge_repository_sync_run: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RepositorySyncSyncRun"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    forge_repository_sync_refs: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+                offset?: number | null;
+                search?: string | null;
+                provider?: string | null;
+                state?: string | null;
+                group_id?: string | null;
+            };
+            header?: never;
+            path: {
+                id: string;
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RefPage"];
                 };
             };
         };
@@ -5207,6 +5610,7 @@ export interface operations {
                 search?: string | null;
                 group_id?: string | null;
                 managed?: boolean | null;
+                sync_available?: boolean | null;
             };
             header?: never;
             path: {
@@ -8042,6 +8446,38 @@ export interface operations {
                 content?: never;
             };
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    forge_repository_sync_list: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+                offset?: number | null;
+                search?: string | null;
+                provider?: string | null;
+                state?: string | null;
+                group_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionPage"];
+                };
+            };
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

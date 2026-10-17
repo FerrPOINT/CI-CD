@@ -2508,6 +2508,11 @@ mod tests {
                 .unwrap()
         );
         std::fs::create_dir_all(&directory).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
         let manifest = json!({"name":project,"services":{"transfer":{"labels":{
             "sdlc.job":job.to_string(),"sdlc.attempt":attempt.to_string(),
             "sdlc.task":format!("job-{job}"),"sdlc.purpose":"cicd-job","sdlc.control-volume":control}}}});

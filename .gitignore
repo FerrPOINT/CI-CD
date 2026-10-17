@@ -5,5 +5,6 @@ backups/
 backend/target/
 frontend/node_modules/
 frontend/dist/
+frontend/dist-sync-preview/
 frontend/.pnpm-store/
 backend/target-cache*/
