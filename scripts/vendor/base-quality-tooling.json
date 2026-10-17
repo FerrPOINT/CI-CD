@@ -1,7 +1,7 @@
 {
   "schema": "base-quality-tooling/v1",
   "repository": "https://github.com/FerrPOINT/services-base",
-  "revision": "ea311891b33d6107a0f7268e16a8abe747ce7451",
+  "revision": "6f77761c41a30545e9417222c7b5043add1f78e0",
   "source": "scripts/quality_selection.py",
   "sha256": "d4ed10f1c09ddca7fd3fe3f380d1e284aa30a7b1154c5f03eb9553bea6d24f1e",
   "rust_target_cache": {
