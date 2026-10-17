@@ -9,7 +9,16 @@ import re
 from typing import Mapping
 from uuid import UUID
 
-from scripts.workspace_deploy_admission import require, validate_recipe
+from scripts.workspace_deploy_admission import OwnerSeal, require, validate_recipe
+
+
+@dataclass(frozen=True, repr=False)
+class OwnerImageFacts:
+    image_id: str
+    default_user: str | None
+    volumes: frozenset[str]
+    os: str
+    architecture: str
 
 
 @dataclass(frozen=True, repr=False)
@@ -21,7 +30,7 @@ class OwnerRuntime:
     network_internal: bool
     users: Mapping[str, str]
     tmpfs: Mapping[str, frozenset[str]]
-    image_volumes: Mapping[str, frozenset[str]]
+    image_facts: Mapping[str, OwnerImageFacts]
     secret_values: Mapping[str, str]
     memory_bytes: int
     cpus: float
@@ -41,9 +50,14 @@ class OwnerComposeSource:
 
 
 def verify_compose_source(compose_bytes, seal, owner, source):
-    require(type(source) is OwnerComposeSource and type(owner) is OwnerRuntime,
+    require(type(owner) is OwnerRuntime, "owner Git source projection required")
+    _verify_source_bytes(compose_bytes, seal, source, owner.job_id, owner.attempt_id)
+
+
+def _verify_source_bytes(compose_bytes, seal, source, job_id, attempt_id):
+    require(type(source) is OwnerComposeSource,
             "owner Git source projection required")
-    require(source.job_id == owner.job_id and source.attempt_id == owner.attempt_id,
+    require(source.job_id == job_id and source.attempt_id == attempt_id,
             "Compose source attempt mismatch")
     require(type(source.source_commit) is str and type(source.plan_sha256) is str
             and source.source_commit == seal.source_commit
@@ -63,6 +77,54 @@ def verify_compose_source(compose_bytes, seal, owner, source):
             and source.blob_oid == hashlib.sha1(
                 b"blob " + str(len(compose_bytes)).encode("ascii") + b"\0" + compose_bytes,
                 usedforsecurity=False).hexdigest(), "Compose source bytes differ from Git blob")
+
+
+def _actual_image(name, facts, seal):
+    require(type(facts) is OwnerImageFacts and facts.image_id == seal.images[name]
+            and facts.os == "linux" and facts.architecture in ("amd64", "arm64")
+            and type(facts.volumes) is frozenset and len(facts.volumes) <= 8
+            and (facts.default_user is None or (type(facts.default_user) is str
+                 and len(facts.default_user) <= 128
+                 and not any(ord(c) < 32 or 127 <= ord(c) <= 159 for c in facts.default_user))),
+            "actual owner image Config facts required")
+
+
+def read_only_inventory(payload):
+    """Private compiled-owner stdin bridge, NOT a public request/proof constructor.
+
+    No lifecycle admission is returned: network/volume/secret custody is not connected.
+    The executable source and this projection must both be supplied by the backend.
+    """
+    compose = payload["compose"].encode("utf-8")
+    manifest = payload["manifest"].encode("utf-8")
+    data = payload["seal"]
+    seal = OwnerSeal(**{**data, "environment": {name: frozenset(keys)
+                        for name, keys in data["environment"].items()},
+                        "secret_names": frozenset(data["secret_names"])})
+    data = payload["source"]
+    source = OwnerComposeSource(**{**data, "job_id": UUID(data["job_id"]),
+                                  "attempt_id": UUID(data["attempt_id"])})
+    _verify_source_bytes(compose, seal, source, UUID(payload["job_id"]), UUID(payload["attempt_id"]))
+    validated = validate_recipe(compose, manifest, seal)
+    facts = payload["image_facts"]
+    require(set(facts) == set(validated.service_names), "incomplete image Config inventory")
+    recipe = json.loads(compose)
+    preparation_needed = False
+    for name, data in facts.items():
+        require(type(data["volumes"]) is list and len(data["volumes"]) == len(set(data["volumes"])),
+                "invalid image volume projection")
+        image = OwnerImageFacts(**{**data, "volumes": frozenset(data["volumes"])})
+        _actual_image(name, image, seal)
+        mounts = {mount["target"] for mount in recipe["services"][name].get("volumes", [])}
+        require(image.volumes <= mounts, "implicit image volume not declared")
+        preparation_needed |= bool(mounts) or not (
+            type(image.default_user) is str
+            and re.fullmatch(r"[1-9][0-9]{0,9}:[1-9][0-9]{0,9}", image.default_user)
+            and all(int(value) <= 2_147_483_647 for value in image.default_user.split(":")))
+    reason = ("owner_volume_user_preparation_unavailable" if preparation_needed
+              else "project_secret_readback_unavailable" if validated.secret_refs
+              else "owner_network_lifecycle_unavailable")
+    return {"status": "held", "reason": reason}
 
 
 @dataclass(frozen=True)
@@ -94,7 +156,7 @@ def resolve_services(compose_bytes, manifest_bytes, seal, owner, source):
     require(not names & {"job", "transfer"}
             and not set(validated.volume_names) & {"workspace", "cargo", "sources"},
             "reserved RemoteJob resource names")
-    require(set(owner.users) == set(owner.tmpfs) == set(owner.image_volumes) == names,
+    require(set(owner.users) == set(owner.tmpfs) == set(owner.image_facts) == names,
             "complete owner service policy required")
     services = compose["services"]
     require(type(owner.memory_bytes) is int and type(owner.cpus) in (int, float)
@@ -109,10 +171,14 @@ def resolve_services(compose_bytes, manifest_bytes, seal, owner, source):
               "sdlc.control-volume": owner.control_volume}
     refs = {(service, key): secret for service, key, secret in validated.secret_refs}
     for name, service in services.items():
+        facts = owner.image_facts[name]
+        _actual_image(name, facts, seal)
         user = owner.users[name]
         require(type(user) is str and re.fullmatch(r"[1-9][0-9]{0,9}:[1-9][0-9]{0,9}", user)
                 and all(int(value) <= 2_147_483_647 for value in user.split(":")),
                 "owner nonroot UID/GID")
+        require(user == facts.default_user,
+                "image default user requires explicit trusted preparation; no inferred UID")
         paths = owner.tmpfs[name]
         require(type(paths) is frozenset and len(paths) <= 4
                 and all(type(path) is str and re.fullmatch(r"/[A-Za-z0-9_/-]+", path)
@@ -124,8 +190,7 @@ def resolve_services(compose_bytes, manifest_bytes, seal, owner, source):
         require(not mounts & paths and not any(
             a != b and (a.startswith(b + "/") or b.startswith(a + "/"))
             for a in mounts | paths for b in mounts | paths), "overlapping owner mount targets")
-        require(type(owner.image_volumes[name]) is frozenset
-                and owner.image_volumes[name] <= mounts, "implicit image volume not declared")
+        require(facts.volumes <= mounts, "implicit image volume not declared")
         require(service.get("read_only", True) is True, "writable root filesystem unsupported")
         environment = service.get("environment", {})
         for key in environment:

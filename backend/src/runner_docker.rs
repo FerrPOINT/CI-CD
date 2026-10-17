@@ -14,6 +14,111 @@ use tokio::process::Command;
 use uuid::Uuid;
 
 const IMAGE_BUILD_INSPECT_FORMAT: &str = r#"{"id":{{json .Id}},"revision":{{json (index .Config.Labels "org.opencontainers.image.revision")}},"attempt":{{json (index .Config.Labels "sdlc.attempt")}},"request":{{json (index .Config.Labels "forge.image-build-request")}},"os":{{json .Os}},"volumes":{{json (index .Config "Volumes")}}}"#;
+const RUNTIME_IMAGE_FORMAT: &str = r#"{"image_id":{{json .Id}},"os":{{json .Os}},"architecture":{{json .Architecture}},"default_user":{{json (index .Config "User")}},"volumes":{{json (index .Config "Volumes")}}}"#;
+
+#[derive(Clone, PartialEq, Eq, serde::Serialize)]
+pub(crate) struct RuntimeImageFacts {
+    image_id: String,
+    os: String,
+    architecture: String,
+    default_user: Option<String>,
+    volumes: std::collections::BTreeSet<String>,
+}
+
+fn architecture(value: &str) -> Option<&'static str> {
+    match value {
+        "amd64" | "x86_64" => Some("amd64"),
+        "arm64" | "aarch64" => Some("arm64"),
+        _ => None,
+    }
+}
+
+fn runtime_image_facts(
+    value: &Value,
+    image: &str,
+    platform: &str,
+) -> io::Result<RuntimeImageFacts> {
+    let platform =
+        architecture(platform).ok_or_else(|| invalid("unsupported dependency platform"))?;
+    if !crate::domain::image_build::valid_image_id(image)
+        || value["image_id"] != image
+        || value["os"] != "linux"
+        || value["architecture"].as_str().and_then(architecture) != Some(platform)
+    {
+        return Err(invalid("runtime image identity/platform mismatch"));
+    }
+    let user = match &value["default_user"] {
+        Value::Null => None,
+        Value::String(user) if user.len() <= 128 && !user.chars().any(char::is_control) => {
+            Some(user.clone())
+        }
+        _ => return Err(invalid("invalid image Config.User")),
+    };
+    let mut volumes = std::collections::BTreeSet::new();
+    if !value["volumes"].is_null() {
+        let declared = value["volumes"]
+            .as_object()
+            .ok_or_else(|| invalid("invalid image Config.Volumes"))?;
+        if declared.len() > 8 {
+            return Err(invalid("image volume bound"));
+        }
+        for (path, options) in declared {
+            if path.len() > 256
+                || !path.starts_with('/')
+                || path == "/"
+                || path.contains(['\\', ':', '$'])
+                || path.chars().any(char::is_control)
+                || !path[1..]
+                    .split('/')
+                    .all(|part| !part.is_empty() && part != "." && part != "..")
+                || !options.as_object().is_some_and(|v| v.is_empty())
+            {
+                return Err(invalid("invalid image volume declaration"));
+            }
+            volumes.insert(path.clone());
+        }
+    }
+    Ok(RuntimeImageFacts {
+        image_id: image.into(),
+        os: "linux".into(),
+        architecture: platform.into(),
+        default_user: user,
+        volumes,
+    })
+}
+
+async fn bounded_image_read(mut command: Command, args: &[&str]) -> io::Result<String> {
+    let mut child = command
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    let result = tokio::time::timeout(Duration::from_secs(30), async {
+        let mut bytes = Vec::new();
+        child
+            .stdout
+            .take()
+            .ok_or_else(|| invalid("missing Docker readback"))?
+            .take(65537)
+            .read_to_end(&mut bytes)
+            .await?;
+        if bytes.len() > 65536 || !child.wait().await?.success() {
+            return Err(invalid("bounded Docker image-build readback failed"));
+        }
+        String::from_utf8(bytes)
+            .map(|v| v.trim().to_owned())
+            .map_err(|_| invalid("invalid Docker image-build readback encoding"))
+    })
+    .await;
+    match result {
+        Ok(Ok(value)) => Ok(value),
+        _ => {
+            let _ = child.kill().await;
+            Err(invalid("Docker image-build readback unavailable"))
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(crate) struct Client {
@@ -201,37 +306,47 @@ impl Client {
     }
 
     async fn image_build_read(&self, docker_config: &Path, args: &[&str]) -> io::Result<String> {
-        let mut child = self
-            .image_build_control_command(docker_config)
-            .args(args)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .spawn()?;
-        let result = tokio::time::timeout(Duration::from_secs(30), async {
-            let mut bytes = Vec::new();
-            child
-                .stdout
-                .take()
-                .ok_or_else(|| invalid("missing Docker readback"))?
-                .take(65537)
-                .read_to_end(&mut bytes)
-                .await?;
-            if bytes.len() > 65536 || !child.wait().await?.success() {
-                return Err(invalid("bounded Docker image-build readback failed"));
-            }
-            String::from_utf8(bytes)
-                .map(|v| v.trim().to_owned())
-                .map_err(|_| invalid("invalid Docker image-build readback encoding"))
-        })
-        .await;
-        match result {
-            Ok(Ok(value)) => Ok(value),
-            _ => {
-                let _ = child.kill().await;
-                Err(invalid("Docker image-build readback unavailable"))
-            }
+        bounded_image_read(self.image_build_control_command(docker_config), args).await
+    }
+
+    /// An immutable selector is not proof: resolve through the existing owner inventory,
+    /// then inspect actual Config on the same verified daemon. Never pull dependencies.
+    pub(crate) async fn runtime_image(&self, image: &str) -> io::Result<RuntimeImageFacts> {
+        if !crate::domain::image_build::valid_image_id(image) {
+            return Err(invalid("runtime dependency requires an immutable image ID"));
         }
+        let format =
+            r#"{"id":{{json .ID}},"os":{{json .OSType}},"architecture":{{json .Architecture}}}"#;
+        let before: Value = serde_json::from_str(
+            &bounded_image_read(self.command(), &["info", "--format", format]).await?,
+        )?;
+        if before["id"] != self.daemon_id
+            || before["os"] != "linux"
+            || self.image(image).await? != image
+        {
+            return Err(invalid("dependency owner inventory differs"));
+        }
+        let value: Value = serde_json::from_str(
+            &bounded_image_read(
+                self.command(),
+                &["image", "inspect", image, "--format", RUNTIME_IMAGE_FORMAT],
+            )
+            .await?,
+        )?;
+        let facts = runtime_image_facts(
+            &value,
+            image,
+            before["architecture"]
+                .as_str()
+                .ok_or_else(|| invalid("daemon platform missing"))?,
+        )?;
+        let after: Value = serde_json::from_str(
+            &bounded_image_read(self.command(), &["info", "--format", format]).await?,
+        )?;
+        if after != before {
+            return Err(invalid("dependency daemon changed during readback"));
+        }
+        Ok(facts)
     }
 
     async fn verify_image_build_daemon(&self, docker_config: &Path) -> io::Result<()> {
@@ -1250,6 +1365,59 @@ fn compose_job(args: &[String], envs: &[(String, String)]) -> io::Result<Value> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dependency_inventory_preserves_actual_user_and_implicit_volumes_without_build_labels() {
+        let id = format!("sha256:{}", "a".repeat(64));
+        let value = json!({"image_id":id,"os":"linux","architecture":"amd64",
+            "default_user":"999:999","volumes":{"/var/lib/database":{}}});
+        let facts = runtime_image_facts(&value, &id, "x86_64").unwrap();
+        let projection = serde_json::to_value(&facts).unwrap();
+        assert_eq!(projection["image_id"], id);
+        assert_eq!(projection["default_user"], "999:999");
+        assert_eq!(projection["volumes"], json!(["/var/lib/database"]));
+        assert!(projection.get("revision").is_none());
+        assert!(projection.get("attempt").is_none());
+    }
+
+    #[test]
+    fn dependency_inventory_docker29_optional_user_and_volumes_do_not_invent_a_uid() {
+        let id = format!("sha256:{}", "a".repeat(64));
+        let value = json!({"image_id":id,"os":"linux","architecture":"arm64"});
+        let facts = runtime_image_facts(&value, &id, "aarch64").unwrap();
+        let projection = serde_json::to_value(&facts).unwrap();
+        assert_eq!(projection["default_user"], Value::Null);
+        assert_eq!(projection["volumes"], json!([]));
+        assert!(RUNTIME_IMAGE_FORMAT.contains(r#"index .Config "Volumes""#));
+        assert!(RUNTIME_IMAGE_FORMAT.contains(r#"index .Config "User""#));
+    }
+
+    #[test]
+    fn dependency_inventory_rejects_mutable_ids_platform_drift_and_malformed_config() {
+        let id = format!("sha256:{}", "a".repeat(64));
+        let value = json!({"image_id":id,"os":"linux","architecture":"amd64",
+            "default_user":"","volumes":null});
+        for (key, changed) in [
+            ("image_id", json!("tag:latest")),
+            ("os", json!("windows")),
+            ("architecture", json!("arm64")),
+            ("default_user", json!({"verified":true})),
+            ("volumes", json!(["/data"])),
+        ] {
+            let mut wrong = value.clone();
+            wrong[key] = changed;
+            assert!(runtime_image_facts(&wrong, &id, "amd64").is_err());
+        }
+        assert!(runtime_image_facts(&value, "tag:latest", "amd64").is_err());
+        assert!(runtime_image_facts(&value, &id, "unknown").is_err());
+        for path in ["/", "relative", "/data/../host", "/data//x", "/data\\x"] {
+            let mut wrong = value.clone();
+            wrong["volumes"] = json!({(path):{}});
+            assert!(runtime_image_facts(&wrong, &id, "amd64").is_err());
+        }
+        let facts = runtime_image_facts(&value, &id, "amd64").unwrap();
+        assert_eq!(serde_json::to_value(facts).unwrap()["default_user"], "");
+    }
 
     fn execution_fixture() -> (Value, Vec<Value>) {
         let manifest = json!({"services":{"transfer":{},"job":{},"application":{},"database":{}}});

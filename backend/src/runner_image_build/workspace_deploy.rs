@@ -1,6 +1,7 @@
 //! Unconnected owner-only readback unit. No enqueue, create, start, stop or cleanup.
 //! Register only inside runner_image_build, whose private custody checks are reused.
 use super::*;
+use crate::{api::ApiError, runner_docker::RuntimeImageFacts};
 use cicd_infra::sdlc_workspace as ledger;
 use sqlx::{PgPool, Row};
 use std::collections::BTreeMap;
@@ -135,12 +136,15 @@ pub(crate) async fn read_owner_compose_source(
 
 pub(crate) struct VerifiedImageRegistry {
     images: BTreeMap<String, VerifiedImage>,
+    dependencies: BTreeMap<String, String>,
+    facts: BTreeMap<String, RuntimeImageFacts>,
     consumer: ImageBuildScope,
     repository: Uuid,
     source_commit: String,
     daemon: String,
 }
 
+#[derive(Clone)]
 struct VerifiedImage {
     descriptor: OciCandidateDescriptor,
     artifact_id: Uuid,
@@ -165,12 +169,358 @@ impl VerifiedImageRegistry {
                 && self.daemon == daemon,
             "registry consumer binding mismatch"
         );
-        Ok(self
+        let mut ids: BTreeMap<_, _> = self
             .images
             .iter()
             .map(|(name, image)| (name.clone(), image.descriptor.image_id.clone()))
-            .collect())
+            .collect();
+        for (service, image) in &self.dependencies {
+            ensure!(
+                ids.insert(service.clone(), image.clone()).is_none(),
+                "duplicate image origin"
+            );
+        }
+        Ok(ids)
     }
+
+    fn owner_facts_for(
+        &self,
+        scope: &ImageBuildScope,
+        source: &PreparationSource,
+    ) -> anyhow::Result<serde_json::Value> {
+        let ids = self.image_ids_for(scope, source, &self.daemon)?;
+        ensure!(
+            ids.len() == self.facts.len() && !ids.is_empty(),
+            "incomplete actual image Config inventory"
+        );
+        let facts = serde_json::to_value(&self.facts)?;
+        for (service, image) in ids {
+            ensure!(
+                facts[&service]["image_id"] == image,
+                "image Config inventory binding changed"
+            );
+        }
+        Ok(facts)
+    }
+}
+
+fn recipe_image_selectors(bytes: &[u8]) -> anyhow::Result<BTreeMap<String, String>> {
+    let recipe: serde_json::Value = serde_json::from_slice(bytes)?;
+    let services = recipe["services"]
+        .as_object()
+        .context("missing recipe services")?;
+    ensure!(
+        !services.is_empty() && services.len() <= 8,
+        "service inventory bound"
+    );
+    services
+        .iter()
+        .map(|(name, spec)| {
+            ensure!(
+                !name.is_empty()
+                    && name.len() <= 63
+                    && name.bytes().enumerate().all(|(i, c)| c.is_ascii_lowercase()
+                        || (i > 0 && (c.is_ascii_digit() || matches!(c, b'_' | b'-')))),
+                "invalid inventory service"
+            );
+            let image = spec["image"].as_str().context("missing image selector")?;
+            ensure!(
+                crate::domain::image_build::valid_image_id(image),
+                "dependency selector is not immutable"
+            );
+            Ok((name.clone(), image.into()))
+        })
+        .collect()
+}
+
+/// Selections come only from verified Git bytes. Inventory dependencies never acquire
+/// build/source labels; matching upstream build receipts retain their distinct provenance.
+async fn read_recipe_registry(
+    pool: &PgPool,
+    source: &PreparationSource,
+    scope: &ImageBuildScope,
+    roots: (&Path, &Path),
+    compose: &VerifiedComposeSource,
+    deadline: std::time::Instant,
+) -> anyhow::Result<VerifiedImageRegistry> {
+    let (_, bytes) = compose.owner_input(scope, source)?;
+    let selected = recipe_image_selectors(bytes)?;
+    let (plan, current) = current_plan(pool, source, scope).await?;
+    ensure!(
+        digest(&serde_json::to_vec(&plan)?) == compose.plan_sha256,
+        "Compose inventory plan drift"
+    );
+    let upstream = upstream_jobs(&plan, &current)?;
+    let mut builds = BTreeMap::new();
+    for job in plan["jobs"].as_array().context("missing jobs")? {
+        let key = job["key"].as_str().context("missing job key")?;
+        if !upstream.contains(key) || job["image_build"].is_null() {
+            continue;
+        }
+        ensure!(builds.len() < 8, "upstream image receipt bound");
+        let spec: ImageBuildSpec = serde_json::from_value(job["image_build"].clone())?;
+        spec.validate().map_err(anyhow::Error::msg)?;
+        let ids: Vec<Uuid> = sqlx::query_scalar("SELECT ar.id FROM artifacts ar JOIN jobs j ON j.id=ar.job_id JOIN stages s ON s.id=j.stage_id JOIN job_leases l ON l.job_id=j.id AND l.attempt_id=ar.attempt_id WHERE s.pipeline_id=$1 AND j.name=$2 AND ar.name=$3 AND l.generation=(SELECT max(generation) FROM job_leases WHERE job_id=j.id) LIMIT 2")
+            .bind(scope.pipeline_id).bind(key).bind(&spec.descriptor_artifact).fetch_all(pool).await?;
+        ensure!(ids.len() == 1, "unique upstream image artifact unavailable");
+        builds.insert(format!("build{}", builds.len()), ids[0]);
+    }
+    let client = Client::configured_verified().await?;
+    let daemon = client.image_build_daemon_id().to_owned();
+    let mut registry = if builds.is_empty() {
+        VerifiedImageRegistry {
+            images: BTreeMap::new(),
+            dependencies: BTreeMap::new(),
+            facts: BTreeMap::new(),
+            consumer: scope.clone(),
+            repository: source.repository_id,
+            source_commit: source.source_commit.clone(),
+            daemon: daemon.clone(),
+        }
+    } else {
+        read_owner_image_registry(pool, source, scope, roots, &daemon, &builds, deadline).await?
+    };
+    let built = std::mem::take(&mut registry.images);
+    let mut observed: BTreeMap<String, RuntimeImageFacts> = BTreeMap::new();
+    for (service, id) in &selected {
+        let witnesses: Vec<_> = built
+            .values()
+            .filter(|image| image.descriptor.image_id == *id)
+            .collect();
+        ensure!(witnesses.len() <= 1, "ambiguous build image identity");
+        if let Some(image) = witnesses.first() {
+            registry.images.insert(service.clone(), (**image).clone());
+        } else {
+            registry.dependencies.insert(service.clone(), id.clone());
+        }
+        let facts = if let Some(facts) = observed.get(id) {
+            facts.clone()
+        } else {
+            let facts = client.runtime_image(id).await?;
+            observed.insert(id.clone(), facts.clone());
+            facts
+        };
+        registry.facts.insert(service.clone(), facts);
+    }
+    for (id, facts) in observed {
+        ensure!(
+            client.runtime_image(&id).await? == facts,
+            "dependency Config changed during inventory"
+        );
+    }
+    ensure!(
+        current_plan(pool, source, scope).await? == (plan, current),
+        "inventory attempt/source changed"
+    );
+    ensure!(
+        registry.image_ids_for(scope, source, &daemon)? == selected,
+        "inventory service identity differs"
+    );
+    Ok(registry)
+}
+
+pub(crate) struct InventoryHold {
+    reason: &'static str,
+}
+
+impl InventoryHold {
+    pub(crate) fn message(&self) -> &'static str {
+        self.reason
+    }
+}
+
+fn requested(plan: &serde_json::Value, key: &str) -> bool {
+    plan["jobs"].as_array().is_some_and(|jobs| {
+        jobs.iter().any(|job| {
+            job["key"].as_str() == Some(key)
+                && job
+                    .as_object()
+                    .is_some_and(|v| v.contains_key("workspace_deploy"))
+        })
+    })
+}
+
+fn bridge_hold(value: &serde_json::Value) -> anyhow::Result<InventoryHold> {
+    ensure!(
+        value.as_object().is_some_and(|v| v.len() == 2) && value["status"] == "held",
+        "inventory validator must not issue execution admission"
+    );
+    let reason = match value["reason"].as_str() {
+        Some("owner_volume_user_preparation_unavailable") => {
+            "runner: deployment held; owner volume/user preparation unavailable"
+        }
+        Some("project_secret_readback_unavailable") => {
+            "runner: deployment held; project secret readback unavailable"
+        }
+        Some("owner_network_lifecycle_unavailable") => {
+            "runner: deployment held; owner network lifecycle unavailable"
+        }
+        Some("recipe_rejected") => "runner: deployment held; closed recipe validation failed",
+        _ => anyhow::bail!("unknown inventory validator result"),
+    };
+    Ok(InventoryHold { reason })
+}
+
+async fn inventory_bridge(input: serde_json::Value) -> anyhow::Result<InventoryHold> {
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "workspace_deploy_admission": include_str!("../../../scripts/workspace_deploy_admission.py"),
+        "workspace_deploy_adapter": include_str!("../../../scripts/workspace_deploy_adapter.py"),
+        "input": input,
+    }))?;
+    ensure!(bytes.len() <= 1024 * 1024, "owner inventory input bound");
+    let mut command = Command::new("python3");
+    command
+        .args([
+            "-I",
+            "-c",
+            include_str!("../../../scripts/workspace_deploy_bridge.py"),
+        ])
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    if let Some(root) = std::env::var_os("SystemRoot") {
+        command.env("SystemRoot", root);
+    }
+    let mut child = command.spawn()?;
+    let mut input = child.stdin.take().context("inventory input missing")?;
+    input.write_all(&bytes).await?;
+    input.shutdown().await?;
+    drop(input);
+    let mut output = Vec::new();
+    child
+        .stdout
+        .take()
+        .context("inventory output missing")?
+        .take(4097)
+        .read_to_end(&mut output)
+        .await?;
+    ensure!(
+        output.len() <= 4096 && child.wait().await?.success(),
+        "bounded inventory validation failed"
+    );
+    bridge_hold(&serde_json::from_slice(&output)?)
+}
+
+async fn inspect_recipe(
+    pool: &PgPool,
+    scope: &ImageBuildScope,
+    config: &crate::runner::RuntimeRunnerConfig,
+    control_root: &Path,
+    deadline: std::time::Instant,
+) -> anyhow::Result<InventoryHold> {
+    ensure!(
+        config.mode == crate::config::RunnerMode::Docker,
+        "Docker owner inventory required"
+    );
+    let mut connection = pool.acquire().await?;
+    let task = ledger::find_task_pipeline(&mut connection, scope.pipeline_id, false)
+        .await?
+        .context("task intent unavailable")?;
+    drop(connection);
+    let storage = crate::repository_catalog::local_storage_for_project(pool, scope.project_id)
+        .await
+        .map_err(|_| anyhow::anyhow!("hosted source unavailable"))?
+        .context("hosted source missing")?;
+    let storage = crate::git_host::validate_repo_name(&storage).map_err(anyhow::Error::msg)?;
+    let source = PreparationSource {
+        project_id: scope.project_id,
+        repository_id: task.intent.repository_id,
+        repository: config.git_root.join(format!("{storage}.git")),
+        source_commit: task.intent.source_commit,
+    };
+    let compose = read_owner_compose_source(pool, &source, scope, deadline).await?;
+    let registry = read_recipe_registry(
+        pool,
+        &source,
+        scope,
+        (control_root, &config.artifacts.root),
+        &compose,
+        deadline,
+    )
+    .await?;
+    let ids = registry.image_ids_for(scope, &source, &registry.daemon)?;
+    let manifest = serde_json::to_vec(&serde_json::json!({"schema":"forge/workspace-images/v1",
+        "sourceCommit":source.source_commit,"images":ids}))?;
+    let (source_projection, bytes) = compose.owner_input(scope, &source)?;
+    let recipe: serde_json::Value = serde_json::from_slice(bytes)?;
+    let (plan, current) = current_plan(pool, &source, scope).await?;
+    ensure!(
+        digest(&serde_json::to_vec(&plan)?) == compose.plan_sha256,
+        "bridge plan changed"
+    );
+    let job = plan["jobs"]
+        .as_array()
+        .context("missing jobs")?
+        .iter()
+        .find(|job| job["key"].as_str() == Some(&current))
+        .context("missing current job")?;
+    let secrets = job["required_secrets"]
+        .as_array()
+        .context("missing declared project secret names")?;
+    ensure!(
+        secrets.len() <= 32 && secrets.iter().all(serde_json::Value::is_string),
+        "secret-name bound"
+    );
+    let environment: BTreeMap<_, Vec<_>> = recipe["services"]
+        .as_object()
+        .context("missing services")?
+        .iter()
+        .map(|(name, service)| {
+            (
+                name,
+                service["environment"]
+                    .as_object()
+                    .map(|env| env.keys().collect())
+                    .unwrap_or_default(),
+            )
+        })
+        .collect();
+    inventory_bridge(
+        serde_json::json!({"job_id":scope.job_id,"attempt_id":scope.attempt_id,
+        "compose":std::str::from_utf8(bytes)?,"manifest":std::str::from_utf8(&manifest)?,
+        "source":source_projection,"image_facts":registry.owner_facts_for(scope,&source)?,
+        "seal":{"source_commit":source.source_commit,"compose_sha256":digest(bytes),
+            "images_manifest_sha256":digest(&manifest),"images":ids,
+            "environment":environment,"secret_names":secrets}}),
+    )
+    .await
+}
+
+/// Existing runner hook: no task submission claim, secret resolution, workspace creation
+/// or lifecycle effect. A requested recipe can return only HOLD, never command fallback.
+pub(crate) async fn inspect_requested(
+    pool: &PgPool,
+    scope: ImageBuildScope,
+    config: &crate::runner::RuntimeRunnerConfig,
+    control_root: &Path,
+) -> Result<Option<InventoryHold>, ApiError> {
+    let row = sqlx::query("SELECT pp.plan,j.name FROM jobs j JOIN stages s ON s.id=j.stage_id JOIN pipelines p ON p.id=s.pipeline_id JOIN pipeline_plans pp ON pp.pipeline_id=p.id WHERE j.id=$1 AND p.id=$2 AND p.project_id=$3")
+        .bind(scope.job_id).bind(scope.pipeline_id).bind(scope.project_id).fetch_optional(pool).await
+        .map_err(ApiError::internal)?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let plan: serde_json::Value = row.try_get("plan").map_err(ApiError::internal)?;
+    let name: String = row.try_get("name").map_err(ApiError::internal)?;
+    if !requested(&plan, &name) {
+        return Ok(None);
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let hold = tokio::time::timeout_at(
+        tokio::time::Instant::from_std(deadline),
+        inspect_recipe(pool, &scope, config, control_root, deadline),
+    )
+    .await;
+    Ok(Some(match hold {
+        Ok(Ok(hold)) => hold,
+        _ => InventoryHold {
+            reason: "runner: deployment held; owner inventory validation unavailable",
+        },
+    }))
 }
 
 #[derive(PartialEq, Eq)]
@@ -354,9 +704,9 @@ async fn current_plan(
         scope.project_id == source.project_id,
         "owner source project mismatch"
     );
-    let row = sqlx::query("SELECT p.commit_sha,pp.config_source,pp.resolved_commit_sha,pp.raw_config,pp.config_sha256,pp.plan,pp.plan_sha256,j.name FROM pipelines p JOIN pipeline_plans pp ON pp.pipeline_id=p.id JOIN stages s ON s.pipeline_id=p.id JOIN jobs j ON j.stage_id=s.id JOIN execution_attempts a ON a.job_id=j.id JOIN job_leases l ON l.job_id=j.id AND l.attempt_id=a.id WHERE p.id=$1 AND p.project_id=$2 AND j.id=$3 AND a.id=$4 AND l.id=$5 AND l.generation=$6 AND j.status='running' AND a.status='running' AND l.lease_status='active' AND l.runner_id IS NULL AND l.runner_name='embedded' AND l.lease_expires_at>clock_timestamp() AND l.cancel_requested_at IS NULL AND l.generation=(SELECT max(generation) FROM job_leases WHERE job_id=j.id)")
+    let row = sqlx::query("SELECT p.commit_sha,pp.config_source,pp.resolved_commit_sha,pp.raw_config,pp.config_sha256,pp.plan,pp.plan_sha256,j.name FROM pipelines p JOIN projects pr ON pr.id=p.project_id AND pr.repository_id=$7 JOIN pipeline_plans pp ON pp.pipeline_id=p.id JOIN stages s ON s.pipeline_id=p.id JOIN jobs j ON j.stage_id=s.id JOIN execution_attempts a ON a.job_id=j.id JOIN job_leases l ON l.job_id=j.id AND l.attempt_id=a.id WHERE p.id=$1 AND p.project_id=$2 AND j.id=$3 AND a.id=$4 AND l.id=$5 AND l.generation=$6 AND j.status='running' AND a.status='running' AND l.lease_status='active' AND l.runner_id IS NULL AND l.runner_name='embedded' AND l.lease_expires_at>clock_timestamp() AND l.cancel_requested_at IS NULL AND l.generation=(SELECT max(generation) FROM job_leases WHERE job_id=j.id)")
         .bind(scope.pipeline_id).bind(scope.project_id).bind(scope.job_id)
-        .bind(scope.attempt_id).bind(scope.lease_id).bind(scope.generation)
+        .bind(scope.attempt_id).bind(scope.lease_id).bind(scope.generation).bind(source.repository_id)
         .fetch_optional(pool).await?.context("current owner attempt unavailable")?;
     let plan: serde_json::Value = row.try_get("plan")?;
     let bytes =
@@ -536,6 +886,8 @@ async fn read_registry(
     }
     Ok(VerifiedImageRegistry {
         images,
+        dependencies: BTreeMap::new(),
+        facts: BTreeMap::new(),
         consumer: scope.clone(),
         repository: source.repository_id,
         source_commit: source.source_commit.clone(),
@@ -547,6 +899,56 @@ async fn read_registry(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn inventory_never_accepts_repo_verified_flags_or_mutable_image_selectors() {
+        let id = format!("sha256:{}", "a".repeat(64));
+        assert_eq!(
+            recipe_image_selectors(
+                &serde_json::to_vec(&json!({"services":{
+            "database":{"image":id}}}))
+                .unwrap()
+            )
+            .unwrap()["database"],
+            id
+        );
+        for value in [
+            json!({"services":{}}),
+            json!({"services":{"database":{"image":"postgres:17"}}}),
+            json!({"services":{"database":{"image":{"verified":true,"image_id":id}}}}),
+            json!({"services":{"../database":{"image":id}}}),
+        ] {
+            assert!(recipe_image_selectors(&serde_json::to_vec(&value).unwrap()).is_err());
+        }
+    }
+
+    #[test]
+    fn explicit_null_requested_recipe_cannot_fall_back_to_ordinary_commands() {
+        let plan = json!({"jobs":[{"key":"deploy","workspace_deploy":null},
+            {"key":"legacy","command":"echo legacy"}]});
+        assert!(requested(&plan, "deploy"));
+        assert!(!requested(&plan, "legacy"));
+        assert!(!requested(&plan, "missing"));
+    }
+
+    #[test]
+    fn bridge_can_return_only_fixed_safe_hold_diagnostics_never_execution_permission() {
+        for reason in [
+            "owner_volume_user_preparation_unavailable",
+            "project_secret_readback_unavailable",
+            "owner_network_lifecycle_unavailable",
+            "recipe_rejected",
+        ] {
+            assert!(bridge_hold(&json!({"status":"held","reason":reason})).is_ok());
+        }
+        for value in [
+            json!({"status":"ready","reason":"owner_network_lifecycle_unavailable"}),
+            json!({"status":"held","reason":"raw-private-value"}),
+            json!({"status":"held","reason":"recipe_rejected","credential":"private"}),
+        ] {
+            assert!(bridge_hold(&value).is_err());
+        }
+    }
 
     #[test]
     fn compose_path_comes_only_from_exact_unique_sealed_job() {
@@ -780,6 +1182,8 @@ mod tests {
         };
         let registry = VerifiedImageRegistry {
             images: BTreeMap::new(),
+            dependencies: BTreeMap::new(),
+            facts: BTreeMap::new(),
             consumer: consumer.clone(),
             repository: source.repository_id,
             source_commit: source.source_commit.clone(),

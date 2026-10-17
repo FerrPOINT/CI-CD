@@ -89,12 +89,12 @@ transfer/workspace/cargo/sources, implicit undeclared image volumes, writable ro
 Финальный literal escaping должен выполнять прежний `RemoteJob.save_manifest`
 ровно один раз; передачи неразрешённого repo JSON в Docker здесь нет.
 
-Файлы не подключены к dispatch, Python invocation или lifecycle. Rust/DB/Engine
-qualification пока нет. Начальный registry reader принимает только реальные
-upstream backend image-build receipts той же pipeline/source; owner dependency
-images (например PostgreSQL с image-declared volumes) требуют отдельного actual
-owner readback, а не fake source/attempt labels. Этот полный DB-stack путь здесь
-не объявлен готовым. Verified Compose Git bytes и lifecycle plumbing описаны ниже;
+Execution не подключён; owner отдельно интегрирует child registration и read-only
+runner hook. Rust/DB/Engine qualification пока нет. Registry сохраняет реальные
+upstream backend image-build receipts отдельно от owner inventory dependencies,
+не присваивая dependencies fake source/attempt labels. Config readback описан ниже.
+Полный DB-stack путь здесь не объявлен готовым. Git bytes и lifecycle plumbing
+описаны ниже;
 они сами не подключают deployment execution или acceptance.
 Существующий readonly descriptor подтверждает здесь только image provenance:
 он не перелэйбливается и не доказывает совместимость с изменяемой БД/migrations.
@@ -113,8 +113,8 @@ Typed result не принимает caller `verified` и не переиспо�
 Private projection содержит job/attempt, commit, plan hash, path, Git blob ID
 и SHA-256. Pure Python assembly требует эту projection до secret resolution и
 проверяет оба byte hashes, source и attempt. Projection не является подписью или
-новой authority: её нельзя принимать из agent/job/API body. Runtime bridge к ней
-не подключён; fresh Tracker admission перед effects остаётся обязательным.
+новой authority: её нельзя принимать из agent/job/API body. Read-only bridge ниже
+не заменяет fresh Tracker admission перед effects.
 
 У существующего `RemoteJob` штатные journal/manifest writes теперь awaited
 `spawn_blocking`, с прежними create-new private temp, file sync и rename. Один
@@ -133,6 +133,50 @@ Engine ownership/foreign-storage checks и terminal DB ACK перед scoped Com
 down остаются прежними; lost stop ACK не превращается в success.
 
 Parser по-прежнему всегда отклоняет `workspace_deploy`. Native service creation,
-dependency-image admission, protected owner network allocation, execution
+protected owner network allocation, execution
 authority/lease monitor, repo-owned acceptance и publication custody ещё не
 подключены. Rust/PG/native qualification этого расширения не заявлена.
+
+## Dependency Inventory And Closed Runner Hook
+
+`Client.runtime_image` принимает только exact `sha256:` selector и использует
+прежний owner `Client.image` resolver. Для immutable ID отсутствующий image не
+pull-ится. Actual ID, Linux/platform, Config.User и Config.Volumes читаются
+bounded Engine readback на том же daemon; daemon identity/platform проверяются
+до и после. Readback ограничен 64 KiB/30s, общий read-only preflight — 30s.
+Optional User/Volumes Docker 29 читаются через Go `index`; отсутствие User
+сохраняется как null, а не превращается в угаданный UID. Нет Config.Env, keys
+или credentials в projection. Existing readonly OCI/build volume guard не ослаблен.
+
+Recipe IDs берутся только из exact verified Compose Git bytes. Existing upstream
+artifact/intent/terminal/cleanup checks подтверждают подходящие build receipts;
+прочие images остаются явно owner-inventory dependencies. Для каждого выбранного
+image actual Config читается повторно, plan/lease/source и project repository ID
+наблюдаются снова. Backend создаёт собственный images witness; caller/job report
+не становится proof. `images_manifest` пока только declared witness path: файл
+не публикуется и не принимается за mutable input authority или delivery receipt.
+
+`inspect_requested` предназначен для existing embedded runner перед checkout,
+secrets и RemoteJob.prepare. Он не claim-ит task submission и не создаёт resources.
+Для обычного job возвращается None; наличие workspace_deploy, включая null,
+никогда не разрешает command fallback. Общий owner hook/registration интегрируется
+отдельно; нового dispatch/controller или table нет.
+
+Python bridge запускается isolated `python3 -I` с очищенным environment и
+компилированными в backend исходниками admission/adapter, не с repo paths.
+Private stdin ограничен 1 MiB, stdout — 4 KiB, stderr не публикуется. Он проверяет
+actual Config facts и оба source hashes, но может вернуть только фиксированный
+HOLD. Missing interpreter/metadata/unknown result не открывает execution.
+Host tests запускают именно этот Python bridge; они не квалифицируют Rust/Engine.
+
+Implicit image volumes должны быть явно покрыты declared owned mounts. Наличие
+mounts либо root/пустой/именованный User требует trusted volume/user preparation:
+UID и права на новый volume нельзя выдумать. Даже volumeless nonroot recipe без
+secrets остаётся HOLD до owner network/lifecycle wiring. Нет fake subnet, secret
+values, volume ownership или готового deployment. Полный launch не включён.
+
+Текущий literal image-ID subset также не задаёт owner reference для нового image,
+собираемого из того же commit: его будущий ID нельзя заранее записать в Git.
+Будущая минимальная extension должна связать такой reference с существующим
+upstream image_build receipt; static fixture/старый image не заменяют это proof.
+Новый selector, migration engine или Pulse business acceptance здесь не добавлены.

@@ -1,11 +1,13 @@
 """Pure trusted-control assembly tests; no daemon or execution is simulated as success."""
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 import hashlib
 import ipaddress
 import os
+import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -13,7 +15,8 @@ from uuid import UUID
 
 from scripts.tests.test_workspace_deploy_admission import APP, DATABASE, SOURCE, encoded, service
 from scripts.workspace_deploy_adapter import (
-    OwnerComposeSource, OwnerRuntime, resolve_services, verify_compose_source,
+    OwnerComposeSource, OwnerImageFacts, OwnerRuntime, read_only_inventory,
+    resolve_services, verify_compose_source,
 )
 from scripts.workspace_deploy_admission import OwnerSeal, Rejected
 
@@ -33,7 +36,9 @@ class WorkspaceDeployAdapterTests(unittest.TestCase):
             "owner-control", ipaddress.ip_network("10.246.200.0/24"), True,
             {"application": "65532:65532", "database": "999:999"},
             {"application": frozenset(("/tmp",)), "database": frozenset(("/tmp", "/run/database"))},
-            {"application": frozenset(), "database": frozenset(("/var/lib/database",))},
+            {"application": OwnerImageFacts(APP, "65532:65532", frozenset(), "linux", "amd64"),
+             "database": OwnerImageFacts(DATABASE, "999:999", frozenset(("/var/lib/database",)),
+                                         "linux", "amd64")},
             {"APP_DB_URL": "synthetic-database-url-$literal", "DOCKER_HOST": "unused-host-credential"},
             1024**3, 2, 256)
 
@@ -43,6 +48,101 @@ class WorkspaceDeployAdapterTests(unittest.TestCase):
             hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw,
                          usedforsecurity=False).hexdigest(),
             hashlib.sha256(raw).hexdigest(), "f" * 64)
+
+    def inventory_input(self):
+        raw, images = encoded(self.compose), encoded(self.images)
+        source = asdict(self.source(raw))
+        source.update(job_id=str(self.owner.job_id), attempt_id=str(self.owner.attempt_id))
+        return {"compose": raw.decode(), "manifest": images.decode(), "source": source,
+                "job_id": str(self.owner.job_id), "attempt_id": str(self.owner.attempt_id),
+                "image_facts": {name: {**asdict(facts), "volumes": sorted(facts.volumes)}
+                                for name, facts in self.owner.image_facts.items()},
+                "seal": {"source_commit": SOURCE, "compose_sha256": hashlib.sha256(raw).hexdigest(),
+                         "images_manifest_sha256": hashlib.sha256(images).hexdigest(),
+                         "images": dict(self.images["images"]),
+                         "environment": {"application": ["DATABASE_URL"]},
+                         "secret_names": ["APP_DB_URL"]}}
+
+    def bridge(self, payload, cwd=None):
+        root = Path(__file__).resolve().parents[2]
+        bundle = {name: (root / "scripts" / (name + ".py")).read_text(encoding="utf-8")
+                  for name in ("workspace_deploy_admission", "workspace_deploy_adapter")}
+        bundle["input"] = payload
+        process = subprocess.run([sys.executable, "-I", "-c",
+                                  (root / "scripts/workspace_deploy_bridge.py").read_text(encoding="utf-8")],
+                                 input=json.dumps(bundle).encode(), stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, timeout=10, check=True, cwd=cwd)
+        self.assertEqual(process.stderr, b"")
+        self.assertLess(len(process.stdout), 4096)
+        return json.loads(process.stdout)
+
+    def test_actual_inventory_bridge_holds_named_volume_preparation_without_fake_success(self):
+        expected = {"status": "held", "reason": "owner_volume_user_preparation_unavailable"}
+        self.assertEqual(read_only_inventory(self.inventory_input()), expected)
+        self.assertEqual(self.bridge(self.inventory_input()), expected)
+
+    def test_inventory_bridge_does_not_resolve_declared_secret_values(self):
+        self.compose["services"]["database"].pop("volumes")
+        self.compose.pop("volumes")
+        self.owner = replace(self.owner, image_facts={**self.owner.image_facts,
+            "database": replace(self.owner.image_facts["database"], volumes=frozenset())})
+        with patch.dict(os.environ, {"APP_DB_URL": "host-secret-must-never-be-used"}):
+            self.assertEqual(self.bridge(self.inventory_input()),
+                             {"status": "held", "reason": "project_secret_readback_unavailable"})
+
+    def test_inventory_bridge_cannot_admit_even_a_valid_volumeless_secretless_recipe(self):
+        self.compose["services"]["database"].pop("volumes")
+        self.compose["services"]["application"].pop("environment")
+        self.compose.pop("volumes")
+        self.owner = replace(self.owner, image_facts={**self.owner.image_facts,
+            "database": replace(self.owner.image_facts["database"], volumes=frozenset())})
+        self.assertEqual(self.bridge(self.inventory_input()),
+                         {"status": "held", "reason": "owner_network_lifecycle_unavailable"})
+
+    def test_inventory_bridge_rejects_forged_identity_or_missing_actual_config(self):
+        for field in ("source", "image_facts"):
+            payload = self.inventory_input()
+            payload[field] = {"verified": True}
+            with self.subTest(field=field):
+                self.assertEqual(self.bridge(payload), {"status": "held", "reason": "recipe_rejected"})
+        payload = self.inventory_input()
+        payload["image_facts"]["database"]["image_id"] = APP
+        self.assertEqual(self.bridge(payload), {"status": "held", "reason": "recipe_rejected"})
+
+    def test_inventory_bridge_rejects_truncated_or_oversize_stdin_with_bounded_safe_output(self):
+        root = Path(__file__).resolve().parents[2]
+        code = (root / "scripts/workspace_deploy_bridge.py").read_text(encoding="utf-8")
+        for raw in (b"{", b"x" * (1024 * 1024 + 1)):
+            with self.subTest(size=len(raw)):
+                result = subprocess.run([sys.executable, "-I", "-c", code], input=raw,
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                        timeout=10, check=True)
+                self.assertEqual(result.stderr, b"")
+                self.assertEqual(json.loads(result.stdout), {"status": "held", "reason": "recipe_rejected"})
+
+    def test_inventory_bridge_uses_compiled_sources_not_cwd_imports(self):
+        with tempfile.TemporaryDirectory(prefix="forge-untrusted-import-") as temp:
+            scripts = Path(temp) / "scripts"
+            scripts.mkdir()
+            (scripts / "__init__.py").write_text("raise RuntimeError('untrusted import')", encoding="utf-8")
+            (scripts / "workspace_deploy_admission.py").write_text("raise RuntimeError('untrusted import')",
+                                                                  encoding="utf-8")
+            self.assertEqual(self.bridge(self.inventory_input(), cwd=temp),
+                             {"status": "held", "reason": "owner_volume_user_preparation_unavailable"})
+
+    def test_inventory_bridge_omitted_user_is_root_preparation_not_guessed_uid(self):
+        payload = self.inventory_input()
+        payload["image_facts"]["database"]["default_user"] = None
+        self.assertEqual(self.bridge(payload),
+                         {"status": "held", "reason": "owner_volume_user_preparation_unavailable"})
+
+    def test_inventory_bridge_rejects_implicit_anonymous_volume_and_undeclared_secret(self):
+        payload = self.inventory_input()
+        payload["image_facts"]["application"]["volumes"] = ["/hidden"]
+        self.assertEqual(self.bridge(payload), {"status": "held", "reason": "recipe_rejected"})
+        payload = self.inventory_input()
+        payload["seal"]["secret_names"] = []
+        self.assertEqual(self.bridge(payload), {"status": "held", "reason": "recipe_rejected"})
 
     def resolve(self, owner=None, source=None):
         raw, images = encoded(self.compose), encoded(self.images)
@@ -177,10 +277,40 @@ class WorkspaceDeployAdapterTests(unittest.TestCase):
             self.resolve(replace(self.owner, users={"application": "65532:65532"}))
 
     def test_owner_cannot_publish_incomplete_image_volume_observation(self):
-        for volumes in ({"application": frozenset()},
-                        {"application": frozenset(("/hidden",)), "database": frozenset()}):
-            with self.subTest(volumes=volumes), self.assertRaises(Rejected):
-                self.resolve(replace(self.owner, image_volumes=volumes))
+        facts = self.owner.image_facts
+        for observation in ({"application": facts["application"]},
+                            {**facts, "application": replace(facts["application"],
+                                                             volumes=frozenset(("/hidden",)))}):
+            with self.subTest(facts=observation), self.assertRaises(Rejected):
+                self.resolve(replace(self.owner, image_facts=observation))
+
+    def test_dependency_image_ids_do_not_substitute_for_actual_owner_config_facts(self):
+        for observation in ({"application": APP, "database": DATABASE},
+                            {name: {"verified": True} for name in self.owner.image_facts}):
+            with self.subTest(facts=observation), self.assertRaisesRegex(Rejected, "Config facts"):
+                self.resolve(replace(self.owner, image_facts=observation))
+
+    def test_dependency_image_facts_must_match_the_sealed_id_and_supported_platform(self):
+        facts = self.owner.image_facts["application"]
+        for changes in ({"image_id": DATABASE}, {"os": "windows"}, {"architecture": "unknown"},
+                        {"default_user": {"verified": True}},
+                        {"volumes": []}):
+            with self.subTest(changes=changes), self.assertRaisesRegex(Rejected, "Config facts"):
+                self.resolve(replace(self.owner, image_facts={**self.owner.image_facts,
+                    "application": replace(facts, **changes)}))
+
+    def test_root_or_named_image_defaults_are_not_guessed_or_silently_overridden(self):
+        facts = self.owner.image_facts["database"]
+        for user in ("", "0", "root", "postgres", "999", "1000:1000"):
+            with self.subTest(user=user), self.assertRaisesRegex(Rejected, "trusted preparation"):
+                self.resolve(replace(self.owner, image_facts={**self.owner.image_facts,
+                    "database": replace(facts, default_user=user)}))
+
+    def test_image_implicit_volume_cannot_create_an_unowned_anonymous_volume(self):
+        facts = self.owner.image_facts["database"]
+        with self.assertRaisesRegex(Rejected, "implicit image volume"):
+            self.resolve(replace(self.owner, image_facts={**self.owner.image_facts,
+                "database": replace(facts, volumes=facts.volumes | {"/other"})}))
 
     def test_owner_resource_quotas_not_broadened_by_repository(self):
         for changes in ({"memory_bytes": 32 * 1024**2}, {"cpus": 0.5}, {"pids": 16},
