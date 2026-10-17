@@ -6,6 +6,8 @@ mod candidate_evidence;
 #[cfg(unix)]
 #[path = "task_delivery.rs"]
 mod task_delivery;
+#[path = "task_pipeline.rs"]
+mod task_pipeline;
 
 struct Fixture {
     pool: sqlx::PgPool,
@@ -1128,4 +1130,36 @@ async fn sdlc_workspace_matching_url_without_explicit_repository_binding_is_reje
         .await
         .unwrap();
     assert_eq!(f.post(&f.request).await.0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn sdlc_workspace_completed_build_is_readonly_devops_observation_not_admission() {
+    let f = Fixture::new().await;
+    sqlx::query("UPDATE job_leases SET lease_status='completed',terminal_status='success',completed_at=now(),completion_received_at=now(),lease_expires_at=now()-interval '1 second' WHERE id=$1")
+        .bind(f.request.lease_id).execute(&f.pool).await.unwrap();
+    // A completed build cannot grant Developer a writable workspace or reactivate its lease.
+    assert_eq!(f.post(&f.request).await.0, StatusCode::CONFLICT);
+    let mut request = f.request.clone();
+    request.role = WorkspaceRole::Devops;
+    request.access = WorkspaceAccess::ReadOnly;
+    let (status, receipt) = f.post(&request).await;
+    assert_eq!(status, StatusCode::OK, "{receipt}");
+    assert_eq!(receipt["status"], "blocked");
+    assert_eq!(receipt["dispatchAllowed"], false);
+    let state: String = sqlx::query_scalar("SELECT lease_status FROM job_leases WHERE id=$1")
+        .bind(request.lease_id)
+        .fetch_one(&f.pool)
+        .await
+        .unwrap();
+    assert_eq!(state, "completed");
+    let mut stale = request.clone();
+    stale.operation_key = "stale:completed".into();
+    stale.workspace_generation += 1;
+    stale.workspace_id = format!(
+        "attempt-{}-{}-{}",
+        stale.attempt_id,
+        stale.workspace_generation,
+        Uuid::new_v4().simple()
+    );
+    assert_eq!(f.post(&stale).await.0, StatusCode::CONFLICT);
 }

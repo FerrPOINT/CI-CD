@@ -1,5 +1,147 @@
 # API v1 Specification — Forge CI/CD
 
+## Typed Image Build In Task Pipeline
+
+Cross-engine candidate67fe990: 51 unit-тест, atomic-terminal PG, HTTP shell
+regression, OCI integration compile и strict all-target Clippy проходят.
+Настоящий task TLS build/deployment ещё не подтверждён;
+[точные границы проверки](IMAGE_BUILD_QUALIFICATION_20261016.md).
+В repository `.forge-ci.yml` v1 job может использовать `image_build` вместо
+`commands`:
+
+```yaml
+version: 1
+jobs:
+  application:
+    image_build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+      descriptor_artifact: delivery/candidate.json
+      readable_schema_versions: [1]
+```
+
+`target` необязателен. Пути portable relative; Dockerfile разрешается внутри
+context. `commands`, job image/tags/secrets/artifacts/allow_failure и default tags
+не смешиваются с `image_build`. Неизвестные поля отклоняются. Ручной pipeline без
+authenticated `task_intent` это действие не запускает.
+
+Новых HTTP routes нет: используется существующий pipeline API, exact repository
+SHA, project SAT, Tracker authority и embedded queue/lease. В immutable v1 plan
+добавляется optional `image_build`; обычные jobs сохраняют прежний JSON/hash.
+Backend собирает sealed Git context через existing configured Docker daemon и
+возвращает artifact `forge/oci-candidate/v1` с immutable image ID/source commit.
+Unknown/timeout удерживает original attempt без автоматического rebuild.
+Artifact не означает deployment или SDLC acceptance. Подробности:
+[ADR-0027](adr/0027-task-backend-image-build.md).
+
+## Task Pipeline Workspace (Source Candidate)
+
+Optional `task_intent` у прежнего `POST /api/v1/projects/{project_id}/pipelines`
+принимает typed `TaskWorkspaceIntent`: `operationKey`, `binding` (прежний
+`WorkspaceTaskBinding`), `repositoryId`, exact `sourceCommit`, technical `role`,
+`agentId`, `trackerLeaseId`, `holderSubject`, `expectedLeaseVersion`.
+Поля intent используют camelCase; прежние `git_ref` и `variables` не меняются.
+Runner lease/attempt/generation/workspace ID и готовый receipt не принимаются.
+Legacy без intent сохраняет прежний trigger/fingerprint/response.
+
+Task branch требует явный original UUID `Idempotency-Key`, dedicated project SAT
+и совпадение опубликованного Tracker project/namespace/repository mapping.
+Свежий серверный Tracker reader проверяет текущий role assignment, native binding
+и live lease; monotonic heartbeat version допустим только при том же tuple/fence.
+Нужен exact SHA с repository `.forge-ci.yml`, без legacy template/manual/tagged
+external jobs. Embedded runner обязателен. External poll не получает task jobs.
+
+Embedded runner сохраняет настоящий preparation request до Git IO; повторное
+наблюдение не клонирует заново. Receipt записывается до job command и cleanup.
+Перед spawn ещё раз проверяются authority и оригинальный submission CAS.
+Повторная/неопределённая submission удерживается, не запускается и не становится
+фиктивным terminal. Это не новая queue, Tracker claim или writable admission.
+
+`GET /api/v1/projects/{project_id}/pipelines/{pipeline_id}/task-workspace`
+с `api:read` того же dedicated service-account subject возвращает `null`, если
+original receipt ещё не записан, иначе exact `WorkspaceOperationReceipt`.
+Readback исторический: не требует живого Tracker lease, не повторяет Git/command
+и не выдаёт runner credential. Чужой project/subject отвергается.
+Прежние workspace/candidate/delivery endpoints принимают полученный original
+key/hash/binding; receipt остаётся blocked, `dispatchAllowed=false`.
+Candidate требует реальные completion ACKs, repository plan и artifact bytes;
+task delivery отдельно проверяет current DevOps fence/owner policy/health.
+
+CLI source candidate:
+
+```sh
+cicd-cli pipeline run --project "$FORGE_PROJECT" --git-ref "$SOURCE_SHA" \
+  --idempotency-key "$ORIGINAL_PIPELINE_KEY" --task-intent intent.json
+cicd-cli pipeline task-workspace --project "$FORGE_PROJECT" --id "$PIPELINE_ID"
+```
+
+Не выбирать новый key после unknown; не заимствовать runner lease credentials.
+Additive journal migration, route policy и OpenAPI registration подключены в
+исходниках. Генерация спецификации и квалификация CLI/server ещё не выполнены;
+это не утверждение о доступности установленного image.
+Source checks не заменяют реальные PostgreSQL/runner/artifact tests.
+
+## Task-bound Nonproduction Delivery
+
+**Source candidate2026-10-13, runtime/PG ещё не квалифицированы.** Existing delivery
+Серверный `CICD_LOCAL_DELIVERY_KIND` выбирает `static` (также default при отсутствии)
+или `oci`; пустое, неизвестное значение, пробелы и другой регистр отклоняются.
+Selector не принимается от агента. `DeliveryCommand` и original hashes не меняются.
+Те же POST/GET возвращают untagged server-local `TaskDeliveryReadback`: прежний
+`DeliveryReadback` либо OCI readback; static JSON shape сохраняется без wrapper.
+
+OCI HTTP использует существующие `CICD_LOCAL_DELIVERY_ROOT/POLICY`, где policy имеет
+прежний OCI формат и `checks.taskExecution`. Target должен быть заранее enrolled
+owner-операцией с тем же project/policy hash; HTTP не создаёт target. Local CLI
+продолжает использовать `CICD_LOCAL_OCI_ROOT/POLICY`, local-verification и отвергать
+taskFence. Его historical receipts остаются owner_local_verification/dispatchAllowed=false.
+
+Task OCI повторно проверяет SAT/project/environment/Tracker перед pointer publication,
+Compose и reconciliation publication. Receipt schema `forge/local-oci-operation/v1`,
+scope `task_nonproduction_delivery`, dispatchAllowed=true, sdlcAcceptanceVerified=false.
+Это не business stage completion. Сохраняются exact daemon/Compose ownership,
+immutable image+commit, original-key CAS/unknown hold/no-redispatch и confirmed rollback.
+GET читает только оригинальный task receipt и ничего не запускает/renew-ит.
+
+OCI ограничения не расширены: Linux, approved temporary owned Compose project,
+одна application, port8000, readonly manifest/data snapshot, no migrations,
+реальные version/health/acceptance/compatibility и container/mount/image readbacks.
+Это source candidate; compile/PG/actual OCI qualification и generated OpenAPI pending.
+
+Static POST подключён к прежнему static-manifest executor только для заранее опубликованного
+owner target: `taskExecution.environment=nonproduction`, exact environment/repository,
+Tracker instance/project и lease holder. Окружение должно принадлежать Forge project,
+иметь `protected=false` и `required_approvals=0`. Generic Maintainer approval/rollback
+не меняются. HTTP не enroll-ит target и не принимает URL, commands или готовый receipt.
+Новых queue/controller, agent-side `forge-delivery` или Hermes hooks нет.
+
+В `DeliveryCommand` добавлен optional `taskFence`: `developmentResultId`, `assignmentId`,
+`executionId`, `agentId`, `leaseId`, `fencingToken`, `expectedLeaseVersion`, `assignmentHash`.
+Для effect он обязателен; legacy без него сохраняет503. Отсутствующие optional поля
+не сериализуются, прежние command/policy hashes и immutable blocked receipts сохраняются.
+Completed build с genuine completion ACK можно записать только как readonly DevOps
+source observation, не как active/writable workspace или текущую Tracker authority.
+
+Сервер читает существующие Tracker `GET /api/v1/issues/{task}/sdlc/lifecycle` и
+`GET .../lifecycle/results/{developmentResultId}`: `CICD_TASK_TRACKER_URL` и
+`CICD_TASK_TRACKER_READ_TOKEN` с единственным scope `task-tracker:read`.
+Accepted Developer result должен совпасть по task/cycle/commit с pipeline snapshot;
+текущий assignment — DevOps/Deployment с exact active lease. Scheduler holder и
+bound agent machine subject остаются разными identity. Forge не claim/renew/release-ит
+Tracker lease и не завершает business stage. Проверяется outer `runtime_state=running`
+вместе с lease clock, без переписывания `receipt`. Transport/readback time входит в lease budget.
+
+POST200 возвращает прежний `DeliveryReadback`; новый scope — `task_nonproduction_delivery`,
+`dispatchAllowed=true`, но `sdlcAcceptanceVerified=false`: окончательное завершение
+принадлежит Tracker. Verified требует actual served manifest/artifact, health и
+acceptance probes. Failed/unknown не доказывают отсутствия effect. Original-key replay
+не публикует повторно; unknown reconciliation только наблюдает существующий intent.
+Для этой read-only reconciliation допустим monotonic heartbeat version при неизменных
+assignment/holder/lease/fence. GET остаётся read-only. Expired/foreign/changed/protected
+удерживаются. Local CLI/OCI/PostgreSQL adapters отвергают task-fenced команды.
+Следующие старые разделы описывают legacy local-verification и отсутствие counterpart.
+
 ## Owner-local PostgreSQL CLI
 
 Если current/confirmed manifest pointer повреждён или недоступен, CLI возвращает
@@ -37,7 +179,7 @@ Validation rejection до accepted intent не создаёт operation. Пос�
 Deploy требует exact artifact UUID; rollback запрещает artifact selector и требует
 exact current SHA256. Null current означает пустой target, не wildcard.
 Dedicated machine/project `api:write`, original owner binding/hash проверяются;
-валидный запрос получает503: authoritative Tracker admission/source binding
+legacy запрос без taskFence получает503: authoritative Tracker admission/source binding
 недоступны, **deployment effect отсутствует**. Caller receipts/accepted/status/
 URLs/commands и неизвестные поля отклоняются422; malformed command400,
 credential401/403, owner operation404, changed binding409.

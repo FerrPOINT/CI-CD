@@ -43,6 +43,43 @@ cicd-cli project create --name my-service \
 
 `repository-url` может указывать на Dashboard/Git proxy `:22802` или на прямой backend Git endpoint `:22801`; CLI API base по умолчанию остаётся `http://127.0.0.1:7711`.
 
+### workspace
+
+**Source candidate, Cargo/PG ещё не выполнены.** Штатная HTTP-only `cicd-cli`
+передаёт существующие workspace/task-delivery DTO без локального executor или
+новых API. `--from-file -` читает JSON из stdin; можно указать путь к файлу.
+
+```bash
+cicd-cli workspace prepare --project <PROJECT_UUID> --from-file workspace.json
+cicd-cli workspace readback --project <PROJECT_UUID> \
+  --operation-key <ORIGINAL_WORKSPACE_KEY> --from-file lookup.json
+cicd-cli workspace candidate-evidence --project <PROJECT_UUID> \
+  --operation-key <ORIGINAL_WORKSPACE_KEY> --from-file lookup.json
+cicd-cli workspace delivery --project <PROJECT_UUID> \
+  --operation-key <ORIGINAL_WORKSPACE_KEY> --from-file delivery.json
+cicd-cli workspace delivery-readback --project <PROJECT_UUID> \
+  --operation-key <ORIGINAL_WORKSPACE_KEY> --delivery-key <ORIGINAL_DELIVERY_KEY> \
+  --from-file lookup.json
+```
+
+`workspace.json` — существующий `WorkspaceOperationRequest`; `lookup.json` — точный
+`WorkspaceOperationLookup`: `requestHash`, `taskId`, `rootTaskId`, `assignmentId`,
+`executionId`, `fencingToken`. Readback и candidate-evidence выполняют только GET.
+`delivery.json` — `DeliveryCommand`, включая полный `taskFence` из
+[task-bound API](API.md#task-bound-nonproduction-delivery). `action=deploy` и
+`action=rollback` используют один task-delivery POST, не generic `deployment` API.
+CLI не придумывает keys/fence, не добавляет admission и не повторяет POST автоматически.
+После неизвестного исхода Fleet читает original delivery key, сохраняет прежний body
+и следует серверному `reconciliationNeeded`, а не создаёт новую операцию.
+
+Ответ выводится без подмены значений. Exit0 означает успешный HTTP/JSON transport,
+не `verified`/business success: Fleet обязан проверить receipt/status, health,
+acceptance и reconciliation. В частности, `sdlcAcceptanceVerified=false` не становится
+true из-за успешного CLI. Типизированная проверка authority остаётся на сервере.
+Нужны предусмотренные API machine ACL, серверный Tracker reader и опубликованный
+nonproduction owner target. CLI не передаёт scheduler token агенту и не запускает
+привилегированный `forge-delivery`. Generic Maintainer approval/rollback не меняются.
+
 ### pipeline
 
 ```bash

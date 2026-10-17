@@ -1,5 +1,27 @@
 # Forge task workspace, candidate и owner-local delivery evidence
 
+## Current Task OCI Source: 15 Октября
+
+Opt-in task HTTP OCI adapter, typed untagged response и owner selector
+реализованы в source: [ADR-0026](adr/0026-task-bound-oci-owner-target.md).
+Production review не выявил P1/P2; последующая test-only коррекция изолирует
+root/data/Compose paths двух OCI selectors в существующих owned mappings.
+Это source/rustfmt/diff qualification, не Cargo/PostgreSQL/OCI PASS.
+
+Следующий affected gate: config selector, wire/scope/live-authority units,
+fixture-path unit, existing actual OCI rollback/crash test и new task HTTP
+PG/runner/image test, затем actual OpenAPI generation/parity. Проверки и
+исторические receipts ниже сохраняют только прежний scope.
+
+Task HTTP regression строит images обычным QA external shell runner с отдельно
+разрешённым Docker/buildx. Это не current task-intent production builder:
+embedded Docker jobs не получают socket/DOCKER_* authority, а OCI consumer
+требует image уже в deployment daemon. Socketless image build/transfer ещё не
+замкнут; preload, static publication или QA build не подменяют автоматический
+полный SDLC. Runtime installation и serving acceptance остаются отдельными gates.
+
+## Historical Verification
+
 **Статус 2026-10-11:** [подготовленное объединение main/OCI](#prepared-main--oci-integration-11-октября)
 не квалифицировано. [Последний full12](#hosted-full12-38144495380) на source53e935
 не принят: integration9 HTTP409/FAIL, aggregate REJECT. Runtime promotion и полный SDLC

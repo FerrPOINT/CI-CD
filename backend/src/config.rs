@@ -74,13 +74,53 @@ pub struct RuntimeConfig {
     pub sdlc_workspace: SdlcWorkspaceConfig,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LocalDeliveryKind {
+    #[default]
+    Static,
+    Oci,
+}
+
+impl LocalDeliveryKind {
+    fn from_env(value: Option<String>) -> Result<Self, ConfigError> {
+        match value.as_deref() {
+            None | Some("static") => Ok(Self::Static),
+            Some("oci") => Ok(Self::Oci),
+            _ => Err(ConfigError::invalid(
+                "CICD_LOCAL_DELIVERY_KIND",
+                "expected static or oci",
+            )),
+        }
+    }
+}
+
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct SdlcWorkspaceConfig {
     pub operation_subject: Option<uuid::Uuid>,
     /// A deployment-owned local mount. No caller-authored path or URL.
     pub observation_root: Option<PathBuf>,
     pub local_delivery_root: Option<PathBuf>,
     pub local_delivery_policy: Option<PathBuf>,
+    pub local_delivery_kind: LocalDeliveryKind,
+    pub tracker_read_url: Option<String>,
+    pub tracker_read_token: Option<String>,
+}
+
+impl std::fmt::Debug for SdlcWorkspaceConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SdlcWorkspaceConfig")
+            .field("operation_subject", &self.operation_subject)
+            .field("observation_root", &self.observation_root)
+            .field("local_delivery_root", &self.local_delivery_root)
+            .field("local_delivery_policy", &self.local_delivery_policy)
+            .field("local_delivery_kind", &self.local_delivery_kind)
+            .field("tracker_read_url", &self.tracker_read_url)
+            .field(
+                "tracker_read_token_configured",
+                &self.tracker_read_token.is_some(),
+            )
+            .finish()
+    }
 }
 
 /// Egress allowlist for outbound webhook deliveries (Stage 5 item 2).
@@ -321,6 +361,9 @@ impl RuntimeConfig {
             secrets,
             smtp,
             sdlc_workspace: SdlcWorkspaceConfig {
+                local_delivery_kind: LocalDeliveryKind::from_env(get("CICD_LOCAL_DELIVERY_KIND"))?,
+                tracker_read_url: optional_trimmed(get("CICD_TASK_TRACKER_URL")),
+                tracker_read_token: optional_secret_value(get("CICD_TASK_TRACKER_READ_TOKEN")),
                 local_delivery_root: optional_trimmed(get("CICD_LOCAL_DELIVERY_ROOT"))
                     .map(PathBuf::from),
                 local_delivery_policy: optional_trimmed(get("CICD_LOCAL_DELIVERY_POLICY"))
@@ -621,6 +664,36 @@ fn redacted<T>(value: Option<T>) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_delivery_kind_is_strict_and_absence_preserves_static() {
+        for (value, expected) in [
+            (None, LocalDeliveryKind::Static),
+            (Some("static"), LocalDeliveryKind::Static),
+            (Some("oci"), LocalDeliveryKind::Oci),
+        ] {
+            let config = RuntimeConfig::from_env_source(
+                |key| {
+                    if key == "CICD_LOCAL_DELIVERY_KIND" {
+                        value.map(str::to_owned)
+                    } else {
+                        None
+                    }
+                },
+                false,
+            )
+            .unwrap();
+            assert_eq!(config.sdlc_workspace.local_delivery_kind, expected);
+        }
+        for value in ["", "OCI", " oci", "oci ", "docker", "unknown"] {
+            let error = RuntimeConfig::from_env_source(
+                |key| (key == "CICD_LOCAL_DELIVERY_KIND").then(|| value.to_owned()),
+                false,
+            )
+            .unwrap_err();
+            assert_eq!(error.variable, "CICD_LOCAL_DELIVERY_KIND");
+        }
+    }
 
     #[test]
     fn runtime_config_requires_database_url_for_server_startup() {

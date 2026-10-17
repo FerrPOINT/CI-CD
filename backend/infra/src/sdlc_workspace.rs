@@ -1,7 +1,88 @@
 use chrono::{DateTime, Utc};
-use cicd_domain::sdlc_workspace::WorkspaceOperationReceipt;
+use cicd_domain::sdlc_workspace::{
+    TaskWorkspaceIntent, WorkspaceOperationReceipt, WorkspaceOperationRequest,
+};
 use sqlx::{PgConnection, Row};
 use uuid::Uuid;
+
+#[derive(sqlx::FromRow)]
+pub struct TaskPipelineJournal {
+    pub pipeline_id: Uuid,
+    pub project_id: Uuid,
+    pub service_account_id: Uuid,
+    pub api_token_id: Uuid,
+    pub preparation_job_id: Uuid,
+    pub intent: sqlx::types::Json<TaskWorkspaceIntent>,
+    pub preparation_request: Option<sqlx::types::Json<WorkspaceOperationRequest>>,
+}
+
+pub async fn find_task_pipeline(
+    conn: &mut PgConnection,
+    pipeline: Uuid,
+    lock: bool,
+) -> Result<Option<TaskPipelineJournal>, sqlx::Error> {
+    let mut sql = "SELECT pipeline_id,project_id,service_account_id,api_token_id,preparation_job_id,intent,preparation_request FROM task_pipeline_intents WHERE pipeline_id=$1".to_string();
+    if lock {
+        sql.push_str(" FOR UPDATE");
+    }
+    sqlx::query_as(&sql)
+        .bind(pipeline)
+        .fetch_optional(conn)
+        .await
+}
+
+pub async fn append_task_pipeline(
+    conn: &mut PgConnection,
+    pipeline: Uuid,
+    project: Uuid,
+    subject: Uuid,
+    token: Uuid,
+    job: Uuid,
+    intent: &TaskWorkspaceIntent,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("INSERT INTO task_pipeline_intents(pipeline_id,project_id,service_account_id,api_token_id,preparation_job_id,operation_key,intent) VALUES($1,$2,$3,$4,$5,$6,$7)")
+        .bind(pipeline).bind(project).bind(subject).bind(token).bind(job)
+        .bind(&intent.operation_key).bind(sqlx::types::Json(intent)).execute(conn).await?;
+    Ok(())
+}
+
+/// One-way custody before Git IO; an uncertain attempt is never reset.
+pub async fn claim_task_preparation(
+    conn: &mut PgConnection,
+    pipeline: Uuid,
+    request: &WorkspaceOperationRequest,
+) -> Result<bool, sqlx::Error> {
+    Ok(sqlx::query("UPDATE task_pipeline_intents SET preparation_request=$2 WHERE pipeline_id=$1 AND preparation_request IS NULL")
+        .bind(pipeline).bind(sqlx::types::Json(request)).execute(conn).await?.rows_affected() == 1)
+}
+
+pub async fn task_project_matches(
+    conn: &mut PgConnection,
+    project: Uuid,
+    intent: &TaskWorkspaceIntent,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM projects p JOIN repository_catalog r ON r.id=p.repository_id JOIN forge_namespace_bindings b ON b.resource_id=r.group_id JOIN forge_workspace_projects w ON w.registry_instance_id=b.registry_instance_id AND w.namespace_id=b.namespace_id WHERE p.id=$1 AND r.id=$2 AND r.kind='hosted' AND r.ready AND b.state='active' AND w.state='active' AND w.tracker_instance_id::text=$3 AND w.tracker_project_id=$4)")
+        .bind(project).bind(intent.repository_id).bind(&intent.binding.tracker_instance_id)
+        .bind(intent.binding.tracker_project_id).fetch_one(conn).await
+}
+
+pub async fn task_attempt_submitted(
+    conn: &mut PgConnection,
+    pipeline: Uuid,
+    attempt: Uuid,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM task_pipeline_intents WHERE pipeline_id=$1 AND $2=ANY(submitted_attempts))")
+        .bind(pipeline).bind(attempt).fetch_one(conn).await
+}
+
+pub async fn claim_task_submission(
+    conn: &mut PgConnection,
+    pipeline: Uuid,
+    attempt: Uuid,
+) -> Result<bool, sqlx::Error> {
+    Ok(sqlx::query("UPDATE task_pipeline_intents SET submitted_attempts=array_append(submitted_attempts,$2) WHERE pipeline_id=$1 AND NOT($2=ANY(submitted_attempts))")
+        .bind(pipeline).bind(attempt).execute(conn).await?.rows_affected()==1)
+}
 
 pub async fn find_receipt(
     conn: &mut PgConnection,

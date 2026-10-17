@@ -4,6 +4,13 @@
 
 Proposed, 2026-10-08. Source и actual QA gates описываются отдельно.
 
+Source follow-up2026-10-13 реализует прежний static executor в existing task HTTP
+adapter только для заранее опубликованного nonproduction target, accepted
+Developer commit и fresh Tracker DevOps assignment/lease. Counterpart — существующий
+Tracker lifecycle/result GET, не новый receipt/proof protocol. Старые local-verification
+receipts сохраняются; generic approvals и privileged OCI/PostgreSQL границы не меняются.
+[Точный API](../API.md#task-bound-nonproduction-delivery). PG/runtime квалификация pending.
+
 ## Context
 
 Generic deployments/rollback связывают pipeline records, но не наблюдают served
@@ -36,10 +43,13 @@ Last-confirmed manifest меняется только после всех owner 
 использует именно сохранённый confirmed manifest и expected-current CAS, затем
 снова проверяет served bytes/identity и application checks.
 
-HTTP SDLC command всегда fail-closed до authoritative counterpart. HTTP GET
-может читать authenticated local operation history; это technical local receipt,
-не `base-sdlc/*` grant и не business acceptance. `dispatchAllowed` и
-`sdlcAcceptanceVerified` остаются false, original blocked receipt не меняется.
+Legacy HTTP command без `taskFence` остаётся fail-closed; OCI/PostgreSQL HTTP
+dispatch этим пакетом не открывается. Новая opt-in static-manifest ветка использует
+existing Tracker readback и owner-published nonproduction policy. Только её receipt
+имеет scope `task_nonproduction_delivery` и `dispatchAllowed=true`.
+`sdlcAcceptanceVerified=false`: окончательный business transition принадлежит Tracker.
+Original blocked workspace receipt и legacy verification hashes не меняются.
+Authenticated GET читает только technical history и не разрешает новый effect.
 
 ## Alternatives Considered
 

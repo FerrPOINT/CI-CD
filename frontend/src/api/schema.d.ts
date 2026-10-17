@@ -1325,6 +1325,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/pipelines/{pipeline_id}/task-workspace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Authenticated original locator: pending is null, not accepted/success; no lease token. */
+        get: operations["read_receipt"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/reports/summary": {
         parameters: {
             query?: never;
@@ -1414,7 +1431,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** HTTP delivery remains fail-closed. No caller flag or configured local target enables dispatch. */
+        /** Task-only nonproduction delivery. Generic deployment approval/rollback policy is unchanged. */
         post: operations["reject_sdlc_delivery"];
         delete?: never;
         options?: never;
@@ -2583,6 +2600,7 @@ export interface components {
             expectedManifestSha256?: string | null;
             operationKey: string;
             original: components["schemas"]["WorkspaceOperationLookup"];
+            taskFence?: null | components["schemas"]["TaskDeliveryFence"];
             workspaceOperationKey: string;
         };
         DeliveryConfig: {
@@ -3011,6 +3029,33 @@ export interface components {
             enabled?: boolean | null;
             /** @description {{event}}/{{pipeline_id}}/{{project_id}}/{{status}} placeholders. */
             subject_template?: string | null;
+        };
+        OciDeliveryReadback: {
+            confirmedManifestSha256?: string | null;
+            currentManifestSha256?: string | null;
+            receipt: components["schemas"]["OciDeliveryReceipt"];
+            reconciledReceipt?: null | components["schemas"]["OciDeliveryReceipt"];
+            reconciliationNeeded: boolean;
+        };
+        OciDeliveryReceipt: {
+            acceptance?: null | components["schemas"]["DeliveryProbe"];
+            command: components["schemas"]["DeliveryCommand"];
+            commandSha256: string;
+            compatibility?: null | components["schemas"]["DeliveryProbe"];
+            containerId?: string | null;
+            dataSha256?: string | null;
+            dispatchAllowed: boolean;
+            health?: null | components["schemas"]["DeliveryProbe"];
+            imageId?: string | null;
+            manifestSha256?: string | null;
+            originalOperation: components["schemas"]["WorkspaceOperationReceipt"];
+            previousManifestSha256?: string | null;
+            reason: string;
+            schema: string;
+            scope: string;
+            sdlcAcceptanceVerified: boolean;
+            status: components["schemas"]["DeliveryStatus"];
+            version?: null | components["schemas"]["DeliveryProbe"];
         };
         OutboxDelivery: {
             /** Format: uuid */
@@ -3575,6 +3620,24 @@ export interface components {
             name: string;
             sha: string;
         };
+        TaskDeliveryFence: {
+            /** Format: uuid */
+            agentId: string;
+            assignmentHash: string;
+            /** Format: uuid */
+            assignmentId: string;
+            /** Format: uuid */
+            developmentResultId: string;
+            /** Format: uuid */
+            executionId: string;
+            /** Format: int64 */
+            expectedLeaseVersion: number;
+            /** Format: int64 */
+            fencingToken: number;
+            /** Format: uuid */
+            leaseId: string;
+        };
+        TaskDeliveryReadback: components["schemas"]["DeliveryReadback"] | components["schemas"]["OciDeliveryReadback"];
         TaskPullEvidence: {
             checks: components["schemas"]["RepositoryCheckRef"][];
             commits: string[];
@@ -3592,6 +3655,31 @@ export interface components {
             task_id: string;
             /** Format: uuid */
             tracker_instance_id: string;
+        };
+        /** @description Additive task branch; legacy field types/defaults and ordinary trigger remain unchanged. */
+        TaskTriggerPipeline: {
+            git_ref?: string | null;
+            task_intent?: null | components["schemas"]["TaskWorkspaceIntent"];
+            /** @description Optional run variables; exposed to every job as CICD_VAR_<KEY>. */
+            variables?: {
+                [key: string]: string;
+            } | null;
+        };
+        /** @description Task input only. Runner lease/attempt/workspace identities are never caller supplied. */
+        TaskWorkspaceIntent: {
+            /** Format: uuid */
+            agentId: string;
+            binding: components["schemas"]["WorkspaceTaskBinding"];
+            /** Format: int64 */
+            expectedLeaseVersion: number;
+            holderSubject: string;
+            operationKey: string;
+            /** Format: uuid */
+            repositoryId: string;
+            role: components["schemas"]["WorkspaceRole"];
+            sourceCommit: string;
+            /** Format: uuid */
+            trackerLeaseId: string;
         };
         Tenant: {
             /** Format: date-time */
@@ -6778,7 +6866,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["TriggerPipeline"];
+                "application/json": components["schemas"]["TaskTriggerPipeline"];
             };
         };
         responses: {
@@ -6803,6 +6891,40 @@ export interface operations {
                 content?: never;
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    read_receipt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                pipeline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": null | components["schemas"]["WorkspaceOperationReceipt"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -7127,6 +7249,14 @@ export interface operations {
             };
         };
         responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskDeliveryReadback"];
+                };
+            };
             400: {
                 headers: {
                     [name: string]: unknown;
@@ -7157,7 +7287,7 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Tracker admission/source binding unavailable; no deployment effect */
+            /** @description Owner task target or Tracker readback unavailable */
             503: {
                 headers: {
                     [name: string]: unknown;
@@ -7191,7 +7321,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["DeliveryReadback"];
+                    "application/json": components["schemas"]["TaskDeliveryReadback"];
                 };
             };
             400: {

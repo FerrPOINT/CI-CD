@@ -6,9 +6,9 @@ use super::{
     LEGACY_TEMPLATE_CONFIG, PIPELINE_TRIGGER_SOURCE_API, PageParams,
     V1_PIPELINE_PLAN_PARSER_VERSION, pipeline_detail, pool,
 };
-use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderValue};
+use axum::{Extension, Json};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -17,13 +17,22 @@ use std::path::Path as FsPath;
 use std::sync::Arc;
 use uuid::Uuid;
 
+/// Additive task branch; legacy field types/defaults and ordinary trigger remain unchanged.
+#[derive(Deserialize, utoipa::ToSchema)]
+pub(crate) struct TaskTriggerPipeline {
+    git_ref: Option<String>,
+    /// Optional run variables; exposed to every job as CICD_VAR_<KEY>.
+    #[serde(default)]
+    variables: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    task_intent: Option<crate::domain::sdlc_workspace::TaskWorkspaceIntent>,
+}
+
 #[utoipa::path(
     post,
     path="/api/v1/projects/{project_id}/pipelines",
     tag="pipelines",
-    request_body=TriggerPipeline,
-    tag="pipelines",
-    request_body=TriggerPipeline,
+    request_body=TaskTriggerPipeline,
     params(
         ("project_id"=Uuid, Path),
         ("Idempotency-Key" = Option<Uuid>, Header, description = "Optional UUID idempotency key for retry-safe pipeline trigger")
@@ -34,20 +43,43 @@ pub(crate) async fn trigger_pipeline(
     State(state): State<Arc<AppState>>,
     Path(project_id): Path<Uuid>,
     headers: HeaderMap,
-    Json(input): Json<TriggerPipeline>,
+    claims: Option<Extension<crate::auth::AccessClaims>>,
+    Json(input): Json<TaskTriggerPipeline>,
 ) -> Result<(HeaderMap, Json<PipelineDetail>), ApiError> {
     let idempotency_key = pipeline_idempotency_key(&headers)?;
     let pool = pool(&state)?;
-    let git_ref = input.git_ref.unwrap_or_else(|| "main".into());
-    let outcome = create_pipeline_with_vars_idempotent(
+    let TaskTriggerPipeline {
+        git_ref,
+        variables,
+        task_intent,
+    } = input;
+    let legacy = TriggerPipeline { git_ref, variables };
+    let submission = match task_intent {
+        Some(intent) => {
+            if idempotency_key.is_none() {
+                return Err(ApiError::bad_request(
+                    "Task trigger требует original Idempotency-Key",
+                ));
+            }
+            let Extension(claims) = claims.ok_or_else(ApiError::forbidden)?;
+            Some(
+                super::sdlc_workspace::task_pipeline::admit(&state, &claims, project_id, intent)
+                    .await?,
+            )
+        }
+        None => None,
+    };
+    let git_ref = legacy.git_ref.unwrap_or_else(|| "main".into());
+    let outcome = create_pipeline_bound(
         pool,
         project_id,
         git_ref,
-        serde_json::to_value(input.variables.clone().unwrap_or_default())
+        serde_json::to_value(legacy.variables.unwrap_or_default())
             .unwrap_or_else(|_| serde_json::json!({})),
         PIPELINE_TRIGGER_SOURCE_API,
         idempotency_key.as_deref(),
         &state.config.git.root,
+        submission.as_ref(),
     )
     .await?;
     let mut response_headers = HeaderMap::new();
@@ -75,6 +107,30 @@ pub(crate) async fn create_pipeline_with_vars_idempotent(
     idempotency_key: Option<&str>,
     git_root: &FsPath,
 ) -> Result<PipelineTriggerOutcome, ApiError> {
+    create_pipeline_bound(
+        pool,
+        project_id,
+        git_ref,
+        variables,
+        source,
+        idempotency_key,
+        git_root,
+        None,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn create_pipeline_bound(
+    pool: &PgPool,
+    project_id: Uuid,
+    git_ref: String,
+    variables: serde_json::Value,
+    source: &str,
+    idempotency_key: Option<&str>,
+    git_root: &FsPath,
+    task: Option<&super::sdlc_workspace::task_pipeline::Submission>,
+) -> Result<PipelineTriggerOutcome, ApiError> {
     crate::repository_catalog::require_project_writable(pool, project_id).await?;
     let storage_name =
         crate::repository_catalog::local_storage_for_project(pool, project_id).await?;
@@ -88,6 +144,11 @@ pub(crate) async fn create_pipeline_with_vars_idempotent(
         None => ("legacy_template", LEGACY_TEMPLATE_CONFIG.to_string()),
     };
     let parsed_config = parse_pipeline_config(Some(&raw_config)).map_err(ApiError::bad_request)?;
+    if parsed_config.has_image_build() && task.is_none() {
+        return Err(ApiError::bad_request(
+            "image_build доступен только для авторизованного task pipeline",
+        ));
+    }
     let plan_snapshot = build_pipeline_plan_snapshot(
         &git_ref,
         commit_sha.as_deref(),
@@ -95,7 +156,8 @@ pub(crate) async fn create_pipeline_with_vars_idempotent(
         raw_config,
         &parsed_config,
     );
-    let fingerprint = pipeline_trigger_fingerprint(&git_ref, &variables);
+    let fingerprint =
+        task_trigger_fingerprint(&git_ref, &variables, task.map(|s| (s.subject, &s.intent)));
     let mut tx = pool.begin().await.map_err(ApiError::internal)?;
 
     if let Some(idempotency_key) = idempotency_key {
@@ -139,6 +201,41 @@ pub(crate) async fn create_pipeline_with_vars_idempotent(
         }
     }
 
+    let task_until = if let Some(task) = task {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(format!(
+                "task-workspace:{project_id}:{}",
+                task.intent.operation_key
+            ))
+            .execute(&mut *tx)
+            .await
+            .map_err(ApiError::internal)?;
+        if commit_sha.as_deref() != Some(task.intent.source_commit.as_str())
+            || git_ref != task.intent.source_commit
+            || config_source != "repository"
+            || parsed_config
+                .stages
+                .iter()
+                .flat_map(|s| &s.jobs)
+                .any(|j| j.manual || !j.required_tags.is_empty())
+        {
+            return Err(ApiError::conflict(
+                "Task pipeline требует exact repository SHA и embedded jobs",
+            ));
+        }
+        let conflict: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM task_pipeline_intents WHERE project_id=$1 AND operation_key=$2 UNION ALL SELECT 1 FROM sdlc_workspace_operations WHERE project_id=$1 AND operation_key=$2)")
+            .bind(project_id).bind(&task.intent.operation_key).fetch_one(&mut *tx).await.map_err(ApiError::internal)?;
+        if conflict {
+            return Err(ApiError::conflict("Task operation key уже занят"));
+        }
+        Some(
+            super::sdlc_workspace::task_pipeline::verify_submission(&mut tx, project_id, task)
+                .await?,
+        )
+    } else {
+        None
+    };
+
     let pipeline = sqlx::query_as::<_, Pipeline>(
         "INSERT INTO pipelines (id, project_id, git_ref, commit_sha, variables, status) VALUES ($1, $2, $3, $4, $5, 'queued') RETURNING id, project_id, git_ref, status, created_at, started_at, finished_at",
     )
@@ -167,12 +264,14 @@ pub(crate) async fn create_pipeline_with_vars_idempotent(
     .execute(&mut *tx)
     .await
     .map_err(ApiError::internal)?;
+    let mut preparation_job = None;
     for (position, stage) in parsed_config.stages.iter().enumerate() {
         let stage_id = Uuid::new_v4();
         sqlx::query("INSERT INTO stages (id, pipeline_id, name, position, status) VALUES ($1, $2, $3, $4, 'queued')")
             .bind(stage_id).bind(pipeline.id).bind(&stage.name).bind(position as i32).execute(&mut *tx).await.map_err(ApiError::internal)?;
         for (job_position, job) in stage.jobs.iter().enumerate() {
             let job_id = Uuid::new_v4();
+            preparation_job.get_or_insert(job_id);
             sqlx::query("INSERT INTO jobs (id, stage_id, name, image, command, required_tags, required_secrets, artifact_paths, position, status, timeout_seconds, allow_failure, manual) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'queued', $10, $11, $12)")
                 .bind(job_id).bind(stage_id).bind(&job.name).bind(&job.image).bind(&job.command).bind(&job.required_tags).bind(&job.required_secrets).bind(&job.artifact_paths)
                 .bind(job_position as i32).bind(job.timeout_seconds).bind(job.allow_failure).bind(job.manual)
@@ -184,6 +283,21 @@ pub(crate) async fn create_pipeline_with_vars_idempotent(
                 .await
                 .map_err(ApiError::internal)?;
         }
+    }
+    if let Some(task) = task {
+        let job =
+            preparation_job.ok_or_else(|| ApiError::conflict("Task pipeline не содержит jobs"))?;
+        crate::store::sdlc_workspace::append_task_pipeline(
+            &mut tx,
+            pipeline.id,
+            project_id,
+            task.subject,
+            task.token,
+            job,
+            &task.intent,
+        )
+        .await
+        .map_err(ApiError::internal)?;
     }
     if let Some(idempotency_key) = idempotency_key {
         sqlx::query(
@@ -200,6 +314,9 @@ pub(crate) async fn create_pipeline_with_vars_idempotent(
         .execute(&mut *tx)
         .await
         .map_err(ApiError::internal)?;
+    }
+    if task_until.is_some_and(|until| std::time::Instant::now() >= until) {
+        return Err(ApiError::conflict("Tracker lease истёк до enqueue commit"));
     }
     tx.commit().await.map_err(ApiError::internal)?;
     crate::dispatch_signal::notify_runner_work_available();
@@ -233,9 +350,178 @@ fn pipeline_trigger_fingerprint(git_ref: &str, variables: &serde_json::Value) ->
     sha256_hex(&serde_json::to_vec(&payload).unwrap_or_default())
 }
 
+fn task_trigger_fingerprint(
+    git_ref: &str,
+    variables: &serde_json::Value,
+    task: Option<(Uuid, &crate::domain::sdlc_workspace::TaskWorkspaceIntent)>,
+) -> String {
+    let legacy = pipeline_trigger_fingerprint(git_ref, variables);
+    match task {
+        None => legacy,
+        Some((subject, intent)) => sha256_hex(
+            &serde_json::to_vec(&serde_json::json!({
+                "legacy_fingerprint": legacy, "subject":subject, "task_intent":intent
+            }))
+            .expect("typed task intent serialization"),
+        ),
+    }
+}
+
 fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(bytes))
+}
+
+#[cfg(test)]
+mod task_trigger_tests {
+    use super::*;
+
+    #[test]
+    fn ordinary_trigger_and_fingerprint_remain_exact() {
+        let input: TaskTriggerPipeline = serde_json::from_value(serde_json::json!({
+            "git_ref":"main","variables":{"CHECK":"yes"}
+        }))
+        .unwrap();
+        assert!(input.task_intent.is_none());
+        assert_eq!(input.git_ref.as_deref(), Some("main"));
+        let vars = serde_json::json!({"CHECK":"yes"});
+        assert_eq!(
+            task_trigger_fingerprint("main", &vars, None),
+            pipeline_trigger_fingerprint("main", &vars)
+        );
+        assert!(
+            serde_json::from_value::<TaskTriggerPipeline>(serde_json::json!({
+                "task_intent":{"role":"unknown"}
+            }))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn task_trigger_legacy_fields_preserve_decode_and_default_parity() {
+        for value in [
+            serde_json::json!({}),
+            serde_json::json!({"git_ref":null,"variables":null}),
+            serde_json::json!({"git_ref":"main","variables":{"CHECK":"yes"}}),
+            serde_json::json!({"git_ref":"","variables":{},"unrelated":true}),
+            serde_json::json!({"git_ref":"refs/heads/ветка","variables":{"TEXT":"значение"},"task_intent":null}),
+            serde_json::json!({"git_ref":42}),
+            serde_json::json!({"variables":[]}),
+            serde_json::json!({"variables":{"CHECK":42}}),
+            serde_json::json!([]),
+        ] {
+            let typed = serde_json::from_value::<TaskTriggerPipeline>(value.clone());
+            let original = serde_json::from_value::<TriggerPipeline>(value);
+            assert_eq!(typed.is_ok(), original.is_ok());
+            if let (Ok(typed), Ok(original)) = (typed, original) {
+                assert!(typed.task_intent.is_none());
+                let legacy = TriggerPipeline {
+                    git_ref: typed.git_ref,
+                    variables: typed.variables,
+                };
+                assert_eq!(legacy.git_ref, original.git_ref);
+                assert_eq!(legacy.variables, original.variables);
+            }
+        }
+    }
+
+    #[test]
+    fn task_trigger_schema_has_object_root_and_exact_legacy_properties() {
+        #[derive(utoipa::OpenApi)]
+        #[openapi(components(schemas(TaskTriggerPipeline, TriggerPipeline)))]
+        struct Contract;
+        let document = serde_json::to_value(<Contract as utoipa::OpenApi>::openapi()).unwrap();
+        let schemas = &document["components"]["schemas"];
+        let typed = &schemas["TaskTriggerPipeline"];
+        let original = &schemas["TriggerPipeline"];
+        assert_eq!(typed["type"], "object");
+        assert!(typed.get("allOf").is_none());
+        for field in ["git_ref", "variables"] {
+            assert!(original["properties"].get(field).is_some());
+            assert_eq!(typed["properties"][field], original["properties"][field]);
+        }
+        assert_eq!(typed.get("required"), original.get("required"));
+        assert_eq!(typed["properties"].as_object().unwrap().len(), 3);
+        assert!(typed["properties"].get("task_intent").is_some());
+    }
+
+    #[test]
+    fn typed_intent_is_not_an_ignored_legacy_extra() {
+        for value in [
+            serde_json::json!("private"),
+            serde_json::json!([]),
+            serde_json::json!({}),
+        ] {
+            assert!(
+                serde_json::from_value::<TaskTriggerPipeline>(serde_json::json!({
+                    "git_ref":"main","task_intent":value
+                }))
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn task_fingerprint_binds_subject_and_original_intent_without_changing_legacy() {
+        use crate::domain::sdlc_workspace::*;
+        let task = Uuid::new_v4();
+        let intent = TaskWorkspaceIntent {
+            operation_key: "prepare:original".into(),
+            repository_id: Uuid::new_v4(),
+            source_commit: "a".repeat(40),
+            role: WorkspaceRole::Developer,
+            agent_id: Uuid::new_v4(),
+            tracker_lease_id: Uuid::new_v4(),
+            holder_subject: "scheduler".into(),
+            expected_lease_version: 1,
+            binding: WorkspaceTaskBinding {
+                tracker_instance_id: Uuid::new_v4().to_string(),
+                tracker_project_id: Uuid::new_v4(),
+                task_id: task,
+                root_task_id: task,
+                assignment_id: Uuid::new_v4(),
+                execution_id: Uuid::new_v4(),
+                routing_snapshot_id: Uuid::new_v4(),
+                requirement_revision: 1,
+                fencing_token: 1,
+                assignment_hash: "b".repeat(64),
+                workflow_task_ref: "SDLC-1".into(),
+            },
+        };
+        intent.validate().unwrap();
+        let vars = serde_json::json!({});
+        let subject = Uuid::new_v4();
+        let original =
+            task_trigger_fingerprint(&intent.source_commit, &vars, Some((subject, &intent)));
+        assert_eq!(
+            original,
+            task_trigger_fingerprint(&intent.source_commit, &vars, Some((subject, &intent)))
+        );
+        assert_ne!(
+            original,
+            task_trigger_fingerprint(&intent.source_commit, &vars, None)
+        );
+        assert_ne!(
+            original,
+            task_trigger_fingerprint(
+                &intent.source_commit,
+                &vars,
+                Some((Uuid::new_v4(), &intent))
+            )
+        );
+        let mut changed = intent.clone();
+        changed.binding.assignment_id = Uuid::new_v4();
+        assert_ne!(
+            original,
+            task_trigger_fingerprint(&intent.source_commit, &vars, Some((subject, &changed)))
+        );
+        changed = intent.clone();
+        changed.operation_key = "different".into();
+        assert_ne!(
+            original,
+            task_trigger_fingerprint(&intent.source_commit, &vars, Some((subject, &changed)))
+        );
+    }
 }
 
 #[derive(Debug)]
@@ -251,6 +537,11 @@ enum ParsedPipelinePlan {
 }
 
 impl ParsedPipelineConfig {
+    fn has_image_build(&self) -> bool {
+        matches!(&self.plan, ParsedPipelinePlan::V1(plan)
+            if plan.jobs.iter().any(|job| job.image_build.is_some()))
+    }
+
     fn parser_version(&self) -> &'static str {
         match self.plan {
             ParsedPipelinePlan::Legacy => LEGACY_PIPELINE_PLAN_PARSER_VERSION,
@@ -346,6 +637,8 @@ struct V1PlanJob {
     timeout_seconds: Option<i32>,
     allow_failure: bool,
     needs: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image_build: Option<crate::domain::image_build::ImageBuildSpec>,
 }
 
 fn build_pipeline_plan_snapshot(
@@ -647,6 +940,7 @@ struct NormalizedV1Job {
     timeout_seconds: Option<i32>,
     allow_failure: bool,
     needs: Vec<String>,
+    image_build: Option<crate::domain::image_build::ImageBuildSpec>,
 }
 
 fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
@@ -674,7 +968,9 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
         #[serde(default)]
         needs: Vec<String>,
         image: Option<String>,
+        #[serde(default)]
         commands: Vec<String>,
+        image_build: Option<crate::domain::image_build::ImageBuildSpec>,
         timeout: Option<String>,
         tags: Option<Vec<String>>,
         #[serde(default)]
@@ -722,7 +1018,21 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
                 ".forge-ci.yml v1 job key '{key}' must match ^[a-zA-Z][a-zA-Z0-9_.-]{{0,62}}$"
             ));
         }
-        if job.commands.is_empty() || job.commands.len() > 64 {
+        if let Some(build) = &job.image_build {
+            build.validate()?;
+            if !job.commands.is_empty()
+                || job.image.is_some()
+                || job.tags.is_some()
+                || !job.secrets.is_empty()
+                || job.artifacts.is_some()
+                || job.allow_failure
+                || !default_tags.is_empty()
+            {
+                return Err(format!(
+                    ".forge-ci.yml v1 job '{key}': image_build несовместим с commands, image, tags, secrets, artifacts и allow_failure"
+                ));
+            }
+        } else if job.commands.is_empty() || job.commands.len() > 64 {
             return Err(format!(
                 ".forge-ci.yml v1 job '{key}' must define 1..64 commands"
             ));
@@ -735,7 +1045,11 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
             }
         }
 
-        let image = job.image.unwrap_or_else(|| default_image.clone());
+        let image = if job.image_build.is_some() {
+            "forge:backend-image-build".into()
+        } else {
+            job.image.unwrap_or_else(|| default_image.clone())
+        };
         if !is_safe_image_reference(&image) {
             return Err(format!(
                 ".forge-ci.yml v1 job '{key}' image must be a safe image reference"
@@ -751,19 +1065,22 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
         };
         let required_secrets =
             normalize_v1_secret_names(&format!("jobs.{key}.secrets"), job.secrets)?;
-        let artifact_paths = match job.artifacts {
-            Some(artifacts) => {
-                if artifacts.paths.is_empty() {
-                    return Err(format!(
-                        ".forge-ci.yml v1 jobs.{key}.artifacts.paths must define at least one path"
-                    ));
+        let artifact_paths = match &job.image_build {
+            Some(build) => vec![build.descriptor_artifact.clone()],
+            None => match job.artifacts {
+                Some(artifacts) => {
+                    if artifacts.paths.is_empty() {
+                        return Err(format!(
+                            ".forge-ci.yml v1 jobs.{key}.artifacts.paths must define at least one path"
+                        ));
+                    }
+                    normalize_v1_artifact_paths(
+                        &format!("jobs.{key}.artifacts.paths"),
+                        artifacts.paths,
+                    )?
                 }
-                normalize_v1_artifact_paths(
-                    &format!("jobs.{key}.artifacts.paths"),
-                    artifacts.paths,
-                )?
-            }
-            None => Vec::new(),
+                None => Vec::new(),
+            },
         };
 
         if job.needs.len() > 64 {
@@ -804,6 +1121,7 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
                 timeout_seconds,
                 allow_failure: job.allow_failure,
                 needs,
+                image_build: job.image_build,
             },
         );
     }
@@ -842,7 +1160,11 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
         let mut ci_jobs = Vec::with_capacity(jobs.len());
         for (job_position, job) in jobs.into_iter().enumerate() {
             let job_position = job_position as i32;
-            let command = v1_runtime_command(&job.commands);
+            let command = if job.image_build.is_some() {
+                "forge:image-build".into()
+            } else {
+                v1_runtime_command(&job.commands)
+            };
             ci_jobs.push(CiJob {
                 name: job.key.clone(),
                 image: job.image.clone(),
@@ -868,6 +1190,7 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
                 timeout_seconds: job.timeout_seconds,
                 allow_failure: job.allow_failure,
                 needs: job.needs,
+                image_build: job.image_build,
             });
         }
         stages.push(CiStage {
@@ -898,6 +1221,68 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
 
 fn v1_runtime_command(commands: &[String]) -> String {
     format!("set -e\n{}", commands.join("\n"))
+}
+
+#[cfg(test)]
+mod image_build_parser_tests {
+    use super::*;
+
+    const BUILD: &str = "version: 1\njobs:\n  package:\n    image_build:\n      context: .\n      dockerfile: Dockerfile\n      descriptor_artifact: output/image.json\n      readable_schema_versions: [1]\n";
+
+    #[test]
+    fn typed_image_build_freezes_action_and_declares_only_its_descriptor() {
+        let parsed = parse_pipeline_config(Some(BUILD)).unwrap();
+        assert!(parsed.has_image_build());
+        let job = &parsed.stages[0].jobs[0];
+        assert_eq!(job.command, "forge:image-build");
+        assert_eq!(job.image, "forge:backend-image-build");
+        assert_eq!(job.artifact_paths, ["output/image.json"]);
+        assert!(job.required_secrets.is_empty() && job.required_tags.is_empty());
+        assert!(!job.allow_failure);
+        let snapshot = build_pipeline_plan_snapshot(
+            &"a".repeat(40),
+            Some(&"a".repeat(40)),
+            "repository",
+            BUILD.into(),
+            &parsed,
+        );
+        let frozen = &snapshot.plan["jobs"][0];
+        assert_eq!(frozen["image_build"]["context"], ".");
+        assert_eq!(frozen["image_build"]["dockerfile"], "Dockerfile");
+        assert_eq!(frozen["commands"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn image_build_rejects_mixed_commands_or_job_level_execution_overrides() {
+        for extra in [
+            "commands: [echo mixed]",
+            "image: alpine:3.21",
+            "tags: [privileged]",
+            "secrets: [TOKEN]",
+            "artifacts: {paths: [extra.txt]}",
+            "allow_failure: true",
+        ] {
+            let raw = BUILD.replace("  package:\n", &format!("  package:\n    {extra}\n"));
+            assert!(parse_pipeline_config(Some(&raw)).is_err(), "{extra}");
+        }
+        let raw = BUILD.replace("jobs:\n", "defaults:\n  tags: [external]\njobs:\n");
+        assert!(parse_pipeline_config(Some(&raw)).is_err());
+    }
+
+    #[test]
+    fn ordinary_v1_plan_keeps_its_existing_fields_and_shell_sentinel_is_not_an_action() {
+        let raw = "version: 1\njobs:\n  test:\n    commands: [forge:image-build]\n";
+        let parsed = parse_pipeline_config(Some(raw)).unwrap();
+        assert!(!parsed.has_image_build());
+        let snapshot =
+            build_pipeline_plan_snapshot("main", None, "repository", raw.into(), &parsed);
+        let job = snapshot.plan["jobs"][0].as_object().unwrap();
+        assert_eq!(job.len(), 13);
+        assert!(!job.contains_key("image_build"));
+        assert_eq!(job["command"], "set -e\nforge:image-build");
+        assert_eq!(job["image"], "alpine:3.21");
+        assert_eq!(job["commands"], serde_json::json!(["forge:image-build"]));
+    }
 }
 
 fn compute_v1_job_levels(

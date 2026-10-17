@@ -444,6 +444,37 @@ if __name__ == '__main__':
         sys.exit('OCI_OFFLINE_BASE_GUARD_FAILED:' + PHASE + ':' + reason)
 "#;
 
+fn oci_fixture_paths(id: Uuid, compose_parent: &std::path::Path) -> (PathBuf, PathBuf, PathBuf) {
+    let suffix = id.simple();
+    (
+        PathBuf::from(format!("/delivery-qa/oci-root-{suffix}")),
+        PathBuf::from(format!("/delivery-qa/oci-data-{suffix}.json")),
+        compose_parent.join(format!("oci-{suffix}")),
+    )
+}
+
+#[test]
+fn oci_fixture_paths_isolate_retained_journals_data_and_compose_within_existing_mappings() {
+    let volume = std::path::Path::new("/delivery-qa");
+    let compose_parent = std::path::Path::new("/owned/oci-compose");
+    let first = oci_fixture_paths(Uuid::from_u128(1), compose_parent);
+    let second = oci_fixture_paths(Uuid::from_u128(2), compose_parent);
+    assert_eq!(first, oci_fixture_paths(Uuid::from_u128(1), compose_parent));
+    for paths in [&first, &second] {
+        assert_eq!(paths.0.parent(), Some(volume));
+        assert_eq!(paths.1.parent(), Some(volume));
+        assert!(!paths.1.starts_with(&paths.0));
+        assert_eq!(paths.2.parent(), Some(compose_parent));
+    }
+    for first_path in [&first.0, &first.1, &first.2] {
+        for second_path in [&second.0, &second.1, &second.2] {
+            assert_ne!(first_path, second_path);
+            assert!(!first_path.starts_with(second_path));
+            assert!(!second_path.starts_with(first_path));
+        }
+    }
+}
+
 struct Oci {
     t: ActualDelivery,
     root: PathBuf,
@@ -457,8 +488,7 @@ struct Oci {
 }
 impl Drop for Oci {
     fn drop(&mut self) {
-        if let Ok(entries) = std::fs::read_dir(std::env::var("CICD_TEST_OCI_COMPOSE_ROOT").unwrap())
-        {
+        if let Ok(entries) = std::fs::read_dir(&self.compose_root) {
             let mut files = entries
                 .flatten()
                 .map(|e| e.path())
@@ -487,13 +517,22 @@ impl Oci {
             .create(t.temp.join("oci-build-progress"))
             .unwrap();
         t.runner_timeout_diagnostic = Some(oci_build_timeout_diagnostic);
-        let root = PathBuf::from("/delivery-qa/oci-root");
-        let data = PathBuf::from("/delivery-qa/oci-data.json");
-        std::fs::write(
-            &data,
-            br#"{"schemaVersion":1,"records":[{"id":"task-1","state":"queued"}]}"#,
-        )
-        .unwrap();
+        let compose_parent = PathBuf::from(std::env::var("CICD_TEST_OCI_COMPOSE_ROOT").unwrap());
+        let (root, data, compose_root) = oci_fixture_paths(t.f.project, &compose_parent);
+        std::fs::DirBuilder::new()
+            .mode(0o755)
+            .create(&compose_root)
+            .unwrap();
+        let mut data_file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&data)
+            .unwrap();
+        data_file
+            .write_all(br#"{"schemaVersion":1,"records":[{"id":"task-1","state":"queued"}]}"#)
+            .unwrap();
+        drop(data_file);
         std::fs::set_permissions(&data, std::fs::Permissions::from_mode(0o444)).unwrap();
         let project = std::env::var("CICD_TEST_OCI_PROJECT").unwrap();
         let id = std::process::Command::new("/usr/local/bin/docker")
@@ -519,7 +558,6 @@ impl Oci {
             .unwrap();
         assert!(prepared.success(), "offline OCI base preparation failed");
         let policy = t.temp.join("oci-policy.json");
-        let compose_root = PathBuf::from(std::env::var("CICD_TEST_OCI_COMPOSE_ROOT").unwrap());
         std::fs::write(&policy,serde_json::to_vec(&serde_json::json!({"projectName":project,"networkName":std::env::var("CICD_TEST_OCI_NETWORK").unwrap(),"daemonId":daemon,"dockerBin":"/usr/local/bin/docker","composeBin":"/usr/local/bin/docker-compose","composeRoot":compose_root,"volumeName":std::env::var("CICD_TEST_OCI_VOLUME").unwrap(),"volumeRoot":"/delivery-qa","dataFile":data,"dataSha256":hash(&std::fs::read(&data).unwrap()),"checks":{"origin":"http://127.0.0.1:8000","healthPath":"/health","healthBodySha256":hash(b"ok\n"),"acceptancePath":"/acceptance","acceptanceBodySha256":hash(b"accepted:task-1:queued\n")}})).unwrap()).unwrap();
         Self {
             t,
@@ -592,6 +630,349 @@ impl Oci {
             serde_json::from_slice(&output.stdout).ok(),
         )
     }
+}
+
+#[tokio::test]
+async fn task_bound_oci_http_requires_current_authority_and_preserves_actual_rollback_and_replay() {
+    use axum::{Json, Router, routing::get};
+    use serde_json::{Value, json};
+    let mut t = Oci::new().await;
+    t.t.f.request.role = cicd::domain::sdlc_workspace::WorkspaceRole::Developer;
+    t.t.f.request.binding.root_task_id = t.t.f.request.binding.task_id;
+    let environment = Uuid::new_v4();
+    sqlx::query("INSERT INTO environments(id,project_id,name,protected,required_approvals) VALUES($1,$2,'task-oci-nonproduction',false,0)")
+        .bind(environment).bind(t.t.f.project).execute(&t.t.f.pool).await.unwrap();
+    let mut policy: Value = serde_json::from_slice(&std::fs::read(&t.policy).unwrap()).unwrap();
+    policy["checks"]["taskExecution"] = json!({"environment":"nonproduction","environmentId":environment,
+        "repositoryId":t.t.f.request.repository_id,"trackerInstanceId":t.t.f.request.binding.tracker_instance_id,
+        "trackerProjectId":t.t.f.request.binding.tracker_project_id,"holderSubject":"fleet-delivery"});
+    std::fs::write(&t.policy, serde_json::to_vec(&policy).unwrap()).unwrap();
+    let data_before = std::fs::read(&t.data).unwrap();
+    let a = t.build("A", &[1], &[]).await;
+    // Privileged existing local path enrolls the owner target, never the HTTP caller.
+    let (code, initial) = t.execute(&a, None).await;
+    assert_eq!(code, 0);
+    let initial = initial.unwrap();
+    assert_eq!(latest(&initial)["scope"], "owner_local_verification");
+    assert_eq!(latest(&initial)["dispatchAllowed"], false);
+    let manifest_a = initial["confirmedManifestSha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mut b = t.build("B", &[1], &[]).await;
+    b.expected_manifest_sha256 = Some(manifest_a.clone());
+    let binding = t.t.f.request.binding.clone();
+    let agent = Uuid::new_v4();
+    let mut fence = TaskDeliveryFence {
+        development_result_id: Uuid::new_v4(),
+        assignment_id: Uuid::new_v4(),
+        execution_id: Uuid::new_v4(),
+        agent_id: agent,
+        lease_id: Uuid::new_v4(),
+        fencing_token: 1,
+        expected_lease_version: 1,
+        assignment_hash: String::new(),
+    };
+    let route = json!({"agent_id":agent});
+    let routing = json!({"snapshot_id":binding.routing_snapshot_id,"tracker_instance_id":binding.tracker_instance_id,
+        "project_id":binding.tracker_project_id,"task_id":binding.task_id,"root_task_id":binding.task_id,
+        "requirement_revision":binding.requirement_revision,"policy":{"tracker_instance_id":binding.tracker_instance_id,
+        "project_id":binding.tracker_project_id,"routes":{"devops":route}}});
+    let mut assignment = json!({"assignment_id":fence.assignment_id,"execution_id":fence.execution_id,
+        "task_id":binding.task_id,"owner_subject":"owner","role":"devops","stage":"Deployment","cycle":0,
+        "attempt":1,"agent_id":agent,"routing":routing,"previous_result_id":Uuid::new_v4(),
+        "fencing_token":fence.fencing_token,"lease_id":fence.lease_id});
+    fn sorted(value: Value) -> Value {
+        match value {
+            Value::Object(object) => Value::Object(
+                object
+                    .into_iter()
+                    .map(|(key, value)| (key, sorted(value)))
+                    .collect::<std::collections::BTreeMap<_, _>>()
+                    .into_iter()
+                    .collect(),
+            ),
+            Value::Array(array) => Value::Array(array.into_iter().map(sorted).collect()),
+            value => value,
+        }
+    }
+    fence.assignment_hash = hash(&serde_json::to_vec(&sorted(assignment.clone())).unwrap());
+    assignment["assignment_hash"] = json!(fence.assignment_hash);
+    b.task_fence = Some(fence);
+    let reply = std::sync::Arc::new(std::sync::Mutex::new(
+        json!({"runtime_state":"running","receipt":{
+        "task":{"task_id":binding.task_id,"owner_subject":"owner","version":1,"stage":"Deployment",
+            "status":"InProgress","runtime":"running","cycle":0,"waiting_reason":null,"routing":routing},
+        "assignment":assignment,"lease":{"lease_id":b.task_fence.as_ref().unwrap().lease_id,"version":1,"holder_subject":"fleet-delivery"},
+        "binding":{"chat_id":Uuid::new_v4(),"run_id":Uuid::new_v4(),"machine_subject":"devops-agent"}}}),
+    ));
+    let observed = reply.clone();
+    let expired = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let expired_response = expired.clone();
+    let expire_at = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(usize::MAX));
+    let late_expiry = expire_at.clone();
+    let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let calls = hits.clone();
+    let source_result = json!({"source":"delivery","receipt":{"result_id":b.task_fence.as_ref().unwrap().development_result_id,
+        "assignment_id":binding.assignment_id,"task_id":binding.task_id,"cycle":0,
+        "output":{"role":"developer","commit_sha":t.t.f.request.source_commit},"next_stage":"Review"}});
+    let tracker = Router::new()
+        .route(
+            &format!(
+                "/api/v1/issues/{}/sdlc/lifecycle/results/{}",
+                binding.task_id,
+                b.task_fence.as_ref().unwrap().development_result_id
+            ),
+            get(move |headers: axum::http::HeaderMap| {
+                let value = source_result.clone();
+                async move {
+                    assert_eq!(headers["authorization"], "Bearer task-reader-fixture");
+                    Json(value)
+                }
+            }),
+        )
+        .route(
+            &format!("/api/v1/issues/{}/sdlc/lifecycle", binding.task_id),
+            get(move |headers: axum::http::HeaderMap| {
+                let value = observed.clone();
+                let expired = expired_response.clone();
+                let late_expiry = late_expiry.clone();
+                let calls = calls.clone();
+                async move {
+                    assert_eq!(headers["authorization"], "Bearer task-reader-fixture");
+                    let call = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                    let mut value = value.lock().unwrap().clone();
+                    let now = Utc::now();
+                    value["observed_at"] = json!(now);
+                    value["receipt"]["lease"]["claimed_at"] =
+                        json!(now - chrono::Duration::seconds(60));
+                    value["receipt"]["lease"]["heartbeat_at"] =
+                        json!(now - chrono::Duration::seconds(1));
+                    value["receipt"]["lease"]["expires_at"] = json!(
+                        now + chrono::Duration::seconds(
+                            if expired.load(std::sync::atomic::Ordering::SeqCst)
+                                || call >= late_expiry.load(std::sync::atomic::Ordering::SeqCst)
+                            {
+                                -1
+                            } else {
+                                29
+                            }
+                        )
+                    );
+                    Json(value)
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let tracker_url = format!("http://{}", listener.local_addr().unwrap());
+    let tracker_server = tokio::spawn(async move { axum::serve(listener, tracker).await.unwrap() });
+    let mut config = cicd::config::RuntimeConfig::test_default()
+        .with_auth_secret(Some("workspace-test-secret".into()));
+    config.sdlc_workspace.operation_subject = Some(t.t.f.subject);
+    config.sdlc_workspace.local_delivery_kind = cicd::config::LocalDeliveryKind::Oci;
+    config.sdlc_workspace.local_delivery_root = Some(t.root.clone());
+    config.sdlc_workspace.local_delivery_policy = Some(t.policy.clone());
+    config.sdlc_workspace.tracker_read_url = Some(tracker_url);
+    config.sdlc_workspace.tracker_read_token = Some("task-reader-fixture".into());
+    config.artifacts.root = t.t.artifact_root.clone();
+    t.t.f.app = cicd::api::app_with_git_and_config(
+        Some(t.t.f.pool.clone()),
+        cicd::git_host::GitConfig {
+            root: t.t.git_root.clone(),
+            token: None,
+            internal_token: None,
+        },
+        None,
+        config,
+    )
+    .unwrap();
+    let path = format!(
+        "/api/v1/projects/{}/sdlc/workspace-operations/{}/delivery-operations",
+        t.t.f.project, b.workspace_operation_key
+    );
+    sqlx::query("UPDATE environments SET protected=true,required_approvals=1 WHERE id=$1")
+        .bind(environment)
+        .execute(&t.t.f.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        call(
+            &t.t.f.app,
+            "POST",
+            &path,
+            &t.t.f.token,
+            serde_json::to_string(&b).unwrap()
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    sqlx::query("UPDATE environments SET protected=false,required_approvals=0 WHERE id=$1")
+        .bind(environment)
+        .execute(&t.t.f.pool)
+        .await
+        .unwrap();
+    reply.lock().unwrap()["receipt"]["lease"]["holder_subject"] = json!("foreign");
+    assert_eq!(
+        call(
+            &t.t.f.app,
+            "POST",
+            &path,
+            &t.t.f.token,
+            serde_json::to_string(&b).unwrap()
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    reply.lock().unwrap()["receipt"]["lease"]["holder_subject"] = json!("fleet-delivery");
+    expired.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert_eq!(
+        call(
+            &t.t.f.app,
+            "POST",
+            &path,
+            &t.t.f.token,
+            serde_json::to_string(&b).unwrap()
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert!(
+        !t.root
+            .join("operations")
+            .join(hash(b.operation_key.as_bytes()))
+            .exists()
+    );
+    expired.store(false, std::sync::atomic::Ordering::SeqCst);
+    let (status, failed) = call(
+        &t.t.f.app,
+        "POST",
+        &path,
+        &t.t.f.token,
+        serde_json::to_string(&b).unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{failed}");
+    assert_eq!(latest(&failed)["schema"], "forge/local-oci-operation/v1");
+    assert_eq!(latest(&failed)["scope"], "task_nonproduction_delivery");
+    assert_eq!(latest(&failed)["dispatchAllowed"], true);
+    assert_eq!(latest(&failed)["sdlcAcceptanceVerified"], false);
+    assert_eq!(latest(&failed)["status"], "failed");
+    assert_eq!(latest(&failed)["health"]["httpStatus"], 503);
+    assert_eq!(failed["confirmedManifestSha256"], manifest_a);
+    assert!(hits.load(std::sync::atomic::Ordering::SeqCst) >= 4);
+    let read_path = format!(
+        "{}/{}?requestHash={}&taskId={}&rootTaskId={}&assignmentId={}&executionId={}&fencingToken={}",
+        path,
+        b.operation_key,
+        b.original.request_hash,
+        b.original.task_id,
+        b.original.root_task_id,
+        b.original.assignment_id,
+        b.original.execution_id,
+        b.original.fencing_token,
+    );
+    let hits_before = hits.load(std::sync::atomic::Ordering::SeqCst);
+    expired.store(true, std::sync::atomic::Ordering::SeqCst);
+    let (status, saved) = call(&t.t.f.app, "GET", &read_path, &t.t.f.token, String::new()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(saved, failed);
+    assert_eq!(
+        call(
+            &t.t.f.app,
+            "POST",
+            &path,
+            &t.t.f.token,
+            serde_json::to_string(&b).unwrap()
+        )
+        .await
+        .1,
+        failed
+    );
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), hits_before);
+    let mut changed = b.clone();
+    changed.expected_manifest_sha256 = None;
+    assert_eq!(
+        call(
+            &t.t.f.app,
+            "POST",
+            &path,
+            &t.t.f.token,
+            serde_json::to_string(&changed).unwrap()
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(t.execute(&b, None).await.0, 1); // Local CLI cannot acquire task authority.
+    expired.store(false, std::sync::atomic::Ordering::SeqCst);
+    let mut rollback = b.clone();
+    rollback.operation_key = "http:oci:rollback".into();
+    rollback.action = DeliveryAction::Rollback;
+    rollback.artifact_id = None;
+    rollback.expected_manifest_sha256 = failed["currentManifestSha256"].as_str().map(str::to_owned);
+    let (status, restored) = call(
+        &t.t.f.app,
+        "POST",
+        &path,
+        &t.t.f.token,
+        serde_json::to_string(&rollback).unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{restored}");
+    assert_eq!(latest(&restored)["status"], "verified");
+    assert_eq!(latest(&restored)["imageId"], latest(&initial)["imageId"]);
+    assert_ne!(
+        latest(&restored)["containerId"],
+        latest(&failed)["containerId"]
+    );
+    assert_eq!(restored["currentManifestSha256"], manifest_a);
+    assert_eq!(std::fs::read(&t.data).unwrap(), data_before);
+    assert_eq!(latest(&initial)["dispatchAllowed"], false);
+    // Expiry after async image/mount preflight must hold the original intent before publication.
+    let pointer = t.root.join("current.json");
+    let pointer_before = std::fs::read(&pointer).unwrap();
+    let mut late = b.clone();
+    late.operation_key = "http:oci:late-preflight".into();
+    late.expected_manifest_sha256 = Some(manifest_a);
+    expire_at.store(
+        hits.load(std::sync::atomic::Ordering::SeqCst) + 2,
+        std::sync::atomic::Ordering::SeqCst,
+    );
+    assert_eq!(
+        call(
+            &t.t.f.app,
+            "POST",
+            &path,
+            &t.t.f.token,
+            serde_json::to_string(&late).unwrap()
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    let held = t
+        .root
+        .join("operations")
+        .join(hash(late.operation_key.as_bytes()));
+    assert!(held.join("intent.json").exists());
+    assert!(!held.join("child.json").exists());
+    assert!(!held.join("result.json").exists());
+    assert_eq!(std::fs::read(&pointer).unwrap(), pointer_before);
+    let read_path = read_path.replacen(
+        &format!("/{}?", b.operation_key),
+        &format!("/{}?", late.operation_key),
+        1,
+    );
+    let (status, pending) = call(&t.t.f.app, "GET", &read_path, &t.t.f.token, String::new()).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(latest(&pending)["status"], "unknown");
+    assert_eq!(pending["reconciliationNeeded"], true);
+    assert_eq!(std::fs::read(&pointer).unwrap(), pointer_before);
+    tracker_server.abort();
 }
 
 #[tokio::test]

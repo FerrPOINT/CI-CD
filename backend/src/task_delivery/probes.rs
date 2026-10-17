@@ -14,10 +14,37 @@ pub struct DeliveryPolicy {
     pub health_body_sha256: String,
     pub acceptance_path: String,
     pub acceptance_body_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_execution: Option<TaskExecutionPolicy>,
+}
+
+/// Explicit owner-published target binding. Never supplied by the calling agent.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TaskExecutionPolicy {
+    pub environment: String,
+    pub environment_id: uuid::Uuid,
+    pub repository_id: uuid::Uuid,
+    pub tracker_instance_id: String,
+    pub tracker_project_id: uuid::Uuid,
+    pub holder_subject: String,
 }
 
 impl DeliveryPolicy {
     pub fn validate(&self) -> anyhow::Result<()> {
+        if let Some(task) = &self.task_execution {
+            ensure!(
+                task.environment == "nonproduction"
+                    && !task.environment_id.is_nil()
+                    && !task.repository_id.is_nil()
+                    && !task.tracker_project_id.is_nil()
+                    && !task.tracker_instance_id.trim().is_empty()
+                    && task.tracker_instance_id.len() <= 256
+                    && !task.holder_subject.trim().is_empty()
+                    && task.holder_subject.len() <= 256,
+                "explicit nonproduction task target binding required"
+            );
+        }
         let url = reqwest::Url::parse(&self.origin)?;
         ensure!(
             matches!(url.scheme(), "http" | "https")

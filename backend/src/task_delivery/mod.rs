@@ -1,8 +1,9 @@
-//! Privileged, bounded static-artifact delivery. No SDLC dispatch, Git merge or shell executor.
+//! Owner-policy static-artifact delivery. No scheduler, Git merge or shell executor.
 mod files;
 pub mod oci;
 pub mod postgres;
 mod probes;
+pub(crate) mod tracker;
 use crate::{
     api::{AppState, sdlc_workspace},
     domain::{sdlc_workspace::*, task_delivery::*},
@@ -22,6 +23,34 @@ use std::{
     sync::Arc,
 };
 use uuid::Uuid;
+
+#[derive(Serialize, utoipa::ToSchema)]
+#[serde(untagged)]
+pub enum TaskDeliveryReadback {
+    Static(DeliveryReadback),
+    Oci(oci::Readback),
+}
+
+async fn task_environment(
+    connection: &mut sqlx::PgConnection,
+    project: Uuid,
+    policy: &probes::TaskExecutionPolicy,
+) -> Result<(), crate::api::ApiError> {
+    use crate::api::ApiError;
+    let environment = sqlx::query_as::<_, (Uuid, bool, i32)>(
+        "SELECT project_id,protected,required_approvals FROM environments WHERE id=$1 FOR SHARE",
+    )
+    .bind(policy.environment_id)
+    .fetch_optional(connection)
+    .await
+    .map_err(ApiError::internal)?;
+    if environment != Some((project, false, 0)) {
+        return Err(ApiError::conflict(
+            "Task target чужой, защищён или требует approval",
+        ));
+    }
+    Ok(())
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -184,8 +213,13 @@ impl Target {
         for observed in std::iter::once(&receipt).chain(reconciled_receipt.iter()) {
             ensure!(
                 observed.schema == "forge/local-delivery-operation/v1"
-                    && observed.scope == "owner_local_verification"
-                    && !observed.dispatch_allowed
+                    && observed.scope
+                        == if command.task_fence.is_some() {
+                            "task_nonproduction_delivery"
+                        } else {
+                            "owner_local_verification"
+                        }
+                    && observed.dispatch_allowed == command.task_fence.is_some()
                     && !observed.sdlc_acceptance_verified
                     && observed.command_sha256 == sha(&serde_json::to_vec(command)?)
                     && observed.command_sha256 == sha(&serde_json::to_vec(&observed.command)?)
@@ -328,13 +362,22 @@ impl Target {
         original: WorkspaceOperationReceipt,
         candidate: Option<VerifiedCandidate>,
         reconcile: bool,
+        mut permit: Option<tracker::Permit>,
+        task_state: Option<&AppState>,
     ) -> anyhow::Result<DeliveryReadback> {
+        ensure!(
+            command.task_fence.is_some() == permit.is_some(),
+            "task effect requires live owner authorization"
+        );
         let _lock = Lock::acquire(&self.root)?;
         let dir = operation_dir(&self.root, &command.operation_key);
         if dir.exists() {
             let previous = self.readback(command, &original)?;
             if !reconcile || !previous.reconciliation_needed {
                 return Ok(previous);
+            }
+            if let Some(permit) = permit {
+                permit.check()?;
             }
             let intent: Intent = read(&dir.join("intent.json"))?;
             if let (Some(hash), Some(manifest)) =
@@ -346,6 +389,9 @@ impl Target {
                 {
                     let receipt = self.observe(intent.receipt, manifest).await;
                     if receipt.status != DeliveryStatus::Unknown {
+                        if let Some(permit) = permit {
+                            permit.check()?;
+                        }
                         if receipt.status == DeliveryStatus::Verified {
                             if !dir.join("verified-checks.json").exists() {
                                 immutable(&dir.join("verified-checks.json"), &receipt)?;
@@ -359,6 +405,9 @@ impl Target {
             return self.readback(command, &original);
         }
         ensure!(!reconcile, "original delivery operation not found");
+        if let Some(permit) = permit {
+            permit.check()?;
+        }
         self.ensure_idle(&command.operation_key)?;
         let previous = pointer(&self.root, "current.json")?;
         ensure!(
@@ -367,7 +416,12 @@ impl Target {
         );
         let mut receipt = DeliveryReceipt {
             schema: "forge/local-delivery-operation/v1".into(),
-            scope: "owner_local_verification".into(),
+            scope: if command.task_fence.is_some() {
+                "task_nonproduction_delivery"
+            } else {
+                "owner_local_verification"
+            }
+            .into(),
             command: command.clone(),
             command_sha256: sha(&serde_json::to_vec(command)?),
             original_operation: original.clone(),
@@ -380,7 +434,7 @@ impl Target {
             health: None,
             acceptance: None,
             recorded_at: Utc::now(),
-            dispatch_allowed: false,
+            dispatch_allowed: command.task_fence.is_some(),
             sdlc_acceptance_verified: false,
         };
         let manifest = match command.action {
@@ -400,6 +454,9 @@ impl Target {
             }
             .into();
         }
+        if let Some(permit) = permit {
+            permit.check()?;
+        }
         directory(&dir)?;
         let intent = Intent {
             receipt: receipt.clone(),
@@ -413,8 +470,14 @@ impl Target {
         };
         let hash = receipt.manifest_sha256.as_ref().unwrap().clone();
         // Durable active intent precedes every publication effect. Any IO error retains the hold.
+        if let Some(permit) = permit {
+            permit.check()?;
+        }
         immutable(&dir.join("active.json"), &receipt.command_sha256)?;
         if let Some(candidate) = candidate {
+            if let Some(permit) = permit {
+                permit.check()?;
+            }
             copy_artifact(
                 &self.root,
                 &candidate.storage_path,
@@ -422,13 +485,45 @@ impl Target {
                 manifest.artifact_size_bytes,
             )?;
         }
+        if let Some(permit) = permit {
+            permit.check()?;
+        }
         immutable(
             &self.root.join("manifests").join(format!("{hash}.json")),
             &manifest,
         )?;
         self.manifest(&hash)?;
+        if let Some(state) = task_state {
+            // Re-read the existing lease after staging, immediately before changing the served pointer.
+            crate::repository_catalog::require_project_writable(
+                state.pool.as_ref().context("owner database absent")?,
+                self.project_id,
+            )
+            .await
+            .map_err(|_| anyhow::anyhow!("project namespace became read-only"))?;
+            permit = Some(
+                tracker::read(
+                    state,
+                    self.policy
+                        .task_execution
+                        .as_ref()
+                        .context("task policy absent")?,
+                    &original,
+                    command.task_fence.as_ref().context("task fence absent")?,
+                    true,
+                )
+                .await
+                .map_err(|_| anyhow::anyhow!("Tracker authority changed before publication"))?,
+            );
+        }
+        if let Some(permit) = permit {
+            permit.check()?;
+        }
         replace_pointer(&self.root, "current.json", &hash)?;
         receipt = self.observe(receipt, &manifest).await;
+        if let Some(permit) = permit {
+            permit.check()?;
+        }
         if receipt.status == DeliveryStatus::Verified {
             immutable(&dir.join("verified-checks.json"), &receipt)?;
             replace_pointer(&self.root, "confirmed.json", &hash)?;
@@ -574,6 +669,10 @@ pub async fn local_command(
     }
     command.validate().map_err(anyhow::Error::msg)?;
     ensure!(
+        command.task_fence.is_none(),
+        "task delivery uses the authenticated owner API"
+    );
+    ensure!(
         token.starts_with("forge_sat_"),
         "existing project machine credential required"
     );
@@ -625,21 +724,21 @@ pub async fn local_command(
             .await
             .map_err(|_| anyhow::anyhow!("fresh owner write authorization rejected"))?;
         target
-            .execute(&command, original, candidate, reconcile)
+            .execute(&command, original, candidate, reconcile, None, None)
             .await?
     };
     tx.commit().await?;
     Ok(result)
 }
 
-/// HTTP delivery remains fail-closed. No caller flag or configured local target enables dispatch.
-#[utoipa::path(post,path="/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations",tag="SDLC workspace",params(("project_id"=Uuid,Path),("operation_key"=String,Path)),request_body=DeliveryCommand,responses((status=503,description="Tracker admission/source binding unavailable; no deployment effect"),(status=400),(status=401),(status=403),(status=404),(status=409)))]
-pub(crate) async fn reject_sdlc_delivery(
+/// Task-only nonproduction delivery. Generic deployment approval/rollback policy is unchanged.
+#[utoipa::path(post,path="/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations",operation_id="reject_sdlc_delivery",tag="SDLC workspace",params(("project_id"=Uuid,Path),("operation_key"=String,Path)),request_body=DeliveryCommand,responses((status=200,body=TaskDeliveryReadback),(status=503,description="Owner task target or Tracker readback unavailable"),(status=400),(status=401),(status=403),(status=404),(status=409)))]
+pub(crate) async fn execute_task_delivery(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<crate::auth::AccessClaims>,
     ApiPath((project, key)): ApiPath<(Uuid, String)>,
     Json(command): Json<DeliveryCommand>,
-) -> Result<Json<DeliveryReceipt>, crate::api::ApiError> {
+) -> Result<Json<TaskDeliveryReadback>, crate::api::ApiError> {
     use crate::api::ApiError;
     command.validate().map_err(ApiError::bad_request)?;
     if command.workspace_operation_key != key {
@@ -658,18 +757,82 @@ pub(crate) async fn reject_sdlc_delivery(
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found_named("workspace operation"))?;
     sdlc_workspace::verify_lookup(&original, &command.original)?;
-    Err(ApiError::service_unavailable(
-        "Tracker admission and authoritative workspace binding unavailable; SDLC delivery dispatch is closed",
-    ))
+    sdlc_workspace::authorize(&mut tx, &state, &claims, project, "api:read").await?;
+    let fence = command
+        .task_fence
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("Нужен текущий task delivery fence"))?;
+    if state.config.sdlc_workspace.local_delivery_kind == crate::config::LocalDeliveryKind::Oci {
+        let result =
+            oci::execute_task(state.clone(), &claims, &mut tx, project, &command, original).await?;
+        tx.commit().await.map_err(ApiError::internal)?;
+        return Ok(Json(TaskDeliveryReadback::Oci(result)));
+    }
+    // No HTTP enrollment: the owner must already have published this target/policy.
+    let target = configured_target(&state, project, false)
+        .map_err(|_| ApiError::service_unavailable("Опубликованный owner target недоступен"))?;
+    let policy = target.policy.task_execution.as_ref().ok_or_else(|| {
+        ApiError::service_unavailable("Nonproduction task delivery policy недоступна")
+    })?;
+    task_environment(&mut tx, project, policy).await?;
+    let existing = operation_dir(&target.root, &command.operation_key).exists();
+    // Completed original-key replay needs no new lease and cannot repeat publication.
+    if existing {
+        let readback = target
+            .readback(&command, &original)
+            .map_err(|_| ApiError::conflict("Исходный delivery journal не совпадает"))?;
+        if !readback.reconciliation_needed {
+            tx.commit().await.map_err(ApiError::internal)?;
+            return Ok(Json(TaskDeliveryReadback::Static(readback)));
+        }
+    }
+    crate::repository_catalog::require_project_writable(
+        state
+            .pool
+            .as_ref()
+            .ok_or_else(|| ApiError::service_unavailable("owner database unavailable"))?,
+        project,
+    )
+    .await?;
+    let candidate = if !existing && command.action == DeliveryAction::Deploy {
+        candidate(
+            state.clone(),
+            claims.clone(),
+            project,
+            &command,
+            target.policy_sha256.clone(),
+        )
+        .await
+        .map_err(|_| ApiError::conflict("Readback точного pipeline artifact отклонён"))?
+    } else {
+        None
+    };
+    let permit = tracker::read(&state, policy, &original, fence, existing).await?;
+    sdlc_workspace::authorize(&mut tx, &state, &claims, project, "api:write").await?;
+    let result = target
+        .execute(
+            &command,
+            original,
+            candidate,
+            existing,
+            Some(permit),
+            Some(&state),
+        )
+        .await
+        .map_err(|_| {
+            ApiError::conflict("Delivery удерживается; перед повтором прочитайте original key")
+        })?;
+    tx.commit().await.map_err(ApiError::internal)?;
+    Ok(Json(TaskDeliveryReadback::Static(result)))
 }
 
-#[utoipa::path(get,path="/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations/{delivery_key}",tag="SDLC workspace",params(("project_id"=Uuid,Path),("operation_key"=String,Path),("delivery_key"=String,Path),("requestHash"=String,Query),("taskId"=Uuid,Query),("rootTaskId"=Uuid,Query),("assignmentId"=Uuid,Query),("executionId"=Uuid,Query),("fencingToken"=i64,Query)),responses((status=200,body=DeliveryReadback),(status=400),(status=401),(status=403),(status=404),(status=409),(status=503)))]
+#[utoipa::path(get,path="/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations/{delivery_key}",tag="SDLC workspace",params(("project_id"=Uuid,Path),("operation_key"=String,Path),("delivery_key"=String,Path),("requestHash"=String,Query),("taskId"=Uuid,Query),("rootTaskId"=Uuid,Query),("assignmentId"=Uuid,Query),("executionId"=Uuid,Query),("fencingToken"=i64,Query)),responses((status=200,body=TaskDeliveryReadback),(status=400),(status=401),(status=403),(status=404),(status=409),(status=503)))]
 pub(crate) async fn get_local_delivery(
     State(state): State<Arc<AppState>>,
     Extension(claims): Extension<crate::auth::AccessClaims>,
     ApiPath((project, key, delivery_key)): ApiPath<(Uuid, String, String)>,
     Query(expected): Query<WorkspaceOperationLookup>,
-) -> Result<Json<DeliveryReadback>, crate::api::ApiError> {
+) -> Result<Json<TaskDeliveryReadback>, crate::api::ApiError> {
     use crate::api::ApiError;
     let mut tx = state
         .pool
@@ -684,8 +847,6 @@ pub(crate) async fn get_local_delivery(
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found_named("workspace operation"))?;
     sdlc_workspace::verify_lookup(&original, &expected)?;
-    let target = configured_target(&state, project, false)
-        .map_err(|_| ApiError::service_unavailable("owner local delivery target unavailable"))?;
     if delivery_key.is_empty()
         || delivery_key.len() > 128
         || !delivery_key
@@ -694,6 +855,13 @@ pub(crate) async fn get_local_delivery(
     {
         return Err(ApiError::bad_request("invalid delivery key"));
     }
+    if state.config.sdlc_workspace.local_delivery_kind == crate::config::LocalDeliveryKind::Oci {
+        let result = oci::read_task(&state, project, &key, &delivery_key, &original)?;
+        tx.commit().await.map_err(ApiError::internal)?;
+        return Ok(Json(TaskDeliveryReadback::Oci(result)));
+    }
+    let target = configured_target(&state, project, false)
+        .map_err(|_| ApiError::service_unavailable("owner local delivery target unavailable"))?;
     let path = operation_dir(&target.root, &delivery_key).join("intent.json");
     let intent = optional::<Intent>(&path)
         .map_err(|_| ApiError::conflict("owner delivery journal unavailable or inconsistent"))?
@@ -707,5 +875,5 @@ pub(crate) async fn get_local_delivery(
         .readback(&intent.receipt.command, &original)
         .map_err(|_| ApiError::conflict("original delivery journal mismatch"))?;
     tx.commit().await.map_err(ApiError::internal)?;
-    Ok(Json(result))
+    Ok(Json(TaskDeliveryReadback::Static(result)))
 }

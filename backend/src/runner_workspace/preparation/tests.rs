@@ -107,6 +107,119 @@ fn fixture_git(cwd: &Path, args: &[&str]) -> String {
 }
 
 #[tokio::test]
+async fn preflight_expiry_prevents_workspace_creation() {
+    let f = Fixture::new();
+    let original = serde_json::to_vec(&f.request).unwrap();
+    let deadline = Instant::now();
+    let mut checks = 0;
+    let error = prepare_at(&f.workspaces, &f.source, &f.request, Some(deadline), || {
+        checks += 1;
+        deadline
+    })
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("before workspace creation"));
+    assert_eq!(checks, 1);
+    assert!(!f.workspaces.exists());
+    assert_eq!(serde_json::to_vec(&f.request).unwrap(), original);
+}
+
+#[tokio::test]
+async fn expiry_before_clone_retains_custody_without_git_effects() {
+    let f = Fixture::new();
+    let deadline = Instant::now();
+    let before = deadline.checked_sub(Duration::from_secs(1)).unwrap();
+    let mut checks = 0;
+    let error = prepare_at(&f.workspaces, &f.source, &f.request, Some(deadline), || {
+        checks += 1;
+        if checks == 1 { before } else { deadline }
+    })
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("before clone"));
+    assert_eq!(checks, 2);
+    assert!(!f.checkout().exists());
+    assert!(!f.directory().join(PREPARED).exists());
+    OwnedWorkspace::reopen(&f.workspaces, &f.request.workspace_id)
+        .unwrap()
+        .verify_identity(
+            f.request.attempt_id,
+            f.request.lease_id,
+            f.request.workspace_generation,
+        )
+        .unwrap();
+    let intent = fs::read(f.directory().join(INTENT)).unwrap();
+    let active = fs::read(f.directory().join(ACTIVE)).unwrap();
+    let saved: Intent = read_guarded_json(&f.directory().join(INTENT)).unwrap();
+    assert_eq!(saved.request, f.request);
+    assert!(prepare(&f.workspaces, &f.source, &f.request).await.is_err());
+    assert!(
+        readback(&f.workspaces, &f.source, &f.request)
+            .await
+            .is_err()
+    );
+    assert_eq!(fs::read(f.directory().join(INTENT)).unwrap(), intent);
+    assert_eq!(fs::read(f.directory().join(ACTIVE)).unwrap(), active);
+    assert!(!f.checkout().exists());
+}
+
+#[tokio::test]
+async fn expiry_before_checkout_retains_clone_and_active_custody() {
+    let f = Fixture::new();
+    let deadline = Instant::now();
+    let before = deadline.checked_sub(Duration::from_secs(1)).unwrap();
+    let mut checks = 0;
+    let error = prepare_at(&f.workspaces, &f.source, &f.request, Some(deadline), || {
+        checks += 1;
+        if checks < 3 { before } else { deadline }
+    })
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("before checkout"));
+    assert_eq!(checks, 3);
+    assert!(f.checkout().join(".git").is_dir());
+    assert!(!f.checkout().join("tracked.txt").exists());
+    assert_ne!(
+        fixture_git(&f.checkout(), &["rev-parse", "HEAD"]),
+        f.request.source_commit
+    );
+    assert!(!f.directory().join(PREPARED).exists());
+    let intent = fs::read(f.directory().join(INTENT)).unwrap();
+    let active = fs::read(f.directory().join(ACTIVE)).unwrap();
+    assert!(prepare(&f.workspaces, &f.source, &f.request).await.is_err());
+    assert!(
+        readback(&f.workspaces, &f.source, &f.request)
+            .await
+            .is_err()
+    );
+    assert_eq!(fs::read(f.directory().join(INTENT)).unwrap(), intent);
+    assert_eq!(fs::read(f.directory().join(ACTIVE)).unwrap(), active);
+    assert!(!f.checkout().join("tracked.txt").exists());
+}
+
+#[tokio::test]
+async fn expired_deadline_does_not_block_retained_preparation_readback() {
+    let f = Fixture::new();
+    let first = prepare(&f.workspaces, &f.source, &f.request).await.unwrap();
+    let observed = prepare_at(
+        &f.workspaces,
+        &f.source,
+        &f.request,
+        Some(Instant::now()),
+        || panic!("retained observation must not consult effect deadline"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(observed, first);
+    assert_eq!(
+        readback(&f.workspaces, &f.source, &f.request)
+            .await
+            .unwrap(),
+        first
+    );
+}
+
+#[tokio::test]
 async fn allocated_identity_exact_pin_replay_and_restart_readback() {
     let f = Fixture::new();
     let first = prepare(&f.workspaces, &f.source, &f.request).await.unwrap();

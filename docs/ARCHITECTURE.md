@@ -1,9 +1,19 @@
 # Архитектура Forge CI/CD
 
+Typed task image-build source использует existing embedded runner и backend
+Docker/TLS authority без передачи её jobs/agents. Exact Git export и generated
+OCI descriptor отделены от mutable job checkout. Source не заменяет actual
+build/deployment qualification: [ADR-0027](adr/0027-task-backend-image-build.md).
+51 unit-тест и atomic-terminal PG aggregate проверены отдельно от native
+build/deployment: [границы evidence](IMAGE_BUILD_QUALIFICATION_20261016.md).
+
 Owner-local OCI CLI поддерживает preloaded immutable image и read-only data
 snapshot без migrations/restore. Actual container/mount/network, served manifest,
 schema/bytes compatibility и application acceptance отделены от desired Compose
-state. [ADR-0021](adr/0021-owner-local-oci-readonly-data.md); HTTP dispatch закрыт.
+state. [ADR-0021](adr/0021-owner-local-oci-readonly-data.md) сохраняет local CLI scope.
+Новый opt-in HTTP OCI source adapter использует текущую task authority и existing
+executor: [ADR-0026](adr/0026-task-bound-oci-owner-target.md). Компиляция, actual
+OCI qualification и установка ещё не подтверждены; Static остаётся default.
 [Сквозные проекты и CI-конфигурации](adr/0024-workspace-projects-delivery-configurations.md): Tracker владеет именем и ключом проекта; Forge хранит проверенную локальную проекцию, Git-группу, репозитории и выполнение. Старый `project_id` остаётся ID CI-конфигурации.
 
 Target интеграция автономного SDLC: [delivery receipts v1](SDLC_DELIVERY_V1.md).
@@ -29,8 +39,11 @@ source binding/live lease проверка остаются prerequisite буд�
 Owner-local manifest delivery переиспользует existing candidate observer и
 project machine ACL. `domain::task_delivery` задаёт strict commands/evidence;
 server IO primitive `task_delivery` содержит isolated filesystem publication и
-bounded HTTP probes. Privileged CLI — единственный effect adapter; HTTP SDLC POST
-закрыт, GET читает history без effects. Existing platform deployments/approvals
+bounded HTTP probes. Privileged CLI сохраняет отдельный legacy verification adapter.
+Source candidate2026-10-13 подключает прежний static-manifest HTTP executor только
+для опубликованного nonproduction target и fresh Tracker DevOps assignment/lease;
+[границы](API.md#task-bound-nonproduction-delivery). Это не новый controller или
+runtime qualification. GET читает history без effects. Existing platform deployments/approvals
 не становятся admission и не переименовываются в verified deployment.
 Процессный lock и durable filesystem journal не являются общей транзакцией с
 DB или протоколом orchestration stop. [ADR-0020](adr/0020-owner-local-manifest-delivery.md).

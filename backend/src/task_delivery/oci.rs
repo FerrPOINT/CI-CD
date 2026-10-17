@@ -4,6 +4,11 @@ use super::*;
 use std::{process::Stdio, time::Duration};
 use tokio::{io::AsyncReadExt, process::Command};
 
+#[path = "oci_probe.rs"]
+mod remote_probe;
+#[path = "oci_transport.rs"]
+mod transport;
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Descriptor {
@@ -28,6 +33,8 @@ struct Policy {
     volume_root: PathBuf,
     data_file: PathBuf,
     data_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    transport_image: Option<String>,
     checks: DeliveryPolicy,
 }
 
@@ -41,8 +48,9 @@ struct Manifest {
     data_sha256: String,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[schema(as = OciDeliveryReceipt)]
 pub struct Receipt {
     schema: String,
     scope: String,
@@ -64,8 +72,9 @@ pub struct Receipt {
     sdlc_acceptance_verified: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
+#[schema(as = OciDeliveryReadback)]
 pub struct Readback {
     receipt: Receipt,
     reconciled_receipt: Option<Receipt>,
@@ -100,6 +109,75 @@ struct Owner {
     project: Uuid,
     policy: Policy,
     policy_hash: String,
+    task_client: Option<crate::runner_docker::Client>,
+}
+
+struct TaskAuthority<'a> {
+    state: &'a AppState,
+    claims: &'a crate::auth::AccessClaims,
+    connection: &'a mut sqlx::PgConnection,
+    permit: tracker::Permit,
+}
+
+impl TaskAuthority<'_> {
+    async fn refresh(
+        &mut self,
+        owner: &Owner,
+        command: &DeliveryCommand,
+        original: &WorkspaceOperationReceipt,
+    ) -> anyhow::Result<()> {
+        let policy = owner
+            .policy
+            .checks
+            .task_execution
+            .as_ref()
+            .context("task policy absent")?;
+        sdlc_workspace::authorize(
+            self.connection,
+            self.state,
+            self.claims,
+            owner.project,
+            "api:write",
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("owner write authorization changed"))?;
+        task_environment(self.connection, owner.project, policy)
+            .await
+            .map_err(|_| anyhow::anyhow!("nonproduction task target changed"))?;
+        crate::repository_catalog::require_project_writable(
+            self.state.pool.as_ref().context("owner database absent")?,
+            owner.project,
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("project namespace became read-only"))?;
+        self.permit = tracker::read(
+            self.state,
+            policy,
+            original,
+            command.task_fence.as_ref().context("task fence absent")?,
+            true,
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Tracker authority changed before effect"))?;
+        sdlc_workspace::authorize(
+            self.connection,
+            self.state,
+            self.claims,
+            owner.project,
+            "api:write",
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("owner write authorization changed"))?;
+        self.permit.check()
+    }
+}
+
+fn receipt_scope(command: &DeliveryCommand) -> &'static str {
+    if command.task_fence.is_some() {
+        "task_nonproduction_delivery"
+    } else {
+        "owner_local_verification"
+    }
 }
 
 #[derive(Debug)]
@@ -250,11 +328,24 @@ fn child_start(pid: u32) -> anyhow::Result<String> {
 
 impl Owner {
     fn open(project: Uuid, create: bool) -> anyhow::Result<Self> {
+        Self::open_at(
+            project,
+            create,
+            &PathBuf::from(std::env::var("CICD_LOCAL_OCI_ROOT")?),
+            &PathBuf::from(std::env::var("CICD_LOCAL_OCI_POLICY")?),
+        )
+    }
+
+    fn open_at(
+        project: Uuid,
+        create: bool,
+        root: &Path,
+        policy_path: &Path,
+    ) -> anyhow::Result<Self> {
         ensure!(
             cfg!(target_os = "linux"),
             "OCI executor requires Linux process/filesystem semantics"
         );
-        let root = PathBuf::from(std::env::var("CICD_LOCAL_OCI_ROOT")?);
         ensure!(
             root.is_absolute()
                 && root.components().all(|c| !matches!(
@@ -263,7 +354,7 @@ impl Owner {
                 )),
             "isolated normalized OCI root required"
         );
-        let policy: Policy = read(&PathBuf::from(std::env::var("CICD_LOCAL_OCI_POLICY")?))?;
+        let policy: Policy = read(policy_path)?;
         let suffix = policy
             .project_name
             .strip_prefix("sdlc-qa-forge-oci-")
@@ -281,6 +372,13 @@ impl Owner {
             "isolated QA network required"
         );
         ensure!(digest(&policy.data_sha256), "exact data snapshot required");
+        ensure!(
+            policy
+                .transport_image
+                .as_deref()
+                .is_none_or(crate::domain::image_build::valid_image_id),
+            "owner transport image must be immutable"
+        );
         policy.checks.validate()?;
         for path in [
             &policy.docker_bin,
@@ -292,9 +390,9 @@ impl Owner {
             plain(path)?;
         }
         if create {
-            directory(&root)?;
+            directory(root)?;
         }
-        plain(&root)?;
+        plain(root)?;
         let root = root.canonicalize()?;
         ensure!(
             !policy.data_file.canonicalize()?.starts_with(&root),
@@ -332,7 +430,22 @@ impl Owner {
             project,
             policy,
             policy_hash,
+            task_client: None,
         })
+    }
+
+    fn check_task_daemon(&self, daemon_id: &str) -> anyhow::Result<()> {
+        ensure!(
+            !daemon_id.is_empty() && daemon_id == self.policy.daemon_id,
+            "configured task daemon differs from OCI owner policy"
+        );
+        Ok(())
+    }
+
+    fn with_task_client(mut self, client: crate::runner_docker::Client) -> anyhow::Result<Self> {
+        self.check_task_daemon(client.image_build_daemon_id())?;
+        self.task_client = Some(client);
+        Ok(self)
     }
 
     fn data(&self, descriptor: &Descriptor) -> anyhow::Result<(u32, String)> {
@@ -368,12 +481,17 @@ impl Owner {
         child
             .args(args)
             .env_clear()
-            .env("DOCKER_HOST", "unix:///var/run/docker.sock")
             .env("DOCKER_CONFIG", self.root.join("docker-config"))
             .env("PATH", "/usr/local/bin:/usr/bin:/bin")
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        if let Some(client) = &self.task_client {
+            // Apply explicit runner transport after clearing inherited environment.
+            client.apply(&mut child);
+        } else {
+            child.env("DOCKER_HOST", "unix:///var/run/docker.sock");
+        }
         #[cfg(target_os = "linux")]
         unsafe {
             child.pre_exec(|| {
@@ -609,8 +727,8 @@ impl Owner {
     fn validate_receipt(&self, r: &Receipt, intent: &Intent) -> anyhow::Result<()> {
         ensure!(
             r.schema == "forge/local-oci-operation/v1"
-                && r.scope == "owner_local_verification"
-                && !r.dispatch_allowed
+                && r.scope == receipt_scope(&r.command)
+                && r.dispatch_allowed == r.command.task_fence.is_some()
                 && !r.sdlc_acceptance_verified
                 && r.command_sha256 == intent.receipt.command_sha256
                 && serde_json::to_vec(&r.command)? == serde_json::to_vec(&intent.receipt.command)?
@@ -693,6 +811,26 @@ impl Owner {
         immutable(&dir.join("child-stopped.json"), &true)
     }
 
+    async fn probe_application(
+        &self,
+        helper: Option<&str>,
+        ip: std::net::IpAddr,
+        path: &str,
+        expected: &str,
+        limit: u64,
+    ) -> DeliveryProbe {
+        if let Some(helper) = helper {
+            self.probe_remote(helper, ip, path, expected, limit).await
+        } else {
+            let mut checks = self.policy.checks.clone();
+            checks.origin = match ip {
+                std::net::IpAddr::V4(_) => format!("http://{ip}:8000"),
+                std::net::IpAddr::V6(_) => format!("http://[{ip}]:8000"),
+            };
+            probes::probe(&checks, path, expected, limit).await
+        }
+    }
+
     async fn observe(&self, mut receipt: Receipt, manifest: &Manifest) -> Receipt {
         let result = async {
             self.engine().await?;
@@ -749,33 +887,74 @@ impl Owner {
                 .as_str()
                 .context("serving address missing")?;
             let parsed: std::net::IpAddr = ip.parse()?;
-            let mut checks = self.policy.checks.clone();
-            checks.origin = format!("http://{parsed}:8000");
+            let checks = &self.policy.checks;
+            let helper = if self.task_client.is_some() {
+                Some(self.validate_transport(&receipt).await?)
+            } else {
+                None
+            };
             let hash = receipt.manifest_sha256.as_ref().unwrap();
-            let mut version = probes::probe(&checks, "/.forge/version", hash, 128 * 1024).await;
+            let manifest_file = self.root.join("manifests").join(format!("{hash}.json"));
+            let mut version = self
+                .probe_application(
+                    helper.as_deref(),
+                    parsed,
+                    "/.forge/version",
+                    hash,
+                    128 * 1024,
+                )
+                .await;
             for _ in 0..10 {
                 if version.status != DeliveryStatus::Unavailable {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                version = probes::probe(&checks, "/.forge/version", hash, 128 * 1024).await;
+                version = self
+                    .probe_application(
+                        helper.as_deref(),
+                        parsed,
+                        "/.forge/version",
+                        hash,
+                        128 * 1024,
+                    )
+                    .await;
             }
-            let health = probes::probe(
-                &checks,
-                &checks.health_path,
-                &checks.health_body_sha256,
-                64 * 1024,
-            )
-            .await;
-            let acceptance = probes::probe(
-                &checks,
-                &checks.acceptance_path,
-                &checks.acceptance_body_sha256,
-                64 * 1024,
-            )
-            .await;
-            let compatibility = probes::probe(&checks, "/compatibility", &data, 1024 * 1024).await;
-            let end_version = probes::probe(&checks, "/.forge/version", hash, 128 * 1024).await;
+            let health = self
+                .probe_application(
+                    helper.as_deref(),
+                    parsed,
+                    &checks.health_path,
+                    &checks.health_body_sha256,
+                    64 * 1024,
+                )
+                .await;
+            let acceptance = self
+                .probe_application(
+                    helper.as_deref(),
+                    parsed,
+                    &checks.acceptance_path,
+                    &checks.acceptance_body_sha256,
+                    64 * 1024,
+                )
+                .await;
+            let compatibility = self
+                .probe_application(
+                    helper.as_deref(),
+                    parsed,
+                    "/compatibility",
+                    &data,
+                    1024 * 1024,
+                )
+                .await;
+            let end_version = self
+                .probe_application(
+                    helper.as_deref(),
+                    parsed,
+                    "/.forge/version",
+                    hash,
+                    128 * 1024,
+                )
+                .await;
             let end = self.docker(&["container", "inspect", &name]).await?;
             ensure!(
                 end[0]["Id"] == c["Id"]
@@ -784,6 +963,10 @@ impl Owner {
                     && self.data(&manifest.descriptor)?.1 == data,
                 "container/data changed during checks"
             );
+            if let Some(helper) = helper.as_deref() {
+                self.verify_remote_snapshots(helper, &manifest_file, &receipt)
+                    .await?;
+            }
             receipt.status = if version.status == DeliveryStatus::Unavailable
                 || end_version.status == DeliveryStatus::Unavailable
             {
@@ -834,12 +1017,27 @@ impl Owner {
         original: WorkspaceOperationReceipt,
         candidate: Option<VerifiedCandidate>,
         reconcile: bool,
+        mut task: Option<TaskAuthority<'_>>,
     ) -> anyhow::Result<Readback> {
+        ensure!(
+            command.task_fence.is_some() == task.is_some(),
+            "task effect requires live owner authorization"
+        );
+        ensure!(
+            task.is_some() == self.task_client.is_some(),
+            "task effect requires configured owner transport"
+        );
+        if let Some(task) = &task {
+            task.permit.check()?;
+        }
         let _lock = Lock::acquire(&self.root)?;
         let dir = operation_dir(&self.root, &command.operation_key);
         if dir.exists() {
             let old = self.readback(command, &original)?;
             if reconcile && old.reconciliation_needed {
+                if let Some(task) = &mut task {
+                    task.refresh(self, command, &original).await?;
+                }
                 self.child_stopped(&dir)?;
                 let intent: Intent = read(&dir.join("intent.json"))?;
                 if let Some(manifest) = &intent.manifest {
@@ -847,11 +1045,21 @@ impl Owner {
                     if pointer(&self.root, "current.json")?.as_ref() == Some(&hash) {
                         let receipt = self.observe(intent.receipt.clone(), manifest).await;
                         if receipt.status != DeliveryStatus::Unknown {
+                            if let Some(task) = &mut task {
+                                task.refresh(self, command, &original).await?;
+                            }
                             if receipt.status == DeliveryStatus::Verified {
                                 self.retain_verified_checks(&dir, &intent, &receipt)?;
                                 replace_pointer(&self.root, "confirmed.json", &hash)?;
                             }
                             immutable(&dir.join("reconciled.json"), &receipt)?;
+                            if self.task_client.is_some() {
+                                let execution_file = self.policy.compose_root.join(format!(
+                                    "{}.json",
+                                    sha(command.operation_key.as_bytes())
+                                ));
+                                self.stop_transport(&execution_file, &dir, &receipt).await?;
+                            }
                         }
                     }
                 }
@@ -859,6 +1067,11 @@ impl Owner {
             return self.readback(command, &original);
         }
         ensure!(!reconcile, "original OCI operation unavailable");
+        let transport_image = if task.is_some() {
+            Some(self.remote_transport_image().await?)
+        } else {
+            None
+        };
         let mut count = 0;
         for entry in std::fs::read_dir(self.root.join("operations"))? {
             count += 1;
@@ -952,7 +1165,7 @@ impl Owner {
         let hash = sha(&serde_json::to_vec(&manifest)?);
         let receipt = Receipt {
             schema: "forge/local-oci-operation/v1".into(),
-            scope: "owner_local_verification".into(),
+            scope: receipt_scope(command).into(),
             command: command.clone(),
             command_sha256: sha(&serde_json::to_vec(command)?),
             original_operation: original.clone(),
@@ -967,9 +1180,12 @@ impl Owner {
             container_id: None,
             image_id: None,
             data_sha256: None,
-            dispatch_allowed: false,
+            dispatch_allowed: command.task_fence.is_some(),
             sdlc_acceptance_verified: false,
         };
+        if let Some(task) = &task {
+            task.permit.check()?;
+        }
         directory(&dir)?;
         immutable(
             &dir.join("intent.json"),
@@ -987,7 +1203,13 @@ impl Owner {
         }
         let host_manifest = self.host_path(&manifest_file).await?;
         let host_data = self.host_path(&self.policy.data_file).await?;
-        let compose = serde_json::json!({"services":{"application":{"image":manifest.descriptor.image_id,"pull_policy":"never","user":"65532:65532","read_only":true,"cap_drop":["ALL"],"security_opt":["no-new-privileges:true"],"pids_limit":64,"mem_limit":"128m","cpus":0.5,"labels":{"sdlc.task":"forge-task-delivery","sdlc.purpose":"disposable-oci-application"},"volumes":[{"type":"bind","source":host_manifest,"target":"/forge/manifest.json","read_only":true},{"type":"bind","source":host_data,"target":"/forge/data.json","read_only":true}],"networks":["owner"]}},"networks":{"owner":{"external":true,"name":self.policy.network_name}}});
+        let mut compose = serde_json::json!({"services":{"application":{"image":manifest.descriptor.image_id,"pull_policy":"never","user":"65532:65532","read_only":true,"cap_drop":["ALL"],"security_opt":["no-new-privileges:true"],"pids_limit":64,"mem_limit":"128m","cpus":0.5,"labels":{"sdlc.task":"forge-task-delivery","sdlc.purpose":"disposable-oci-application"},"volumes":[{"type":"bind","source":host_manifest,"target":"/forge/manifest.json","read_only":true},{"type":"bind","source":host_data,"target":"/forge/data.json","read_only":true}],"networks":["owner"]}},"networks":{"owner":{"external":true,"name":self.policy.network_name}}});
+        if let Some(image) = &transport_image {
+            compose["services"]["transport"] =
+                self.transport_service(image, &sha(command.operation_key.as_bytes()));
+            compose["volumes"] =
+                serde_json::json!({"data":{"external":true,"name":self.policy.volume_name}});
+        }
         let compose_file = dir.join("compose.json");
         immutable(&compose_file, &compose)?;
         let execution_file = self
@@ -995,7 +1217,10 @@ impl Owner {
             .compose_root
             .join(format!("{}.json", sha(command.operation_key.as_bytes())));
         immutable(&execution_file, &compose)?;
-        replace_pointer(&self.root, "current.json", &hash)?;
+        if transport_image.is_some() {
+            self.transfer_snapshots(&execution_file, &dir, &manifest_file, &receipt, &mut task)
+                .await?;
+        }
         let args = vec![
             "-p".into(),
             self.policy.project_name.clone(),
@@ -1009,9 +1234,19 @@ impl Owner {
             "--force-recreate".into(),
             "application".into(),
         ];
+        if let Some(task) = &mut task {
+            task.refresh(self, command, &original).await?;
+        }
+        replace_pointer(&self.root, "current.json", &hash)?;
+        if let Some(task) = &mut task {
+            task.refresh(self, command, &original).await?;
+        }
         self.run(&self.policy.compose_bin, &args, Some(&dir))
             .await?;
         let receipt = self.observe(receipt, &manifest).await;
+        if let Some(task) = &mut task {
+            task.refresh(self, command, &original).await?;
+        }
         if receipt.status == DeliveryStatus::Verified {
             immutable(&dir.join("verified-checks.json"), &receipt)?;
             #[cfg(feature = "oci-integration")]
@@ -1021,11 +1256,159 @@ impl Owner {
                 tokio::time::sleep(Duration::from_secs(20)).await;
                 anyhow::bail!("native QA verified-checks checkpoint was not interrupted");
             }
+            if let Some(task) = &mut task {
+                task.refresh(self, command, &original).await?;
+            }
             replace_pointer(&self.root, "confirmed.json", &hash)?;
         }
         immutable(&dir.join("result.json"), &receipt)?;
+        if transport_image.is_some() && receipt.status != DeliveryStatus::Unknown {
+            self.stop_transport(&execution_file, &dir, &receipt).await?;
+        }
         self.readback(command, &original)
     }
+}
+
+fn check_owner_root(state: &AppState, root: &Path) -> anyhow::Result<()> {
+    let resolved = if root.exists() {
+        plain(root)?;
+        root.canonicalize()?
+    } else {
+        let parent = root.parent().context("OCI parent missing")?;
+        plain(parent)?;
+        parent
+            .canonicalize()?
+            .join(root.file_name().context("OCI root name missing")?)
+    };
+    for protected in [&state.git.root, &state.config.artifacts.root] {
+        if let Ok(path) = protected.canonicalize() {
+            ensure!(
+                !resolved.starts_with(&path) && !path.starts_with(&resolved),
+                "OCI target overlaps protected root"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn task_owner(state: &AppState, project: Uuid) -> anyhow::Result<Owner> {
+    let config = &state.config.sdlc_workspace;
+    let root = config
+        .local_delivery_root
+        .as_deref()
+        .context("OCI target root absent")?;
+    let policy = config
+        .local_delivery_policy
+        .as_deref()
+        .context("OCI target policy absent")?;
+    check_owner_root(state, root)?;
+    Owner::open_at(project, false, root, policy)
+}
+
+pub(super) async fn execute_task(
+    state: Arc<AppState>,
+    claims: &crate::auth::AccessClaims,
+    connection: &mut sqlx::PgConnection,
+    project: Uuid,
+    command: &DeliveryCommand,
+    original: WorkspaceOperationReceipt,
+) -> Result<Readback, crate::api::ApiError> {
+    use crate::api::ApiError;
+    let owner = task_owner(&state, project)
+        .map_err(|_| ApiError::service_unavailable("Опубликованный OCI owner target недоступен"))?;
+    let policy =
+        owner.policy.checks.task_execution.as_ref().ok_or_else(|| {
+            ApiError::service_unavailable("Nonproduction OCI task policy недоступна")
+        })?;
+    task_environment(connection, project, policy).await?;
+    let fence = command
+        .task_fence
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("Нужен текущий task delivery fence"))?;
+    let existing = operation_dir(&owner.root, &command.operation_key).exists();
+    if existing {
+        let saved = owner
+            .readback(command, &original)
+            .map_err(|_| ApiError::conflict("Исходный OCI delivery journal не совпадает"))?;
+        if !saved.reconciliation_needed {
+            return Ok(saved);
+        }
+    }
+    crate::repository_catalog::require_project_writable(
+        state
+            .pool
+            .as_ref()
+            .ok_or_else(|| ApiError::service_unavailable("owner database unavailable"))?,
+        project,
+    )
+    .await?;
+    let candidate = if !existing && command.action == DeliveryAction::Deploy {
+        super::candidate(
+            state.clone(),
+            claims.clone(),
+            project,
+            command,
+            owner.policy_hash.clone(),
+        )
+        .await
+        .map_err(|_| ApiError::conflict("Readback точного OCI pipeline artifact отклонён"))?
+    } else {
+        None
+    };
+    let permit = tracker::read(&state, policy, &original, fence, existing).await?;
+    sdlc_workspace::authorize(connection, &state, claims, project, "api:write").await?;
+    let client = crate::runner_docker::Client::configured_verified()
+        .await
+        .map_err(|_| ApiError::service_unavailable("Проверенный OCI task daemon недоступен"))?;
+    let owner = owner.with_task_client(client).map_err(|_| {
+        ApiError::service_unavailable("OCI owner daemon не совпадает с конфигурацией")
+    })?;
+    owner
+        .execute(
+            command,
+            original,
+            candidate,
+            existing,
+            Some(TaskAuthority {
+                state: &state,
+                claims,
+                connection,
+                permit,
+            }),
+        )
+        .await
+        .map_err(|_| ApiError::conflict("OCI delivery удерживается; прочитайте original key"))
+}
+
+pub(super) fn read_task(
+    state: &AppState,
+    project: Uuid,
+    workspace_key: &str,
+    delivery_key: &str,
+    original: &WorkspaceOperationReceipt,
+) -> Result<Readback, crate::api::ApiError> {
+    use crate::api::ApiError;
+    let owner = task_owner(state, project)
+        .map_err(|_| ApiError::service_unavailable("Опубликованный OCI owner target недоступен"))?;
+    let intent = optional::<Intent>(&operation_dir(&owner.root, delivery_key).join("intent.json"))
+        .map_err(|_| ApiError::conflict("OCI delivery journal недоступен или изменён"))?
+        .ok_or_else(|| ApiError::not_found_named("OCI delivery operation"))?;
+    if intent.receipt.command.workspace_operation_key != workspace_key
+        || intent.receipt.command.operation_key != delivery_key
+        || intent.receipt.command.task_fence.is_none()
+    {
+        return Err(ApiError::conflict(
+            "Исходный task OCI delivery key не совпадает",
+        ));
+    }
+    intent
+        .receipt
+        .command
+        .validate()
+        .map_err(|_| ApiError::conflict("Исходный OCI command невалиден"))?;
+    owner
+        .readback(&intent.receipt.command, original)
+        .map_err(|_| ApiError::conflict("Исходный OCI delivery journal не совпадает"))
 }
 
 /// Privileged local entry point; never called by the SDLC HTTP command route.
@@ -1044,6 +1427,10 @@ pub async fn local_command(
         );
     }
     command.validate().map_err(anyhow::Error::msg)?;
+    ensure!(
+        command.task_fence.is_none(),
+        "task delivery uses the authenticated owner API"
+    );
     ensure!(
         token.starts_with("forge_sat_"),
         "existing owner machine credential required"
@@ -1078,25 +1465,10 @@ pub async fn local_command(
     .context("original operation unavailable")?;
     sdlc_workspace::verify_lookup(&original, &command.original)
         .map_err(|_| anyhow::anyhow!("original binding mismatch"))?;
-    let root = PathBuf::from(std::env::var("CICD_LOCAL_OCI_ROOT")?);
-    let resolved = if root.exists() {
-        plain(&root)?;
-        root.canonicalize()?
-    } else {
-        let parent = root.parent().context("OCI parent missing")?;
-        plain(parent)?;
-        parent
-            .canonicalize()?
-            .join(root.file_name().context("OCI root name missing")?)
-    };
-    for protected in [&state.git.root, &state.config.artifacts.root] {
-        if let Ok(path) = protected.canonicalize() {
-            ensure!(
-                !resolved.starts_with(&path) && !path.starts_with(&resolved),
-                "OCI target overlaps protected root"
-            );
-        }
-    }
+    check_owner_root(
+        &state,
+        &PathBuf::from(std::env::var("CICD_LOCAL_OCI_ROOT")?),
+    )?;
     let owner = Owner::open(project, !read_only)?;
     let result = if read_only {
         owner.readback(&command, &original)?
@@ -1118,7 +1490,7 @@ pub async fn local_command(
             .await
             .map_err(|_| anyhow::anyhow!("fresh owner write rejected"))?;
         owner
-            .execute(&command, original, candidate, reconcile)
+            .execute(&command, original, candidate, reconcile, None)
             .await?
     };
     tx.commit().await?;
@@ -1152,12 +1524,14 @@ mod tests {
                 volume_root: root.clone(),
                 data_file: root.join("data.json"),
                 data_sha256: sha(b"data"),
+                transport_image: None,
                 checks: DeliveryPolicy {
                     origin: "http://127.0.0.1:8000".into(),
                     health_path: "/health".into(),
                     health_body_sha256: sha(b"ok\n"),
                     acceptance_path: "/acceptance".into(),
                     acceptance_body_sha256: sha(b"accepted\n"),
+                    task_execution: None,
                 },
             };
             let owner = Owner {
@@ -1165,6 +1539,7 @@ mod tests {
                 project,
                 policy_hash: sha(&serde_json::to_vec(&policy).unwrap()),
                 policy,
+                task_client: None,
             };
             let attempt_id = Uuid::new_v4();
             let request = WorkspaceOperationRequest {
@@ -1220,6 +1595,7 @@ mod tests {
                 action: DeliveryAction::Deploy,
                 artifact_id: Some(artifact_id),
                 expected_manifest_sha256: None,
+                task_fence: None,
             };
             command.validate().unwrap();
             let manifest = Manifest {
@@ -1313,6 +1689,90 @@ mod tests {
         fn drop(&mut self) {
             std::fs::remove_dir_all(&self.owner.root).unwrap();
         }
+    }
+
+    #[test]
+    fn task_oci_transport_requires_exact_published_daemon_without_rewriting_policy() {
+        let fixture = RecoveryFixture::new();
+        let policy = serde_json::to_vec(&fixture.owner.policy).unwrap();
+        let intent = std::fs::read(fixture.dir.join("intent.json")).unwrap();
+        fixture
+            .owner
+            .check_task_daemon(&fixture.owner.policy.daemon_id)
+            .unwrap();
+        for daemon in ["", "foreign-daemon"] {
+            assert!(fixture.owner.check_task_daemon(daemon).is_err());
+        }
+        assert!(fixture.owner.task_client.is_none());
+        assert_eq!(serde_json::to_vec(&fixture.owner.policy).unwrap(), policy);
+        assert_eq!(
+            std::fs::read(fixture.dir.join("intent.json")).unwrap(),
+            intent
+        );
+    }
+
+    #[test]
+    fn task_oci_legacy_docker_and_compose_keep_isolated_unix_environment() {
+        let fixture = RecoveryFixture::new();
+        for binary in [
+            &fixture.owner.policy.docker_bin,
+            &fixture.owner.policy.compose_bin,
+        ] {
+            let command = fixture.owner.process(binary, &["version".into()]);
+            let command = command.as_std();
+            let env = command
+                .get_envs()
+                .map(|(key, value)| (key.to_owned(), value.map(|value| value.to_owned())))
+                .collect::<std::collections::BTreeMap<_, _>>();
+            assert_eq!(env.len(), 3);
+            assert_eq!(
+                env.get(std::ffi::OsStr::new("DOCKER_HOST")),
+                Some(&Some("unix:///var/run/docker.sock".into()))
+            );
+            assert_eq!(
+                env.get(std::ffi::OsStr::new("DOCKER_CONFIG")),
+                Some(&Some(
+                    fixture.owner.root.join("docker-config").into_os_string()
+                ))
+            );
+            assert_eq!(
+                env.get(std::ffi::OsStr::new("PATH")),
+                Some(&Some("/usr/local/bin:/usr/bin:/bin".into()))
+            );
+            assert_eq!(
+                command
+                    .get_args()
+                    .map(|arg| arg.to_str().unwrap())
+                    .collect::<Vec<_>>(),
+                ["version"]
+            );
+        }
+    }
+
+    #[test]
+    fn task_oci_saved_http_readback_needs_no_transport_or_engine() {
+        let mut fixture = RecoveryFixture::new();
+        fixture.intent.receipt.command.task_fence = Some(task_fence());
+        fixture.intent.receipt.scope = "task_nonproduction_delivery".into();
+        fixture.intent.receipt.dispatch_allowed = true;
+        fixture.intent.receipt.command_sha256 =
+            sha(&serde_json::to_vec(&fixture.intent.receipt.command).unwrap());
+        // This synthetic fixture has not been published as an HTTP operation yet.
+        std::fs::remove_file(fixture.dir.join("intent.json")).unwrap();
+        immutable(&fixture.dir.join("intent.json"), &fixture.intent).unwrap();
+        let proof = fixture.verified("2026-10-07T00:01:00Z");
+        immutable(&fixture.dir.join("result.json"), &proof).unwrap();
+        let bytes = std::fs::read(fixture.dir.join("result.json")).unwrap();
+        assert!(fixture.owner.task_client.is_none());
+        assert!(!fixture.owner.policy.docker_bin.exists());
+        let readback = fixture.readback().unwrap();
+        assert_eq!(readback.latest_status(), DeliveryStatus::Verified);
+        assert!(!readback.reconciliation_needed);
+        assert_eq!(
+            std::fs::read(fixture.dir.join("result.json")).unwrap(),
+            bytes
+        );
+        assert!(!fixture.dir.join("child.json").exists());
     }
 
     #[test]
@@ -1448,6 +1908,7 @@ mod tests {
                 fixture.intent.receipt.original_operation.clone(),
                 None,
                 true,
+                None,
             )
             .await
             .unwrap();
@@ -1458,6 +1919,132 @@ mod tests {
         assert!(!fixture.dir.join("compose.json").exists());
         assert!(!fixture.dir.join("child.json").exists());
         assert_eq!(std::fs::read(&path).unwrap(), historical_bytes);
+    }
+
+    fn task_fence() -> crate::domain::task_delivery::TaskDeliveryFence {
+        crate::domain::task_delivery::TaskDeliveryFence {
+            development_result_id: Uuid::new_v4(),
+            assignment_id: Uuid::new_v4(),
+            execution_id: Uuid::new_v4(),
+            agent_id: Uuid::new_v4(),
+            lease_id: Uuid::new_v4(),
+            fencing_token: 1,
+            expected_lease_version: 1,
+            assignment_hash: "a".repeat(64),
+        }
+    }
+
+    #[test]
+    fn task_http_untagged_response_preserves_both_existing_wire_shapes() {
+        let fixture = RecoveryFixture::new();
+        let oci = fixture.readback().unwrap();
+        let expected = serde_json::to_vec(&oci).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&TaskDeliveryReadback::Oci(oci)).unwrap(),
+            expected
+        );
+        let static_value = DeliveryReadback {
+            receipt: DeliveryReceipt {
+                schema: "forge/local-delivery-operation/v1".into(),
+                scope: "owner_local_verification".into(),
+                command: fixture.intent.receipt.command.clone(),
+                command_sha256: fixture.intent.receipt.command_sha256.clone(),
+                original_operation: fixture.intent.receipt.original_operation.clone(),
+                manifest_sha256: None,
+                previous_manifest_sha256: None,
+                status: DeliveryStatus::Unknown,
+                reason: "local_effect_not_finalized".into(),
+                version: None,
+                served_artifact: None,
+                health: None,
+                acceptance: None,
+                recorded_at: Utc::now(),
+                dispatch_allowed: false,
+                sdlc_acceptance_verified: false,
+            },
+            reconciled_receipt: None,
+            current_manifest_sha256: None,
+            confirmed_manifest_sha256: None,
+            reconciliation_needed: true,
+        };
+        let expected = serde_json::to_vec(&static_value).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&TaskDeliveryReadback::Static(static_value)).unwrap(),
+            expected
+        );
+    }
+
+    #[test]
+    fn task_oci_receipt_cannot_relabel_historical_local_authority() {
+        let fixture = RecoveryFixture::new();
+        let legacy = fixture.intent.receipt.clone();
+        fixture
+            .owner
+            .validate_receipt(&legacy, &fixture.intent)
+            .unwrap();
+        let mut forged = legacy.clone();
+        forged.scope = "task_nonproduction_delivery".into();
+        forged.dispatch_allowed = true;
+        assert!(
+            fixture
+                .owner
+                .validate_receipt(&forged, &fixture.intent)
+                .is_err()
+        );
+        let mut intent = Intent {
+            receipt: legacy,
+            manifest: fixture.intent.manifest.clone(),
+        };
+        intent.receipt.command.task_fence = Some(task_fence());
+        intent.receipt.command_sha256 = sha(&serde_json::to_vec(&intent.receipt.command).unwrap());
+        assert!(
+            fixture
+                .owner
+                .validate_receipt(&intent.receipt, &intent)
+                .is_err()
+        );
+        intent.receipt.scope = "task_nonproduction_delivery".into();
+        intent.receipt.dispatch_allowed = true;
+        fixture
+            .owner
+            .validate_receipt(&intent.receipt, &intent)
+            .unwrap();
+        assert!(!fixture.intent.receipt.dispatch_allowed);
+        assert_eq!(fixture.intent.receipt.scope, "owner_local_verification");
+    }
+
+    #[tokio::test]
+    async fn task_oci_effect_without_live_authority_never_enters_engine_or_reconciliation() {
+        let fixture = RecoveryFixture::new();
+        let original_bytes = std::fs::read(fixture.dir.join("intent.json")).unwrap();
+        let mut command = fixture.intent.receipt.command.clone();
+        command.task_fence = Some(task_fence());
+        for reconcile in [false, true] {
+            let error = fixture
+                .owner
+                .execute(
+                    &command,
+                    fixture.intent.receipt.original_operation.clone(),
+                    None,
+                    reconcile,
+                    None,
+                )
+                .await
+                .err()
+                .unwrap();
+            assert!(
+                error
+                    .to_string()
+                    .contains("task effect requires live owner authorization")
+            );
+        }
+        assert!(!fixture.dir.join("child.json").exists());
+        assert!(!fixture.dir.join("compose.json").exists());
+        assert!(!fixture.dir.join("reconciled.json").exists());
+        assert_eq!(
+            std::fs::read(fixture.dir.join("intent.json")).unwrap(),
+            original_bytes
+        );
     }
 }
 

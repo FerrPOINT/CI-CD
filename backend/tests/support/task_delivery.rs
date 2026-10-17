@@ -6,6 +6,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "task_delivery_diagnostic.rs"]
+mod timeout_diagnostic;
+
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -95,6 +98,7 @@ impl ActualDelivery {
                 health_body_sha256: hash(b"ok\n"),
                 acceptance_path: "/acceptance".into(),
                 acceptance_body_sha256: hash(b"accepted\n"),
+                task_execution: None,
             })
             .unwrap(),
         )
@@ -327,6 +331,7 @@ impl ActualDelivery {
                     serde_json::from_value(evidence["artifacts"][0]["artifactId"].clone()).unwrap(),
                 ),
                 expected_manifest_sha256: None,
+                task_fence: None,
             },
             evidence["artifacts"][0].clone(),
             original,
@@ -377,20 +382,16 @@ impl ActualDelivery {
             .stderr(std::process::Stdio::piped())
             .spawn()
             .unwrap();
+        let pid = process.id();
         let mut wait = tokio::spawn(async move { process.wait_with_output().await.unwrap() });
         let output = match tokio::time::timeout(Duration::from_secs(25), &mut wait).await {
             Ok(result) => result.unwrap(),
             Err(_) => {
-                type LockDiagnostic = (i32, String, Option<String>, Vec<i32>, String);
-                let locks: Vec<LockDiagnostic> = sqlx::query_as("SELECT pid,state,wait_event,pg_blocking_pids(pid),left(query,160) FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() ORDER BY pid LIMIT 20").fetch_all(&self.f.pool).await.unwrap();
-                eprintln!(
-                    "DELIVERY_TIMEOUT key={} locks={locks:?}",
-                    command.operation_key
+                timeout_diagnostic::emit(
+                    &self.target_root,
+                    &hash(command.operation_key.as_bytes()),
+                    pid,
                 );
-                let files = std::fs::read_dir(&self.target_root)
-                    .ok()
-                    .map(|entries| entries.flatten().map(|e| e.file_name()).collect::<Vec<_>>());
-                eprintln!("DELIVERY_TARGET_FILES={files:?}");
                 wait.abort();
                 panic!("owner local CLI exceeded deadline");
             }
@@ -480,9 +481,261 @@ fn latest(readback: &serde_json::Value) -> &serde_json::Value {
     }
 }
 
+#[tokio::test]
+async fn task_bound_http_delivery_uses_live_devops_and_preserves_rollback_and_replay() {
+    use axum::{Json, Router, routing::get};
+    use serde_json::{Value, json};
+    let mut t = ActualDelivery::new().await;
+    t.f.request.role = cicd::domain::sdlc_workspace::WorkspaceRole::Developer;
+    t.f.request.binding.root_task_id = t.f.request.binding.task_id;
+    let environment = Uuid::new_v4();
+    sqlx::query("INSERT INTO environments(id,project_id,name,protected,required_approvals) VALUES($1,$2,'task-nonproduction',false,0)")
+        .bind(environment).bind(t.f.project).execute(&t.f.pool).await.unwrap();
+    let mut policy: Value =
+        serde_json::from_slice(&std::fs::read(&t.policy_file).unwrap()).unwrap();
+    policy["taskExecution"] = json!({"environment":"nonproduction","environmentId":environment,
+        "repositoryId":t.f.request.repository_id,"trackerInstanceId":t.f.request.binding.tracker_instance_id,
+        "trackerProjectId":t.f.request.binding.tracker_project_id,"holderSubject":"fleet-delivery"});
+    std::fs::write(&t.policy_file, serde_json::to_vec(&policy).unwrap()).unwrap();
+    let (a, _) = t
+        .build("http-A", "version=A\nhealth=ok\nacceptance=ok\n")
+        .await;
+    // Existing privileged owner initialization publishes the target; HTTP may not enroll one.
+    let (code, a_readback) = t.execute(&a, None).await;
+    assert_eq!(code, 0);
+    let manifest_a = a_readback.unwrap()["currentManifestSha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let (mut b, original) = t
+        .build("http-B", "version=B\nhealth=failed\nacceptance=ok\n")
+        .await;
+    b.expected_manifest_sha256 = Some(manifest_a.clone());
+    let agent = Uuid::new_v4();
+    let mut fence = TaskDeliveryFence {
+        development_result_id: Uuid::new_v4(),
+        assignment_id: Uuid::new_v4(),
+        execution_id: Uuid::new_v4(),
+        agent_id: agent,
+        lease_id: Uuid::new_v4(),
+        fencing_token: 1,
+        expected_lease_version: 1,
+        assignment_hash: String::new(),
+    };
+    let binding = &t.f.request.binding;
+    let route = json!({"agent_id":agent,"fleet_config_revision":1,"package_commit":"a".repeat(40),
+        "package_manifest_sha256":"b".repeat(64),"namespace_id":"1","namespace_name":"QA","workflow_id":"1",
+        "workflow_key":"hermes-sdlc:devops","profile":"hermes-sdlc-operations","workflow_catalog_version":4,
+        "workflow_catalog_sha256":"c".repeat(64)});
+    let routes: serde_json::Map<String, Value> = [
+        "project_manager",
+        "analyst",
+        "architect",
+        "developer",
+        "reviewer",
+        "tester",
+        "devops",
+    ]
+    .into_iter()
+    .map(|key| (key.into(), route.clone()))
+    .collect();
+    let routing = json!({"contract_version":1,"snapshot_id":binding.routing_snapshot_id,
+        "tracker_instance_id":binding.tracker_instance_id,"project_id":binding.tracker_project_id,
+        "task_id":binding.task_id,"root_task_id":binding.task_id,"confirmation_id":Uuid::new_v4(),
+        "requirement_revision":binding.requirement_revision,"content_hash":"d".repeat(64),"created_at":Utc::now(),
+        "policy":{"contract_version":1,"tracker_instance_id":binding.tracker_instance_id,
+            "project_id":binding.tracker_project_id,"version":1,"routing_hash":"e".repeat(64),"routes":routes,
+            "verification":"declared","native_ready":false,"dispatch_allowed":false,"author_subject":"owner","created_at":Utc::now()}});
+    let mut assignment = json!({"assignment_id":fence.assignment_id,"execution_id":fence.execution_id,
+        "task_id":binding.task_id,"owner_subject":"owner","role":"devops","stage":"Deployment","cycle":0,
+        "attempt":1,"agent_id":agent,"routing":routing,"previous_result_id":Uuid::new_v4(),
+        "fencing_token":fence.fencing_token,"lease_id":fence.lease_id});
+    fn sorted(value: Value) -> Value {
+        match value {
+            Value::Object(object) => {
+                let object: std::collections::BTreeMap<_, _> = object
+                    .into_iter()
+                    .map(|(key, value)| (key, sorted(value)))
+                    .collect();
+                Value::Object(object.into_iter().collect())
+            }
+            Value::Array(array) => Value::Array(array.into_iter().map(sorted).collect()),
+            value => value,
+        }
+    }
+    fence.assignment_hash = hash(&serde_json::to_vec(&sorted(assignment.clone())).unwrap());
+    assignment["assignment_hash"] = json!(fence.assignment_hash);
+    b.task_fence = Some(fence);
+    let reply = std::sync::Arc::new(std::sync::Mutex::new(
+        json!({"runtime_state":"running","receipt":{"task":{
+        "task_id":binding.task_id,"owner_subject":"owner","version":1,"stage":"Deployment","status":"InProgress",
+        "cycle":0,"transient_retries":0,"waiting_reason":null,"runtime":"running","routing":routing,"previous_result_id":assignment["previous_result_id"]},
+        "assignment":assignment,"lease":{"lease_id":b.task_fence.as_ref().unwrap().lease_id,"version":1,"holder_subject":"fleet-delivery"},
+        "binding":{"chat_id":Uuid::new_v4(),"run_id":Uuid::new_v4(),"machine_subject":"devops-agent",
+            "dispatch_receipt":{"reference":"fleet:accepted","sha256":"f".repeat(64)}},"result":null}}),
+    ));
+    let observed = reply.clone();
+    let source_result = json!({"source":"delivery","receipt":{"result_id":b.task_fence.as_ref().unwrap().development_result_id,
+        "assignment_id":binding.assignment_id,"task_id":binding.task_id,"cycle":0,
+        "output":{"role":"developer","commit_sha":t.f.request.source_commit},"next_stage":"Review"}});
+    let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let calls = hits.clone();
+    let tracker_app = Router::new()
+        .route(
+            &format!(
+                "/api/v1/issues/{}/sdlc/lifecycle/results/{}",
+                binding.task_id,
+                b.task_fence.as_ref().unwrap().development_result_id
+            ),
+            get(move |headers: axum::http::HeaderMap| {
+                let source_result = source_result.clone();
+                async move {
+                    assert_eq!(headers["authorization"], "Bearer task-reader-fixture");
+                    Json(source_result)
+                }
+            }),
+        )
+        .route(
+            &format!("/api/v1/issues/{}/sdlc/lifecycle", binding.task_id),
+            get(move |headers: axum::http::HeaderMap| {
+                let observed = observed.clone();
+                let calls = calls.clone();
+                async move {
+                    assert_eq!(headers["authorization"], "Bearer task-reader-fixture");
+                    calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let mut value = observed.lock().unwrap().clone();
+                    let now = Utc::now();
+                    value["observed_at"] = json!(now);
+                    value["receipt"]["lease"]["claimed_at"] = json!(now);
+                    value["receipt"]["lease"]["heartbeat_at"] = json!(now);
+                    value["receipt"]["lease"]["expires_at"] =
+                        json!(now + chrono::Duration::seconds(30));
+                    Json(value)
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let tracker_url = format!("http://{}", listener.local_addr().unwrap());
+    let tracker_server =
+        tokio::spawn(async move { axum::serve(listener, tracker_app).await.unwrap() });
+    let mut config = cicd::config::RuntimeConfig::test_default()
+        .with_auth_secret(Some("workspace-test-secret".into()));
+    config.sdlc_workspace.operation_subject = Some(t.f.subject);
+    config.sdlc_workspace.local_delivery_root = Some(t.target_root.clone());
+    config.sdlc_workspace.local_delivery_policy = Some(t.policy_file.clone());
+    config.sdlc_workspace.tracker_read_url = Some(tracker_url);
+    config.sdlc_workspace.tracker_read_token = Some("task-reader-fixture".into());
+    config.artifacts.root = t.artifact_root.clone();
+    t.f.app = cicd::api::app_with_git_and_config(
+        Some(t.f.pool.clone()),
+        cicd::git_host::GitConfig {
+            root: t.git_root.clone(),
+            token: None,
+            internal_token: None,
+        },
+        None,
+        config,
+    )
+    .unwrap();
+    let path = format!(
+        "/api/v1/projects/{}/sdlc/workspace-operations/{}/delivery-operations",
+        t.f.project, b.workspace_operation_key
+    );
+    sqlx::query("UPDATE environments SET protected=true,required_approvals=1 WHERE id=$1")
+        .bind(environment)
+        .execute(&t.f.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        call(
+            &t.f.app,
+            "POST",
+            &path,
+            &t.f.token,
+            serde_json::to_string(&b).unwrap()
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    sqlx::query("UPDATE environments SET protected=false,required_approvals=0 WHERE id=$1")
+        .bind(environment)
+        .execute(&t.f.pool)
+        .await
+        .unwrap();
+    reply.lock().unwrap()["receipt"]["lease"]["holder_subject"] = json!("foreign");
+    assert_eq!(
+        call(
+            &t.f.app,
+            "POST",
+            &path,
+            &t.f.token,
+            serde_json::to_string(&b).unwrap()
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    reply.lock().unwrap()["receipt"]["lease"]["holder_subject"] = json!("fleet-delivery");
+    let (status, failed) = call(
+        &t.f.app,
+        "POST",
+        &path,
+        &t.f.token,
+        serde_json::to_string(&b).unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{failed}");
+    assert_eq!(failed["receipt"]["status"], "failed");
+    assert_eq!(failed["receipt"]["health"]["httpStatus"], 503);
+    assert_eq!(failed["confirmedManifestSha256"], manifest_a);
+    let before = hits.load(std::sync::atomic::Ordering::SeqCst);
+    reply.lock().unwrap()["receipt"]["lease"]["holder_subject"] = json!("foreign");
+    let replay = call(
+        &t.f.app,
+        "POST",
+        &path,
+        &t.f.token,
+        serde_json::to_string(&b).unwrap(),
+    )
+    .await;
+    assert_eq!(replay.0, StatusCode::OK);
+    assert_eq!(replay.1["receipt"], failed["receipt"]);
+    assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), before);
+    reply.lock().unwrap()["receipt"]["lease"]["holder_subject"] = json!("fleet-delivery");
+    let mut rollback = b.clone();
+    rollback.operation_key = "http:rollback".into();
+    rollback.action = DeliveryAction::Rollback;
+    rollback.artifact_id = None;
+    rollback.expected_manifest_sha256 = failed["currentManifestSha256"].as_str().map(str::to_owned);
+    let restored = call(
+        &t.f.app,
+        "POST",
+        &path,
+        &t.f.token,
+        serde_json::to_string(&rollback).unwrap(),
+    )
+    .await;
+    assert_eq!(restored.0, StatusCode::OK, "{}", restored.1);
+    assert_eq!(restored.1["receipt"]["status"], "verified");
+    assert_eq!(restored.1["currentManifestSha256"], manifest_a);
+    assert_eq!(
+        restored.1["receipt"]["scope"],
+        "task_nonproduction_delivery"
+    );
+    assert_eq!(restored.1["receipt"]["sdlcAcceptanceVerified"], false);
+    assert_eq!(
+        t.read_http(&b, &original).await["receipt"],
+        failed["receipt"]
+    );
+    tracker_server.abort();
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn sdlc_task_delivery_actual_versions_health_acceptance_rollback_and_crash_recovery() {
+    timeout_diagnostic::assert_source_binding();
     let mut t = ActualDelivery::new().await;
     let (a, original_a) = t.build("A", "version=A\nhealth=ok\nacceptance=ok\n").await;
     let mut missing = a.clone();
@@ -755,6 +1008,7 @@ async fn sdlc_task_delivery_http_dispatch_remains_closed_and_lookup_is_scoped() 
         action: DeliveryAction::Deploy,
         artifact_id: Some(Uuid::new_v4()),
         expected_manifest_sha256: None,
+        task_fence: None,
     };
     let url = format!(
         "/api/v1/projects/{}/sdlc/workspace-operations/{}/delivery-operations",

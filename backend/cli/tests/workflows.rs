@@ -615,6 +615,382 @@ async fn effective_transport_token_is_redacted() {
     }
 }
 
+fn workspace_lookup() -> Value {
+    json!({"requestHash":"a".repeat(64),
+        "taskId":"00000000-0000-4000-8000-000000000001",
+        "rootTaskId":"00000000-0000-4000-8000-000000000001",
+        "assignmentId":"00000000-0000-4000-8000-000000000002",
+        "executionId":"00000000-0000-4000-8000-000000000003","fencingToken":1})
+}
+
+#[tokio::test]
+async fn task_workspace_commands_preserve_fence_original_keys_and_lookup() {
+    let project = "00000000-0000-4000-8000-000000000004";
+    let lookup = workspace_lookup();
+    let fence = json!({"developmentResultId":"00000000-0000-4000-8000-000000000005",
+        "assignmentId":"00000000-0000-4000-8000-000000000006",
+        "executionId":"00000000-0000-4000-8000-000000000007",
+        "agentId":"00000000-0000-4000-8000-000000000008",
+        "leaseId":"00000000-0000-4000-8000-000000000009",
+        "fencingToken":2,"expectedLeaseVersion":3,"assignmentHash":"b".repeat(64)});
+    let delivery = json!({"operationKey":"deliver:original","workspaceOperationKey":"prepare:original",
+        "original":lookup,"action":"deploy","artifactId":"00000000-0000-4000-8000-000000000010",
+        "expectedManifestSha256":null,"taskFence":fence});
+    let prepare = json!({"operationKey":"prepare:original","contractVersion":1});
+    let response = json!({"receipt":{"status":"unknown","sdlcAcceptanceVerified":false},"reconciliationNeeded":true});
+    let server = Server::start(vec![(200, response.clone()); 5]).await;
+    let args = [
+        "workspace",
+        "prepare",
+        "--project",
+        project,
+        "--from-file",
+        "-",
+    ];
+    assert_eq!(
+        success(&server.run(&args, Some(&prepare.to_string())).await),
+        response
+    );
+    for command in [
+        "readback",
+        "candidate-evidence",
+        "delivery",
+        "delivery-readback",
+    ] {
+        let mut args = vec![
+            "workspace",
+            command,
+            "--project",
+            project,
+            "--operation-key",
+            "prepare:original",
+            "--from-file",
+            "-",
+        ];
+        if command == "delivery-readback" {
+            args.extend(["--delivery-key", "deliver:original"]);
+        }
+        let body = if command == "delivery" {
+            &delivery
+        } else {
+            &lookup
+        };
+        assert_eq!(
+            success(&server.run(&args, Some(&body.to_string())).await),
+            response
+        );
+    }
+    let requests = server.requests();
+    assert_eq!(requests.len(), 5);
+    let root = format!("/api/v1/projects/{project}/sdlc/workspace-operations");
+    assert_eq!(requests[0].path, root);
+    assert_eq!(requests[0].method, "POST");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&requests[0].body).unwrap(),
+        prepare
+    );
+    assert_eq!(
+        requests[3].path,
+        format!("{root}/prepare%3Aoriginal/delivery-operations")
+    );
+    assert_eq!(requests[3].method, "POST");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&requests[3].body).unwrap(),
+        delivery
+    );
+    for (index, suffix) in [
+        (1, ""),
+        (2, "/candidate-evidence"),
+        (4, "/delivery-operations/deliver%3Aoriginal"),
+    ] {
+        let request = &requests[index];
+        assert_eq!(request.method, "GET");
+        assert!(request.body.is_empty());
+        let url = reqwest::Url::parse(&format!("http://localhost{}", request.path)).unwrap();
+        assert_eq!(url.path(), format!("{root}/prepare%3Aoriginal{suffix}"));
+        let pairs = url
+            .query_pairs()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(pairs.len(), 6);
+        for (key, value) in lookup.as_object().unwrap() {
+            let expected = value
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| value.to_string());
+            assert_eq!(pairs.get(key.as_str()).unwrap().as_ref(), expected);
+        }
+    }
+    assert!(
+        requests
+            .iter()
+            .all(|r| r.key.is_none() && r.authorization.as_deref() == Some("Bearer fixture-token"))
+    );
+}
+
+#[tokio::test]
+async fn task_delivery_rejection_never_falls_back_or_reposts() {
+    for status in [409, 503] {
+        let server = Server::start(vec![(
+            status,
+            json!({"error":{"code":"HELD","message":"fixture-token"}}),
+        )])
+        .await;
+        let output = server
+            .run(
+                &[
+                    "--error-format",
+                    "json",
+                    "workspace",
+                    "delivery",
+                    "--project",
+                    "00000000-0000-4000-8000-000000000004",
+                    "--operation-key",
+                    "prepare:original",
+                    "--from-file",
+                    "-",
+                ],
+                Some("{\"operationKey\":\"deliver:original\",\"taskFence\":null}"),
+            )
+            .await;
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert_eq!(server.requests().len(), 1);
+        let error: Value = serde_json::from_slice(&output.stderr).unwrap();
+        assert_eq!(error["error"]["status"], status);
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("fixture-token"));
+    }
+}
+
+#[tokio::test]
+async fn task_workspace_bad_inputs_are_private_and_make_no_http_request() {
+    let server = Server::start(vec![]).await;
+    let mut extra = workspace_lookup();
+    extra["unexpectedPrivateField"] = json!("private-input-marker");
+    for (command, body) in [
+        ("delivery", "{private-input-marker".to_owned()),
+        ("delivery", "null".to_owned()),
+        (
+            "delivery",
+            json!({"private-input-marker":"x".repeat(16*1024)}).to_string(),
+        ),
+        ("readback", extra.to_string()),
+        ("readback", "{}".to_owned()),
+    ] {
+        let output = server
+            .run(
+                &[
+                    "--error-format",
+                    "json",
+                    "workspace",
+                    command,
+                    "--project",
+                    "00000000-0000-4000-8000-000000000004",
+                    "--operation-key",
+                    "prepare:original",
+                    "--from-file",
+                    "-",
+                ],
+                Some(&body),
+            )
+            .await;
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("private-input-marker"));
+    }
+    for key in ["..", "../foreign", "foreign/key", ""] {
+        let output = server
+            .run(
+                &[
+                    "workspace",
+                    "readback",
+                    "--project",
+                    "00000000-0000-4000-8000-000000000004",
+                    "--operation-key",
+                    key,
+                    "--from-file",
+                    "-",
+                ],
+                Some(&workspace_lookup().to_string()),
+            )
+            .await;
+        assert!(!output.status.success());
+    }
+    assert!(server.requests().is_empty());
+}
+
+#[tokio::test]
+async fn task_delivery_file_input_keeps_rollback_and_missing_fence_unchanged() {
+    let server = Server::start(vec![(200, json!({"status":"unavailable"})); 2]).await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("command.json");
+    let mut body = json!({"operationKey":"rollback:original","workspaceOperationKey":"prepare:original",
+        "original":workspace_lookup(),"action":"rollback","artifactId":null,
+        "expectedManifestSha256":"a".repeat(64)});
+    for fence in [None, Some(json!({"expectedLeaseVersion":4}))] {
+        if let Some(fence) = fence {
+            body["taskFence"] = fence;
+        }
+        std::fs::write(&path, body.to_string()).unwrap();
+        success(
+            &server
+                .run(
+                    &[
+                        "workspace",
+                        "delivery",
+                        "--project",
+                        "00000000-0000-4000-8000-000000000004",
+                        "--operation-key",
+                        "prepare:original",
+                        "--from-file",
+                        path.to_str().unwrap(),
+                    ],
+                    None,
+                )
+                .await,
+        );
+        let request = server.requests().pop().unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&request.body).unwrap(),
+            body
+        );
+    }
+    assert_eq!(server.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn task_pipeline_cli_preserves_supplied_intent_key_and_authenticated_locator() {
+    let project = uuid::Uuid::new_v4().to_string();
+    let pipeline = uuid::Uuid::new_v4().to_string();
+    let key = uuid::Uuid::new_v4().to_string();
+    let task = uuid::Uuid::new_v4();
+    let intent = json!({"operationKey":"workspace:original","repositoryId":uuid::Uuid::new_v4(),
+        "sourceCommit":"a".repeat(40),"role":"developer","agentId":uuid::Uuid::new_v4(),
+        "trackerLeaseId":uuid::Uuid::new_v4(),"holderSubject":"scheduler","expectedLeaseVersion":1,
+        "binding":{"trackerInstanceId":uuid::Uuid::new_v4().to_string(),
+            "trackerProjectId":uuid::Uuid::new_v4(),"taskId":task,"rootTaskId":task,
+            "assignmentId":uuid::Uuid::new_v4(),"executionId":uuid::Uuid::new_v4(),
+            "routingSnapshotId":uuid::Uuid::new_v4(),"requirementRevision":1,"fencingToken":1,
+            "assignmentHash":"b".repeat(64),"workflowTaskRef":"SDLC-7"}});
+    let server = Server::start(vec![
+        (200, json!({"pipeline":{"id":pipeline}})),
+        (200, Value::Null),
+    ])
+    .await;
+    let raw = intent.to_string();
+    success(
+        &server
+            .run(
+                &[
+                    "--output",
+                    "json",
+                    "pipeline",
+                    "run",
+                    "--project",
+                    &project,
+                    "--git-ref",
+                    &"a".repeat(40),
+                    "--idempotency-key",
+                    &key,
+                    "--task-intent",
+                    "-",
+                ],
+                Some(&raw),
+            )
+            .await,
+    );
+    assert_eq!(
+        success(
+            &server
+                .run(
+                    &[
+                        "--output",
+                        "json",
+                        "pipeline",
+                        "task-workspace",
+                        "--project",
+                        &project,
+                        "--id",
+                        &pipeline
+                    ],
+                    None
+                )
+                .await
+        ),
+        Value::Null
+    );
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].method, "POST");
+    assert_eq!(requests[0].key.as_deref(), Some(key.as_str()));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&requests[0].body).unwrap()["task_intent"],
+        intent
+    );
+    assert_eq!(requests[1].method, "GET");
+    assert_eq!(
+        requests[1].path,
+        format!("/api/v1/projects/{project}/pipelines/{pipeline}/task-workspace")
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|r| r.authorization.as_deref() == Some("Bearer fixture-token"))
+    );
+}
+
+#[tokio::test]
+async fn task_pipeline_cli_no_generated_key_malformed_input_or_http_retry() {
+    let server = Server::start(vec![(409, json!({"error":"held"}))]).await;
+    let args = [
+        "pipeline",
+        "run",
+        "--project",
+        "00000000-0000-4000-8000-000000000001",
+        "--task-intent",
+        "-",
+    ];
+    let output = server.run(&args, Some("{}")).await;
+    assert!(!output.status.success());
+    assert!(server.requests().is_empty());
+    for input in ["private-invalid-json", "[]", "null"] {
+        let output = server
+            .run(
+                &[
+                    "pipeline",
+                    "run",
+                    "--project",
+                    "00000000-0000-4000-8000-000000000001",
+                    "--idempotency-key",
+                    "00000000-0000-4000-8000-000000000002",
+                    "--task-intent",
+                    "-",
+                ],
+                Some(input),
+            )
+            .await;
+        assert!(!output.status.success());
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("private-invalid-json"));
+        assert!(server.requests().is_empty());
+    }
+    let output = server
+        .run(
+            &[
+                "pipeline",
+                "run",
+                "--project",
+                "00000000-0000-4000-8000-000000000001",
+                "--idempotency-key",
+                "00000000-0000-4000-8000-000000000002",
+                "--task-intent",
+                "-",
+            ],
+            Some("{}"),
+        )
+        .await;
+    assert!(!output.status.success());
+    assert_eq!(server.requests().len(), 1);
+}
+
 #[test]
 fn help_hides_token_environment_value() {
     let output = Command::new(env!("CARGO_BIN_EXE_cicd-cli"))
