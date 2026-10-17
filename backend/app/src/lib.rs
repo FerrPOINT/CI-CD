@@ -5,6 +5,7 @@
 //! checked against `project_memberships` by the API middleware.
 
 pub mod auth;
+pub mod repository_sync;
 
 const GET: &[&str] = &["GET"];
 const POST: &[&str] = &["POST"];
@@ -129,6 +130,49 @@ const fn user(
 
 /// Exhaustive policy registry for the current OpenAPI/router surface.
 pub const ROUTE_POLICIES: &[RoutePolicy] = &[
+    user(GET, "/api/v1/repository-syncs", Action::Read, Role::Viewer),
+    user(
+        GET,
+        "/api/v1/catalog/repositories/{id}/sync",
+        Action::Read,
+        Role::Viewer,
+    ),
+    user(
+        PUT,
+        "/api/v1/catalog/repositories/{id}/sync",
+        Action::Write,
+        Role::Developer,
+    ),
+    user(
+        POST,
+        "/api/v1/catalog/repositories/{id}/sync/check",
+        Action::Write,
+        Role::Developer,
+    ),
+    user(
+        POST,
+        "/api/v1/catalog/repositories/{id}/sync/runs",
+        Action::Write,
+        Role::Developer,
+    ),
+    user(
+        GET,
+        "/api/v1/catalog/repositories/{id}/sync/runs",
+        Action::Read,
+        Role::Viewer,
+    ),
+    user(
+        GET,
+        "/api/v1/catalog/repositories/{id}/sync/runs/{run_id}",
+        Action::Read,
+        Role::Viewer,
+    ),
+    user(
+        GET,
+        "/api/v1/catalog/repositories/{id}/sync/runs/{run_id}/refs",
+        Action::Read,
+        Role::Viewer,
+    ),
     user(
         GET,
         "/api/v1/projects/{project_id}/pipelines/{pipeline_id}/task-workspace",

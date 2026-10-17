@@ -152,7 +152,7 @@ export function CatalogRepositoryPage() {
           {project.data.name} · {project.data.project_key}
         </p>
       )}
-      <h1 className="text-xl font-semibold">{repo.public_name}</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3"><h1 className="text-xl font-semibold">{repo.public_name}</h1>{repo.kind === 'hosted' && <Link className="text-accent" to={withNamespaceLocation(`/catalog/repositories/${id}/sync`,repo.namespace ?? null)}>Синхронизация с внешним репозиторием</Link>}</div>
       <SectionNavigation aria-label="Разделы репозитория">
         {[
           ['git', 'Git / PR'],

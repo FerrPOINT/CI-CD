@@ -6,6 +6,14 @@ This index is the entry point for architecture decisions. It separates **current
 
 ## Start here
 
+Синхронизация hosted Git с внешним HTTPS provider описана в
+[ADR-0031](adr/0031-external-repository-synchronization.md). Domain/application
+задают ref plan и use cases, infra — PostgreSQL, encryption и Git subprocess;
+существующий worker выполняет журналируемые effects. Общая файловая блокировка
+и namespace admission сохраняются для receive-pack, PR merge и sync. Новая
+граница credential/TLS отражена в [модели угроз](THREAT_MODEL.md); source gates
+и установленная runtime-приёмка учитываются раздельно.
+
 1. `docs/FUNCTIONAL_ARCHITECTURE.md` — product boundaries, capability map, aggregate ownership and cross-cutting invariants.
 2. `docs/ARCHITECTURE.md` — runtime and workspace/package layout.
 3. `docs/DOMAIN_MODEL.md` — domain invariants and pipeline status model.

@@ -23,6 +23,12 @@ use tower::ServiceExt;
 use uuid::Uuid;
 #[path = "support/fixture_cleanup.rs"]
 mod fixture_cleanup;
+#[path = "support/repository_sync.rs"]
+mod repository_sync;
+
+#[cfg(unix)]
+#[path = "support/repository_sync_auth.rs"]
+mod repository_sync_auth;
 
 #[path = "support/sdlc_workspace.rs"]
 mod sdlc_workspace;
@@ -2815,6 +2821,25 @@ async fn git_smart_http_uses_project_membership_when_auth_enabled() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        response.headers()["www-authenticate"],
+        "Basic realm=\"Forge Git\""
+    );
+    let denied_rpc = app
+        .clone()
+        .oneshot(
+            Request::post(format!("/git/{private_repo}.git/git-upload-pack"))
+                .header("content-type", "application/x-git-upload-pack-request")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(denied_rpc.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        denied_rpc.headers()["www-authenticate"],
+        "Basic realm=\"Forge Git\""
+    );
 
     let response = app
         .clone()
@@ -9064,7 +9089,7 @@ async fn migration_catalog_contains_exact_historical_36_and_37() {
     let catalog = cicd::migrations().await.unwrap();
     assert_eq!(
         catalog.iter().map(|m| m.version).collect::<Vec<_>>(),
-        (1..=40).chain([90, 91, 92]).collect::<Vec<_>>()
+        (1..=40).chain([90, 91, 92, 93]).collect::<Vec<_>>()
     );
     for (version, description, sql, checksum) in HISTORICAL_DEPLOYMENT_MIGRATIONS {
         let migration = catalog
@@ -9097,7 +9122,10 @@ async fn migration_catalog_fresh_and_prior_35_or_37_upgrade() {
                 .fetch_all(&pool)
                 .await
                 .unwrap();
-        assert_eq!(versions, (1..=40).chain([90, 91, 92]).collect::<Vec<_>>());
+        assert_eq!(
+            versions,
+            (1..=40).chain([90, 91, 92, 93]).collect::<Vec<_>>()
+        );
         let history = migration_catalog_history(&pool).await;
         catalog.run(&pool).await.unwrap();
         assert_eq!(migration_catalog_history(&pool).await, history);

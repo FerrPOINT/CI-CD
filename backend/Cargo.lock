@@ -353,9 +353,11 @@ name = "cicd-app"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "cicd-domain",
  "jsonwebtoken",
  "pdlc-auth-core",
  "serde",
+ "serde_json",
  "sha2",
  "sqlx",
  "subtle",
@@ -401,10 +403,18 @@ dependencies = [
 name = "cicd-infra"
 version = "0.1.0"
 dependencies = [
+ "aes-gcm",
+ "base64 0.22.1",
  "chrono",
+ "cicd-app",
  "cicd-domain",
+ "hmac",
+ "libc",
+ "serde",
  "serde_json",
+ "sha2",
  "sqlx",
+ "tokio",
  "uuid",
 ]
 

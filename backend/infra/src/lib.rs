@@ -1,7 +1,10 @@
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
+pub mod repository_sync;
 pub mod sdlc_workspace;
+pub mod secrets;
+pub mod sync_git;
 
 /// Hook the host wires at startup to wake embedded runners after enqueue.
 /// Defaults to no-op so the crate stays transport-agnostic; the server crate

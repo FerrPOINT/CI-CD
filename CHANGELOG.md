@@ -15,6 +15,17 @@
 
 ## [Unreleased]
 
+- Синхронизация внешних GitHub/GitLab репозиториев сохраняет текущие Git
+  admission, protected receive и atomic PR publication. URL передаётся Git
+  только после canonical origin validation; неоднозначные адреса запрещены.
+  Project-scoped tokens проходят штатный middleware только для sync routes,
+  PUT поддержан CORS, а история обновляется после завершения запуска.
+  Исправлены challenge обычного Git-клиента и JSON для ref с кавычками.
+  Занятый repository guard не занимает worker capacity; старый scratch убирается
+  под собственной блокировкой. Добавлены TLS и process-recovery проверки.
+  Sync учитывает default branch каждого связанного проекта даже при пустом
+  списке protected branches, сохраняя правило обычного Git receive.
+
 - Task OCI delivery передаёт manifest/data в transport с read-only rootfs
   через bounded stdin, сохраняя tmpfs, capabilities и запрет перезаписи.
   Исправлен отказ Docker archive upload до запуска приложения.

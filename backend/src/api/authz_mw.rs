@@ -200,7 +200,8 @@ pub(crate) async fn require_auth(
     let path = req.uri().path().to_string();
     if claims.role == "service_account"
         && (path.starts_with("/api/v1/git-groups/")
-            || path.starts_with("/api/v1/catalog/repositories")
+            || (path.starts_with("/api/v1/catalog/repositories")
+                && !repository_sync_route(&method, &path))
             || path.starts_with("/api/v1/namespace-contexts")
             || path.starts_with("/api/v1/workspace-")
             || path.starts_with("/api/v1/delivery-configurations"))
@@ -229,6 +230,29 @@ pub(crate) async fn require_auth(
     Ok(next.run(req).await)
 }
 
+// This exception reaches the existing project/token checks, never the wider catalog API.
+fn repository_sync_route(method: &str, path: &str) -> bool {
+    let Some(tail) = path.strip_prefix("/api/v1/catalog/repositories/") else {
+        return false;
+    };
+    let parts: Vec<_> = tail.split('/').collect();
+    let Some(repository) = parts.first() else {
+        return false;
+    };
+    if Uuid::parse_str(repository).is_err() {
+        return false;
+    }
+    match (method, &parts[1..]) {
+        ("GET" | "PUT", ["sync"])
+        | ("POST", ["sync", "check"])
+        | ("GET" | "POST", ["sync", "runs"]) => true,
+        ("GET", ["sync", "runs", run]) | ("GET", ["sync", "runs", run, "refs"]) => {
+            Uuid::parse_str(run).is_ok()
+        }
+        _ => false,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ProjectScopeRef {
     Project(Uuid),
@@ -242,6 +266,7 @@ pub(crate) enum ProjectScopeRef {
     Webhook(Uuid),
     OutboxDelivery(Uuid),
     Repository(String),
+    CatalogRepository(Uuid),
 }
 
 async fn project_scope_allows(
@@ -253,14 +278,22 @@ async fn project_scope_allows(
 ) -> Result<bool, ApiError> {
     let Some(scope_ref) = project_scope_ref(path) else {
         if claims.token_id.is_some() && claims.token_project_id.is_some() {
-            return Ok(
-                method == "GET" && matches!(path, "/api/v1/projects" | "/api/v1/auth/principal")
-            );
+            return Ok(method == "GET"
+                && matches!(
+                    path,
+                    "/api/v1/projects" | "/api/v1/auth/principal" | "/api/v1/repository-syncs"
+                ));
         }
         return Ok(true);
     };
     let Some(pool) = state.pool.as_ref() else {
         return Err(ApiError::unavailable());
+    };
+    let scope_ref = match scope_ref {
+        ProjectScopeRef::CatalogRepository(id) => {
+            ProjectScopeRef::Repository(crate::repository_catalog::storage_by_id(pool, id).await?)
+        }
+        other => other,
     };
     let scope_ref = match scope_ref {
         ProjectScopeRef::Repository(name) => {
@@ -354,6 +387,16 @@ pub(crate) fn project_scope_ref(path: &str) -> Option<ProjectScopeRef> {
     }
     let resource = segments.next()?;
     match resource {
+        "catalog" => {
+            if segments.next()? != "repositories" {
+                return None;
+            }
+            let id = segments.next()?.parse().ok()?;
+            if segments.next()? != "sync" {
+                return None;
+            }
+            Some(ProjectScopeRef::CatalogRepository(id))
+        }
         "repos" | "repositories" => segments
             .next()
             .map(|name| ProjectScopeRef::Repository(name.to_string())),
@@ -592,7 +635,7 @@ async fn project_id_for_scope_ref(
         .fetch_optional(pool)
         .await
         .map_err(ApiError::internal),
-        ProjectScopeRef::Repository(_) => Ok(None),
+        ProjectScopeRef::Repository(_) | ProjectScopeRef::CatalogRepository(_) => Ok(None),
     }
 }
 

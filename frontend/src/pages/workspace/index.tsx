@@ -14,6 +14,7 @@ import type { components } from '@/api/schema'
 import { useNamespaceRef } from '@/widgets/namespace-context'
 import { WorkspaceLinks } from '@/widgets/workspace-links'
 import { ExecutionList } from '@/widgets/execution-list'
+import { RepositorySyncsPage } from '@/pages/repository-syncs'
 import { NamespacePage } from '@/pages/namespace'
 export function NamespaceRedirect() {
   const { ref, malformed, all } = useNamespaceRef()
@@ -91,6 +92,7 @@ export function WorkspacePage() {
   const sections = [
     ['', 'Обзор'],
     ['repositories', 'Репозитории'],
+    ['syncs', 'Синхронизации'],
     ['pipelines', 'Пайплайны'],
     ['deployments', 'Деплои'],
   ]
@@ -141,6 +143,8 @@ export function WorkspacePage() {
         </p>
       ) : section === 'repositories' ? (
         <NamespacePage embedded />
+      ) : section === 'syncs' ? (
+        <RepositorySyncsPage groupId={data.group_id} />
       ) : section === 'pipelines' ? (
         <ExecutionList key={workspaceKey(ref) + section} namespace={ref} />
       ) : section === 'deployments' ? (

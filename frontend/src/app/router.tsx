@@ -11,6 +11,9 @@ import { AppShell } from '@/widgets/app-shell'
 import { AuthProvider } from '@/shared/auth/auth-provider'
 import { ProtectedRoute } from '@/shared/auth/protected-route'
 
+const RepositorySyncsPage = lazy(() => import('@/pages/repository-syncs').then(m => ({ default: m.RepositorySyncsPage })))
+const RepositorySyncPage = lazy(() => import('@/pages/repository-syncs').then(m => ({ default: m.RepositorySyncPage })))
+
 const DashboardPage = lazy(() =>
   import('@/pages/dashboard').then((m) => ({ default: m.DashboardPage })),
 )
@@ -97,6 +100,8 @@ export const appRoutes = [
             children: [
               { path: '/namespace', element: <NamespaceRedirect /> },
               { path: '/workspaces/:registry/:namespace/*', element: withSuspense(<WorkspacePage />) },
+              { path: '/repository-syncs', element: withSuspense(<RepositorySyncsPage />) },
+              { path: '/catalog/repositories/:id/sync', element: withSuspense(<RepositorySyncPage />) },
               { path: '/delivery-configs', element: withSuspense(<DeliveryConfigurationsPage />) },
               {
                 path: '/delivery-configs/:projectId/settings',

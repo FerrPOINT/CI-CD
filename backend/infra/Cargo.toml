@@ -12,3 +12,11 @@ sqlx.workspace = true
 uuid.workspace = true
 cicd-domain = { path = "../domain" }
 serde_json.workspace = true
+cicd-app = { path = "../app" }
+aes-gcm = "0.10"
+base64 = "0.22"
+hmac = "0.12"
+sha2.workspace = true
+tokio.workspace = true
+libc = "0.2"
+serde.workspace = true
