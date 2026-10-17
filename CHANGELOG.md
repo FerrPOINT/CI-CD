@@ -15,6 +15,10 @@
 
 ## [Unreleased]
 
+- Pipeline распознаёт закрытый `workspace_deploy` и явно отклоняет его до
+  подключения доверенного executor. Добавлена pure-проверка sealed Compose recipe;
+  она не запускает контейнеры и не выдаёт deployment acceptance.
+
 - Task OCI delivery передаёт manifest/data в transport с read-only rootfs
   через bounded stdin, сохраняя tmpfs, capabilities и запрет перезаписи.
   Исправлен отказ Docker archive upload до запуска приложения.
