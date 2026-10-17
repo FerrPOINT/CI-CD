@@ -22,7 +22,8 @@
 - Source candidate временного task workspace deploy переиспользует RemoteJob:
   exact Git recipe, upstream image-build extension, private project secrets,
   owned volume preparation, all-service stop и historical validation receipt.
-  Отдельный common integration patch и Rust/PG/native qualification pending;
+  Общие parser/runner подключения и backend image sources включены;
+  Rust/PG/native qualification pending;
   readonly OCI и Pulse business logic не меняются.
 
 - Task OCI delivery передаёт manifest/data в transport с read-only rootfs

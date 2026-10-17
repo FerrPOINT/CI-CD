@@ -166,9 +166,9 @@ async fn create_pipeline_bound(
         None => ("legacy_template", LEGACY_TEMPLATE_CONFIG.to_string()),
     };
     let parsed_config = parse_pipeline_config(Some(&raw_config)).map_err(ApiError::bad_request)?;
-    if parsed_config.has_image_build() && task.is_none() {
+    if (parsed_config.has_image_build() || parsed_config.has_workspace_deploy()) && task.is_none() {
         return Err(ApiError::bad_request(
-            "image_build доступен только для авторизованного task pipeline",
+            "image_build/workspace_deploy доступны только для авторизованного task pipeline",
         ));
     }
     let plan_snapshot = build_pipeline_plan_snapshot(
@@ -584,6 +584,10 @@ enum ParsedPipelinePlan {
 }
 
 impl ParsedPipelineConfig {
+    fn has_workspace_deploy(&self) -> bool {
+        matches!(&self.plan, ParsedPipelinePlan::V1(plan)
+            if plan.jobs.iter().any(|job|job.workspace_deploy.is_some()))
+    }
     fn has_image_build(&self) -> bool {
         matches!(&self.plan, ParsedPipelinePlan::V1(plan)
             if plan.jobs.iter().any(|job| job.image_build.is_some()))
@@ -686,6 +690,8 @@ struct V1PlanJob {
     needs: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     image_build: Option<crate::domain::image_build::ImageBuildSpec>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workspace_deploy: Option<WorkspaceDeploySpec>,
 }
 
 fn build_pipeline_plan_snapshot(
@@ -998,9 +1004,10 @@ struct NormalizedV1Job {
     allow_failure: bool,
     needs: Vec<String>,
     image_build: Option<crate::domain::image_build::ImageBuildSpec>,
+    workspace_deploy: Option<WorkspaceDeploySpec>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Clone, Debug, Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WorkspaceDeploySpec {
     compose: String,
@@ -1107,8 +1114,14 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
         }
         if let Some(deployment) = &job.workspace_deploy {
             deployment.validate()?;
-            // Parsing a recipe must not enqueue ordinary commands with deployment ignored.
-            return Err("workspace_deploy execution is unavailable: trusted sealed deployment adapter is not installed".into());
+            if job.image_build.is_some()
+                || job.artifacts.is_some()
+                || job.allow_failure
+                || job.tags.is_some()
+                || !default_tags.is_empty()
+            {
+                return Err("workspace_deploy requires repo commands and owner receipt only; no image_build, artifacts, allow_failure or external tags".into());
+            }
         }
         if let Some(build) = &job.image_build {
             build.validate()?;
@@ -1157,22 +1170,26 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
         };
         let required_secrets =
             normalize_v1_secret_names(&format!("jobs.{key}.secrets"), job.secrets)?;
-        let artifact_paths = match &job.image_build {
-            Some(build) => vec![build.descriptor_artifact.clone()],
-            None => match job.artifacts {
-                Some(artifacts) => {
-                    if artifacts.paths.is_empty() {
-                        return Err(format!(
-                            ".forge-ci.yml v1 jobs.{key}.artifacts.paths must define at least one path"
-                        ));
+        let artifact_paths = if let Some(deployment) = &job.workspace_deploy {
+            vec![deployment.images_manifest.clone()]
+        } else {
+            match &job.image_build {
+                Some(build) => vec![build.descriptor_artifact.clone()],
+                None => match job.artifacts {
+                    Some(artifacts) => {
+                        if artifacts.paths.is_empty() {
+                            return Err(format!(
+                                ".forge-ci.yml v1 jobs.{key}.artifacts.paths must define at least one path"
+                            ));
+                        }
+                        normalize_v1_artifact_paths(
+                            &format!("jobs.{key}.artifacts.paths"),
+                            artifacts.paths,
+                        )?
                     }
-                    normalize_v1_artifact_paths(
-                        &format!("jobs.{key}.artifacts.paths"),
-                        artifacts.paths,
-                    )?
-                }
-                None => Vec::new(),
-            },
+                    None => Vec::new(),
+                },
+            }
         };
 
         if job.needs.len() > 64 {
@@ -1214,6 +1231,7 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
                 allow_failure: job.allow_failure,
                 needs,
                 image_build: job.image_build,
+                workspace_deploy: job.workspace_deploy,
             },
         );
     }
@@ -1283,6 +1301,7 @@ fn parse_v1_pipeline_config(raw: &str) -> Result<ParsedPipelineConfig, String> {
                 allow_failure: job.allow_failure,
                 needs: job.needs,
                 image_build: job.image_build,
+                workspace_deploy: job.workspace_deploy,
             });
         }
         stages.push(CiStage {
@@ -1380,10 +1399,52 @@ mod workspace_deploy_parser_tests {
 
     #[test]
     fn workspace_deploy_cannot_fall_through_to_ordinary_commands() {
-        let error = parse_pipeline_config(Some(DEPLOY)).err().unwrap();
-        assert!(error.contains("workspace_deploy execution is unavailable"));
+        let parsed = parse_pipeline_config(Some(DEPLOY)).unwrap();
+        assert!(parsed.has_workspace_deploy());
+        assert_eq!(
+            parsed.stages[0].jobs[0].artifact_paths,
+            vec!["reports/images.json"]
+        );
+        let snapshot = build_pipeline_plan_snapshot(
+            &"a".repeat(40),
+            Some(&"a".repeat(40)),
+            "repository",
+            DEPLOY.into(),
+            &parsed,
+        );
+        assert_eq!(
+            snapshot.plan["jobs"][0]["workspace_deploy"]["compose"],
+            "deploy/task.compose.json"
+        );
+        assert_eq!(
+            snapshot.plan["jobs"][0]["commands"],
+            serde_json::json!(["echo must-not-run"])
+        );
         let mixed = DEPLOY.replace("    commands:", "    image_build: {}\n    commands:");
         assert!(parse_pipeline_config(Some(&mixed)).is_err());
+    }
+
+    #[test]
+    fn workspace_deploy_requires_commands_and_owner_output_without_failure_or_external_override() {
+        for field in [
+            "    allow_failure: true\n",
+            "    tags: [external]\n",
+            "    artifacts: {paths: [forged.json]}\n",
+        ] {
+            assert!(
+                parse_pipeline_config(Some(&DEPLOY.replace(
+                    "    workspace_deploy:",
+                    &format!("{field}    workspace_deploy:")
+                )))
+                .is_err()
+            );
+        }
+        assert!(
+            parse_pipeline_config(Some(
+                &DEPLOY.replace("    commands: [echo must-not-run]\n", "")
+            ))
+            .is_err()
+        );
     }
 
     #[test]
