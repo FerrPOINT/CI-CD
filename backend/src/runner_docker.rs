@@ -627,6 +627,8 @@ pub(crate) struct RemoteJob {
     active: bool,
     stopped: bool,
     writes: Arc<PrivateWrites>,
+    deployment_output: Option<PathBuf>,
+    deployment_witness: Option<(Value, bool)>,
 }
 
 #[derive(Default)]
@@ -835,8 +837,285 @@ fn execution_stopped(manifest: &Value, containers: &[Value]) -> io::Result<()> {
     Ok(())
 }
 
+const VOLUME_INITIALIZE: &str = r#"test "$#" -eq 2
+test -d "$1" && test ! -L "$1"
+test -z "$(find "$1" -mindepth 1 -maxdepth 1 -print -quit)"
+chown "$2" "$1"
+chmod 700 "$1"
+test "$(stat -c '%u:%g:%a' "$1")" = "$2:700"
+"#;
+
+fn merge_deployment(
+    manifest: &mut Value,
+    fragment: &Value,
+    users: &std::collections::BTreeMap<String, String>,
+) -> io::Result<()> {
+    let project = manifest["name"]
+        .as_str()
+        .ok_or_else(|| invalid("project missing"))?
+        .to_owned();
+    let labels = manifest["services"]["transfer"]["labels"].clone();
+    if fragment["name"] != project
+        || fragment["networks"]["job"]["name"] != format!("{project}_job")
+        || fragment["networks"]["job"]["internal"] != false
+        || fragment["networks"]["job"]["labels"] != labels
+        || fragment["networks"]["job"]
+            .as_object()
+            .is_none_or(|v| v.len() != 3)
+    {
+        return Err(invalid(
+            "deployment cannot replace the existing owner network",
+        ));
+    }
+    let services = fragment["services"]
+        .as_object()
+        .ok_or_else(|| invalid("services missing"))?;
+    let volumes = fragment["volumes"]
+        .as_object()
+        .ok_or_else(|| invalid("volumes missing"))?;
+    if services.is_empty()
+        || services.len() > 8
+        || volumes.len() > 8
+        || volumes.len() != users.len()
+    {
+        return Err(invalid("deployment resource bound"));
+    }
+    for (name, service) in services {
+        if name == "job"
+            || name == "transfer"
+            || service["labels"] != labels
+            || service["container_name"] != format!("{project}-{name}")
+            || !service["image"]
+                .as_str()
+                .is_some_and(crate::domain::image_build::valid_image_id)
+            || service.get("x-forge-image-build").is_some()
+        {
+            return Err(invalid("unsealed deployment service"));
+        }
+        manifest["services"][name] = service.clone();
+    }
+    for (name, volume) in volumes {
+        let user = users
+            .get(name)
+            .ok_or_else(|| invalid("volume user missing"))?;
+        if ["workspace", "cargo", "sources"].contains(&name.as_str())
+            || volume["labels"] != labels
+            || volume["name"] != format!("{project}_{name}")
+            || !user.split_once(':').is_some_and(|(uid, gid)| {
+                [uid, gid].into_iter().all(|id| {
+                    id.parse::<u32>()
+                        .is_ok_and(|n| n > 0 && n <= i32::MAX as u32)
+                })
+            })
+        {
+            return Err(invalid("unsealed disposable volume"));
+        }
+        manifest["volumes"][name] = volume.clone();
+        manifest["services"]["transfer"]["volumes"].as_array_mut().ok_or_else(||invalid("helper mounts missing"))?
+            .push(json!({"type":"volume","source":name,"target":format!("/forge-data/{name}"),"volume":{"nocopy":true}}));
+    }
+    Ok(())
+}
+
+fn mounts_match(manifest: &Value, service: &str, container: &Value) -> bool {
+    let expected = manifest["services"][service]["volumes"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let Some(actual) = container["Mounts"].as_array() else {
+        return false;
+    };
+    let tmpfs: Vec<_> = manifest["services"][service]["tmpfs"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|v| {
+            v.as_str()
+                .and_then(|v| v.split_once(':'))
+                .map(|(path, _)| path)
+        })
+        .collect();
+    actual.iter().all(|mount| {
+        mount["Type"] == "volume"
+            || (mount["Type"] == "tmpfs"
+                && mount["Destination"]
+                    .as_str()
+                    .is_some_and(|path| tmpfs.contains(&path)))
+    }) && expected.len()
+        == actual
+            .iter()
+            .filter(|mount| mount["Type"] == "volume")
+            .count()
+        && expected.iter().all(|mount| {
+            let Some(logical) = mount["source"].as_str() else {
+                return false;
+            };
+            let name = manifest["volumes"][logical]["name"]
+                .as_str()
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    format!(
+                        "{}_{}",
+                        manifest["name"].as_str().unwrap_or_default(),
+                        logical
+                    )
+                });
+            actual
+                .iter()
+                .filter(|observed| {
+                    observed["Type"] == "volume"
+                        && observed["Name"] == name
+                        && observed["Destination"] == mount["target"]
+                        && observed["RW"] == !mount["read_only"].as_bool().unwrap_or(false)
+                })
+                .count()
+                == 1
+        })
+}
+
+#[derive(Clone, Copy)]
+enum DeploymentState {
+    Created,
+    Running,
+    Stopped,
+    BeforeStop,
+}
+
+fn deployment_containers(
+    manifest: &Value,
+    containers: &[Value],
+    state: DeploymentState,
+) -> io::Result<Value> {
+    let mut result = serde_json::Map::new();
+    let services = manifest["services"]
+        .as_object()
+        .ok_or_else(|| invalid("services missing"))?;
+    for (name, spec) in services
+        .iter()
+        .filter(|(name, _)| !matches!(name.as_str(), "job" | "transfer"))
+    {
+        let found: Vec<_> = containers
+            .iter()
+            .filter(|c| c["Config"]["Labels"]["com.docker.compose.service"] == *name)
+            .collect();
+        if found.len() != 1 {
+            return Err(invalid("exact deployment service readback missing"));
+        }
+        let container = found[0];
+        let running = if matches!(state, DeploymentState::BeforeStop) {
+            container["State"]["Running"]
+                .as_bool()
+                .ok_or_else(|| invalid("running state missing"))?
+        } else {
+            matches!(state, DeploymentState::Running)
+        };
+        let host = &container["HostConfig"];
+        if container["Image"] != spec["image"]
+            || !container["Id"]
+                .as_str()
+                .is_some_and(|id| id.len() == 64 && id.bytes().all(|c| c.is_ascii_hexdigit()))
+            || container["Config"]["User"] != spec["user"]
+            || container["State"]["Running"] != running
+            || container["State"]["Paused"] != false
+            || container["State"]["Restarting"] != false
+            || container["State"]["Dead"] != false
+            || !container["State"]["Pid"]
+                .as_i64()
+                .is_some_and(|pid| if running { pid > 0 } else { pid == 0 })
+            || (running && container["State"]["Status"] != "running")
+            || (running
+                && !container["State"]["StartedAt"]
+                    .as_str()
+                    .is_some_and(|start| !start.is_empty() && !start.starts_with("0001-")))
+            || (matches!(state, DeploymentState::Created)
+                && container["State"]["Status"] != "created")
+            || host["Privileged"] != false
+            || host["PidMode"] != ""
+            || !host["IpcMode"]
+                .as_str()
+                .is_some_and(|mode| matches!(mode, "" | "private"))
+            || host["RestartPolicy"]["Name"] != "no"
+            || !host["SecurityOpt"].as_array().is_some_and(|opts| {
+                opts.len() == 1
+                    && matches!(
+                        opts[0].as_str(),
+                        Some("no-new-privileges:true" | "no-new-privileges")
+                    )
+            })
+            || host["ReadonlyRootfs"] != true
+            || host["PublishAllPorts"] != false
+            || host["NetworkMode"]
+                != format!("{}_job", manifest["name"].as_str().unwrap_or_default())
+            || host["Memory"] != spec["mem_limit"]
+            || host["PidsLimit"] != spec["pids_limit"]
+            || host["NanoCpus"].as_i64()
+                != spec["cpus"]
+                    .as_f64()
+                    .map(|cpu| (cpu * 1_000_000_000.0).round() as i64)
+            || ![
+                "Binds",
+                "Devices",
+                "DeviceRequests",
+                "ExtraHosts",
+                "PortBindings",
+                "CapAdd",
+            ]
+            .iter()
+            .all(|key| {
+                host[*key].is_null()
+                    || host[*key].as_array().is_some_and(|v| v.is_empty())
+                    || host[*key].as_object().is_some_and(|v| v.is_empty())
+            })
+            || host["CapDrop"] != json!(["ALL"])
+            || !mounts_match(manifest, name, container)
+        {
+            return Err(invalid(
+                "actual deployment container differs from sealed owner manifest",
+            ));
+        }
+        result.insert(name.clone(),json!({"id":container["Id"],"image":container["Image"],
+            "state":container["State"]["Status"],"started_at":container["State"]["StartedAt"],
+            "pid":container["State"]["Pid"],"mounts":container["Mounts"].as_array().unwrap().iter().map(|mount|
+                json!({"name":mount["Name"],"destination":mount["Destination"],"rw":mount["RW"]})).collect::<Vec<_>>()}));
+    }
+    if result.is_empty() {
+        return Err(invalid("deployment service set empty"));
+    }
+    Ok(result.into())
+}
+
 impl RemoteJob {
     pub(crate) async fn prepare(id: Uuid, attempt: Uuid, workspace: &Path) -> io::Result<Self> {
+        Self::prepare_inner(id, attempt, workspace, None).await
+    }
+
+    pub(crate) async fn prepare_deployment(
+        id: Uuid,
+        attempt: Uuid,
+        workspace: &Path,
+        deployment: &crate::runner_image_build::workspace_deploy::PreparedDeployment,
+        pool: &sqlx::PgPool,
+        config: &crate::runner::RuntimeRunnerConfig,
+    ) -> io::Result<Self> {
+        let until = deployment
+            .effect_deadline(pool, config)
+            .await
+            .map_err(|_| invalid("task preparation authority unavailable"))?;
+        tokio::time::timeout_at(
+            tokio::time::Instant::from_std(until),
+            Self::prepare_inner(id, attempt, workspace, Some(deployment)),
+        )
+        .await
+        .map_err(|_| invalid("deployment preparation outcome unknown; original journal retained"))?
+    }
+
+    async fn prepare_inner(
+        id: Uuid,
+        attempt: Uuid,
+        workspace: &Path,
+        deployment: Option<&crate::runner_image_build::workspace_deploy::PreparedDeployment>,
+    ) -> io::Result<Self> {
         let client = Client::from_env()?;
         client.verify().await?;
         let root = PathBuf::from(
@@ -854,16 +1133,30 @@ impl RemoteJob {
         // A persisted invocation is never replayed, even if no container is currently visible.
         std::fs::create_dir(&directory)
             .map_err(|_| invalid("attempt journal exists; reconcile instead of reexecuting"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))?;
+        }
         let helper = format!("forge-transfer-{attempt}");
         let labels = json!({"sdlc.task": format!("job-{id}"), "sdlc.purpose":"cicd-job", "sdlc.job":id.to_string(), "sdlc.attempt":attempt.to_string(),
             "sdlc.control-volume":std::env::var("CICD_RUNNER_WORKSPACE_VOLUME").unwrap_or_default()});
         let helper_image = client.image("alpine:3.21").await?;
-        let manifest = json!({"name":project, "services":{"transfer":{
+        let mut manifest = json!({"name":project, "services":{"transfer":{
             "image":helper_image, "container_name":helper, "pull_policy":"never", "restart":"no",
             "entrypoint":["/bin/sh"], "command":["-c","sleep 86400"], "network_mode":"none",
             "read_only":true, "tmpfs":["/tmp:mode=700"], "security_opt":["no-new-privileges:true"],
             "labels":labels, "volumes":[{"type":"volume","source":"workspace","target":"/workspace"},{"type":"volume","source":"cargo","target":"/cache"}]
         }}, "volumes":{"workspace":{"labels":labels}, "cargo":{"labels":labels}}, "networks":{"job":{"labels":labels}}});
+        let volume_users = if let Some(deployment) = deployment {
+            let (fragment, users) = deployment
+                .services_for(id, attempt)
+                .map_err(|_| invalid("deployment consumer differs"))?;
+            merge_deployment(&mut manifest, fragment, users)?;
+            users.clone()
+        } else {
+            std::collections::BTreeMap::new()
+        };
         let job = Self {
             client,
             helper,
@@ -873,9 +1166,32 @@ impl RemoteJob {
             active: true,
             stopped: false,
             writes: Arc::default(),
+            deployment_output: None,
+            deployment_witness: None,
         };
         job.record("prepared").await?;
         let prepared = async {
+            if deployment.is_some() {
+                let names = bounded_image_read(
+                    job.client.command(),
+                    &["volume", "ls", "--format", "{{.Name}}"],
+                )
+                .await?;
+                let planned: Vec<_> = job.manifest["volumes"]
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .map(|name| format!("{}_{}", job.project, name))
+                    .collect();
+                if names
+                    .lines()
+                    .any(|name| planned.iter().any(|planned| planned == name))
+                {
+                    return Err(invalid(
+                        "disposable deployment volume already exists; no adoption permitted",
+                    ));
+                }
+            }
             job.save_manifest().await?;
             job.compose(&["up", "-d", "--no-build", "--pull", "never", "transfer"])
                 .await?;
@@ -889,6 +1205,7 @@ impl RemoteJob {
                     &format!("{}:/workspace", job.helper),
                 ])
                 .await?;
+            job.initialize_data_volumes(&volume_users).await?;
             job.client
                 .run(&[
                     "exec",
@@ -905,6 +1222,215 @@ impl RemoteJob {
         .await;
         prepared?;
         Ok(job)
+    }
+
+    async fn initialize_data_volumes(
+        &self,
+        users: &std::collections::BTreeMap<String, String>,
+    ) -> io::Result<()> {
+        if users.is_empty() {
+            return Ok(());
+        }
+        let containers = self.owned_resources().await?;
+        let helper = containers
+            .iter()
+            .find(|item| item["Name"] == format!("/{}", self.helper))
+            .ok_or_else(|| invalid("trusted transfer helper missing"))?;
+        if helper["Image"] != self.manifest["services"]["transfer"]["image"]
+            || !mounts_match(&self.manifest, "transfer", helper)
+        {
+            return Err(invalid("trusted helper image/mount readback differs"));
+        }
+        for (volume, user) in users {
+            let inspected: Value = serde_json::from_str(
+                &self
+                    .client
+                    .run(&["volume", "inspect", &format!("{}_{}", self.project, volume)])
+                    .await?,
+            )?;
+            let actual = inspected
+                .as_array()
+                .filter(|v| v.len() == 1)
+                .and_then(|v| v.first())
+                .ok_or_else(|| invalid("data volume readback missing"))?;
+            if !resource_owned(
+                "volume",
+                actual,
+                &self.manifest,
+                &self.project,
+                &self.directory.join("compose.json"),
+            ) {
+                return Err(invalid("foreign data volume blocks initialization"));
+            }
+            self.client
+                .run(&[
+                    "exec",
+                    &self.helper,
+                    "sh",
+                    "-ec",
+                    VOLUME_INITIALIZE,
+                    "forge-volume-init",
+                    &format!("/forge-data/{volume}"),
+                    user,
+                ])
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn start_deployment(
+        &mut self,
+        deployment: &crate::runner_image_build::workspace_deploy::PreparedDeployment,
+        pool: &sqlx::PgPool,
+        config: &crate::runner::RuntimeRunnerConfig,
+    ) -> io::Result<()> {
+        let (fragment, _) = deployment
+            .services_for(self.job_id()?, self.attempt_id()?)
+            .map_err(|_| invalid("deployment consumer differs"))?;
+        let names: Vec<&str> = fragment["services"]
+            .as_object()
+            .ok_or_else(|| invalid("services missing"))?
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let manifest = self.manifest_bytes().await?;
+        deployment
+            .record_started(&self.directory, manifest)
+            .await
+            .map_err(|_| invalid("original deployment intent unavailable"))?;
+        for action in ["create", "start"] {
+            let until = deployment
+                .effect_deadline(pool, config)
+                .await
+                .map_err(|_| invalid("task start authority unavailable"))?;
+            let containers = self.owned_resources().await?;
+            self.verify_deployment_custody(&containers, DeploymentState::BeforeStop)?;
+            let mut arguments = if action == "create" {
+                vec![
+                    "up",
+                    "--no-start",
+                    "--no-deps",
+                    "--no-build",
+                    "--pull",
+                    "never",
+                ]
+            } else {
+                vec!["start"]
+            };
+            arguments.extend(names.iter().copied());
+            tokio::time::timeout_at(
+                tokio::time::Instant::from_std(until),
+                self.compose(&arguments),
+            )
+            .await
+            .map_err(|_| {
+                invalid("deployment action outcome unknown; original journal retained")
+            })??;
+            let observation = self
+                .observe_deployment(if action == "create" {
+                    DeploymentState::Created
+                } else {
+                    DeploymentState::Running
+                })
+                .await?;
+            deployment
+                .record_observation(
+                    &self.directory,
+                    if action == "create" {
+                        "deployment-created.json"
+                    } else {
+                        "deployment-running.json"
+                    },
+                    observation.clone(),
+                )
+                .await
+                .map_err(|_| invalid("original deployment observation cannot be recorded"))?;
+            self.deployment_witness = Some((observation, action == "start"));
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn complete_deployment(
+        &mut self,
+        deployment: &crate::runner_image_build::workspace_deploy::PreparedDeployment,
+        status: std::process::ExitStatus,
+    ) -> io::Result<()> {
+        deployment
+            .services_for(self.job_id()?, self.attempt_id()?)
+            .map_err(|_| invalid("deployment completion consumer differs"))?;
+        self.stop_execution().await?;
+        let observed = self.observe_deployment(DeploymentState::Stopped).await?;
+        let output = deployment
+            .record_validation(
+                &self.directory,
+                self.manifest_bytes().await?,
+                observed,
+                status,
+            )
+            .await
+            .map_err(|_| invalid("historical deployment receipt unavailable"))?;
+        self.deployment_output = Some(output);
+        Ok(())
+    }
+
+    pub(crate) fn deployment_artifacts(&self) -> Option<&Path> {
+        self.deployment_output.as_deref()
+    }
+
+    fn job_id(&self) -> io::Result<Uuid> {
+        self.manifest["services"]["transfer"]["labels"]["sdlc.job"]
+            .as_str()
+            .and_then(|id| Uuid::parse_str(id).ok())
+            .ok_or_else(|| invalid("job identity missing"))
+    }
+    fn attempt_id(&self) -> io::Result<Uuid> {
+        self.manifest["services"]["transfer"]["labels"]["sdlc.attempt"]
+            .as_str()
+            .and_then(|id| Uuid::parse_str(id).ok())
+            .ok_or_else(|| invalid("attempt identity missing"))
+    }
+    async fn manifest_bytes(&self) -> io::Result<Vec<u8>> {
+        let path = self.directory.join("compose.json");
+        tokio::task::spawn_blocking(move || std::fs::read(path))
+            .await
+            .map_err(|_| invalid("manifest read failed"))?
+    }
+
+    async fn observe_deployment(&self, state: DeploymentState) -> io::Result<Value> {
+        let containers = self.owned_resources().await?;
+        let observed = deployment_containers(&self.manifest, &containers, state)?;
+        let network: Value = serde_json::from_str(
+            &self
+                .client
+                .run(&["network", "inspect", &format!("{}_job", self.project)])
+                .await?,
+        )?;
+        let network = network
+            .as_array()
+            .filter(|v| v.len() == 1)
+            .and_then(|v| v.first())
+            .ok_or_else(|| invalid("deployment network readback missing"))?;
+        if !resource_owned(
+            "network",
+            network,
+            &self.manifest,
+            &self.project,
+            &self.directory.join("compose.json"),
+        ) || network["Driver"] != "bridge"
+            || !network["Id"]
+                .as_str()
+                .is_some_and(|id| id.len() == 64 && id.bytes().all(|c| c.is_ascii_hexdigit()))
+            || network["Internal"] != false
+            || !network["IPAM"]["Config"]
+                .as_array()
+                .is_some_and(|v| !v.is_empty())
+        {
+            return Err(invalid("owned deployment network differs"));
+        }
+        Ok(
+            json!({"containers":observed,"network":{"id":network["Id"],"name":network["Name"],
+            "ipam":network["IPAM"]["Config"]}}),
+        )
     }
     fn journal(&self, phase: &str) -> Value {
         json!({"project":self.project,
@@ -1108,7 +1634,15 @@ impl RemoteJob {
     pub(crate) async fn confirm_stopped(&mut self) -> io::Result<()> {
         self.stopped = false;
         let containers = self.owned_resources().await?;
+        self.verify_deployment_custody(&containers, DeploymentState::Stopped)?;
         execution_stopped(&self.manifest, &containers)?;
+        if let Some((witness, started)) = &self.deployment_witness {
+            let current = self.observe_deployment(DeploymentState::Stopped).await?;
+            crate::runner_image_build::workspace_deploy::verify_observation(
+                witness, &current, *started,
+            )
+            .map_err(|_| invalid("deployment identity changed before cleanup"))?;
+        }
         self.stopped = true;
         self.record("execution-stopped").await
     }
@@ -1116,6 +1650,7 @@ impl RemoteJob {
     pub(crate) async fn stop_execution(&mut self) -> io::Result<()> {
         self.stopped = false;
         let containers = self.owned_resources().await?;
+        self.verify_deployment_custody(&containers, DeploymentState::BeforeStop)?;
         for container in execution_containers(&self.manifest, &containers)? {
             let id = container["Id"]
                 .as_str()
@@ -1123,6 +1658,30 @@ impl RemoteJob {
             self.client.run(&["stop", "-t", "2", id]).await?;
         }
         self.confirm_stopped().await
+    }
+
+    fn verify_deployment_custody(
+        &self,
+        containers: &[Value],
+        state: DeploymentState,
+    ) -> io::Result<()> {
+        if let Some((witness, started)) = &self.deployment_witness {
+            let current =
+                json!({"containers":deployment_containers(&self.manifest,containers,state)?});
+            crate::runner_image_build::workspace_deploy::verify_container_custody(
+                witness, &current, *started,
+            )
+            .map_err(|_| invalid("deployment container replaced; original journal retained"))?;
+        } else if containers.iter().any(|c| {
+            c["Config"]["Labels"]["com.docker.compose.service"]
+                .as_str()
+                .is_some_and(|s| !matches!(s, "job" | "transfer"))
+        }) {
+            return Err(invalid(
+                "deployment has no original create observation; hold",
+            ));
+        }
+        Ok(())
     }
 
     pub(crate) async fn cleanup(&mut self, pool: &sqlx::PgPool) -> io::Result<()> {
@@ -1146,7 +1705,7 @@ impl RemoteJob {
         if !acknowledged {
             return Err(invalid("terminal receipt missing; resources retained"));
         }
-        self.owned_resources().await?;
+        self.confirm_stopped().await?;
         self.compose(&["down", "--remove-orphans", "--volumes"])
             .await?;
         if !self.owned_resources().await?.is_empty() {
@@ -1260,6 +1819,12 @@ pub(crate) async fn reconcile(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
                 "journal endpoint/project ownership differs",
             )));
         }
+        let deployment_witness =
+            crate::runner_image_build::workspace_deploy::read_observation(&directory)
+                .await
+                .map_err(|_| {
+                    sqlx::Error::Io(invalid("deployment observation unavailable; dispatch held"))
+                })?;
         let mut job = RemoteJob {
             helper: manifest["services"]["transfer"]["container_name"]
                 .as_str()
@@ -1272,6 +1837,8 @@ pub(crate) async fn reconcile(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
             active: true,
             stopped: false,
             writes: Arc::default(),
+            deployment_output: None,
+            deployment_witness,
         };
         // Fresh Engine termination precedes releasing the project's lease.
         job.stop_execution().await.map_err(sqlx::Error::Io)?;
@@ -1365,6 +1932,119 @@ fn compose_job(args: &[String], envs: &[(String, String)]) -> io::Result<Value> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn deployment_fixture() -> (Value, Value, Vec<Value>) {
+        let labels = json!({"sdlc.task":"fixture"});
+        let project = "sdlc-build-job-fixture";
+        let service = json!({"image":format!("sha256:{}","a".repeat(64)),"user":"999:999",
+            "mem_limit":16777216,"cpus":0.5,"pids_limit":16,"labels":labels,
+            "container_name":format!("{project}-db"),"volumes":[{"type":"volume","source":"data","target":"/data"}]});
+        let fragment = json!({"name":project,"services":{"db":service},"volumes":{"data":{"name":format!("{project}_data"),"labels":labels}},
+            "networks":{"job":{"name":format!("{project}_job"),"internal":false,"labels":labels}}});
+        let mut manifest = json!({"name":project,"services":{"transfer":{"labels":labels,"volumes":[]}},
+            "volumes":{},"networks":{"job":{"labels":labels}}});
+        merge_deployment(
+            &mut manifest,
+            &fragment,
+            &std::collections::BTreeMap::from([("data".into(), "999:999".into())]),
+        )
+        .unwrap();
+        let container = json!({"Id":"b".repeat(64),"Image":service["image"],
+            "Config":{"User":"999:999","Labels":{"com.docker.compose.service":"db"}},
+            "State":{"Running":true,"Paused":false,"Restarting":false,"Dead":false,"Pid":42,"Status":"running","StartedAt":"2026-10-17T01:02:03Z"},
+            "HostConfig":{"Privileged":false,"PidMode":"","IpcMode":"private","RestartPolicy":{"Name":"no"},
+                "SecurityOpt":["no-new-privileges:true"],"ReadonlyRootfs":true,"PublishAllPorts":false,"NetworkMode":format!("{project}_job"),
+                "Memory":16777216,"PidsLimit":16,"NanoCpus":500000000,"CapDrop":["ALL"]},
+            "Mounts":[{"Type":"volume","Name":format!("{project}_data"),"Destination":"/data","RW":true}]});
+        (manifest, fragment, vec![container])
+    }
+
+    #[test]
+    fn deployment_merge_preserves_existing_network_and_rejects_control_resource_shadowing() {
+        let (manifest, fragment, _) = deployment_fixture();
+        assert!(manifest["networks"]["job"].get("ipam").is_none());
+        assert_eq!(
+            manifest["services"]["transfer"]["volumes"][0]["target"],
+            "/forge-data/data"
+        );
+        let users = std::collections::BTreeMap::from([("data".into(), "999:999".into())]);
+        for key in ["name", "internal", "labels", "ipam"] {
+            let mut wrong = fragment.clone();
+            wrong["networks"]["job"][key] = json!("foreign");
+            assert!(merge_deployment(&mut manifest.clone(), &wrong, &users).is_err());
+        }
+        let mut wrong = fragment.clone();
+        wrong["services"]["job"] = wrong["services"]["db"].clone();
+        assert!(merge_deployment(&mut manifest.clone(), &wrong, &users).is_err());
+        assert!(
+            merge_deployment(
+                &mut manifest.clone(),
+                &fragment,
+                &std::collections::BTreeMap::from([("data".into(), "0:0".into())])
+            )
+            .is_err()
+        );
+        assert!(VOLUME_INITIALIZE.contains("-mindepth 1 -maxdepth 1"));
+        assert!(VOLUME_INITIALIZE.contains("chown \"$2\" \"$1\""));
+        assert!(!VOLUME_INITIALIZE.contains("chown -R"));
+    }
+
+    #[test]
+    fn deployment_readback_rejects_actual_privilege_mount_image_and_start_drift() {
+        let (manifest, _, containers) = deployment_fixture();
+        deployment_containers(&manifest, &containers, DeploymentState::Running).unwrap();
+        for (key, value) in [
+            ("Privileged", json!(true)),
+            ("ReadonlyRootfs", json!(false)),
+            ("PublishAllPorts", json!(true)),
+            ("NetworkMode", json!("host")),
+            ("PidMode", json!("host")),
+            ("Memory", json!(0)),
+            ("CapAdd", json!(["SYS_ADMIN"])),
+            ("ExtraHosts", json!(["host:gateway"])),
+        ] {
+            let mut wrong = containers.clone();
+            wrong[0]["HostConfig"][key] = value;
+            assert!(
+                deployment_containers(&manifest, &wrong, DeploymentState::Running).is_err(),
+                "{key}"
+            );
+        }
+        for (key, value) in [
+            ("Id", json!("short")),
+            ("Image", json!("tag")),
+            (
+                "Mounts",
+                json!([{"Type":"bind","Destination":"/data","RW":true}]),
+            ),
+        ] {
+            let mut wrong = containers.clone();
+            wrong[0][key] = value;
+            assert!(
+                deployment_containers(&manifest, &wrong, DeploymentState::Running).is_err(),
+                "{key}"
+            );
+        }
+        for (key, value) in [
+            ("Pid", json!(0)),
+            ("StartedAt", json!("0001-01-01T00:00:00Z")),
+            ("Running", json!(false)),
+        ] {
+            let mut wrong = containers.clone();
+            wrong[0]["State"][key] = value;
+            assert!(
+                deployment_containers(&manifest, &wrong, DeploymentState::Running).is_err(),
+                "{key}"
+            );
+        }
+        let mut stopped = containers.clone();
+        stopped[0]["State"]["Running"] = json!(false);
+        stopped[0]["State"]["Pid"] = json!(0);
+        stopped[0]["State"]["Status"] = json!("exited");
+        deployment_containers(&manifest, &stopped, DeploymentState::BeforeStop).unwrap();
+        deployment_containers(&manifest, &stopped, DeploymentState::Stopped).unwrap();
+        assert!(deployment_containers(&manifest, &containers, DeploymentState::Stopped).is_err());
+    }
 
     #[test]
     fn dependency_inventory_preserves_actual_user_and_implicit_volumes_without_build_labels() {
@@ -1518,6 +2198,8 @@ mod tests {
             active: true,
             stopped: false,
             writes: Arc::clone(&writes),
+            deployment_output: None,
+            deployment_witness: None,
         };
         let pending =
             write_private_async(path.clone(), json!({"phase":"execution-started"}), writes);

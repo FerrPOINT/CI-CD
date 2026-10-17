@@ -1,9 +1,11 @@
 # API v1 Specification — Forge CI/CD
 
-`workspace_deploy` — validation-only source slice: закрытый spec с `compose` и
-`images_manifest` распознаётся, но любой такой job отклоняется до создания plan/
-queue, пока trusted deployment adapter отсутствует. Это не доступная deployment
-capability. Обычные jobs и readonly OCI не меняются; [точная граница](contracts/WORKSPACE_DEPLOY_ADMISSION.md).
+`workspace_deploy` source candidate связывает exact Git Compose, retained upstream
+`image_build` и existing RemoteJob temporary app/DB lifecycle с repo commands.
+Отдельный common patch включает task-only planning/runner path; до него parser
+остаётся закрытым. Receipt исторический `stopped-after-validation`, не current
+healthy или business acceptance. Rust/PG/native qualification pending; обычные
+jobs и readonly OCI сохраняются. [Контракт](contracts/WORKSPACE_DEPLOY_ADMISSION.md).
 
 Source-only opt-in delegated task credential добавляет optional
 `TaskTriggerPipeline.credential_context` и отдельную child identity только для

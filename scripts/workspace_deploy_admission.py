@@ -2,10 +2,10 @@
 
 The seal is a trusted owner projection, never deserialized from job/agent input.
 No secrets are resolved and no Docker, filesystem or subprocess IO is performed.
-Only JSON Compose documents are supported in this initial validation-only slice.
+Only JSON Compose documents are supported by the trusted owner renderer.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import hashlib
 import json
 import math
@@ -19,6 +19,8 @@ ENV_NAME = re.compile(r"[A-Z][A-Z0-9_]{0,127}\Z", re.ASCII)
 IMAGE = re.compile(r"sha256:[a-f0-9]{64}\Z", re.ASCII)
 COMMIT = re.compile(r"[a-f0-9]{40}\Z", re.ASCII)
 SECRET = re.compile(r"\$\{([A-Z][A-Z0-9_]{0,127})\}\Z", re.ASCII)
+BUILD_JOB = re.compile(r"[a-zA-Z][a-zA-Z0-9_.-]{0,62}\Z", re.ASCII)
+USER = re.compile(r"[1-9][0-9]{0,9}:[1-9][0-9]{0,9}\Z", re.ASCII)
 
 
 class Rejected(ValueError):
@@ -33,6 +35,7 @@ class OwnerSeal:
     images: Mapping[str, str]
     environment: Mapping[str, frozenset[str]]
     secret_names: frozenset[str]
+    build_producers: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -155,11 +158,22 @@ def validate_recipe(compose_bytes, images_manifest_bytes, seal):
     refs = []
     for name, service in services.items():
         require(NAME.fullmatch(name), "service name")
-        _fields(service, ("image", "mem_limit", "cpus", "pids_limit"),
-                ("environment", "volumes", "depends_on", "read_only"))
-        image = service["image"]
-        require(type(image) is str and IMAGE.fullmatch(image)
-                and image == seal.images[name], "only exact sealed image IDs")
+        _fields(service, ("mem_limit", "cpus", "pids_limit"),
+                ("image", "x-forge-image-build", "user", "environment", "volumes", "depends_on", "read_only"))
+        require(("image" in service) != ("x-forge-image-build" in service), "one image source required")
+        image = seal.images[name]
+        require(type(image) is str and IMAGE.fullmatch(image), "only exact sealed image IDs")
+        if "x-forge-image-build" in service:
+            producer = service["x-forge-image-build"]
+            require(type(producer) is str and BUILD_JOB.fullmatch(producer)
+                    and seal.build_producers.get(name) == producer, "retained upstream image producer required")
+        else:
+            require(service["image"] == image and name not in seal.build_producers,
+                    "only exact sealed image IDs")
+        if "user" in service:
+            require(type(service["user"]) is str and USER.fullmatch(service["user"])
+                    and all(int(part) <= 2_147_483_647 for part in service["user"].split(":")),
+                    "explicit nonroot numeric user required")
         memory, cpu, pids = service["mem_limit"], service["cpus"], service["pids_limit"]
         require(type(memory) is int and 16 * 1024**2 <= memory <= 2 * 1024**3, "memory bound")
         require(type(cpu) in (int, float) and 0.1 <= cpu <= 2 and math.isfinite(cpu), "CPU bound")

@@ -31,6 +31,7 @@ class WorkspaceDeployAdapterTests(unittest.TestCase):
             {"type": "volume", "source": "data", "target": "/var/lib/database"}]
         self.images = {"schema": "forge/workspace-images/v1", "sourceCommit": SOURCE,
                        "images": {"application": APP, "database": DATABASE}}
+        self.producers = {}
         self.owner = OwnerRuntime(
             UUID("11111111-1111-4111-8111-111111111111"), UUID("22222222-2222-4222-8222-222222222222"),
             "owner-control", ipaddress.ip_network("10.246.200.0/24"), True,
@@ -61,13 +62,14 @@ class WorkspaceDeployAdapterTests(unittest.TestCase):
                          "images_manifest_sha256": hashlib.sha256(images).hexdigest(),
                          "images": dict(self.images["images"]),
                          "environment": {"application": ["DATABASE_URL"]},
-                         "secret_names": ["APP_DB_URL"]}}
+                         "secret_names": ["APP_DB_URL"], "build_producers": dict(self.producers)}}
 
-    def bridge(self, payload, cwd=None):
+    def bridge(self, payload, cwd=None, operation="inspect"):
         root = Path(__file__).resolve().parents[2]
         bundle = {name: (root / "scripts" / (name + ".py")).read_text(encoding="utf-8")
                   for name in ("workspace_deploy_admission", "workspace_deploy_adapter")}
         bundle["input"] = payload
+        bundle["operation"] = operation
         process = subprocess.run([sys.executable, "-I", "-c",
                                   (root / "scripts/workspace_deploy_bridge.py").read_text(encoding="utf-8")],
                                  input=json.dumps(bundle).encode(), stdout=subprocess.PIPE,
@@ -75,6 +77,75 @@ class WorkspaceDeployAdapterTests(unittest.TestCase):
         self.assertEqual(process.stderr, b"")
         self.assertLess(len(process.stdout), 4096)
         return json.loads(process.stdout)
+
+    def prepare(self):
+        payload = self.inventory_input()
+        payload.update(control_volume=self.owner.control_volume,
+                       project_secret_values={"APP_DB_URL": self.owner.secret_values["APP_DB_URL"]})
+        return self.bridge(payload, operation="prepare")
+
+    def test_real_prepare_bridge_renders_owned_services_and_volume_users_without_claiming_started(self):
+        result = self.prepare()
+        self.assertEqual(result["status"], "prepared")
+        self.assertEqual(result["volume_users"], {"data": "999:999"})
+        fragment = json.loads(result["rendered"])
+        self.assertNotIn("ipam", fragment["networks"]["job"])
+        self.assertEqual(fragment["services"]["database"]["user"], "999:999")
+        self.assertEqual(fragment["services"]["application"]["environment"],
+                         {"DATABASE_URL": "synthetic-database-url-$literal"})
+        self.assertNotIn("runtime_state", result)
+        self.assertNotIn("verified", result)
+
+    def test_upstream_extension_resolves_only_exact_owner_producer_and_is_stripped(self):
+        service = self.compose["services"]["application"]
+        service.pop("image")
+        service["x-forge-image-build"] = "package.App"
+        self.producers = {"application": "package.App"}
+        original = encoded(self.compose)
+        result = self.prepare()
+        self.assertEqual(result["status"], "prepared")
+        rendered = json.loads(result["rendered"])["services"]["application"]
+        self.assertEqual(rendered["image"], APP)
+        self.assertNotIn("x-forge-image-build", rendered)
+        self.assertEqual(encoded(self.compose), original)
+        self.producers = {"application": "foreign"}
+        self.assertEqual(self.prepare()["status"], "held")
+        self.producers = {}
+        self.assertEqual(self.prepare()["status"], "held")
+
+    def test_image_source_extension_is_exclusive_and_not_a_new_uri_or_interpolation(self):
+        for value in (None, "${IMAGE}", "http://producer", "../job", {"verified": True}):
+            with self.subTest(value=value):
+                self.setUp()
+                self.compose["services"]["application"].pop("image")
+                self.compose["services"]["application"]["x-forge-image-build"] = value
+                self.assertEqual(self.prepare()["status"], "held")
+        self.setUp()
+        self.compose["services"]["application"]["x-forge-image-build"] = "package"
+        self.producers = {"application": "package"}
+        self.assertEqual(self.prepare()["status"], "held")
+
+    def test_explicit_repo_numeric_user_override_works_without_guessing_image_uid(self):
+        self.owner = replace(self.owner, image_facts={**self.owner.image_facts,
+            "database": replace(self.owner.image_facts["database"], default_user="")})
+        self.assertEqual(self.prepare()["status"], "held")
+        self.compose["services"]["database"]["user"] = "999:999"
+        result = self.prepare()
+        self.assertEqual(result["status"], "prepared")
+        self.assertEqual(result["volume_users"], {"data": "999:999"})
+        for user in ("root", "0:0", "999", "999:0", "0:999", "999:999999999999"):
+            with self.subTest(user=user):
+                self.compose["services"]["database"]["user"] = user
+                self.assertEqual(self.prepare()["status"], "held")
+
+    def test_prepare_rejects_conflicting_volume_owners_and_missing_secret_readback(self):
+        self.compose["services"]["application"]["volumes"] = [
+            {"type": "volume", "source": "data", "target": "/app-data"}]
+        self.assertEqual(self.prepare()["status"], "held")
+        self.setUp()
+        payload = self.inventory_input()
+        payload.update(control_volume=self.owner.control_volume, project_secret_values={})
+        self.assertEqual(self.bridge(payload, operation="prepare")["status"], "held")
 
     def test_actual_inventory_bridge_holds_named_volume_preparation_without_fake_success(self):
         expected = {"status": "held", "reason": "owner_volume_user_preparation_unavailable"}
@@ -148,7 +219,7 @@ class WorkspaceDeployAdapterTests(unittest.TestCase):
         raw, images = encoded(self.compose), encoded(self.images)
         seal = OwnerSeal(SOURCE, hashlib.sha256(raw).hexdigest(), hashlib.sha256(images).hexdigest(),
                          dict(self.images["images"]), {"application": frozenset(("DATABASE_URL",))},
-                         frozenset(("APP_DB_URL",)))
+                         frozenset(("APP_DB_URL",)), dict(self.producers))
         return resolve_services(raw, images, seal, owner or self.owner, source or self.source(raw))
 
     def test_git_projection_required_before_private_secret_resolution(self):

@@ -26,7 +26,7 @@ class OwnerRuntime:
     job_id: UUID
     attempt_id: UUID
     control_volume: str
-    subnet: ipaddress.IPv4Network
+    subnet: ipaddress.IPv4Network | None
     network_internal: bool
     users: Mapping[str, str]
     tmpfs: Mapping[str, frozenset[str]]
@@ -89,12 +89,7 @@ def _actual_image(name, facts, seal):
             "actual owner image Config facts required")
 
 
-def read_only_inventory(payload):
-    """Private compiled-owner stdin bridge, NOT a public request/proof constructor.
-
-    No lifecycle admission is returned: network/volume/secret custody is not connected.
-    The executable source and this projection must both be supplied by the backend.
-    """
+def _inventory_input(payload):
     compose = payload["compose"].encode("utf-8")
     manifest = payload["manifest"].encode("utf-8")
     data = payload["seal"]
@@ -105,6 +100,13 @@ def read_only_inventory(payload):
     source = OwnerComposeSource(**{**data, "job_id": UUID(data["job_id"]),
                                   "attempt_id": UUID(data["attempt_id"])})
     _verify_source_bytes(compose, seal, source, UUID(payload["job_id"]), UUID(payload["attempt_id"]))
+    validate_recipe(compose, manifest, seal)
+    return compose, manifest, seal, source
+
+
+def read_only_inventory(payload):
+    """Private read-only inspection; never an execution permit."""
+    compose, manifest, seal, _ = _inventory_input(payload)
     validated = validate_recipe(compose, manifest, seal)
     facts = payload["image_facts"]
     require(set(facts) == set(validated.service_names), "incomplete image Config inventory")
@@ -127,6 +129,33 @@ def read_only_inventory(payload):
     return {"status": "held", "reason": reason}
 
 
+def prepare_deployment(payload):
+    """Render only from backend-owned source/image/secret projections.
+
+    RemoteJob still must prepare actual owned volumes, validate create/start,
+    and perform task/lease checks. This result is not a caller-supplied ACK.
+    """
+    compose, manifest, seal, source = _inventory_input(payload)
+    recipe = json.loads(compose)
+    facts = {name: OwnerImageFacts(**{**data, "volumes": frozenset(data["volumes"])})
+             for name, data in payload["image_facts"].items()}
+    users = {name: service.get("user", facts[name].default_user)
+             for name, service in recipe["services"].items()}
+    # None requests reuse of the EXISTING RemoteJob-owned job network; no subnet proof is invented.
+    owner = OwnerRuntime(source.job_id, source.attempt_id, payload["control_volume"], None, False,
+                         users, {name: frozenset(("/tmp", "/run")) for name in users}, facts,
+                         payload["project_secret_values"], 4 * 1024**3, 4, 2048)
+    fragment = resolve_services(compose, manifest, seal, owner, source).owner_document()
+    volume_users = {}
+    for service in fragment["services"].values():
+        for mount in service.get("volumes", []):
+            previous = volume_users.setdefault(mount["source"], service["user"])
+            require(previous == service["user"], "shared volume has conflicting explicit users")
+    require(set(volume_users) == set(fragment["volumes"]), "unused disposable volume")
+    rendered = json.dumps(fragment, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return {"status": "prepared", "rendered": rendered, "volume_users": volume_users}
+
+
 @dataclass(frozen=True)
 class PrivateServiceFragment:
     _document: dict = field(repr=False)
@@ -147,10 +176,10 @@ def resolve_services(compose_bytes, manifest_bytes, seal, owner, source):
     require(type(owner.control_volume) is str
             and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", owner.control_volume),
             "owner control volume identity")
-    require(type(owner.subnet) is ipaddress.IPv4Network
+    require((owner.subnet is None or (type(owner.subnet) is ipaddress.IPv4Network
             and 16 <= owner.subnet.prefixlen <= 28
             and any(owner.subnet.subnet_of(ipaddress.ip_network(pool))
-                    for pool in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
+                    for pool in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))))
             and type(owner.network_internal) is bool, "owner allocated network")
     names = set(validated.service_names)
     require(not names & {"job", "transfer"}
@@ -177,7 +206,7 @@ def resolve_services(compose_bytes, manifest_bytes, seal, owner, source):
         require(type(user) is str and re.fullmatch(r"[1-9][0-9]{0,9}:[1-9][0-9]{0,9}", user)
                 and all(int(value) <= 2_147_483_647 for value in user.split(":")),
                 "owner nonroot UID/GID")
-        require(user == facts.default_user,
+        require(user == service.get("user", facts.default_user),
                 "image default user requires explicit trusted preparation; no inferred UID")
         paths = owner.tmpfs[name]
         require(type(paths) is frozenset and len(paths) <= 4
@@ -199,17 +228,19 @@ def resolve_services(compose_bytes, manifest_bytes, seal, owner, source):
                 require(type(value) is str and len(value) <= 16 * 1024 and "\0" not in value,
                         "declared project secret value unavailable")
                 environment[key] = value
-        service.update(environment=environment, user=user, read_only=True,
+        service.pop("x-forge-image-build", None)
+        service.update(image=seal.images[name], environment=environment, user=user, read_only=True,
                        cap_drop=["ALL"], security_opt=["no-new-privileges:true"],
                        pull_policy="never", restart="no", networks=["job"],
                        container_name=project + "-" + name,
                        labels=dict(labels),
-                       tmpfs=[path + ":rw,noexec,nosuid,size=16m" for path in sorted(paths)])
+                       tmpfs=[path + ":rw,noexec,nosuid,mode=1777,size=16m" for path in sorted(paths)])
         for mount in service.get("volumes", []):
             mount["volume"] = {"nocopy": True}
     volumes = {name: {"name": project + "_" + name, "labels": dict(labels)}
                for name in validated.volume_names}
-    network = {"name": project + "_job", "internal": owner.network_internal,
-               "labels": dict(labels), "ipam": {"config": [{"subnet": str(owner.subnet)}]}}
+    network = {"name": project + "_job", "internal": owner.network_internal, "labels": dict(labels)}
+    if owner.subnet is not None:
+        network["ipam"] = {"config": [{"subnet": str(owner.subnet)}]}
     return PrivateServiceFragment({"name": project, "services": services,
                                    "volumes": volumes, "networks": {"job": network}})

@@ -25,7 +25,12 @@ def main():
             module.__package__ = "scripts"
             sys.modules[qualified] = module
             exec(compile(bundle[name], "<forge-" + name + ">", "exec"), module.__dict__)
-        result = sys.modules["scripts.workspace_deploy_adapter"].read_only_inventory(bundle["input"])
+        adapter = sys.modules["scripts.workspace_deploy_adapter"]
+        operation = bundle.get("operation", "inspect")
+        if operation == "inspect":
+            result = adapter.read_only_inventory(bundle["input"])
+        elif operation == "prepare":
+            result = adapter.prepare_deployment(bundle["input"])
     except Exception:
         pass
     sys.stdout.write(json.dumps(result, separators=(",", ":")))

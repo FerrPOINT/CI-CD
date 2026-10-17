@@ -1,5 +1,5 @@
-//! Unconnected owner-only readback unit. No enqueue, create, start, stop or cleanup.
-//! Register only inside runner_image_build, whose private custody checks are reused.
+//! Owner-sealed task deployment preparation and historical validation receipts.
+//! RemoteJob alone controls lifecycle; no repo/caller acknowledgement is authority.
 use super::*;
 use crate::{api::ApiError, runner_docker::RuntimeImageFacts};
 use cicd_infra::sdlc_workspace as ledger;
@@ -152,6 +152,7 @@ struct VerifiedImage {
     artifact_size: i64,
     artifact_path: String,
     scope: ImageBuildScope,
+    job_key: String,
 }
 
 impl VerifiedImageRegistry {
@@ -202,9 +203,34 @@ impl VerifiedImageRegistry {
         }
         Ok(facts)
     }
+
+    fn producer_mapping(&self) -> serde_json::Value {
+        let mut result = serde_json::Map::new();
+        for (service, image) in &self.images {
+            result.insert(
+                service.clone(),
+                serde_json::json!({"origin":"image_build",
+                "job_key":image.job_key,"artifact_id":image.artifact_id,"scope":image.scope,
+                "image_id":image.descriptor.image_id,"descriptor_sha256":image.artifact_sha256}),
+            );
+        }
+        for (service, image) in &self.dependencies {
+            result.insert(
+                service.clone(),
+                serde_json::json!({"origin":"owner_inventory","image_id":image}),
+            );
+        }
+        result.into()
+    }
 }
 
-fn recipe_image_selectors(bytes: &[u8]) -> anyhow::Result<BTreeMap<String, String>> {
+#[derive(PartialEq, Eq, Debug)]
+enum ImageSelector {
+    Literal(String),
+    Build(String),
+}
+
+fn recipe_image_selectors(bytes: &[u8]) -> anyhow::Result<BTreeMap<String, ImageSelector>> {
     let recipe: serde_json::Value = serde_json::from_slice(bytes)?;
     let services = recipe["services"]
         .as_object()
@@ -223,12 +249,31 @@ fn recipe_image_selectors(bytes: &[u8]) -> anyhow::Result<BTreeMap<String, Strin
                         || (i > 0 && (c.is_ascii_digit() || matches!(c, b'_' | b'-')))),
                 "invalid inventory service"
             );
-            let image = spec["image"].as_str().context("missing image selector")?;
-            ensure!(
-                crate::domain::image_build::valid_image_id(image),
-                "dependency selector is not immutable"
-            );
-            Ok((name.clone(), image.into()))
+            let spec = spec.as_object().context("service object required")?;
+            let selector = match (spec.get("image"), spec.get("x-forge-image-build")) {
+                (Some(image), None) => {
+                    let image = image.as_str().context("image ID required")?;
+                    ensure!(
+                        crate::domain::image_build::valid_image_id(image),
+                        "immutable dependency ID required"
+                    );
+                    ImageSelector::Literal(image.into())
+                }
+                (None, Some(key)) => {
+                    let key = key.as_str().context("build job key required")?;
+                    ensure!(
+                        !key.is_empty()
+                            && key.len() <= 63
+                            && key.bytes().enumerate().all(|(i, c)| c.is_ascii_alphabetic()
+                                || (i > 0
+                                    && (c.is_ascii_digit() || matches!(c, b'_' | b'-' | b'.')))),
+                        "invalid upstream job key"
+                    );
+                    ImageSelector::Build(key.into())
+                }
+                _ => anyhow::bail!("exactly one service image source required"),
+            };
+            Ok((name.clone(), selector))
         })
         .collect()
 }
@@ -252,18 +297,26 @@ async fn read_recipe_registry(
     );
     let upstream = upstream_jobs(&plan, &current)?;
     let mut builds = BTreeMap::new();
-    for job in plan["jobs"].as_array().context("missing jobs")? {
-        let key = job["key"].as_str().context("missing job key")?;
-        if !upstream.contains(key) || job["image_build"].is_null() {
+    for (service, selector) in &selected {
+        let ImageSelector::Build(key) = selector else {
             continue;
-        }
-        ensure!(builds.len() < 8, "upstream image receipt bound");
+        };
+        ensure!(
+            upstream.contains(key),
+            "build producer is not a declared upstream dependency"
+        );
+        let job = plan["jobs"]
+            .as_array()
+            .context("missing jobs")?
+            .iter()
+            .find(|job| job["key"].as_str() == Some(key.as_str()))
+            .context("build job missing")?;
         let spec: ImageBuildSpec = serde_json::from_value(job["image_build"].clone())?;
         spec.validate().map_err(anyhow::Error::msg)?;
         let ids: Vec<Uuid> = sqlx::query_scalar("SELECT ar.id FROM artifacts ar JOIN jobs j ON j.id=ar.job_id JOIN stages s ON s.id=j.stage_id JOIN job_leases l ON l.job_id=j.id AND l.attempt_id=ar.attempt_id WHERE s.pipeline_id=$1 AND j.name=$2 AND ar.name=$3 AND l.generation=(SELECT max(generation) FROM job_leases WHERE job_id=j.id) LIMIT 2")
             .bind(scope.pipeline_id).bind(key).bind(&spec.descriptor_artifact).fetch_all(pool).await?;
         ensure!(ids.len() == 1, "unique upstream image artifact unavailable");
-        builds.insert(format!("build{}", builds.len()), ids[0]);
+        builds.insert(service.clone(), ids[0]);
     }
     let client = Client::configured_verified().await?;
     let daemon = client.image_build_daemon_id().to_owned();
@@ -280,23 +333,26 @@ async fn read_recipe_registry(
     } else {
         read_owner_image_registry(pool, source, scope, roots, &daemon, &builds, deadline).await?
     };
-    let built = std::mem::take(&mut registry.images);
     let mut observed: BTreeMap<String, RuntimeImageFacts> = BTreeMap::new();
-    for (service, id) in &selected {
-        let witnesses: Vec<_> = built
-            .values()
-            .filter(|image| image.descriptor.image_id == *id)
-            .collect();
-        ensure!(witnesses.len() <= 1, "ambiguous build image identity");
-        if let Some(image) = witnesses.first() {
-            registry.images.insert(service.clone(), (**image).clone());
-        } else {
-            registry.dependencies.insert(service.clone(), id.clone());
-        }
-        let facts = if let Some(facts) = observed.get(id) {
+    for (service, selector) in &selected {
+        let id = match selector {
+            ImageSelector::Build(key) => {
+                let image = registry
+                    .images
+                    .get(service)
+                    .context("build receipt missing")?;
+                ensure!(image.job_key == *key, "build producer key differs");
+                image.descriptor.image_id.clone()
+            }
+            ImageSelector::Literal(id) => {
+                registry.dependencies.insert(service.clone(), id.clone());
+                id.clone()
+            }
+        };
+        let facts = if let Some(facts) = observed.get(&id) {
             facts.clone()
         } else {
-            let facts = client.runtime_image(id).await?;
+            let facts = client.runtime_image(&id).await?;
             observed.insert(id.clone(), facts.clone());
             facts
         };
@@ -313,20 +369,232 @@ async fn read_recipe_registry(
         "inventory attempt/source changed"
     );
     ensure!(
-        registry.image_ids_for(scope, source, &daemon)? == selected,
+        registry.image_ids_for(scope, source, &daemon)?.len() == selected.len(),
         "inventory service identity differs"
     );
     Ok(registry)
 }
 
-pub(crate) struct InventoryHold {
-    reason: &'static str,
+/// Only the owner factory below constructs this; no Deserialize or caller ACK.
+pub(crate) struct PreparedDeployment {
+    scope: ImageBuildScope,
+    source: PreparationSource,
+    compose: VerifiedComposeSource,
+    registry: VerifiedImageRegistry,
+    fragment: serde_json::Value,
+    volume_users: BTreeMap<String, String>,
+    rendered_sha256: String,
+    artifact_path: String,
+    commands_sha256: String,
+    task_intent: crate::domain::sdlc_workspace::TaskWorkspaceIntent,
 }
 
-impl InventoryHold {
-    pub(crate) fn message(&self) -> &'static str {
-        self.reason
+impl PreparedDeployment {
+    pub(crate) fn services_for(
+        &self,
+        job: Uuid,
+        attempt: Uuid,
+    ) -> anyhow::Result<(&serde_json::Value, &BTreeMap<String, String>)> {
+        ensure!(
+            self.scope.job_id == job && self.scope.attempt_id == attempt,
+            "deployment consumer differs"
+        );
+        Ok((&self.fragment, &self.volume_users))
     }
+
+    pub(crate) async fn effect_deadline(
+        &self,
+        pool: &PgPool,
+        config: &crate::runner::RuntimeRunnerConfig,
+    ) -> anyhow::Result<std::time::Instant> {
+        let until = crate::api::sdlc_workspace::task_pipeline::verify_submitted_attempt(
+            pool,
+            self.scope.pipeline_id,
+            self.scope.attempt_id,
+            &config.sdlc_workspace,
+            &config.secrets,
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("original task authority unavailable"))?;
+        let (plan, _) = current_plan(pool, &self.source, &self.scope).await?;
+        let mut connection = pool.acquire().await?;
+        let task = ledger::find_task_pipeline(&mut connection, self.scope.pipeline_id, false)
+            .await?
+            .context("original task pipeline missing")?;
+        ensure!(
+            task.intent.0 == self.task_intent,
+            "original task/assignment binding changed"
+        );
+        drop(connection);
+        ensure!(
+            digest(&serde_json::to_vec(&plan)?) == self.compose.plan_sha256
+                && std::time::Instant::now() < until,
+            "deployment source/lease changed"
+        );
+        let observed = std::time::Instant::now();
+        let seconds:f64=sqlx::query_scalar("SELECT EXTRACT(EPOCH FROM lease_expires_at-clock_timestamp())::double precision FROM job_leases WHERE id=$1 AND attempt_id=$2 AND job_id=$3 AND generation=$4 AND lease_status='active' AND cancel_requested_at IS NULL")
+            .bind(self.scope.lease_id).bind(self.scope.attempt_id).bind(self.scope.job_id).bind(self.scope.generation)
+            .fetch_one(pool).await?;
+        ensure!(
+            seconds.is_finite() && seconds > 0.0,
+            "original embedded lease expired"
+        );
+        let embedded = observed
+            .checked_add(Duration::try_from_secs_f64(seconds)?)
+            .context("invalid original lease deadline")?;
+        Ok(until.min(embedded))
+    }
+
+    pub(crate) async fn record_started(
+        &self,
+        directory: &Path,
+        manifest: Vec<u8>,
+    ) -> anyhow::Result<()> {
+        let record = serde_json::json!({"scope":self.scope,"repository_id":self.source.repository_id,
+            "source_commit":self.source.source_commit,"compose_sha256":digest(&self.compose.bytes),
+            "plan_sha256":self.compose.plan_sha256,"rendered_fragment_sha256":self.rendered_sha256,
+            "manifest_sha256":digest(&manifest),"producers":self.registry.producer_mapping(),
+            "commands_sha256":self.commands_sha256,"task_binding":self.task_intent.binding,
+            "agent_id":self.task_intent.agent_id,"tracker_lease_id":self.task_intent.tracker_lease_id});
+        let directory = directory.to_owned();
+        tokio::task::spawn_blocking(move || {
+            private_directory(&directory)?;
+            write_new(
+                &directory.join("deployment-start.json"),
+                &serde_json::to_vec(&record)?,
+                0o600,
+            )
+        })
+        .await??;
+        Ok(())
+    }
+
+    pub(crate) async fn record_observation(
+        &self,
+        directory: &Path,
+        name: &'static str,
+        observed: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        ensure!(
+            matches!(name, "deployment-created.json" | "deployment-running.json"),
+            "unknown observation"
+        );
+        let directory = directory.to_owned();
+        tokio::task::spawn_blocking(move || {
+            private_directory(&directory)?;
+            if name == "deployment-running.json" {
+                let created: serde_json::Value = serde_json::from_slice(&read_private(
+                    &directory.join("deployment-created.json"),
+                    65536,
+                )?)?;
+                verify_observation(&created, &observed, false)?;
+            }
+            write_new(
+                &directory.join(name),
+                &serde_json::to_vec(&observed)?,
+                0o600,
+            )
+        })
+        .await??;
+        Ok(())
+    }
+
+    pub(crate) async fn record_validation(
+        &self,
+        directory: &Path,
+        manifest: Vec<u8>,
+        observed: serde_json::Value,
+        status: std::process::ExitStatus,
+    ) -> anyhow::Result<PathBuf> {
+        let directory = directory.to_owned();
+        let artifact = self.artifact_path.clone();
+        let scope = self.scope.clone();
+        tokio::task::spawn_blocking(move || {
+            private_directory(&directory)?;
+            let original: serde_json::Value = serde_json::from_slice(&read_private(&directory.join("deployment-start.json"),65536)?)?;
+            ensure!(original["scope"] == serde_json::to_value(scope)? && original["manifest_sha256"] == digest(&manifest),
+                "deployment manifest changed after original start");
+            let running:serde_json::Value=serde_json::from_slice(&read_private(&directory.join("deployment-running.json"),65536)?)?;
+            verify_observation(&running,&observed,true)?;
+            let output = directory.join("outputs");
+            fs::create_dir(&output)?;
+            #[cfg(unix)] {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(&output, fs::Permissions::from_mode(0o700))?;
+            }
+            create_parents(&output, Path::new(&artifact))?;
+            let receipt = serde_json::json!({"schema":"forge/workspace-deployment/v1","intent":original,
+                "validation":if status.success(){"verified"}else{"failed"},
+                "runtime_state":"stopped-after-validation","exit_code":status.code(),"observed":observed});
+            write_new(&output.join(&artifact), &serde_json::to_vec(&receipt)?, 0o600)?;
+            Ok::<_,anyhow::Error>(output)
+        }).await?
+    }
+}
+
+pub(crate) fn verify_observation(
+    original: &serde_json::Value,
+    current: &serde_json::Value,
+    started: bool,
+) -> anyhow::Result<()> {
+    ensure!(
+        original["network"]["id"] == current["network"]["id"],
+        "deployment network replaced"
+    );
+    verify_container_custody(original, current, started)
+}
+
+pub(crate) fn verify_container_custody(
+    original: &serde_json::Value,
+    current: &serde_json::Value,
+    started: bool,
+) -> anyhow::Result<()> {
+    let original = original["containers"]
+        .as_object()
+        .context("original containers missing")?;
+    let current = current["containers"]
+        .as_object()
+        .context("current containers missing")?;
+    ensure!(
+        original.len() == current.len(),
+        "deployment service set changed"
+    );
+    for (name, old) in original {
+        let new = current.get(name).context("deployment service missing")?;
+        ensure!(
+            old["id"] == new["id"]
+                && old["image"] == new["image"]
+                && (!started || old["started_at"] == new["started_at"]),
+            "deployment container identity/start changed"
+        );
+    }
+    Ok(())
+}
+
+pub(crate) async fn read_observation(
+    directory: &Path,
+) -> anyhow::Result<Option<(serde_json::Value, bool)>> {
+    let directory = directory.to_owned();
+    tokio::task::spawn_blocking(move || {
+        if !directory.join("deployment-start.json").try_exists()? {
+            return Ok(None);
+        }
+        private_directory(&directory)?;
+        for (name, started) in [
+            ("deployment-running.json", true),
+            ("deployment-created.json", false),
+        ] {
+            let path = directory.join(name);
+            if path.try_exists()? {
+                return Ok(Some((
+                    serde_json::from_slice(&read_private(&path, 65536)?)?,
+                    started,
+                )));
+            }
+        }
+        anyhow::bail!("deployment create outcome unknown; original journal retained")
+    })
+    .await?
 }
 
 fn requested(plan: &serde_json::Value, key: &str) -> bool {
@@ -340,32 +608,28 @@ fn requested(plan: &serde_json::Value, key: &str) -> bool {
     })
 }
 
-fn bridge_hold(value: &serde_json::Value) -> anyhow::Result<InventoryHold> {
+fn rendered_fragment(
+    value: &serde_json::Value,
+) -> anyhow::Result<(String, BTreeMap<String, String>)> {
     ensure!(
-        value.as_object().is_some_and(|v| v.len() == 2) && value["status"] == "held",
-        "inventory validator must not issue execution admission"
+        value.as_object().is_some_and(|v| v.len() == 3) && value["status"] == "prepared",
+        "owner rendering unavailable"
     );
-    let reason = match value["reason"].as_str() {
-        Some("owner_volume_user_preparation_unavailable") => {
-            "runner: deployment held; owner volume/user preparation unavailable"
-        }
-        Some("project_secret_readback_unavailable") => {
-            "runner: deployment held; project secret readback unavailable"
-        }
-        Some("owner_network_lifecycle_unavailable") => {
-            "runner: deployment held; owner network lifecycle unavailable"
-        }
-        Some("recipe_rejected") => "runner: deployment held; closed recipe validation failed",
-        _ => anyhow::bail!("unknown inventory validator result"),
-    };
-    Ok(InventoryHold { reason })
+    let rendered = value["rendered"]
+        .as_str()
+        .context("rendered services missing")?;
+    ensure!(rendered.len() <= 512 * 1024, "rendered service bound");
+    let users = serde_json::from_value(value["volume_users"].clone())?;
+    Ok((rendered.into(), users))
 }
 
-async fn inventory_bridge(input: serde_json::Value) -> anyhow::Result<InventoryHold> {
+async fn inventory_bridge(
+    input: serde_json::Value,
+) -> anyhow::Result<(String, BTreeMap<String, String>)> {
     let bytes = serde_json::to_vec(&serde_json::json!({
         "workspace_deploy_admission": include_str!("../../../scripts/workspace_deploy_admission.py"),
         "workspace_deploy_adapter": include_str!("../../../scripts/workspace_deploy_adapter.py"),
-        "input": input,
+        "input": input,"operation":"prepare",
     }))?;
     ensure!(bytes.len() <= 1024 * 1024, "owner inventory input bound");
     let mut command = Command::new("python3");
@@ -395,14 +659,14 @@ async fn inventory_bridge(input: serde_json::Value) -> anyhow::Result<InventoryH
         .stdout
         .take()
         .context("inventory output missing")?
-        .take(4097)
+        .take(1024 * 1024 + 1)
         .read_to_end(&mut output)
         .await?;
     ensure!(
-        output.len() <= 4096 && child.wait().await?.success(),
+        output.len() <= 1024 * 1024 && child.wait().await?.success(),
         "bounded inventory validation failed"
     );
-    bridge_hold(&serde_json::from_slice(&output)?)
+    rendered_fragment(&serde_json::from_slice(&output)?)
 }
 
 async fn inspect_recipe(
@@ -411,7 +675,12 @@ async fn inspect_recipe(
     config: &crate::runner::RuntimeRunnerConfig,
     control_root: &Path,
     deadline: std::time::Instant,
-) -> anyhow::Result<InventoryHold> {
+    project_secrets: &[(String, String)],
+) -> anyhow::Result<PreparedDeployment> {
+    ensure!(
+        cfg!(unix),
+        "private deployment custody requires Unix backend"
+    );
     ensure!(
         config.mode == crate::config::RunnerMode::Docker,
         "Docker owner inventory required"
@@ -430,7 +699,7 @@ async fn inspect_recipe(
         project_id: scope.project_id,
         repository_id: task.intent.repository_id,
         repository: config.git_root.join(format!("{storage}.git")),
-        source_commit: task.intent.source_commit,
+        source_commit: task.intent.source_commit.clone(),
     };
     let compose = read_owner_compose_source(pool, &source, scope, deadline).await?;
     let registry = read_recipe_registry(
@@ -465,40 +734,74 @@ async fn inspect_recipe(
         secrets.len() <= 32 && secrets.iter().all(serde_json::Value::is_string),
         "secret-name bound"
     );
-    let environment: BTreeMap<_, Vec<_>> = recipe["services"]
+    let environment: BTreeMap<String, Vec<String>> = recipe["services"]
         .as_object()
         .context("missing services")?
         .iter()
         .map(|(name, service)| {
             (
-                name,
+                name.clone(),
                 service["environment"]
                     .as_object()
-                    .map(|env| env.keys().collect())
+                    .map(|env| env.keys().cloned().collect())
                     .unwrap_or_default(),
             )
         })
         .collect();
-    inventory_bridge(
+    let build_producers: BTreeMap<String, String> = registry
+        .images
+        .iter()
+        .map(|(name, image)| (name.clone(), image.job_key.clone()))
+        .collect();
+    let secret_values: BTreeMap<String, String> = project_secrets.iter().cloned().collect();
+    ensure!(
+        secret_values.len() == project_secrets.len()
+            && secret_values.len() == secrets.len()
+            && secrets.iter().all(|key| key
+                .as_str()
+                .is_some_and(|name| secret_values.contains_key(name))),
+        "declared project secret readback missing"
+    );
+    let (rendered, volume_users) = inventory_bridge(
         serde_json::json!({"job_id":scope.job_id,"attempt_id":scope.attempt_id,
         "compose":std::str::from_utf8(bytes)?,"manifest":std::str::from_utf8(&manifest)?,
         "source":source_projection,"image_facts":registry.owner_facts_for(scope,&source)?,
+        "control_volume":config.workspace_volume,"project_secret_values":secret_values,
         "seal":{"source_commit":source.source_commit,"compose_sha256":digest(bytes),
             "images_manifest_sha256":digest(&manifest),"images":ids,
-            "environment":environment,"secret_names":secrets}}),
+            "environment":environment,"secret_names":secrets,"build_producers":build_producers}}),
     )
-    .await
+    .await?;
+    let artifact_path = job["workspace_deploy"]["images_manifest"]
+        .as_str()
+        .context("receipt path missing")?
+        .to_owned();
+    let commands_sha256 = digest(&serde_json::to_vec(&job["commands"])?);
+    let fragment = serde_json::from_str(&rendered)?;
+    Ok(PreparedDeployment {
+        scope: scope.clone(),
+        source,
+        compose,
+        registry,
+        fragment,
+        volume_users,
+        rendered_sha256: digest(rendered.as_bytes()),
+        artifact_path,
+        commands_sha256,
+        task_intent: task.intent.0,
+    })
 }
 
-/// Existing runner hook: no task submission claim, secret resolution, workspace creation
-/// or lifecycle effect. A requested recipe can return only HOLD, never command fallback.
-pub(crate) async fn inspect_requested(
+/// Existing runner supplies real project_secret_pairs; this factory performs no lifecycle effects.
+/// Only an original submitted task can later use PreparedDeployment.effect_deadline.
+pub(crate) async fn prepare_requested(
     pool: &PgPool,
     scope: ImageBuildScope,
     config: &crate::runner::RuntimeRunnerConfig,
     control_root: &Path,
-) -> Result<Option<InventoryHold>, ApiError> {
-    let row = sqlx::query("SELECT pp.plan,j.name FROM jobs j JOIN stages s ON s.id=j.stage_id JOIN pipelines p ON p.id=s.pipeline_id JOIN pipeline_plans pp ON pp.pipeline_id=p.id WHERE j.id=$1 AND p.id=$2 AND p.project_id=$3")
+    project_secrets: &[(String, String)],
+) -> Result<Option<PreparedDeployment>, ApiError> {
+    let row = sqlx::query("SELECT pp.plan,j.name,j.command,j.image,j.required_secrets,j.artifact_paths FROM jobs j JOIN stages s ON s.id=j.stage_id JOIN pipelines p ON p.id=s.pipeline_id JOIN pipeline_plans pp ON pp.pipeline_id=p.id WHERE j.id=$1 AND p.id=$2 AND p.project_id=$3")
         .bind(scope.job_id).bind(scope.pipeline_id).bind(scope.project_id).fetch_optional(pool).await
         .map_err(ApiError::internal)?;
     let Some(row) = row else {
@@ -509,18 +812,59 @@ pub(crate) async fn inspect_requested(
     if !requested(&plan, &name) {
         return Ok(None);
     }
+    let planned = plan["jobs"]
+        .as_array()
+        .and_then(|jobs| jobs.iter().find(|job| job["key"].as_str() == Some(&name)))
+        .ok_or_else(|| ApiError::conflict("Deployment plan missing"))?;
+    let artifact = planned["workspace_deploy"]["images_manifest"]
+        .as_str()
+        .ok_or_else(|| ApiError::conflict("Deployment receipt missing"))?;
+    if planned["command"]
+        != row
+            .try_get::<String, _>("command")
+            .map_err(ApiError::internal)?
+        || planned["image"]
+            != row
+                .try_get::<String, _>("image")
+                .map_err(ApiError::internal)?
+        || planned["required_secrets"]
+            != serde_json::json!(
+                row.try_get::<Vec<String>, _>("required_secrets")
+                    .map_err(ApiError::internal)?
+            )
+        || row
+            .try_get::<Vec<String>, _>("artifact_paths")
+            .map_err(ApiError::internal)?
+            != vec![artifact.to_owned()]
+        || planned["allow_failure"] != false
+        || planned["image_build"].is_object()
+        || !planned["commands"]
+            .as_array()
+            .is_some_and(|v| !v.is_empty())
+    {
+        return Err(ApiError::conflict(
+            "Deployment job differs from immutable plan",
+        ));
+    }
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
-    let hold = tokio::time::timeout_at(
+    let prepared = tokio::time::timeout_at(
         tokio::time::Instant::from_std(deadline),
-        inspect_recipe(pool, &scope, config, control_root, deadline),
+        inspect_recipe(
+            pool,
+            &scope,
+            config,
+            control_root,
+            deadline,
+            project_secrets,
+        ),
     )
     .await;
-    Ok(Some(match hold {
-        Ok(Ok(hold)) => hold,
-        _ => InventoryHold {
-            reason: "runner: deployment held; owner inventory validation unavailable",
-        },
-    }))
+    match prepared {
+        Ok(Ok(prepared)) => Ok(Some(prepared)),
+        _ => Err(ApiError::conflict(
+            "Deployment owner preparation unavailable; no launch performed",
+        )),
+    }
 }
 
 #[derive(PartialEq, Eq)]
@@ -855,6 +1199,7 @@ async fn read_registry(
                 artifact_size: artifact.size_bytes,
                 artifact_path: artifact.storage_path.clone(),
                 scope: build_scope,
+                job_key: job_name,
             },
         );
     }
@@ -910,7 +1255,7 @@ mod tests {
                 .unwrap()
             )
             .unwrap()["database"],
-            id
+            ImageSelector::Literal(id.clone())
         );
         for value in [
             json!({"services":{}}),
@@ -932,22 +1277,87 @@ mod tests {
     }
 
     #[test]
-    fn bridge_can_return_only_fixed_safe_hold_diagnostics_never_execution_permission() {
-        for reason in [
-            "owner_volume_user_preparation_unavailable",
-            "project_secret_readback_unavailable",
-            "owner_network_lifecycle_unavailable",
-            "recipe_rejected",
-        ] {
-            assert!(bridge_hold(&json!({"status":"held","reason":reason})).is_ok());
-        }
+    fn renderer_output_is_private_data_not_a_caller_execution_ack() {
+        assert!(
+            rendered_fragment(&json!({"status":"prepared","rendered":"{}","volume_users":{}}))
+                .is_ok()
+        );
         for value in [
             json!({"status":"ready","reason":"owner_network_lifecycle_unavailable"}),
             json!({"status":"held","reason":"raw-private-value"}),
             json!({"status":"held","reason":"recipe_rejected","credential":"private"}),
         ] {
-            assert!(bridge_hold(&value).is_err());
+            assert!(rendered_fragment(&value).is_err());
         }
+    }
+
+    #[test]
+    fn upstream_extension_is_exclusive_and_names_an_existing_job_not_a_uri() {
+        assert_eq!(
+            recipe_image_selectors(
+                &serde_json::to_vec(&json!({"services":{
+            "app":{"x-forge-image-build":"build_app"}}}))
+                .unwrap()
+            )
+            .unwrap()["app"],
+            ImageSelector::Build("build_app".into())
+        );
+        for service in [
+            json!({"x-forge-image-build":"build_app","image":format!("sha256:{}","a".repeat(64))}),
+            json!({"x-forge-image-build":"forge://build_app"}),
+            json!({"x-forge-image-build":"${BUILD}"}),
+            json!({"x-forge-image-build":null}),
+            json!({"x-forge-image-build":{"verified":true}}),
+            json!({}),
+        ] {
+            assert!(
+                recipe_image_selectors(
+                    &serde_json::to_vec(&json!({"services":{"app":service}})).unwrap()
+                )
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn original_container_start_epoch_and_network_are_required_after_validation() {
+        let observed = json!({"network":{"id":"n"},"containers":{
+            "app":{"id":"a","image":"i","started_at":"epoch-one"},
+            "db":{"id":"b","image":"j","started_at":"epoch-two"}}});
+        verify_observation(&observed, &observed, true).unwrap();
+        for (field, value) in [
+            ("id", json!("replacement")),
+            ("image", json!("other")),
+            ("started_at", json!("restarted")),
+        ] {
+            let mut next = observed.clone();
+            next["containers"]["app"][field] = value;
+            assert!(verify_observation(&observed, &next, true).is_err());
+            if field == "started_at" {
+                verify_observation(&observed, &next, false).unwrap();
+            }
+        }
+        let mut next = observed.clone();
+        next["network"]["id"] = json!("new-network");
+        assert!(verify_observation(&observed, &next, false).is_err());
+        next = observed.clone();
+        next["containers"].as_object_mut().unwrap().remove("db");
+        assert!(verify_container_custody(&observed, &next, true).is_err());
+    }
+
+    #[tokio::test]
+    async fn reconcile_does_not_adopt_fresh_containers_after_unknown_create_ack() {
+        let directory =
+            std::env::temp_dir().join(format!("forge-deploy-observation-{}", Uuid::new_v4()));
+        create_directory(&directory).unwrap();
+        assert!(read_observation(&directory).await.unwrap().is_none());
+        write_new(&directory.join("deployment-start.json"), b"{}", 0o600).unwrap();
+        assert!(read_observation(&directory).await.is_err());
+        write_new(&directory.join("deployment-created.json"), b"{}", 0o600).unwrap();
+        assert!(!read_observation(&directory).await.unwrap().unwrap().1);
+        write_new(&directory.join("deployment-running.json"), b"{}", 0o600).unwrap();
+        assert!(read_observation(&directory).await.unwrap().unwrap().1);
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
