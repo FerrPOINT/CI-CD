@@ -1565,7 +1565,9 @@ async fn run_job_inner(
             }
         }
         guard = running.lock().await;
-        if !image_build_attempt_active(&pool, &lease).await? {
+        if !image_build_attempt_active(&pool, &lease).await?
+            || deployment_deadline.is_some_and(|until| std::time::Instant::now() >= until)
+        {
             drop(guard);
             let _ = remote_job
                 .as_mut()

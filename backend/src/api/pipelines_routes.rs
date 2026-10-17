@@ -171,6 +171,15 @@ async fn create_pipeline_bound(
             "image_build/workspace_deploy доступны только для авторизованного task pipeline",
         ));
     }
+    if parsed_config.has_workspace_deploy()
+        && task.is_some_and(|submission| {
+            submission.intent.role != crate::domain::sdlc_workspace::WorkspaceRole::Devops
+        })
+    {
+        return Err(ApiError::bad_request(
+            "workspace_deploy требует текущий DevOps task intent",
+        ));
+    }
     let plan_snapshot = build_pipeline_plan_snapshot(
         &git_ref,
         commit_sha.as_deref(),

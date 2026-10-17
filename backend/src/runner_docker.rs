@@ -1960,6 +1960,59 @@ mod tests {
     }
 
     #[test]
+    fn deployment_stop_requires_original_container_and_start_epoch_not_matching_labels() {
+        let (manifest, _, containers) = deployment_fixture();
+        let observed = json!({"containers":deployment_containers(&manifest,&containers,DeploymentState::Running).unwrap()});
+        let mut job = RemoteJob {
+            client: Client {
+                host: "not-contacted".into(),
+                cert_path: "not-opened".into(),
+                daemon_id: "fixture-daemon".into(),
+            },
+            helper: String::new(),
+            project: "fixture".into(),
+            directory: PathBuf::new(),
+            manifest,
+            active: false,
+            stopped: false,
+            writes: Arc::default(),
+            deployment_output: None,
+            deployment_witness: None,
+        };
+        assert!(
+            job.verify_deployment_custody(&containers, DeploymentState::BeforeStop)
+                .is_err(),
+            "matching service labels cannot invent the original create ACK"
+        );
+        job.deployment_witness = Some((observed.clone(), true));
+        job.verify_deployment_custody(&containers, DeploymentState::BeforeStop)
+            .unwrap();
+        let mut replaced = containers.clone();
+        replaced[0]["Id"] = json!("c".repeat(64));
+        assert!(
+            job.verify_deployment_custody(&replaced, DeploymentState::BeforeStop)
+                .is_err()
+        );
+        let mut restarted = containers.clone();
+        restarted[0]["State"]["StartedAt"] = json!("2026-10-17T01:02:04Z");
+        assert!(
+            job.verify_deployment_custody(&restarted, DeploymentState::BeforeStop)
+                .is_err()
+        );
+        // An unknown start ACK permits stopping only the exact previously Created ID;
+        // it does not manufacture a Running observation or a validation receipt.
+        job.deployment_witness = Some((observed, false));
+        job.verify_deployment_custody(&restarted, DeploymentState::BeforeStop)
+            .unwrap();
+        assert!(
+            job.verify_deployment_custody(&replaced, DeploymentState::BeforeStop)
+                .is_err()
+        );
+        assert!(job.deployment_artifacts().is_none());
+        assert!(!job.stopped);
+    }
+
+    #[test]
     fn deployment_merge_preserves_existing_network_and_rejects_control_resource_shadowing() {
         let (manifest, fragment, _) = deployment_fixture();
         assert!(manifest["networks"]["job"].get("ipam").is_none());

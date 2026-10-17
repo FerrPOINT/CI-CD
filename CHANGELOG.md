@@ -15,6 +15,10 @@
 
 ## [Unreleased]
 
+- Task workspace deploy отклоняет не-DevOps intent до enqueue и повторно
+  проверяет исходный authority deadline после ожидания spawn mutex. Добавлены
+  unit custody и HTTP/PG admission regressions; execution qualification pending.
+
 - Task pipeline получает source-only opt-in для ограниченного delegated credential:
   отдельная зашифрованная async custody, live reauthorization и сохранение legacy SAT.
   Git write и обновление child не включены; Rust/PG и live-приёмка остаются открытыми.

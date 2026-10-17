@@ -28,6 +28,8 @@ Generic trigger без task intent отклоняется. Existing external run
 исключает task pipelines. Новых routes, credentials, issuers, tables, queues,
 controller или caller ACK нет. Original task submission claim выполняется один
 раз до подготовки deployment resources; restart не повторяет unknown invocation.
+Declaration требует текущий DevOps intent уже до enqueue, как и owner renderer;
+Developer intent не создаёт pipeline, который затем неизбежно удержал бы runner.
 
 ## Git И Image Provenance
 
@@ -109,6 +111,8 @@ network ID. Неизвестный ACK не превращается в success 
 Перед repo commands выполняется свежий authority/lease readback; command timeout
 не выходит за исходную authority deadline. Existing cancel/termination path
 останавливает все execution services, включая DB/app, кроме transfer helper.
+После ожидания общего RunningJobs mutex исходный Tracker deadline проверяется
+снова перед spawn вместе с embedded lease: ожидание не продлевает authority.
 
 До stop/delete сверяются исходные IDs/images и, после Running observation,
 StartedAt. Changed identity или incomplete observation удерживает исходный
