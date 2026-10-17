@@ -222,7 +222,7 @@ async fn authorize_child(
     intent: &TaskWorkspaceIntent,
     stored: &StoredCredential,
 ) -> Result<Instant, ApiError> {
-    stored.verify(config, secrets, project, intent).await?;
+    let child_until = stored.verify(config, secrets, project, intent).await?;
     if !ledger::task_project_matches(conn, project, intent)
         .await
         .map_err(ApiError::internal)?
@@ -231,7 +231,25 @@ async fn authorize_child(
             "Task project/repository mapping changed",
         ));
     }
-    tracker_bound(config, intent, Some(&stored.context)).await
+    bound_child_authority(
+        child_until,
+        tracker_bound(config, intent, Some(&stored.context)),
+    )
+    .await
+}
+
+async fn bound_child_authority<F>(child_until: Instant, tracker: F) -> Result<Instant, ApiError>
+where
+    F: std::future::Future<Output = Result<Instant, ApiError>>,
+{
+    if Instant::now() >= child_until {
+        return Err(ApiError::forbidden());
+    }
+    let until = child_until.min(tracker.await?);
+    if Instant::now() >= until {
+        return Err(ApiError::forbidden());
+    }
+    Ok(until)
 }
 
 pub(crate) async fn admit_delegated(
@@ -436,12 +454,12 @@ pub(crate) async fn before_delegated_effect(
         ));
     }
     let until = authorize_saved(&mut tx, &config.sdlc_workspace, &record, &config.secrets).await?;
+    tx.commit().await.map_err(ApiError::internal)?;
     if Instant::now() >= until {
         return Err(ApiError::conflict(
-            "Tracker lease expired before publication",
+            "Task authority expired before publication",
         ));
     }
-    tx.commit().await.map_err(ApiError::internal)?;
     Ok(())
 }
 

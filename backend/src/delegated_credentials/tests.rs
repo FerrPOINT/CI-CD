@@ -2,6 +2,13 @@ use super::*;
 use crate::domain::sdlc_workspace::{WorkspaceRole, WorkspaceTaskBinding};
 use std::collections::HashSet;
 
+fn live_child(central: AuthContext) -> (AuthContext, std::time::Instant) {
+    (
+        central,
+        std::time::Instant::now() + std::time::Duration::from_secs(30),
+    )
+}
+
 fn fixture() -> (
     TaskCredentialContext,
     AuthContext,
@@ -303,7 +310,7 @@ async fn async_verifier_reintrospects_same_child_each_time_and_never_uses_cached
                 move |token| async move {
                     calls.fetch_add(1, Ordering::SeqCst);
                     assert_eq!(token, central.token);
-                    Ok(Some(central))
+                    Ok(Some(live_child(central)))
                 },
             )
             .await
@@ -339,7 +346,7 @@ async fn async_verifier_reintrospects_same_child_each_time_and_never_uses_cached
                 &secrets,
                 context.project_id,
                 &context.intent,
-                move |_| async move { Ok(Some(changed)) }
+                move |_| async move { Ok(Some(live_child(changed))) }
             )
             .await
             .is_err()
@@ -490,10 +497,32 @@ async fn expired_revoked_or_replaced_child_cannot_refresh_saved_command_authorit
                 &secrets,
                 context.project_id,
                 &context.intent,
-                move |_| async { Ok(Some(replacement)) }
+                move |_| async { Ok(Some(live_child(replacement))) }
             )
             .await
             .is_err()
     );
     assert!(stored.context == context);
+}
+
+#[tokio::test]
+async fn valid_identity_with_elapsed_child_deadline_cannot_authorize_effects() {
+    let (context, central, config, secrets) = fixture();
+    let stored = Identity::verified(&central, &config)
+        .unwrap()
+        .store(context.clone(), &secrets)
+        .unwrap();
+    let expired = std::time::Instant::now();
+    assert!(
+        stored
+            .verify_with(
+                &config,
+                &secrets,
+                context.project_id,
+                &context.intent,
+                move |_| async move { Ok(Some((central, expired))) }
+            )
+            .await
+            .is_err()
+    );
 }

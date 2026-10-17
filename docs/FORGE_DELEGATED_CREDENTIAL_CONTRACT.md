@@ -82,6 +82,19 @@ deny/hold; cached grant/server token не подставляется.
 
 ### Lifetime: явная граница
 
+Delegated effect требует additive `expires_at` и `observed_at` из существующего
+Base `/auth/tokens/introspect`. Последнее поле — свежие PostgreSQL-часы issuer.
+Pinned SDK не меняется: metadata читает existing Forge central-auth adapter;
+старый Base без этих полей закрывает delegated effect, а не выдаёт бесконечный
+permit. Legacy SAT/human authentication остаются прежними.
+
+Child deadline вычисляется от начала HTTP-запроса плюс `expires_at - observed_at`;
+transport/decode/DB/Tracker ожидания не продлевают его. Async prepare, spawn и
+publication получают минимум child deadline и прежнего Tracker deadline.
+После Tracker await и commit перед ordinary publication выполняется повторная
+проверка. Идентичность, original fingerprint/context и live revoke проверки
+сохраняются; metadata не разрешает подменить child или assignment.
+
 Base replay не продлевает expiry. Credential file refresh у caller НЕ заменяет
 child в immutable async journal. Renewal для той же сохранённой command в этом
 slice НЕ поддержан: другой live child, даже с тем же assignment/run/fence/context,

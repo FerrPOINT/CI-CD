@@ -272,9 +272,9 @@ impl StoredCredential {
         secrets: &SecretsConfig,
         project: Uuid,
         intent: &TaskWorkspaceIntent,
-    ) -> Result<(), ApiError> {
+    ) -> Result<std::time::Instant, ApiError> {
         self.verify_with(config, secrets, project, intent, |token| async move {
-            crate::central_auth::try_central(&token).await
+            crate::central_auth::try_central_child(&token).await
         })
         .await
     }
@@ -286,20 +286,26 @@ impl StoredCredential {
         project: Uuid,
         intent: &TaskWorkspaceIntent,
         introspect: F,
-    ) -> Result<(), ApiError>
+    ) -> Result<std::time::Instant, ApiError>
     where
         F: FnOnce(String) -> Fut,
-        Fut: std::future::Future<Output = Result<Option<AuthContext>, ApiError>>,
+        Fut: std::future::Future<
+                Output = Result<Option<(AuthContext, std::time::Instant)>, ApiError>,
+            >,
     {
         let token = self.open(secrets)?;
-        let central = introspect(token).await?.ok_or_else(ApiError::forbidden)?;
+        let (central, until) = introspect(token).await?.ok_or_else(ApiError::forbidden)?;
         let identity = Identity::verified(&central, config)?;
         if identity.subject != self.subject
             || crate::auth::hash_token(&identity.token) != self.fingerprint
         {
             return Err(ApiError::forbidden());
         }
-        identity.bind(&self.context, project, intent)
+        identity.bind(&self.context, project, intent)?;
+        if std::time::Instant::now() >= until {
+            return Err(ApiError::forbidden());
+        }
+        Ok(until)
     }
 
     fn open(&self, secrets: &SecretsConfig) -> Result<String, ApiError> {
