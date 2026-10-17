@@ -46,6 +46,13 @@
   Rust/PG/native qualification pending;
   readonly OCI и Pulse business logic не меняются.
 
+- Меню сервисов CI/CD использует адреса только из собственного runtime-каталога.
+  Пока каталог загружается или недоступен, названия остаются видимыми без
+  переходов по встроенным адресам. После загрузки доступны точные адреса стенда.
+  Обновлён независимый Base UI pin; backend и runner не меняются.
+  Прежняя страница `/users` тоже получает Admin URL из каталога, сохраняет
+  namespace и не открывает встроенный `localhost:7772` при недоступном каталоге.
+
 - Синхронизация внешних GitHub/GitLab репозиториев сохраняет текущие Git
   admission, protected receive и atomic PR publication. URL передаётся Git
   только после canonical origin validation; неоднозначные адреса запрещены.

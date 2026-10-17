@@ -108,3 +108,25 @@ loopback browser origin; crypto API не заменялся. Внешних за
 | [44-repository-sync-source-375.png](../../screenshots/44-repository-sync-source-375.png) | `/sync-preview.html?production=1` | Production-компонент, fixture transport | 375×812 | 375×1486 |
 | [44-repository-sync-source-1920.png](../../screenshots/44-repository-sync-source-1920.png) | `/sync-preview.html?production=1` | Production-компонент, fixture transport | 1920×1080 | 1920×1080 |
 | [44-repository-sync-source-2560.png](../../screenshots/44-repository-sync-source-2560.png) | `/sync-preview.html?production=1` | Production-компонент, fixture transport | 2560×1440 | 2560×1440 |
+
+## Пользователи и каталог сервисов — установленный SDLC2, 17 октября 2026
+
+Снимки настоящего UI из CI/CD `1216eee` и Base UI `e0759e0` получены
+в отдельном Chromium profile на собственном зарегистрированном origin
+`http://localhost:8712`. Auth и каталог Admin настоящие; данные на снимках
+не заменялись фикстурами. Открыто штатное меню сервисов, горизонтальной
+прокрутки нет. PNG — непосредственный full-page capture, DPR 1.
+
+В Chromium, Firefox и WebKit отдельно прошли SSO callback, точный Admin URL
+с namespace, reload, запрос к собственному API, logout и отклонение отозванного
+bearer. Две проверки Chromium дополнительно задерживают или отклоняют только
+публичный GET каталога: до подтверждения назначения недоступны; после
+возобновления настоящего GET собственный Admin URL восстанавливается.
+Настройки безопасности браузеров сохранены, внешних AI-вызовов нет.
+Эти проверки не подтверждают полный автоматический SDLC.
+
+| Файл | Маршрут | Режим | Viewport | Размер PNG |
+|---|---|---|---|---|
+| [45-users-catalog-375.png](../../screenshots/45-users-catalog-375.png) | `/users` | Настоящий runtime catalog, меню сервисов | 375×900 | 375×900 |
+| [45-users-catalog-1920.png](../../screenshots/45-users-catalog-1920.png) | `/users` | Настоящий runtime catalog, меню сервисов | 1920×900 | 1920×900 |
+| [45-users-catalog-2560.png](../../screenshots/45-users-catalog-2560.png) | `/users` | Настоящий runtime catalog, меню сервисов | 2560×900 | 2560×900 |
