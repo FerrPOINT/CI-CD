@@ -15,6 +15,10 @@
 
 ## [Unreleased]
 
+- Обычный Compose retry без image-build custody не требует Unix/private
+  каталога новой функции. Проверки journal/daemon/job/stop/cleanup сохраняются;
+  незавершённая либо чужая image-build попытка по-прежнему блокирует повтор.
+
 - Owner-only `CICD_LOCAL_DELIVERY_KIND=static|oci` подключает существующий OCI
   executor к task delivery API с текущими SAT/Tracker/environment guards.
   Static wire/local CLI сохраняются; OCI fixture paths изолированы без удаления
