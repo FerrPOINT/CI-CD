@@ -130,8 +130,26 @@ Git Smart HTTP различает read и write:
 - Private `git-upload-pack` и любой `git-receive-pack` требуют credential.
 - Legacy `CICD_GIT_TOKEN` остаётся operator bypass для совместимости.
 - При непустом `CICD_AUTH_SECRET` можно передать JWT/PAT пользователя: `viewer+` читает связанный project repository, `developer+` может push, `admin` имеет bypass. PAT дополнительно должен иметь `git:read` для fetch/clone или `git:write` для push и, если задан `project_id`, совпадать со связанным проектом.
+- Project-bound `forge_sat_` использует тот же repository UUID → CI project
+  predicate, что API, без фиктивного human membership. Нужны отдельные
+  `git:read`/`git:write`; `api:read`/`api:write` не дают Git-доступ.
+  Disabled/revoked/expired SAT отклоняет существующий identity resolver.
 
-Связь repository -> project в текущем MVP выводится из `projects.repository_url`, который указывает на exact repo tail: `/{repo}.git`, `:{repo}.git` или ровно `{repo}.git`. Полноценная tenant-bound mapping table и scoped Git credentials остаются target.
+Связь hosted repository → project проверяется через `repository_catalog.id`,
+`storage_name` и `projects.repository_id`, не через URL tail.
+
+Smart HTTP receive использует native `pre-receive` до изменения refs: прямые
+создание/update/delete default branch или точного имени из `protected_branches`
+любой связанной CI-конфигурации запрещают весь push. Изменение этих branches
+проходит через существующий PR merge gate; operator/legacy credential не отменяет
+receive policy. Task branches продолжают работать по прежним ACL/scopes.
+Новый task-bound credential не выдаётся, `git:write` остаётся repository-wide.
+
+Временный private `core.hooksPath` делегирует executable custom hooks исходного
+effective hook directory с прежними argv/stdin. Repo hooks и Git config не
+перезаписываются. При известном завершении Git удаляется только собственный
+guard directory; при неизвестном writer outcome он сохраняется. Подробности:
+[ADR-0028](adr/0028-git-sat-native-receive-policy.md).
 
 Если используется legacy `CICD_GIT_TOKEN`, Git HTTP принимает один из вариантов:
 

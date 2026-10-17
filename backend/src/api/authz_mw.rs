@@ -411,7 +411,7 @@ async fn repository_scope_allows(
         .any(|role| role >= min_role))
 }
 
-async fn repository_linked_to_project(
+pub(crate) async fn repository_linked_to_project(
     pool: &PgPool,
     repo: &str,
     project_id: Uuid,

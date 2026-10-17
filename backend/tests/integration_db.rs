@@ -34,6 +34,10 @@ mod task_pipeline_http;
 #[path = "support/task_pipeline_migration.rs"]
 mod task_pipeline_migration;
 
+#[cfg(unix)]
+#[path = "support/git_sat_receive.rs"]
+mod git_sat_receive;
+
 type CanceledExternalLeaseState = (
     String,
     String,

@@ -15,6 +15,11 @@
 
 ## [Unreleased]
 
+- Git Smart HTTP принимает project-bound service-account token с отдельными
+  Git scopes и защищает default/protected refs native pre-receive hook до
+  изменения refs, сохраняя custom hooks и прежние human ACL. Source fix;
+  Rust/PG и installed-image qualification pending.
+
 - Owner-only `CICD_LOCAL_DELIVERY_KIND=static|oci` подключает существующий OCI
   executor к task delivery API с текущими SAT/Tracker/environment guards.
   Static wire/local CLI сохраняются; OCI fixture paths изолированы без удаления

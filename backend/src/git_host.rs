@@ -18,6 +18,8 @@ use uuid::Uuid;
 
 use crate::api::{ApiError, AppState};
 
+mod receive_hooks;
+
 #[derive(Clone, Debug)]
 pub struct GitConfig {
     pub root: PathBuf,
@@ -363,6 +365,12 @@ async fn check_repo_access(
     if !crate::api::bearer_token_has_scope(&claims, required_scope) {
         return Err(ApiError::forbidden());
     }
+    if claims.role == "service_account" {
+        return match claims.token_project_id {
+            Some(project_id) => git_repository_linked_to_project(pool, &name, project_id).await,
+            None => Err(ApiError::forbidden()),
+        };
+    }
     if claims.role != "service_account"
         && global_role >= min_role
         && crate::repository_catalog::shared_human_repository(pool, &name, claims.token_project_id)
@@ -473,14 +481,7 @@ async fn git_repository_linked_to_project(
     repo: &str,
     project_id: Uuid,
 ) -> Result<(), ApiError> {
-    let linked = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM projects p JOIN repository_catalog r ON r.id=p.repository_id WHERE p.id=$1 AND r.storage_name=$2)",
-    )
-    .bind(project_id)
-    .bind(repo)
-    .fetch_one(pool)
-    .await
-    .map_err(ApiError::internal)?;
+    let linked = crate::api::authz_mw::repository_linked_to_project(pool, repo, project_id).await?;
     if linked {
         Ok(())
     } else {
@@ -591,19 +592,64 @@ fn maybe_gunzip(headers: &HeaderMap, body: Bytes) -> Result<Bytes, ApiError> {
 }
 
 async fn run_git_service(
+    state: std::sync::Arc<AppState>,
     path: &Path,
     service: &str, // "upload-pack" | "receive-pack"
     body: Bytes,
+    hooks: Option<receive_hooks::ReceiveHooks>,
+    storage: Option<String>,
 ) -> Result<Vec<u8>, ApiError> {
-    let mut child = Command::new("git")
+    // The owner waiter retains the guard until native Git exits, even if HTTP is cancelled.
+    let path = path.to_owned();
+    let service = service.to_owned();
+    tokio::spawn(async move {
+        let _namespace_lease = if let Some(storage) = storage {
+            match crate::repository_catalog::write_lease(&state, &storage).await {
+                Ok(lease) => Some(lease),
+                Err(error) => {
+                    if let Some(hooks) = hooks {
+                        hooks.cleanup();
+                    }
+                    return Err(error);
+                }
+            }
+        } else {
+            None
+        };
+        run_git_service_owned(&path, &service, body, hooks).await
+    })
+    .await
+    .map_err(|_| ApiError::service_unavailable("Git service waiter unavailable"))?
+}
+
+async fn run_git_service_owned(
+    path: &Path,
+    service: &str,
+    body: Bytes,
+    hooks: Option<receive_hooks::ReceiveHooks>,
+) -> Result<Vec<u8>, ApiError> {
+    let mut command = Command::new("git");
+    command.kill_on_drop(true);
+    if let Some(hooks) = &hooks {
+        command.arg("-c").arg(hooks.config());
+    }
+    let spawned = command
         .arg(service)
         .arg("--stateless-rpc")
         .arg(path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+        .spawn();
+    let mut child = match spawned {
+        Ok(child) => child,
+        Err(error) => {
+            if let Some(hooks) = hooks {
+                hooks.cleanup();
+            }
+            return Err(ApiError::internal(sqlx::Error::Io(error)));
+        }
+    };
     let mut stdin = child
         .stdin
         .take()
@@ -617,6 +663,9 @@ async fn run_git_service(
         .wait_with_output()
         .await
         .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if let Some(hooks) = hooks {
+        hooks.cleanup();
+    }
     let _ = writer.await;
     if !output.status.success() {
         return Err(ApiError::internal(sqlx::Error::Io(std::io::Error::other(
@@ -668,15 +717,12 @@ pub async fn git_service_endpoint(
         Ok(path) => path,
         Err(e) => return e.into_response(),
     };
-    let _namespace_lease = if operation == GitOperation::Write {
+    let storage = if operation == GitOperation::Write {
         let storage = match crate::repository_catalog::resolve_storage(pool, &repo).await {
             Ok(name) => name,
             Err(error) => return error.into_response(),
         };
-        match crate::repository_catalog::write_lease(&state, &storage).await {
-            Ok(lease) => Some(lease),
-            Err(error) => return error.into_response(),
-        }
+        Some(storage)
     } else {
         None
     };
@@ -684,7 +730,15 @@ pub async fn git_service_endpoint(
         Ok(body) => body,
         Err(e) => return e.into_response(),
     };
-    match run_git_service(path.as_path(), service, body).await {
+    let hooks = if operation == GitOperation::Write {
+        match receive_hooks::ReceiveHooks::prepare(pool, &path).await {
+            Ok(hooks) => Some(hooks),
+            Err(error) => return error.into_response(),
+        }
+    } else {
+        None
+    };
+    match run_git_service(state, path.as_path(), service, body, hooks, storage).await {
         Ok(out) => (
             StatusCode::OK,
             [(
