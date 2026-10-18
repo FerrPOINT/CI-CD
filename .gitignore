@@ -8,3 +8,6 @@ frontend/dist/
 frontend/dist-sync-preview/
 frontend/.pnpm-store/
 backend/target-cache*/
+
+# Incremental TypeScript compiler metadata.
+*.tsbuildinfo
