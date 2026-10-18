@@ -11,10 +11,12 @@ from pathlib import Path
 DOCKERFILE = Path(__file__).resolve().parents[2] / "backend/Dockerfile.umbrella"
 
 
-def staged_paths(dockerfile: str, required: set[str]) -> set[str]:
+def staged_paths(
+    dockerfile: str, required: set[str], destinations: dict[str, str] | None = None
+) -> set[str]:
     staged = set()
     for line in dockerfile.replace("\\\n", " ").splitlines():
-        if not line.startswith("COPY services-base/"):
+        if not line.startswith("COPY "):
             continue
         *sources, destination = shlex.split(line)[1:]
         for source in sources:
@@ -25,12 +27,32 @@ def staged_paths(dockerfile: str, required: set[str]) -> set[str]:
                     target = destination.rstrip("/") + path[len(source.rstrip("/")):]
                 else:
                     continue
-                if target == "/" + path:
+                if target == (destinations or {}).get(path, "/" + path):
                     staged.add(path)
     return staged
 
 
 class BackendDockerfileTests(unittest.TestCase):
+    def test_embedded_workspace_validators_are_staged_in_both_recipes(self) -> None:
+        root = DOCKERFILE.parents[1]
+        source = (root / "backend/src/runner_image_build/workspace_deploy.rs").read_text(encoding="utf-8")
+        names = set(re.findall(r'include_str!\(\s*"(?:\.\./)+scripts/([^"/]+\.py)"\s*\)', source))
+        self.assertTrue(names, "Workspace validation must embed its pinned scripts")
+        required = {"CI-CD/scripts/" + name for name in names}
+        destinations = {path: "/scripts/" + Path(path).name for path in required}
+        for name in ("Dockerfile", "Dockerfile.umbrella"):
+            dockerfile = (root / "backend" / name).read_text(encoding="utf-8")
+            with self.subTest(dockerfile=name):
+                self.assertFalse(required - staged_paths(dockerfile, required, destinations))
+
+    def test_workspace_validator_interpreter_is_installed_in_both_runtime_stages(self) -> None:
+        for name in ("Dockerfile", "Dockerfile.umbrella"):
+            dockerfile = (DOCKERFILE.parent / name).read_text(encoding="utf-8")
+            runtime = dockerfile.split("FROM debian:bookworm-slim", 1)[1].replace("\\\n", " ")
+            packages = [shlex.split(command) for command in re.findall(r"apt-get install[^&;\n]+", runtime)]
+            with self.subTest(dockerfile=name):
+                self.assertTrue(any("python3" in command for command in packages))
+
     def test_all_embedded_base_helpers_are_staged_at_the_include_path(self) -> None:
         root = DOCKERFILE.parents[1]
         source = (root / "backend/src/task_delivery/postgres.rs").read_text(encoding="utf-8")
