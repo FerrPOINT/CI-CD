@@ -19,6 +19,10 @@
   predecessor CAS и current credential overlay без повторного dispatch.
   Общие registrations подключены; Rust/PG/image qualification pending.
 
+- CLI Developer подготавливает checkout и точный candidate intent через приватный
+  Fleet grant. Push/readback не требуют общего `CICD_API_TOKEN`; отсутствующая Git
+  author identity задаётся только для нового checkout, существующая сохраняется.
+
 - Исправлена umbrella-сборка backend: встроенные workspace deployment validators
   копируются до компиляции Rust, а runtime содержит необходимый Python 3.
 
