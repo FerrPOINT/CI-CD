@@ -23,6 +23,8 @@
   Fleet grant. Push/readback не требуют общего `CICD_API_TOKEN`; отсутствующая Git
   author identity задаётся только для нового checkout, существующая сохраняется.
 
+- Repository Syncs использует общий OffsetPageNavigation Base для четырёх списков; текущие offset, URL-фильтры, загрузка данных и права сохранены.
+
 - Исправлена umbrella-сборка backend: встроенные workspace deployment validators
   копируются до компиляции Rust, а runtime содержит необходимый Python 3.
 
