@@ -53,6 +53,11 @@ Grant hash охватывает ВСЕ поля context. В body передаё�
 
 ## Consumer и разрешённые действия
 
+DevOps delivery остаётся отдельной authority-границей. Проверенные ограничения
+v1 custody и минимальный versioned proposal описаны в
+[DevOps task-child binding](contracts/DEVOPS_TASK_CHILD_AUTHORITY.md).
+Этот proposal не открывает routes и не выдаёт child legacy SAT authority.
+
 Отдельная typed identity, без поддельных local SAT UUID/service-account name или
 human/admin role. Только opaque PAT без browser SID/role, exact configured central
 subject, один валидный task grant и ровно три разрешённых scope. Malformed,

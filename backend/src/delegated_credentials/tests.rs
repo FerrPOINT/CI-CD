@@ -9,7 +9,7 @@ fn live_child(central: AuthContext) -> (AuthContext, std::time::Instant) {
     )
 }
 
-fn fixture() -> (
+pub(super) fn fixture() -> (
     TaskCredentialContext,
     AuthContext,
     SdlcWorkspaceConfig,
