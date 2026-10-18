@@ -314,7 +314,10 @@ fn source_provenance_matches(volume: &Value, revision: &str, workspace: &str) ->
         && revision
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        && matches!(workspace, "sdlc1" | "sdlc2" | "pdlc1" | "pdlc2" | "pdlc3")
+        && matches!(
+            workspace,
+            "sdlc1" | "sdlc2" | "pdlc1" | "pdlc2" | "pdlc3" | "pdlc4"
+        )
         && volume[0]["Labels"]["sdlc.base-revision"] == revision
         && volume[0]["Labels"]["sdlc.workspace"] == workspace
 }
@@ -2728,7 +2731,7 @@ mod tests {
     #[test]
     fn runner_sources_accept_registered_installations_and_reject_foreign_provenance() {
         let revision = "875cac2edf1a18c3a8a59e2f67256d02a8fc04e4";
-        for workspace in ["sdlc1", "sdlc2", "pdlc1", "pdlc2", "pdlc3"] {
+        for workspace in ["sdlc1", "sdlc2", "pdlc1", "pdlc2", "pdlc3", "pdlc4"] {
             let volume =
                 json!([{"Labels":{"sdlc.base-revision":revision,"sdlc.workspace":workspace}}]);
             assert!(source_provenance_matches(&volume, revision, workspace));
