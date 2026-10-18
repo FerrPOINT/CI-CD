@@ -17,7 +17,7 @@
 
 - Source-only owner-P task credential renewal: additive successor custody,
   predecessor CAS и current credential overlay без повторного dispatch.
-  Общие registrations и Rust/PG/image qualification pending.
+  Общие registrations подключены; Rust/PG/image qualification pending.
 
 - Исправлена umbrella-сборка backend: встроенные workspace deployment validators
   копируются до компиляции Rust, а runtime содержит необходимый Python 3.

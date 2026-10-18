@@ -194,7 +194,7 @@ pub(crate) fn routes() -> Router<Arc<AppState>> {
         }))
 }
 
-#[utoipa::path(post,path="/api/v1/projects/{project_id}/pipelines/{pipeline_id}/credential-renewals",
+#[utoipa::path(post,operation_id="renew_task_pipeline_credential",path="/api/v1/projects/{project_id}/pipelines/{pipeline_id}/credential-renewals",
     tag="SDLC workspace",params(("project_id"=Uuid,Path),("pipeline_id"=Uuid,Path)),
     request_body=RenewalRequest,responses((status=200,body=custody::RenewalReadback),(status=401),(status=403),(status=409)))]
 pub(crate) async fn renew(
@@ -265,7 +265,7 @@ pub(crate) async fn renew(
     Ok(Json(receipt))
 }
 
-#[utoipa::path(get,path="/api/v1/projects/{project_id}/pipelines/{pipeline_id}/credential-renewals/{renewal_key}",
+#[utoipa::path(get,operation_id="read_task_pipeline_credential_renewal",path="/api/v1/projects/{project_id}/pipelines/{pipeline_id}/credential-renewals/{renewal_key}",
     tag="SDLC workspace",params(("project_id"=Uuid,Path),("pipeline_id"=Uuid,Path),("renewal_key"=String,Path)),
     responses((status=200,body=custody::RenewalReadback),(status=401),(status=403),(status=404)))]
 pub(crate) async fn readback(

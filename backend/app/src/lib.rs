@@ -460,6 +460,14 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
     public(POST, "/api/v1/auth/logout"),
     system(POST, "/api/v1/internal/git-push"),
     system(POST, "/api/v1/internal/task-git-check"),
+    system(
+        POST,
+        "/api/v1/projects/{project_id}/pipelines/{pipeline_id}/credential-renewals",
+    ),
+    system(
+        GET,
+        "/api/v1/projects/{project_id}/pipelines/{pipeline_id}/credential-renewals/{renewal_key}",
+    ),
     runner(POST, "/api/v1/runner/register"),
     runner(POST, "/api/v1/runner/heartbeat"),
     runner(POST, "/api/v1/runner/work:poll"),
@@ -1086,6 +1094,29 @@ fn path_matches(policy_path: &str, path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn credential_renewal_routes_require_dedicated_machine_authorization() {
+        for (method, path) in [
+            ("POST", "/api/v1/projects/p/pipelines/r/credential-renewals"),
+            (
+                "GET",
+                "/api/v1/projects/p/pipelines/r/credential-renewals/key",
+            ),
+        ] {
+            assert_eq!(route_access(method, path), Some(RouteAccess::System));
+            for role in [Role::Viewer, Role::Developer, Role::Maintainer, Role::Admin] {
+                assert!(!allows(role, method, path));
+            }
+        }
+        assert_eq!(
+            route_access(
+                "DELETE",
+                "/api/v1/projects/p/pipelines/r/credential-renewals/key"
+            ),
+            None
+        );
+    }
 
     #[test]
     fn viewer_reads_but_cannot_write() {
