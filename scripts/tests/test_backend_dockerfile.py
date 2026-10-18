@@ -56,6 +56,22 @@ class BackendDockerfileTests(unittest.TestCase):
         self.assertEqual(staged_paths(copies.splitlines()[0], required), {"services-base/scripts/platform_namespace.py"})
         self.assertEqual(staged_paths(copies.replace(" /services-base/", " /wrong/"), required), set())
 
+    def test_compiler_helpers_are_an_exact_file_set_without_broad_runtime_directories(self) -> None:
+        source = (DOCKERFILE.parents[1] / 'backend/src/task_delivery/postgres.rs').read_text(encoding='utf-8')
+        required = {'services-base/' + path for path in re.findall(r'pinned_base_helper!\("([^\"]+)"\)', source)}
+        self.assertTrue(required)
+        for name in ('Dockerfile', 'Dockerfile.umbrella'):
+            recipe = (DOCKERFILE.parent / name).read_text(encoding='utf-8')
+            build = recipe.split('FROM dependencies AS build', 1)[1].split('FROM debian:', 1)[0]
+            copied = set()
+            for line in build.replace('\\\n', ' ').splitlines():
+                if line.startswith('COPY services-base/'):
+                    *paths, destination = shlex.split(line)[1:]
+                    copied.update(paths)
+                    self.assertEqual(staged_paths(line, set(paths)), set(paths), name)
+            with self.subTest(recipe=name):
+                self.assertEqual(copied, required)
+
     def test_explicit_files_are_supported_without_accepting_a_sibling(self) -> None:
         required = {"services-base/scripts/platform_namespace.py", "services-base/scripts/_platform_namespace_contract.py"}
         copies = "COPY services-base/scripts/platform_namespace.py /services-base/scripts/\n"

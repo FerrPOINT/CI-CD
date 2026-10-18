@@ -81,6 +81,23 @@ Shell fixture исполняет dependency command с recording Cargo и про
 unused input cache hit и artifacts проверяются на общей native вехе; source
 checks и размер COPY segment не являются измерением CPU/RAM или скорости.
 
+### Точные compiler witnesses
+
+Build stage обоих recipes копирует ровно 66 файлов из `BASE_PG_HELPERS`,
+сохраняя прежние include paths. Изменение постороннего Python helper не должно
+сбрасывать этот Docker layer. Regression сравнивает полные множества COPY и
+embeds; проверка только наличия необходимых файлов недостаточна.
+Macro использует `::std::include_bytes!`/`::std::concat!`, исключая shadow
+импортированных macros. Это source contract; actual locked compilation,
+old-mtime binary change, layer hit и PostgreSQL delivery ещё требуют native gate.
+
+В Base реализован дополнительный `forge-runtime-witness-v1`: closed parser
+фиксирует inventory в dependency request и применяет его к view/fingerprint.
+Полный SDK export/runtime package сохраняет дополнительные imports.
+Текущий descriptor оставляет `forge-runtime-v1`, совместимый с принятыми callers.
+Новый profile включается отдельно после qualification и принятия exact tooling
+с parser; автоматически изменять SDK/quality pins или объявлять reuse нельзя.
+
 Test options теперь живут в отдельном `frontend/vitest.config.ts`, наследуя
 production config. Его изменение выбирает проверки без app artifact, и оба
 production COPY исключают этот файл. Types/config loader проверены отдельно от

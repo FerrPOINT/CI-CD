@@ -14,7 +14,7 @@ macro_rules! pinned_base_helper {
     ($path:literal) => {
         (
             $path,
-            include_bytes!(concat!("../../../../services-base/", $path)) as &[u8],
+            ::std::include_bytes!(::std::concat!("../../../../services-base/", $path)) as &[u8],
         )
     };
 }
