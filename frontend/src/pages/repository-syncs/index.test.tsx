@@ -5,10 +5,12 @@ import {
   screen,
   waitFor,
   cleanup,
+  within,
 } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ApiError } from '@/api/client'
+import * as apiClient from '@/api/client'
 import { repositorySync, type SyncConnection, type SyncRun } from '@/api/repository-sync'
 import {
   RepositorySyncEditor,
@@ -66,6 +68,73 @@ afterEach(() => {
   context.malformed = false
 })
 describe('production repository synchronization', () => {
+  it.each(['Infinity', '-1', '1.5', 'not-a-number', '9007199254740992'])(
+    'normalizes invalid list offset %s before requesting data',
+    async (offset) => {
+      const list = vi.spyOn(repositorySync, 'list').mockResolvedValue({ items: [], total: 0 })
+      mount(<RepositorySyncsPage />, `/repository-syncs?offset=${offset}&provider=github&search=service`)
+      await screen.findByRole('navigation', { name: 'Синхронизации репозиториев' })
+      expect(list.mock.calls[0][0].get('offset')).toBe('0')
+      expect(list.mock.calls[0][0].get('provider')).toBe('github')
+      expect(list.mock.calls[0][0].get('search')).toBe('service')
+      expect(screen.getByRole('button', { name: 'Назад' })).toBeDisabled()
+    },
+  )
+  it.each(['Infinity', '-1', '1.5', 'not-a-number', '9007199254740992'])(
+    'normalizes invalid catalog offset %s before requesting data',
+    async (offset) => {
+      vi.spyOn(repositorySync, 'list').mockResolvedValue({ items: [], total: 0 })
+      const catalog = vi.spyOn(apiClient, 'api').mockResolvedValue({ items: [], total: 0 })
+      mount(<RepositorySyncsPage />, `/repository-syncs?select_offset=${offset}&select_search=service`)
+      fireEvent.click(screen.getByRole('button', { name: 'Добавить синхронизацию' }))
+      await screen.findByRole('navigation', { name: 'Доступные репозитории' })
+      const query = new URL(catalog.mock.calls[0][0], 'https://unit.invalid').searchParams
+      expect(query.get('offset')).toBe('0')
+      expect(query.get('search')).toBe('service')
+    },
+  )
+  it.each(['Infinity', '-1', '1.5', 'not-a-number', '9007199254740992'])(
+    'normalizes invalid history and refs offset %s before requesting data',
+    async (offset) => {
+      const runs = vi.spyOn(repositorySync, 'runs').mockResolvedValue({ items: [], total: 0 })
+      const refs = vi.spyOn(repositorySync, 'refs').mockResolvedValue({ items: [], total: 0 })
+      mount(<RepositorySyncEditor connection={connection} reload={vi.fn()} />,
+        `/?tab=history&run_id=run&runs_offset=${offset}&refs_offset=${offset}`)
+      await waitFor(() => expect(runs).toHaveBeenCalled())
+      await waitFor(() => expect(refs).toHaveBeenCalled())
+      expect(runs.mock.calls[0][1]).toBe(0)
+      expect(refs.mock.calls[0][2]).toBe(0)
+    },
+  )
+  it('preserves an unaligned catalog offset and advances only that pager', async () => {
+    vi.spyOn(repositorySync, 'list').mockResolvedValue({ items: [], total: 55 })
+    const catalog = vi.spyOn(apiClient, 'api').mockResolvedValue({ items: [], total: 55 })
+    mount(<RepositorySyncsPage />, '/repository-syncs?offset=15&select_offset=15&select_search=service')
+    fireEvent.click(screen.getByRole('button', { name: 'Добавить синхронизацию' }))
+    const nav = await screen.findByRole('navigation', { name: 'Доступные репозитории' })
+    expect(new URL(catalog.mock.calls[0][0], 'https://unit.invalid').searchParams.get('offset')).toBe('15')
+    fireEvent.click(within(nav).getByRole('button', { name: 'Далее' }))
+    await waitFor(() => expect(catalog).toHaveBeenCalledTimes(2))
+    const query = new URL(catalog.mock.calls[1][0], 'https://unit.invalid').searchParams
+    expect(query.get('offset')).toBe('35')
+    expect(query.get('search')).toBe('service')
+  })
+  it('preserves unaligned history and refs offsets with their own page sizes', async () => {
+    const runs = vi.spyOn(repositorySync, 'runs').mockResolvedValue({ items: [], total: 55 })
+    const refs = vi.spyOn(repositorySync, 'refs').mockResolvedValue({ items: [], total: 125 })
+    mount(<RepositorySyncEditor connection={connection} reload={vi.fn()} />,
+      '/?tab=history&run_id=run&runs_offset=15&refs_offset=15')
+    const historyNav = await screen.findByRole('navigation', { name: 'История синхронизации' })
+    const refsNav = await screen.findByRole('navigation', { name: 'Результаты веток и тегов' })
+    expect(runs.mock.calls[0][1]).toBe(15)
+    expect(refs.mock.calls[0][2]).toBe(15)
+    fireEvent.click(within(refsNav).getByRole('button', { name: 'Далее' }))
+    await waitFor(() => expect(refs.mock.calls.at(-1)?.[2]).toBe(65))
+    expect(runs).toHaveBeenCalledTimes(1)
+    fireEvent.click(within(historyNav).getByRole('button', { name: 'Далее' }))
+    await waitFor(() => expect(runs.mock.calls.at(-1)?.[1]).toBe(35))
+    expect(refs.mock.calls.at(-1)?.[2]).toBe(65)
+  })
   it('keeps owner filters and unaligned offsets when shared navigation requests the next range', async () => {
     const list = vi.spyOn(repositorySync, 'list').mockResolvedValue({ items: [connection], total: 55 })
     mount(<RepositorySyncsPage />, '/repository-syncs?provider=github&offset=15&search=service')

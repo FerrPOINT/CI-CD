@@ -109,7 +109,10 @@ const message = (error: unknown) =>
   error instanceof Error
     ? (diagnostics[error.message] ?? error.message)
     : 'Не удалось выполнить действие'
-const offsetOf = (value: string | null) => Math.max(0, Number(value) || 0)
+const offsetOf = (value: string | null) => {
+  const offset = Number(value)
+  return Number.isSafeInteger(offset) && offset >= 0 ? offset : 0
+}
 
 export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
   const [params, setParams] = useSearchParams()
@@ -119,8 +122,9 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
   const [adding, setAdding] = useState(false)
   const [selection, setSelection] = useState('')
   const query = new URLSearchParams()
-  for (const key of ['search', 'provider', 'state', 'offset'])
+  for (const key of ['search', 'provider', 'state'])
     if (params.get(key)) query.set(key, params.get(key)!)
+  if (params.has('offset')) query.set('offset', String(offsetOf(params.get('offset'))))
   query.set('limit', '20')
   if (group) query.set('group_id', group)
   const enabled = !malformed && (all || !ref || !!group)
@@ -133,7 +137,7 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
   const availableQuery = new URLSearchParams({
     sync_available: 'true',
     limit: '20',
-    offset: params.get('select_offset') ?? '0',
+    offset: String(offsetOf(params.get('select_offset'))),
     search: params.get('select_search') ?? '',
   })
   if (group) availableQuery.set('group_id', group)
