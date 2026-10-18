@@ -5,6 +5,7 @@ import tailwindcss from '@tailwindcss/vite'
 import { fileURLToPath, URL } from 'node:url'
 
 export default defineConfig({
+  base: process.env.VITE_APP_BASE_PATH ?? '/',
   plugins: [react(), tailwindcss()],
   test: {
     environment: 'jsdom',
