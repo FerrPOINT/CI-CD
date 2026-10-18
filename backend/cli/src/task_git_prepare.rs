@@ -242,6 +242,86 @@ fn checkout_location(checkout: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+// Only metadata lookup sees normal user/system config; transport stays isolated.
+fn author_git() -> Command {
+    let mut command = git();
+    for name in [
+        "HOME",
+        "USERPROFILE",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "XDG_CONFIG_HOME",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_CONFIG_NOSYSTEM",
+        "GIT_CONFIG",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+    ] {
+        match std::env::var_os(name) {
+            Some(value) => command.env(name, value),
+            None => command.env_remove(name),
+        };
+    }
+    for (name, value) in std::env::vars_os() {
+        if name.to_str().is_some_and(|name| {
+            name.starts_with("GIT_CONFIG_KEY_") || name.starts_with("GIT_CONFIG_VALUE_")
+        }) {
+            command.env(name, value);
+        }
+    }
+    command
+}
+
+async fn default_author(checkout: &Path, config_git: impl Fn() -> Command) -> anyhow::Result<()> {
+    for (key, fallback) in [
+        ("user.name", "Fleet Control Developer"),
+        ("user.email", "developer@fleet-control.local"),
+    ] {
+        let configured = config_git()
+            .arg("-C")
+            .arg(checkout)
+            .args(["config", "--get", key])
+            .output()
+            .await?;
+        match configured.status.code() {
+            Some(0) => continue,
+            Some(1) => (),
+            _ => anyhow::bail!("Git author config недоступен; без замены identity"),
+        }
+        ensure!(
+            git()
+                .arg("-C")
+                .arg(checkout)
+                .args(["config", "--local", key, fallback])
+                .output()
+                .await?
+                .status
+                .success(),
+            "Local Git author default не подтверждён"
+        );
+    }
+    Ok(())
+}
+
+async fn reuse_checkout(checkout: &Path, base: &str, source: &[u8]) -> anyhow::Result<Value> {
+    ensure!(
+        !fs::symlink_metadata(checkout)?.file_type().is_symlink(),
+        "Checkout symlink запрещён"
+    );
+    let git_dir = checkout.join(".git");
+    ensure!(
+        fs::symlink_metadata(&git_dir)?.is_dir(),
+        "Нужен исходный собственный checkout, не worktree/link"
+    );
+    ensure!(
+        read_private(&git_dir.join("forge-source.json"), 16_384)?.as_bytes() == source,
+        "Существующий checkout другой/незавершённый; без reset/overwrite"
+    );
+    ancestor(checkout, base, &commit(checkout).await?).await?;
+    Ok(json!({"state":"checkout_reused","checkout":checkout,"base_oid":base}))
+}
+
 async fn checkout_inner(
     origin: &str,
     access_file: &Path,
@@ -258,22 +338,7 @@ async fn checkout_inner(
     let (url, reference, _, _) = inputs(origin, &context)?;
     let source = serde_json::to_vec(&context["source"])?;
     if fs::symlink_metadata(checkout).is_ok() {
-        ensure!(
-            !fs::symlink_metadata(checkout)?.file_type().is_symlink(),
-            "Checkout symlink запрещён"
-        );
-        let git_dir = checkout.join(".git");
-        ensure!(
-            fs::symlink_metadata(&git_dir)?.is_dir(),
-            "Нужен исходный собственный checkout, не worktree/link"
-        );
-        ensure!(
-            read_private(&git_dir.join("forge-source.json"), 16_384)?.as_bytes()
-                == source.as_slice(),
-            "Существующий checkout другой/незавершённый; без reset/overwrite"
-        );
-        ancestor(checkout, base, &commit(checkout).await?).await?;
-        return Ok(json!({"state":"checkout_reused","checkout":checkout,"base_oid":base}));
+        return reuse_checkout(checkout, base, &source).await;
     }
     let mut builder = fs::DirBuilder::new();
     #[cfg(unix)]
@@ -347,6 +412,7 @@ async fn checkout_inner(
         commit(checkout).await? == base,
         "Checkout OID отличается от Tracker base"
     );
+    default_author(checkout, author_git).await?;
     private_file(&git_dir.join("forge-source.json"), &source)?;
     Ok(
         json!({"state":"checkout_prepared","checkout":checkout,"base_oid":base,"context_file":context_file}),
@@ -367,6 +433,10 @@ pub(crate) async fn checkout(
     .await
     .context("Checkout timeout; partial checkout сохранён без автоматического retry")?
 }
+
+#[cfg(test)]
+#[path = "task_git_author_tests.rs"]
+mod author_tests;
 
 #[cfg(test)]
 mod tests {

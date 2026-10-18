@@ -29,6 +29,11 @@ Source candidate: `repository prepare-checkout`, `prepare-candidate` и
 без требования или fallback к `CICD_API_TOKEN`. Остальные repository-команды
 сохраняют обычный API-клиент. Установка этого CLI ещё не подтверждена.
 
+Только новый собственный checkout получает локальные `user.name = Fleet Control
+Developer` и `user.email = developer@fleet-control.local`, по отдельности и только
+при отсутствии effective Git-настройки. Заданные global/local/config-env identity
+и существующие checkout/rework не переписываются. Это Git metadata, не Auth user.
+
 Глобальные флаги:
 
 ```bash
