@@ -36,6 +36,7 @@ COPY CI-CD/backend/migration/src migration/src
 COPY CI-CD/backend/migrations ./migrations
 # Compile-time delivery witnesses must come from the same pinned source set.
 COPY CI-CD/scripts/postgres-delivery.py /scripts/postgres-delivery.py
+COPY CI-CD/scripts/workspace_deploy_admission.py CI-CD/scripts/workspace_deploy_adapter.py CI-CD/scripts/workspace_deploy_bridge.py /scripts/
 COPY services-base/scripts /services-base/scripts
 COPY services-base/base-operator/src /services-base/base-operator/src
 RUN find src domain app infra api cli migration -name '*.rs' -exec touch {} + \
@@ -47,7 +48,7 @@ FROM debian:bookworm-slim
 # official CLI is pinned because bookworm's docker.io is too old for the
 # host daemon API (>=1.44).
 ARG DOCKER_CLI_VERSION=29.5.0
-RUN apt-get update && apt-get install -y --no-install-recommends curl git git-lfs unzip xz-utils ca-certificates && rm -rf /var/lib/apt/lists/* \
+RUN apt-get update && apt-get install -y --no-install-recommends curl git git-lfs unzip xz-utils ca-certificates python3 && rm -rf /var/lib/apt/lists/* \
  && curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_CLI_VERSION}.tgz \
   | tar -xz --strip-components=1 -C /usr/local/bin docker/docker \
  && useradd --create-home --uid 10001 cicd
