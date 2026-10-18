@@ -221,10 +221,14 @@ fn only_task_trigger_and_exact_task_readback_routes_no_git_admin_or_delivery() {
             &format!("/api/v1/projects/{p}/pipelines/{pipeline}/task-workspace"),
         )
         .unwrap();
+    identity
+        .route("GET", &format!("/api/v1/pipelines/{pipeline}"))
+        .unwrap();
     for (method, path) in [
         ("GET", "/api/v1/projects".into()),
         ("GET", format!("/api/v1/projects/{p}")),
-        ("GET", format!("/api/v1/pipelines/{pipeline}")),
+        ("GET", "/api/v1/pipelines".into()),
+        ("GET", format!("/api/v1/pipelines/{pipeline}/jobs")),
         ("POST", format!("/api/v1/pipelines/{pipeline}/retry")),
         (
             "POST",

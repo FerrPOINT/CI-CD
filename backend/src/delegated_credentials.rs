@@ -175,6 +175,7 @@ impl Identity {
         let id = |s: &str| Uuid::parse_str(s).is_ok_and(|id| !id.is_nil() && id.to_string() == s);
         let allowed = match (method, parts.as_slice()) {
             ("POST", ["", "api", "v1", "projects", project, "pipelines"]) => id(project),
+            ("GET", ["", "api", "v1", "pipelines", pipeline]) => id(pipeline),
             (
                 "GET",
                 [

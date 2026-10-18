@@ -9,6 +9,7 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::{path::Path as FsPath, time::Instant};
 
+pub(crate) mod read_detail;
 pub(crate) mod renewal;
 
 pub(crate) struct Submission {
