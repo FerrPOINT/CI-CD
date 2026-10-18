@@ -2,8 +2,9 @@
 
 Source-only owner-P credential renewal сохраняет original pipeline/intent и
 добавляет отдельный acknowledged successor без dispatch. Два dedicated owner
-routes зарегистрированы вне legacy user middleware; OpenAPI regeneration и
-Rust/PG qualification ещё требуются: [контракт](TASK_CREDENTIAL_RENEWAL.md).
+routes зарегистрированы вне legacy user middleware. OpenAPI и затронутые
+Rust/PostgreSQL source gates проверены; установка и совместная live-приёмка
+учитываются отдельно: [контракт и квалификация](TASK_CREDENTIAL_RENEWAL.md).
 
 Registered-reader `GET /api/v1/namespace-repositories/{id}/source` возвращает
 exact source readback и optional delivery configuration того же repository.

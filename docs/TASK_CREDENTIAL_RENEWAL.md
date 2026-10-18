@@ -96,3 +96,26 @@ CI явно запускает оба ignored renewal-теста и upgrade-сц
 cargo test --locked -p cicd-server --lib renewal_pg_ -- --ignored --test-threads=1
 cargo test --locked --features integration --test integration_db task_credential_successor_migration:: -- --ignored --test-threads=1
 ```
+
+## Квалификация исходников — 18 октября 2026
+
+Исправление task-owned PipelineDetail опубликовано в
+[Forge #130](https://github.com/FerrPOINT/CI-CD/pull/130), merge
+`49731f66657d277858e90edce1ccac6bb3529cd8`.
+[Полный hosted CI](https://github.com/FerrPOINT/CI-CD/actions/runs/39132155553)
+прошёл на этом merge. Следующий согласованный источник
+`1c2353dc999bad3cf32a003320e8971e8230affb` также имеет
+[четыре успешных hosted gates](https://github.com/FerrPOINT/CI-CD/actions/runs/39153643096).
+
+Локально проверены Rust 1.88 fmt, strict workspace/integration clippy, tests и
+release build; generated OpenAPI совпал с canonical YAML. HTTP/PG сценарий
+renewal/read-detail и populated 0094→0095 запускались явно, с проверкой числа
+выполненных тестов. Исторические строки, checksums и guard functions сохранились.
+Auth/Fleet ответы в HTTP fixture синтетические: эти source gates не доказывают
+настоящий native ACK, обновление private env или завершение agent/CI run.
+
+Эти результаты относятся к исходникам. Наличие миграции и зелёный CI не означают
+её применение к установленной БД; совместимая установка Forge/Fleet и live renewal
+остаются отдельным этапом. Дополнительный UI pin с тем же backend tree не требует
+повторения неизменённых PostgreSQL gates, но квалифицируется своими package/UI
+проверками.
