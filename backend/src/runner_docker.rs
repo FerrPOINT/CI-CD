@@ -181,9 +181,13 @@ fn parse_cgroup_parent(value: Option<&str>) -> io::Result<Option<String>> {
     if stem.is_empty()
         || value.len() > 128
         || !stem.as_bytes()[0].is_ascii_alphanumeric()
-        || !stem.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
+        || !stem
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
     {
-        return Err(invalid("runner cgroup parent must be a named systemd slice"));
+        return Err(invalid(
+            "runner cgroup parent must be a named systemd slice",
+        ));
     }
     Ok(Some(value.to_owned()))
 }
@@ -194,7 +198,10 @@ fn apply_cgroup_parent(manifest: &mut Value, parent: Option<&str>) -> io::Result
         .as_object_mut()
         .ok_or_else(|| invalid("job services missing"))?;
     for service in services.values_mut() {
-        if service.get("cgroup_parent").is_some_and(|value| value != parent) {
+        if service
+            .get("cgroup_parent")
+            .is_some_and(|value| value != parent)
+        {
             return Err(invalid("job cgroup differs from operator budget"));
         }
         service["cgroup_parent"] = json!(parent);
@@ -1988,9 +1995,18 @@ mod tests {
         assert_eq!(parse_cgroup_parent(None).unwrap(), None);
         assert_eq!(parse_cgroup_parent(Some("")).unwrap(), None);
         for name in ["pdlc4.slice", "another-workspace.slice"] {
-            assert_eq!(parse_cgroup_parent(Some(name)).unwrap().as_deref(), Some(name));
+            assert_eq!(
+                parse_cgroup_parent(Some(name)).unwrap().as_deref(),
+                Some(name)
+            );
         }
-        for name in ["../pdlc4.slice", "pdlc4", ".slice", "x/y.slice", "pdlc4.slice;id"] {
+        for name in [
+            "../pdlc4.slice",
+            "pdlc4",
+            ".slice",
+            "x/y.slice",
+            "pdlc4.slice;id",
+        ] {
             assert!(parse_cgroup_parent(Some(name)).is_err());
         }
     }
@@ -2013,10 +2029,19 @@ mod tests {
     #[test]
     fn host_budget_readback_rejects_escape_to_another_parent() {
         let spec = json!({"cgroup_parent":"pdlc4.slice"});
-        assert!(cgroup_parent_matches(&spec, &json!({"CgroupParent":"pdlc4.slice"})));
-        assert!(!cgroup_parent_matches(&spec, &json!({"CgroupParent":"foreign.slice"})));
+        assert!(cgroup_parent_matches(
+            &spec,
+            &json!({"CgroupParent":"pdlc4.slice"})
+        ));
+        assert!(!cgroup_parent_matches(
+            &spec,
+            &json!({"CgroupParent":"foreign.slice"})
+        ));
         assert!(!cgroup_parent_matches(&spec, &json!({})));
-        assert!(cgroup_parent_matches(&json!({}), &json!({"CgroupParent":"host-default.slice"})));
+        assert!(cgroup_parent_matches(
+            &json!({}),
+            &json!({"CgroupParent":"host-default.slice"})
+        ));
     }
 
     fn deployment_fixture() -> (Value, Value, Vec<Value>) {
