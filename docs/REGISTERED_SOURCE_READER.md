@@ -1,8 +1,11 @@
 # Проверка источника registered reader
 
-Текущий route split — source candidate без нового Rust/PG/HTTP PASS;
-runtime не изменён. Typed routes и общий wiring интегрированы в source;
-итоговую qualification и генерацию OpenAPI выполняет Main.
+Route split проверен локально на source `6072c5158a16c518d8f00446059085760ed64d2e`:
+129 PostgreSQL cases, строгий Clippy, канонический image и release workspace
+build. Rust OpenAPI/codegen/compatibility проверены отдельно на неизменных
+контрактах. [Точный состав и ограничения](FORGE_TASK_DEPLOYMENT_LOCAL_20261017.md).
+Runtime не изменён; локальная qualification не означает установленный rollout
+или завершённый producer/deployment сценарий.
 
 Прежний `GET /api/v1/namespace-repositories/{id}` сохраняет reader auth и обычный
 catalog JSON с `kind`. Отдельный `GET /api/v1/namespace-repositories/{id}/source`
