@@ -14,4 +14,4 @@ compact и mobile navigation. Точный UI pin находится в .base-ui
 предметные semantic aliases ссылаются на канонические цвета Base.
 
 Точный UI-кандидат: `4b80fbfbfae48d95219011a4612dd9427a1a4b92`. Связанные проверки и ограничения
-фиксируются в отчёте Base `docs/reports/shared-application-shell-20261018.md`.
+фиксируются в [отчёте Base](https://github.com/FerrPOINT/services-base/blob/main/docs/reports/shared-application-shell-20261018.md).
