@@ -15,6 +15,10 @@
 
 ## [Unreleased]
 
+- Списки синхронизаций, доступных репозиториев, истории и refs отправляют в API
+  нормализованные смещения: отрицательные, дробные, нечисловые и небезопасно
+  большие значения из URL сбрасываются в 0. Допустимые смещения сохраняются.
+
 - Source-only owner-P task credential renewal: additive successor custody,
   predecessor CAS и current credential overlay без повторного dispatch.
   Общие registrations подключены; Rust/PG/image qualification pending.
