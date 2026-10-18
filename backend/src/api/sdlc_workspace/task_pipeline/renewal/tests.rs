@@ -303,7 +303,7 @@ fn renewal_sql_preserves_original_intent_guard_and_is_append_only() {
 }
 
 #[tokio::test]
-#[ignore = "requires an explicitly migrated disposable CICD_TEST_DATABASE_URL including 0095"]
+#[ignore = "requires disposable CICD_TEST_DATABASE_URL; owns and cleans its migrated schema"]
 async fn renewal_pg_successors_are_cas_immutable_and_do_not_change_business_custody() {
     let url = std::env::var("CICD_TEST_DATABASE_URL").expect("explicit disposable PG required");
     let parsed = reqwest::Url::parse(&url).expect("synthetic PG URL required");
@@ -314,171 +314,198 @@ async fn renewal_pg_successors_are_cas_immutable_and_do_not_change_business_cust
             .starts_with("forge_test_"),
         "disposable forge_test_ database required"
     );
-    let pool = sqlx::PgPool::connect(&url).await.unwrap();
-    let mut tx = pool.begin().await.unwrap();
-    let (original, mut child, config, secrets, _) = fixture();
-    let project = original.context.project_id;
-    let pipeline = Uuid::new_v4();
-    let stage = Uuid::new_v4();
-    let job = Uuid::new_v4();
-    sqlx::query("INSERT INTO projects(id,name,repository_url) VALUES($1,$2,'https://example.invalid/test.git')")
-        .bind(project).bind(format!("renewal-{project}")).execute(&mut *tx).await.unwrap();
-    sqlx::query("INSERT INTO pipelines(id,project_id,git_ref,commit_sha,status) VALUES($1,$2,$3,$3,'queued')")
-        .bind(pipeline).bind(project).bind(&original.context.intent.source_commit).execute(&mut *tx).await.unwrap();
-    sqlx::query("INSERT INTO stages(id,pipeline_id,name,position,status) VALUES($1,$2,'prepare',0,'queued')")
-        .bind(stage).bind(pipeline).execute(&mut *tx).await.unwrap();
-    sqlx::query("INSERT INTO jobs(id,stage_id,name,image,command,position,status) VALUES($1,$2,'prepare','unused','unused',0,'queued')")
-        .bind(job).bind(stage).execute(&mut *tx).await.unwrap();
-    ledger::append_delegated_task_pipeline(
-        &mut tx,
-        pipeline,
-        project,
-        &original.value().unwrap(),
-        job,
-        &original.context.intent,
-    )
-    .await
-    .unwrap();
-    let before: Value =
-        sqlx::query_scalar("SELECT to_jsonb(t) FROM task_pipeline_intents t WHERE pipeline_id=$1")
-            .bind(pipeline)
-            .fetch_one(&mut *tx)
-            .await
-            .unwrap();
-    let record = ledger::find_task_pipeline(&mut tx, pipeline, true)
+    use sqlx::{
+        Connection,
+        postgres::{PgConnectOptions, PgPoolOptions},
+    };
+    use std::str::FromStr;
+    let options = PgConnectOptions::from_str(&url).unwrap();
+    let mut admin = sqlx::PgConnection::connect_with(&options).await.unwrap();
+    let schema = format!("it_renewal_custody_{}", Uuid::new_v4().simple());
+    sqlx::query(&format!("CREATE SCHEMA {schema}"))
+        .execute(&mut admin)
         .await
-        .unwrap()
         .unwrap();
-    let request = request(&original);
-    child.token = request.replacement_token.clone();
-    let next = replacement(
-        &child,
-        &config,
-        &secrets,
-        &original,
-        original.context.clone(),
-    )
-    .unwrap();
-    let request_hash = request
-        .fingerprint(project, pipeline, original.subject)
+    let pool = PgPoolOptions::new()
+        .max_connections(2)
+        .connect_with(options.options([("search_path", schema.as_str())]))
+        .await
         .unwrap();
-    let receipt = custody::append(
-        &mut tx,
-        pipeline,
-        &request.renewal_key,
-        &request_hash,
-        &original.fingerprint,
-        &next,
-    )
-    .await
-    .unwrap();
-    assert!(receipt.current);
-    assert_eq!(receipt.generation, 1);
-    assert_eq!(
-        custody::current(&mut tx, &record)
-            .await
-            .unwrap()
-            .fingerprint,
-        next.fingerprint
-    );
-    assert_eq!(
-        custody::find(&mut tx, pipeline, &request.renewal_key)
-            .await
-            .unwrap()
-            .unwrap()
-            .request_hash,
-        request_hash
-    );
-    let wire = serde_json::to_string(&receipt).unwrap();
-    assert!(!wire.contains(&child.token));
-    assert!(!wire.contains("encrypted_child"));
-    child.token = format!("sdlc_pat_{}", "c".repeat(43));
-    let second = replacement(
-        &child,
-        &config,
-        &secrets,
-        &original,
-        original.context.clone(),
-    )
-    .unwrap();
-    let receipt2 = custody::append(
-        &mut tx,
-        pipeline,
-        "credential:successor:2",
-        &"d".repeat(64),
-        &next.fingerprint,
-        &second,
-    )
-    .await
-    .unwrap();
-    assert!(receipt2.current);
-    assert_eq!(receipt2.generation, 2);
-    assert!(
-        !custody::find(&mut tx, pipeline, &request.renewal_key)
-            .await
-            .unwrap()
-            .unwrap()
-            .current
-    );
-    assert_eq!(
-        custody::current(&mut tx, &record)
-            .await
-            .unwrap()
-            .fingerprint,
-        second.fingerprint
-    );
-    assert_eq!(
-        custody::append(
+    let checked = pool.clone();
+    let result = tokio::spawn(async move {
+        crate::migrations().await.unwrap().run(&checked).await.unwrap();
+        let mut tx = checked.begin().await.unwrap();
+        let (original, mut child, config, secrets, _) = fixture();
+        let project = original.context.project_id;
+        let pipeline = Uuid::new_v4();
+        let stage = Uuid::new_v4();
+        let job = Uuid::new_v4();
+        sqlx::query("INSERT INTO projects(id,name,repository_url) VALUES($1,$2,'https://example.invalid/test.git')")
+            .bind(project).bind(format!("renewal-{project}")).execute(&mut *tx).await.unwrap();
+        sqlx::query("INSERT INTO pipelines(id,project_id,git_ref,commit_sha,status) VALUES($1,$2,$3,$3,'queued')")
+            .bind(pipeline).bind(project).bind(&original.context.intent.source_commit).execute(&mut *tx).await.unwrap();
+        sqlx::query("INSERT INTO stages(id,pipeline_id,name,position,status) VALUES($1,$2,'prepare',0,'queued')")
+            .bind(stage).bind(pipeline).execute(&mut *tx).await.unwrap();
+        sqlx::query("INSERT INTO jobs(id,stage_id,name,image,command,position,status) VALUES($1,$2,'prepare','unused','unused',0,'queued')")
+            .bind(job).bind(stage).execute(&mut *tx).await.unwrap();
+        ledger::append_delegated_task_pipeline(
             &mut tx,
             pipeline,
-            "resurrection",
-            &"e".repeat(64),
-            &second.fingerprint,
-            &next
+            project,
+            &original.value().unwrap(),
+            job,
+            &original.context.intent,
         )
         .await
-        .unwrap_err()
-        .status,
-        StatusCode::CONFLICT
-    );
-    for statement in [
-        "UPDATE task_credential_successors SET request_hash=repeat('f',64) WHERE pipeline_id=$1",
-        "DELETE FROM task_credential_successors WHERE pipeline_id=$1",
-        "INSERT INTO task_credential_successors(pipeline_id,generation,renewal_key,request_hash,predecessor_fingerprint,credential) SELECT pipeline_id,2,'stale',request_hash,predecessor_fingerprint,credential FROM task_credential_successors WHERE pipeline_id=$1",
-        "UPDATE task_pipeline_intents SET delegated_credential=jsonb_set(delegated_credential,'{fingerprint}',to_jsonb(repeat('f',64))) WHERE pipeline_id=$1",
-    ] {
-        sqlx::query("SAVEPOINT denied")
-            .execute(&mut *tx)
-            .await
-            .unwrap();
-        assert!(
-            sqlx::query(statement)
+        .unwrap();
+        let before: Value =
+            sqlx::query_scalar("SELECT to_jsonb(t) FROM task_pipeline_intents t WHERE pipeline_id=$1")
                 .bind(pipeline)
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap();
+        let record = ledger::find_task_pipeline(&mut tx, pipeline, true)
+            .await
+            .unwrap()
+            .unwrap();
+        let request = request(&original);
+        child.token = request.replacement_token.clone();
+        let next = replacement(
+            &child,
+            &config,
+            &secrets,
+            &original,
+            original.context.clone(),
+        )
+        .unwrap();
+        let request_hash = request
+            .fingerprint(project, pipeline, original.subject)
+            .unwrap();
+        let receipt = custody::append(
+            &mut tx,
+            pipeline,
+            &request.renewal_key,
+            &request_hash,
+            &original.fingerprint,
+            &next,
+        )
+        .await
+        .unwrap();
+        assert!(receipt.current);
+        assert_eq!(receipt.generation, 1);
+        assert_eq!(
+            custody::current(&mut tx, &record)
+                .await
+                .unwrap()
+                .fingerprint,
+            next.fingerprint
+        );
+        assert_eq!(
+            custody::find(&mut tx, pipeline, &request.renewal_key)
+                .await
+                .unwrap()
+                .unwrap()
+                .request_hash,
+            request_hash
+        );
+        let wire = serde_json::to_string(&receipt).unwrap();
+        assert!(!wire.contains(&child.token));
+        assert!(!wire.contains("encrypted_child"));
+        child.token = format!("sdlc_pat_{}", "c".repeat(43));
+        let second = replacement(
+            &child,
+            &config,
+            &secrets,
+            &original,
+            original.context.clone(),
+        )
+        .unwrap();
+        let receipt2 = custody::append(
+            &mut tx,
+            pipeline,
+            "credential:successor:2",
+            &"d".repeat(64),
+            &next.fingerprint,
+            &second,
+        )
+        .await
+        .unwrap();
+        assert!(receipt2.current);
+        assert_eq!(receipt2.generation, 2);
+        assert!(
+            !custody::find(&mut tx, pipeline, &request.renewal_key)
+                .await
+                .unwrap()
+                .unwrap()
+                .current
+        );
+        assert_eq!(
+            custody::current(&mut tx, &record)
+                .await
+                .unwrap()
+                .fingerprint,
+            second.fingerprint
+        );
+        assert_eq!(
+            custody::append(
+                &mut tx,
+                pipeline,
+                "resurrection",
+                &"e".repeat(64),
+                &second.fingerprint,
+                &next
+            )
+            .await
+            .unwrap_err()
+            .status,
+            StatusCode::CONFLICT
+        );
+        for statement in [
+            "UPDATE task_credential_successors SET request_hash=repeat('f',64) WHERE pipeline_id=$1",
+            "DELETE FROM task_credential_successors WHERE pipeline_id=$1",
+            "INSERT INTO task_credential_successors(pipeline_id,generation,renewal_key,request_hash,predecessor_fingerprint,credential) SELECT pipeline_id,2,'stale',request_hash,predecessor_fingerprint,credential FROM task_credential_successors WHERE pipeline_id=$1",
+            "UPDATE task_pipeline_intents SET delegated_credential=jsonb_set(delegated_credential,'{fingerprint}',to_jsonb(repeat('f',64))) WHERE pipeline_id=$1",
+        ] {
+            sqlx::query("SAVEPOINT denied")
                 .execute(&mut *tx)
                 .await
-                .is_err()
-        );
-        sqlx::query("ROLLBACK TO SAVEPOINT denied")
-            .execute(&mut *tx)
-            .await
-            .unwrap();
-    }
-    let after: Value =
-        sqlx::query_scalar("SELECT to_jsonb(t) FROM task_pipeline_intents t WHERE pipeline_id=$1")
-            .bind(pipeline)
-            .fetch_one(&mut *tx)
-            .await
-            .unwrap();
-    assert_eq!(after, before);
-    let count: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM task_credential_successors WHERE pipeline_id=$1")
-            .bind(pipeline)
-            .fetch_one(&mut *tx)
-            .await
-            .unwrap();
-    assert_eq!(count, 2);
-    tx.rollback().await.unwrap();
+                .unwrap();
+            assert!(
+                sqlx::query(statement)
+                    .bind(pipeline)
+                    .execute(&mut *tx)
+                    .await
+                    .is_err()
+            );
+            sqlx::query("ROLLBACK TO SAVEPOINT denied")
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+        }
+        let after: Value =
+            sqlx::query_scalar("SELECT to_jsonb(t) FROM task_pipeline_intents t WHERE pipeline_id=$1")
+                .bind(pipeline)
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap();
+        assert_eq!(after, before);
+        let count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM task_credential_successors WHERE pipeline_id=$1")
+                .bind(pipeline)
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap();
+        assert_eq!(count, 2);
+        tx.rollback().await.unwrap();
+    })
+    .await;
     pool.close().await;
+    sqlx::query(&format!("DROP SCHEMA {schema} CASCADE"))
+        .execute(&mut admin)
+        .await
+        .unwrap();
+    admin.close().await.unwrap();
+    result.unwrap();
 }
 
 #[tokio::test]

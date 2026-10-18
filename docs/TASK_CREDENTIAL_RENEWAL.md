@@ -62,5 +62,15 @@ Unknown ACK сначала читается исходным renewal key, не �
 Он засеивает SAT/delegated custody, попытки и business queue до применения0095,
 затем сравнивает полные исходные строки, прежний ledger/checksums и OID/body
 guard functions после upgrade и replay. Successor table остаётся пустой:
-сама миграция не выпускает credentials. Сценарий пока не выполнен; source fixture
-не заменяет реальную PostgreSQL-приёмку или live renewal.
+сама миграция не выпускает credentials. Source fixture не заменяет live renewal.
+
+CI явно запускает оба ignored renewal-теста и upgrade-сценарий на отдельной БД,
+проверяя также число выполненных случаев. Каждый тест создаёт собственную
+схему, применяет штатный SQLx catalog и удаляет схему после проверки; заранее
+мигрированная public schema не требуется. Для локального запуска задайте
+`CICD_TEST_DATABASE_URL` отдельной disposable БД с префиксом `forge_test_`:
+
+```sh
+cargo test --locked -p cicd-server --lib renewal_pg_ -- --ignored --test-threads=1
+cargo test --locked --features integration --test integration_db task_credential_successor_migration:: -- --ignored --test-threads=1
+```
