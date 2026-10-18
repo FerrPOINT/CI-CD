@@ -50,10 +50,13 @@ overlay с прежними live introspection/revoke/fence guards. SAT path н�
 Повторный pipeline POST новым child не является renewal: original trigger
 fingerprint намеренно не переписывается.
 
-Fleet renewal journal/private env refresh остаются отдельным consumer-пакетом.
-После exact current ACK Fleet должен сохранить свой receipt, затем атомарно
-обновить прежний private env. CLI перечитывает env перед следующим вызовом.
-Unknown ACK сначала читается исходным renewal key, не новым business key.
+Fleet renewal journal/private env refresh реализованы отдельным consumer-пакетом
+в [Fleet Control #105](https://github.com/FerrPOINT/fleet-control/pull/105).
+Его проверка, merge и совместимая установка ещё требуются; наличие исходников
+не является live-приёмкой renewal. После exact current ACK Fleet сохраняет свой
+receipt, затем атомарно обновляет прежний private env. CLI перечитывает env перед
+следующим вызовом. Unknown ACK сначала читается исходным renewal key, не новым
+business key.
 
 ## Проверка Истории Миграций
 
