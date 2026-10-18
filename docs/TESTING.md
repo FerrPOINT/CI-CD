@@ -85,3 +85,16 @@ Docker SDK profile и его source/shell проверки:
 Оба server recipes сохраняют CLI metadata, но блокируют compilation её
 placeholder; full CLI/release остаются самостоятельными consumers. Не включать
 узкую проекцию старому recipe без metadata target. SDK/operator pins сохраняются.
+
+## Раздельная Vite/Vitest configuration
+
+Production plugins/alias/proxy находятся в `vite.config.ts`; `vitest.config.ts`
+добавляет прежние jsdom/include/setup/worker4. Types включают оба config files.
+Unit config исключён из app artifact inputs и production COPY обоих recipes,
+сохраняя unit/types selection. Production Vite change по-прежнему выбирает build.
+
+Config loader на закреплённом Node22.20.0 подтвердил равенство options до/после;
+два config files прошли scoped TypeScript check. Actual source fingerprint при
+фиксированном context сохраняется для app после test-config change, меняется
+после production proxy change. App compilation, полный unit и Docker layer reuse
+на этой source-вехе не выполнялись. Locks/dependencies не менялись.

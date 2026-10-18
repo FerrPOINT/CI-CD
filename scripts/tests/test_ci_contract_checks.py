@@ -3,6 +3,7 @@
 import hashlib
 import json
 import shlex
+import runpy
 import shutil
 import subprocess
 import tempfile
@@ -10,6 +11,17 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+class FrontendConfigurationBoundaryTests(unittest.TestCase):
+    def test_separate_vitest_config_selects_units_without_rebuilding_application(self):
+        selector = runpy.run_path(str(ROOT / 'scripts/vendor/base_quality_selection.py'))
+        selected = selector['plan'](ROOT, profile='build', changed=['frontend/vitest.config.ts'])
+        names = {gate['id'] for gate in selected['gates']}
+        self.assertIn('frontend:tests', names)
+        self.assertNotIn('frontend:build', names)
+        production = selector['plan'](ROOT, profile='build', changed=['frontend/vite.config.ts'])
+        self.assertIn('frontend:build', {gate['id'] for gate in production['gates']})
 
 
 class ManualGitReceiveGateTests(unittest.TestCase):

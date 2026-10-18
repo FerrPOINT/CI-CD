@@ -80,3 +80,8 @@ Shell fixture исполняет dependency command с recording Cargo и про
 до вызова compiler stub. Actual locked image/build, old-mtime SDK invalidation,
 unused input cache hit и artifacts проверяются на общей native вехе; source
 checks и размер COPY segment не являются измерением CPU/RAM или скорости.
+
+Test options теперь живут в отдельном `frontend/vitest.config.ts`, наследуя
+production config. Его изменение выбирает проверки без app artifact, и оба
+production COPY исключают этот файл. Types/config loader проверены отдельно от
+native app build; [границы проверки](../TESTING.md#раздельная-vitevitest-configuration).
