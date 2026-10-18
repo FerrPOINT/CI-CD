@@ -213,7 +213,10 @@ async fn seed_0094(pool: &sqlx::PgPool, delegated: bool) {
         request,
         recorded_at: Utc::now(),
         status: WorkspaceOperationStatus::Blocked,
-        blockers: vec![WorkspaceOperationBlocker::TrackerAdmissionUnavailable],
+        blockers: vec![
+            WorkspaceOperationBlocker::TrackerAdmissionUnavailable,
+            WorkspaceOperationBlocker::TrackerWorkspaceBindingUnavailable,
+        ],
         physical_source_observed: false,
         dispatch_allowed: false,
     };
