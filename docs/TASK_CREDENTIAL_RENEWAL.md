@@ -53,3 +53,13 @@ Fleet renewal journal/private env refresh остаются отдельным co
 После exact current ACK Fleet должен сохранить свой receipt, затем атомарно
 обновить прежний private env. CLI перечитывает env перед следующим вызовом.
 Unknown ACK сначала читается исходным renewal key, не новым business key.
+
+## Проверка Истории Миграций
+
+Добавлен отдельный ignored PG-сценарий
+`task_credential_successor_migration::populated_0094_to_0095_preserves_original_custody_business_and_migration_history`.
+Он засеивает SAT/delegated custody, попытки и business queue до применения0095,
+затем сравнивает полные исходные строки, прежний ledger/checksums и OID/body
+guard functions после upgrade и replay. Successor table остаётся пустой:
+сама миграция не выпускает credentials. Сценарий пока не выполнен; source fixture
+не заменяет реальную PostgreSQL-приёмку или live renewal.
