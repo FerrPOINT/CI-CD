@@ -1,6 +1,7 @@
 {
   "schema": "base-quality-product/v1",
   "product": "CI-CD",
+  "candidate_sdk_projection": "forge-runtime-v1",
   "components": {
     "docs": [
       "docs/**",

@@ -59,3 +59,24 @@ generator и полный manifest определяют его cache key. Неп
 ошибка generation блокируют результат, включая прогретый compile cache.
 
 CI Rust target после restore готовится через `python3 ../scripts/vendor/base_rust_target_cache.py` из `backend/`; версия и checksum включены в отдельный Base quality packet.
+
+## SDK projection серверного образа
+
+`candidate_sdk_projection: forge-runtime-v1` в `.quality-gate.json` объявляет
+совместимость Dockerfile и Dockerfile.umbrella с узкой проекцией нового Base
+producer. Полный код копируется для pdlc-auth-core/shared/telemetry; от cli-core
+нужен только Cargo.toml, поскольку CLI остаётся необранным членом workspace.
+Recipe создаёт metadata target с `compile_error!`: случайная попытка скомпилировать
+его завершается ошибкой вместо поставки пустой библиотеки. Реальный CLI/Fleet
+producer продолжает получать настоящий SDK, без этого placeholder.
+
+Dependency и final stages обоих recipes выбирают только server/runner binaries.
+Pinned delivery helpers, operator witnesses, migrations, units и runtime tools
+сохранены. Старый Base producer может передавать больший SDK context; новый
+сужает его только при явном profile. Неизвестный profile/layout отклоняется.
+
+Scoped regressions: `python -B -m unittest scripts.tests.test_backend_dockerfile -q`.
+Shell fixture исполняет dependency command с recording Cargo и проверяет target
+до вызова compiler stub. Actual locked image/build, old-mtime SDK invalidation,
+unused input cache hit и artifacts проверяются на общей native вехе; source
+checks и размер COPY segment не являются измерением CPU/RAM или скорости.

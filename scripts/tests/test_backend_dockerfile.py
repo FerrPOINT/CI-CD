@@ -6,6 +6,10 @@ from __future__ import annotations
 import unittest
 import re
 import shlex
+import os
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 
 DOCKERFILE = Path(__file__).resolve().parents[2] / "backend/Dockerfile.umbrella"
@@ -58,16 +62,63 @@ class BackendDockerfileTests(unittest.TestCase):
         self.assertEqual(staged_paths(copies, required), {"services-base/scripts/platform_namespace.py"})
 
     def test_dependency_and_production_graphs_build_only_the_runtime_binaries(self) -> None:
-        dockerfile = DOCKERFILE.read_text(encoding="utf-8")
-        shipped = set(re.findall(r"COPY --from=build /app/target/release/([A-Za-z0-9_-]+)", dockerfile))
-        builds = re.findall(r"/usr/local/cargo/bin/cargo build ([^\n\\]+)", dockerfile)
-        self.assertEqual(len(builds), 2)
-        self.assertTrue(shipped)
-        for build in builds:
-            arguments = shlex.split(build)
-            self.assertEqual({arguments[i + 1] for i, value in enumerate(arguments) if value == "--bin"}, shipped)
-            self.assertIn("--locked", arguments)
-            self.assertIn("--release", arguments)
+        for name in ('Dockerfile', 'Dockerfile.umbrella'):
+            with self.subTest(recipe=name):
+                dockerfile = (DOCKERFILE.parent / name).read_text(encoding="utf-8")
+                shipped = set(re.findall(r"COPY --from=build /app/target/release/([A-Za-z0-9_-]+)", dockerfile))
+                builds = re.findall(r"/usr/local/cargo/bin/cargo build ([^\n\\]+)", dockerfile)
+                self.assertEqual(len(builds), 2)
+                self.assertTrue(shipped)
+                for build in builds:
+                    arguments = shlex.split(build)
+                    self.assertEqual({arguments[i + 1] for i, value in enumerate(arguments) if value == "--bin"}, shipped)
+                    self.assertIn("--locked", arguments)
+                    self.assertIn("--release", arguments)
+
+    def test_sdk_dependency_copy_excludes_unused_sources_and_keeps_cli_manifest(self) -> None:
+        expected = {'services-base/base-modules/rust/pdlc-' + name
+                    for name in ('auth-core', 'shared', 'telemetry')}
+        expected.add('services-base/base-modules/rust/pdlc-cli-core/Cargo.toml')
+        for name in ('Dockerfile', 'Dockerfile.umbrella'):
+            with self.subTest(recipe=name):
+                source = (DOCKERFILE.parent / name).read_text(encoding='utf-8')
+                dependency_stage = source.split('FROM dependencies AS unit-dependencies', 1)[0]
+                actual = set(re.findall(r'^COPY (services-base/base-modules/rust\S*)\s', dependency_stage, re.M))
+                self.assertEqual(actual, expected)
+
+    def test_dependency_shell_creates_cli_metadata_target_before_selected_cargo_build(self) -> None:
+        bash = Path('C:/Program Files/Git/bin/bash.exe') if os.name == 'nt' else Path(shutil.which('bash') or '/missing')
+        if not bash.is_file():
+            self.skipTest('Bash required for the isolated dependency command fixture')
+        for name in ('Dockerfile', 'Dockerfile.umbrella'):
+            with self.subTest(recipe=name), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                source = (DOCKERFILE.parent / name).read_text(encoding='utf-8')
+                stage = source.split('FROM dependencies AS unit-dependencies', 1)[0]
+                command = next(line for line in stage.replace('\\\n', ' ').splitlines() if line.startswith('RUN '))
+                command = re.sub(r'^RUN(?: --mount=\S+)* ', '', command)
+                command = command.replace('/services-base/', (root / 'services-base').as_posix() + '/')
+                command = command.replace('/usr/local/cargo/bin/cargo', 'cargo')
+                cli = root / 'services-base/base-modules/rust/pdlc-cli-core'
+                cli.mkdir(parents=True)
+                manifest = cli / 'Cargo.toml'
+                manifest.write_text('[package]\nname="pdlc-cli-core"\nversion="0.1.0"\n')
+                original = manifest.read_bytes()
+                environment = {**os.environ, 'CLI_METADATA_TARGET': (cli / 'src/lib.rs').as_posix()}
+                stub = ('cargo() { if ! grep -q "compile_error!" "$CLI_METADATA_TARGET"; then return 61; fi; '
+                        'printf "%s\\n" "$*" >> cargo.log; }\n')
+                result = subprocess.run([str(bash), '--noprofile', '--norc', '-euo', 'pipefail', '-c', stub + command],
+                                        cwd=root, env=environment, capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue((cli / 'src/lib.rs').is_file())
+                self.assertIn('compile_error!("metadata-only pdlc-cli-core must not be compiled")',
+                              (cli / 'src/lib.rs').read_text())
+                self.assertEqual(manifest.read_bytes(), original)
+                builds = [shlex.split(line) for line in (root / 'cargo.log').read_text().splitlines()
+                          if line.startswith('build ')]
+                self.assertEqual(len(builds), 1)
+                self.assertEqual({builds[0][i + 1] for i, value in enumerate(builds[0][:-1]) if value == '--bin'},
+                                 {'cicd-server', 'forge-runner'})
 
     def test_runner_cli_pin_covers_the_critical_tls_fix(self) -> None:
         dockerfile = DOCKERFILE.read_text(encoding="utf-8")

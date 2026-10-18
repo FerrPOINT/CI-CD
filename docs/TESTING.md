@@ -79,3 +79,9 @@ Cargo invocation; build/drift имеют одно условие `backend_build`
 release по-прежнему строит workspace. Source boundary:
 `python -m unittest scripts.tests.test_ci_contract_checks.ManualGitReceiveGateTests`;
 actual locked targets/OpenAPI требуют native проверки на общей вехе.
+
+Docker SDK profile и его source/shell проверки:
+[build performance](plans/build-performance.md#sdk-projection-серверного-образа).
+Оба server recipes сохраняют CLI metadata, но блокируют compilation её
+placeholder; full CLI/release остаются самостоятельными consumers. Не включать
+узкую проекцию старому recipe без metadata target. SDK/operator pins сохраняются.
