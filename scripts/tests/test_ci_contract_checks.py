@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -12,6 +13,23 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class ManualGitReceiveGateTests(unittest.TestCase):
+    def test_ordinary_ci_builds_only_server_runner_and_contract_targets(self) -> None:
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
+        backend = workflow.split('\n  backend:\n', 1)[1].split('\n  frontend:\n', 1)[0]
+        build = backend.split('- name: Build changed application after isolated units', 1)[1].split('- name:', 1)[0]
+        command = next(line.strip().removeprefix('run: ') for line in build.splitlines() if 'run: cargo build' in line)
+        self.assertEqual(shlex.split(command), [
+            'cargo', 'build', '--locked', '-p', 'cicd-server', '--bin', 'cicd-server',
+            '--bin', 'forge-runner', '--bin', 'openapi-dump',
+        ])
+        condition = "if: needs.changes.outputs.backend_build == 'true'"
+        self.assertIn(condition, build)
+        contract = backend.split('- name: openapi drift gate', 1)[1]
+        self.assertIn(condition, contract)
+        self.assertIn('debug/openapi-dump', contract)
+        release = (ROOT / '.github/workflows/release.yml').read_text(encoding='utf-8')
+        self.assertIn('cargo build --locked --release --workspace', release)
+
     def test_postgres_receive_races_remain_explicit_and_isolated(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         backend = workflow.split("\n  backend:\n", 1)[1].split("\n  frontend:\n", 1)[0]

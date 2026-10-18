@@ -72,3 +72,10 @@ Standalone CLI, delivery/migration tools и OpenAPI не включаются в
 `backend:quality` сохраняет полные workspace clippy/tests в ручном release;
 MSRV/features/OpenAPI и необходимые integration gates не сокращаются.
 Fresh target между source exports и registry/compiler-cache policy Base сохраняются.
+
+Обычный CI строит только package `cicd-server`, bins `cicd-server`, `forge-runner`
+и `openapi-dump`. Последний используется существующим drift gate без нового
+Cargo invocation; build/drift имеют одно условие `backend_build`. Полный ручной
+release по-прежнему строит workspace. Source boundary:
+`python -m unittest scripts.tests.test_ci_contract_checks.ManualGitReceiveGateTests`;
+actual locked targets/OpenAPI требуют native проверки на общей вехе.
