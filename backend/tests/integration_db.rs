@@ -40,6 +40,9 @@ mod task_pipeline_http;
 #[path = "support/task_pipeline_migration.rs"]
 mod task_pipeline_migration;
 
+#[path = "support/task_credential_successor_migration.rs"]
+mod task_credential_successor_migration;
+
 #[cfg(unix)]
 #[path = "support/git_sat_receive.rs"]
 mod git_sat_receive;
