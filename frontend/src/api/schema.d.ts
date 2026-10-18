@@ -1437,6 +1437,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{project_id}/pipelines/{pipeline_id}/credential-renewals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["renew_task_pipeline_credential"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{project_id}/pipelines/{pipeline_id}/credential-renewals/{renewal_key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["read_task_pipeline_credential_renewal"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{project_id}/pipelines/{pipeline_id}/task-workspace": {
         parameters: {
             query?: never;
@@ -3459,6 +3491,27 @@ export interface components {
             prerelease: boolean;
             repository_name: string;
             tag_name: string;
+        };
+        RenewalReadback: {
+            contextHash: string;
+            /** @description A historical ACK is not permission to republish a superseded credential. */
+            current: boolean;
+            fingerprint: string;
+            /** Format: int64 */
+            generation: number;
+            /** Format: uuid */
+            pipelineId: string;
+            predecessorFingerprint: string;
+            /** Format: date-time */
+            recordedAt: string;
+            renewalKey: string;
+            requestHash: string;
+        };
+        RenewalRequest: {
+            credentialContext: components["schemas"]["TaskCredentialContext"];
+            predecessorFingerprint: string;
+            renewalKey: string;
+            replacementToken: string;
         };
         Report: {
             /** Format: double */
@@ -7544,6 +7597,91 @@ export interface operations {
                 content?: never;
             };
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    renew_task_pipeline_credential: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                pipeline_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenewalRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RenewalReadback"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    read_task_pipeline_credential_renewal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                pipeline_id: string;
+                renewal_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RenewalReadback"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

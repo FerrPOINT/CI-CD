@@ -604,6 +604,7 @@ pub(crate) async fn pipeline_detail(
 mod tests {
     use axum::body::Body;
     use tower::ServiceExt;
+    use utoipa::OpenApi;
 
     use super::*;
 
