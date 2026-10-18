@@ -85,3 +85,9 @@ Test options теперь живут в отдельном `frontend/vitest.conf
 production config. Его изменение выбирает проверки без app artifact, и оба
 production COPY исключают этот файл. Types/config loader проверены отдельно от
 native app build; [границы проверки](../TESTING.md#раздельная-vitevitest-configuration).
+
+Pure execution-filter tests переведены в Node, DOM fixtures/imports стали
+условными. Три same-case samples и соседние guards/QueryState прошли;
+[измерения и границы](../TESTING.md#pure-node-suites-и-browser-setup).
+Actual source-key controls подтверждают прежний app key, новый unit key и
+выбор только types/tests. Production config/dependencies и runtime не менялись.
