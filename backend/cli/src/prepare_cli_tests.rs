@@ -5,6 +5,7 @@ use super::*;
 fn prepare_checkout_parses_explicit_private_material_and_checkout_paths() {
     let cli = Cli::try_parse_from([
         "cicd",
+        "repository",
         "prepare-checkout",
         "--access-file",
         "private/access.json",
@@ -13,14 +14,17 @@ fn prepare_checkout_parses_explicit_private_material_and_checkout_paths() {
     ])
     .unwrap();
     match cli.command {
-        Command::PrepareCheckout {
-            access_file,
-            checkout,
-        } => {
+        Command::Work(commands::WorkCommand::Repository {
+            command:
+                commands::RepositoryCommand::PrepareCheckout {
+                    access_file,
+                    checkout,
+                },
+        }) => {
             assert_eq!(access_file, PathBuf::from("private/access.json"));
             assert_eq!(checkout, PathBuf::from("project-checkout"));
         }
-        _ => panic!("prepare-checkout must not enter repository/general dispatch"),
+        _ => panic!("prepare-checkout must belong to the repository group"),
     }
 }
 
@@ -29,6 +33,7 @@ fn prepare_candidate_parses_exact_cas_old_and_no_caller_new_oid() {
     let old = "a".repeat(40);
     let cli = Cli::try_parse_from([
         "cicd",
+        "repository",
         "prepare-candidate",
         "--access-file",
         "private/access.json",
@@ -39,27 +44,69 @@ fn prepare_candidate_parses_exact_cas_old_and_no_caller_new_oid() {
     ])
     .unwrap();
     match cli.command {
-        Command::PrepareCandidate {
-            access_file,
-            checkout,
-            old_oid,
-        } => {
+        Command::Work(commands::WorkCommand::Repository {
+            command:
+                commands::RepositoryCommand::PrepareCandidate {
+                    access_file,
+                    checkout,
+                    old_oid,
+                },
+        }) => {
             assert_eq!(access_file, PathBuf::from("private/access.json"));
             assert_eq!(checkout, PathBuf::from("project-checkout"));
             assert_eq!(old_oid, old);
         }
-        _ => panic!("prepare-candidate must not enter repository/general dispatch"),
+        _ => panic!("prepare-candidate must belong to the repository group"),
     }
 }
 
 #[test]
 fn prepare_requires_paths_and_candidate_old_oid_without_authority_overrides() {
     for args in [
-        vec!["cicd", "prepare-checkout"],
-        vec!["cicd", "prepare-checkout", "--access-file", "access.json"],
+        vec!["cicd", "repository", "prepare-checkout"],
         vec![
             "cicd",
+            "repository",
+            "prepare-checkout",
+            "--access-file",
+            "access.json",
+        ],
+        vec![
+            "cicd",
+            "repository",
             "prepare-candidate",
+            "--access-file",
+            "access.json",
+            "--checkout",
+            "repo",
+        ],
+        vec![
+            "cicd",
+            "repository",
+            "prepare-candidate",
+            "--access-file",
+            "access.json",
+            "--checkout",
+            "repo",
+            "--old-oid",
+            "HEAD",
+            "--new-oid",
+            "untrusted",
+        ],
+        vec![
+            "cicd",
+            "repository",
+            "prepare-checkout",
+            "--access-file",
+            "access.json",
+            "--checkout",
+            "repo",
+            "--machine-subject",
+            "operator",
+        ],
+        vec![
+            "cicd",
+            "prepare-checkout",
             "--access-file",
             "access.json",
             "--checkout",
@@ -74,18 +121,16 @@ fn prepare_requires_paths_and_candidate_old_oid_without_authority_overrides() {
             "repo",
             "--old-oid",
             "HEAD",
-            "--new-oid",
-            "untrusted",
         ],
         vec![
             "cicd",
+            "work",
+            "repository",
             "prepare-checkout",
             "--access-file",
             "access.json",
             "--checkout",
             "repo",
-            "--machine-subject",
-            "operator",
         ],
     ] {
         assert!(Cli::try_parse_from(args).is_err());
@@ -96,10 +141,12 @@ fn prepare_requires_paths_and_candidate_old_oid_without_authority_overrides() {
 async fn checkout_dispatch_uses_private_access_not_general_forge_client() {
     let temporary = tempfile::tempdir().unwrap();
     let root = temporary.path().canonicalize().unwrap();
-    let command = Command::PrepareCheckout {
-        access_file: root.join("missing-private-access.json"),
-        checkout: root.join("checkout"),
-    };
+    let command = Command::Work(commands::WorkCommand::Repository {
+        command: commands::RepositoryCommand::PrepareCheckout {
+            access_file: root.join("missing-private-access.json"),
+            checkout: root.join("checkout"),
+        },
+    });
     // A general ApiClient would fail on this URL/token configuration first.
     // The real early dispatcher instead reaches the private-file reader.
     let error = prepare_git(&command, "not-a-service-url")
@@ -116,11 +163,13 @@ async fn checkout_dispatch_uses_private_access_not_general_forge_client() {
 async fn candidate_dispatch_rejects_invalid_cas_before_any_git_or_http_effect() {
     let temporary = tempfile::tempdir().unwrap();
     let root = temporary.path().canonicalize().unwrap();
-    let command = Command::PrepareCandidate {
-        access_file: root.join("missing-private-access.json"),
-        checkout: root.join("missing-checkout"),
-        old_oid: "HEAD".into(),
-    };
+    let command = Command::Work(commands::WorkCommand::Repository {
+        command: commands::RepositoryCommand::PrepareCandidate {
+            access_file: root.join("missing-private-access.json"),
+            checkout: root.join("missing-checkout"),
+            old_oid: "HEAD".into(),
+        },
+    });
     let error = prepare_git(&command, "not-a-service-url")
         .await
         .unwrap()
@@ -164,6 +213,7 @@ async fn existing_push_and_readback_keep_general_authenticated_dispatch() {
 async fn unrelated_commands_do_not_gain_private_child_auth_bypass() {
     for args in [
         vec!["cicd", "project", "list"],
+        vec!["cicd", "repository", "list"],
         vec!["cicd", "completions", "bash"],
     ] {
         let cli = Cli::try_parse_from(args).unwrap();
