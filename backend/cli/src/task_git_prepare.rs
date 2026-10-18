@@ -128,7 +128,7 @@ async fn prepare(access_file: &Path, request: &Value) -> anyhow::Result<(Value, 
     // Existing Base CLI transport enforces trusted HTTP origins and disables redirects.
     // Explicit nonempty child prevents platform-token/operator fallback.
     let client = pdlc_cli_core::ApiClient::new(
-        &format!("{}api/v1", origin),
+        &format!("{origin}api/v1"),
         Some(&token),
         Duration::from_secs(60),
     )?;

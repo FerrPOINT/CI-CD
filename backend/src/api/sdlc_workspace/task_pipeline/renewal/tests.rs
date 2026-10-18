@@ -142,7 +142,7 @@ fn renewal_replacement_requires_same_full_context_and_exact_child_scopes() {
     )
     .unwrap();
     assert_ne!(next.fingerprint, original.fingerprint);
-    assert_eq!(next.context, original.context);
+    assert!(next.context == original.context);
     assert_eq!(next.context_hash, original.context_hash);
     for (path, value) in [
         ("/runId", json!(Uuid::new_v4())),
