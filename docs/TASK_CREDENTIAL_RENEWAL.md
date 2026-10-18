@@ -1,7 +1,8 @@
 # Обновление task credential без повторного pipeline
 
-Source-only расширение от Forge607. Compile, Clippy, Rust/PG tests, image и live
-acceptance не запускались. Общие registrations остаются отдельным Main glue.
+Расширение existing Forge custody. HTTP routes, authorization policy, OpenAPI
+и generated client зарегистрированы в этом комплекте. Установка и совместная
+live-приёмка с Fleet остаются отдельным этапом; наличие исходников их не доказывает.
 
 ## Authority и wire
 

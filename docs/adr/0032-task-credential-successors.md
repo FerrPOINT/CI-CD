@@ -2,7 +2,8 @@
 
 ## Статус
 
-Source proposal; registrations, Rust/PG и installed acceptance pending.
+Реализовано в source вместе с HTTP registrations и generated OpenAPI/client.
+Installed acceptance и совместная проверка consumer Fleet остаются отдельным этапом.
 
 ## Решение
 
