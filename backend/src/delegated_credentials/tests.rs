@@ -446,7 +446,7 @@ fn replay_fingerprint_preserves_legacy_and_binds_child_not_random_cipher_nonce()
         trigger_fingerprint("trigger".into(), Some(&b)).unwrap()
     );
     let mut foreign = central;
-    foreign.token = "sdlc_pat_other_child".into();
+    foreign.token = "sdlc_pat_other_child".into(); // Test placeholder.
     let foreign = Identity::verified(&foreign, &config)
         .unwrap()
         .store(context, &secrets)

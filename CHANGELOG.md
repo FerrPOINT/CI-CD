@@ -15,6 +15,9 @@
 
 ## [Unreleased]
 
+- Исправлена umbrella-сборка backend: встроенные workspace deployment validators
+  копируются до компиляции Rust, а runtime содержит необходимый Python 3.
+
 - Source readback и task Git callback вынесены в отдельные typed routes
   `/namespace-repositories/{id}/source` и `/internal/task-git-check`; прежние
   catalog/legacy callback object contracts сохранены без union и fallback.
