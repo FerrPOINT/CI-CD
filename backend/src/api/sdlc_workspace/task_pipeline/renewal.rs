@@ -296,3 +296,6 @@ pub(crate) async fn readback(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod pg_tests;

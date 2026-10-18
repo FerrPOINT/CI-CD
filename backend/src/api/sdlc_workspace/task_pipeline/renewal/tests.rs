@@ -2,7 +2,7 @@ use super::*;
 use crate::domain::sdlc_workspace::WorkspaceRole;
 use axum::http::StatusCode;
 
-fn fixture() -> (
+pub(super) fn fixture() -> (
     StoredCredential,
     AuthContext,
     SdlcWorkspaceConfig,
