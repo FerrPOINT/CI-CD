@@ -138,6 +138,18 @@ jobs:
           else
             cargo test --locked --features integration --test integration_db -- --test-threads=1
           fi
+      - name: Task credential renewal PostgreSQL regressions
+        if: ${{ !inputs.git_receive_only }}
+        run: |
+          set -euo pipefail
+          cargo test --locked -p cicd-server --lib renewal_pg_ -- --ignored --test-threads=1 | tee "$RUNNER_TEMP/task-credential-renewal.log"
+          grep -F 'test result: ok. 2 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/task-credential-renewal.log"
+      - name: Populated task credential migration upgrade
+        if: ${{ !inputs.git_receive_only }}
+        run: |
+          set -euo pipefail
+          cargo test --locked --features integration --test integration_db task_credential_successor_migration:: -- --ignored --test-threads=1 | tee "$RUNNER_TEMP/task-credential-upgrade.log"
+          grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/task-credential-upgrade.log"
       - name: Create isolated CLI test database
         if: ${{ !inputs.git_receive_only }}
         env:

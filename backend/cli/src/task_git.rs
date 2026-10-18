@@ -9,6 +9,9 @@ use std::{
 };
 use tokio::process::Command;
 
+#[path = "task_git_prepare.rs"]
+pub(crate) mod prepare;
+
 fn private_file(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
     let mut options = fs::OpenOptions::new();
     options.write(true).create_new(true);

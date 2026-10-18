@@ -40,6 +40,9 @@ mod task_pipeline_http;
 #[path = "support/task_pipeline_migration.rs"]
 mod task_pipeline_migration;
 
+#[path = "support/task_credential_successor_migration.rs"]
+mod task_credential_successor_migration;
+
 #[cfg(unix)]
 #[path = "support/git_sat_receive.rs"]
 mod git_sat_receive;
@@ -9089,7 +9092,7 @@ async fn migration_catalog_contains_exact_historical_36_and_37() {
     let catalog = cicd::migrations().await.unwrap();
     assert_eq!(
         catalog.iter().map(|m| m.version).collect::<Vec<_>>(),
-        (1..=40).chain([90, 91, 92, 93, 94]).collect::<Vec<_>>()
+        (1..=40).chain([90, 91, 92, 93, 94, 95]).collect::<Vec<_>>()
     );
     for (version, description, sql, checksum) in HISTORICAL_DEPLOYMENT_MIGRATIONS {
         let migration = catalog
@@ -9124,7 +9127,7 @@ async fn migration_catalog_fresh_and_prior_35_or_37_upgrade() {
                 .unwrap();
         assert_eq!(
             versions,
-            (1..=40).chain([90, 91, 92, 93, 94]).collect::<Vec<_>>()
+            (1..=40).chain([90, 91, 92, 93, 94, 95]).collect::<Vec<_>>()
         );
         let history = migration_catalog_history(&pool).await;
         catalog.run(&pool).await.unwrap();

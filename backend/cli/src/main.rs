@@ -662,7 +662,6 @@ enum TokenCommand {
 }
 
 struct ApiClient {
-    api_origin: String,
     transport: CoreApiClient,
     secrets: Vec<String>,
     request_timeout: Duration,
@@ -680,7 +679,6 @@ impl ApiClient {
             .filter(|value| !value.is_empty())
             .collect();
         Ok(Self {
-            api_origin: api_url.clone(),
             secrets,
             request_timeout: timeout,
             transport: CoreApiClient::new(
@@ -785,6 +783,22 @@ async fn main() -> std::process::ExitCode {
         let mut cmd = Cli::command();
         let name = cmd.get_name().to_string();
         clap_complete::generate(*shell, &mut cmd, name, &mut std::io::stdout());
+        return exit(exit_code::OK);
+    }
+    // Preparation uses the Fleet child; push/readback use the private Git child.
+    // Do not construct the general Forge client or fall back to CICD_API_TOKEN.
+    if let Some(result) = private_git(&cli.command, &cli.api_url).await {
+        let value = match result {
+            Ok(value) => value,
+            Err(error) => {
+                support::report(&error, cli.error_format, &[]);
+                return exit(classify_error(&error));
+            }
+        };
+        if let Err(error) = print_output(&value, cli.output) {
+            support::report(&error, cli.error_format, &[]);
+            return exit(exit_code::USAGE);
+        }
         return exit(exit_code::OK);
     }
     if matches!(
@@ -893,6 +907,50 @@ fn exit(code: u8) -> std::process::ExitCode {
     std::process::ExitCode::from(code)
 }
 
+async fn private_git(command: &Command, origin: &str) -> Option<anyhow::Result<Value>> {
+    match command {
+        Command::Work(commands::WorkCommand::Repository {
+            command:
+                commands::RepositoryCommand::PrepareCheckout {
+                    access_file,
+                    checkout,
+                },
+        }) => {
+            Some(task_git::prepare::checkout(origin, access_file.clone(), checkout.clone()).await)
+        }
+        Command::Work(commands::WorkCommand::Repository {
+            command:
+                commands::RepositoryCommand::PrepareCandidate {
+                    access_file,
+                    checkout,
+                    old_oid,
+                },
+        }) => Some(
+            task_git::prepare::candidate(access_file.clone(), checkout.clone(), old_oid.clone())
+                .await,
+        ),
+        Command::Work(commands::WorkCommand::Repository {
+            command:
+                commands::RepositoryCommand::PushCandidate {
+                    context_file,
+                    child_token_file,
+                    checkout,
+                    readback,
+                },
+        }) => Some(
+            task_git::run(
+                origin,
+                context_file.clone(),
+                child_token_file.clone(),
+                checkout.clone(),
+                *readback,
+            )
+            .await,
+        ),
+        _ => None,
+    }
+}
+
 /// K5: map error chains to stable exit codes (network/4xx/5xx).
 fn classify_error(err: &anyhow::Error) -> u8 {
     if let Some(error) = err.downcast_ref::<support::ApiFailure>() {
@@ -965,6 +1023,10 @@ async fn execute(api: &ApiClient, command: Command) -> anyhow::Result<Value> {
         Command::Token { command } => token(api, command).await,
     }
 }
+
+#[cfg(test)]
+#[path = "prepare_cli_tests.rs"]
+mod prepare_cli_tests;
 
 async fn project(api: &ApiClient, command: ProjectCommand) -> anyhow::Result<Value> {
     match command {

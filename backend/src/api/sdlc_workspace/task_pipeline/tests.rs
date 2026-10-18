@@ -104,7 +104,7 @@ async fn delegated_tracker_readback_requires_exact_native_tuple_and_current_assi
     server.abort();
 }
 
-fn fixture(role: WorkspaceRole, stage: &str) -> (TaskWorkspaceIntent, Value) {
+pub(super) fn fixture(role: WorkspaceRole, stage: &str) -> (TaskWorkspaceIntent, Value) {
     let task = Uuid::new_v4();
     let now = Utc::now();
     let mut intent = TaskWorkspaceIntent {

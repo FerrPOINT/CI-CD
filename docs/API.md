@@ -1,5 +1,10 @@
 # API v1 Specification — Forge CI/CD
 
+Source-only owner-P credential renewal сохраняет original pipeline/intent и
+добавляет отдельный acknowledged successor без dispatch. Два dedicated owner
+routes зарегистрированы вне legacy user middleware; OpenAPI regeneration и
+Rust/PG qualification ещё требуются: [контракт](TASK_CREDENTIAL_RENEWAL.md).
+
 Registered-reader `GET /api/v1/namespace-repositories/{id}/source` возвращает
 exact source readback и optional delivery configuration того же repository.
 Прежний GET без `/source` сохраняет catalog object с обязательным `kind`.
@@ -518,8 +523,8 @@ Readiness-проверка backend dependency boundary. Endpoint требует 
   "database": "ok",
   "migrations": {
     "status": "ok",
-    "latest_applied_version": 94,
-    "latest_required_version": 94,
+    "latest_applied_version": 95,
+    "latest_required_version": 95,
     "pending_versions": [],
     "checksum_mismatches": [],
     "unknown_applied_versions": [],
