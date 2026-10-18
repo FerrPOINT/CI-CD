@@ -136,9 +136,13 @@ Live lease/Tracker fence/source preparation authorization обязан пров�
 owner adapter до effect и перед receipt; helper не может проверить их по filesystem.
 Existing blocked ledger/API не вызывают primitive и не меняют своё поведение.
 Нет новой migration, runner execution, scheduler, model commands или credentials.
-Tracker source binding counterpart всё ещё отсутствует: включать HTTP preparation
-по caller payload запрещено. Полный native admission нужен перед agent dispatch,
-не для этой изолированной owner-local подготовки после будущего source authorization.
+Этот исторический filesystem slice сам не реализует Tracker source binding.
+Counterpart теперь реализован в [Task Tracker #165](https://github.com/FerrPOINT/task-tracker/pull/165);
+текущий контракт описан в [task candidate Git](OWN_TASK_CANDIDATE_GIT.md).
+Наличие исходников не подтверждает установку совместимого Tracker или live admission:
+включать HTTP preparation только по caller payload по-прежнему запрещено.
+Полный native admission нужен перед agent dispatch, не для изолированной
+owner-local подготовки после проверенного source authorization.
 
 ### Source slice: task-bound workspace operation, 2026-10-04
 

@@ -195,6 +195,22 @@ async fn workspace(api: &ApiClient, command: WorkspaceCommand) -> Result<Value> 
 }
 #[derive(Subcommand)]
 pub enum RepositoryCommand {
+    /// Prepare an own-task checkout using the private run-bound Fleet request child.
+    PrepareCheckout {
+        #[arg(long)]
+        access_file: std::path::PathBuf,
+        #[arg(long)]
+        checkout: std::path::PathBuf,
+    },
+    /// Prepare an exact candidate CAS after a real local commit; does not push.
+    PrepareCandidate {
+        #[arg(long)]
+        access_file: std::path::PathBuf,
+        #[arg(long)]
+        checkout: std::path::PathBuf,
+        #[arg(long)]
+        old_oid: String,
+    },
     PushCandidate {
         #[arg(long)]
         context_file: std::path::PathBuf,
@@ -330,7 +346,7 @@ pub async fn execute(api: &ApiClient, command: WorkCommand) -> Result<Value> {
     match command {
         WorkCommand::Workspace { command } => workspace(api, command).await,
         WorkCommand::Repository {command}=>match command {
-            RepositoryCommand::PushCandidate {context_file,child_token_file,checkout,readback}=>crate::task_git::run(&api.api_origin,context_file,child_token_file,checkout,readback).await,
+            RepositoryCommand::PrepareCheckout {..}|RepositoryCommand::PrepareCandidate {..}|RepositoryCommand::PushCandidate {..}=>bail!("Task Git requires private child dispatch"),
             RepositoryCommand::List=>api.json(api.get("/repositories")).await,
             RepositoryCommand::Create {name,visibility}=>api.json(api.post("/repositories").json(&json!({"name":name,"visibility":visibility}))).await,
             RepositoryCommand::Delete {name}=>api.json(api.delete(&format!("/repositories/{}",enc(&name)))).await,

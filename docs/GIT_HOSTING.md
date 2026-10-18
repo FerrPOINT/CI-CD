@@ -4,6 +4,12 @@ Opt-in source-only [own-task candidate Git](OWN_TASK_CANDIDATE_GIT.md) пров�
 confirmed source/current Developer и exact OID CAS через native hooks. Только
 этот child-вариант подавляет post-receive auto-pipeline; обычный human/SAT поток
 ниже не меняется. Qualification/installation не заявлены.
+CLI `repository push-candidate`, включая `--readback`, использует только private
+Git child/context до общего API-клиента, без global-token fallback. Durable
+single-attempt marker и правило unknown outcome → readback-only не изменены.
+Новый собственный checkout получает nonhuman local author defaults только для
+отсутствующих effective `user.name`/`user.email`; global/explicit identity и
+существующие checkout/rework сохраняются. Это не новый principal или grant.
 Task-only hooks используют `/api/v1/internal/task-git-check`, не legacy
 `/api/v1/internal/git-push`. Последний сохраняет свой object contract и отвергает
 `task_candidate` до обычной pipeline обработки.

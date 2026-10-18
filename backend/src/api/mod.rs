@@ -138,6 +138,8 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         sdlc_workspace::prepare_workspace_operation, sdlc_workspace::get_workspace_operation,
         sdlc_workspace::get_candidate_evidence,
         sdlc_workspace::task_pipeline::read_receipt,
+        sdlc_workspace::task_pipeline::renewal::renew,
+        sdlc_workspace::task_pipeline::renewal::readback,
         crate::task_delivery::execute_task_delivery, crate::task_delivery::get_local_delivery,
         crate::api::readiness::health, crate::api::readiness::readiness, metrics, serve_openapi_json,
         crate::api::auth_routes::auth_login, crate::api::auth_routes::auth_refresh,
@@ -236,6 +238,8 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::domain::sdlc_workspace::WorkspaceTaskBinding,
         crate::domain::sdlc_workspace::TaskWorkspaceIntent,
         crate::delegated_credentials::TaskCredentialContext,
+        sdlc_workspace::task_pipeline::renewal::RenewalRequest,
+        crate::delegated_credentials::custody::RenewalReadback,
         crate::task_git::SourceBinding, crate::task_git::GitContext,
         crate::task_git::CandidateCheck, crate::task_git::CandidateCheckReadback,
         crate::domain::sdlc_workspace::WorkspaceOperationReceipt,
@@ -600,8 +604,41 @@ pub(crate) async fn pipeline_detail(
 mod tests {
     use axum::body::Body;
     use tower::ServiceExt;
+    use utoipa::OpenApi;
 
     use super::*;
+
+    #[test]
+    fn credential_renewal_routes_have_distinct_generated_operations_and_schemas() {
+        let document = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        let paths = document["paths"].as_object().unwrap();
+        for (path, method, id) in [
+            (
+                "/api/v1/projects/{project_id}/pipelines/{pipeline_id}/credential-renewals",
+                "post",
+                "renew_task_pipeline_credential",
+            ),
+            (
+                "/api/v1/projects/{project_id}/pipelines/{pipeline_id}/credential-renewals/{renewal_key}",
+                "get",
+                "read_task_pipeline_credential_renewal",
+            ),
+        ] {
+            assert_eq!(paths[path][method]["operationId"], id);
+            assert_eq!(
+                paths
+                    .values()
+                    .filter_map(serde_json::Value::as_object)
+                    .flat_map(|item| item.values())
+                    .filter(|operation| operation["operationId"] == id)
+                    .count(),
+                1
+            );
+        }
+        for name in ["RenewalRequest", "RenewalReadback"] {
+            assert!(document["components"]["schemas"][name].is_object());
+        }
+    }
 
     #[test]
     fn internal_errors_hide_database_details_from_clients() {

@@ -1,5 +1,9 @@
 # Дата-модель Forge CI/CD
 
+Additive0095 `task_credential_successors` хранит append-only successor custody
+под lock original task intent; 0092/0094 и trigger fingerprints неизменны.
+Schema/application qualification pending: [контракт](TASK_CREDENTIAL_RENEWAL.md).
+
 Source additive0094 вводит disjoint encrypted central-child custody в existing
 task pipeline/workspace journals. Legacy SAT rows, original FK/checksum history,
 unique operation keys и immutable receipt/attempt guards сохранены. Новой

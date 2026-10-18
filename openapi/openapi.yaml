@@ -3463,6 +3463,79 @@ paths:
           description: ''
         '409':
           description: ''
+  /api/v1/projects/{project_id}/pipelines/{pipeline_id}/credential-renewals:
+    post:
+      tags:
+      - SDLC workspace
+      operationId: renew_task_pipeline_credential
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: pipeline_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenewalRequest'
+        required: true
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RenewalReadback'
+        '401':
+          description: ''
+        '403':
+          description: ''
+        '409':
+          description: ''
+  /api/v1/projects/{project_id}/pipelines/{pipeline_id}/credential-renewals/{renewal_key}:
+    get:
+      tags:
+      - SDLC workspace
+      operationId: read_task_pipeline_credential_renewal
+      parameters:
+      - name: project_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: pipeline_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: renewal_key
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RenewalReadback'
+        '401':
+          description: ''
+        '403':
+          description: ''
+        '404':
+          description: ''
   /api/v1/projects/{project_id}/pipelines/{pipeline_id}/task-workspace:
     get:
       tags:
@@ -8599,6 +8672,58 @@ components:
           type: string
         tag_name:
           type: string
+    RenewalReadback:
+      type: object
+      required:
+      - pipelineId
+      - renewalKey
+      - requestHash
+      - generation
+      - predecessorFingerprint
+      - fingerprint
+      - contextHash
+      - recordedAt
+      - current
+      properties:
+        contextHash:
+          type: string
+        current:
+          type: boolean
+          description: A historical ACK is not permission to republish a superseded credential.
+        fingerprint:
+          type: string
+        generation:
+          type: integer
+          format: int64
+        pipelineId:
+          type: string
+          format: uuid
+        predecessorFingerprint:
+          type: string
+        recordedAt:
+          type: string
+          format: date-time
+        renewalKey:
+          type: string
+        requestHash:
+          type: string
+    RenewalRequest:
+      type: object
+      required:
+      - renewalKey
+      - predecessorFingerprint
+      - credentialContext
+      - replacementToken
+      properties:
+        credentialContext:
+          $ref: '#/components/schemas/TaskCredentialContext'
+        predecessorFingerprint:
+          type: string
+        renewalKey:
+          type: string
+        replacementToken:
+          type: string
+      additionalProperties: false
     Report:
       type: object
       required:
