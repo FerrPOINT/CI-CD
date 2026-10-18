@@ -1,7 +1,7 @@
 import { currentSession } from './auth'
 import { getPlatformProduct } from '@pdlc/ui/platform'
 
-const BASE = '/api/v1'
+const BASE = `${import.meta.env.BASE_URL}api/v1`
 
 export type ApiErrorKind = 'api' | 'network' | 'cancelled'
 
