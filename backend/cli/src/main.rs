@@ -662,7 +662,6 @@ enum TokenCommand {
 }
 
 struct ApiClient {
-    api_origin: String,
     transport: CoreApiClient,
     secrets: Vec<String>,
     request_timeout: Duration,
@@ -680,7 +679,6 @@ impl ApiClient {
             .filter(|value| !value.is_empty())
             .collect();
         Ok(Self {
-            api_origin: api_url.clone(),
             secrets,
             request_timeout: timeout,
             transport: CoreApiClient::new(
@@ -787,9 +785,9 @@ async fn main() -> std::process::ExitCode {
         clap_complete::generate(*shell, &mut cmd, name, &mut std::io::stdout());
         return exit(exit_code::OK);
     }
-    // These commands authenticate only with the explicit private Fleet child.
+    // Preparation uses the Fleet child; push/readback use the private Git child.
     // Do not construct the general Forge client or fall back to CICD_API_TOKEN.
-    if let Some(result) = prepare_git(&cli.command, &cli.api_url).await {
+    if let Some(result) = private_git(&cli.command, &cli.api_url).await {
         let value = match result {
             Ok(value) => value,
             Err(error) => {
@@ -909,7 +907,7 @@ fn exit(code: u8) -> std::process::ExitCode {
     std::process::ExitCode::from(code)
 }
 
-async fn prepare_git(command: &Command, origin: &str) -> Option<anyhow::Result<Value>> {
+async fn private_git(command: &Command, origin: &str) -> Option<anyhow::Result<Value>> {
     match command {
         Command::Work(commands::WorkCommand::Repository {
             command:
@@ -930,6 +928,24 @@ async fn prepare_git(command: &Command, origin: &str) -> Option<anyhow::Result<V
         }) => Some(
             task_git::prepare::candidate(access_file.clone(), checkout.clone(), old_oid.clone())
                 .await,
+        ),
+        Command::Work(commands::WorkCommand::Repository {
+            command:
+                commands::RepositoryCommand::PushCandidate {
+                    context_file,
+                    child_token_file,
+                    checkout,
+                    readback,
+                },
+        }) => Some(
+            task_git::run(
+                origin,
+                context_file.clone(),
+                child_token_file.clone(),
+                checkout.clone(),
+                *readback,
+            )
+            .await,
         ),
         _ => None,
     }

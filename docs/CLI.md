@@ -23,6 +23,12 @@ cargo +1.88.0 build --locked --release -p cicd-cli
 | `CICD_PROFILE` | - | Имя профиля из `~/.config/forge-cli/config.toml`; эквивалентно `--profile` |
 | `CICD_CONFIG` | `~/.config/forge-cli/config.toml` | Путь к TOML-конфигу профилей |
 
+Source candidate: `repository prepare-checkout`, `prepare-candidate` и
+`push-candidate [--readback]` исполняются до общего API-клиента. Подготовка
+использует только private Fleet child; push/readback — private Git child/context,
+без требования или fallback к `CICD_API_TOKEN`. Остальные repository-команды
+сохраняют обычный API-клиент. Установка этого CLI ещё не подтверждена.
+
 Глобальные флаги:
 
 ```bash

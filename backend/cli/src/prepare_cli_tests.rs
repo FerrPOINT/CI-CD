@@ -149,7 +149,7 @@ async fn checkout_dispatch_uses_private_access_not_general_forge_client() {
     });
     // A general ApiClient would fail on this URL/token configuration first.
     // The real early dispatcher instead reaches the private-file reader.
-    let error = prepare_git(&command, "not-a-service-url")
+    let error = private_git(&command, "not-a-service-url")
         .await
         .unwrap()
         .unwrap_err();
@@ -170,7 +170,7 @@ async fn candidate_dispatch_rejects_invalid_cas_before_any_git_or_http_effect() 
             old_oid: "HEAD".into(),
         },
     });
-    let error = prepare_git(&command, "not-a-service-url")
+    let error = private_git(&command, "not-a-service-url")
         .await
         .unwrap()
         .unwrap_err();
@@ -180,32 +180,57 @@ async fn candidate_dispatch_rejects_invalid_cas_before_any_git_or_http_effect() 
 }
 
 #[tokio::test]
-async fn existing_push_and_readback_keep_general_authenticated_dispatch() {
+async fn push_and_readback_need_private_material_not_a_global_token() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path().canonicalize().unwrap();
+    let context = root.join("missing-context.json");
+    let child = root.join("missing-child.token");
+    let checkout = root.join("missing-checkout");
     for readback in [false, true] {
         let mut args = vec![
             "cicd",
             "repository",
             "push-candidate",
             "--context-file",
-            "context.json",
+            context.to_str().unwrap(),
             "--child-token-file",
-            "child.token",
+            child.to_str().unwrap(),
             "--checkout",
-            "checkout",
+            checkout.to_str().unwrap(),
         ];
         if readback {
             args.push("--readback");
         }
-        let cli = Cli::try_parse_from(args).unwrap();
-        assert!(matches!(
-            &cli.command,
-            Command::Work(commands::WorkCommand::Repository { .. })
-        ));
-        assert!(
-            prepare_git(&cli.command, "not-a-service-url")
-                .await
-                .is_none()
-        );
+        let mut cli = Cli::try_parse_from(args).unwrap();
+        // No process-environment mutation: ignore any inherited test-host token.
+        cli.token = None;
+        assert!(cli.token.is_none());
+        match &cli.command {
+            Command::Work(commands::WorkCommand::Repository {
+                command:
+                    commands::RepositoryCommand::PushCandidate {
+                        context_file,
+                        child_token_file,
+                        checkout: parsed_checkout,
+                        readback: parsed_readback,
+                    },
+            }) => {
+                assert_eq!(context_file, &context);
+                assert_eq!(child_token_file, &child);
+                assert_eq!(parsed_checkout, &checkout);
+                assert_eq!(*parsed_readback, readback);
+            }
+            _ => panic!("push-candidate must remain in the repository group"),
+        }
+        let error = private_git(&cli.command, &cli.api_url)
+            .await
+            .unwrap()
+            .unwrap_err();
+        // Real unchanged task_git::run reaches the private-file reader, not
+        // ApiClient's missing-global-token guard. No Git/HTTP operation occurs.
+        assert!(format!("{error:#}").contains("Private Git input недоступен"));
+        assert!(error.downcast_ref::<CliError>().is_none());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
     }
 }
 
@@ -218,9 +243,31 @@ async fn unrelated_commands_do_not_gain_private_child_auth_bypass() {
     ] {
         let cli = Cli::try_parse_from(args).unwrap();
         assert!(
-            prepare_git(&cli.command, "not-a-service-url")
+            private_git(&cli.command, "not-a-service-url")
                 .await
                 .is_none()
         );
+    }
+}
+
+#[test]
+fn private_push_still_requires_context_child_and_checkout_for_readback_too() {
+    for readback in [false, true] {
+        for missing in ["--context-file", "--child-token-file", "--checkout"] {
+            let mut args = vec!["cicd", "repository", "push-candidate"];
+            for (flag, value) in [
+                ("--context-file", "context.json"),
+                ("--child-token-file", "child.token"),
+                ("--checkout", "checkout"),
+            ] {
+                if flag != missing {
+                    args.extend([flag, value]);
+                }
+            }
+            if readback {
+                args.push("--readback");
+            }
+            assert!(Cli::try_parse_from(args).is_err());
+        }
     }
 }

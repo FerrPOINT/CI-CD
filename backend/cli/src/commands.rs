@@ -346,8 +346,7 @@ pub async fn execute(api: &ApiClient, command: WorkCommand) -> Result<Value> {
     match command {
         WorkCommand::Workspace { command } => workspace(api, command).await,
         WorkCommand::Repository {command}=>match command {
-            RepositoryCommand::PrepareCheckout {..}|RepositoryCommand::PrepareCandidate {..}=>bail!("Git preparation requires private Fleet child dispatch"),
-            RepositoryCommand::PushCandidate {context_file,child_token_file,checkout,readback}=>crate::task_git::run(&api.api_origin,context_file,child_token_file,checkout,readback).await,
+            RepositoryCommand::PrepareCheckout {..}|RepositoryCommand::PrepareCandidate {..}|RepositoryCommand::PushCandidate {..}=>bail!("Task Git requires private child dispatch"),
             RepositoryCommand::List=>api.json(api.get("/repositories")).await,
             RepositoryCommand::Create {name,visibility}=>api.json(api.post("/repositories").json(&json!({"name":name,"visibility":visibility}))).await,
             RepositoryCommand::Delete {name}=>api.json(api.delete(&format!("/repositories/{}",enc(&name)))).await,
