@@ -999,6 +999,13 @@ curl -sS -X POST http://127.0.0.1:22801/api/v1/projects/$PROJECT_ID/pipelines \
 
 Возвращает детали пайплайна: метаданные + массив стадий с задачами. Стадии отсортированы по `position`, jobs внутри стадии — по `position`.
 
+Task child может читать только свой exact original pipeline после проверки current
+credential/context и live Auth/Tracker authority. Для него успешный ответ имеет
+`Cache-Control: no-store`; чужой project/task и superseded child получают отказ.
+Response DTO и legacy SAT/User authorization сохранены. Этот доступ не открывает
+pipeline list, retry/cancel, delivery или rollback; CI status остаётся фактическим,
+включая queued/failed. [Credential binding](TASK_CREDENTIAL_RENEWAL.md#exact-task-owned-pipelinedetail).
+
 **Path params:**
 
 | Параметр | Тип | Описание |
