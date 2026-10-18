@@ -21,7 +21,7 @@ const authState = vi.hoisted(() => ({
 }));
 
 vi.mock("react-i18next", () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({ t: (key: string, options?: { defaultValue?: string }) => options?.defaultValue ?? key }),
 }));
 
 vi.mock("@/shared/auth/auth-provider", () => ({
@@ -76,7 +76,7 @@ describe("AppShell navigation", () => {
   it("shares the utility disclosure between desktop and mobile", async () => {
     renderShell();
     fireEvent.click(screen.getByRole("button", { name: "Служебное" }));
-    fireEvent.click(screen.getByRole("button", { name: "navigation.toggleMenu" }));
+    fireEvent.click(screen.getByRole("button", { name: "Открыть навигацию" }));
     const dialog = await screen.findByRole("dialog");
     const utility = within(dialog).getByRole("button", { name: "Служебное" });
     expect(utility).toHaveAttribute("aria-expanded", "true");
@@ -129,13 +129,13 @@ describe("AppShell navigation", () => {
   it("uses an accessible focus-managed mobile drawer", async () => {
     renderShell();
     const trigger = screen.getByRole("button", {
-      name: "navigation.toggleMenu",
+      name: "Открыть навигацию",
     });
 
     fireEvent.click(trigger);
 
     const dialog = await screen.findByRole("dialog", {
-      name: "navigation.toggleMenu",
+      name: "app.name",
     });
     expect(
       within(dialog).getByRole("navigation", { name: "navigation.main" }),
@@ -146,7 +146,7 @@ describe("AppShell navigation", () => {
 
     await waitFor(() =>
       expect(
-        screen.queryByRole("dialog", { name: "navigation.toggleMenu" }),
+        screen.queryByRole("dialog", { name: "app.name" }),
       ).not.toBeInTheDocument(),
     );
     await waitFor(() => expect(trigger).toHaveFocus());
@@ -173,7 +173,7 @@ describe("AppShell navigation", () => {
   it("closes the drawer after following a navigation link", async () => {
     renderShell();
     const trigger = screen.getByRole("button", {
-      name: "navigation.toggleMenu",
+      name: "Открыть навигацию",
     });
     fireEvent.click(trigger);
     const dialog = await screen.findByRole("dialog");
@@ -201,10 +201,10 @@ describe("AppShell navigation", () => {
     );
     const { unmount } = renderShell();
     fireEvent.click(
-      screen.getByRole("button", { name: "navigation.toggleMenu" }),
+      screen.getByRole("button", { name: "Открыть навигацию" }),
     );
     await screen.findByRole("dialog");
-    const listener = media.addEventListener.mock.calls[0][1] as () => void;
+    const listener = media.addEventListener.mock.calls.at(-1)![1] as () => void;
     media.matches = true;
     act(() => listener());
     await waitFor(() =>
@@ -260,3 +260,15 @@ describe("AppShell navigation", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+
+it('uses the shared Base sidebar and compact-state contract', () => {
+  renderShell()
+  const shell = document.querySelector('[data-base-shell]')!
+  expect(document.querySelectorAll('aside')).toHaveLength(1)
+  expect(shell.getAttribute('data-sidebar-mode')).toBe('expanded')
+  fireEvent.click(screen.getByRole('button', {name:'Свернуть меню'}))
+  expect(shell.getAttribute('data-sidebar-mode')).toBe('compact')
+  fireEvent.click(screen.getByRole('button', {name:'Развернуть меню'}))
+  expect(shell.getAttribute('data-sidebar-mode')).toBe('expanded')
+})
