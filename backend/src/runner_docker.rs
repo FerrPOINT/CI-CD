@@ -192,6 +192,25 @@ fn parse_cgroup_parent(value: Option<&str>) -> io::Result<Option<String>> {
     Ok(Some(value.to_owned()))
 }
 
+fn build_cgroup_path(parent: &str) -> io::Result<String> {
+    let parent = parse_cgroup_parent(Some(parent))?
+        .ok_or_else(|| invalid("build cgroup parent is empty"))?;
+    let stem = parent.strip_suffix(".slice").unwrap();
+    let mut prefix = String::new();
+    let mut path = String::new();
+    for component in stem.split('-') {
+        if component.is_empty() {
+            return Err(invalid("build cgroup slice hierarchy is invalid"));
+        }
+        if !prefix.is_empty() {
+            prefix.push('-');
+        }
+        prefix.push_str(component);
+        path.push_str(&format!("/{prefix}.slice"));
+    }
+    Ok(path)
+}
+
 fn apply_cgroup_parent(manifest: &mut Value, parent: Option<&str>) -> io::Result<()> {
     let Some(parent) = parent else { return Ok(()) };
     let services = manifest["services"]
@@ -497,7 +516,9 @@ impl Client {
                 build.request_sha256
             ));
         if let Some(parent) = &self.cgroup_parent {
-            command.arg("--cgroup-parent").arg(parent);
+            command
+                .arg("--cgroup-parent")
+                .arg(build_cgroup_path(parent)?);
         }
         if let Some(target) = target {
             command.arg("--target").arg(target);
@@ -2519,224 +2540,263 @@ mod tests {
     }
 
     #[test]
+    fn image_build_maps_systemd_slices_to_engine_cgroup_paths() {
+        for (name, path) in [
+            ("pdlc4.slice", "/pdlc4.slice"),
+            (
+                "pdlc4-workloads.slice",
+                "/pdlc4.slice/pdlc4-workloads.slice",
+            ),
+            (
+                "neighbor-jobs-build.slice",
+                "/neighbor.slice/neighbor-jobs.slice/neighbor-jobs-build.slice",
+            ),
+        ] {
+            assert_eq!(build_cgroup_path(name).unwrap(), path);
+        }
+        for invalid in ["", "../foreign.slice", "pdlc4--jobs.slice"] {
+            assert!(build_cgroup_path(invalid).is_err());
+        }
+    }
+
+    #[test]
     fn image_build_command_is_fixed_load_without_job_env_or_arbitrary_options() {
         use crate::domain::image_build::ImageBuildSpec;
-        for parent in [None, Some("pdlc4-workloads.slice")] {
-            let client = Client {
-                host: "tcp://runner-daemon:2376".into(),
-                cert_path: "/backend-only/tls".into(),
-                daemon_id: "expected-daemon".into(),
-                cgroup_parent: parent.map(str::to_owned),
-            };
-            let spec = ImageBuildSpec {
-                context: ".".into(),
-                dockerfile: "Dockerfile".into(),
-                target: Some("release".into()),
-                descriptor_artifact: "candidate.json".into(),
-                readable_schema_versions: vec![1],
-            };
-            let source = "a".repeat(40);
-            let hash = "b".repeat(64);
-            let attempt = Uuid::new_v4();
-            let command = client
-                .image_build_command(ImageBuildCommand {
-                    spec: &spec,
-                    context: Path::new("/control/tree"),
-                    dockerfile: Path::new("/control/tree/Dockerfile"),
-                    iid_file: Path::new("/control/image-id"),
-                    docker_config: Path::new("/control/docker-config"),
-                    source_commit: &source,
-                    attempt,
-                    request_sha256: &hash,
-                })
-                .unwrap();
-            let command = command.as_std();
-            let args: Vec<_> = command
-                .get_args()
-                .map(|arg| arg.to_str().unwrap())
-                .collect();
-            assert_eq!(
-                args.windows(2)
-                    .find(|pair| pair[0] == "--cgroup-parent")
-                    .map(|pair| pair[1]),
-                parent
-            );
-            assert_eq!(
-                &args[..8],
-                &[
-                    "buildx",
-                    "build",
-                    "--builder",
-                    "default",
-                    "--load",
-                    "--network",
-                    "default",
-                    "--provenance=false"
-                ]
-            );
-            assert_eq!(
-                &args[args.len() - 3..],
-                &["--target", "release", "/control/tree"]
-            );
-            for flag in [
-                "--push",
-                "--secret",
-                "--ssh",
-                "--allow",
-                "--build-arg",
-                "--tag",
-                "--output",
-            ] {
-                assert!(!args.contains(&flag));
-            }
-            let env: std::collections::BTreeMap<_, _> = command
-                .get_envs()
-                .filter_map(|(key, value)| {
-                    value.map(|value| {
-                        (
-                            key.to_string_lossy().into_owned(),
-                            value.to_string_lossy().into_owned(),
-                        )
-                    })
-                })
-                .collect();
-            assert_eq!(env["DOCKER_HOST"], client.host);
-            assert_eq!(env["DOCKER_TLS_VERIFY"], "1");
-            assert_eq!(env["DOCKER_CONFIG"], "/control/docker-config");
-            for key in env.keys() {
-                assert!(
-                    [
-                        "PATH",
-                        "SystemRoot",
-                        "DOCKER_HOST",
-                        "DOCKER_CERT_PATH",
-                        "DOCKER_TLS_VERIFY",
-                        "DOCKER_CONFIG"
-                    ]
-                    .contains(&key.as_str())
-                );
-            }
+        let client = Client {
+            host: "tcp://runner-daemon:2376".into(),
+            cert_path: "/backend-only/tls".into(),
+            daemon_id: "expected-daemon".into(),
+            cgroup_parent: None,
+        };
+        let spec = ImageBuildSpec {
+            context: ".".into(),
+            dockerfile: "Dockerfile".into(),
+            target: Some("release".into()),
+            descriptor_artifact: "candidate.json".into(),
+            readable_schema_versions: vec![1],
+        };
+        let source = "a".repeat(40);
+        let hash = "b".repeat(64);
+        let attempt = Uuid::new_v4();
+        let command = client
+            .image_build_command(ImageBuildCommand {
+                spec: &spec,
+                context: Path::new("/control/tree"),
+                dockerfile: Path::new("/control/tree/Dockerfile"),
+                iid_file: Path::new("/control/image-id"),
+                docker_config: Path::new("/control/docker-config"),
+                source_commit: &source,
+                attempt,
+                request_sha256: &hash,
+            })
+            .unwrap();
+        let command = command.as_std();
+        let args: Vec<_> = command
+            .get_args()
+            .map(|arg| arg.to_str().unwrap())
+            .collect();
+        assert!(!args.contains(&"--cgroup-parent"));
+        let budgeted = Client {
+            cgroup_parent: Some("pdlc4-workloads.slice".into()),
+            ..client.clone()
+        };
+        let budgeted_command = budgeted
+            .image_build_command(ImageBuildCommand {
+                spec: &spec,
+                context: Path::new("/control/tree"),
+                dockerfile: Path::new("/control/tree/Dockerfile"),
+                iid_file: Path::new("/control/image-id"),
+                docker_config: Path::new("/control/docker-config"),
+                source_commit: &source,
+                attempt,
+                request_sha256: &hash,
+            })
+            .unwrap();
+        let budgeted_args: Vec<_> = budgeted_command
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_str().unwrap())
+            .collect();
+        assert!(
+            budgeted_args
+                .windows(2)
+                .any(|pair| pair == ["--cgroup-parent", "/pdlc4.slice/pdlc4-workloads.slice"])
+        );
+        assert_eq!(
+            &args[..8],
+            &[
+                "buildx",
+                "build",
+                "--builder",
+                "default",
+                "--load",
+                "--network",
+                "default",
+                "--provenance=false"
+            ]
+        );
+        assert_eq!(
+            &args[args.len() - 3..],
+            &["--target", "release", "/control/tree"]
+        );
+        for flag in [
+            "--push",
+            "--secret",
+            "--ssh",
+            "--allow",
+            "--build-arg",
+            "--tag",
+            "--output",
+        ] {
+            assert!(!args.contains(&flag));
         }
-
-        #[tokio::test]
-        async fn retry_requires_cleaned_owned_journal_even_after_owner_death() {
-            let root = std::env::temp_dir().join(format!("forge-retry-journal-{}", Uuid::new_v4()));
-            let job = Uuid::new_v4();
-            let attempt = Uuid::new_v4();
-            let project = format!("sdlc-build-job-{}", attempt.simple());
-            let directory = root.join(&project);
-            let manifest_path = directory.join("compose.json");
-            let journal_path = directory.join("journal.json");
-            let daemon = "registered-test-daemon";
-            let control = "owned-control";
+        let env: std::collections::BTreeMap<_, _> = command
+            .get_envs()
+            .filter_map(|(key, value)| {
+                value.map(|value| {
+                    (
+                        key.to_string_lossy().into_owned(),
+                        value.to_string_lossy().into_owned(),
+                    )
+                })
+            })
+            .collect();
+        assert_eq!(env["DOCKER_HOST"], client.host);
+        assert_eq!(env["DOCKER_TLS_VERIFY"], "1");
+        assert_eq!(env["DOCKER_CONFIG"], "/control/docker-config");
+        for key in env.keys() {
             assert!(
-                !retry_unconfirmed_at(&root, job, attempt, daemon, control)
-                    .await
-                    .unwrap()
+                [
+                    "PATH",
+                    "SystemRoot",
+                    "DOCKER_HOST",
+                    "DOCKER_CERT_PATH",
+                    "DOCKER_TLS_VERIFY",
+                    "DOCKER_CONFIG"
+                ]
+                .contains(&key.as_str())
             );
-            std::fs::create_dir_all(&directory).unwrap();
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
-            }
-            let manifest = json!({"name":project,"services":{"transfer":{"labels":{
+        }
+    }
+
+    #[tokio::test]
+    async fn retry_requires_cleaned_owned_journal_even_after_owner_death() {
+        let root = std::env::temp_dir().join(format!("forge-retry-journal-{}", Uuid::new_v4()));
+        let job = Uuid::new_v4();
+        let attempt = Uuid::new_v4();
+        let project = format!("sdlc-build-job-{}", attempt.simple());
+        let directory = root.join(&project);
+        let manifest_path = directory.join("compose.json");
+        let journal_path = directory.join("journal.json");
+        let daemon = "registered-test-daemon";
+        let control = "owned-control";
+        assert!(
+            !retry_unconfirmed_at(&root, job, attempt, daemon, control)
+                .await
+                .unwrap()
+        );
+        std::fs::create_dir_all(&directory).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let manifest = json!({"name":project,"services":{"transfer":{"labels":{
             "sdlc.job":job.to_string(),"sdlc.attempt":attempt.to_string(),
             "sdlc.task":format!("job-{job}"),"sdlc.purpose":"cicd-job","sdlc.control-volume":control}}}});
-            write_private(&manifest_path, &manifest).unwrap();
-            let mut journal = json!({"project":project,"daemon_id":daemon,"manifest":manifest_path,
+        write_private(&manifest_path, &manifest).unwrap();
+        let mut journal = json!({"project":project,"daemon_id":daemon,"manifest":manifest_path,
                                  "owner":"4294967295:0","stopped":false});
-            for phase in [
-                "prepared",
-                "execution-started",
-                "cleanup-required",
-                "execution-stopped",
-            ] {
-                journal["phase"] = json!(phase);
-                journal["stopped"] = json!(phase == "execution-stopped");
-                write_private(&journal_path, &journal).unwrap();
-                assert!(
-                    retry_unconfirmed_at(&root, job, attempt, daemon, control)
-                        .await
-                        .unwrap(),
-                    "owner death or stopped phase {phase} is not completed recovery"
-                );
-            }
-            journal["phase"] = json!("cleaned");
-            journal["stopped"] = json!(true);
-            write_private(&journal_path, &journal).unwrap();
-            assert!(
-                !retry_unconfirmed_at(&root, job, attempt, daemon, control)
-                    .await
-                    .unwrap()
-            );
-            assert!(
-                retry_unconfirmed_at(&root, Uuid::new_v4(), attempt, daemon, control)
-                    .await
-                    .is_err(),
-                "foreign job binding must fail closed"
-            );
-            assert!(
-                retry_unconfirmed_at(&root, job, attempt, "foreign-daemon", control)
-                    .await
-                    .is_err()
-            );
-            assert!(
-                retry_unconfirmed_at(&root, job, attempt, daemon, "foreign-control")
-                    .await
-                    .is_err()
-            );
-            journal["stopped"] = json!(false);
+        for phase in [
+            "prepared",
+            "execution-started",
+            "cleanup-required",
+            "execution-stopped",
+        ] {
+            journal["phase"] = json!(phase);
+            journal["stopped"] = json!(phase == "execution-stopped");
             write_private(&journal_path, &journal).unwrap();
             assert!(
                 retry_unconfirmed_at(&root, job, attempt, daemon, control)
                     .await
-                    .is_err(),
-                "cleaned without stopped must fail closed"
+                    .unwrap(),
+                "owner death or stopped phase {phase} is not completed recovery"
             );
-            std::fs::write(&journal_path, b"{invalid").unwrap();
-            assert!(
-                retry_unconfirmed_at(&root, job, attempt, daemon, control)
-                    .await
-                    .is_err()
-            );
-            std::fs::write(&journal_path, vec![b' '; 64 * 1024 + 1]).unwrap();
-            assert!(
-                retry_unconfirmed_at(&root, job, attempt, daemon, control)
-                    .await
-                    .is_err()
-            );
-            std::fs::remove_file(&journal_path).unwrap();
-            assert!(
-                retry_unconfirmed_at(&root, job, attempt, daemon, control)
-                    .await
-                    .is_err(),
-                "existing incomplete directory is not prelaunch absence"
-            );
-            std::fs::remove_file(&manifest_path).unwrap();
-            std::fs::remove_dir(&directory).unwrap();
-            #[cfg(unix)]
-            {
-                let foreign = root.join("foreign");
-                std::fs::create_dir(&foreign).unwrap();
-                std::fs::write(foreign.join("do-not-touch"), b"foreign").unwrap();
-                std::os::unix::fs::symlink(&foreign, &directory).unwrap();
-                assert!(
-                    retry_unconfirmed_at(&root, job, attempt, daemon, control)
-                        .await
-                        .is_err(),
-                    "foreign recovery symlink must fail closed"
-                );
-                assert_eq!(
-                    std::fs::read(foreign.join("do-not-touch")).unwrap(),
-                    b"foreign"
-                );
-                std::fs::remove_file(&directory).unwrap();
-                std::fs::remove_file(foreign.join("do-not-touch")).unwrap();
-                std::fs::remove_dir(foreign).unwrap();
-            }
-            std::fs::remove_dir(root).unwrap();
         }
+        journal["phase"] = json!("cleaned");
+        journal["stopped"] = json!(true);
+        write_private(&journal_path, &journal).unwrap();
+        assert!(
+            !retry_unconfirmed_at(&root, job, attempt, daemon, control)
+                .await
+                .unwrap()
+        );
+        assert!(
+            retry_unconfirmed_at(&root, Uuid::new_v4(), attempt, daemon, control)
+                .await
+                .is_err(),
+            "foreign job binding must fail closed"
+        );
+        assert!(
+            retry_unconfirmed_at(&root, job, attempt, "foreign-daemon", control)
+                .await
+                .is_err()
+        );
+        assert!(
+            retry_unconfirmed_at(&root, job, attempt, daemon, "foreign-control")
+                .await
+                .is_err()
+        );
+        journal["stopped"] = json!(false);
+        write_private(&journal_path, &journal).unwrap();
+        assert!(
+            retry_unconfirmed_at(&root, job, attempt, daemon, control)
+                .await
+                .is_err(),
+            "cleaned without stopped must fail closed"
+        );
+        std::fs::write(&journal_path, b"{invalid").unwrap();
+        assert!(
+            retry_unconfirmed_at(&root, job, attempt, daemon, control)
+                .await
+                .is_err()
+        );
+        std::fs::write(&journal_path, vec![b' '; 64 * 1024 + 1]).unwrap();
+        assert!(
+            retry_unconfirmed_at(&root, job, attempt, daemon, control)
+                .await
+                .is_err()
+        );
+        std::fs::remove_file(&journal_path).unwrap();
+        assert!(
+            retry_unconfirmed_at(&root, job, attempt, daemon, control)
+                .await
+                .is_err(),
+            "existing incomplete directory is not prelaunch absence"
+        );
+        std::fs::remove_file(&manifest_path).unwrap();
+        std::fs::remove_dir(&directory).unwrap();
+        #[cfg(unix)]
+        {
+            let foreign = root.join("foreign");
+            std::fs::create_dir(&foreign).unwrap();
+            std::fs::write(foreign.join("do-not-touch"), b"foreign").unwrap();
+            std::os::unix::fs::symlink(&foreign, &directory).unwrap();
+            assert!(
+                retry_unconfirmed_at(&root, job, attempt, daemon, control)
+                    .await
+                    .is_err(),
+                "foreign recovery symlink must fail closed"
+            );
+            assert_eq!(
+                std::fs::read(foreign.join("do-not-touch")).unwrap(),
+                b"foreign"
+            );
+            std::fs::remove_file(&directory).unwrap();
+            std::fs::remove_file(foreign.join("do-not-touch")).unwrap();
+            std::fs::remove_dir(foreign).unwrap();
+        }
+        std::fs::remove_dir(root).unwrap();
     }
 
     #[test]
