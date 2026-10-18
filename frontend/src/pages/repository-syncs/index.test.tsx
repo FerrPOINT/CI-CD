@@ -66,6 +66,17 @@ afterEach(() => {
   context.malformed = false
 })
 describe('production repository synchronization', () => {
+  it('keeps owner filters and unaligned offsets when shared navigation requests the next range', async () => {
+    const list = vi.spyOn(repositorySync, 'list').mockResolvedValue({ items: [connection], total: 55 })
+    mount(<RepositorySyncsPage />, '/repository-syncs?provider=github&offset=15&search=service')
+    await screen.findByRole('link', { name: 'platform/service' })
+    fireEvent.click(screen.getByRole('button', { name: 'Далее' }))
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+    const next = list.mock.calls[1][0]
+    expect(next.get('offset')).toBe('35')
+    expect(next.get('provider')).toBe('github')
+    expect(next.get('search')).toBe('service')
+  })
   it('refreshes visible history and refs when the parent observes completion first', async () => {
     const running: SyncRun = {
       id: 'run', repository_id: 'repo', connection_version: 1,

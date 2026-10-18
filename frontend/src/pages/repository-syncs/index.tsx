@@ -15,6 +15,7 @@ import {
   Input,
   Label,
   NamespaceLink as Link,
+  OffsetPageNavigation,
   Table,
   TableBody,
   TableCell,
@@ -109,42 +110,6 @@ const message = (error: unknown) =>
     ? (diagnostics[error.message] ?? error.message)
     : 'Не удалось выполнить действие'
 const offsetOf = (value: string | null) => Math.max(0, Number(value) || 0)
-
-function Pagination({
-  offset,
-  total,
-  size,
-  change,
-}: {
-  offset: number
-  total: number
-  size: number
-  change: (next: number) => void
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-3 text-sm">
-      <span>
-        {total
-          ? `${offset + 1}–${Math.min(offset + size, total)} из ${total}`
-          : 'Нет записей'}
-      </span>
-      <Button
-        variant="outline"
-        disabled={!offset}
-        onClick={() => change(Math.max(0, offset - size))}
-      >
-        Назад
-      </Button>
-      <Button
-        variant="outline"
-        disabled={offset + size >= total}
-        onClick={() => change(offset + size)}
-      >
-        Далее
-      </Button>
-    </div>
-  )
-}
 
 export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
   const [params, setParams] = useSearchParams()
@@ -279,11 +244,11 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
                     </Link>
                   </Button>
                 )}
-              <Pagination
+              <OffsetPageNavigation label="Доступные репозитории"
                 offset={offsetOf(params.get('select_offset'))}
                 total={available.data.total}
-                size={20}
-                change={(next) => update('select_offset', String(next))}
+                limit={20}
+                onOffsetChange={(next) => update('select_offset', String(next))}
               />
             </>
           )}
@@ -451,11 +416,11 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
               подключение.
             </p>
           )}
-          <Pagination
+          <OffsetPageNavigation label="Синхронизации репозиториев"
             offset={offsetOf(params.get('offset'))}
             total={list.data.total}
-            size={20}
-            change={(next) => update('offset', String(next))}
+            limit={20}
+            onOffsetChange={(next) => update('offset', String(next))}
           />
         </>
       )}
@@ -1049,11 +1014,11 @@ function SyncHistory({
               ))}
             </TableBody>
           </Table>
-          <Pagination
+          <OffsetPageNavigation label="История синхронизации"
             offset={offset}
             total={runs.data.total}
-            size={20}
-            change={(value) => update('runs_offset', String(value))}
+            limit={20}
+            onOffsetChange={(value) => update('runs_offset', String(value))}
           />
         </>
       )}
@@ -1118,11 +1083,11 @@ function SyncHistory({
                   ))}
                 </TableBody>
               </Table>
-              <Pagination
+              <OffsetPageNavigation label="Результаты веток и тегов"
                 offset={refsOffset}
                 total={refs.data.total}
-                size={50}
-                change={(value) => update('refs_offset', String(value))}
+                limit={50}
+                onOffsetChange={(value) => update('refs_offset', String(value))}
               />
             </>
           )}
