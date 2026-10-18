@@ -50,6 +50,25 @@ overlay с прежними live introspection/revoke/fence guards. SAT path н�
 Повторный pipeline POST новым child не является renewal: original trigger
 fingerprint намеренно не переписывается.
 
+## Exact task-owned PipelineDetail
+
+Task child также может читать существующий `GET /api/v1/pipelines/{pipeline_id}`.
+Возвращается прежний `PipelineDetail`, включая actual plan/stages/jobs/status,
+без нового DTO. Journal должен принадлежать именно этому child: current successor
+fingerprint/subject, context grant, project, task/assignment/run/fence и source
+сверяются с первоначальным intent. Текущие Auth expiry/revoke, Tracker lease/native
+binding и project/repository mapping проверяются прежним authorizer. Данные
+читаются под исходным custody lock; после ожиданий deadline не продлевается.
+Успешный child response имеет `Cache-Control: no-store`.
+
+Чужой project/task/pipeline и superseded child отклоняются. List, jobs/logs,
+retry/cancel, generic deployment, delivery и rollback routes этим доступом не
+открываются. Legacy SAT/User middleware и JSON response shape сохранены.
+Queued/failed status не преобразуется в CI PASS. GET task-workspace по-прежнему
+возвращает отдельный preparation locator, а не CI result. Установка совместимого
+backend и использование actual CI evidence перед ролью Complete остаются
+отдельными действиями; blanket запрет Reviewer этим пакетом не вводится.
+
 Fleet renewal journal/private env refresh реализованы отдельным consumer-пакетом
 в [Fleet Control #105](https://github.com/FerrPOINT/fleet-control/pull/105).
 Его проверка, merge и совместимая установка ещё требуются; наличие исходников

@@ -2229,8 +2229,28 @@ pub(crate) async fn list_pipelines(
 pub(crate) async fn get_pipeline(
     State(state): State<Arc<AppState>>,
     Path(pipeline_id): Path<Uuid>,
-) -> ApiResult<PipelineDetail> {
-    pipeline_detail(pool(&state)?, pipeline_id).await.map(Json)
+    child: Option<Extension<crate::delegated_credentials::Identity>>,
+    claims: Option<Extension<crate::auth::AccessClaims>>,
+) -> Result<axum::response::Response, ApiError> {
+    use axum::response::IntoResponse;
+    if let Some(Extension(identity)) = child {
+        if claims.is_some() {
+            return Err(ApiError::forbidden());
+        }
+        let detail =
+            super::sdlc_workspace::task_pipeline::read_detail::read(&state, &identity, pipeline_id)
+                .await?;
+        let mut response = detail.into_response();
+        response.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            HeaderValue::from_static("no-store"),
+        );
+        return Ok(response);
+    }
+    pipeline_detail(pool(&state)?, pipeline_id)
+        .await
+        .map(Json)
+        .map(IntoResponse::into_response)
 }
 
 #[cfg(test)]

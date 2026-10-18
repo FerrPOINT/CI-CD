@@ -136,6 +136,73 @@ async fn business(pool: &PgPool, pipeline: Uuid) -> Value {
         .bind(pipeline).fetch_one(pool).await.unwrap()
 }
 
+async fn pipeline_detail_readback_checks(
+    state: Arc<AppState>,
+    original: &StoredCredential,
+    pipeline: Uuid,
+    current_token: &str,
+) {
+    let pool = state.pool.as_ref().unwrap();
+    let (foreign_stored, mut foreign_central, _, _, _) = super::tests::fixture();
+    foreign_central.user_id = original.subject.to_string();
+    foreign_central.token = token('d');
+    foreign_central.scopes = [
+        "ci-cd:read".into(),
+        "ci-cd:write".into(),
+        foreign_stored.context.grant().unwrap(),
+    ]
+    .into();
+    let foreign = Identity::verified(&foreign_central, &state.config.sdlc_workspace)
+        .unwrap()
+        .store(foreign_stored.context, &state.config.secrets)
+        .unwrap();
+    let foreign_pipeline = Uuid::new_v4();
+    seed(pool, &foreign, foreign_pipeline).await;
+    let before = business(pool, pipeline).await;
+    let expected =
+        serde_json::to_value(crate::api::pipeline_detail(pool, pipeline).await.unwrap()).unwrap();
+    let app = Router::new()
+        .route(
+            "/api/v1/pipelines/{pipeline_id}",
+            get(crate::api::pipelines_routes::get_pipeline),
+        )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::api::authz_mw::require_auth,
+        ))
+        .with_state(state.clone());
+    for (requested, bearer, expected_status) in [
+        (pipeline, current_token.to_owned(), StatusCode::OK),
+        (
+            foreign_pipeline,
+            current_token.to_owned(),
+            StatusCode::FORBIDDEN,
+        ),
+        (pipeline, token('a'), StatusCode::UNAUTHORIZED),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(format!("/api/v1/pipelines/{requested}"))
+                    .header("authorization", format!("Bearer {bearer}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), expected_status);
+        if expected_status == StatusCode::OK {
+            assert_eq!(wire(response).await, expected);
+        }
+    }
+    assert_eq!(
+        business(pool, pipeline).await,
+        before,
+        "GET must not change original business custody"
+    );
+}
+
 async fn run_child() {
     let input: Value =
         serde_json::from_str(&std::env::var("FORGE_RENEWAL_FIXTURE").unwrap()).unwrap();
@@ -183,7 +250,7 @@ async fn run_child() {
     let state = Arc::new(AppState {
         pool: Some(pool.clone()),
         namespace_admission_pool: None,
-        auth_secret: None,
+        auth_secret: Some("synthetic-pipeline-read-signing-key".into()),
         git: config.git.to_git_config(),
         config,
         running_jobs: None,
@@ -320,6 +387,13 @@ async fn run_child() {
     let current = custody::current(&mut tx, &record).await.unwrap();
     assert_eq!(current.fingerprint, ack["fingerprint"].as_str().unwrap());
     tx.commit().await.unwrap();
+    pipeline_detail_readback_checks(
+        state.clone(),
+        &original,
+        pipeline,
+        winner["replacementToken"].as_str().unwrap(),
+    )
+    .await;
     let count: i64 =
         sqlx::query_scalar("SELECT count(*) FROM task_credential_successors WHERE pipeline_id=$1")
             .bind(pipeline)

@@ -578,19 +578,27 @@ pub(crate) async fn pipeline_detail(
     pool: &PgPool,
     pipeline_id: Uuid,
 ) -> Result<PipelineDetail, ApiError> {
-    let pipeline = sqlx::query_as::<_, Pipeline>("SELECT id, project_id, git_ref, status, created_at, started_at, finished_at FROM pipelines WHERE id = $1").bind(pipeline_id).fetch_optional(pool).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?;
+    let mut connection = pool.acquire().await.map_err(ApiError::internal)?;
+    pipeline_detail_on(&mut connection, pipeline_id).await
+}
+
+pub(crate) async fn pipeline_detail_on(
+    connection: &mut sqlx::PgConnection,
+    pipeline_id: Uuid,
+) -> Result<PipelineDetail, ApiError> {
+    let pipeline = sqlx::query_as::<_, Pipeline>("SELECT id, project_id, git_ref, status, created_at, started_at, finished_at FROM pipelines WHERE id = $1").bind(pipeline_id).fetch_optional(&mut *connection).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?;
     let plan = sqlx::query_as::<_, PipelinePlan>(
         "SELECT pipeline_id, config_source, parser_version, git_ref, resolved_commit_sha, config_sha256, plan_sha256, raw_config, plan, created_at \
          FROM pipeline_plans WHERE pipeline_id = $1",
     )
     .bind(pipeline_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *connection)
     .await
     .map_err(ApiError::internal)?;
-    let stages = sqlx::query_as::<_, Stage>("SELECT id, pipeline_id, name, position, status FROM stages WHERE pipeline_id = $1 ORDER BY position").bind(pipeline_id).fetch_all(pool).await.map_err(ApiError::internal)?;
+    let stages = sqlx::query_as::<_, Stage>("SELECT id, pipeline_id, name, position, status FROM stages WHERE pipeline_id = $1 ORDER BY position").bind(pipeline_id).fetch_all(&mut *connection).await.map_err(ApiError::internal)?;
     let mut details = Vec::with_capacity(stages.len());
     for stage in stages {
-        let jobs = sqlx::query_as::<_, Job>("SELECT id, stage_id, name, image, command, required_tags, required_secrets, artifact_paths, position, status, started_at, finished_at FROM jobs WHERE stage_id = $1 ORDER BY position").bind(stage.id).fetch_all(pool).await.map_err(ApiError::internal)?;
+        let jobs = sqlx::query_as::<_, Job>("SELECT id, stage_id, name, image, command, required_tags, required_secrets, artifact_paths, position, status, started_at, finished_at FROM jobs WHERE stage_id = $1 ORDER BY position").bind(stage.id).fetch_all(&mut *connection).await.map_err(ApiError::internal)?;
         details.push(StageDetail { stage, jobs });
     }
     Ok(PipelineDetail {
