@@ -2,6 +2,8 @@
 # Stages the sibling services-base checkout so the pdlc-auth-core path
 # dependency (../../../services-base/...) resolves.
 FROM rust:1.88.0-slim-bookworm AS build
+ARG CARGO_BUILD_JOBS=2
+ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 WORKDIR /app
 # backend/Cargo.toml: pdlc-auth-core = { path = "../../../services-base/..." }
 # /app/../../services-base == /services-base (WORKDIR is repo backend/).

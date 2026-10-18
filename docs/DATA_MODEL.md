@@ -2,7 +2,9 @@
 
 Additive0095 `task_credential_successors` хранит append-only successor custody
 под lock original task intent; 0092/0094 и trigger fingerprints неизменны.
-Schema/application qualification pending: [контракт](TASK_CREDENTIAL_RENEWAL.md).
+Source schema/application gates, включая populated upgrade, проверены;
+установка и live renewal ещё требуют отдельной приёмки:
+[контракт и квалификация](TASK_CREDENTIAL_RENEWAL.md).
 
 Source additive0094 вводит disjoint encrypted central-child custody в existing
 task pipeline/workspace journals. Legacy SAT rows, original FK/checksum history,

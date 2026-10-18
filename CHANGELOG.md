@@ -17,6 +17,12 @@
 
 ### Fixed
 
+- Frontend сохраняет префикс установки в API и маршрутах, включая `/forge/`.
+  Runner принимает зарегистрированный PDLC4 source volume; необязательный
+  `CICD_RUNNER_CGROUP_PARENT` задаётся оператором для Compose jobs и typed build.
+  Без настройки сохраняется прежнее размещение jobs. Umbrella-сборка backend
+  ограничивает параллелизм через `CARGO_BUILD_JOBS` (по умолчанию 2).
+
 - Task child может читать PipelineDetail своего исходного pipeline с проверкой
   current credential, task/source binding и live lease; чужие pipeline закрыты.
 

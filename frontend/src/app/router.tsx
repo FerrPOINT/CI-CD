@@ -224,4 +224,4 @@ export const appRoutes = [
   { path: '*', element: <Navigate to="/" replace /> },
 ]
 
-export const router = createProductRouter(appRoutes, { serviceKey: 'ci-cd', portalOrigin: import.meta.env.VITE_PLATFORM_ORIGIN })
+export const router = createProductRouter(appRoutes, { basename: import.meta.env.BASE_URL, serviceKey: 'ci-cd', portalOrigin: import.meta.env.VITE_PLATFORM_ORIGIN })

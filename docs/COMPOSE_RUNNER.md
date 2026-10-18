@@ -9,7 +9,7 @@ daemon ID, immutable source volume, Base SHA и имя workspace. Перемен
 `DOCKER_HOST`, `DOCKER_TLS_VERIFY=1`, `DOCKER_CERT_PATH`,
 `CICD_RUNNER_DOCKER_DAEMON_ID`, `CICD_RUNNER_SHARED_SOURCES_VOLUME`,
 `CICD_RUNNER_BASE_REVISION`, `CICD_RUNNER_WORKSPACE_PROJECT`.
-Поддерживаются зарегистрированные installations `sdlc1`, `sdlc2`, `pdlc1`, `pdlc2`, `pdlc3`.
+Поддерживаются зарегистрированные installations `sdlc1`, `sdlc2`, `pdlc1`, `pdlc2`, `pdlc3`, `pdlc4`.
 Workspace и полный lowercase Base SHA должны точно совпадать с labels sources;
 старый volume без provenance не присваивается автоматически новой установке.
 Несовпадение daemon ID, отсутствие plugin или source provenance блокирует job.
@@ -123,3 +123,7 @@ Pure regression suite запускается отдельным процессо
 `SDLC_MAINTENANCE_BASE` и `SDLC_MAINTENANCE_SDK_SHA256` в окружении host harness.
 Она использует настоящий SDK и модель Docker, не запускает контейнеры и
 не подтверждает native build/deployment или полную SDLC-приёмку.
+
+## Host workload budget
+
+Operator `CICD_RUNNER_CGROUP_PARENT` применяется к Compose transfer/job/deployment и к RUN-контейнерам typed image-build через штатный `buildx --cgroup-parent`. Job не выбирает и не переопределяет host budget. Без настройки сохраняется прежняя команда. На Firebat2 `pdlc4-workloads.slice` имеет 4 CPU/4 GiB и находится внутри общего `pdlc4.slice` 4 CPU/7 GiB. Это не заменяет admission через host execution slot и приёмку настоящего Forge/Fleet-задания.
