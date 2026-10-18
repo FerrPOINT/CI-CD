@@ -1,5 +1,9 @@
 # API v1 Specification — Forge CI/CD
 
+Source-only owner-P credential renewal сохраняет original pipeline/intent и
+добавляет отдельный acknowledged successor без dispatch. Общие registrations
+pending: [контракт](TASK_CREDENTIAL_RENEWAL.md).
+
 Registered-reader `GET /api/v1/namespace-repositories/{id}/source` возвращает
 exact source readback и optional delivery configuration того же repository.
 Прежний GET без `/source` сохраняет catalog object с обязательным `kind`.

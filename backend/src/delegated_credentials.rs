@@ -12,6 +12,8 @@ use uuid::Uuid;
 
 pub(crate) const GRANT_PREFIX: &str = "ci-cd:sdlc:task:v1:";
 
+pub(crate) mod custody;
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TaskCredentialContext {

@@ -15,6 +15,10 @@
 
 ## [Unreleased]
 
+- Source-only owner-P task credential renewal: additive successor custody,
+  predecessor CAS и current credential overlay без повторного dispatch.
+  Общие registrations и Rust/PG/image qualification pending.
+
 - Source readback и task Git callback вынесены в отдельные typed routes
   `/namespace-repositories/{id}/source` и `/internal/task-git-check`; прежние
   catalog/legacy callback object contracts сохранены без union и fallback.

@@ -9,6 +9,8 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 use std::{path::Path as FsPath, time::Instant};
 
+pub(crate) mod renewal;
+
 pub(crate) struct Submission {
     pub subject: Uuid,
     pub token: Option<Uuid>,
@@ -187,11 +189,11 @@ async fn authorize_saved(
     record: &ledger::TaskPipelineJournal,
     secrets: &SecretsConfig,
 ) -> Result<Instant, ApiError> {
-    if let Some(credential) = &record.delegated_credential {
+    if record.delegated_credential.is_some() {
         if record.service_account_id.is_some() || record.api_token_id.is_some() {
             return Err(ApiError::forbidden());
         }
-        let stored = StoredCredential::from_value(&credential.0)?;
+        let stored = crate::delegated_credentials::custody::current(conn, record).await?;
         return authorize_child(
             conn,
             config,
@@ -665,8 +667,8 @@ pub(crate) async fn read_receipt(
         return Err(ApiError::forbidden());
     }
     match (child, claims, &record.delegated_credential) {
-        (Some(Extension(identity)), None, Some(credential)) => {
-            let stored = StoredCredential::from_value(&credential.0)?;
+        (Some(Extension(identity)), None, Some(_)) => {
+            let stored = crate::delegated_credentials::custody::current(&mut tx, &record).await?;
             if stored.subject != identity.subject || stored.fingerprint != identity.fingerprint() {
                 return Err(ApiError::forbidden());
             }
