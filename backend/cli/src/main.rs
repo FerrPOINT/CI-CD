@@ -120,6 +120,22 @@ fn resolve_profile(flag: &Option<String>) -> Option<ProfileOverrides> {
 enum Command {
     #[command(flatten)]
     Work(commands::WorkCommand),
+    /// Prepare an own-task checkout using the private run-bound Fleet request child.
+    PrepareCheckout {
+        #[arg(long)]
+        access_file: PathBuf,
+        #[arg(long)]
+        checkout: PathBuf,
+    },
+    /// Prepare an exact candidate CAS after a real local commit; does not push.
+    PrepareCandidate {
+        #[arg(long)]
+        access_file: PathBuf,
+        #[arg(long)]
+        checkout: PathBuf,
+        #[arg(long)]
+        old_oid: String,
+    },
     /// K5: emit shell completions (bash/zsh/fish/powershell).
     Completions {
         #[arg(value_enum)]
@@ -787,6 +803,22 @@ async fn main() -> std::process::ExitCode {
         clap_complete::generate(*shell, &mut cmd, name, &mut std::io::stdout());
         return exit(exit_code::OK);
     }
+    // These commands authenticate only with the explicit private Fleet child.
+    // Do not construct the general Forge client or fall back to CICD_API_TOKEN.
+    if let Some(result) = prepare_git(&cli.command, &cli.api_url).await {
+        let value = match result {
+            Ok(value) => value,
+            Err(error) => {
+                support::report(&error, cli.error_format, &[]);
+                return exit(classify_error(&error));
+            }
+        };
+        if let Err(error) = print_output(&value, cli.output) {
+            support::report(&error, cli.error_format, &[]);
+            return exit(exit_code::USAGE);
+        }
+        return exit(exit_code::OK);
+    }
     if matches!(
         &cli.command,
         Command::Runner {
@@ -893,6 +925,24 @@ fn exit(code: u8) -> std::process::ExitCode {
     std::process::ExitCode::from(code)
 }
 
+async fn prepare_git(command: &Command, origin: &str) -> Option<anyhow::Result<Value>> {
+    match command {
+        Command::PrepareCheckout {
+            access_file,
+            checkout,
+        } => Some(task_git::prepare::checkout(origin, access_file.clone(), checkout.clone()).await),
+        Command::PrepareCandidate {
+            access_file,
+            checkout,
+            old_oid,
+        } => Some(
+            task_git::prepare::candidate(access_file.clone(), checkout.clone(), old_oid.clone())
+                .await,
+        ),
+        _ => None,
+    }
+}
+
 /// K5: map error chains to stable exit codes (network/4xx/5xx).
 fn classify_error(err: &anyhow::Error) -> u8 {
     if let Some(error) = err.downcast_ref::<support::ApiFailure>() {
@@ -943,6 +993,9 @@ fn classify_error(err: &anyhow::Error) -> u8 {
 
 async fn execute(api: &ApiClient, command: Command) -> anyhow::Result<Value> {
     match command {
+        Command::PrepareCheckout { .. } | Command::PrepareCandidate { .. } => {
+            anyhow::bail!("Git preparation requires private Fleet child dispatch")
+        }
         Command::Work(command) => commands::execute(api, command).await,
         // Completions is handled in main() before the API client exists.
         Command::Completions { .. } => Ok(Value::Null),
@@ -965,6 +1018,10 @@ async fn execute(api: &ApiClient, command: Command) -> anyhow::Result<Value> {
         Command::Token { command } => token(api, command).await,
     }
 }
+
+#[cfg(test)]
+#[path = "prepare_cli_tests.rs"]
+mod prepare_cli_tests;
 
 async fn project(api: &ApiClient, command: ProjectCommand) -> anyhow::Result<Value> {
     match command {
