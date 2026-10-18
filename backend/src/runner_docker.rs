@@ -125,6 +125,7 @@ pub(crate) struct Client {
     host: String,
     cert_path: String,
     daemon_id: String,
+    cgroup_parent: Option<String>,
 }
 
 pub(crate) struct ImageBuildCommand<'a> {
@@ -171,6 +172,44 @@ fn image_build_version_matches(value: &str) -> bool {
     let mut fields = value.split_whitespace();
     fields.next() == Some("github.com/docker/buildx") && fields.next() == Some("v0.37.2")
 }
+// The operator owns the host budget; jobs cannot choose another cgroup.
+fn parse_cgroup_parent(value: Option<&str>) -> io::Result<Option<String>> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let stem = value.strip_suffix(".slice").unwrap_or_default();
+    if stem.is_empty()
+        || value.len() > 128
+        || !stem.as_bytes()[0].is_ascii_alphanumeric()
+        || !stem.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
+    {
+        return Err(invalid("runner cgroup parent must be a named systemd slice"));
+    }
+    Ok(Some(value.to_owned()))
+}
+
+fn apply_cgroup_parent(manifest: &mut Value, parent: Option<&str>) -> io::Result<()> {
+    let Some(parent) = parent else { return Ok(()) };
+    let services = manifest["services"]
+        .as_object_mut()
+        .ok_or_else(|| invalid("job services missing"))?;
+    for service in services.values_mut() {
+        if service.get("cgroup_parent").is_some_and(|value| value != parent) {
+            return Err(invalid("job cgroup differs from operator budget"));
+        }
+        service["cgroup_parent"] = json!(parent);
+    }
+    Ok(())
+}
+
+fn cgroup_parent_matches(spec: &Value, host: &Value) -> bool {
+    match spec.get("cgroup_parent") {
+        Some(Value::String(parent)) => host["CgroupParent"].as_str() == Some(parent),
+        None => true,
+        _ => false,
+    }
+}
+
 fn invalid(message: &str) -> io::Error {
     io::Error::other(message)
 }
@@ -513,10 +552,16 @@ impl Client {
                 "TCP runner requires existing TLS certificates; fallback is forbidden",
             ));
         }
+        let cgroup_parent = match std::env::var("CICD_RUNNER_CGROUP_PARENT") {
+            Ok(value) => parse_cgroup_parent(Some(&value))?,
+            Err(std::env::VarError::NotPresent) => None,
+            Err(_) => return Err(invalid("invalid runner cgroup parent encoding")),
+        };
         Ok(Self {
             host,
             cert_path,
             daemon_id,
+            cgroup_parent,
         })
     }
     pub(crate) fn apply(&self, command: &mut Command) {
@@ -1047,6 +1092,7 @@ fn deployment_containers(
             || host["PublishAllPorts"] != false
             || host["NetworkMode"]
                 != format!("{}_job", manifest["name"].as_str().unwrap_or_default())
+            || !cgroup_parent_matches(spec, host)
             || host["Memory"] != spec["mem_limit"]
             || host["PidsLimit"] != spec["pids_limit"]
             || host["NanoCpus"].as_i64()
@@ -1157,6 +1203,7 @@ impl RemoteJob {
         } else {
             std::collections::BTreeMap::new()
         };
+        apply_cgroup_parent(&mut manifest, client.cgroup_parent.as_deref())?;
         let job = Self {
             client,
             helper,
@@ -1492,6 +1539,9 @@ impl RemoteJob {
                 .await?
         );
         service["labels"] = self.manifest["services"]["transfer"]["labels"].clone();
+        if let Some(parent) = &self.client.cgroup_parent {
+            service["cgroup_parent"] = json!(parent);
+        }
         self.manifest["services"]["job"] = service;
         self.manifest["volumes"]["sources"] = json!({"external":true,"name":source});
         self.save_manifest().await?;
@@ -1933,6 +1983,42 @@ fn compose_job(args: &[String], envs: &[(String, String)]) -> io::Result<Value> 
 mod tests {
     use super::*;
 
+    #[test]
+    fn host_budget_parent_is_optional_and_accepts_independent_workspaces() {
+        assert_eq!(parse_cgroup_parent(None).unwrap(), None);
+        assert_eq!(parse_cgroup_parent(Some("")).unwrap(), None);
+        for name in ["pdlc4.slice", "another-workspace.slice"] {
+            assert_eq!(parse_cgroup_parent(Some(name)).unwrap().as_deref(), Some(name));
+        }
+        for name in ["../pdlc4.slice", "pdlc4", ".slice", "x/y.slice", "pdlc4.slice;id"] {
+            assert!(parse_cgroup_parent(Some(name)).is_err());
+        }
+    }
+
+    #[test]
+    fn host_budget_covers_transfer_job_and_deployment_without_changing_legacy() {
+        let original = json!({"services":{"transfer":{},"job":{},"database":{}}});
+        let mut legacy = original.clone();
+        apply_cgroup_parent(&mut legacy, None).unwrap();
+        assert_eq!(legacy, original);
+        let mut budgeted = original;
+        apply_cgroup_parent(&mut budgeted, Some("pdlc4.slice")).unwrap();
+        for service in budgeted["services"].as_object().unwrap().values() {
+            assert_eq!(service["cgroup_parent"], "pdlc4.slice");
+        }
+        budgeted["services"]["job"]["cgroup_parent"] = json!("foreign.slice");
+        assert!(apply_cgroup_parent(&mut budgeted, Some("pdlc4.slice")).is_err());
+    }
+
+    #[test]
+    fn host_budget_readback_rejects_escape_to_another_parent() {
+        let spec = json!({"cgroup_parent":"pdlc4.slice"});
+        assert!(cgroup_parent_matches(&spec, &json!({"CgroupParent":"pdlc4.slice"})));
+        assert!(!cgroup_parent_matches(&spec, &json!({"CgroupParent":"foreign.slice"})));
+        assert!(!cgroup_parent_matches(&spec, &json!({})));
+        assert!(cgroup_parent_matches(&json!({}), &json!({"CgroupParent":"host-default.slice"})));
+    }
+
     fn deployment_fixture() -> (Value, Value, Vec<Value>) {
         let labels = json!({"sdlc.task":"fixture"});
         let project = "sdlc-build-job-fixture";
@@ -1968,6 +2054,7 @@ mod tests {
                 host: "not-contacted".into(),
                 cert_path: "not-opened".into(),
                 daemon_id: "fixture-daemon".into(),
+                cgroup_parent: None,
             },
             helper: String::new(),
             project: "fixture".into(),
@@ -2243,6 +2330,7 @@ mod tests {
                 host: "not-contacted".into(),
                 cert_path: "not-opened".into(),
                 daemon_id: "fixture-daemon".into(),
+                cgroup_parent: None,
             },
             helper: String::new(),
             project: "fixture".into(),
@@ -2406,6 +2494,7 @@ mod tests {
             host: "tcp://runner-daemon:2376".into(),
             cert_path: "/backend-only/tls".into(),
             daemon_id: "expected-daemon".into(),
+            cgroup_parent: None,
         };
         let spec = ImageBuildSpec {
             context: ".".into(),
