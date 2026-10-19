@@ -105,6 +105,32 @@ fn fixture() -> (
 fn closed_exact_selectors_reject_authority_fields_and_unsafe_keys() {
     let (query, _, _) = fixture();
     assert!(query.source_query().is_ok());
+    let valid = json!({
+        "registry_instance_id":query.registry_instance_id, "namespace_id":query.namespace_id,
+        "base_ref":query.base_ref, "base_commit":query.base_commit,
+        "delivery_configuration_name":query.delivery_configuration_name,
+        "project_id":query.project_id, "source_pipeline_id":query.source_pipeline_id,
+        "operation_key":query.operation_key, "source_commit":query.source_commit,
+        "request_hash":query.request_hash, "task_id":query.task_id, "root_task_id":query.root_task_id,
+        "assignment_id":query.assignment_id, "execution_id":query.execution_id,
+        "fencing_token":query.fencing_token,
+    });
+    assert!(serde_json::from_value::<EvidenceQuery>(valid.clone()).is_ok());
+    for field in [
+        "accepted",
+        "dispatch_allowed",
+        "server_evidence",
+        "role",
+        "target_policy",
+    ] {
+        let mut injected = valid.clone();
+        injected[field] = json!(true);
+        let error = serde_json::from_value::<EvidenceQuery>(injected)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("unknown field"));
+        assert!(error.to_string().contains(field));
+    }
     for key in ["", "../key", " key", "key?token=x"] {
         let mut invalid = query.clone();
         invalid.operation_key = key.into();
@@ -116,7 +142,6 @@ fn closed_exact_selectors_reject_authority_fields_and_unsafe_keys() {
     let mut invalid = query;
     invalid.request_hash = "0".repeat(64);
     assert!(invalid.source_query().is_err());
-    assert!(serde_json::from_value::<EvidenceQuery>(json!({"accepted":true})).is_err());
 }
 
 #[test]
@@ -142,6 +167,9 @@ fn legacy_sat_mixed_custody_missing_receipt_and_tampered_context_deny() {
     record.service_account_id = Some(Uuid::new_v4());
     assert!(retained_matches(&record, &receipt, &query, receipt.request.repository_id).is_err());
     record.service_account_id = None;
+    record.api_token_id = Some(Uuid::new_v4());
+    assert!(retained_matches(&record, &receipt, &query, receipt.request.repository_id).is_err());
+    record.api_token_id = None;
     record.preparation_request = None;
     assert!(retained_matches(&record, &receipt, &query, receipt.request.repository_id).is_err());
     record.preparation_request = Some(sqlx::types::Json(receipt.request.clone()));
