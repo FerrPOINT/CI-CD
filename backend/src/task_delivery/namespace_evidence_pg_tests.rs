@@ -247,7 +247,12 @@ async fn exercise(pool: sqlx::PgPool, negative: bool) {
     .fetch_one(&pool)
     .await
     .unwrap();
-    sqlx::query("UPDATE jobs SET status='running',started_at=now(),artifact_paths=ARRAY['product.txt'] WHERE id=$1")
+    sqlx::query("UPDATE stages SET name='build' WHERE pipeline_id=$1")
+        .bind(pipeline)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE jobs SET name='build',status='running',started_at=now(),artifact_paths=ARRAY['product.txt'] WHERE id=$1")
         .bind(job).execute(&pool).await.unwrap();
     sqlx::query("INSERT INTO execution_attempts(id,job_id,attempt_no,status,started_at) VALUES($1,$2,1,'running',now())")
         .bind(receipt.request.attempt_id).bind(job).execute(&pool).await.unwrap();
@@ -320,6 +325,17 @@ async fn exercise(pool: sqlx::PgPool, negative: bool) {
             tracker_project_id: receipt.request.binding.tracker_project_id,
             holder_subject: "fixture-fleet".into(),
         }),
+        delivery_selection: if negative {
+            None
+        } else {
+            Some(super::owner_selection::Policy {
+                version: 1,
+                action: super::owner_selection::Action::Deploy,
+                stage_name: "build".into(),
+                job_name: "build".into(),
+                artifact_name: "product.txt".into(),
+            })
+        },
     };
     let target = root.0.join("target");
     Target::open(&target, query.project_id, policy.clone(), true).unwrap();
@@ -390,6 +406,21 @@ async fn exercise(pool: sqlx::PgPool, negative: bool) {
         assert_eq!(body["target"]["policySha256"], policy.sha256().unwrap());
         assert_eq!(body["target"]["current"], json!({"state":"absent"}));
         assert_eq!(body["target"]["confirmed"], json!({"state":"absent"}));
+        if negative {
+            assert!(body["target"].get("selection").is_none());
+        } else {
+            assert_eq!(
+                body["target"]["selection"],
+                json!({
+                    "schema":"forge/owner-delivery-selection/v1",
+                    "action":"deploy", "sourcePipelineId":pipeline,
+                    "configSha256":sha(yaml.as_bytes()), "planSha256":plan_hash,
+                    "artifact": {"artifactId":artifact, "jobId":job,
+                        "attemptId":receipt.request.attempt_id,
+                        "sha256":sha(bytes), "sizeBytes":bytes.len() as i64}
+                })
+            );
+        }
         assert_eq!(body["dispatchAllowed"], false);
         for name in [
             "dispatchAllowed",
@@ -403,6 +434,7 @@ async fn exercise(pool: sqlx::PgPool, negative: bool) {
             "encrypted_child",
             "sdlc_pat_",
             "fixture-private-ciphertext",
+            "historical-private-child-must-not-be-opened",
             root.0.to_str().unwrap(),
         ] {
             assert!(

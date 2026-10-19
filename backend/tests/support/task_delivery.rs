@@ -99,6 +99,7 @@ impl ActualDelivery {
                 acceptance_path: "/acceptance".into(),
                 acceptance_body_sha256: hash(b"accepted\n"),
                 task_execution: None,
+                delivery_selection: None,
             })
             .unwrap(),
         )

@@ -168,6 +168,7 @@ fn read_lock_does_not_write_and_excludes_inflight_publication() {
             acceptance_path: "/acceptance".into(),
             acceptance_body_sha256: "b".repeat(64),
             task_execution: None,
+            delivery_selection: None,
         },
         true,
     )

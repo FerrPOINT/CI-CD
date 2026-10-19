@@ -8426,6 +8426,33 @@ components:
         state:
           type: string
       additionalProperties: false
+    OwnerDeliverySelection:
+      type: object
+      required:
+      - schema
+      - action
+      - sourcePipelineId
+      - configSha256
+      - planSha256
+      - artifact
+      properties:
+        action:
+          $ref: '#/components/schemas/OwnerDeliverySelectionAction'
+        artifact:
+          $ref: '#/components/schemas/CandidateArtifactEvidence'
+        configSha256:
+          type: string
+        planSha256:
+          type: string
+        schema:
+          type: string
+        sourcePipelineId:
+          type: string
+          format: uuid
+    OwnerDeliverySelectionAction:
+      type: string
+      enum:
+      - deploy
     OwnerReadback:
       type: object
       required:
@@ -9982,6 +10009,10 @@ components:
         policySha256:
           type: string
           description: Digest of the full owner policy, not of the redacted projection below.
+        selection:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/OwnerDeliverySelection'
         targetKind:
           $ref: '#/components/schemas/TargetKind'
         taskExecution:

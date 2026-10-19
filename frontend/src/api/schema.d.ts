@@ -3361,6 +3361,17 @@ export interface components {
             schema_version: number;
             state: string;
         };
+        OwnerDeliverySelection: {
+            action: components["schemas"]["OwnerDeliverySelectionAction"];
+            artifact: components["schemas"]["CandidateArtifactEvidence"];
+            configSha256: string;
+            planSha256: string;
+            schema: string;
+            /** Format: uuid */
+            sourcePipelineId: string;
+        };
+        /** @enum {string} */
+        OwnerDeliverySelectionAction: "deploy";
         OwnerReadback: {
             drained: boolean;
             /** Format: int64 */
@@ -3997,6 +4008,7 @@ export interface components {
             observedAt: string;
             /** @description Digest of the full owner policy, not of the redacted projection below. */
             policySha256: string;
+            selection?: null | components["schemas"]["OwnerDeliverySelection"];
             targetKind: components["schemas"]["TargetKind"];
             taskExecution: components["schemas"]["TaskExecutionPolicy"];
         };

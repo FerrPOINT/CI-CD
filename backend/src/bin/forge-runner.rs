@@ -1149,10 +1149,12 @@ async fn upload_declared_artifacts(
     if offer.attempt.artifacts.is_empty() {
         return Ok(());
     }
+    let names = cicd::domain::artifact_names::declared_artifact_names(&offer.attempt.artifacts)
+        .map_err(anyhow::Error::msg)?;
     let workspace = tokio::fs::canonicalize(workspace)
         .await
         .with_context(|| format!("canonicalize workspace {}", workspace.display()))?;
-    for artifact_path in &offer.attempt.artifacts {
+    for (artifact_path, artifact_name) in offer.attempt.artifacts.iter().zip(names) {
         let file = resolve_workspace_artifact(&workspace, artifact_path).await?;
         let metadata = tokio::fs::metadata(&file)
             .await
@@ -1163,7 +1165,6 @@ async fn upload_declared_artifacts(
         let bytes = tokio::fs::read(&file)
             .await
             .with_context(|| format!("read artifact {}", file.display()))?;
-        let artifact_name = artifact_name_from_declared_path(artifact_path);
         let response = context
             .client
             .post(format!(
@@ -1224,10 +1225,6 @@ async fn resolve_workspace_artifact(
         bail!("declared artifact {artifact_path} must be a file");
     }
     Ok(file)
-}
-
-fn artifact_name_from_declared_path(path: &str) -> String {
-    path.replace(['/', '\\'], "__")
 }
 
 async fn await_log_task(
@@ -1759,7 +1756,9 @@ mod tests {
     #[test]
     fn declared_artifact_name_preserves_relative_context() {
         assert_eq!(
-            artifact_name_from_declared_path("target/release/app.tar.gz"),
+            cicd::domain::artifact_names::artifact_name_from_declared_path(
+                "target/release/app.tar.gz"
+            ),
             "target__release__app.tar.gz"
         );
     }

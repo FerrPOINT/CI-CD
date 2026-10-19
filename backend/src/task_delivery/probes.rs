@@ -16,6 +16,8 @@ pub struct DeliveryPolicy {
     pub acceptance_body_sha256: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_execution: Option<TaskExecutionPolicy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivery_selection: Option<super::owner_selection::Policy>,
 }
 
 /// Explicit owner-published target binding. Never supplied by the calling agent.
@@ -32,6 +34,13 @@ pub struct TaskExecutionPolicy {
 
 impl DeliveryPolicy {
     pub fn validate(&self) -> anyhow::Result<()> {
+        if let Some(selection) = &self.delivery_selection {
+            selection.validate()?;
+            ensure!(
+                self.task_execution.is_some(),
+                "owner selection requires task policy"
+            );
+        }
         if let Some(task) = &self.task_execution {
             ensure!(
                 task.environment == "nonproduction"

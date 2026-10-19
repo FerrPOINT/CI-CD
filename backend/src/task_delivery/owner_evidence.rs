@@ -13,6 +13,8 @@ pub struct TargetEvidence {
     pub task_execution: probes::TaskExecutionPolicy,
     pub current: ManifestEvidence,
     pub confirmed: ManifestEvidence,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection: Option<super::owner_selection::Selection>,
 }
 
 #[derive(Debug, Serialize, PartialEq, Eq, utoipa::ToSchema)]
@@ -185,6 +187,7 @@ pub(crate) async fn observe(
     project: Uuid,
     repository: Uuid,
     binding: &WorkspaceTaskBinding,
+    candidate: &CandidateEvidenceReadback,
 ) -> Result<TargetEvidence, ApiError> {
     let (kind, policy_sha256, task_execution) =
         delegated::policy(state, project).map_err(|_| unavailable())?;
@@ -192,17 +195,27 @@ pub(crate) async fn observe(
         return Err(ApiError::conflict("devops_target_binding_mismatch"));
     }
     task_environment(connection, project, &task_execution).await?;
-    let (current, confirmed) = match kind {
+    let (current, confirmed, selector) = match kind {
         delegated::TargetKind::Static => {
             let target = configured_target(state, project, false).map_err(|_| unavailable())?;
             if target.policy_sha256 != policy_sha256 {
                 return Err(unavailable());
             }
-            static_snapshot(&target).map_err(|_| unavailable())?
+            let (current, confirmed) = static_snapshot(&target).map_err(|_| unavailable())?;
+            (current, confirmed, target.policy.delivery_selection)
         }
-        delegated::TargetKind::Oci => oci::owner_evidence::snapshot(state, project, &policy_sha256)
-            .map_err(|_| unavailable())?,
+        delegated::TargetKind::Oci => {
+            let (current, confirmed) =
+                oci::owner_evidence::snapshot(state, project, &policy_sha256)
+                    .map_err(|_| unavailable())?;
+            let selector = oci::owner_evidence::selection_policy(state, project, &policy_sha256)
+                .map_err(|_| unavailable())?;
+            (current, confirmed, selector)
+        }
     };
+    let selection = super::owner_selection::resolve(connection, selector.as_ref(), candidate)
+        .await
+        .map_err(|_| ApiError::conflict("devops_owner_selection_mismatch"))?;
     Ok(TargetEvidence {
         observed_at: chrono::Utc::now(),
         target_kind: kind,
@@ -210,6 +223,7 @@ pub(crate) async fn observe(
         task_execution,
         current,
         confirmed,
+        selection,
     })
 }
 

@@ -3,6 +3,16 @@ use crate::task_delivery::owner_evidence::{
     ManifestEvidence, ReadLock, matches_binding, operations, pointers,
 };
 
+pub(in crate::task_delivery) fn selection_policy(
+    state: &AppState,
+    project: Uuid,
+    policy_sha256: &str,
+) -> anyhow::Result<Option<crate::task_delivery::owner_selection::Policy>> {
+    let owner = task_owner(state, project)?;
+    ensure!(owner.policy_hash == policy_sha256, "owner policy changed");
+    Ok(owner.policy.checks.delivery_selection)
+}
+
 pub(in crate::task_delivery) fn snapshot(
     state: &AppState,
     project: Uuid,

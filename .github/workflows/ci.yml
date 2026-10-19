@@ -150,6 +150,14 @@ jobs:
           set -euo pipefail
           cargo test --locked -p cicd-server --lib namespace_devops_evidence_pg_ -- --ignored --test-threads=1 | tee "$RUNNER_TEMP/namespace-devops-evidence.log"
           grep -F 'test result: ok. 2 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/namespace-devops-evidence.log"
+      - name: Exact owner selection and artifact observer PostgreSQL regressions
+        if: ${{ !inputs.git_receive_only }}
+        run: |
+          set -euo pipefail
+          cargo test --locked -p cicd-server --lib owner_selection::tests:: -- --ignored --test-threads=1 | tee "$RUNNER_TEMP/owner-selection.log"
+          grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/owner-selection.log"
+          cargo test --locked -p cicd-infra candidate_jobs_nested_names_stale_rows_duplicates_and_aliases_fail_closed -- --ignored --test-threads=1 | tee "$RUNNER_TEMP/candidate-artifacts.log"
+          grep -F 'test result: ok. 1 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/candidate-artifacts.log"
       - name: Populated task credential migration upgrade
         if: ${{ !inputs.git_receive_only }}
         run: |

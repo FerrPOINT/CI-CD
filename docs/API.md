@@ -18,10 +18,21 @@ exact source readback и optional delivery configuration того же repositor
 Human catalogs не меняются. [Контракт reader](NAMESPACE_DELIVERY_CONFIGURATION_READER.md).
 
 Source-only registered-R slice для first-publication candidate/target CAS facts:
-[Namespace DevOps owner evidence](NAMESPACE_DEVOPS_EVIDENCE.md). Route, annotations и Rust-generated
-OpenAPI подключены; 15 focused Rust cases, fmt, typed compile и strict Clippy проходят.
-Installed/live R-readback и положительная SQL-интеграция ещё не подтверждены. Readback не выдаёт
-полномочия на dispatch и не доказывает принятие результата в Tracker.
+[Namespace DevOps owner evidence](NAMESPACE_DEVOPS_EVIDENCE.md). Existing GET
+`/api/v1/namespace-repositories/{id}/devops-evidence` добавляет optional
+`target.selection`, только если защищённая owner policy задаёт точный deploy
+selector stage/job/stored artifact name. Selection сохраняет sourcePipelineId,
+config/plan SHA и полный artifact tuple; caller не выбирает первый artifact и
+не получает writer permit. Slash/backslash paths кодируются обоими runner и
+observer одинаково в `__`; duplicate/alias/stale-attempt evidence запрещено.
+[Контракт selection](DEVOPS_OWNER_SELECTION.md).
+Historical 15-case compile/Clippy/OpenAPI результат относится только к source26b,
+PG-selected0. Merged baseline дополнительно имеет два actual PostgreSQL/HTTP
+cases и hosted gates на0c8572a. Для новых selection/name changes 13-case gate pending; старый
+failed PG не считается PASS. Source schemas зарегистрированы, но generated
+OpenAPI/client refresh и Rust qualification добавленного domain shim export ещё
+pending. Installed/live R-readback и SQL-квалификация нового selection не заявлены.
+Readback не выдаёт dispatch и не доказывает принятие результата в Tracker.
 
 Existing Smart HTTP and `/api/v1/internal/task-git-check` support an opt-in own-task candidate
 variant with exact confirmed source binding, fresh Developer authority and
