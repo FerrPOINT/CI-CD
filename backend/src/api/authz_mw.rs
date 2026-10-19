@@ -186,8 +186,9 @@ pub(crate) async fn require_auth(
         .and_then(pdlc_auth_core::bearer_from_header);
     let mut checked_central = None;
     if let Some(token) = bearer.filter(|token| pdlc_auth_core::is_personal_token(token))
-        && let Some(central) = crate::central_auth::try_central(token).await?
+        && let Some(verified) = crate::central_auth::try_verified_central(token).await?
     {
+        let central = &verified.context;
         if crate::delegated_credentials::has_grant(&central)
             || state
                 .config
@@ -204,7 +205,7 @@ pub(crate) async fn require_auth(
             req.extensions_mut().insert(identity);
             return Ok(next.run(req).await);
         }
-        checked_central = Some(central_identity(pool, &central).await?);
+        checked_central = Some(central_identity(pool, &verified).await?);
     }
     let is_platform_token = req
         .headers()
@@ -707,16 +708,17 @@ pub(crate) async fn bearer_identity(
 
 async fn central_identity(
     pool: &PgPool,
-    central: &pdlc_auth_core::AuthContext,
+    verified: &pdlc_auth_core::service_bridge::VerifiedCentralToken,
 ) -> Result<crate::auth::AccessClaims, ApiError> {
+    let central = &verified.context;
     if crate::namespace::registered_machine(&central.user_id)
-        || central.role.as_deref() == Some("service_account")
+        || verified.subject_role.as_deref() == Some("service_account")
         || crate::delegated_credentials::has_grant(central)
         || crate::delegated_credentials::configured_subject(&central.user_id)
     {
         return Err(ApiError::forbidden());
     }
-    crate::central_auth::link_central_user(pool, central).await
+    crate::central_auth::link_central_user(pool, verified).await
 }
 
 pub(crate) async fn identity_for_bearer_token(
@@ -726,8 +728,8 @@ pub(crate) async fn identity_for_bearer_token(
 ) -> Result<crate::auth::AccessClaims, ApiError> {
     // Central fleet auth-server first (ES256 via JWKS); legacy session JWTs
     // and cicd_ PATs remain valid during the migration window.
-    if let Some(central) = crate::central_auth::try_central(token).await? {
-        return central_identity(pool, &central).await;
+    if let Some(verified) = crate::central_auth::try_verified_central(token).await? {
+        return central_identity(pool, &verified).await;
     }
     if token.starts_with("forge_sat_") {
         let hash = crate::auth::hash_token(token);

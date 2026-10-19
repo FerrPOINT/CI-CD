@@ -287,3 +287,5 @@ Docker Compose: postgres + backend + frontend (nginx static + `/api`,`/git` prox
 ## Общая база
 
 Подключение версий, границы контрактов и проверки описаны в [BASE_INTEGRATION](BASE_INTEGRATION.md).
+
+Единое пространство: [поверхности доступа](UNIFIED_SPACE_SURFACES.md) и [центральный профиль/роли](CENTRAL_PROFILE_ROLES.md).

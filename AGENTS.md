@@ -87,3 +87,11 @@ Desktop fallback. Pulse — приватный Git/pipeline только в CI/C
 Перед изменением платформенных имён прочитайте [интеграцию с Base](docs/PDLC_BASE_INTEGRATION.md) и канонические TERMS/BRANDING.
 Для UI: `pnpm --dir frontend exec pdlc-ui search "задача"` → `show ExportName` → один нужный `example`. В Workflow SSR используйте штатный exporter Base.
 Не переносите продуктовые запросы, DTO и права в общий UI. SDK/UI/skills pins независимы; новое имя платформы не меняет SDLC IDs/scopes или Hermes upstream.
+
+## Единое пространство PDLC
+
+[Согласованный план](docs/plans/unified-spaces-20261019.md) вводит M:N и общий read admission. До полного
+совместимого cohort это цель, не установленное поведение. Строгие V1/V2 и
+applied migrations сохранять; ProjectRef/SpaceRef/V3 отдельны. Полный gate на
+интегрированной вехе, в ходе реализации scoped checks. Runtime не активировать
+по готовности одного продукта; не выбирать первый Project/Space неявно.

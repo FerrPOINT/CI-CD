@@ -2170,3 +2170,17 @@ token сохраняет старый; пустой token ошибочен. Но
 для machine/PAT principals вместе с существующим api scope/project binding.
 Archive admission применяется перед изменениями. Pagination server-side,
 сортировка истории created_at/id DESC, refs — по имени.
+
+Единое пространство: [поверхности доступа](UNIFIED_SPACE_SURFACES.md) и [центральный профиль/роли](CENTRAL_PROFILE_ROLES.md).
+
+
+## Drain и runner identity: source candidate общего пространства
+
+Owner readback drained требует подтверждённого terminal receipt каждой начатой
+попытки. Lease expiry, terminal status без receipt и успех соседней попытки не
+завершают drain. Embedded owner пишет marker после реального process exit и
+durable workspace ACK; исторические receipts не создаются из статусов.
+Чужой аутентифицированный runner получает404 при mutation чужой lease независимо
+от active/expired состояния. Собственный runner сохраняет409 fenced и410 expired.
+[Границы и доказательства](UNIFIED_SPACE_SURFACES.md) не заменяют общий admission,
+owner-v2 lifecycle и полный serving cohort, которые ещё в работе.

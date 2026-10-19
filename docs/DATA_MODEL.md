@@ -1228,3 +1228,12 @@ repository_sync_operations (operation UUID PK, actor/repository/kind, keyed HMAC
 fingerprint, safe readback). Partial unique index допускает только один active
 run на repository. Namespace triggers запрещают создание работы/изменение
 настроек в архиве. История не удаляется автоматически и удерживает identity.
+
+Единое пространство: [поверхности доступа](UNIFIED_SPACE_SURFACES.md) и [центральный профиль/роли](CENTRAL_PROFILE_ROLES.md).
+
+
+Общий Space drain использует существующие completion_received_at, acknowledged_at,
+generation и execution_attempts; миграции/checksums не переписываются. В обычном
+embedded CI marker теперь ставится после того же реального owner journal ACK,
+что и в task pipeline. Failed/expired legacy execution без принятого completion
+остаётся незавершённой для drain и входит в миграционное расследование.
