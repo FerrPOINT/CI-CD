@@ -15,8 +15,9 @@ candidate observer сохраняет terminal ACK и retention/expiry checks и
 declared paths с runner names через общий `/`/`\` → `__` mapping. Duplicate names,
 encoded aliases, missing output и stale attempts запрещены; current inventory
 ограничен 32 artifacts (33-я строка закрывает observation, не обрезает его до PASS).
-Historical rows/receipts и migrations не изменены. Новая 13-case qualification
-pending; source fixture fixes не превращают прежний failed PG в успешный результат.
+Historical rows/receipts и migrations не изменены. Отдельная actual 13-case
+qualification проходит на source57bb: 9 units, два SQL projections и два real R
+HTTP/PG. Старые failed receipts сохранены; они не переименованы в новый PASS.
 [Границы selection и artifact observation](DEVOPS_OWNER_SELECTION.md).
 
 Additive0095 `task_credential_successors` хранит append-only successor custody

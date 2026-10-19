@@ -15,7 +15,7 @@
 ## Архитектура и контракты
 
 - [Namespace DevOps evidence](NAMESPACE_DEVOPS_EVIDENCE.md) — registered-R readback исходного Developer candidate и owner target; [owner selection](DEVOPS_OWNER_SELECTION.md) — точный выбор artifact и общее кодирование имён без dispatch authority.
-- [Qualification namespace evidence](evidence/NAMESPACE_DEVOPS_OWNER_20261019.md) — source26b и последующий merged baseline с actual PG; новый 13-case owner-selection/artifact gate pending, не installed/live evidence.
+- [Qualification namespace evidence](evidence/NAMESPACE_DEVOPS_OWNER_20261019.md) — source26b и merged baseline; [actual 13-case follow-up](evidence/2026-10-19-owner-selection.md#focused-local-gate) отдельно проверяет owner selection/artifact names, не installed/live acceptance.
 - [SDLC_DELIVERY_V1](SDLC_DELIVERY_V1.md) — target delivery packet и actual blocked workspace operation owner API; [ADR-0018](adr/0018-blocked-workspace-operation-ledger.md) — граница authority.
 - [TASK_DELIVERY_VERIFICATION](TASK_DELIVERY_VERIFICATION.md) — actual runner/artifact и owner-local manifest delivery evidence; [ADR-0020](adr/0020-owner-local-manifest-delivery.md) — local checks, rollback и unknown recovery.
 - [ADR-0021](adr/0021-owner-local-oci-readonly-data.md) — bounded OCI/read-only data compatibility и rollback без migrations.

@@ -50,8 +50,8 @@ declarations/observations запрещены без изменения исто�
 Rollback authority из отсутствия/ошибки deploy не выводится.
 
 Это не расширяет child grants и не заменяет live Auth/Tracker/lease/artifact/policy
-проверки перед effects. Source schemas подключены, но новый 13-case gate и
-generated API refresh pending; прежний failed PG не является qualification.
+проверки перед effects. Отдельный actual 13-case gate и generated API refresh
+проходят на source57bb; прежний failed PG не является этой qualification.
 Historical source26b 15-case gate не покрывает новый selector/name mapping.
-При интеграции добавлен недостающий domain shim export; compile gate pending.
+Добавленный domain shim export проверен typed compile/strict affected Clippy.
 [Контракт owner selection](../DEVOPS_OWNER_SELECTION.md).

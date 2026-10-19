@@ -119,16 +119,17 @@ head `0c8572a`. [Протокол merge-кандидата](evidence/NAMESPACE_D
 В follow-up сохранены DB-valid ciphertext, JWKS и preparation/submission claim
 под живым embedded lease до terminal ACK; positive R fixture дополнен selection.
 
-Текущий owner-selection/artifact-name follow-up требует нового 13-case gate:
-**pending, PASS не заявлен**. Предыдущий PG run завершился ошибкой; его failed
-evidence не переписывается и не считается PASS после source fixture fix.
+Отдельный owner-selection/artifact-name gate на source57bb фактически проходит
+**13/13**: 9 unit и 4 ignored PG, явно выполненных через exact selectors.
+Предыдущий PG run завершился ошибкой; его failed evidence не переписывается
+и не считается новым PASS после source fixture fix.
 Projection tests вызывают настоящий selector/observer SQL в private TEMP tables
 с rollback, но не заменяют actual R HTTP/PG auth/custody case.
 
-Rust router и новые schemas зарегистрированы в source. Committed OpenAPI пока
-содержит прежний target без selection; штатная Rust generation/client refresh
-для нового поля и OwnerDeliverySelection schemas ещё pending. Отсутствовавший
-`artifact_names` re-export в `backend/src/domain.rs` добавлен при интеграции;
-его Rust compile qualification также pending.
-До отдельного результата нельзя заявлять current compile/API parity.
+Rust router, domain shim и новые schemas прошли typed/strict affected gates.
+Committed OpenAPI содержит exact actual export, generated client создан штатной
+командой. Все paths прежние; `TargetEvidence` расширен только optional selection,
+добавлены две schemas, 189 operation IDs уникальны. Generator parity, compatibility
+against ab2 и scoped host schema checks проходят. Полный UI gate не повторялся.
+[Точный результат](evidence/2026-10-19-owner-selection.md#focused-local-gate).
 Production image, установка, live Auth/R/OCI и Fleet publication — отдельная приёмка.
