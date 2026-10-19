@@ -3,6 +3,10 @@
   "product": "CI-CD",
   "candidate_sdk_projection": "forge-runtime-v1",
   "components": {
+    "tooling": [
+      "scripts/tests/test_backend_dockerfile.py",
+      "scripts/tests/test_ci_contract_checks.py"
+    ],
     "docs": [
       "docs/**",
       "*.md",
@@ -34,6 +38,16 @@
     ]
   },
   "gates": [
+    {
+      "id": "tooling:build-contracts",
+      "component": "tooling",
+      "profiles": ["fast", "unit", "build", "integrated", "release"],
+      "argv": ["{python}", "-B", "-m", "unittest", "scripts.tests.test_backend_dockerfile", "scripts.tests.test_ci_contract_checks.FrontendConfigurationBoundaryTests", "scripts.tests.test_ci_contract_checks.ManualGitReceiveGateTests", "scripts.tests.test_ci_contract_checks.CliIntegrationGateTests", "-q"],
+      "cwd": ".",
+      "inputs": ["scripts/tests/test_backend_dockerfile.py", "scripts/tests/test_ci_contract_checks.py", ".quality-gate.json", "backend/Dockerfile", "backend/Dockerfile.umbrella", "backend/src/task_delivery/postgres.rs", ".github/workflows/ci.yml", ".github/workflows/release.yml", "scripts/vendor/base_quality_selection.py", "scripts/vendor/base-quality-tooling.json", ".quality-tooling-revision"],
+      "cacheable": true,
+      "test_tier": "static"
+    },
     {
       "id": "backend:cache-tooling-unit",
       "component": "backend",

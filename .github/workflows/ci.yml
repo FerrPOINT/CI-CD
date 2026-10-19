@@ -104,7 +104,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: documentation regression tests
-        run: python3 -m unittest scripts.tests.test_verify_docs scripts.tests.test_base_stand_backup scripts.tests.test_ci_contract_checks scripts.tests.test_postgres_rejection scripts.tests.test_backend_dockerfile scripts.tests.test_postgres_import_boundary
+        run: python3 -m unittest scripts.tests.test_verify_docs scripts.tests.test_base_stand_backup scripts.tests.test_ci_contract_checks.FrontendConfigurationBoundaryTests scripts.tests.test_ci_contract_checks.ManualGitReceiveGateTests scripts.tests.test_ci_contract_checks.CliIntegrationGateTests scripts.tests.test_postgres_rejection scripts.tests.test_backend_dockerfile scripts.tests.test_postgres_import_boundary
       - name: documentation checks
         run: python3 scripts/verify_docs.py --all
       - name: Native QA Compose ownership regressions

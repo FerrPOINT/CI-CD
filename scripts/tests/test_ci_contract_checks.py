@@ -64,6 +64,29 @@ class ManualGitReceiveGateTests(unittest.TestCase):
 
 
 class CliIntegrationGateTests(unittest.TestCase):
+    def test_build_contract_test_edits_select_only_the_static_tooling_gate(self):
+        selection = runpy.run_path(str(ROOT / 'scripts/vendor/base_quality_selection.py'))['plan']
+        for path in ('scripts/tests/test_backend_dockerfile.py', 'scripts/tests/test_ci_contract_checks.py'):
+            with self.subTest(path=path):
+                plan = selection(ROOT, profile='build', changed=[path])
+                self.assertEqual([gate['id'] for gate in plan['gates']], ['tooling:build-contracts'])
+        for path, required in (('backend/src/main.rs', 'backend:build'),
+                               ('frontend/src/main.tsx', 'frontend:build')):
+            self.assertIn(required, [gate['id'] for gate in selection(ROOT, profile='build', changed=[path])['gates']])
+        unknown = selection(ROOT, profile='build', changed=['scripts/tests/future_unknown.py'])
+        self.assertTrue({'backend:build', 'frontend:build'} <= {gate['id'] for gate in unknown['gates']})
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
+        docs = workflow.split('\n  docs:\n', 1)[1].split('\n  minimum-rust:\n', 1)[0]
+        for target in ('scripts.tests.test_backend_dockerfile',
+                       'scripts.tests.test_ci_contract_checks.FrontendConfigurationBoundaryTests',
+                       'scripts.tests.test_ci_contract_checks.ManualGitReceiveGateTests',
+                       'scripts.tests.test_ci_contract_checks.CliIntegrationGateTests'):
+            self.assertIn(target, docs)
+        command = next(line for line in docs.splitlines() if 'run: python3 -m unittest' in line)
+        self.assertNotIn('scripts.tests.test_ci_contract_checks', shlex.split(command))
+        release = (ROOT / '.github/workflows/release.yml').read_text(encoding='utf-8')
+        self.assertIn('scripts.tests.test_ci_contract_checks', release)
+
     def test_cli_database_is_scoped_to_cli_step(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
         backend = workflow.split("\n  backend:\n", 1)[1].split("\n  frontend:\n", 1)[0]

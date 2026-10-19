@@ -1,5 +1,14 @@
 # Быстрые повторные проверки и сборка
 
+Изменение двух build-contract test files выбирает только static
+`tooling:build-contracts`, без frontend/backend builds и dependency preparation.
+Gate сохраняет все pure classes этого checkout: Docker contracts, Vite boundary,
+CI/manual-receive configuration и CLI configuration. Ordinary CI выполняет их
+один раз в existing docs command. `DeliveryPinPreflightTests` с PowerShell/Git
+subprocess fixtures остаётся в full module ручного release gate; actual pinned
+Base verification и Native QA ownership regressions ordinary CI не меняются.
+SDK/quality pins и witness profile сохраняются.
+
 Встроенный `scripts/postgres-delivery.py` входит в backend component и artifact
 inputs. Его изменение выбирает backend без frontend и меняет server key даже
 при прежних размере/timestamp. `scripts/check_cache_tooling.py` проверяет
