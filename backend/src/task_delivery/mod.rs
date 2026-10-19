@@ -6,6 +6,7 @@ mod files;
 mod namespace_evidence_pg_tests;
 pub mod oci;
 pub(crate) mod owner_evidence;
+pub(crate) mod owner_selection;
 pub mod postgres;
 mod probes;
 pub(crate) mod tracker;

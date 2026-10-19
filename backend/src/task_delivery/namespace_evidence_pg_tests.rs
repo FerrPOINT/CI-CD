@@ -284,6 +284,7 @@ async fn exercise(pool: sqlx::PgPool, negative: bool) {
             tracker_project_id: receipt.request.binding.tracker_project_id,
             holder_subject: "fixture-fleet".into(),
         }),
+        delivery_selection: None,
     };
     let target = root.0.join("target");
     Target::open(&target, query.project_id, policy.clone(), true).unwrap();
