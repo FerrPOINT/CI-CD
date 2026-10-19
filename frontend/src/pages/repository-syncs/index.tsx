@@ -11,6 +11,7 @@ import {
   RefreshCw,
 } from 'lucide-react'
 import {
+  Select,
   Button,
   Input,
   Label,
@@ -40,8 +41,6 @@ import type { components } from '@/api/schema'
 import { useNamespaceRef } from '@/widgets/namespace-context'
 import { useWorkspace } from '@/api/workspaces'
 
-const inputClass =
-  'min-h-10 w-full rounded-md border border-border bg-surface px-3 text-sm focus-visible:outline-2 focus-visible:outline-accent'
 const modes = [
   {
     value: 'disabled',
@@ -219,9 +218,9 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
               <Label htmlFor="new-repository">
                 Доступный hosted-репозиторий без подключения
               </Label>
-              <select
+              <Select
                 id="new-repository"
-                className={inputClass}
+                className="w-full"
                 value={selection}
                 onChange={(event) => setSelection(event.target.value)}
               >
@@ -231,7 +230,7 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
                     {repo.public_name}
                   </option>
                 ))}
-              </select>
+              </Select>
               {selection &&
                 available.data.items.some((repo) => repo.id === selection) && (
                   <Button asChild>
@@ -271,22 +270,22 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
         </div>
         <div>
           <Label htmlFor="provider-filter">Провайдер</Label>
-          <select
+          <Select
             id="provider-filter"
-            className={inputClass}
+            className="w-full"
             value={params.get('provider') ?? ''}
             onChange={(event) => update('provider', event.target.value)}
           >
             <option value="">Все провайдеры</option>
             <option value="github">GitHub.com</option>
             <option value="gitlab">Свой GitLab</option>
-          </select>
+          </Select>
         </div>
         <div>
           <Label htmlFor="state-filter">Состояние</Label>
-          <select
+          <Select
             id="state-filter"
-            className={inputClass}
+            className="w-full"
             value={params.get('state') ?? ''}
             onChange={(event) => update('state', event.target.value)}
           >
@@ -308,7 +307,7 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
                 {states[value]}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
       </div>
       {list.isError && (
@@ -688,9 +687,9 @@ export function RepositorySyncEditor({
             >
               <div className="space-y-1">
                 <Label htmlFor="provider">Провайдер</Label>
-                <select
+                <Select
                   id="provider"
-                  className={inputClass}
+                  className="w-full"
                   value={draft.provider}
                   onChange={(event) =>
                     patch({
@@ -704,7 +703,7 @@ export function RepositorySyncEditor({
                 >
                   <option value="github">GitHub.com</option>
                   <option value="gitlab">Свой GitLab</option>
-                </select>
+                </Select>
               </div>
               <div className="space-y-1">
                 <Label htmlFor="instance">

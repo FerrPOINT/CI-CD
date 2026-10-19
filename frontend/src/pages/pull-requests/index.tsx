@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  Select,
   NamespaceLink as Link,
   ResourceList,
   ResourceListRow,
@@ -447,7 +448,7 @@ export function PullRequestsPage() {
                 <Label htmlFor="pr-status" className="sr-only">
                   {t("pulls.statusFilter")}
                 </Label>
-                <select
+                <Select
                   id="pr-status"
                   value={status}
                   onChange={(event) =>
@@ -455,13 +456,13 @@ export function PullRequestsPage() {
                       event.target.value as PullRequestStatus | "all",
                     )
                   }
-                  className="min-h-10 rounded-md border border-border bg-surface px-2 text-sm text-text-primary outline-none focus-visible:border-accent sm:w-40"
+                  className="w-auto sm:w-40"
                 >
                   <option value="all">{t("pulls.allStatuses")}</option>
                   <option value="open">{t("pulls.status_open")}</option>
                   <option value="closed">{t("pulls.status_closed")}</option>
                   <option value="merged">{t("pulls.status_merged")}</option>
-                </select>
+                </Select>
               </div>
               <p
                 className="flex flex-wrap gap-2 text-xs text-text-muted"

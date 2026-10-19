@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { useDeleteRunner, useRegisterRunner, useRunners } from "@/api/hooks";
 import type { Runner, RunnerStatus } from "@/api/types";
 import {
+  Select,
   Button,
   Input,
   Label,
@@ -189,20 +190,20 @@ export function RunnersPage() {
                 <Label htmlFor="runner-status" className="shrink-0">
                   {t("runners.status")}
                 </Label>
-                <select
+                <Select
                   id="runner-status"
                   value={statusFilter}
                   onChange={(event) => {
                     setStatusFilter(event.target.value as RunnerStatus | "all");
                     setPage(1);
                   }}
-                  className="min-h-10 min-w-0 flex-1 rounded-md border border-border bg-surface px-2 text-sm text-text-primary outline-none focus-visible:border-accent sm:w-40"
+                  className="w-auto min-w-0 flex-1 sm:w-40"
                 >
                   <option value="all">{t("runners.allStatuses")}</option>
                   <option value="online">{t("runners.status_online")}</option>
                   <option value="offline">{t("runners.status_offline")}</option>
                   <option value="paused">{t("runners.status_paused")}</option>
-                </select>
+                </Select>
               </div>
             </div>
             <p className="text-xs text-text-muted">
