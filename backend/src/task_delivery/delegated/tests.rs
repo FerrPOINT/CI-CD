@@ -465,9 +465,13 @@ async fn delivery_pg_retained_variables_current_child_lock_and_http_denial_witho
         // prevent its namespace guard from using the same transaction.
         let mut occupied = Vec::new();
         for _ in 0..3 { occupied.push(pool.acquire().await.unwrap()); }
-        tokio::time::timeout(std::time::Duration::from_secs(1),
+        let denied = tokio::time::timeout(std::time::Duration::from_secs(1),
             crate::repository_catalog::require_project_writable_on(&mut tx, context.project_id))
-            .await.expect("namespace guard must not acquire another pool slot").unwrap();
+            .await.expect("namespace guard must not acquire another pool slot").unwrap_err();
+        // The fixture deliberately has no process-wide owner configuration.
+        // Pool saturation must preserve that fail-closed policy result.
+        assert_eq!(denied.status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(denied.message, "namespace_owner_not_configured");
         drop(occupied);
         let (_, actual) = current(&mut tx, &identity, pipeline).await.unwrap();
         assert_eq!(canonical_hash(&actual).unwrap(), canonical_hash(&variables.forge_task_delivery).unwrap());
