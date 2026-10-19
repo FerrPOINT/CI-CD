@@ -1005,6 +1005,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/namespace-repositories/{id}/devops-evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["readback"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/namespace-repositories/{id}/source": {
         parameters: {
             query?: never;
@@ -2894,6 +2910,14 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        DevopsEvidence: {
+            candidate: components["schemas"]["CandidateEvidenceReadback"];
+            /** @description R proves observations, not Tracker acceptance, a current task lease or execution authority. */
+            dispatchAllowed: boolean;
+            schema: string;
+            source: components["schemas"]["VerifiedSource"];
+            target: components["schemas"]["TargetEvidence"];
+        };
         DiffFile: {
             /** Format: int32 */
             additions: number;
@@ -3075,6 +3099,14 @@ export interface components {
         };
         LogoutResponse: {
             revoked: boolean;
+        };
+        ManifestEvidence: {
+            /** @enum {string} */
+            state: "absent";
+        } | {
+            sha256: string;
+            /** @enum {string} */
+            state: "present";
         };
         ManualJobStartResult: {
             started: boolean;
@@ -3958,6 +3990,18 @@ export interface components {
             name: string;
             sha: string;
         };
+        TargetEvidence: {
+            confirmed: components["schemas"]["ManifestEvidence"];
+            current: components["schemas"]["ManifestEvidence"];
+            /** Format: date-time */
+            observedAt: string;
+            /** @description Digest of the full owner policy, not of the redacted projection below. */
+            policySha256: string;
+            targetKind: components["schemas"]["TargetKind"];
+            taskExecution: components["schemas"]["TaskExecutionPolicy"];
+        };
+        /** @enum {string} */
+        TargetKind: "static" | "oci";
         TaskCredentialContext: {
             /** Format: uuid */
             chatId: string;
@@ -3991,6 +4035,18 @@ export interface components {
             leaseId: string;
         };
         TaskDeliveryReadback: components["schemas"]["DeliveryReadback"] | components["schemas"]["OciDeliveryReadback"];
+        /** @description Explicit owner-published target binding. Never supplied by the calling agent. */
+        TaskExecutionPolicy: {
+            environment: string;
+            /** Format: uuid */
+            environmentId: string;
+            holderSubject: string;
+            /** Format: uuid */
+            repositoryId: string;
+            trackerInstanceId: string;
+            /** Format: uuid */
+            trackerProjectId: string;
+        };
         TaskPullEvidence: {
             checks: components["schemas"]["RepositoryCheckRef"][];
             commits: string[];
@@ -6506,6 +6562,85 @@ export interface operations {
             };
             /** @description Foreign namespace */
             403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    readback: {
+        parameters: {
+            query: {
+                registry_instance_id: string;
+                namespace_id: string;
+                base_ref: string;
+                base_commit: string;
+                delivery_configuration_name: string;
+                project_id: string;
+                source_pipeline_id: string;
+                operation_key: string;
+                source_commit: string;
+                request_hash: string;
+                task_id: string;
+                root_task_id: string;
+                assignment_id: string;
+                execution_id: string;
+                fencing_token: number;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DevopsEvidence"];
+                };
+            };
+            /** @description Invalid exact selectors */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Central reader authentication required */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Registered namespace reader required */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Original owner evidence missing */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Source, configuration, candidate or target binding changed */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Owner evidence unavailable; no dispatch */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -236,6 +236,11 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
     },
     RoutePolicy {
         methods: GET,
+        path: "/api/v1/namespace-repositories/{id}/devops-evidence",
+        access: RouteAccess::NamespaceReader,
+    },
+    RoutePolicy {
+        methods: GET,
         path: "/api/v1/namespace-task-evidence/{tracker}/{task}",
         access: RouteAccess::NamespaceReader,
     },

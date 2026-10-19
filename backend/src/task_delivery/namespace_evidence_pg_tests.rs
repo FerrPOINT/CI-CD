@@ -164,10 +164,26 @@ async fn exercise(pool: sqlx::PgPool, negative: bool) {
     );
     let commit = git(&source, &["rev-parse", "HEAD"]);
     let (mut query, record, mut receipt) = fixture();
-    let mut stored = StoredCredential::from_value(&record.delegated_credential.unwrap().0).unwrap();
+    let mut credential = record.delegated_credential.unwrap().0;
+    // Persist real ciphertext accepted by the DB contract. The reader has no key
+    // and must not decrypt even this deliberately non-credential plaintext.
+    credential["encrypted_child"] = json!(
+        crate::platform::encrypt_secret(
+            "historical-private-child-must-not-be-opened",
+            &crate::config::SecretsConfig {
+                key: Some([31; 32])
+            },
+        )
+        .unwrap()
+    );
+    let mut stored = StoredCredential::from_value(&credential).unwrap();
     assert_ne!(stored.subject.to_string(), READER);
     stored.context.intent.source_commit = commit.clone();
     stored.context_hash = context_digest(&stored.context).unwrap();
+    receipt.blockers = vec![
+        WorkspaceOperationBlocker::TrackerAdmissionUnavailable,
+        WorkspaceOperationBlocker::TrackerWorkspaceBindingUnavailable,
+    ];
     receipt.request.source_commit = commit.clone();
     receipt.request_hash = sha(&serde_json::to_vec(&receipt.request).unwrap());
     query.source_commit = commit.clone();
@@ -231,21 +247,11 @@ async fn exercise(pool: sqlx::PgPool, negative: bool) {
     .fetch_one(&pool)
     .await
     .unwrap();
-    sqlx::query("UPDATE pipelines SET status='success',finished_at=now() WHERE id=$1")
-        .bind(pipeline)
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE stages SET status='success' WHERE pipeline_id=$1")
-        .bind(pipeline)
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE jobs SET status='success',finished_at=now(),artifact_paths=ARRAY['product.txt'] WHERE id=$1")
+    sqlx::query("UPDATE jobs SET status='running',started_at=now(),artifact_paths=ARRAY['product.txt'] WHERE id=$1")
         .bind(job).execute(&pool).await.unwrap();
-    sqlx::query("INSERT INTO execution_attempts(id,job_id,attempt_no,status,started_at,finished_at,exit_code) VALUES($1,$2,1,'success',now(),now(),0)")
+    sqlx::query("INSERT INTO execution_attempts(id,job_id,attempt_no,status,started_at) VALUES($1,$2,1,'running',now())")
         .bind(receipt.request.attempt_id).bind(job).execute(&pool).await.unwrap();
-    sqlx::query("INSERT INTO job_leases(id,job_id,attempt_id,runner_name,generation,lease_status,lease_expires_at,acknowledged_at,completed_at,completion_received_at,terminal_status) VALUES($1,$2,$3,'retained-fixture',1,'completed',now(),now(),now(),now(),'success')")
+    sqlx::query("INSERT INTO job_leases(id,job_id,attempt_id,runner_name,generation,lease_status,lease_expires_at,acknowledged_at) VALUES($1,$2,$3,'embedded',1,'active',now()+interval '1 hour',now())")
         .bind(receipt.request.lease_id).bind(job).bind(receipt.request.attempt_id).execute(&pool).await.unwrap();
     let plan = json!({"stages":[{"name":"build","jobs":[{"name":"build","artifact_paths":["product.txt"]}]}]});
     let plan_hash = sha(&serde_json::to_vec(&plan).unwrap());
@@ -266,7 +272,37 @@ async fn exercise(pool: sqlx::PgPool, negative: bool) {
     ledger::append_delegated_receipt(&mut tx, stored.subject, &stored.context_hash, &receipt)
         .await
         .unwrap();
+    assert!(
+        ledger::claim_task_submission(&mut tx, pipeline, receipt.request.attempt_id)
+            .await
+            .unwrap()
+    );
     tx.commit().await.unwrap();
+    // Complete only after the original current embedded lease has claimed custody.
+    sqlx::query(
+        "UPDATE execution_attempts SET status='success',finished_at=now(),exit_code=0 WHERE id=$1",
+    )
+    .bind(receipt.request.attempt_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE job_leases SET lease_status='completed',completed_at=now(),completion_received_at=now(),terminal_status='success' WHERE id=$1")
+        .bind(receipt.request.lease_id).execute(&pool).await.unwrap();
+    sqlx::query("UPDATE jobs SET status='success',finished_at=now() WHERE id=$1")
+        .bind(job)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE stages SET status='success' WHERE pipeline_id=$1")
+        .bind(pipeline)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE pipelines SET status='success',finished_at=now() WHERE id=$1")
+        .bind(pipeline)
+        .execute(&pool)
+        .await
+        .unwrap();
     let environment = Uuid::new_v4();
     sqlx::query("INSERT INTO environments(id,project_id,name,protected,required_approvals) VALUES($1,$2,'fixture',false,0)")
         .bind(environment).bind(query.project_id).execute(&pool).await.unwrap();
@@ -450,7 +486,11 @@ async fn isolated(selector: &str, negative: bool) {
         return;
     }
     // Same controlled Auth introspection peer/child-process isolation as the reader middleware fixture.
-    let auth = Router::new().route("/auth/tokens/introspect", get_handler(|headers: HeaderMap| async move {
+    let auth = Router::new()
+        .route("/oidc/jwks", get_handler(|| async { Json(json!({"keys":[{
+            "kty":"EC","crv":"P-256","use":"sig","alg":"ES256","kid":"namespace-delivery-fixture",
+            "x":"XWEILsoYXdKJKnoeOa43PCI4APkASpJhoE2lp5xsq6s","y":"SZrHPij6p6aveE0oBNfd4Vlg3eQyFSCV_2joRUzRLxk"}]})) }))
+        .route("/auth/tokens/introspect", get_handler(|headers: HeaderMap| async move {
         let subject = match headers.get("authorization").and_then(|h| h.to_str().ok()) {
             Some("Bearer sdlc_pat_reader") => READER,
             Some("Bearer sdlc_pat_foreign") => "00000000-0000-0000-0000-000000000008",
