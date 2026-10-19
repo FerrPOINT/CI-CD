@@ -1,5 +1,11 @@
 # API v1 Specification — Forge CI/CD
 
+Source candidate task-child delivery использует existing v1 `variablesSha256`
+commitment с closed kind-tagged payload; old/unbound credentials остаются закрытыми.
+Existing exact workspace/candidate/delivery routes и DTO не меняются, SAT не
+подставляется: [binding и qualification scope](contracts/DEVOPS_TASK_CHILD_AUTHORITY.md).
+Новый issuer/scope prefix/migration не добавлены; Rust/PG/native gate ещё не выполнен.
+
 Source-only owner-P credential renewal сохраняет original pipeline/intent и
 добавляет отдельный acknowledged successor без dispatch. Два dedicated owner
 routes зарегистрированы вне legacy user middleware. OpenAPI и затронутые

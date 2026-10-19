@@ -117,9 +117,15 @@ struct Owner {
 
 struct TaskAuthority<'a> {
     state: &'a AppState,
-    claims: &'a crate::auth::AccessClaims,
+    credential: TaskCredential<'a>,
     connection: &'a mut sqlx::PgConnection,
     permit: tracker::Permit,
+}
+
+#[derive(Clone, Copy)]
+enum TaskCredential<'a> {
+    Sat(&'a crate::auth::AccessClaims),
+    Child(&'a delegated::Session),
 }
 
 impl TaskAuthority<'_> {
@@ -129,6 +135,20 @@ impl TaskAuthority<'_> {
         command: &DeliveryCommand,
         original: &WorkspaceOperationReceipt,
     ) -> anyhow::Result<()> {
+        let claims = match self.credential {
+            TaskCredential::Child(session) => {
+                ensure!(
+                    owner.policy_hash == session.binding.target_policy_sha256,
+                    "bound OCI target changed"
+                );
+                self.permit = session
+                    .refresh(self.state, self.connection)
+                    .await
+                    .map_err(|_| anyhow::anyhow!("current child authority unavailable"))?;
+                return self.permit.check();
+            }
+            TaskCredential::Sat(claims) => claims,
+        };
         let policy = owner
             .policy
             .checks
@@ -138,7 +158,7 @@ impl TaskAuthority<'_> {
         sdlc_workspace::authorize(
             self.connection,
             self.state,
-            self.claims,
+            claims,
             owner.project,
             "api:write",
         )
@@ -165,7 +185,7 @@ impl TaskAuthority<'_> {
         sdlc_workspace::authorize(
             self.connection,
             self.state,
-            self.claims,
+            claims,
             owner.project,
             "api:write",
         )
@@ -1065,6 +1085,13 @@ impl Owner {
         let _lock = Lock::acquire(&self.root)?;
         let dir = operation_dir(&self.root, &command.operation_key);
         if dir.exists() {
+            match task.as_ref().map(|v| v.credential) {
+                Some(TaskCredential::Child(session)) => session.check_journal(&dir)?,
+                _ => ensure!(
+                    !dir.join("task-child.json").exists(),
+                    "task child custody requires its original credential"
+                ),
+            }
             let old = self.readback(command, &original)?;
             if reconcile && old.reconciliation_needed {
                 if let Some(task) = &mut task {
@@ -1195,6 +1222,14 @@ impl Owner {
         );
         self.image(&manifest.descriptor).await?;
         let hash = sha(&serde_json::to_vec(&manifest)?);
+        if let Some(TaskCredential::Child(session)) = task.as_ref().map(|v| v.credential)
+            && command.action == DeliveryAction::Rollback
+        {
+            ensure!(
+                session.binding.rollback_manifest_sha256.as_ref() == Some(&hash),
+                "committed rollback manifest changed under target lock"
+            );
+        }
         let receipt = Receipt {
             schema: "forge/local-oci-operation/v1".into(),
             scope: receipt_scope(command).into(),
@@ -1215,7 +1250,10 @@ impl Owner {
             dispatch_allowed: command.task_fence.is_some(),
             sdlc_acceptance_verified: false,
         };
-        if let Some(task) = &task {
+        if let Some(task) = task.as_mut() {
+            if matches!(task.credential, TaskCredential::Child(_)) {
+                task.refresh(self, command, &original).await?;
+            }
             task.permit.check()?;
         }
         directory(&dir)?;
@@ -1226,6 +1264,9 @@ impl Owner {
                 manifest: Some(manifest.clone()),
             },
         )?;
+        if let Some(TaskCredential::Child(session)) = task.as_ref().map(|v| v.credential) {
+            session.record_journal(&dir)?;
+        }
         let manifest_file = self.root.join("manifests").join(format!("{hash}.json"));
         immutable(&manifest_file, &manifest)?;
         #[cfg(unix)]
@@ -1345,6 +1386,41 @@ pub(super) async fn execute_task(
     command: &DeliveryCommand,
     original: WorkspaceOperationReceipt,
 ) -> Result<Readback, crate::api::ApiError> {
+    execute_owned(
+        state,
+        TaskCredential::Sat(claims),
+        connection,
+        project,
+        command,
+        original,
+    )
+    .await
+}
+
+pub(super) async fn execute_delegated(
+    state: Arc<AppState>,
+    connection: &mut sqlx::PgConnection,
+    session: &delegated::Session,
+) -> Result<Readback, crate::api::ApiError> {
+    execute_owned(
+        state,
+        TaskCredential::Child(session),
+        connection,
+        session.original.project_id,
+        &session.binding.command,
+        session.original.clone(),
+    )
+    .await
+}
+
+async fn execute_owned(
+    state: Arc<AppState>,
+    credential: TaskCredential<'_>,
+    connection: &mut sqlx::PgConnection,
+    project: Uuid,
+    command: &DeliveryCommand,
+    original: WorkspaceOperationReceipt,
+) -> Result<Readback, crate::api::ApiError> {
     use crate::api::ApiError;
     let owner = task_owner(&state, project)
         .map_err(|_| ApiError::service_unavailable("Опубликованный OCI owner target недоступен"))?;
@@ -1358,7 +1434,21 @@ pub(super) async fn execute_task(
         .as_ref()
         .ok_or_else(|| ApiError::service_unavailable("Нужен текущий task delivery fence"))?;
     let existing = operation_dir(&owner.root, &command.operation_key).exists();
+    if let TaskCredential::Child(session) = credential
+        && (owner.policy_hash != session.binding.target_policy_sha256
+            || (!existing
+                && command.action == DeliveryAction::Rollback
+                && pointer(&owner.root, "confirmed.json").map_err(|_| ApiError::forbidden())?
+                    != session.binding.rollback_manifest_sha256))
+    {
+        return Err(ApiError::forbidden());
+    }
     if existing {
+        if let TaskCredential::Child(session) = credential {
+            session
+                .check_journal(&operation_dir(&owner.root, &command.operation_key))
+                .map_err(|_| ApiError::forbidden())?;
+        }
         let saved = owner
             .readback(command, &original)
             .map_err(|_| ApiError::conflict("Исходный OCI delivery journal не совпадает"))?;
@@ -1375,20 +1465,32 @@ pub(super) async fn execute_task(
     )
     .await?;
     let candidate = if !existing && command.action == DeliveryAction::Deploy {
-        super::candidate(
-            state.clone(),
-            claims.clone(),
-            project,
-            command,
-            owner.policy_hash.clone(),
-        )
-        .await
-        .map_err(|_| ApiError::conflict("Readback точного OCI pipeline artifact отклонён"))?
+        match credential {
+            TaskCredential::Sat(claims) => super::candidate(
+                state.clone(),
+                claims.clone(),
+                project,
+                command,
+                owner.policy_hash.clone(),
+            )
+            .await
+            .map_err(|_| ApiError::conflict("Readback точного OCI pipeline artifact отклонён"))?,
+            TaskCredential::Child(session) => Some(
+                delegated::candidate_on(&state, connection, session, owner.policy_hash.clone())
+                    .await?,
+            ),
+        }
     } else {
         None
     };
-    let permit = tracker::read(&state, policy, &original, fence, existing).await?;
-    sdlc_workspace::authorize(connection, &state, claims, project, "api:write").await?;
+    let permit = match credential {
+        TaskCredential::Sat(claims) => {
+            let permit = tracker::read(&state, policy, &original, fence, existing).await?;
+            sdlc_workspace::authorize(connection, &state, claims, project, "api:write").await?;
+            permit
+        }
+        TaskCredential::Child(session) => session.refresh(&state, connection).await?,
+    };
     let client = crate::runner_docker::Client::configured_verified()
         .await
         .map_err(|_| ApiError::service_unavailable("Проверенный OCI task daemon недоступен"))?;
@@ -1403,13 +1505,55 @@ pub(super) async fn execute_task(
             existing,
             Some(TaskAuthority {
                 state: &state,
-                claims,
+                credential,
                 connection,
                 permit,
             }),
         )
         .await
         .map_err(|_| ApiError::conflict("OCI delivery удерживается; прочитайте original key"))
+}
+
+pub(super) fn delegated_policy(
+    state: &AppState,
+    project: Uuid,
+) -> Result<(delegated::TargetKind, String, probes::TaskExecutionPolicy), crate::api::ApiError> {
+    let owner = task_owner(state, project)
+        .map_err(|_| crate::api::ApiError::service_unavailable("Owner OCI target unavailable"))?;
+    Ok((
+        delegated::TargetKind::Oci,
+        owner.policy_hash,
+        owner
+            .policy
+            .checks
+            .task_execution
+            .ok_or_else(crate::api::ApiError::forbidden)?,
+    ))
+}
+
+pub(super) fn read_delegated(
+    state: &AppState,
+    session: &delegated::Session,
+) -> Result<Readback, crate::api::ApiError> {
+    let command = &session.binding.command;
+    let owner = task_owner(state, session.original.project_id)
+        .map_err(|_| crate::api::ApiError::forbidden())?;
+    session
+        .check_journal(&operation_dir(&owner.root, &command.operation_key))
+        .map_err(|_| crate::api::ApiError::forbidden())?;
+    let value = read_task(
+        state,
+        session.original.project_id,
+        &command.workspace_operation_key,
+        &command.operation_key,
+        &session.original,
+    )?;
+    if crate::delegated_credentials::digest(&value.receipt.command)?
+        != crate::delegated_credentials::digest(command)?
+    {
+        return Err(crate::api::ApiError::forbidden());
+    }
+    Ok(value)
 }
 
 pub(super) fn read_task(

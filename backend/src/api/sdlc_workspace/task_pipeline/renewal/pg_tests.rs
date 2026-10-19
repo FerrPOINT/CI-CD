@@ -47,7 +47,7 @@ async fn wire(response: Response) -> Value {
     serde_json::from_slice(&bytes).unwrap()
 }
 
-async fn seed(pool: &PgPool, original: &StoredCredential, pipeline: Uuid) {
+pub(crate) async fn seed(pool: &PgPool, original: &StoredCredential, pipeline: Uuid) {
     let context = &original.context;
     let project = context.project_id;
     let b = &context.intent.binding;

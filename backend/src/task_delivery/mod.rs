@@ -1,4 +1,5 @@
 //! Owner-policy static-artifact delivery. No scheduler, Git merge or shell executor.
+pub mod delegated;
 mod files;
 pub mod oci;
 pub mod postgres;
@@ -29,6 +30,53 @@ use uuid::Uuid;
 pub enum TaskDeliveryReadback {
     Static(DeliveryReadback),
     Oci(oci::Readback),
+}
+
+enum Refresh<'a> {
+    Tracker(&'a AppState),
+    Child {
+        state: &'a AppState,
+        session: &'a delegated::Session,
+        connection: &'a mut sqlx::PgConnection,
+    },
+}
+
+impl Refresh<'_> {
+    async fn read(
+        &mut self,
+        project: Uuid,
+        policy: &probes::TaskExecutionPolicy,
+        original: &WorkspaceOperationReceipt,
+        command: &DeliveryCommand,
+    ) -> anyhow::Result<tracker::Permit> {
+        match self {
+            Self::Child {
+                state,
+                session,
+                connection,
+            } => session
+                .refresh(state, connection)
+                .await
+                .map_err(|_| anyhow::anyhow!("current child authority unavailable")),
+            Self::Tracker(state) => {
+                crate::repository_catalog::require_project_writable(
+                    state.pool.as_ref().context("owner database absent")?,
+                    project,
+                )
+                .await
+                .map_err(|_| anyhow::anyhow!("project namespace became read-only"))?;
+                tracker::read(
+                    state,
+                    policy,
+                    original,
+                    command.task_fence.as_ref().context("task fence absent")?,
+                    true,
+                )
+                .await
+                .map_err(|_| anyhow::anyhow!("Tracker authority changed before publication"))
+            }
+        }
+    }
 }
 
 async fn task_environment(
@@ -363,15 +411,37 @@ impl Target {
         candidate: Option<VerifiedCandidate>,
         reconcile: bool,
         mut permit: Option<tracker::Permit>,
-        task_state: Option<&AppState>,
+        mut task_state: Option<Refresh<'_>>,
     ) -> anyhow::Result<DeliveryReadback> {
         ensure!(
             command.task_fence.is_some() == permit.is_some(),
             "task effect requires live owner authorization"
         );
         let _lock = Lock::acquire(&self.root)?;
+        if let Some(refresh @ Refresh::Child { .. }) = task_state.as_mut() {
+            permit = Some(
+                refresh
+                    .read(
+                        self.project_id,
+                        self.policy
+                            .task_execution
+                            .as_ref()
+                            .context("task policy absent")?,
+                        &original,
+                        command,
+                    )
+                    .await?,
+            );
+        }
         let dir = operation_dir(&self.root, &command.operation_key);
         if dir.exists() {
+            match task_state.as_ref() {
+                Some(Refresh::Child { session, .. }) => session.check_journal(&dir)?,
+                _ => ensure!(
+                    !dir.join("task-child.json").exists(),
+                    "task child custody requires its original credential"
+                ),
+            }
             let previous = self.readback(command, &original)?;
             if !reconcile || !previous.reconciliation_needed {
                 return Ok(previous);
@@ -388,6 +458,21 @@ impl Target {
                     && self.manifest(&hash).is_ok()
                 {
                     let receipt = self.observe(intent.receipt, manifest).await;
+                    if let Some(refresh @ Refresh::Child { .. }) = task_state.as_mut() {
+                        permit = Some(
+                            refresh
+                                .read(
+                                    self.project_id,
+                                    self.policy
+                                        .task_execution
+                                        .as_ref()
+                                        .context("task policy absent")?,
+                                    &original,
+                                    command,
+                                )
+                                .await?,
+                        );
+                    }
                     if receipt.status != DeliveryStatus::Unknown {
                         if let Some(permit) = permit {
                             permit.check()?;
@@ -443,6 +528,18 @@ impl Target {
                 .map(|hash| self.manifest(&hash))
                 .transpose()?,
         };
+        if let Some(Refresh::Child { session, .. }) = task_state.as_ref()
+            && command.action == DeliveryAction::Rollback
+        {
+            ensure!(
+                manifest
+                    .as_ref()
+                    .map(|m| serde_json::to_vec(m).map(|v| sha(&v)))
+                    .transpose()?
+                    == session.binding.rollback_manifest_sha256,
+                "committed rollback manifest changed under target lock"
+            );
+        }
         if let Some(manifest) = &manifest {
             receipt.manifest_sha256 = Some(sha(&serde_json::to_vec(manifest)?));
         } else {
@@ -464,6 +561,9 @@ impl Target {
             policy_sha256: self.policy_sha256.clone(),
         };
         immutable(&dir.join("intent.json"), &intent)?;
+        if let Some(Refresh::Child { session, .. }) = task_state.as_ref() {
+            session.record_journal(&dir)?;
+        }
         let Some(manifest) = manifest else {
             immutable(&dir.join("result.json"), &receipt)?;
             return self.readback(command, &original);
@@ -493,27 +593,20 @@ impl Target {
             &manifest,
         )?;
         self.manifest(&hash)?;
-        if let Some(state) = task_state {
+        if let Some(refresh) = task_state.as_mut() {
             // Re-read the existing lease after staging, immediately before changing the served pointer.
-            crate::repository_catalog::require_project_writable(
-                state.pool.as_ref().context("owner database absent")?,
-                self.project_id,
-            )
-            .await
-            .map_err(|_| anyhow::anyhow!("project namespace became read-only"))?;
             permit = Some(
-                tracker::read(
-                    state,
-                    self.policy
-                        .task_execution
-                        .as_ref()
-                        .context("task policy absent")?,
-                    &original,
-                    command.task_fence.as_ref().context("task fence absent")?,
-                    true,
-                )
-                .await
-                .map_err(|_| anyhow::anyhow!("Tracker authority changed before publication"))?,
+                refresh
+                    .read(
+                        self.project_id,
+                        self.policy
+                            .task_execution
+                            .as_ref()
+                            .context("task policy absent")?,
+                        &original,
+                        command,
+                    )
+                    .await?,
             );
         }
         if let Some(permit) = permit {
@@ -521,6 +614,21 @@ impl Target {
         }
         replace_pointer(&self.root, "current.json", &hash)?;
         receipt = self.observe(receipt, &manifest).await;
+        if let Some(refresh @ Refresh::Child { .. }) = task_state.as_mut() {
+            permit = Some(
+                refresh
+                    .read(
+                        self.project_id,
+                        self.policy
+                            .task_execution
+                            .as_ref()
+                            .context("task policy absent")?,
+                        &original,
+                        command,
+                    )
+                    .await?,
+            );
+        }
         if let Some(permit) = permit {
             permit.check()?;
         }
@@ -548,13 +656,30 @@ async fn candidate(
 ) -> anyhow::Result<Option<VerifiedCandidate>> {
     let evidence = sdlc_workspace::get_candidate_evidence(
         State(state.clone()),
-        Extension(claims),
+        Some(Extension(claims)),
+        None,
         ApiPath((project, command.workspace_operation_key.clone())),
         Query(command.original.clone()),
     )
     .await
     .map_err(|_| anyhow::anyhow!("owner candidate observation rejected"))?
     .0;
+    let mut conn = state
+        .pool
+        .as_ref()
+        .context("owner database unavailable")?
+        .acquire()
+        .await?;
+    candidate_from_evidence(&state, &mut conn, command, policy_sha256, evidence).await
+}
+
+async fn candidate_from_evidence(
+    state: &AppState,
+    conn: &mut sqlx::PgConnection,
+    command: &DeliveryCommand,
+    policy_sha256: String,
+    evidence: CandidateEvidenceReadback,
+) -> anyhow::Result<Option<VerifiedCandidate>> {
     if !evidence.candidate_observed {
         return Ok(None);
     }
@@ -565,13 +690,7 @@ async fn candidate(
     else {
         return Ok(None);
     };
-    let mut conn = state
-        .pool
-        .as_ref()
-        .context("owner database unavailable")?
-        .acquire()
-        .await?;
-    let rows = ledger::candidate_artifacts(&mut conn, evidence.pipeline_id).await?;
+    let rows = ledger::candidate_artifacts(conn, evidence.pipeline_id).await?;
     let row = rows
         .into_iter()
         .find(|r| r.artifact_id == artifact.artifact_id)
@@ -735,11 +854,19 @@ pub async fn local_command(
 #[utoipa::path(post,path="/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations",operation_id="reject_sdlc_delivery",tag="SDLC workspace",params(("project_id"=Uuid,Path),("operation_key"=String,Path)),request_body=DeliveryCommand,responses((status=200,body=TaskDeliveryReadback),(status=503,description="Owner task target or Tracker readback unavailable"),(status=400),(status=401),(status=403),(status=404),(status=409)))]
 pub(crate) async fn execute_task_delivery(
     State(state): State<Arc<AppState>>,
-    Extension(claims): Extension<crate::auth::AccessClaims>,
+    claims: Option<Extension<crate::auth::AccessClaims>>,
+    child: Option<Extension<crate::delegated_credentials::Identity>>,
     ApiPath((project, key)): ApiPath<(Uuid, String)>,
     Json(command): Json<DeliveryCommand>,
 ) -> Result<Json<TaskDeliveryReadback>, crate::api::ApiError> {
     use crate::api::ApiError;
+    let claims = match (claims, child) {
+        (None, Some(Extension(identity))) => {
+            return delegated::execute(state, &identity, project, &key, command).await;
+        }
+        (Some(Extension(claims)), None) => claims,
+        _ => return Err(ApiError::forbidden()),
+    };
     command.validate().map_err(ApiError::bad_request)?;
     if command.workspace_operation_key != key {
         return Err(ApiError::conflict("original workspace key mismatch"));
@@ -816,7 +943,7 @@ pub(crate) async fn execute_task_delivery(
             candidate,
             existing,
             Some(permit),
-            Some(&state),
+            Some(Refresh::Tracker(&state)),
         )
         .await
         .map_err(|_| {
@@ -829,11 +956,20 @@ pub(crate) async fn execute_task_delivery(
 #[utoipa::path(get,path="/api/v1/projects/{project_id}/sdlc/workspace-operations/{operation_key}/delivery-operations/{delivery_key}",tag="SDLC workspace",params(("project_id"=Uuid,Path),("operation_key"=String,Path),("delivery_key"=String,Path),("requestHash"=String,Query),("taskId"=Uuid,Query),("rootTaskId"=Uuid,Query),("assignmentId"=Uuid,Query),("executionId"=Uuid,Query),("fencingToken"=i64,Query)),responses((status=200,body=TaskDeliveryReadback),(status=400),(status=401),(status=403),(status=404),(status=409),(status=503)))]
 pub(crate) async fn get_local_delivery(
     State(state): State<Arc<AppState>>,
-    Extension(claims): Extension<crate::auth::AccessClaims>,
+    claims: Option<Extension<crate::auth::AccessClaims>>,
+    child: Option<Extension<crate::delegated_credentials::Identity>>,
     ApiPath((project, key, delivery_key)): ApiPath<(Uuid, String, String)>,
     Query(expected): Query<WorkspaceOperationLookup>,
 ) -> Result<Json<TaskDeliveryReadback>, crate::api::ApiError> {
     use crate::api::ApiError;
+    let claims = match (claims, child) {
+        (None, Some(Extension(identity))) => {
+            return delegated::readback(&state, &identity, project, &key, &delivery_key, &expected)
+                .await;
+        }
+        (Some(Extension(claims)), None) => claims,
+        _ => return Err(ApiError::forbidden()),
+    };
     let mut tx = state
         .pool
         .as_ref()

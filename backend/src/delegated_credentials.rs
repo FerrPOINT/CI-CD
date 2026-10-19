@@ -173,6 +173,20 @@ impl Identity {
     pub(crate) fn route(&self, method: &str, path: &str) -> Result<(), ApiError> {
         let parts: Vec<_> = path.split('/').collect();
         let id = |s: &str| Uuid::parse_str(s).is_ok_and(|id| !id.is_nil() && id.to_string() == s);
+        let key = |s: &str| {
+            // Existing CLI URL-encodes ':' in otherwise unreserved operation keys.
+            // Accept only that canonical escape, never a general encoded path separator.
+            if s.len() > 384 {
+                return false;
+            }
+            let decoded = s.replace("%3A", ":");
+            !decoded.is_empty()
+                && decoded.len() <= 128
+                && !matches!(decoded.as_str(), "." | "..")
+                && decoded
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_.:".contains(&b))
+        };
         let allowed = match (method, parts.as_slice()) {
             ("POST", ["", "api", "v1", "projects", project, "pipelines"]) => id(project),
             ("GET", ["", "api", "v1", "pipelines", pipeline]) => id(pipeline),
@@ -189,6 +203,62 @@ impl Identity {
                     "task-workspace",
                 ],
             ) => id(project) && id(pipeline),
+            (
+                "GET",
+                [
+                    "",
+                    "api",
+                    "v1",
+                    "projects",
+                    project,
+                    "sdlc",
+                    "workspace-operations",
+                    operation,
+                ],
+            ) => id(project) && key(operation),
+            (
+                "GET",
+                [
+                    "",
+                    "api",
+                    "v1",
+                    "projects",
+                    project,
+                    "sdlc",
+                    "workspace-operations",
+                    operation,
+                    "candidate-evidence",
+                ],
+            )
+            | (
+                "POST",
+                [
+                    "",
+                    "api",
+                    "v1",
+                    "projects",
+                    project,
+                    "sdlc",
+                    "workspace-operations",
+                    operation,
+                    "delivery-operations",
+                ],
+            ) => id(project) && key(operation),
+            (
+                "GET",
+                [
+                    "",
+                    "api",
+                    "v1",
+                    "projects",
+                    project,
+                    "sdlc",
+                    "workspace-operations",
+                    operation,
+                    "delivery-operations",
+                    delivery,
+                ],
+            ) => id(project) && key(operation) && key(delivery),
             _ => false,
         };
         if allowed {
@@ -366,3 +436,6 @@ pub fn delegation_request(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod devops_boundary_tests;

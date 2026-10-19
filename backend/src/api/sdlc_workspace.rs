@@ -266,12 +266,23 @@ pub async fn prepare_workspace_operation(
         (status=403, description="Machine/project/read scope denied"), (status=404, description="No receipt owned by this subject"),
         (status=400, description="Missing or malformed original lookup identity"), (status=401, description="Missing, expired or revoked credential"),
         (status=409, description="Original binding/hash mismatch"), (status=503, description="Owner configuration unavailable")), tag="SDLC workspace")]
-pub async fn get_workspace_operation(
+pub(crate) async fn get_workspace_operation(
     State(state): State<Arc<AppState>>,
-    Extension(claims): Extension<AccessClaims>,
+    claims: Option<Extension<AccessClaims>>,
+    child: Option<Extension<crate::delegated_credentials::Identity>>,
     Path((project, key)): Path<(Uuid, String)>,
     Query(expected): Query<WorkspaceOperationLookup>,
 ) -> ApiResult<WorkspaceOperationReadback> {
+    let claims = match (claims, child) {
+        (None, Some(Extension(identity))) => {
+            return crate::task_delivery::delegated::workspace(
+                &state, &identity, project, &key, &expected,
+            )
+            .await;
+        }
+        (Some(Extension(claims)), None) => claims,
+        _ => return Err(ApiError::forbidden()),
+    };
     let mut tx = pool(&state)?.begin().await.map_err(ApiError::internal)?;
     authorize(&mut tx, &state, &claims, project, "api:read").await?;
     let receipt = ledger::find_receipt(&mut tx, project, claims.sub, &key)
@@ -310,12 +321,23 @@ pub async fn get_workspace_operation(
         ("assignmentId"=Uuid, Query), ("executionId"=Uuid, Query), ("fencingToken"=i64, Query)),
     responses((status=200, description="Fresh bounded owner evidence; task delivery remains blocked", body=CandidateEvidenceReadback),
         (status=400), (status=401), (status=403), (status=404), (status=409), (status=503)), tag="SDLC workspace")]
-pub async fn get_candidate_evidence(
+pub(crate) async fn get_candidate_evidence(
     State(state): State<Arc<AppState>>,
-    Extension(claims): Extension<AccessClaims>,
+    claims: Option<Extension<AccessClaims>>,
+    child: Option<Extension<crate::delegated_credentials::Identity>>,
     Path((project, key)): Path<(Uuid, String)>,
     Query(expected): Query<WorkspaceOperationLookup>,
 ) -> ApiResult<CandidateEvidenceReadback> {
+    let claims = match (claims, child) {
+        (None, Some(Extension(identity))) => {
+            return crate::task_delivery::delegated::candidate_read(
+                &state, &identity, project, &key, &expected,
+            )
+            .await;
+        }
+        (Some(Extension(claims)), None) => claims,
+        _ => return Err(ApiError::forbidden()),
+    };
     let mut tx = pool(&state)?.begin().await.map_err(ApiError::internal)?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
         .execute(&mut *tx)
@@ -327,11 +349,23 @@ pub async fn get_candidate_evidence(
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::not_found_named("workspace operation"))?;
     verify_lookup(&receipt, &expected)?;
-    let pipeline = ledger::candidate_pipeline(&mut tx, &receipt)
+    let result = candidate_evidence_on(&state, &mut tx, receipt).await?;
+    tx.commit().await.map_err(ApiError::internal)?;
+    Ok(Json(result))
+}
+
+/// Caller must authorize the exact retained receipt before invoking the observer.
+pub(crate) async fn candidate_evidence_on(
+    state: &AppState,
+    tx: &mut sqlx::PgConnection,
+    receipt: WorkspaceOperationReceipt,
+) -> Result<CandidateEvidenceReadback, ApiError> {
+    let project = receipt.project_id;
+    let pipeline = ledger::candidate_pipeline(tx, &receipt)
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::conflict("original pipeline identity unavailable"))?;
-    let lease = ledger::lease_observation(&mut tx, project, receipt.request.lease_id, false)
+    let lease = ledger::lease_observation(tx, project, receipt.request.lease_id, false)
         .await
         .map_err(ApiError::internal)?
         .ok_or_else(|| ApiError::conflict("original lease identity unavailable"))?;
@@ -395,7 +429,7 @@ pub async fn get_candidate_evidence(
         candidate_observed = false;
         blockers.push("exact_repository_pipeline_config_unverified".into());
     }
-    let jobs = ledger::candidate_jobs(&mut tx, pipeline.pipeline_id)
+    let jobs = ledger::candidate_jobs(tx, pipeline.pipeline_id)
         .await
         .map_err(ApiError::internal)?;
     if pipeline.status != "success"
@@ -409,7 +443,7 @@ pub async fn get_candidate_evidence(
         candidate_observed = false;
         blockers.push("pipeline_gates_or_completion_ack_unverified".into());
     }
-    let rows = ledger::candidate_artifacts(&mut tx, pipeline.pipeline_id)
+    let rows = ledger::candidate_artifacts(tx, pipeline.pipeline_id)
         .await
         .map_err(ApiError::internal)?;
     let mut artifacts = Vec::new();
@@ -460,7 +494,6 @@ pub async fn get_candidate_evidence(
         candidate_observed = false;
         blockers.push("attempt_artifact_bytes_unverified".into());
     }
-    tx.commit().await.map_err(ApiError::internal)?;
     let result = CandidateEvidenceReadback {
         schema: "forge/candidate-evidence-readback/v1".into(),
         source_commit: receipt.request.source_commit.clone(),
@@ -476,5 +509,5 @@ pub async fn get_candidate_evidence(
         deployment_verified: false,
         acceptance_verified: false,
     };
-    Ok(Json(result))
+    Ok(result)
 }

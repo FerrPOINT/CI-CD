@@ -15,6 +15,17 @@ pub(super) struct Permit {
 }
 
 impl Permit {
+    #[cfg(test)]
+    pub(super) fn test_until(until: Instant) -> Self {
+        Self { until }
+    }
+
+    pub(super) fn bounded(self, until: Instant) -> Self {
+        Self {
+            until: self.until.min(until),
+        }
+    }
+
     pub(super) fn check(&self) -> anyhow::Result<()> {
         ensure!(
             Instant::now() < self.until,
@@ -275,6 +286,17 @@ pub(super) async fn read(
     fence: &TaskDeliveryFence,
     reconciliation: bool,
 ) -> Result<Permit, ApiError> {
+    read_bound(state, policy, original, fence, reconciliation, None).await
+}
+
+pub(super) async fn read_bound(
+    state: &AppState,
+    policy: &TaskExecutionPolicy,
+    original: &WorkspaceOperationReceipt,
+    fence: &TaskDeliveryFence,
+    reconciliation: bool,
+    expected_result_hash: Option<&str>,
+) -> Result<Permit, ApiError> {
     let unavailable =
         || ApiError::service_unavailable("Readback жизненного цикла Tracker недоступен");
     let config = &state.config.sdlc_workspace;
@@ -313,6 +335,11 @@ pub(super) async fn read(
         fence.development_result_id
     ));
     let accepted = get(&client, result_url, token).await?;
+    if let Some(expected) = expected_result_hash
+        && crate::delegated_credentials::digest(&accepted["receipt"])? != expected
+    {
+        return Err(ApiError::conflict("Accepted Developer result changed"));
+    }
     let started = Instant::now();
     let value = get(&client, url, token).await?;
     let remaining = validate(&value, policy, original, fence, reconciliation).map_err(|_| {
@@ -566,6 +593,42 @@ mod tests {
                 validate_source(&bad, &original, &fence, &json!(0)).is_err(),
                 "{path}"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn committed_developer_result_hash_uses_actual_http_receipt_and_denies_change() {
+        use axum::{Json, Router, routing::get};
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+        for changed in [false, true] {
+            let (live, policy, original, fence) = fixture();
+            let mut result = accepted(&original, &fence);
+            let expected = crate::delegated_credentials::digest(&result["receipt"]).unwrap();
+            if changed {
+                result["receipt"]["output"]["commit_sha"] = json!("9".repeat(40));
+            }
+            let hits = Arc::new(AtomicUsize::new(0));
+            let counted = hits.clone();
+            let app = Router::new().fallback(get(move |uri: axum::http::Uri| {
+                let body = if uri.path().contains("/results/") {
+                    result.clone()
+                } else {
+                    live.clone()
+                };
+                counted.fetch_add(1, Ordering::SeqCst);
+                async move { Json(body) }
+            }));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let state = state(format!("http://{}", listener.local_addr().unwrap()));
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let permit =
+                read_bound(&state, &policy, &original, &fence, false, Some(&expected)).await;
+            server.abort();
+            assert_eq!(permit.is_ok(), !changed);
+            assert_eq!(hits.load(Ordering::SeqCst), if changed { 1 } else { 2 });
         }
     }
 

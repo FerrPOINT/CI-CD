@@ -184,7 +184,7 @@ async fn tracker_bound(
     Ok(until)
 }
 
-async fn authorize_saved(
+pub(crate) async fn authorize_saved(
     conn: &mut sqlx::PgConnection,
     config: &SdlcWorkspaceConfig,
     record: &ledger::TaskPipelineJournal,
@@ -701,7 +701,7 @@ pub(crate) async fn read_receipt(
     Ok(Json(receipt))
 }
 
-async fn find_owned_receipt(
+pub(crate) async fn find_owned_receipt(
     conn: &mut sqlx::PgConnection,
     record: &ledger::TaskPipelineJournal,
 ) -> Result<Option<WorkspaceOperationReceipt>, ApiError> {
