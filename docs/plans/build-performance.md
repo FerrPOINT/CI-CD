@@ -84,3 +84,22 @@ source срезом не квалифицированы; они остаются
 остаётся production input. Сам static contract читает оба configs, tsconfig и
 два recipes; эти inputs включены в его receipt и tooling component. Изменение
 потребляемого файла не получает старый REUSED contract result.
+
+## 2026-10-19: Release без повторного domain suite
+
+Release выбирал combined `backend:unit` и полный `backend:quality`:
+domain lib suite и fmt выполнялись дважды при отсутствии unit receipt.
+Cargo compilation cache не кэширует исполнение тестов. Standalone protocol
+target имеет собственный `[workspace]` и полным `--workspace` не покрывается.
+
+Убрать `release` из combined unit; сохранить его Fast/Unit/Build argv. Добавить
+release-only `backend:cache-protocol-unit` с прежней standalone командой и теми
+же wrapper/toolchain/SDK/input contracts. Полный quality остаётся владельцем
+workspace/domain/doctests/fmt/clippy и прежнего DB gate. Не применять ложный
+`covers_units` к external integration gate и не ослаблять Base validator.
+
+Source regressions проверяют owner union, ordinary profiles и separate protocol
+workspace. Они входят в existing tooling/CI checks; дешёвый `tooling:build-contracts`
+явно выполняется вне heavy host slot. Его receipt покрывает consumed descriptor,
+workspace manifests и selector. Native Release/failure/receipt lifecycle и actual
+time savings остаются отдельной согласованной вехой без автоматического PG run.

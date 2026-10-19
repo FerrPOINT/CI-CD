@@ -72,3 +72,9 @@ Standalone CLI, delivery/migration tools и OpenAPI не включаются в
 `backend:quality` сохраняет полные workspace clippy/tests в ручном release;
 MSRV/features/OpenAPI и необходимые integration gates не сокращаются.
 Fresh target между source exports и registry/compiler-cache policy Base сохраняются.
+
+Root quality Release выбирает полный `backend:quality` и отдельный
+`backend:cache-protocol-unit`. Domain lib suite и fmt выполняются внутри полного
+quality один раз; standalone protocol workspace сохраняет собственный запуск.
+Fast/Unit/Build по-прежнему выбирают прежний combined `backend:unit`.
+Source routing contract: `python -B -m unittest scripts.tests.test_backend_release_ownership`.
