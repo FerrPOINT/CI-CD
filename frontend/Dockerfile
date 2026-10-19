@@ -49,7 +49,7 @@ RUN --mount=type=cache,id=pdlc-host-run-slot-v1,target=/.__pdlc_build_slot__,sha
 
 FROM dependencies AS build
 ARG PDLC_RUN_SLOT_SHARING=locked
-COPY --exclude=Dockerfile* --exclude=**/Dockerfile* --exclude=.dockerignore --exclude=**/.dockerignore --exclude=nginx.conf --exclude=**/nginx.conf --exclude=**/*.test.* --exclude=**/*.spec.* --exclude=**/__tests__/** --exclude=**/test-setup.ts CI-CD/frontend/ ./
+COPY --exclude=Dockerfile* --exclude=**/Dockerfile* --exclude=.dockerignore --exclude=**/.dockerignore --exclude=nginx.conf --exclude=**/nginx.conf --exclude=**/*.test.* --exclude=**/*.spec.* --exclude=**/__tests__/** --exclude=vitest.config.ts --exclude=**/vitest.config.ts --exclude=**/test-setup.ts CI-CD/frontend/ ./
 COPY --from=generated /app/src/api/schema.d.ts ./src/api/schema.d.ts
 ARG VITE_NAMESPACE_ENABLED="false"
 ENV VITE_NAMESPACE_ENABLED=${VITE_NAMESPACE_ENABLED}

@@ -60,3 +60,22 @@ generator и полный manifest определяют его cache key. Неп
 ошибка generation блокируют результат, включая прогретый compile cache.
 
 CI Rust target после restore готовится через `python3 ../scripts/vendor/base_rust_target_cache.py` из `backend/`; версия и checksum включены в отдельный Base quality packet.
+
+## 2026-10-19: отдельная конфигурация frontend units
+
+`frontend/vitest.config.ts` объединяет production `vite.config.ts` через штатный
+`mergeConfig`: React/Tailwind plugins, alias и dev proxy остаются у Vite.
+Прежние test environment `jsdom`, максимум 4 workers, test/spec glob и
+`src/test-setup.ts` сохранены. Обе конфигурации входят в TypeScript проверку.
+
+Изменение только `vitest.config.ts` выбирает frontend unit/static без frontend
+compilation в local selector и CI. Production COPY обоих Dockerfiles исключает
+этот файл; unit COPY сохраняет его. `vite.config.ts`, production sources,
+tsconfig, package/lockfile остаются build inputs. Проверка units по-прежнему
+блокирует получение нового image при ошибке, включая прогретую compilation.
+Node 22.20.0, pnpm 10.28.1, frozen install, Base UI и OpenAPI handoff не меняются.
+
+Source/selector contracts проверены через RED/GREEN; actual config loading и
+TypeScript только двух config files проверены на существующем Node 22.20.0 без
+install/build. Cache hits, artifact identity и CPU/RAM новой native сборки этим
+source срезом не квалифицированы; они остаются отдельной общей вехой.

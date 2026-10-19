@@ -278,7 +278,8 @@
         "frontend/src/*.test.mjs",
         "frontend/src/*.test.cjs",
         "frontend/e2e/**",
-        "frontend/src/test-setup.ts"
+        "frontend/src/test-setup.ts",
+        "frontend/vitest.config.ts"
       ],
       "test_tier": "artifact"
     },
@@ -471,7 +472,8 @@
     "frontend/src/*.spec.tsx",
     "frontend/src/*.test.mjs",
     "frontend/src/*.test.cjs",
-    "frontend/src/test-setup.ts"
+    "frontend/src/test-setup.ts",
+    "frontend/vitest.config.ts"
   ],
   "test_policy": {
     "automatic": [
