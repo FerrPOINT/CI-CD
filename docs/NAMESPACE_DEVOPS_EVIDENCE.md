@@ -91,3 +91,8 @@ All fifteen selected Linux cases pass in the existing owned QA, together with fm
 strict Clippy and actual OpenAPI generation. PG-selected0: middleware's missing-DB503 is not a
 positive SQL integration claim. Image, installation, live R and Fleet publication remain separate.
 [Qualification evidence](evidence/NAMESPACE_DEVOPS_OWNER_20261019.md).
+
+Последующая квалификация объединённого кандидата включает 372 unit и два
+реальных PostgreSQL/HTTP cases; [новый протокол](evidence/NAMESPACE_DEVOPS_OWNER_20261019.md#последующая-квалификация-merge-кандидата)
+заменяет PG-selected0 для source-проверки. Live installation/consumer gates
+остаются отдельными.

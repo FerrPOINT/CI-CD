@@ -31,3 +31,38 @@ PG-selected0. Проверка R middleware с отсутствующей БД �
 SQL-readback. Production ELF/image, установка, live Auth/R/OCI и Fleet consumer
 ещё не приняты. Маршрут не выдаёт полномочий на dispatch и не подменяет Tracker
 receipt, текущий lease либо health/acceptance работающего приложения.
+
+## Последующая Квалификация Merge-кандидата
+
+После объединения с main `7b8f98c743434be420947585d64140f82534d7ba`
+на Firebat2 проверены текущие backend-входы PR #134:
+
+- Rust 1.88.0: fmt, 372 unit cases и strict release Clippy проходят.
+  Пять явно ignored случаев не включены в PASS; два новых PG cases
+  дополнительно запущены через `--ignored` и оба проходят.
+- Настоящие PostgreSQL17 и Axum reader middleware подтверждают повторяемый
+  положительный readback, запрет чужого проекта и неверного assignment,
+  отсутствие изменений строк БД и файлов. Размер пула — одно соединение.
+- Фикстура проходит штатные DB guards: ciphertext имеет реальный формат,
+  original preparation/submission закрепляются при живом embedded lease,
+  затем фиксируются completion ACK и успешный pipeline. Исторический child
+  не расшифровывается; ключ фикстуры не передаётся reader.
+- Endpoint включён в общий `NamespaceReader` inventory. Проверка запрещает
+  human Viewer/Admin и сверяет все документированные маршруты с policy.
+- Rust OpenAPI экспорт побайтно совпадает с artifact выше. Все прежние paths
+  и schemas равны main; добавлены один путь и пять schemas. Operation IDs
+  уникальны:189. Клиентские TypeScript-типы обновлены из этого контракта.
+- Node22.20.0 / pnpm10.28.1, точный UI pin
+  `3865cf4b926bfe52b2e13de1e2c09689f1e80209`: offline frozen install,
+  typecheck и `openapi:check` проходят. Внешние версии и lockfile не менялись.
+
+Первый PG-прогон выявил невалидные synthetic credential/lease/receipt rows;
+они исправлены, ограничения БД сохранены. Полный unit-прогон выявил пропуск
+policy inventory; он устранён в общем владельце маршрутов. Read-only checkout
+сохранён; shell-фикстуры получают отдельный временный каталог.
+
+Временный Compose с собственной БД удалён после проверки. Рабочие данные,
+runtime, credentials, pins, Hermes и production не менялись. Это квалификация
+исходников/API, а не installation, live R/OCI или Fleet acceptance.
+Точный опубликованный head и hosted состояние фиксируются в
+[PR #134](https://github.com/FerrPOINT/CI-CD/pull/134).
