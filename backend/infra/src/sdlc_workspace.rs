@@ -242,26 +242,55 @@ pub struct CandidateJobObservation {
     pub artifacts_complete: bool,
 }
 
+#[derive(sqlx::FromRow)]
+struct CandidateJobArtifactRow {
+    job_id: Uuid,
+    attempt_id: Option<Uuid>,
+    terminal_acknowledged: bool,
+    declared_artifacts: Vec<String>,
+    observed_artifacts: Vec<String>,
+    artifacts_retained: bool,
+}
+
 pub async fn candidate_jobs(
     conn: &mut PgConnection,
     pipeline: Uuid,
 ) -> Result<Vec<CandidateJobObservation>, sqlx::Error> {
-    sqlx::query_as("SELECT j.id AS job_id,a.id AS attempt_id,
+    let rows: Vec<CandidateJobArtifactRow> = sqlx::query_as("SELECT j.id AS job_id,a.id AS attempt_id,
         COALESCE(j.status='success' AND s.status='success' AND j.finished_at IS NOT NULL
           AND a.status='success' AND a.finished_at IS NOT NULL AND l.lease_status='completed'
           AND l.terminal_status='success' AND l.completed_at IS NOT NULL
           AND l.acknowledged_at IS NOT NULL AND l.completion_received_at IS NOT NULL,false) AS terminal_acknowledged,
-        NOT EXISTS(SELECT 1 FROM unnest(j.artifact_paths) AS declared(name)
-          WHERE NOT EXISTS(SELECT 1 FROM artifacts ar WHERE ar.job_id=j.id AND ar.attempt_id=a.id
-            AND ar.name=declared.name AND ar.sha256 IS NOT NULL AND ar.purged_at IS NULL
-            AND ar.expires_at>clock_timestamp())) AS artifacts_complete
+        j.artifact_paths AS declared_artifacts,
+        ARRAY(SELECT ar.name FROM artifacts ar WHERE ar.job_id=j.id AND ar.attempt_id=a.id ORDER BY ar.id LIMIT 33) AS observed_artifacts,
+        NOT EXISTS(SELECT 1 FROM artifacts ar WHERE ar.job_id=j.id AND ar.attempt_id=a.id
+          AND NOT COALESCE(ar.sha256 IS NOT NULL AND ar.purged_at IS NULL
+            AND ar.expires_at>clock_timestamp() AND ar.size_bytes>0,false)) AS artifacts_retained
         FROM jobs j JOIN stages s ON s.id=j.stage_id
         LEFT JOIN LATERAL (SELECT id,status,finished_at FROM execution_attempts WHERE job_id=j.id ORDER BY attempt_no DESC LIMIT 1) a ON true
         LEFT JOIN LATERAL (SELECT attempt_id,lease_status,terminal_status,completed_at,acknowledged_at,completion_received_at
           FROM job_leases WHERE job_id=j.id ORDER BY generation DESC LIMIT 1) l ON l.attempt_id=a.id
         WHERE s.pipeline_id=$1 ORDER BY j.id LIMIT 1001")
-        .bind(pipeline).fetch_all(conn).await
+        .bind(pipeline).fetch_all(conn).await?;
+    Ok(rows
+        .into_iter()
+        .map(|row| CandidateJobObservation {
+            job_id: row.job_id,
+            attempt_id: row.attempt_id,
+            terminal_acknowledged: row.terminal_acknowledged,
+            artifacts_complete: row.artifacts_retained
+                && row.observed_artifacts.len() <= 32
+                && cicd_domain::artifact_names::declared_artifacts_complete(
+                    &row.declared_artifacts,
+                    &row.observed_artifacts,
+                ),
+        })
+        .collect())
 }
+
+#[cfg(test)]
+#[path = "sdlc_workspace_artifact_tests.rs"]
+mod artifact_tests;
 
 #[derive(sqlx::FromRow)]
 pub struct CandidateArtifactObservation {
