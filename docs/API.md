@@ -18,8 +18,9 @@ exact source readback и optional delivery configuration того же repositor
 Human catalogs не меняются. [Контракт reader](NAMESPACE_DELIVERY_CONFIGURATION_READER.md).
 
 Source-only registered-R slice для first-publication candidate/target CAS facts:
-[Namespace DevOps owner evidence](NAMESPACE_DEVOPS_EVIDENCE.md). Common wiring и Rust gate
-ещё не выполнены; dispatch/Tracker acceptance authority этот readback не выдаёт.
+[Namespace DevOps owner evidence](NAMESPACE_DEVOPS_EVIDENCE.md). Route и OpenAPI annotations
+подключены; generated OpenAPI и Rust gate ещё не выполнены. Readback не выдаёт
+полномочия на dispatch и не доказывает принятие результата в Tracker.
 
 Existing Smart HTTP and `/api/v1/internal/task-git-check` support an opt-in own-task candidate
 variant with exact confirmed source binding, fresh Developer authority and
