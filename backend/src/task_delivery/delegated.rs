@@ -1,6 +1,6 @@
 //! Delivery authority committed by existing v1 variables_sha256, never by role alone.
 use super::*;
-use crate::api::{ApiError, ApiResult};
+use crate::api::ApiError;
 use crate::delegated_credentials::{Identity, TaskCredentialContext, digest as canonical_hash};
 use serde_json::Value;
 
@@ -423,7 +423,7 @@ pub(crate) async fn workspace(
     project: Uuid,
     key: &str,
     expected: &WorkspaceOperationLookup,
-) -> ApiResult<WorkspaceOperationReadback> {
+) -> Result<Json<WorkspaceOperationReadback>, ApiError> {
     let mut tx = crate::api::pool(state)?
         .begin()
         .await
@@ -462,7 +462,7 @@ pub(crate) async fn candidate_read(
     project: Uuid,
     key: &str,
     expected: &WorkspaceOperationLookup,
-) -> ApiResult<CandidateEvidenceReadback> {
+) -> Result<Json<CandidateEvidenceReadback>, ApiError> {
     let mut tx = crate::api::pool(state)?
         .begin()
         .await
@@ -484,7 +484,7 @@ pub(crate) async fn execute(
     project: Uuid,
     key: &str,
     command: DeliveryCommand,
-) -> ApiResult<TaskDeliveryReadback> {
+) -> Result<Json<TaskDeliveryReadback>, ApiError> {
     let mut tx = crate::api::pool(&state)?
         .begin()
         .await
@@ -558,7 +558,7 @@ pub(crate) async fn readback(
     key: &str,
     delivery_key: &str,
     expected: &WorkspaceOperationLookup,
-) -> ApiResult<TaskDeliveryReadback> {
+) -> Result<Json<TaskDeliveryReadback>, ApiError> {
     let mut tx = crate::api::pool(state)?
         .begin()
         .await

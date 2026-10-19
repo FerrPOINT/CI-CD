@@ -96,6 +96,12 @@ retained variables/current successor, renewal lock, HTTP denial без source и
 full middleware/Auth/Tracker positive deployment/OCI native gate этим не заявляется.
 Rust selectors написаны, НЕ executed/list-qualified. Host fmt/docs checks отдельно.
 
+Первый закреплённый Linux-прогон прошёл fmt/metadata, но остановился при
+компиляции на импорте приватного `ApiResult`. Возвращаемые типы обработчиков
+приведены к существующему `Result<Json<T>, ApiError>` соседнего модуля, без
+расширения видимости API. Для исправленного исходника Rust/PG gate ещё требуется;
+13 сценариев не выдаются за выполненные. Disposable cleanup подтверждён.
+
 Related: [task credential](../FORGE_DELEGATED_CREDENTIAL_CONTRACT.md),
 [renewal/custody](../TASK_CREDENTIAL_RENEWAL.md),
 [workspace deploy](WORKSPACE_DEPLOY_ADMISSION.md).
