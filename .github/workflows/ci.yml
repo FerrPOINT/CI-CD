@@ -144,6 +144,12 @@ jobs:
           set -euo pipefail
           cargo test --locked -p cicd-server --lib renewal_pg_ -- --ignored --test-threads=1 | tee "$RUNNER_TEMP/task-credential-renewal.log"
           grep -F 'test result: ok. 2 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/task-credential-renewal.log"
+      - name: Namespace DevOps evidence PostgreSQL regressions
+        if: ${{ !inputs.git_receive_only }}
+        run: |
+          set -euo pipefail
+          cargo test --locked -p cicd-server --lib namespace_devops_evidence_pg_ -- --ignored --test-threads=1 | tee "$RUNNER_TEMP/namespace-devops-evidence.log"
+          grep -F 'test result: ok. 2 passed; 0 failed; 0 ignored;' "$RUNNER_TEMP/namespace-devops-evidence.log"
       - name: Populated task credential migration upgrade
         if: ${{ !inputs.git_receive_only }}
         run: |

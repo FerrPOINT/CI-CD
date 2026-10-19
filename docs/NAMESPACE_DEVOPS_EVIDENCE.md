@@ -81,7 +81,8 @@ pipeline/deployment/rollback, renew a lease, mint a child, approve production or
 
 The root module, protected router and schemas are now registered. The actual Rust-generated
 OpenAPI adds only this route and five schemas; all previous paths/schemas are identical and
-operation IDs remain unique. Dependencies, source pins and SQL are unchanged.
+operation IDs remain unique. Dependencies, source pins and database schema/migrations are unchanged.
+The reader adds bounded SELECT queries over existing tables.
 
 New source units cover selectors, exact retained custody, legacy/mixed denial, configuration
 ownership, candidate truth, missing reader, fixed error redaction, pointers/empty inventories,
