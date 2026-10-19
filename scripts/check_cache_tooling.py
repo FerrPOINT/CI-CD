@@ -12,12 +12,21 @@ import tomllib
 def check_build_scope(root):
     root = Path(root).resolve()
     manifest = json.loads((root / ".quality-gate.json").read_text(encoding="utf-8"))
-    compiled = re.findall(r'include_str!\("([^"]+)"\)', (root / "backend/src/runner_cache.rs").read_text(encoding="utf-8"))
-    if not compiled:
-        raise ValueError("Cache bootstrap has no reviewed compiled inputs")
+    compiled = []
+    for relative in ("runner_cache.rs", "task_delivery/postgres.rs"):
+        owner = root / "backend/src" / relative
+        owner_inputs = []
+        for source in re.findall(r'include_(?:str|bytes)!\("([^"]+)"\)', owner.read_text(encoding="utf-8")):
+            path = (owner.parent / source).resolve()
+            # External Base helpers have their own pinned SDK input contract.
+            # This guard covers product-local literal embedded script inputs.
+            if path.is_relative_to(root) and path.relative_to(root).parts[0] == "scripts":
+                owner_inputs.append(path.relative_to(root).as_posix())
+        if not owner_inputs:
+            raise ValueError("Embedded script owner has no reviewed product inputs: " + relative)
+        compiled.extend(owner_inputs)
     artifact = next(gate for gate in manifest["gates"] if gate["id"] == "backend:build")
-    for source in compiled:
-        path = (root / "backend/src" / source).resolve().relative_to(root).as_posix()
+    for path in compiled:
         def matches(patterns):
             return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
         if not matches(manifest["components"]["backend"]) or matches(manifest["components"]["frontend"]):

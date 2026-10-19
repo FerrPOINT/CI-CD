@@ -1,5 +1,11 @@
 # Быстрые повторные проверки и сборка
 
+Встроенный `scripts/postgres-delivery.py` входит в backend component и artifact
+inputs. Его изменение выбирает backend без frontend и меняет server key даже
+при прежних размере/timestamp. `scripts/check_cache_tooling.py` проверяет
+product-local literal includes у cache bootstrap и privileged coordinator;
+внешние Base helpers сохраняют отдельный pinned SDK contract.
+
 Ordinary backend CI передаёт готовый workspace executable
 `${CARGO_TARGET_DIR:-target}/debug/openapi-dump` в прежний OpenAPI drift gate.
 Аргумент output path и сравнение YAML сохранены; повторный Cargo graph не нужен.
