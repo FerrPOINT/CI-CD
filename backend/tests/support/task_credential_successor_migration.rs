@@ -156,7 +156,7 @@ async fn seed_0094(pool: &sqlx::PgPool, delegated: bool) {
             .unwrap()
             .to_owned();
         // Real encryption of fixture-only bytes; no issued PAT or simulated Auth/native ACK.
-        let token = "history-not-an-issued-child";
+        let token = "synthetic-history-not-an-issued-child";
         let plaintext =
             serde_json::to_string(&json!({"subject":subject,"context":context,"token":token}))
                 .unwrap();
