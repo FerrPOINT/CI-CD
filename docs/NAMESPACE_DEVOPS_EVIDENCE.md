@@ -1,93 +1,127 @@
-# Namespace R: first-publication owner evidence
+# Namespace R: наблюдение DevOps candidate и owner target
 
-Source-only additive slice. No runtime, installed capability, migration, issuer or dispatch claim.
-The old namespace repository and `/source` response contracts are unchanged.
+Исходниковый additive-срез. Старые namespace repository и `/source` контракты
+сохранены. Наличие route/миграций не означает установленную capability или
+полномочия на dispatch. Qualification текущего среза описана отдельно ниже.
 
-## Read Contract
+## Контракт чтения
 
 `GET /api/v1/namespace-repositories/{repository_id}/devops-evidence`
 
-The slice's router applies the existing `namespace::reader_auth` itself. Only the configured R
-machine with central `ci-cd:read` may reach it. Human sessions, unregistered subjects, write-only
-tokens, delegated task children and legacy SATs remain denied. This is a server-reader call;
-neither the historical Developer child nor a not-yet-issued DevOps child authenticates it.
+Router сам применяет существующий `namespace::reader_auth`: только настроенная
+registered-R machine с central `ci-cd:read`. Human session, чужой subject,
+write-only token, delegated task child и legacy SAT не получают доступ.
+Исторический Developer child и будущий DevOps child не авторизуют этот GET.
 
-All query fields are required; unknown or duplicate fields are rejected by the typed extractor:
+Все query-поля обязательны; неизвестные и повторные поля отклоняет typed extractor.
 
-| Field | Meaning |
+| Поле | Назначение |
 | --- | --- |
-| `registry_instance_id`, `namespace_id` | Exact current namespace projection |
-| `base_ref`, `base_commit` | Exact full branch and current 40-character lowercase owner source SHA |
-| `delivery_configuration_name`, `project_id` | Exact same-repository configuration name and UUID |
-| `source_pipeline_id`, `operation_key` | Locator of the original retained Developer task pipeline |
-| `source_commit` | Exact Developer candidate SHA, not necessarily the project base SHA |
-| `request_hash`, `task_id`, `root_task_id`, `assignment_id`, `execution_id`, `fencing_token` | Original `WorkspaceOperationLookup` comparisons |
+| `registry_instance_id`, `namespace_id` | Точная текущая namespace projection |
+| `base_ref`, `base_commit` | Полный branch ref и текущий lowercase owner source SHA из 40 символов |
+| `delivery_configuration_name`, `project_id` | Имя и UUID конфигурации того же repository |
+| `source_pipeline_id`, `operation_key` | Locator исходного retained Developer task pipeline |
+| `source_commit` | Точный Developer candidate SHA, не обязательно project base SHA |
+| `request_hash`, `task_id`, `root_task_id`, `assignment_id`, `execution_id`, `fencing_token` | Исходные сравнения `WorkspaceOperationLookup` |
 
-The namespace/catalog shared advisory lease spans the observation. Project, workspace mapping
-and original task intent rows are share-locked. The original receipt is resolved using
-`find_owned_receipt`, after rejecting legacy/mixed custody. Its request, hash, source and task
-binding must equal the retained preparation and delegated context. Historical encrypted child
-bytes are never opened or returned. No child expiry is extended: R is independently authenticated
-and only reads historical custody, not that child's authority.
+Catalog/namespace advisory lease покрывает наблюдение. Project, workspace mapping
+и original task intent читаются под share locks. После запрета legacy/mixed custody
+`find_owned_receipt` находит настоящий receipt. Request/hash/source/task binding
+должны совпасть с retained preparation и delegated context. Зашифрованный child
+не открывается, не возвращается и не продлевается: R читает историческую custody,
+а не заимствует полномочия того child.
 
-`candidate_evidence_on` performs the existing current-generation, successful pipeline, repository
-config/plan and actual artifact-byte checks. The response retains its original blockers and false
-dispatch/deployment/acceptance flags. Empty or unobserved artifact evidence is not successful.
+`candidate_evidence_on` проверяет current generation, successful pipeline,
+repository config/plan, latest job attempts, terminal ACK и фактические artifact
+bytes. Пустой или неподтверждённый inventory не считается успешным.
 
-## Response
+## Ответ
 
-Schema: `forge/namespace-devops-evidence/v1`. Top-level fields:
-`schema`, `source`, `candidate`, `target`, `dispatchAllowed:false`. Success is `no-store`.
+Schema `forge/namespace-devops-evidence/v1`: `schema`, `source`, `candidate`,
+`target`, `dispatchAllowed:false`; успешный ответ имеет `Cache-Control: no-store`.
 
-`source` is the unchanged `VerifiedSource` DTO, including its four-field selected configuration.
-`candidate` is the actual `CandidateEvidenceReadback`, not a synthetic `ServerEvidence`.
+`source` — прежний `VerifiedSource` с выбранной four-field delivery configuration.
+`candidate` — настоящий `CandidateEvidenceReadback`, не synthetic ServerEvidence.
+Его blockers и false dispatch/deployment/acceptance flags сохраняются.
 
-`target` contains `observedAt`, `targetKind` (`static` or `oci`), `policySha256`,
-`taskExecution`, `current`, `confirmed`. `taskExecution` is the existing typed six-field
-owner projection: environment, environmentId, repositoryId, trackerInstanceId, trackerProjectId,
-holderSubject. **The policy digest is calculated by the existing owner loader over the complete
-typed private policy, not over this redacted projection.** Paths, commands, Docker credentials,
-probe origins and private manifest/operation contents are not exported.
+`target` содержит `observedAt`, `targetKind` (`static`/`oci`), `policySha256`,
+`taskExecution`, `current`, `confirmed` и optional `selection`.
+`taskExecution` содержит только environment, environmentId, repositoryId,
+trackerInstanceId, trackerProjectId, holderSubject. Policy hash вычисляется по
+полной typed private policy, не по redacted projection. Private paths, commands,
+probe origins, Docker credentials и содержимое owner journals не экспортируются.
 
-The existing `delegated::policy` and environment guard require the exact repository/Tracker
-project and a same-project, non-protected environment with zero required approvals. Owner marker,
-project and full policy hash must match. The route never enrolls a missing target.
+### Явный owner selection
 
-Both target kinds use a shared nonblocking read-only flock on the existing `.lock` inode. Missing
-lock, busy publication, unknown/torn operation, bad manifest bytes, stale policy or missing pointer
-fail closed with a fixed safe code. No filesystem creation or owner publication occurs.
+Приватная owner policy может задать `deliverySelection` с version1, action `deploy`
+и точными `stageName`, `jobName`, `artifactName`. Для OCI поле находится в `checks`.
+Это защищённая owner-конфигурация, не query/body calling agent. Без поля policy
+сохраняет прежние serialized bytes/hash, ответ не содержит `selection`.
 
-Each pointer is either `{"state":"present","sha256":"..."}` or `{"state":"absent"}`.
-Present current must have a retained owner receipt; confirmed must have a Verified owner receipt.
-Actual manifest bytes/project/policy are validated through the existing owner reader. Both absent
-is permitted only for an enrolled target with no operations and empty manifest/object inventories.
-One missing pointer or historical receipts with missing pointers is **not** treated as empty.
-These are CAS observations, not a new live health/acceptance assertion.
+Если policy задана, `target.selection` имеет schema
+`forge/owner-delivery-selection/v1`, action `deploy`, sourcePipelineId,
+configSha256, planSha256 и полный CandidateArtifactEvidence. Resolver требует
+ровно один current retained artifact исходного pipeline с указанными именами,
+однозначную declared path mapping и точное membership в проверенном candidate.
+Missing/duplicate/stale/foreign/ambiguous evidence отклоняется, `first()` и
+basename/extension guessing отсутствуют. Автоматического выбора rollback нет.
+[Полный контракт selection](DEVOPS_OWNER_SELECTION.md).
 
-## Consumer Boundary
+Оба runner и observer используют общее кодирование artifact paths: `/` и `\`
+становятся `__`, без другой нормализации. Stored name `dist__bundle.tar` не равен
+literal path `dist/bundle.tar` или basename `bundle.tar`. Повторные declarations,
+encoded aliases и duplicate observed names запрещены; старый attempt не заменяет
+отсутствующий output текущего. Существующие filesystem guards не ослаблены;
+HTTP upload protocol и исторические artifact rows не переписываются.
 
-Fleet must join this readback to its **actual retained accepted Developer Complete** chain and raw
-Tracker receipt hash. A caller's `accepted:true`, PR task link, source SHA or successful CI alone
-cannot substitute for that parent chain. This Forge route does not claim Tracker acceptance and
-does not accept a caller success boolean. It provides the owner pipeline/operation locator, exact
-request hash, artifacts and target policy needed for that server-owned join.
+## Target custody и CAS
 
-After that join, Fleet can build the existing closed `forgeTaskDelivery` JSON string and commit its
-canonical outer variables hash before delegation. Fresh Auth/Tracker/current-child and publication
-checks in the existing delivery consumer remain mandatory. An R observation cannot execute a
-pipeline/deployment/rollback, renew a lease, mint a child, approve production or override a CAS.
+Существующие owner loader и environment guard требуют тот же repository/Tracker
+project и same-project nonprotected environment без required approvals.
+Owner marker, project и полный policy hash должны совпасть. GET не enroll-ит target.
 
-## Integration and Qualification
+Static/OCI используют nonblocking shared flock существующего `.lock` inode.
+Missing lock, busy publication, unknown/torn operation, неверные manifest bytes,
+stale policy или недоказанные pointers закрывают readback с фиксированным safe code.
+Ни файлов, ни publication операций этот путь не создаёт.
 
-The root module, protected router and schemas are now registered. The actual Rust-generated
-OpenAPI adds only this route and five schemas; all previous paths/schemas are identical and
-operation IDs remain unique. Dependencies, source pins and SQL are unchanged.
+Pointer имеет вид `{"state":"present","sha256":"..."}` либо `{"state":"absent"}`.
+Current требует retained owner receipt, confirmed — Verified owner receipt;
+bytes/project/policy проверяет прежний owner reader. Оба absent допустимы только
+для enrolled target без operations и с пустыми manifest/object inventories.
+Один absent или потеря pointers при наличии history не означают empty target.
+Это CAS observation, не live health/acceptance assertion.
 
-New source units cover selectors, exact retained custody, legacy/mixed denial, configuration
-ownership, candidate truth, missing reader, fixed error redaction, pointers/empty inventories,
-target binding and read-lock semantics. The existing isolated central-reader middleware test is
-extended to exercise the actual new route for R, foreign, human, child, revoked and SAT inputs.
-All fifteen selected Linux cases pass in the existing owned QA, together with fmt, typed compile,
-strict Clippy and actual OpenAPI generation. PG-selected0: middleware's missing-DB503 is not a
-positive SQL integration claim. Image, installation, live R and Fleet publication remain separate.
-[Qualification evidence](evidence/NAMESPACE_DEVOPS_OWNER_20261019.md).
+## Граница Fleet consumer
+
+Fleet связывает ответ с настоящей retained accepted Developer Complete chain и
+raw Tracker receipt hash. Caller `accepted:true`, PR link, source SHA или успешный
+CI не заменяют эту цепочку. R не утверждает Tracker acceptance.
+
+После join Fleet может сохранить closed `forgeTaskDelivery` JSON и canonical
+outer variables hash до delegation. Fresh Auth/Tracker/current child, task lease,
+artifact/policy/CAS и publication проверки остаются обязательными перед effects.
+R observation не исполняет pipeline/deploy/rollback, не обновляет lease, не mint-ит
+child и не разрешает production. Новых endpoint кроме этого GET, scopes, issuer,
+queue, таблиц, migrations, controllers или Hermes changes нет.
+
+## Qualification и публикация
+
+Historical source `26b73e0` имеет 15/15 focused Linux cases, fmt, typed compile,
+strict Clippy и actual Rust OpenAPI export; PG-selected0. Это не положительная
+SQL-интеграция и не qualification новых selection/name changes.
+[Неизменённый historical receipt](evidence/NAMESPACE_DEVOPS_OWNER_20261019.md).
+
+Текущий owner-selection/artifact-name срез `2a2c802` требует нового 14-case gate:
+**pending, PASS не заявлен**. Предыдущий PG run завершился ошибкой; его failed
+evidence не переписывается и не считается PASS после source fixture fix.
+Projection tests вызывают настоящий selector/observer SQL в private TEMP tables
+с rollback, но не заменяют actual R HTTP/PG auth/custody case.
+
+Rust router и новые schemas зарегистрированы в source. Committed OpenAPI пока
+содержит прежний target без selection; штатная Rust generation/client refresh
+для нового поля и OwnerDeliverySelection schemas ещё pending. На source2a также
+обнаружен отсутствующий `artifact_names` re-export в compatibility shim
+`backend/src/domain.rs`; docs-only публикация не устраняет compile blocker.
+До отдельного результата нельзя заявлять current compile/API parity.
+Production image, установка, live Auth/R/OCI и Fleet publication — отдельная приёмка.

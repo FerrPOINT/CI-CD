@@ -41,13 +41,17 @@ Rollback не выбирается автоматически по ошибке 
 Новый selector содержит только deploy. Fleet может replay уже сохранённой
 явной rollback-команды, но данный пакет не создаёт first-rollback authority.
 
-Source-only проверки: четыре Rust unit selectors и один ignored PostgreSQL
-projection selector в owner_selection_tests.rs написаны, но Cargo/PG не
-выполнялись. PG case проверяет exact/latest-attempt/duplicate/path-alias SQL
+Исходниковый inventory: четыре Rust unit selectors и один ignored PostgreSQL
+projection selector в owner_selection_tests.rs. Новый общий 14-case gate pending;
+предыдущий PG run failed, source fixture fix не считается успешным повтором.
+PG case проверяет exact/latest-attempt/duplicate/path-alias SQL
 в connection-private TEMP tables с rollback, не заменяет настоящую R HTTP/PG
 проверку auth/custody из существующего fixture. До qualification нужны оба scope.
-Main регистрирует OwnerDeliverySelection и OwnerDeliverySelectionAction при
-штатной Rust OpenAPI/client generation; generated schemas вручную не правятся.
+OwnerDeliverySelection и OwnerDeliverySelectionAction уже зарегистрированы в Rust
+OpenAPI source. Committed OpenAPI пока не содержит selection/new schemas;
+штатная Rust generation/client refresh pending, generated schemas вручную не правятся.
+На source2a обнаружен отсутствующий artifact_names re-export в domain compatibility
+shim; его исправление и compile gate выполняются отдельно от этой docs-only публикации.
 
 ## Canonical artifact names
 

@@ -39,3 +39,19 @@ target policy/current/confirmed для подготовки первого DevOp
 новый issuer: readback не расшифровывает прежний child и не выдаёт dispatch,
 а Fleet обязан связать его с настоящим accepted Tracker receipt. Подробности:
 [namespace owner evidence](../NAMESPACE_DEVOPS_EVIDENCE.md).
+
+Для first-publication observation защищённая owner policy может явно задать
+optional `deliverySelection`: deploy + exact stage/job/stored artifact name.
+Поле входит в полный policy hash; отсутствие сохраняет прежние serialized bytes.
+R сопоставляет selector с latest retained attempt и проверенным candidate inventory,
+не принимает artifact authority от caller и не выбирает первый доступный элемент.
+Общее runner/observer кодирование `/` и `\` в `__` сохраняется; неоднозначные
+declarations/observations запрещены без изменения исторических rows или upload API.
+Rollback authority из отсутствия/ошибки deploy не выводится.
+
+Это не расширяет child grants и не заменяет live Auth/Tracker/lease/artifact/policy
+проверки перед effects. Source schemas подключены, но новый 14-case gate и
+generated API refresh pending; прежний failed PG не является qualification.
+Historical source26b 15-case gate не покрывает новый selector/name mapping.
+Docs-only публикация не устраняет обнаруженный domain shim compile blocker.
+[Контракт owner selection](../DEVOPS_OWNER_SELECTION.md).

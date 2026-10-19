@@ -5,6 +5,20 @@ Namespace DevOps evidence читает существующие task pipeline/pr
 миграции не добавлены; исторический child не расшифровывается. Контракт:
 [read-only owner evidence](NAMESPACE_DEVOPS_EVIDENCE.md).
 
+Optional `DeliveryPolicy.deliverySelection` (для OCI — `checks.deliverySelection`)
+хранится в существующей private owner policy, входит в её полный typed hash и
+не является SQL row или task-caller authority. При отсутствии поля serialized
+bytes/hash прежние. R возвращает только exact deploy selection/source pipeline,
+config/plan hashes и artifact tuple, не private policy body.
+Selector делает bounded SELECT существующих stages/jobs/latest attempts/artifacts;
+candidate observer сохраняет terminal ACK и retention/expiry checks и сопоставляет
+declared paths с runner names через общий `/`/`\` → `__` mapping. Duplicate names,
+encoded aliases, missing output и stale attempts запрещены; current inventory
+ограничен 32 artifacts (33-я строка закрывает observation, не обрезает его до PASS).
+Historical rows/receipts и migrations не изменены. Новая 14-case qualification
+pending; source fixture fixes не превращают прежний failed PG в успешный результат.
+[Границы selection и artifact observation](DEVOPS_OWNER_SELECTION.md).
+
 Additive0095 `task_credential_successors` хранит append-only successor custody
 под lock original task intent; 0092/0094 и trigger fingerprints неизменны.
 Source schema/application gates, включая populated upgrade, проверены;
