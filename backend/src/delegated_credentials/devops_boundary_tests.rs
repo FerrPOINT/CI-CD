@@ -16,7 +16,7 @@ fn devops() -> (TaskCredentialContext, AuthContext, SdlcWorkspaceConfig) {
 }
 
 #[test]
-fn devops_v1_pipeline_authority_does_not_admit_delivery_or_workspace_routes() {
+fn devops_route_grammar_does_not_admit_workspace_creation_or_generic_deployments() {
     let (context, central, config) = devops();
     let identity = Identity::verified(&central, &config).unwrap();
     let pipeline = Uuid::new_v4();
@@ -26,19 +26,24 @@ fn devops_v1_pipeline_authority_does_not_admit_delivery_or_workspace_routes() {
     identity
         .route("GET", &format!("/api/v1/pipelines/{pipeline}"))
         .unwrap();
+    identity.route("POST", &format!("/api/v1/projects/{}/sdlc/workspace-operations/developer%3Aoriginal/delivery-operations", context.project_id)).unwrap();
     for project in [context.project_id, Uuid::new_v4()] {
         let root = format!("/api/v1/projects/{project}/sdlc/workspace-operations");
         for (method, suffix) in [
             ("POST", ""),
-            ("GET", "/developer:original"),
-            ("GET", "/developer:original/candidate-evidence"),
-            ("POST", "/developer:original/delivery-operations"),
-            (
-                "GET",
-                "/developer:original/delivery-operations/deploy:original",
-            ),
+            ("DELETE", "/developer:original"),
+            ("POST", "/developer:original/candidate-evidence"),
+            ("POST", "/../delivery-operations"),
+            ("POST", "/bad%2Fkey/delivery-operations"),
         ] {
             assert!(identity.route(method, &format!("{root}{suffix}")).is_err());
+        }
+        let root = format!("/api/v1/projects/{project}");
+        for path in [
+            format!("{root}/deployments"),
+            format!("{root}/deployments/{pipeline}/rollback"),
+        ] {
+            assert!(identity.route("POST", &path).is_err());
         }
     }
 }

@@ -53,10 +53,10 @@ Grant hash охватывает ВСЕ поля context. В body передаё�
 
 ## Consumer и разрешённые действия
 
-DevOps delivery остаётся отдельной authority-границей. Проверенные ограничения
-v1 custody и минимальный versioned proposal описаны в
+DevOps delivery остаётся отдельной authority-границей. Closed payload внутри
+existing `variablesSha256` commitment и source consumer описаны в
 [DevOps task-child binding](contracts/DEVOPS_TASK_CHILD_AUTHORITY.md).
-Этот proposal не открывает routes и не выдаёт child legacy SAT authority.
+Old/unbound v1 journals не получают delivery authority; child не становится SAT.
 
 Отдельная typed identity, без поддельных local SAT UUID/service-account name или
 human/admin role. Только opaque PAT без browser SID/role, exact configured central
@@ -71,9 +71,11 @@ Namespace auth отдельно отвергает task grant.
 - `GET /api/v1/projects/{project_id}/pipelines/{pipeline_id}/task-workspace` для
   исходного child fingerprint/context/project. Null означает pending, не PASS.
 
-Это project-bound task readback, НЕ список проектов/чужих pipelines. Delivery,
-retry/cancel, secrets/admin, namespace, runner protocol и Git credential права
-не открыты. Legacy local SAT routes/scopes/FKs остаются отдельной веткой.
+Это project-bound task readback, НЕ список проектов/чужих pipelines. Без отдельного
+typed variables binding delivery остаётся закрытым. Source consumer binding выше
+добавляет только exact existing delivery/readback routes, не generic deployment.
+Retry/cancel, secrets/admin, namespace, runner protocol и Git credential права
+этим child не открываются. Legacy local SAT routes/scopes/FKs остаются отдельной веткой.
 
 Перед admission, enqueue, replay после ожидания lock, async prepare, spawn и
 submission readback проверяется ТОТ ЖЕ child через live Base introspection.
