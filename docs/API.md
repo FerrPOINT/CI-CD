@@ -28,10 +28,12 @@ observer одинаково в `__`; duplicate/alias/stale-attempt evidence за
 [Контракт selection](DEVOPS_OWNER_SELECTION.md).
 Historical 15-case compile/Clippy/OpenAPI результат относится только к source26b,
 PG-selected0. Merged baseline дополнительно имеет два actual PostgreSQL/HTTP
-cases и hosted gates на0c8572a. Для новых selection/name changes 13-case gate pending; старый
-failed PG не считается PASS. Source schemas зарегистрированы, но generated
-OpenAPI/client refresh и Rust qualification добавленного domain shim export ещё
-pending. Installed/live R-readback и SQL-квалификация нового selection не заявлены.
+cases и hosted gates на0c8572a. Отдельный actual source57bb gate проходит 13/13:
+9 unit, два SQL-projection PG и два R HTTP/PG. Старый failed PG не переписан.
+Штатный Rust OpenAPI export и generated client опубликованы; старые paths
+неизменны, добавлены только optional selection и две schemas, 189 operation IDs
+уникальны. [Точечная квалификация](evidence/2026-10-19-owner-selection.md#focused-local-gate)
+не является production ELF/image, installed/live R-readback или deployment proof.
 Readback не выдаёт dispatch и не доказывает принятие результата в Tracker.
 
 Existing Smart HTTP and `/api/v1/internal/task-git-check` support an opt-in own-task candidate

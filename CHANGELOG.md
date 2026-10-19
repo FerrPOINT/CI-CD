@@ -23,7 +23,7 @@
 - Optional owner policy selection связывает точный deploy artifact с исходным
   pipeline/config/plan и current retained inventory, без first-item fallback.
   Без policy response/legacy hash не расширяются; rollback автоматически не выбирается.
-  Новые 13-case и generated API gates pending; installed/live capability не заявлена.
+  Точечные 13-case и generated API gates проходят; installed/live capability не заявлена.
 
 ### Fixed
 
@@ -31,7 +31,7 @@
   прежнее кодирование artifact paths (`/` и `\` → `__`). Duplicate declarations,
   encoded aliases и duplicate current observations отклоняются без переписывания
   истории. Filesystem/upload guards сохранены. Старый failed PG не объявляется
-  PASS после source fix; shim export добавлен, compile/API refresh текущего среза pending.
+  PASS после source fix; shim export, compile и API refresh проверены отдельным actual gate.
 
 - Task-child delivery получает отдельную привязку command/artifact/target/CAS
   через существующий variables hash, current custody и повторные проверки

@@ -42,16 +42,17 @@ Rollback не выбирается автоматически по ошибке 
 явной rollback-команды, но данный пакет не создаёт first-rollback authority.
 
 Исходниковый inventory: четыре Rust unit selectors и один ignored PostgreSQL
-projection selector в owner_selection_tests.rs. Новый общий 13-case gate pending;
-предыдущий PG run failed, source fixture fix не считается успешным повтором.
+projection selector в owner_selection_tests.rs. Отдельный actual 13-case gate
+на source57bb проходит; предыдущий PG run failed и сохранён отдельно.
 PG case проверяет exact/latest-attempt/duplicate/path-alias SQL
 в connection-private TEMP tables с rollback, не заменяет настоящую R HTTP/PG
-проверку auth/custody из существующего fixture. До qualification нужны оба scope.
-OwnerDeliverySelection и OwnerDeliverySelectionAction уже зарегистрированы в Rust
-OpenAPI source. Committed OpenAPI пока не содержит selection/new schemas;
-штатная Rust generation/client refresh pending, generated schemas вручную не правятся.
-Отсутствовавший artifact_names re-export в domain compatibility shim добавлен
-при объединении с actual main; его Rust compile gate остаётся pending.
+проверку auth/custody из существующего fixture. Оба scope выполнены в этом gate:
+два SQL projections и два actual R HTTP/PG входят в 13/13, отдельно от 9 units.
+OwnerDeliverySelection и OwnerDeliverySelectionAction включены в actual Rust
+OpenAPI export и штатно regenerated client; ручных правок schemas нет.
+Domain shim re-export проверен typed compile и strict affected Clippy.
+[Scope и evidence](evidence/2026-10-19-owner-selection.md#focused-local-gate)
+не заменяют production build, installation или real deployment acceptance.
 
 ## Canonical artifact names
 
@@ -74,4 +75,5 @@ Source-only inventory дополнен пятью pure domain cases и ignored P
 с rollback, проверяя nested positive, literal/basename mismatch, duplicates,
 aliases, expired/purged/null-sha/empty artifacts и смену latest attempt.
 Существующий selector PG case также проверяет slash/backslash/repeated aliases.
-Это не результаты запуска и не замена фактической R HTTP/PG qualification.
+Эти cases фактически выполнены в точечном gate; actual R HTTP/PG проверены
+отдельными двумя cases, а не выведены из успеха SQL projections.
