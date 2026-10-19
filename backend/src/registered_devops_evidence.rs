@@ -152,7 +152,7 @@ fn retained_matches(
         || receipt.project_id != record.project_id
         || receipt.request.repository_id != repository
         || receipt.request.role != WorkspaceRole::Developer
-        || receipt.request.access != WorkspaceAccess::ReadWrite
+        || receipt.request.access != WorkspaceAccess::ReadOnly
         || receipt.request.operation_key != intent.operation_key
         || receipt.request.source_commit != intent.source_commit
         || receipt.request.binding != intent.binding

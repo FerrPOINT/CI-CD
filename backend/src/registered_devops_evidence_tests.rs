@@ -147,8 +147,26 @@ fn closed_exact_selectors_reject_authority_fields_and_unsafe_keys() {
 #[test]
 fn retained_developer_receipt_not_child_token_is_the_owner_locator() {
     let (query, record, receipt) = fixture();
+    assert_eq!(receipt.request.access, WorkspaceAccess::ReadOnly);
     assert!(retained_matches(&record, &receipt, &query, receipt.request.repository_id).is_ok());
     // The deliberately unusable ciphertext above proves no historical token needs decrypting.
+    let (mut writable_query, mut writable_record, mut writable_receipt) = fixture();
+    writable_receipt.request.access = WorkspaceAccess::ReadWrite;
+    writable_receipt.request_hash = format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&writable_receipt.request).unwrap())
+    );
+    writable_query.request_hash = writable_receipt.request_hash.clone();
+    writable_record.preparation_request = Some(sqlx::types::Json(writable_receipt.request.clone()));
+    assert!(
+        retained_matches(
+            &writable_record,
+            &writable_receipt,
+            &writable_query,
+            writable_receipt.request.repository_id
+        )
+        .is_err()
+    );
     let mut other = query.clone();
     other.assignment_id = Uuid::new_v4();
     assert!(retained_matches(&record, &receipt, &other, receipt.request.repository_id).is_err());
