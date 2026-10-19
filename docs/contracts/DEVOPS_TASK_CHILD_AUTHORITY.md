@@ -94,13 +94,18 @@ elapsed permit effects=0. Ignored Axum/PG regression переиспользуе�
 retained variables/current successor, renewal lock, HTTP denial без source и
 нулевые queue/attempt/lease effects. Typed identity в этом HTTP fixture injected;
 full middleware/Auth/Tracker positive deployment/OCI native gate этим не заявляется.
-Rust selectors написаны, НЕ executed/list-qualified. Host fmt/docs checks отдельно.
+Исправленный source `dfdfeef721bc8f43e3b9a84c0a03d53c14d45eae` проверен локально:
+13/13 exact list/run (3 boundary, 8 binding, 1 tracker-result, 1 ignored PostgreSQL),
+typed compile, fmt, scoped strict Clippy и OpenAPI byte parity проходят.
+Result SHA256: `cdeb782238f98c2e6abda44ca32c4e73b9155de5750921c429e9e0120ee018c7`.
+Обе cleanup=true, временный project пуст. Это не полный workspace release/build
+и не живая проверка Auth/Tracker/OCI или установка в постоянный стенд.
 
 Первый закреплённый Linux-прогон прошёл fmt/metadata, но остановился при
 компиляции на импорте приватного `ApiResult`. Возвращаемые типы обработчиков
 приведены к существующему `Result<Json<T>, ApiError>` соседнего модуля, без
-расширения видимости API. Для исправленного исходника Rust/PG gate ещё требуется;
-13 сценариев не выдаются за выполненные. Disposable cleanup подтверждён.
+расширения видимости API. Единственный следующий целевой Rust/PG прогон прошёл;
+прежний отказ и его evidence сохранены отдельно. Disposable cleanup подтверждён.
 
 Related: [task credential](../FORGE_DELEGATED_CREDENTIAL_CONTRACT.md),
 [renewal/custody](../TASK_CREDENTIAL_RENEWAL.md),
