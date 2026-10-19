@@ -79,12 +79,15 @@ pipeline/deployment/rollback, renew a lease, mint a child, approve production or
 
 ## Integration and Qualification
 
-Main owns the root module declaration, router merge, OpenAPI schemas and Fleet collector. Apply
-the companion common-wiring proposal before Rust qualification. No shared registrations, Cargo
-metadata, dependencies, source pins, SQL or generated API files are changed by this donor.
+The root module, protected router and schemas are now registered. The actual Rust-generated
+OpenAPI adds only this route and five schemas; all previous paths/schemas are identical and
+operation IDs remain unique. Dependencies, source pins and SQL are unchanged.
 
 New source units cover selectors, exact retained custody, legacy/mixed denial, configuration
 ownership, candidate truth, missing reader, fixed error redaction, pointers/empty inventories,
 target binding and read-lock semantics. The existing isolated central-reader middleware test is
 extended to exercise the actual new route for R, foreign, human, child, revoked and SAT inputs.
-All Rust cases require execution by the existing owned QA; host source checks are not Rust proof.
+All fifteen selected Linux cases pass in the existing owned QA, together with fmt, typed compile,
+strict Clippy and actual OpenAPI generation. PG-selected0: middleware's missing-DB503 is not a
+positive SQL integration claim. Image, installation, live R and Fleet publication remain separate.
+[Qualification evidence](evidence/NAMESPACE_DEVOPS_OWNER_20261019.md).

@@ -15,6 +15,12 @@
 
 ## [Unreleased]
 
+### Added
+
+- Registered namespace reader получает read-only DevOps evidence: исходный
+  Developer pipeline/receipt, проверенные candidate artifacts и target CAS.
+  Чтение не выдаёт полномочий на deployment или Tracker acceptance.
+
 ### Fixed
 
 - Task-child delivery получает отдельную привязку command/artifact/target/CAS

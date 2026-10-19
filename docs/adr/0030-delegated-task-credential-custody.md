@@ -33,3 +33,9 @@ Consumer opt-in, default disabled; accepted runtime/pins не меняются �
 Git write ограничен owner-pinned source/ref; producer остаётся отдельной
 зависимостью. Pipeline child не получает Git-доступ.
 Wire, env и границы: [контракт](../FORGE_DELEGATED_CREDENTIAL_CONTRACT.md).
+
+Registered namespace R отдельно читает факты исходного Developer pipeline и
+target policy/current/confirmed для подготовки первого DevOps child. Это не
+новый issuer: readback не расшифровывает прежний child и не выдаёт dispatch,
+а Fleet обязан связать его с настоящим accepted Tracker receipt. Подробности:
+[namespace owner evidence](../NAMESPACE_DEVOPS_EVIDENCE.md).
