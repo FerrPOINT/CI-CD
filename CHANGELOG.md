@@ -17,6 +17,12 @@
 
 ### Fixed
 
+- Task-child delivery получает отдельную привязку command/artifact/target/CAS
+  через существующий variables hash, current custody и повторные проверки
+  полномочий перед effects. V1 schema/scopes и legacy SAT путь сохранены;
+  старые credentials без typed binding не получают delivery authority.
+  Исходниковый пакет ещё требует Rust/PG и live-приёмки, а также Fleet producer.
+
 - Frontend сохраняет префикс установки в API и маршрутах, включая `/forge/`.
   Runner принимает зарегистрированный PDLC4 source volume; необязательный
   `CICD_RUNNER_CGROUP_PARENT` задаётся оператором для Compose jobs и typed build.
