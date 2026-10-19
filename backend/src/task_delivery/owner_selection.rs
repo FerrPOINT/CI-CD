@@ -110,18 +110,28 @@ pub(super) async fn resolve(
     policy.validate()?;
     // Same source pipeline and latest attempt as the existing candidate observer. Colliding
     // declared path encodings, duplicate job names and duplicate artifacts never choose a first.
-    let ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT ar.id FROM artifacts ar JOIN jobs j ON j.id=ar.job_id \
+    let rows: Vec<(Uuid, Vec<String>)> = sqlx::query_as(
+        "SELECT ar.id,j.artifact_paths FROM artifacts ar JOIN jobs j ON j.id=ar.job_id \
          JOIN stages s ON s.id=j.stage_id \
          WHERE s.pipeline_id=$1 AND s.name=$2 AND j.name=$3 AND ar.name=$4 \
          AND ar.attempt_id=(SELECT a.id FROM execution_attempts a WHERE a.job_id=j.id ORDER BY a.attempt_no DESC LIMIT 1) \
          AND ar.purged_at IS NULL AND ar.expires_at>clock_timestamp() \
-         AND (SELECT count(*) FROM unnest(j.artifact_paths) AS d(path) \
-           WHERE replace(replace(d.path,'/','__'),chr(92),'__')=ar.name)=1 \
          ORDER BY ar.id LIMIT 2",
     ).bind(candidate.pipeline_id).bind(&policy.stage_name).bind(&policy.job_name)
         .bind(&policy.artifact_name).fetch_all(connection).await?;
-    Ok(Some(selected(candidate, &ids)?))
+    ensure!(rows.len() == 1, "owner selection is missing or ambiguous");
+    let (artifact, paths) = &rows[0];
+    let names = crate::domain::artifact_names::declared_artifact_names(paths)
+        .map_err(anyhow::Error::msg)?;
+    ensure!(
+        names
+            .iter()
+            .filter(|name| *name == &policy.artifact_name)
+            .count()
+            == 1,
+        "owner selection is not an exact declared artifact"
+    );
+    Ok(Some(selected(candidate, &[*artifact])?))
 }
 
 #[cfg(test)]

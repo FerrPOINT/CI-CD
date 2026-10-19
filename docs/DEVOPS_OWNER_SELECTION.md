@@ -48,3 +48,26 @@ projection selector в owner_selection_tests.rs написаны, но Cargo/PG 
 проверку auth/custody из существующего fixture. До qualification нужны оба scope.
 Main регистрирует OwnerDeliverySelection и OwnerDeliverySelectionAction при
 штатной Rust OpenAPI/client generation; generated schemas вручную не правятся.
+
+## Canonical artifact names
+
+`domain::artifact_names::artifact_name_from_declared_path` сохраняет прежнее
+runner-кодирование: `/` и `\` превращаются в `__`, без другой нормализации.
+Embedded и external runner используют общий `declared_artifact_names` до
+чтения/upload: duplicate paths и разные paths с одним encoded name запрещены.
+Проверки filesystem paths остаются прежними; HTTP protocol/headers не меняются.
+
+Общий hook заменяет literal `ar.name=declared.name` в `candidate_jobs`:
+SQL получает все имена именно latest attempt без DISTINCT и проверяет retention,
+expiry, sha presence, positive size; Rust сопоставляет через общий mapping.
+Дубликаты observed names, отсутствующий output и declared aliases запрещены.
+Исторические attempts не используются вместо current artifact; строки не правятся.
+Owner selector использует тот же helper вместо второго SQL replace expression.
+
+Source-only inventory дополнен пятью pure domain cases и ignored PG case
+`candidate_jobs_nested_names_stale_rows_duplicates_and_aliases_fail_closed`.
+Последний вызывает настоящий observer SQL на transaction-local projection tables
+с rollback, проверяя nested positive, literal/basename mismatch, duplicates,
+aliases, expired/purged/null-sha/empty artifacts и смену latest attempt.
+Существующий selector PG case также проверяет slash/backslash/repeated aliases.
+Это не результаты запуска и не замена фактической R HTTP/PG qualification.

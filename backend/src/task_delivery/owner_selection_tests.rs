@@ -162,11 +162,14 @@ async fn owner_selection_pg_exact_latest_attempt_duplicates_and_path_aliases() {
         .execute(&mut *tx)
         .await
         .unwrap();
-    sqlx::query("UPDATE jobs SET artifact_paths=ARRAY['dist/bundle.tar','dist__bundle.tar']")
-        .execute(&mut *tx)
-        .await
-        .unwrap();
-    assert!(resolve(&mut tx, Some(&p), &c).await.is_err());
+    for alias in ["dist__bundle.tar", "dist\\bundle.tar", "dist/bundle.tar"] {
+        sqlx::query("UPDATE jobs SET artifact_paths=$1")
+            .bind(vec!["dist/bundle.tar", alias])
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        assert!(resolve(&mut tx, Some(&p), &c).await.is_err());
+    }
     sqlx::query("UPDATE jobs SET artifact_paths=ARRAY['dist/bundle.tar']")
         .execute(&mut *tx)
         .await
