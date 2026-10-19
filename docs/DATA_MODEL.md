@@ -1,5 +1,10 @@
 # Дата-модель Forge CI/CD
 
+Namespace DevOps evidence читает существующие task pipeline/preparation journals
+и owner manifests под прежними catalog/namespace/project locks. Таблицы и
+миграции не добавлены; исторический child не расшифровывается. Контракт:
+[read-only owner evidence](NAMESPACE_DEVOPS_EVIDENCE.md).
+
 Additive0095 `task_credential_successors` хранит append-only successor custody
 под lock original task intent; 0092/0094 и trigger fingerprints неизменны.
 Source schema/application gates, включая populated upgrade, проверены;

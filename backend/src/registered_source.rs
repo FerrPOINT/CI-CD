@@ -253,10 +253,32 @@ pub async fn observe(
 ) -> Result<VerifiedSource, ApiError> {
     // The dedicated route keeps reader auth; this lease closes catalog/namespace relocation.
     let mut tx = crate::repository_catalog::catalog_write_lease(state, repository).await?;
+    let observation = observe_on(
+        state,
+        &mut tx,
+        repository,
+        namespace,
+        expected,
+        delivery_configuration_name,
+    )
+    .await?;
+    tx.commit().await.map_err(ApiError::internal)?;
+    Ok(observation)
+}
+
+/// The caller retains the existing catalog/namespace lease for the complete observation.
+pub(crate) async fn observe_on(
+    state: &AppState,
+    connection: &mut sqlx::PgConnection,
+    repository: Uuid,
+    namespace: NamespaceRef,
+    expected: ExpectedSource,
+    delivery_configuration_name: Option<&str>,
+) -> Result<VerifiedSource, ApiError> {
     let row = sqlx::query("SELECT r.group_id,r.kind,r.ready,r.storage_name,g.slug||'/'||r.slug AS public_name,b.command
         FROM repository_catalog r JOIN git_groups g ON g.id=r.group_id
         JOIN forge_namespace_bindings b ON b.resource_id=g.id WHERE r.id=$1")
-        .bind(repository).fetch_optional(&mut *tx).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?;
+        .bind(repository).fetch_optional(&mut *connection).await.map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?;
     let command: OwnerCommand =
         serde_json::from_value(row.try_get("command").map_err(ApiError::internal)?)
             .map_err(|_| unavailable())?;
@@ -291,7 +313,7 @@ pub async fn observe(
     }
     let policies = sqlx::query_as::<_,(String,Vec<String>)>(
         "SELECT default_branch,protected_branches FROM projects WHERE repository_id=$1 ORDER BY id LIMIT 257")
-        .bind(repository).fetch_all(&mut *tx).await.map_err(ApiError::internal)?;
+        .bind(repository).fetch_all(&mut *connection).await.map_err(ApiError::internal)?;
     let (commit, default) = native_source(&path, &expected).await?;
     let protected_refs = protected_refs(&default, policies)?;
     // Same catalog/namespace fence, exact repo and name; never a human catalog listing.
@@ -301,7 +323,7 @@ pub async fn observe(
         )
         .bind(repository)
         .bind(name)
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut *connection)
         .await
         .map_err(ApiError::internal)?;
         Some(exact_delivery_configuration(
@@ -325,7 +347,6 @@ pub async fn observe(
         observed_at: Utc::now(),
         delivery_configuration,
     };
-    tx.commit().await.map_err(ApiError::internal)?;
     Ok(observation)
 }
 

@@ -273,15 +273,17 @@ async fn namespace_delivery_reader_middleware_preserves_machine_and_human_bounda
 
         // The actual route reaches its fail-closed missing-DB boundary only after reader auth.
         let config = crate::config::RuntimeConfig::from_env_source(|_| None, false).unwrap();
-        let actual = crate::namespace::routes().with_state(Arc::new(AppState {
-            pool: None,
-            namespace_admission_pool: None,
-            auth_secret: None,
-            git: config.git.to_git_config(),
-            config,
-            running_jobs: None,
-            rate_limiter: Arc::new(crate::rate_limit::RateLimiter::default()),
-        }));
+        let actual = crate::namespace::routes()
+            .merge(crate::registered_devops_evidence::routes())
+            .with_state(Arc::new(AppState {
+                pool: None,
+                namespace_admission_pool: None,
+                auth_secret: None,
+                git: config.git.to_git_config(),
+                config,
+                running_jobs: None,
+                rate_limiter: Arc::new(crate::rate_limit::RateLimiter::default()),
+            }));
         for (selector, expected) in [
             ("pipeline", StatusCode::SERVICE_UNAVAILABLE),
             ("", StatusCode::BAD_REQUEST),
@@ -302,6 +304,47 @@ async fn namespace_delivery_reader_middleware_preserves_machine_and_human_bounda
                 .await
                 .unwrap();
             assert_eq!(response.status(), expected, "{selector}");
+        }
+        let evidence_uri = format!(
+            "/api/v1/namespace-repositories/00000000-0000-0000-0000-000000000003/devops-evidence{query}pipeline\
+             &project_id=00000000-0000-0000-0000-000000000004\
+             &source_pipeline_id=00000000-0000-0000-0000-000000000010\
+             &operation_key=developer:original&source_commit={}\
+             &request_hash={}&task_id=00000000-0000-0000-0000-000000000011\
+             &root_task_id=00000000-0000-0000-0000-000000000011\
+             &assignment_id=00000000-0000-0000-0000-000000000012\
+             &execution_id=00000000-0000-0000-0000-000000000013&fencing_token=1",
+            "b".repeat(40),
+            "c".repeat(64),
+        );
+        for (token, expected) in [
+            ("sdlc_pat_reader", StatusCode::SERVICE_UNAVAILABLE),
+            ("sdlc_pat_foreign", StatusCode::FORBIDDEN),
+            ("sdlc_pat_write_only", StatusCode::FORBIDDEN),
+            ("sdlc_pat_task_child", StatusCode::FORBIDDEN),
+            ("sdlc_pat_revoked", StatusCode::UNAUTHORIZED),
+            (human.as_str(), StatusCode::FORBIDDEN),
+            (
+                "forge_sat_fixture_not_a_central_reader",
+                StatusCode::UNAUTHORIZED,
+            ),
+        ] {
+            let response = actual
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(&evidence_uri)
+                        .header("authorization", format!("Bearer {token}"))
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                expected,
+                "namespace DevOps reader boundary"
+            );
         }
         return;
     }

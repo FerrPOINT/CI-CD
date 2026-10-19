@@ -38,6 +38,7 @@ pub mod git_host;
 pub mod namespace;
 pub mod platform;
 pub mod pulls;
+pub mod registered_devops_evidence;
 pub mod registered_source;
 pub mod repository_catalog;
 pub mod repository_sync;

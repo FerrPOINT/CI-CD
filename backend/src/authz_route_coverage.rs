@@ -32,6 +32,11 @@ fn namespace_owner_and_reader_routes_never_grant_human_roles() {
             RouteAccess::NamespaceReader,
         ),
         (
+            "GET",
+            "/api/v1/namespace-repositories/018f3c59-38f6-7c2a-bc55-081eb78cbf17/devops-evidence",
+            RouteAccess::NamespaceReader,
+        ),
+        (
             "POST",
             "/api/v1/internal/task-git-check",
             RouteAccess::System,

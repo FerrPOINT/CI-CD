@@ -1,7 +1,11 @@
 //! Owner-policy static-artifact delivery. No scheduler, Git merge or shell executor.
 pub mod delegated;
 mod files;
+#[cfg(all(test, unix))]
+#[path = "namespace_evidence_pg_tests.rs"]
+mod namespace_evidence_pg_tests;
 pub mod oci;
+pub(crate) mod owner_evidence;
 pub mod postgres;
 mod probes;
 pub(crate) mod tracker;

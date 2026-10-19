@@ -124,6 +124,7 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::namespace::readback,
         crate::repository_catalog::verified_repository,
         crate::repository_catalog::verified_repository_source,
+        crate::registered_devops_evidence::readback,
         crate::repository_catalog::verified_repositories,
         crate::repository_catalog::list,
         crate::repository_catalog::create,
@@ -228,6 +229,9 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
     components(schemas(
         crate::registered_source::VerifiedSource,
         crate::registered_source::DeliveryConfigurationReadback,
+        crate::registered_devops_evidence::DevopsEvidence,
+        crate::task_delivery::owner_evidence::TargetEvidence,
+        crate::task_delivery::owner_evidence::ManifestEvidence,
         cicd_domain::repository_sync::Provider,cicd_domain::repository_sync::Direction,
         cicd_domain::repository_sync::Settings,cicd_domain::repository_sync::SaveConnection,
         cicd_domain::repository_sync::CheckConnection,cicd_domain::repository_sync::CheckResult,

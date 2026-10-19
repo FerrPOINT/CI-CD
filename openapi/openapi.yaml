@@ -2448,6 +2448,121 @@ paths:
                 $ref: '#/components/schemas/VerifiedRepository'
         '403':
           description: Foreign namespace
+  /api/v1/namespace-repositories/{id}/devops-evidence:
+    get:
+      tags:
+      - namespaces
+      operationId: readback
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: registry_instance_id
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: namespace_id
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: base_ref
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: base_commit
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: delivery_configuration_name
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: project_id
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: source_pipeline_id
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: operation_key
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: source_commit
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: request_hash
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: task_id
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: root_task_id
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: assignment_id
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: execution_id
+        in: query
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: fencing_token
+        in: query
+        required: true
+        schema:
+          type: integer
+          format: int64
+      responses:
+        '200':
+          description: ''
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevopsEvidence'
+        '400':
+          description: Invalid exact selectors
+        '401':
+          description: Central reader authentication required
+        '403':
+          description: Registered namespace reader required
+        '404':
+          description: Original owner evidence missing
+        '409':
+          description: Source, configuration, candidate or target binding changed
+        '503':
+          description: Owner evidence unavailable; no dispatch
   /api/v1/namespace-repositories/{id}/source:
     get:
       tags:
@@ -7179,6 +7294,26 @@ components:
         updated_at:
           type: string
           format: date-time
+    DevopsEvidence:
+      type: object
+      required:
+      - schema
+      - source
+      - candidate
+      - target
+      - dispatchAllowed
+      properties:
+        candidate:
+          $ref: '#/components/schemas/CandidateEvidenceReadback'
+        dispatchAllowed:
+          type: boolean
+          description: R proves observations, not Tracker acceptance, a current task lease or execution authority.
+        schema:
+          type: string
+        source:
+          $ref: '#/components/schemas/VerifiedSource'
+        target:
+          $ref: '#/components/schemas/TargetEvidence'
     DiffFile:
       type: object
       required:
@@ -7636,6 +7771,27 @@ components:
       properties:
         revoked:
           type: boolean
+    ManifestEvidence:
+      oneOf:
+      - type: object
+        required:
+        - state
+        properties:
+          state:
+            type: string
+            enum:
+            - absent
+      - type: object
+        required:
+        - sha256
+        - state
+        properties:
+          sha256:
+            type: string
+          state:
+            type: string
+            enum:
+            - present
     ManualJobStartResult:
       type: object
       required:
@@ -9806,6 +9962,35 @@ components:
           type: string
         sha:
           type: string
+    TargetEvidence:
+      type: object
+      required:
+      - observedAt
+      - targetKind
+      - policySha256
+      - taskExecution
+      - current
+      - confirmed
+      properties:
+        confirmed:
+          $ref: '#/components/schemas/ManifestEvidence'
+        current:
+          $ref: '#/components/schemas/ManifestEvidence'
+        observedAt:
+          type: string
+          format: date-time
+        policySha256:
+          type: string
+          description: Digest of the full owner policy, not of the redacted projection below.
+        targetKind:
+          $ref: '#/components/schemas/TargetKind'
+        taskExecution:
+          $ref: '#/components/schemas/TaskExecutionPolicy'
+    TargetKind:
+      type: string
+      enum:
+      - static
+      - oci
     TaskCredentialContext:
       type: object
       required:
@@ -9881,6 +10066,33 @@ components:
       oneOf:
       - $ref: '#/components/schemas/DeliveryReadback'
       - $ref: '#/components/schemas/OciDeliveryReadback'
+    TaskExecutionPolicy:
+      type: object
+      description: Explicit owner-published target binding. Never supplied by the calling agent.
+      required:
+      - environment
+      - environmentId
+      - repositoryId
+      - trackerInstanceId
+      - trackerProjectId
+      - holderSubject
+      properties:
+        environment:
+          type: string
+        environmentId:
+          type: string
+          format: uuid
+        holderSubject:
+          type: string
+        repositoryId:
+          type: string
+          format: uuid
+        trackerInstanceId:
+          type: string
+        trackerProjectId:
+          type: string
+          format: uuid
+      additionalProperties: false
     TaskPullEvidence:
       type: object
       required:
