@@ -164,7 +164,10 @@ async fn exercise(pool: sqlx::PgPool, negative: bool) {
     );
     let commit = git(&source, &["rev-parse", "HEAD"]);
     let (mut query, record, mut receipt) = fixture();
-    let mut stored = StoredCredential::from_value(&record.delegated_credential.unwrap().0).unwrap();
+    let mut credential = record.delegated_credential.unwrap().0;
+    // Match 0094's envelope shape, but keep an invalid nonce/ciphertext: R must never decrypt it.
+    credential["encrypted_child"] = json!("v1:AA==:AA==");
+    let mut stored = StoredCredential::from_value(&credential).unwrap();
     assert_ne!(stored.subject.to_string(), READER);
     stored.context.intent.source_commit = commit.clone();
     stored.context_hash = context_digest(&stored.context).unwrap();
@@ -368,6 +371,7 @@ async fn exercise(pool: sqlx::PgPool, negative: bool) {
             "encrypted_child",
             "sdlc_pat_",
             "fixture-private-ciphertext",
+            "v1:AA==:AA==",
             root.0.to_str().unwrap(),
         ] {
             assert!(
