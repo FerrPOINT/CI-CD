@@ -1,6 +1,7 @@
 """Regression checks for isolated CLI integration gates."""
 
 import hashlib
+import importlib.util
 import json
 import re
 import shlex
@@ -14,6 +15,23 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class CliIntegrationGateTests(unittest.TestCase):
+    def test_build_contract_test_edits_select_only_the_static_tooling_gate(self):
+        spec = importlib.util.spec_from_file_location('forge_packaged_selector', ROOT / 'scripts/vendor/base_quality_selection.py')
+        selection = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(selection)
+        for path in ('scripts/tests/test_backend_dockerfile.py', 'scripts/tests/test_ci_contract_checks.py'):
+            with self.subTest(path=path):
+                plan = selection.plan(ROOT, profile='build', changed=[path])
+                self.assertEqual([gate['id'] for gate in plan['gates']], ['tooling:build-contracts'])
+        for path, required in (('backend/src/main.rs', 'backend:build'),
+                               ('frontend/src/main.tsx', 'frontend:build')):
+            self.assertIn(required, [gate['id'] for gate in selection.plan(ROOT, profile='build', changed=[path])['gates']])
+        unknown = selection.plan(ROOT, profile='build', changed=['scripts/tests/future_unknown.py'])
+        self.assertTrue({'backend:build', 'frontend:build'} <= {gate['id'] for gate in unknown['gates']})
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
+        docs = workflow.split('\n  docs:\n', 1)[1].split('\n  minimum-rust:\n', 1)[0]
+        self.assertIn('scripts.tests.test_backend_dockerfile scripts.tests.test_ci_contract_checks.CliIntegrationGateTests', docs)
+
     def test_ordinary_build_selects_runtime_and_openapi_bins_without_workspace_defaults(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         step = workflow.split("- name: Build changed application after isolated units", 1)[1].split("- name:", 1)[0]

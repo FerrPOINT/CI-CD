@@ -14,6 +14,12 @@ inputs. Его изменение выбирает backend без frontend и м
 product-local literal includes у cache bootstrap и privileged coordinator;
 внешние Base helpers сохраняют отдельный pinned SDK contract.
 
+Правки `test_backend_dockerfile.py`/`test_ci_contract_checks.py` выбирают один
+`tooling:build-contracts` без frontend/backend builds и без подготовки окружения.
+Это чистые script/config checks; они также входят в обычный CI script step.
+Неизвестные paths сохраняют conservative fallback, реальные backend/frontend
+inputs по-прежнему выбирают свои producers. SDK и quality pin не меняются.
+
 Применить [стандарт Base](https://github.com/FerrPOINT/services-base/blob/197ead9d9b6cf6901e8f9dd31f43f719885502c3/docs/BUILD_PERFORMANCE.md) без изменения runtime и SDK/UI/skills pins.
 Product-owned команды описаны в .quality-gate.json. При разработке/сборке —
 unit/static; integration/slow/full coverage — вручную перед релизом.

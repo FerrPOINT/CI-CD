@@ -89,6 +89,7 @@ jobs:
         run: |
           python3 scripts/check_cache_tooling.py
           python3 -B -m unittest discover -s scripts/tests -p 'test_cache_tooling.py' -q
+          python3 -B -m unittest scripts.tests.test_backend_dockerfile scripts.tests.test_ci_contract_checks.CliIntegrationGateTests -q
           python3 -m py_compile scripts/verify_docs.py scripts/generate_sbom.py scripts/scan_secrets.py scripts/forge_backup.py
           bash -n scripts/backup.sh scripts/backup-stand.sh scripts/restore.sh scripts/verify-backup.sh scripts/scan_container_images.sh
   minimum-rust:
