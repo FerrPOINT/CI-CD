@@ -2,6 +2,8 @@
 
 import hashlib
 import json
+import re
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -12,6 +14,17 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class CliIntegrationGateTests(unittest.TestCase):
+    def test_ordinary_build_selects_runtime_and_openapi_bins_without_workspace_defaults(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        step = workflow.split("- name: Build changed application after isolated units", 1)[1].split("- name:", 1)[0]
+        command = re.search(r"run: (cargo build [^\n]+)", step)
+        self.assertIsNotNone(command)
+        arguments = shlex.split(command[1])
+        self.assertNotIn("--workspace", arguments)
+        self.assertIn("--locked", arguments)
+        self.assertEqual({arguments[i + 1] for i, arg in enumerate(arguments) if arg == "--bin"},
+                         {"cicd-server", "forge-runner", "openapi-dump"})
+
     def test_cli_database_is_scoped_to_cli_step(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
         backend = workflow.split("\n  backend:\n", 1)[1].split("\n  frontend:\n", 1)[0]

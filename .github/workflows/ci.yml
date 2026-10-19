@@ -175,7 +175,7 @@ jobs:
           cargo test --locked --manifest-path tests/cache-protocol/Cargo.toml --lib
       - name: Build changed application after isolated units
         if: needs.changes.outputs.backend_build == 'true'
-        run: cargo build --locked --workspace
+        run: cargo build --locked -p cicd-server --bin cicd-server --bin forge-runner --bin openapi-dump
         env:
           SQLX_OFFLINE: "true"
       - name: openapi drift gate

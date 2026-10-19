@@ -16,6 +16,7 @@
       ".namespace-base-revision"
     ],
     "backend": [
+      "scripts/postgres-delivery.py",
       "scripts/check_cache_tooling.py",
       "scripts/tests/test_cache_tooling.py",
       "scripts/vendor/base_forge_job_cache.py",
@@ -38,7 +39,7 @@
       "profiles": ["fast", "unit", "build", "release"],
       "argv": ["{python}", "-B", "-m", "unittest", "discover", "-s", "scripts/tests", "-p", "test_cache_tooling.py", "-q"],
       "cwd": ".",
-      "inputs": ["scripts/check_cache_tooling.py", "scripts/tests/test_cache_tooling.py", ".quality-gate.json", "backend/src/runner_cache.rs"],
+      "inputs": ["scripts/check_cache_tooling.py", "scripts/tests/test_cache_tooling.py", ".quality-gate.json", "backend/src/runner_cache.rs", "backend/src/task_delivery/postgres.rs"],
       "cacheable": true,
       "test_tier": "unit"
     },
@@ -366,6 +367,7 @@
       ],
       "cwd": "backend",
       "inputs": [
+        "scripts/postgres-delivery.py",
         "scripts/vendor/base_forge_job_cache.py",
         "scripts/vendor/base-build-cache-policy.json",
         "scripts/vendor/base-forge-cache-tooling.json",

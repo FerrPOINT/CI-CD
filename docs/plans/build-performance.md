@@ -4,6 +4,16 @@ Ordinary backend CI передаёт готовый workspace executable
 `${CARGO_TARGET_DIR:-target}/debug/openapi-dump` в прежний OpenAPI drift gate.
 Аргумент output path и сравнение YAML сохранены; повторный Cargo graph не нужен.
 
+Обычный CI выбирает только `cicd-server`, `forge-runner` и `openapi-dump`.
+Оба production Docker recipes выбирают два поставляемых runtime binaries,
+включая dependency stage; manual/release workspace checks сохраняются отдельно.
+
+Встроенный `scripts/postgres-delivery.py` входит в backend component и artifact
+inputs. Его изменение выбирает backend без frontend и меняет server key даже
+при прежних размере/timestamp. `scripts/check_cache_tooling.py` проверяет
+product-local literal includes у cache bootstrap и privileged coordinator;
+внешние Base helpers сохраняют отдельный pinned SDK contract.
+
 Применить [стандарт Base](https://github.com/FerrPOINT/services-base/blob/197ead9d9b6cf6901e8f9dd31f43f719885502c3/docs/BUILD_PERFORMANCE.md) без изменения runtime и SDK/UI/skills pins.
 Product-owned команды описаны в .quality-gate.json. При разработке/сборке —
 unit/static; integration/slow/full coverage — вручную перед релизом.
