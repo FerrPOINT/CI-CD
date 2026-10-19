@@ -294,4 +294,4 @@ fn protect<S: Clone + Send + Sync + 'static>(router: Router<S>) -> Router<S> {
 
 #[cfg(test)]
 #[path = "registered_devops_evidence_tests.rs"]
-mod tests;
+pub(crate) mod tests;

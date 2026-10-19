@@ -2,7 +2,7 @@ use super::*;
 use crate::delegated_credentials::TaskCredentialContext;
 use serde_json::json;
 
-fn fixture() -> (
+pub(crate) fn fixture() -> (
     EvidenceQuery,
     TaskPipelineJournal,
     WorkspaceOperationReceipt,
