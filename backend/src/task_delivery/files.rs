@@ -28,7 +28,7 @@ pub(super) fn plain(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn open_read(path: &Path) -> anyhow::Result<fs::File> {
+pub(super) fn open_read(path: &Path) -> anyhow::Result<fs::File> {
     plain(path)?;
     let mut options = fs::OpenOptions::new();
     options.read(true);

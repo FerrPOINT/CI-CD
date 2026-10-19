@@ -7,6 +7,8 @@ use tokio::{
     process::Command,
 };
 
+#[path = "oci_owner_evidence.rs"]
+pub(super) mod owner_evidence;
 #[path = "oci_probe.rs"]
 mod remote_probe;
 #[path = "oci_transport.rs"]

@@ -37,7 +37,7 @@ pub struct Binding {
     pub rollback_manifest_sha256: Option<String>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TargetKind {
     Static,
@@ -398,7 +398,7 @@ async fn current(
     Ok((record, binding))
 }
 
-fn policy(
+pub(super) fn policy(
     state: &AppState,
     project: Uuid,
 ) -> Result<(TargetKind, String, probes::TaskExecutionPolicy), ApiError> {

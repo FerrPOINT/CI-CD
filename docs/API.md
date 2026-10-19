@@ -17,6 +17,10 @@ exact source readback и optional delivery configuration того же repositor
 Прежний GET без `/source` сохраняет catalog object с обязательным `kind`.
 Human catalogs не меняются. [Контракт reader](NAMESPACE_DELIVERY_CONFIGURATION_READER.md).
 
+Source-only registered-R slice для first-publication candidate/target CAS facts:
+[Namespace DevOps owner evidence](NAMESPACE_DEVOPS_EVIDENCE.md). Common wiring и Rust gate
+ещё не выполнены; dispatch/Tracker acceptance authority этот readback не выдаёт.
+
 Existing Smart HTTP and `/api/v1/internal/task-git-check` support an opt-in own-task candidate
 variant with exact confirmed source binding, fresh Developer authority and
 single-ref CAS. Legacy authentication and ordinary post-receive remain separate;

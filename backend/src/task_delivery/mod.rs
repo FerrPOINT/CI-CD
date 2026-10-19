@@ -2,6 +2,7 @@
 pub mod delegated;
 mod files;
 pub mod oci;
+pub(crate) mod owner_evidence;
 pub mod postgres;
 mod probes;
 pub(crate) mod tracker;

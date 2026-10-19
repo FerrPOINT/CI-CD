@@ -19,7 +19,7 @@ pub struct DeliveryPolicy {
 }
 
 /// Explicit owner-published target binding. Never supplied by the calling agent.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TaskExecutionPolicy {
     pub environment: String,
