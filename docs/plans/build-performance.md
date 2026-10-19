@@ -79,3 +79,8 @@ Source/selector contracts проверены через RED/GREEN; actual config
 TypeScript только двух config files проверены на существующем Node 22.20.0 без
 install/build. Cache hits, artifact identity и CPU/RAM новой native сборки этим
 source срезом не квалифицированы; они остаются отдельной общей вехой.
+
+Исключён только корневой config: неизвестный `frontend/nested/vitest.config.ts`
+остаётся production input. Сам static contract читает оба configs, tsconfig и
+два recipes; эти inputs включены в его receipt и tooling component. Изменение
+потребляемого файла не получает старый REUSED contract result.

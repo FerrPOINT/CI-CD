@@ -4,7 +4,12 @@
   "components": {
     "tooling": [
       "scripts/tests/test_backend_dockerfile.py",
-      "scripts/tests/test_ci_contract_checks.py"
+      "scripts/tests/test_ci_contract_checks.py",
+      "frontend/vite.config.ts",
+      "frontend/vitest.config.ts",
+      "frontend/tsconfig.json",
+      "frontend/Dockerfile",
+      "frontend/Dockerfile.umbrella"
     ],
     "docs": [
       "docs/**",
@@ -43,7 +48,7 @@
       "profiles": ["fast", "unit", "build", "integrated", "release"],
       "argv": ["{python}", "-B", "-m", "unittest", "scripts.tests.test_backend_dockerfile", "scripts.tests.test_ci_contract_checks.CliIntegrationGateTests", "-q"],
       "cwd": ".",
-      "inputs": ["scripts/tests/test_backend_dockerfile.py", "scripts/tests/test_ci_contract_checks.py", ".quality-gate.json", "backend/Dockerfile", "backend/Dockerfile.umbrella", ".github/workflows/ci.yml", ".github/workflows/release.yml", "scripts/vendor/base_quality_selection.py", "scripts/vendor/base-quality-tooling.json", ".quality-tooling-revision"],
+      "inputs": ["scripts/tests/test_backend_dockerfile.py", "scripts/tests/test_ci_contract_checks.py", "frontend/vite.config.ts", "frontend/vitest.config.ts", "frontend/tsconfig.json", "frontend/Dockerfile", "frontend/Dockerfile.umbrella", ".quality-gate.json", "backend/Dockerfile", "backend/Dockerfile.umbrella", ".github/workflows/ci.yml", ".github/workflows/release.yml", "scripts/vendor/base_quality_selection.py", "scripts/vendor/base-quality-tooling.json", ".quality-tooling-revision"],
       "cacheable": true,
       "test_tier": "static"
     },

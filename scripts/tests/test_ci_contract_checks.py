@@ -48,7 +48,7 @@ class CliIntegrationGateTests(unittest.TestCase):
                 self.assertEqual(len(copies(build)), 1)
                 self.assertFalse(any('vitest.config.ts' in arg for arg in copies(unit)[0]))
                 self.assertIn('--exclude=vitest.config.ts', copies(build)[0])
-                self.assertIn('--exclude=**/vitest.config.ts', copies(build)[0])
+                self.assertNotIn('--exclude=**/vitest.config.ts', copies(build)[0])
                 self.assertNotIn('--exclude=vite.config.ts', copies(build)[0])
                 self.assertIn('pnpm test:unit && pnpm exec tsc --noEmit', unit)
                 self.assertIn('from=unit,source=/tmp/frontend-unit-check', build)
@@ -58,6 +58,10 @@ class CliIntegrationGateTests(unittest.TestCase):
         selection = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(selection)
         manifest = selection.load(ROOT)
+        contract = next(gate for gate in manifest['gates'] if gate['id'] == 'tooling:build-contracts')
+        for consumed in ('frontend/vite.config.ts', 'frontend/vitest.config.ts', 'frontend/tsconfig.json',
+                         'frontend/Dockerfile', 'frontend/Dockerfile.umbrella'):
+            self.assertTrue(selection.matches(consumed, contract['inputs']), consumed)
         build = next(gate for gate in manifest['gates'] if gate['id'] == 'frontend:build')
         path = 'frontend/vitest.config.ts'
         self.assertTrue(selection.matches(path, build['exclude_inputs']))
@@ -65,7 +69,7 @@ class CliIntegrationGateTests(unittest.TestCase):
         cases = [([path], False), (['frontend/src/test-setup.ts'], False)]
         cases.extend(([neighbor], True) for neighbor in ('frontend/vite.config.ts',
                      'frontend/src/main.tsx', 'frontend/tsconfig.json', 'frontend/package.json',
-                     'frontend/pnpm-lock.yaml'))
+                     'frontend/pnpm-lock.yaml', 'frontend/nested/vitest.config.ts'))
         cases.extend([([path, 'frontend/vite.config.ts'], True),
                       ([path, 'backend/src/main.rs'], False)])
         for paths, compile_frontend in cases:
