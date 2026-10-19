@@ -20,8 +20,18 @@
 - Registered namespace reader получает read-only DevOps evidence: исходный
   Developer pipeline/receipt, проверенные candidate artifacts и target CAS.
   Чтение не выдаёт полномочий на deployment или Tracker acceptance.
+- Optional owner policy selection связывает точный deploy artifact с исходным
+  pipeline/config/plan и current retained inventory, без first-item fallback.
+  Без policy response/legacy hash не расширяются; rollback автоматически не выбирается.
+  Новые 13-case и generated API gates pending; installed/live capability не заявлена.
 
 ### Fixed
+
+- Embedded/external runner, candidate observer и owner selector используют общее
+  прежнее кодирование artifact paths (`/` и `\` → `__`). Duplicate declarations,
+  encoded aliases и duplicate current observations отклоняются без переписывания
+  истории. Filesystem/upload guards сохранены. Старый failed PG не объявляется
+  PASS после source fix; shim export добавлен, compile/API refresh текущего среза pending.
 
 - Task-child delivery получает отдельную привязку command/artifact/target/CAS
   через существующий variables hash, current custody и повторные проверки

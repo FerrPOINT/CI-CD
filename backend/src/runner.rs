@@ -2118,10 +2118,12 @@ async fn collect_declared_artifacts(
     if artifact_paths.is_empty() {
         return Ok(());
     }
+    let names = crate::domain::artifact_names::declared_artifact_names(artifact_paths)
+        .map_err(ApiError::bad_request)?;
     let workspace = tokio::fs::canonicalize(workspace)
         .await
         .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
-    for artifact_path in artifact_paths {
+    for (artifact_path, name) in artifact_paths.iter().zip(names) {
         let file = resolve_workspace_artifact(&workspace, artifact_path).await?;
         let metadata = tokio::fs::metadata(&file)
             .await
@@ -2135,7 +2137,6 @@ async fn collect_declared_artifacts(
         let bytes = tokio::fs::read(&file)
             .await
             .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
-        let name = artifact_name_from_declared_path(artifact_path);
         crate::platform::store_job_artifact_with_config(
             pool,
             artifacts,
@@ -2189,10 +2190,6 @@ async fn resolve_workspace_artifact(
         ));
     }
     Ok(file)
-}
-
-fn artifact_name_from_declared_path(path: &str) -> String {
-    path.replace(['/', '\\'], "__")
 }
 
 #[derive(Debug, sqlx::FromRow)]

@@ -1754,6 +1754,7 @@ mod tests {
                     acceptance_path: "/acceptance".into(),
                     acceptance_body_sha256: sha(b"accepted\n"),
                     task_execution: None,
+                    delivery_selection: None,
                 },
             };
             let owner = Owner {

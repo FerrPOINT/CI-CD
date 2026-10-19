@@ -5,6 +5,7 @@
 //! infrastructure supplies adapters for persistent and external resources.
 
 use serde::{Deserialize, Serialize};
+pub mod artifact_names;
 pub mod image_build;
 pub mod sdlc_workspace;
 pub mod task_delivery;

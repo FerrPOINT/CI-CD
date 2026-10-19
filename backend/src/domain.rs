@@ -4,6 +4,7 @@
 //! package (`backend/domain`). This shim keeps existing paths compiling
 //! during the migration to the layered workspace architecture.
 
+pub use cicd_domain::artifact_names;
 pub use cicd_domain::image_build;
 pub use cicd_domain::sdlc_workspace;
 pub use cicd_domain::task_delivery;
