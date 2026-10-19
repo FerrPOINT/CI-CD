@@ -461,6 +461,18 @@ async fn delivery_pg_retained_variables_current_child_lock_and_http_denial_witho
         crate::api::sdlc_workspace::task_pipeline::renewal::pg_tests::seed(&pool, &stored, pipeline).await;
         sqlx::query("UPDATE pipelines SET variables=$2 WHERE id=$1").bind(pipeline).bind(variables_value(&variables).unwrap()).execute(&pool).await.unwrap();
         let mut tx = pool.begin().await.unwrap();
+        // Delivery owns one connection; occupying the other three must not
+        // prevent its namespace guard from using the same transaction.
+        let mut occupied = Vec::new();
+        for _ in 0..3 { occupied.push(pool.acquire().await.unwrap()); }
+        let denied = tokio::time::timeout(std::time::Duration::from_secs(1),
+            crate::repository_catalog::require_project_writable_on(&mut tx, context.project_id))
+            .await.expect("namespace guard must not acquire another pool slot").unwrap_err();
+        // The fixture deliberately has no process-wide owner configuration.
+        // Pool saturation must preserve that fail-closed policy result.
+        assert_eq!(denied.status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(denied.message, "namespace_owner_not_configured");
+        drop(occupied);
         let (_, actual) = current(&mut tx, &identity, pipeline).await.unwrap();
         assert_eq!(canonical_hash(&actual).unwrap(), canonical_hash(&variables.forge_task_delivery).unwrap());
         let mut competing = pool.begin().await.unwrap();

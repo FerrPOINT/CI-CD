@@ -323,11 +323,20 @@ pub(crate) async fn catalog_write_lease_on_pool(
     Ok(tx)
 }
 pub async fn require_project_writable(pool: &PgPool, project: Uuid) -> Result<(), ApiError> {
-    let group: Option<Uuid>=sqlx::query_scalar("SELECT r.group_id FROM projects p LEFT JOIN repository_catalog r ON r.id=p.repository_id WHERE p.id=$1").bind(project).fetch_optional(pool).await.map_err(catalog_database_error)?.flatten();
+    let mut connection = pool.acquire().await.map_err(catalog_database_error)?;
+    require_project_writable_on(&mut connection, project).await
+}
+
+/// Reuse the caller's transaction instead of waiting for a second pool slot.
+pub(crate) async fn require_project_writable_on(
+    connection: &mut sqlx::PgConnection,
+    project: Uuid,
+) -> Result<(), ApiError> {
+    let group: Option<Uuid>=sqlx::query_scalar("SELECT r.group_id FROM projects p LEFT JOIN repository_catalog r ON r.id=p.repository_id WHERE p.id=$1").bind(project).fetch_optional(&mut *connection).await.map_err(catalog_database_error)?.flatten();
     if let Some(group) = group {
-        crate::namespace::binding(pool, group).await?;
+        crate::namespace::binding_on(&mut *connection, group).await?;
     }
-    let lifecycle: Option<String> = sqlx::query_scalar("SELECT b.state FROM projects p JOIN repository_catalog r ON r.id=p.repository_id JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE p.id=$1").bind(project).fetch_optional(pool).await.map_err(catalog_database_error)?;
+    let lifecycle: Option<String> = sqlx::query_scalar("SELECT b.state FROM projects p JOIN repository_catalog r ON r.id=p.repository_id JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE p.id=$1").bind(project).fetch_optional(&mut *connection).await.map_err(catalog_database_error)?;
     if lifecycle.is_some_and(|s| s != "active") {
         return Err(ApiError::conflict("namespace_resource_read_only"));
     }
