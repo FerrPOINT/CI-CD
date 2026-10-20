@@ -2,7 +2,8 @@
 
 Статус: **согласованная цель**, реализация в работе, runtime не активирован.
 Решение владельца 2026-10-19; общий договор — services-base ADR 0010 и
-`docs/contracts/UNIFIED_SPACES_V1.md` в зависимой feature-ветке.
+[контракт единого пространства](https://github.com/FerrPOINT/services-base/blob/feat/unified-spaces-20261019/docs/contracts/UNIFIED_SPACES_V1.md)
+в зависимой feature-ветке Base. Ссылка доступна после публикации этой ветки.
 
 ## Ответственность
 

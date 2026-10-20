@@ -1,5 +1,7 @@
 # Архитектура Forge CI/CD
 
+Admin-owned Space lifecycle использует общий SDK owner v2, необязательное ID-preserving group mapping, прежний Git lease и подтверждённый execution drain. [Границы source candidate](SPACE_LIFECYCLE_V2.md); полного admission/serving cohort этот participant не заменяет.
+
 Opt-in central child для existing task pipeline отделён от legacy SAT identity
 и хранится в прежнем journal с live reauthorization перед effects, без нового
 issuer/controller. [ADR-0030](adr/0030-delegated-task-credential-custody.md).

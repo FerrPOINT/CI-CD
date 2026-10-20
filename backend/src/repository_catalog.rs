@@ -310,12 +310,11 @@ pub(crate) async fn catalog_write_lease_on_pool(
         crate::namespace::binding_on(&mut *tx, group)
             .await?
             .ok_or_else(|| ApiError::service_unavailable("namespace_projection_missing"))?;
-        let state: Option<String> =
-            sqlx::query_scalar("SELECT state FROM forge_namespace_bindings WHERE resource_id=$1")
-                .bind(group)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(catalog_database_error)?;
+        let state: Option<String> = sqlx::query_scalar("SELECT forge_effective_group_state($1)")
+            .bind(group)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(catalog_database_error)?;
         if state.as_deref() != Some("active") {
             return Err(ApiError::conflict("namespace_resource_read_only"));
         }
@@ -336,7 +335,11 @@ pub(crate) async fn require_project_writable_on(
     if let Some(group) = group {
         crate::namespace::binding_on(&mut *connection, group).await?;
     }
-    let lifecycle: Option<String> = sqlx::query_scalar("SELECT b.state FROM projects p JOIN repository_catalog r ON r.id=p.repository_id JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE p.id=$1").bind(project).fetch_optional(&mut *connection).await.map_err(catalog_database_error)?;
+    let lifecycle: Option<String> = sqlx::query_scalar("SELECT forge_effective_group_state($1)")
+        .bind(group)
+        .fetch_one(&mut *connection)
+        .await
+        .map_err(catalog_database_error)?;
     if lifecycle.is_some_and(|s| s != "active") {
         return Err(ApiError::conflict("namespace_resource_read_only"));
     }
@@ -353,7 +356,11 @@ pub async fn require_storage_writable(pool: &PgPool, storage: &str) -> Result<()
     if let Some(group) = group {
         crate::namespace::binding(pool, group).await?;
     }
-    let lifecycle: Option<String>=sqlx::query_scalar("SELECT b.state FROM repository_catalog r JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE r.storage_name=$1").bind(storage).fetch_optional(pool).await.map_err(catalog_database_error)?;
+    let lifecycle: Option<String> = sqlx::query_scalar("SELECT forge_effective_group_state($1)")
+        .bind(group)
+        .fetch_one(pool)
+        .await
+        .map_err(catalog_database_error)?;
     if lifecycle.is_some_and(|state| state != "active") {
         return Err(ApiError::conflict("namespace_resource_read_only"));
     }
@@ -501,10 +508,17 @@ pub async fn attach(
         .execute(&mut *tx)
         .await
         .map_err(catalog_database_error)?;
-    let binding = crate::namespace::binding_on(&mut *tx, input.group_id)
+    crate::namespace::binding_on(&mut *tx, input.group_id)
         .await?
         .ok_or_else(|| ApiError::conflict("managed_git_group_required"))?;
-    if binding.state != "active" {
+    if sqlx::query_scalar::<_, Option<String>>("SELECT forge_effective_group_state($1)")
+        .bind(input.group_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(catalog_database_error)?
+        .as_deref()
+        != Some("active")
+    {
         return Err(ApiError::conflict("namespace_resource_read_only"));
     }
     let group_slug: String = sqlx::query_scalar("SELECT slug FROM git_groups WHERE id=$1")
@@ -623,7 +637,7 @@ pub async fn create(
     crate::namespace::binding_on(&mut *lease, group)
         .await?
         .ok_or_else(|| ApiError::service_unavailable("namespace_projection_missing"))?;
-    let group_slug: Option<String> = sqlx::query_scalar("SELECT g.slug FROM git_groups g JOIN forge_namespace_bindings b ON b.resource_id=g.id WHERE g.id=$1 AND b.state='active'").bind(group).fetch_optional(&mut *lease).await.map_err(catalog_database_error)?;
+    let group_slug: Option<String> = sqlx::query_scalar("SELECT g.slug FROM git_groups g JOIN forge_namespace_bindings b ON b.resource_id=g.id WHERE g.id=$1 AND forge_effective_group_state(g.id)='active'").bind(group).fetch_optional(&mut *lease).await.map_err(catalog_database_error)?;
     let group_slug =
         group_slug.ok_or_else(|| ApiError::conflict("namespace_resource_read_only"))?;
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,1))")
@@ -699,7 +713,7 @@ pub async fn connect_delivery(
         return Err(ApiError::not_found());
     }
     let mut tx = catalog_write_lease(&state, id).await?;
-    let row = sqlx::query("SELECT r.group_id,b.state FROM repository_catalog r LEFT JOIN forge_namespace_bindings b ON b.resource_id=r.group_id WHERE r.id=$1").bind(id).fetch_optional(&mut *tx).await.map_err(catalog_database_error)?.ok_or_else(ApiError::not_found)?;
+    let row = sqlx::query("SELECT r.group_id,forge_effective_group_state(r.group_id) AS state FROM repository_catalog r WHERE r.id=$1").bind(id).fetch_optional(&mut *tx).await.map_err(catalog_database_error)?.ok_or_else(ApiError::not_found)?;
     if row.get::<Option<Uuid>, _>("group_id").is_some()
         && row.get::<Option<String>, _>("state").as_deref() != Some("active")
     {

@@ -94,6 +94,10 @@ read PAT не пишет, git:write не заменяет membership developer, 
 также проходят. Это не actual clone/push, не проверка общей Space policy и не
 ограничение lifetime всего дочернего Git IO; эти gates остаются следующими.
 
+## Lifecycle owner v2: source candidate
+
+[Необязательная Git-группа, original operation/revision, archive fence и real drain](SPACE_LIFECYCLE_V2.md) реализованы в source. Текущая native квалификация хранится отдельно в workspace report. Human Space admission, explicit new group attach и весь serving cohort ещё не завершены.
+
 ## Контракт следующего этапа
 
 [Owner provenance, Git/CI границы и совместимость v2](SPACE_ADMISSION_CONTRACT_V2.md)

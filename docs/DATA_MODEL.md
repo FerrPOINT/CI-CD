@@ -1,5 +1,7 @@
 # Дата-модель Forge CI/CD
 
+Аддитивная0096 сохраняет strict-v1 binding/receipts и добавляет Space catalog/operation journal с необязательной Git-группой. Effective lifecycle и общий v1/v2 fence описаны в [SPACE_LIFECYCLE_V2](SPACE_LIFECYCLE_V2.md). Это source candidate; рабочая БД не мигрирована.
+
 Namespace DevOps evidence читает существующие task pipeline/preparation journals
 и owner manifests под прежними catalog/namespace/project locks. Таблицы и
 миграции не добавлены; исторический child не расшифровывается. Контракт:

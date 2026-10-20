@@ -211,6 +211,16 @@ pub const ROUTE_POLICIES: &[RoutePolicy] = &[
     ),
     RoutePolicy {
         methods: GET,
+        path: "/api/v2/spaces/{registry}/{space}/owner-state",
+        access: RouteAccess::NamespaceOwner,
+    },
+    RoutePolicy {
+        methods: PUT,
+        path: "/api/v2/spaces/{registry}/{space}/owner-state",
+        access: RouteAccess::NamespaceOwner,
+    },
+    RoutePolicy {
+        methods: GET,
         path: "/api/v1/namespace-resources/git_group/{id}",
         access: RouteAccess::NamespaceOwner,
     },

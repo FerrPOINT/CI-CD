@@ -8,17 +8,17 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-struct Work {
-    group: Uuid,
-    project: Uuid,
-    pipeline: Uuid,
-    job: Uuid,
-    attempt: Uuid,
-    lease: Uuid,
-    storage: String,
+pub(super) struct Work {
+    pub(super) group: Uuid,
+    pub(super) project: Uuid,
+    pub(super) pipeline: Uuid,
+    pub(super) job: Uuid,
+    pub(super) attempt: Uuid,
+    pub(super) lease: Uuid,
+    pub(super) storage: String,
 }
 
-async fn work(pool: &PgPool, runner: Option<Uuid>) -> Work {
+pub(super) async fn work(pool: &PgPool, runner: Option<Uuid>) -> Work {
     let status = if runner.is_some() {
         "running"
     } else {
@@ -84,7 +84,7 @@ async fn work(pool: &PgPool, runner: Option<Uuid>) -> Work {
     w
 }
 
-fn completion(w: &Work, credential: &str) -> Request<Body> {
+pub(super) fn completion(w: &Work, credential: &str) -> Request<Body> {
     Request::post(format!("/api/v1/runner/leases/{}/complete", w.lease))
         .header("authorization", format!("Bearer {credential}"))
         .header("content-type", "application/json")

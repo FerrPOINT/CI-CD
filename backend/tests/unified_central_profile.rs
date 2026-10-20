@@ -3,6 +3,8 @@
 mod git_scope;
 #[path = "support/group_drain.rs"]
 mod group_drain;
+#[path = "support/space_owner.rs"]
+mod space_owner;
 use axum::{Json, Router, routing::get};
 use cicd::central_auth::{link_central_user, try_verified_central};
 use sqlx::PgPool;
@@ -56,7 +58,7 @@ async fn unified_central_profile_keeps_local_roles_and_rejects_machine_or_expire
     let router=Router::new().route("/oidc/jwks",get(||async{Json(serde_json::json!({"keys":[]}))}))
  .route("/auth/tokens/introspect",get(move|uri:axum::http::Uri,headers:axum::http::HeaderMap|{
   let profile=expected.read().unwrap().clone();async move{
-   assert_eq!(uri.query(),Some("include_lifetime=true"));
+   assert!(matches!(uri.query(), None | Some("include_lifetime=true")),"known legacy/v2 introspection contracts only");
    assert_eq!(headers.get("authorization").unwrap(),"Bearer sdlc_pat_fixture_product_roles");
    Json(serde_json::json!({"sub":profile.subject,"email":"fixture@example.test","subject_role":profile.role,"scopes":profile.scopes,"observed_at":chrono::Utc::now(),"expires_at":chrono::Utc::now()+chrono::Duration::seconds(profile.expires_in)}))
   }
@@ -235,6 +237,7 @@ async fn unified_central_profile_keeps_local_roles_and_rejects_machine_or_expire
         "late JIT INSERT is rolled back, not just hidden by an error response"
     );
     git_scope::verify(&pool, profile.clone()).await;
+    space_owner::verify(&pool, profile.clone()).await;
     group_drain::verify(&pool).await;
     server.abort();
     pool.close().await;

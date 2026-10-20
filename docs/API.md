@@ -1,5 +1,7 @@
 # API v1 Specification — Forge CI/CD
 
+Source candidate общего Space lifecycle добавляет отдельный owner v2 GET/PUT, без изменения строгих v1 DTO: [протокол и ограничения](SPACE_LIFECYCLE_V2.md). Endpoint не означает готовность полного admission или установленного cohort.
+
 Source candidate task-child delivery использует existing v1 `variablesSha256`
 commitment с closed kind-tagged payload; old/unbound credentials остаются закрытыми.
 Existing exact workspace/candidate/delivery routes и DTO не меняются, SAT не
@@ -78,6 +80,12 @@ repository/project и отдельные `git:read`/`git:write` scopes. Native p
 Custom hooks и human ACL сохраняются. Ограниченный initial bootstrap для
 admin/operator описан ниже; SAT его не получает. [Git hosting](GIT_HOSTING.md#8-аутентификация).
 Новые routes/credentials/scopes не вводятся; Rust/PG и installed-image qualification pending.
+
+## Общий Space owner v2
+
+| Метод | Путь | Контракт |
+| --- | --- | --- |
+| GET, PUT | `/api/v2/spaces/{registry}/{space}/owner-state` | [Source candidate и ограничения lifecycle](SPACE_LIFECYCLE_V2.md) |
 
 ## Typed Image Build In Task Pipeline
 

@@ -114,6 +114,8 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::delivery_configs::push_get,
         crate::delivery_configs::push_put,
         crate::namespace::apply,
+        crate::space_owner::apply,
+        crate::space_owner::readback,
         crate::task_links::link,
         crate::task_links::list,
         crate::task_links::evidence,
@@ -227,6 +229,8 @@ pub(crate) const PIPELINE_TRIGGER_SOURCE_SCHEDULE: &str = "schedule";
         crate::api::pipelines_routes::get_test_report, crate::api::pipelines_routes::upload_test_report,
     ),
     components(schemas(
+        pdlc_shared::space_lifecycle::SpaceOwnerCommandV2,
+        pdlc_shared::space_lifecycle::SpaceOwnerReadbackV2,
         crate::registered_source::VerifiedSource,
         crate::registered_source::DeliveryConfigurationReadback,
         crate::registered_devops_evidence::DevopsEvidence,

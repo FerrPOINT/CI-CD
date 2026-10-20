@@ -127,6 +127,19 @@ pub async fn apply(
         .await
         .map_err(ApiError::internal)?;
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+        .bind(format!(
+            "shared-space:{}:{}",
+            command.namespace.registry_instance_id, command.namespace.namespace_id
+        ))
+        .execute(&mut *tx)
+        .await
+        .map_err(ApiError::internal)?;
+    if sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM forge_space_catalog WHERE registry_instance_id=$1 AND space_id=$2)")
+        .bind(command.namespace.registry_instance_id).bind(command.namespace.namespace_id)
+        .fetch_one(&mut *tx).await.map_err(ApiError::internal)? {
+        return Err(ApiError::conflict("shared_space_requires_owner_v2"));
+    }
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
         .bind(id.to_string())
         .execute(&mut *tx)
         .await
@@ -263,6 +276,7 @@ pub fn routes() -> axum::Router<Arc<AppState>> {
             axum::routing::get(readback).put(apply),
         )
         .route_layer(axum::middleware::from_fn(owner_auth))
+        .merge(crate::space_owner::routes())
         .merge(
             axum::Router::new()
                 .route(
