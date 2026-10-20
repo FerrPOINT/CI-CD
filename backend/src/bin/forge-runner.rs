@@ -1167,9 +1167,9 @@ async fn run_shell_command_in_scope(
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        command_process.as_std_mut().process_group(
-            i32::try_from(processes.group).map_err(|_| UnconfirmedExecution)?,
-        );
+        command_process
+            .as_std_mut()
+            .process_group(i32::try_from(processes.group).map_err(|_| UnconfirmedExecution)?);
     }
     command_process.current_dir(cwd).stdin(Stdio::null());
     for (name, value) in secret_env {
