@@ -298,9 +298,16 @@ pub(super) async fn verify(
         task_input
     );
     // Seed an actual existing hidden link: replay must not bypass common visibility.
+    let hidden_bare = root.join(format!("{hidden_name}.git"));
+    let hidden_tree = git(&hidden_bare, &["mktree"]).await;
     let hidden_base = git(
-        &root.join(format!("{hidden_name}.git")),
-        &["rev-parse", "refs/heads/task/current"],
+        &hidden_bare,
+        &["commit-tree", &hidden_tree, "-m", "Hidden fixture source"],
+    )
+    .await;
+    git(
+        &hidden_bare,
+        &["update-ref", "refs/heads/task/current", &hidden_base],
     )
     .await;
     let inserted = sqlx::query(
@@ -344,7 +351,14 @@ pub(super) async fn verify(
     println!(
         "PR task-link replay common visibility, scopes, role, encoded ID and original SQL deadline: PASS"
     );
-    let hook_path = bare.join("hooks/reference-transaction");
+    // Previous Git transport cases deliberately configure a custom hooksPath.
+    // Exercise the actual hook Git resolves, rather than an inactive default file.
+    let hooks = git(
+        &bare,
+        &["rev-parse", "--path-format=absolute", "--git-path", "hooks"],
+    )
+    .await;
+    let hook_path = std::path::PathBuf::from(hooks).join("reference-transaction");
     let original = tokio::fs::read(&hook_path).await.ok();
     let slow = format!(
         "#!/bin/sh\nset -eu\ncat >/dev/null\nif test \"$1\" = prepared; then\n touch '{}'\n sleep 4\n touch '{}'\nfi\n",
@@ -369,10 +383,24 @@ pub(super) async fn verify(
         "native process group cleanup stops the late hook"
     );
     assert_eq!(tokio::fs::read(&hook_path).await.unwrap(), slow.as_bytes());
+    for reference in ["qa-pr-source", "qa-pr-target"] {
+        assert!(
+            !bare.join(format!("refs/heads/{reference}.lock")).exists(),
+            "terminated Git must clean its own {reference} lock before the next writer"
+        );
+    }
     profile.write().unwrap().expires_in = 300;
-    let deny = b"#!/bin/sh\ncat >/dev/null\nif test \"$1\" = prepared; then exit 1; fi\n";
-    hook(&hook_path, deny).await;
+    let denied_marker = root.join("pr-denied-prepared");
+    let deny = format!(
+        "#!/bin/sh\ncat >/dev/null\nif test \"$1\" = prepared; then touch '{}'; exit 1; fi\n",
+        denied_marker.display()
+    );
+    hook(&hook_path, deny.as_bytes()).await;
     post(&http, origin, &action, &json!({"action":"merge"}), 409).await;
+    assert!(
+        denied_marker.exists(),
+        "custom hook, not a stale ref lock, denied merge"
+    );
     assert_eq!(
         git(&bare, &["rev-parse", "refs/heads/qa-pr-target"]).await,
         base

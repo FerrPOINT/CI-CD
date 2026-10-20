@@ -60,6 +60,13 @@ Merge-tree/commit-tree и update-ref используют существующи
 Git owner. Он завершает только свою process group и ждёт cleanup до освобождения
 namespace lease/MutationGuard. HTTP disconnect не отменяет detached owner.
 
+При истечении исходного срока owned process group сначала получает SIGTERM:
+Git выполняет собственный cleanup ref locks. Ожидание ограничено250ms, затем
+оставшаяся группа получает SIGKILL, включая hook, игнорирующий TERM. Это время
+очистки не продлевает допуск и не разрешает публикацию после proof deadline.
+Принудительное завершение не доказывает Git rollback: unknown outcome по-прежнему
+требует exact readback. Lock-файлы не удаляются по предположению об их владельце.
+
 Перед native ref preparation private hook выполняет исходный custom/task hook,
 затем проверяет оставшееся время исходного proof через прежний conservative
 BOOTTIME/wall cap. Custom hook bytes не переписываются. Одна Git transaction
@@ -87,5 +94,11 @@ Native fixture использует реальные HTTP/Git/SQL: scope/role/fo
 counter+PR rollback после original expiry в SQL, close/reopen, custom prepared
 hook deadline и cleanup, exact успешная publication, timeout после committed
 hook с реальным ref readback и без повторного запуска, task-link read deny.
+Fixture создаёт настоящий source commit скрытого репозитория перед проверкой
+stored replay. Native hook разрешается через git rev-parse --git-path hooks,
+включая configured core.hooksPath. Проверяются отсутствие own ref locks после
+штатного TERM cleanup, достижение запрещающего hook и следующий успешный merge;
+конфликт из-за stale lock не считается доказательством работы custom hook.
+
 Подготовленные cases и компиляция не являются native PASS, live Admin/IAB
 приёмкой, общей миграцией или full gate. Результаты и версии — в task report.

@@ -122,3 +122,8 @@ Task-link replay не обходит текущий допуск: при акт�
 write permit/роль/lifecycle до stored readback. Новая связь и проверки исходного
 proof после SQL wait входят в одну транзакцию; прежний source commit при replay
 не переснимать. OFF сохраняет исторический original-key readback.
+
+При native timeout дать Git ограниченное время на собственный signal cleanup
+ref locks перед SIGKILL остальной owned group. Это не продлевает proof. Сохранять
+unknown outcome; не удалять locks по предположению. Fixture custom hook обязан
+использовать фактический core.hooksPath и доказывать достижение hook.

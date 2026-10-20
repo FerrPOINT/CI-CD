@@ -160,7 +160,16 @@ pub(super) async fn output(
         other => {
             #[cfg(unix)]
             if let Some(pid) = pid {
+                // Let Git's signal handler remove its own ref locks before
+                // forcing the remaining owned group down. Never unlink locks
+                // by guessing which process created them.
                 // SAFETY: this invocation created and owns this process group.
+                unsafe {
+                    libc::kill(-(pid as i32), libc::SIGTERM);
+                }
+                let _ = tokio::time::timeout(Duration::from_millis(250), child.wait()).await;
+                // A custom hook can ignore TERM even after its Git parent exits.
+                // SAFETY: this is still the group owned by this invocation.
                 unsafe {
                     libc::kill(-(pid as i32), libc::SIGKILL);
                 }

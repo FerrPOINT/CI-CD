@@ -6,10 +6,16 @@ transaction и original proof до native publication. GET связанных з
 использует общий repository read. Qualification и durable unknown recovery
 остаются отдельными gates; runtime и исторические migrations не изменены.
 
+Native deadline cleanup сначала даёт Git250ms на SIGTERM, затем завершает
+остаток owned process group через SIGKILL. Локальные ref locks убирает сам Git;
+при forced termination нельзя удалять неизвестные locks или считать rollback
+доказанным. Неизвестная publication требует exact ref readback.
+
 Source candidate: [общий read admission Git-браузера и PR](adr/0036-repository-browse-read-admission.md)
-использует decoded owner identity и original proof. Native QA пока не выполнена:
-resource preflight остановил запуск до компилятора. Это не installed behavior,
-не разрешение PR write/merge и не готовность всего serving cohort.
+использует decoded owner identity и original proof. Read adapters и PR write
+покрываются scoped native HTTP/Git/SQL fixture; exact inputs и результаты находятся
+в отчёте задачи. Это source candidate, не установленная политика и не готовность
+всего serving cohort.
 
 Opt-in source-only [own-task candidate Git](OWN_TASK_CANDIDATE_GIT.md) проверяет
 confirmed source/current Developer и exact OID CAS через native hooks. Только
