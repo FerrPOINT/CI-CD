@@ -325,16 +325,19 @@ pub async fn delete_repository_core(
 }
 
 /// Checks Git Smart HTTP access.
-/// Public repositories allow unauthenticated read only. Legacy
+/// With common admission OFF, public repositories allow unauthenticated read only. Legacy
 /// `CICD_GIT_TOKEN` is still accepted as an operator bypass; otherwise, when
 /// `CICD_AUTH_SECRET` is configured, Git accepts Bearer/JWT/PAT credentials
 /// from an Authorization header or Basic auth password and checks project role.
+/// After activation every human path additionally requires owner Space admission;
+/// public/legacy are not fallbacks. Task V1 is fenced by the entry handlers.
 /// Private access retains bootstrap permission and the original central proof deadline.
 async fn check_repo_access(
     state: &std::sync::Arc<AppState>,
     repo: &str,
     headers: &HeaderMap,
     operation: GitOperation,
+    admission_active: bool,
 ) -> Result<GitAccess, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     let name = crate::repository_catalog::resolve_storage(pool, repo).await?;
@@ -348,11 +351,14 @@ async fn check_repo_access(
             .await
             .map_err(ApiError::internal)?;
 
-    if operation == GitOperation::Read && visibility.as_deref() == Some("public") {
+    if !admission_active
+        && operation == GitOperation::Read
+        && visibility.as_deref() == Some("public")
+    {
         return Ok(GitAccess::default());
     }
 
-    if legacy_git_token_matches(&state.git, headers)? {
+    if !admission_active && legacy_git_token_matches(&state.git, headers)? {
         return if visibility.is_some() {
             Ok(GitAccess {
                 bootstrap: true,
@@ -364,6 +370,11 @@ async fn check_repo_access(
     }
 
     let Some(auth_secret) = state.auth_secret.as_deref() else {
+        if admission_active {
+            return Err(ApiError::service_unavailable(
+                "central_auth_required_for_space_admission",
+            ));
+        }
         if configured_git_token(&state.git).is_none() && visibility.is_none() {
             return Err(ApiError::not_found());
         }
@@ -386,6 +397,31 @@ async fn check_repo_access(
         GitOperation::Write => "git:write",
     };
     identity.require_scope(required_scope)?;
+    let common = if admission_active {
+        let actor = identity.central.as_ref().ok_or_else(ApiError::forbidden)?;
+        Some(
+            crate::space_admission::repository(
+                pool,
+                &name,
+                actor,
+                operation == GitOperation::Write,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    // A project-token constraint still applies when common visibility grants read.
+    if common.is_some() && operation == GitOperation::Read {
+        if let Some(project) = claims.token_project_id {
+            git_repository_linked_to_project(pool, &name, project).await?;
+        }
+        identity.require_scope(required_scope)?;
+        return Ok(GitAccess {
+            bootstrap: false,
+            deadline: common.as_ref().map(deadline::GitDeadline::admission),
+        });
+    }
     let bootstrap = if claims.role == "service_account" {
         let project_id = claims.token_project_id.ok_or_else(ApiError::forbidden)?;
         git_repository_linked_to_project(pool, &name, project_id).await?;
@@ -411,10 +447,15 @@ async fn check_repo_access(
     identity.require_scope(required_scope)?;
     Ok(GitAccess {
         bootstrap,
-        deadline: identity
-            .central
+        deadline: common
             .as_ref()
-            .map(deadline::GitDeadline::identity),
+            .map(deadline::GitDeadline::admission)
+            .or_else(|| {
+                identity
+                    .central
+                    .as_ref()
+                    .map(deadline::GitDeadline::identity)
+            }),
     })
 }
 
@@ -563,13 +604,26 @@ pub async fn git_info_refs(
             return ApiError::bad_request("service parameter is required").into_response();
         }
     };
+    let admission_active = match state.pool.as_ref() {
+        Some(pool) => match crate::space_admission::active(pool).await {
+            Ok(active) => active,
+            Err(error) => return error.into_response(),
+        },
+        None => return ApiError::unavailable().into_response(),
+    };
+    // Existing task V1 is a different capability; it cannot inherit human admission.
+    if admission_active && headers.contains_key(crate::task_git::HEADER) {
+        return ApiError::forbidden().into_response();
+    }
     let access = match crate::task_git::admit(&state, &repo, &headers).await {
         Err(e) => return git_access_error(e),
         Ok(Some(_)) => GitAccess::default(),
-        Ok(None) => match check_repo_access(&state, &repo, &headers, operation).await {
-            Ok(access) => access,
-            Err(e) => return git_access_error(e),
-        },
+        Ok(None) => {
+            match check_repo_access(&state, &repo, &headers, operation, admission_active).await {
+                Ok(access) => access,
+                Err(e) => return git_access_error(e),
+            }
+        }
     };
     let pool = match state.pool.as_ref() {
         Some(pool) => pool,
@@ -811,6 +865,17 @@ pub async fn git_service_endpoint(
         "receive-pack" => (service, GitOperation::Write),
         _ => return ApiError::bad_request("unsupported git service").into_response(),
     };
+    let admission_active = match state.pool.as_ref() {
+        Some(pool) => match crate::space_admission::active(pool).await {
+            Ok(active) => active,
+            Err(error) => return error.into_response(),
+        },
+        None => return ApiError::unavailable().into_response(),
+    };
+    // Existing task V1 is a different capability; it cannot inherit human admission.
+    if admission_active && headers.contains_key(crate::task_git::HEADER) {
+        return ApiError::forbidden().into_response();
+    }
     let task = match crate::task_git::admit(&state, &repo, &headers).await {
         Ok(task) => task,
         Err(e) => return git_access_error(e),
@@ -818,7 +883,7 @@ pub async fn git_service_endpoint(
     let access = if task.is_some() {
         GitAccess::default()
     } else {
-        match check_repo_access(&state, &repo, &headers, operation).await {
+        match check_repo_access(&state, &repo, &headers, operation, admission_active).await {
             Ok(allowed) => allowed,
             Err(e) => return git_access_error(e),
         }

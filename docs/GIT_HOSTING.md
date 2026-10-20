@@ -208,6 +208,13 @@ curl -H "x-git-token: <TOKEN>" ...
 
 `CICD_GIT_INTERNAL_TOKEN` ведёт себя так же строго по границе окружения: пустое значение отключает проверку только для trusted-local hook traffic, shared deployment обязан задать уникальный токен. Устаревшее значение `forge-internal-dev-token` отклоняется при старте backend.
 
+Opt-in source общего пространства (migration0097, default OFF) требует central
+human identity и Admin policy на discovery/RPC/aliases до public/legacy fallback.
+Unbound repository закрыт; read admission не выдаёт write роль. Нужна точная
+v2 revision mapping и active состояние для записи. Старый task V1 не наследует
+human admission. Включать partial source нельзя; [cohort и оставшиеся gates](UNIFIED_SPACE_SURFACES.md#opt-in-human-git-space-admission-source-candidate).
+Существующая установка и поведение выше описаны отдельно от этого source slice.
+
 ## 9. Ограничения MVP и следующий этап
 
 - Каталог Git groups/repository UUID и project-bound SAT уже существуют. Общее Space admission ещё не установлено: public/legacy Git и прочие поверхности требуют отдельной квалификации полного совместимого cohort. Current read/write RBAC использует memberships и PAT scopes через `projects.repository_id`, а не URL tail.

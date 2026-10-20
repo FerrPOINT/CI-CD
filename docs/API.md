@@ -298,6 +298,10 @@ Original workspace receipt остаётся blocked; `dispatchAllowed=false` и
 историческую outbox-схему, но не меняет API, DTO, роли и runner protocol.
 CLI не применяет migrations; несовместимый ledger/checksum остаётся ошибкой.
 
+Opt-in common Space Git authentication и source-only migration0097 описаны
+в [матрице](UNIFIED_SPACE_SURFACES.md#opt-in-human-git-space-admission-source-candidate).
+Публичные DTO/URL не меняются, partial activation запрещена.
+
 REST API первой версии Forge CI/CD. Контрольная плоскость использует JSON; Git Smart HTTP, artifact download, SSE logs и `/metrics` имеют собственные content types. Основные группы: проекты, запуск пайплайнов, переходы статусов задач, append-only логи, platform resources, auth и Git hosting.
 
 > **Source of truth:** актуальная реализация и OpenAPI-аннотации в `backend/src/api.rs`, `backend/src/platform.rs`, `backend/src/runner_protocol.rs`, `backend/src/git_host.rs`, `backend/src/pulls.rs`; committed contract — `openapi/openapi.yaml`.

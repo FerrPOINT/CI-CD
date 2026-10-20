@@ -1,6 +1,6 @@
 # Forge: контракт общего пространства v2
 
-Статус: согласованная цель и source trace перед реализацией. Это не installed
+Статус: согласованная цель; opt-in Git source slice реализован. Это не installed
 behavior и не cohort receipt. [Матрица текущих поверхностей](UNIFIED_SPACE_SURFACES.md)
 сохраняет отдельный статус каждой границы.
 

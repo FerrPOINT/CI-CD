@@ -1,6 +1,8 @@
 //! Native profile persistence plus the real fresh SDK HTTP verification path.
 #[path = "support/git_scope.rs"]
 mod git_scope;
+#[path = "support/git_space_admission.rs"]
+mod git_space_admission;
 #[path = "support/group_drain.rs"]
 mod group_drain;
 #[path = "support/space_owner.rs"]

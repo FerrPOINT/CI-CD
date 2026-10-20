@@ -45,7 +45,9 @@ source binding/live lease проверка остаются prerequisite буд�
 owner и body handoff. Lifecycle lease не освобождается по отмене HTTP caller;
 reference-transaction guard сохраняет custom policy перед проверкой исходного
 срока. [Контракт и границы](UNIFIED_SPACE_SURFACES.md#исходный-deadline-native-git-source-candidate).
-Общая Space policy/public/legacy/task admission остаётся отдельной реализацией.
+Opt-in human Git Space admission реализован отдельно, default OFF:
+[ADR-0034](adr/0034-git-common-space-admission.md). Полный REST/machine/runner/V3
+cohort и установка ещё не завершены.
 
 ## 1. Контекст
 

@@ -47,6 +47,7 @@ pub(crate) mod runner_docker;
 pub(crate) mod runner_image_build;
 pub mod runner_protocol;
 pub mod runner_workspace;
+pub(crate) mod space_admission;
 pub(crate) mod space_owner;
 pub mod store;
 pub mod task_delivery;

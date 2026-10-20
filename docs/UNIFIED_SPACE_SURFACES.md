@@ -32,9 +32,9 @@ owner-v1 контракту. При миграции сохранить суще
 | Global/personal settings и справочники | existing route policy and owner tables | Явная классификация; отсутствие Space само по себе не публичность |
 
 Human central profile boundary описан и проверен отдельно:
-[CENTRAL_PROFILE_ROLES](CENTRAL_PROFILE_ROLES.md). Общий допуск всё ещё отсутствует
-на перечисленных Git/public/machine/runner поверхностях; ни одна из них не
-объявляется готовой по успешному profile test.
+[CENTRAL_PROFILE_ROLES](CENTRAL_PROFILE_ROLES.md). Opt-in human Git admission
+реализован отдельным source slice ниже. Полный допуск REST/machine/runner и
+serving cohort остаётся открытым; profile test их не заменяет.
 
 Отдельного SSH Git server adapter в рассмотренном source inventory не найдено.
 Перед активацией проверить фактический serving ingress/listeners: это наблюдение
@@ -125,6 +125,34 @@ slow post-receive case подтверждает обратную границу:
 не означает rollback; actual ref readback обнаруживает опубликованную ref, а
 поздний эффект hook останавливается. Исходные custom hook bytes сохраняются.
 Это изолированная source qualification, не installed behavior или serving cohort.
+
+## Opt-in human Git Space admission: source candidate
+
+Аддитивная0097 создаёт выключенный forge_space_admission_state. Включающего API
+нет: partial source нельзя активировать до полного совместимого cohort,
+populated migration/access diff и rollback. Рабочая БД и runtime не менялись.
+
+При включении discovery/RPC/canonical aliases требуют fresh central human
+identity, точный git scope и Admin admission по repository UUID → group → SpaceRef.
+Используется существующий bounded SDK/HTTP client с отдельным narrow registered
+Admin reader credential (CICD_SPACES__ADMISSION_URL/TOKEN). Human bearer не
+пересылается владельцу. Public и legacy token не обходят политику. Unbound,
+missing v2 mapping и machine/старый task V1 human path закрыты без default Space.
+
+Read admission открывает чтение без старого membership. Запись сохраняет прежние
+роли/project restrictions, требует active owner confirmation и active local
+catalog; revision mismatch закрывает запись до reconciliation. Read proof
+для того же immutable SpaceRef сохраняет чтение при архивировании: переход
+local revision не отзывает подтверждённый допуск раньше его исходного срока. Исходный срок
+SDK/identity/owner передаётся native Git и hook, не начинается заново. Временная
+недоступность владельца после expiry fail-closed. Local role не становится admin.
+
+Scoped native HTTP/PG использует настоящий SDK client и mock owner только в
+изолированном fixture: selected/all/future Space, viewer без membership,
+actual clone, разрешённый push, public B/canonical alias/RPC/legacy/unbound и
+machine/task fences. Настоящий owner archive/ACK сохраняет read-only доступ
+при ещё действующем read proof предыдущей revision.
+Это не приёмка с live Admin, Git push по V3, REST/catalog filtering или activation.
 
 ## Lifecycle owner v2: source candidate
 

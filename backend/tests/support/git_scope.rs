@@ -325,6 +325,8 @@ pub(super) async fn verify(pool: &sqlx::PgPool, profile: Arc<RwLock<Profile>>) {
     assert_eq!(tokio::fs::read_to_string(&post).await.unwrap(), post_script);
     profile.write().unwrap().expires_in = 300;
     println!("Git post-publication timeout requires actual ref readback: PASS");
+    super::git_space_admission::verify(pool, profile.clone(), &root, &name, repo.id, &origin).await;
+
     println!(
         "Git native clone/push original deadline, custom prepared hook and process-group cleanup: PASS"
     );

@@ -69,6 +69,11 @@ source-observation receipt. Completed acknowledged build допускает то
 DevOps observation, не реактивацию job lease. Current Tracker authority читается
 отдельно перед новым effect. [API](API.md#task-bound-nonproduction-delivery); PG/runtime pending.
 
+Аддитивная0097 хранит только opt-in activation state (default false), отдельно
+от Admin user policy и immutable Space mapping. Включающего API нет; partial
+Git source не разрешает activation. Historical migrations/receipts сохранены.
+[Границы source slice](UNIFIED_SPACE_SURFACES.md#opt-in-human-git-space-admission-source-candidate).
+
 ## Retry и подтверждение выполнения
 
 Для external lease с `runner_id` и `lease_token_hash` активное состояние либо

@@ -15,6 +15,12 @@ impl GitDeadline {
             until: source.lifetime.local_valid_until(),
         }
     }
+    pub(super) fn admission(source: &pdlc_auth_core::service_bridge::ConfirmedSpaceRead) -> Self {
+        Self {
+            instant: source.monotonic_deadline(),
+            until: source.valid_until(),
+        }
+    }
     pub(super) fn current(self) -> bool {
         Instant::now() < self.instant && Utc::now().timestamp() < self.until
     }
