@@ -1,3 +1,4 @@
+import { chooseValue } from '../../test/choice'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -130,9 +131,9 @@ describe('pull request workflow', () => {
     expect(screen.getByRole('status')).toHaveTextContent('pulls.noMatches')
   })
 
-  it('requests a server status filter and resets pagination', () => {
+  it('requests a server status filter and resets pagination', async () => {
     setup([...Array.from({ length: 20 }, (_, index) => pullRequest(index + 1)), pullRequest(21, 'closed')], '/repositories/platform/pulls?page=2')
-    fireEvent.change(screen.getByLabelText('pulls.statusFilter'), { target: { value: 'closed' } })
+    await chooseValue(screen.getByLabelText('pulls.statusFilter'), 'closed')
     expect(screen.getByRole('link', { name: '#21 Change 21' })).toBeInTheDocument()
     expect(screen.getByTestId('location')).toHaveTextContent('?status=closed')
     expect(mocks.list).toHaveBeenLastCalledWith('platform', expect.objectContaining({ offset: 0, status: 'closed' }))

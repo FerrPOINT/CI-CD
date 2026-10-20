@@ -1,3 +1,4 @@
+import { chooseValue } from '../../test/choice'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'sonner'
@@ -48,7 +49,7 @@ function setup(count: number) {
 afterEach(() => vi.clearAllMocks())
 
 describe('RunnersPage', () => {
-  it('shows one compact list with search, status filtering and pagination', () => {
+  it('shows one compact list with search, status filtering and pagination', async () => {
     setup(24)
     expect(screen.getAllByRole('button', { name: /runners.deleteRunner/ })).toHaveLength(20)
     expect(screen.queryByText('runners.heartbeat')).not.toBeInTheDocument()
@@ -60,7 +61,7 @@ describe('RunnersPage', () => {
     expect(screen.queryByRole('navigation', { name: 'runners.pages' })).not.toBeInTheDocument()
 
     fireEvent.change(screen.getByRole('searchbox', { name: 'runners.search' }), { target: { value: '' } })
-    fireEvent.change(screen.getByLabelText('runners.status'), { target: { value: 'online' } })
+    await chooseValue(screen.getByLabelText('runners.status'), 'online')
     expect(screen.getAllByRole('button', { name: /runners.deleteRunner/ })).toHaveLength(12)
     expect(screen.queryByRole('button', { name: 'runners.deleteRunner runner-07' })).not.toBeInTheDocument()
   })

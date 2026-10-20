@@ -237,8 +237,8 @@ describe('WebhooksPage', () => {
       `GET /api/v1/projects/${projectId}/outbox-deliveries/page?limit=20&offset=20&status=failed&channel=notification`,
     ))
     expect(screen.getByTestId('location')).toHaveTextContent('?view=deliveries&page=2&status=failed&channel=notification')
-    expect(await screen.findByRole('combobox', { name: 'deliveries.statusFilter' })).toHaveValue('failed')
-    expect(screen.getByRole('combobox', { name: 'deliveries.channelFilter' })).toHaveValue('notification')
+    expect(await screen.findByRole('combobox', { name: 'deliveries.statusFilter' })).toHaveAttribute('data-value', 'failed')
+    expect(screen.getByRole('combobox', { name: 'deliveries.channelFilter' })).toHaveAttribute('data-value', 'notification')
 
     fireEvent.click(screen.getByRole('button', { name: 'deliveries.next' }))
     await waitFor(() => expect(requests).toContain(

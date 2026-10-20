@@ -193,7 +193,8 @@ describe('EnvironmentsPage protected delivery controls', () => {
     fireEvent.change(screen.getByRole('searchbox', { name: 'environments.search' }), { target: { value: '' } })
     await chooseValue(screen.getByRole('combobox', { name: 'environments.statusFilter' }), 'stopped')
     expect(screen.getAllByRole('listitem')).toHaveLength(1)
-    expect(screen.getAllByText('environments.statusStopped')).toHaveLength(2)
+    expect(screen.getByRole('listitem')).toHaveTextContent('environments.statusStopped')
+    expect(screen.getByRole('combobox', { name: 'environments.statusFilter' })).toHaveTextContent('environments.statusStopped')
   })
 
   it('hides stale rows on loading failure and retries successfully', async () => {
