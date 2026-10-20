@@ -7,6 +7,95 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 const TOKEN: &str = "sdlc_pat_fixture_product_roles";
+
+// Reuse an existing human profile; owner calls must never JIT a new human.
+async fn catalog_projection(
+    http: &reqwest::Client,
+    origin: &str,
+    profile: &Arc<RwLock<Profile>>,
+    human: &Profile,
+    expected: (Uuid, Uuid, SpaceRef, &str),
+) {
+    let (group, repository, space, state) = expected;
+    let owner = profile.read().unwrap().clone();
+    let mut reader = human.clone();
+    reader.expires_in = 300;
+    reader.scopes = vec!["ci-cd:read"];
+    *profile.write().unwrap() = reader;
+    let previous_origin = std::env::var("CICD_NAMESPACE__PUBLIC_GIT_ORIGIN").ok();
+    unsafe {
+        std::env::set_var("CICD_NAMESPACE__PUBLIC_GIT_ORIGIN", origin);
+    }
+    for path in [
+        format!("/api/v1/catalog/repositories?group_id={group}&managed=true&limit=1"),
+        format!("/api/v1/git-groups/{group}/repositories?limit=1"),
+    ] {
+        let response = http
+            .get(format!("{origin}{path}"))
+            .bearer_auth(TOKEN)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let text = response.text().await.unwrap();
+        assert_eq!(status, reqwest::StatusCode::OK, "{path}: {text}");
+        let page: cicd::repository_catalog::CatalogPage = serde_json::from_str(&text).unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].id, repository);
+        assert_eq!(page.items[0].state.as_deref(), Some(state));
+        let namespace = page.items[0].namespace.as_ref().unwrap();
+        assert_eq!(namespace.registry_instance_id, space.registry_instance_id);
+        assert_eq!(namespace.namespace_id, space.space_id);
+    }
+    let response = http
+        .get(format!("{origin}/api/v1/catalog/repositories/{repository}"))
+        .bearer_auth(TOKEN)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let item: cicd::repository_catalog::CatalogRepository = response.json().await.unwrap();
+    assert_eq!(item.id, repository);
+    assert_eq!(item.group_id, Some(group));
+    assert_eq!(item.state.as_deref(), Some(state));
+    let response = http
+        .get(format!(
+            "{origin}/api/v1/catalog/repositories?group_id={group}&sync_available=true&limit=1"
+        ))
+        .bearer_auth(TOKEN)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let page: cicd::repository_catalog::CatalogPage = response.json().await.unwrap();
+    assert_eq!(page.total, i64::from(state == "active"));
+    assert_eq!(page.items.len(), usize::from(state == "active"));
+    let response = http
+        .get(format!(
+            "{origin}/api/v1/catalog/repositories?group_id={group}&limit=1&offset=1"
+        ))
+        .bearer_auth(TOKEN)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let page: cicd::repository_catalog::CatalogPage = response.json().await.unwrap();
+    assert_eq!(page.total, 1);
+    assert!(
+        page.items.is_empty(),
+        "lifecycle projection must not duplicate pagination rows"
+    );
+    *profile.write().unwrap() = owner;
+    unsafe {
+        if let Some(previous) = previous_origin {
+            std::env::set_var("CICD_NAMESPACE__PUBLIC_GIT_ORIGIN", previous);
+        } else {
+            std::env::remove_var("CICD_NAMESPACE__PUBLIC_GIT_ORIGIN");
+        }
+    }
+}
+
 fn command(registry: Uuid, instance: Uuid, space: Uuid) -> SpaceOwnerCommandV2 {
     SpaceOwnerCommandV2 {
         schema_version: 2,
@@ -340,6 +429,19 @@ pub(super) async fn verify(pool: &PgPool, profile: Arc<RwLock<Profile>>) {
         .execute(pool)
         .await
         .unwrap();
+    catalog_projection(
+        &http,
+        &origin,
+        &profile,
+        &original,
+        (
+            empty_group,
+            extra_repo,
+            legacy_empty.space.clone(),
+            "active",
+        ),
+    )
+    .await;
     let mut rename_archived = next(&legacy_empty, DesiredSpaceState::Archived);
     rename_archived.metadata.name = "Архив знаний".into();
     assert!(
@@ -358,6 +460,20 @@ pub(super) async fn verify(pool: &PgPool, profile: Arc<RwLock<Profile>>) {
             .unwrap(),
         "Архив знаний"
     );
+
+    catalog_projection(
+        &http,
+        &origin,
+        &profile,
+        &original,
+        (
+            empty_group,
+            extra_repo,
+            legacy_empty.space.clone(),
+            "archived",
+        ),
+    )
+    .await;
 
     let unknown = group_drain::work(pool, Some(runner)).await;
     let unknown_space = command(registry, instance, Uuid::new_v4());
@@ -394,6 +510,20 @@ pub(super) async fn verify(pool: &PgPool, profile: Arc<RwLock<Profile>>) {
     let work = group_drain::work(pool, Some(runner)).await;
     let active = command(registry, instance, Uuid::new_v4());
     let legacy = bind_legacy(&http, &origin, &active, work.group, false).await;
+    let work_repository: Uuid =
+        sqlx::query_scalar("SELECT repository_id FROM projects WHERE id=$1")
+            .bind(work.project)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    catalog_projection(
+        &http,
+        &origin,
+        &profile,
+        &original,
+        (work.group, work_repository, active.space.clone(), "active"),
+    )
+    .await;
     let old_command: serde_json::Value =
         sqlx::query_scalar("SELECT command FROM forge_namespace_bindings WHERE resource_id=$1")
             .bind(work.group)
@@ -472,6 +602,19 @@ pub(super) async fn verify(pool: &PgPool, profile: Arc<RwLock<Profile>>) {
             .await
             .drained
     );
+    catalog_projection(
+        &http,
+        &origin,
+        &profile,
+        &original,
+        (
+            work.group,
+            work_repository,
+            active.space.clone(),
+            "archiving",
+        ),
+    )
+    .await;
     let restore = next(&archive, DesiredSpaceState::Active);
     assert_eq!(
         send(&http, &origin, &restore).await.status(),

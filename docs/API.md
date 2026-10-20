@@ -325,6 +325,11 @@ UI применяет draft-фильтры после «Применить»/Ent
 запись, не выполняя approval/rollback автоматически. Ни эти ссылки, ни managed
 catalog flags не расширяют права, lifecycle admission или service scopes.
 
+Каталог репозиториев, карточка и список группы читают эффективные Space ID/state:
+подтверждённый owner v2 имеет приоритет над сохранённой v1 binding. Фильтр
+sync_available и его total используют тот же lifecycle до pagination.
+[Контракт и сохранение прежней истории](SPACE_LIFECYCLE_V2.md).
+
 Новые human endpoints используют прежние scopes/roles и trusted-shared policy.
 Machine reader не получает доступа к human routes. Проект Tracker, репозиторий
 и CI-конфигурация имеют отдельные DTO; строгие SDLC owner envelopes не меняются.
@@ -2191,4 +2196,5 @@ durable workspace ACK; исторические receipts не создаются
 Чужой аутентифицированный runner получает404 при mutation чужой lease независимо
 от active/expired состояния. Собственный runner сохраняет409 fenced и410 expired.
 [Границы и доказательства](UNIFIED_SPACE_SURFACES.md) не заменяют общий admission,
-owner-v2 lifecycle и полный serving cohort, которые ещё в работе.
+полный serving cohort, которые ещё в работе. Owner-v2 lifecycle реализован как
+[source candidate](SPACE_LIFECYCLE_V2.md); это не подтверждение установленного admission.

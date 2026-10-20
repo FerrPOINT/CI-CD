@@ -82,3 +82,13 @@ Git public/legacy/IO, raw/download/CI/runner routes, populated migration/access
 comparison и совместимый rollback остаются отдельными обязательными gates.
 Наличие этого owner endpoint не разрешает включить policy для части приложений
 или использовать старые образы без admission после активации.
+
+## Каталог репозиториев и совместимость v1
+
+Общий каталог, список репозиториев группы и карточка используют подтверждённые
+Space ID и состояние из forge_space_catalog, если участник уже перешёл на v2.
+Для ещё не перенесённой группы сохраняется явное чтение прежней v1 binding.
+Фильтр sync_available и count применяют то же эффективное состояние до LIMIT
+и OFFSET. Публичные UUID, aliases и прежний command JSON не переписываются.
+Это согласование read projection с lifecycle, а не полный human admission:
+Git/API scopes, доступ по пространствам и совместимый cohort проверяются отдельно.
