@@ -117,3 +117,8 @@ ref preparation. После SQL wait повторно проверять исх�
 держать под существующими locks. Counter и создание PR атомарны. Timeout после
 возможной публикации — unknown outcome с exact ref readback, без auto retry,
 отката refs по предположению или признания PR status доказательством Git rollback.
+
+Task-link replay не обходит текущий допуск: при активной политике проверять
+write permit/роль/lifecycle до stored readback. Новая связь и проверки исходного
+proof после SQL wait входят в одну транзакцию; прежний source commit при replay
+не переснимать. OFF сохраняет исторический original-key readback.

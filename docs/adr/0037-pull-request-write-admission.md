@@ -17,8 +17,8 @@ authority, зависимости, tables и варианты strict-v1/v2 не 
 
 ## Request permit и транзакции
 
-Для четырёх существующих create/action маршрутов legacy repo/catalog UUID
-middleware разрешает framework-decoded owner identity и получает bounded proof
+Для существующих create/action маршрутов legacy repo/catalog UUID
+и привязки задачи к PR middleware разрешает framework-decoded owner identity и получает bounded proof
 с active Space и совпадающей owner revision. Оно сохраняет scopes, текущую
 продуктовую роль и credential project binding. Private fields opaque
 RepositoryWrite создаются только проверенным middleware, не DTO или caller header.
@@ -37,6 +37,22 @@ current SpaceRef/revision/state под блокировкой. Роль и lifec
 Close/reopen сохраняют прежние transitions и проверяют proof после row lock и
 после SQL, перед commit. Это соответствует существующей owner transaction
 границе; отдельный background writer/retry не создаётся.
+
+## Привязка задачи и повтор запроса
+
+POST task links получает тот же private RepositoryWrite до чтения stored result.
+При active policy replay подтверждает текущие scopes, роль и lifecycle; наличие
+строки не возвращает доступ после отзыва. После namespace lease роль/catalog
+блокируются до окончания операции. Новая связь записывается транзакционно;
+исходный proof проверяется после Tracker readback и перед/после INSERT, до commit.
+SQL wait не создаёт новое окно. Исходный TaskRef/commit у replay сохраняется;
+Tracker повторно не вызывается. OFF сохраняет исторический original-key readback,
+включая уже сохранённую связь архивного owner; новые записи требуют прежний lease.
+
+Fixture дополняется replay scope/role/hidden deny, encoded ID, expiry при реальной
+блокировке таблицы и сохранением source commit. Эти подготовленные cases требуют
+native запуска; cargo check подтверждает только типы. Новый INSERT после задержки
+Tracker/SQL, машинная делегация и строгий V3 остаются отдельной приёмкой.
 
 ## Native merge и неизвестный результат
 
@@ -63,8 +79,8 @@ PR status сам по себе не подтверждает неизменно�
 ## Покрытие и приёмка
 
 Create/action проверяются по canonical ID и legacy/encoded aliases. GET связанных
-задач PR включён в ту же repository read boundary; machine evidence и link write
-остаются отдельными поверхностями. Прежние roles, task scopes, immutable mapping,
+задач PR включён в ту же repository read boundary; POST task links — в write
+boundary. Machine evidence и task/project V3 authority остаются отдельными поверхностями. Прежние roles, task scopes, immutable mapping,
 исторические owner receipts и данные сохраняются.
 
 Native fixture использует реальные HTTP/Git/SQL: scope/role/foreign deny,

@@ -98,17 +98,39 @@ pub async fn link(
     State(state): State<Arc<AppState>>,
     Path((repository, number)): Path<(Uuid, i32)>,
     Extension(claims): Extension<crate::auth::AccessClaims>,
+    permit: Option<Extension<crate::space_admission::RepositoryWrite>>,
     Json(task): Json<TaskRef>,
 ) -> Result<Json<TaskRef>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
+    let storage = crate::repository_catalog::storage_by_id(pool, repository).await?;
+    let write = crate::space_admission::RepositoryWrite::for_repository(
+        pool,
+        &storage,
+        permit.map(|permit| permit.0),
+    )
+    .await?;
+    // The inactive policy preserves legacy readback of an already stored link.
+    // Active-policy replays must retain current write role/lifecycle admission.
+    let lease = if write.is_some() {
+        Some(crate::repository_catalog::write_lease(&state, &storage).await?)
+    } else {
+        None
+    };
+    let mut transaction = pool.begin().await.map_err(ApiError::internal)?;
+    if let Some(permit) = write.as_ref() {
+        permit.lock(&mut transaction).await?;
+    }
     // Stored identity is the original-key readback. Replay neither revalidates a
     // neighboring owner nor snapshots a newer source branch commit.
-    let existing: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pull_task_links l JOIN pull_requests p ON p.id=l.pull_request_id WHERE p.repository_id=$1 AND p.number=$2 AND l.tracker_instance_id=$3 AND l.task_id=$4)").bind(repository).bind(number).bind(task.tracker_instance_id).bind(task.task_id).fetch_one(pool).await.map_err(ApiError::internal)?;
+    let existing: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pull_task_links l JOIN pull_requests p ON p.id=l.pull_request_id WHERE p.repository_id=$1 AND p.number=$2 AND l.tracker_instance_id=$3 AND l.task_id=$4)").bind(repository).bind(number).bind(task.tracker_instance_id).bind(task.task_id).fetch_one(&mut *transaction).await.map_err(ApiError::internal)?;
+    crate::space_admission::require_write(write.as_ref())?;
     if existing {
         return Ok(Json(task));
     }
-    let storage = crate::repository_catalog::storage_by_id(pool, repository).await?;
-    let lease = crate::repository_catalog::write_lease(&state, &storage).await?;
+    let lease = match lease {
+        Some(lease) => lease,
+        None => crate::repository_catalog::write_lease(&state, &storage).await?,
+    };
     let group: Uuid = sqlx::query_scalar("SELECT group_id FROM repository_catalog WHERE id=$1")
         .bind(repository)
         .fetch_one(pool)
@@ -118,12 +140,13 @@ pub async fn link(
         .await?
         .ok_or_else(|| ApiError::bad_request("managed_repository_required"))?;
     let task_key = verify_task(&binding.namespace, &task).await?;
+    crate::space_admission::require_write(write.as_ref())?;
     let pull = sqlx::query(
-        "SELECT id,source_branch FROM pull_requests WHERE repository_id=$1 AND number=$2",
+        "SELECT id,source_branch FROM pull_requests WHERE repository_id=$1 AND number=$2 FOR SHARE",
     )
     .bind(repository)
     .bind(number)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *transaction)
     .await
     .map_err(ApiError::internal)?
     .ok_or_else(ApiError::not_found)?;
@@ -149,7 +172,10 @@ pub async fn link(
     {
         return Err(ApiError::conflict("pull_source_commit_unavailable"));
     }
-    sqlx::query("INSERT INTO pull_task_links(pull_request_id,repository_id,tracker_instance_id,task_id,registry_instance_id,namespace_id,source_commit_sha,created_by_user_id,task_key_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(pull_request_id,tracker_instance_id,task_id) DO NOTHING").bind(pull.get::<Uuid,_>("id")).bind(repository).bind(task.tracker_instance_id).bind(task.task_id).bind(binding.namespace.registry_instance_id).bind(binding.namespace.namespace_id).bind(commit).bind(claims.sub).bind(task_key).execute(pool).await.map_err(ApiError::internal)?;
+    crate::space_admission::require_write(write.as_ref())?;
+    sqlx::query("INSERT INTO pull_task_links(pull_request_id,repository_id,tracker_instance_id,task_id,registry_instance_id,namespace_id,source_commit_sha,created_by_user_id,task_key_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(pull_request_id,tracker_instance_id,task_id) DO NOTHING").bind(pull.get::<Uuid,_>("id")).bind(repository).bind(task.tracker_instance_id).bind(task.task_id).bind(binding.namespace.registry_instance_id).bind(binding.namespace.namespace_id).bind(commit).bind(claims.sub).bind(task_key).execute(&mut *transaction).await.map_err(ApiError::internal)?;
+    crate::space_admission::require_write(write.as_ref())?;
+    transaction.commit().await.map_err(ApiError::internal)?;
     lease.commit().await.map_err(ApiError::internal)?;
     Ok(Json(task))
 }

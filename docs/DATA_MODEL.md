@@ -3,7 +3,8 @@
 Source candidate: [write admission PR](adr/0037-pull-request-write-admission.md)
 сохраняет прежние DTO/URL, добавляет opaque request permit, atomic PR number
 transaction и original proof до native publication. GET связанных задач PR
-использует общий repository read. Qualification и durable unknown recovery
+использует общий repository read. Task-link POST и replay используют тот же
+write permit и исходный proof до SQL commit. Qualification и durable unknown recovery
 остаются отдельными gates; runtime и исторические migrations не изменены.
 
 Аддитивная0096 сохраняет strict-v1 binding/receipts и добавляет Space catalog/operation journal с необязательной Git-группой. Effective lifecycle и общий v1/v2 fence описаны в [SPACE_LIFECYCLE_V2](SPACE_LIFECYCLE_V2.md). Это source candidate; рабочая БД не мигрирована.

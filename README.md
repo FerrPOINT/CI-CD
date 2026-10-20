@@ -291,5 +291,6 @@ preflight. PR write/merge, sync и остальные REST endpoints остаю�
 [Запись PR и original deadline](docs/adr/0037-pull-request-write-admission.md) —
 следующий opt-in source candidate: role/lifecycle locks, atomic number+PR,
 detached native owner и exact ref preparation. Native qualification в работе.
-GET task links использует repository read admission; link write, CI/sync/machine,
+GET task links использует repository read admission, POST — write permit;
+CI/sync/machine,
 unknown merge recovery и полный serving cohort остаются gates.

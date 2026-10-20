@@ -180,6 +180,7 @@ pub(crate) fn repository_write_route(method: &axum::http::Method, route: &str) -
                 | "/api/v1/repos/{repo}/pulls/{number}/action"
                 | "/api/v1/catalog/repositories/{id}/pulls"
                 | "/api/v1/catalog/repositories/{id}/pulls/{number}/action"
+                | "/api/v1/catalog/repositories/{id}/pulls/{number}/tasks"
         )
 }
 

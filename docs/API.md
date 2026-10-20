@@ -3,7 +3,8 @@
 Source candidate: [write admission PR](adr/0037-pull-request-write-admission.md)
 сохраняет прежние DTO/URL, добавляет opaque request permit, atomic PR number
 transaction и original proof до native publication. GET связанных задач PR
-использует общий repository read. Qualification и durable unknown recovery
+использует общий repository read. Task-link POST и replay используют тот же
+write permit и исходный proof до SQL commit. Qualification и durable unknown recovery
 остаются отдельными gates; runtime и исторические migrations не изменены.
 
 Source candidate: [общий read admission Git-браузера и PR](adr/0036-repository-browse-read-admission.md)

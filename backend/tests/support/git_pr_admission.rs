@@ -272,6 +272,78 @@ pub(super) async fn verify(
             assert!(!text.contains("TASK-42"));
         }
     }
+    // A stored idempotency result is still protected by the current write proof.
+    let task_route = format!("/api/v1/catalog/repositories/{repository}/pulls/1/tasks");
+    let encoded_task_route = format!(
+        "/api/v1/catalog/repositories/{}/pulls/1/tasks",
+        repository.to_string().replace('-', "%2D")
+    );
+    let task_input = json!({"tracker_instance_id":tracker,"task_id":task});
+    profile.write().unwrap().scopes = vec!["ci-cd:read"];
+    post(&http, origin, &task_route, &task_input, 403).await;
+    profile.write().unwrap().scopes = vec!["ci-cd:read", "ci-cd:write", "git:read", "git:write"];
+    sqlx::query("UPDATE users SET role='viewer' WHERE central_sub=$1")
+        .bind(saved.subject.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+    post(&http, origin, &task_route, &task_input, 403).await;
+    sqlx::query("UPDATE users SET role='developer' WHERE central_sub=$1")
+        .bind(saved.subject.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        post(&http, origin, &encoded_task_route, &task_input, 200).await,
+        task_input
+    );
+    // Seed an actual existing hidden link: replay must not bypass common visibility.
+    let hidden_base = git(
+        &root.join(format!("{hidden_name}.git")),
+        &["rev-parse", "refs/heads/task/current"],
+    )
+    .await;
+    let inserted = sqlx::query(
+        "INSERT INTO pull_task_links(pull_request_id,repository_id,tracker_instance_id,task_id,registry_instance_id,namespace_id,source_commit_sha,created_by_user_id,task_key_snapshot) SELECT p.id,p.repository_id,$2,$3,b.registry_instance_id,b.namespace_id,$4,u.id,'HIDDEN-42' FROM pull_requests p JOIN repository_catalog r ON r.id=p.repository_id JOIN forge_namespace_bindings b ON b.resource_id=r.group_id JOIN users u ON u.central_sub=$5 WHERE p.repository_id=$1 AND p.number=1",
+    ).bind(hidden_id).bind(tracker).bind(task).bind(&hidden_base).bind(saved.subject.to_string()).execute(pool).await.unwrap();
+    assert_eq!(inserted.rows_affected(), 1);
+    post(
+        &http,
+        origin,
+        &format!("/api/v1/catalog/repositories/{hidden_id}/pulls/1/tasks"),
+        &task_input,
+        403,
+    )
+    .await;
+    let mut held = pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE pull_task_links IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *held)
+        .await
+        .unwrap();
+    profile.write().unwrap().expires_in = 2;
+    let delayed = delayed_post(&http, origin, &task_route, task_input.clone()).await;
+    wait_query(pool, "SELECT EXISTS(SELECT 1 FROM pull_task_links%").await;
+    tokio::time::sleep(std::time::Duration::from_millis(2200)).await;
+    held.rollback().await.unwrap();
+    let response = delayed.await.unwrap();
+    let status = response.status();
+    let text = response.text().await.unwrap();
+    assert_eq!(status, 403, "expired task-link replay: {text}");
+    profile.write().unwrap().expires_in = 300;
+    assert_eq!(
+        post(&http, origin, &task_route, &task_input, 200).await,
+        task_input
+    );
+    let snapshot: String = sqlx::query_scalar(
+        "SELECT source_commit_sha FROM pull_task_links WHERE repository_id=$1 AND tracker_instance_id=$2 AND task_id=$3"
+    ).bind(repository).bind(tracker).bind(task).fetch_one(pool).await.unwrap();
+    assert_eq!(
+        snapshot, base,
+        "replay preserves the original source commit"
+    );
+    println!(
+        "PR task-link replay common visibility, scopes, role, encoded ID and original SQL deadline: PASS"
+    );
     let hook_path = bare.join("hooks/reference-transaction");
     let original = tokio::fs::read(&hook_path).await.ok();
     let slow = format!(
