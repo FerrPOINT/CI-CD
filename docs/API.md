@@ -301,6 +301,10 @@ CLI не применяет migrations; несовместимый ledger/checks
 Opt-in common Space Git authentication и source-only migration0097 описаны
 в [матрице](UNIFIED_SPACE_SURFACES.md#opt-in-human-git-space-admission-source-candidate).
 Публичные DTO/URL не меняются, partial activation запрещена.
+Opt-in GET /api/v1/catalog/repositories применяет тот же допуск до count/page;
+пустой selected даёт items=[]/total=0, включая local admin. Срок SDK proof
+сохраняется после SQL ожиданий. Другие REST поверхности отдельно:
+[ADR0035](adr/0035-repository-catalog-read-admission.md).
 
 REST API первой версии Forge CI/CD. Контрольная плоскость использует JSON; Git Smart HTTP, artifact download, SSE logs и `/metrics` имеют собственные content types. Основные группы: проекты, запуск пайплайнов, переходы статусов задач, append-only логи, platform resources, auth и Git hosting.
 

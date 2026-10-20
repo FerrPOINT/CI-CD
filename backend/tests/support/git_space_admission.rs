@@ -115,6 +115,25 @@ async fn attach(
     slug
 }
 
+async fn catalog(
+    http: &reqwest::Client,
+    origin: &str,
+    query: &str,
+) -> cicd::repository_catalog::CatalogPage {
+    let response = http
+        .get(format!("{origin}/api/v1/catalog/repositories{query}"))
+        .bearer_auth("sdlc_pat_fixture_product_roles")
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let text = response.text().await.unwrap();
+    assert_eq!(status, 200, "common catalog {query}: {text}");
+    assert_eq!(headers["cache-control"], "private, no-store");
+    serde_json::from_str(&text).unwrap()
+}
+
 pub(super) async fn verify(
     pool: &PgPool,
     profile: Arc<RwLock<Profile>>,
@@ -130,7 +149,8 @@ pub(super) async fn verify(
             .unwrap(),
         "source migration defaults OFF"
     );
-    let human = profile.read().unwrap().clone();
+    let mut human = profile.read().unwrap().clone();
+    human.scopes = vec!["git:read", "git:write", "ci-cd:read"];
     let space = SpaceRef {
         registry_instance_id: Uuid::new_v4(),
         space_id: Uuid::new_v4(),
@@ -259,7 +279,7 @@ pub(super) async fn verify(
         .execute(pool)
         .await
         .unwrap();
-    profile.write().unwrap().scopes = vec!["git:read", "git:write"];
+    profile.write().unwrap().scopes = vec!["git:read", "git:write", "ci-cd:read"];
     sqlx::query("DELETE FROM project_memberships WHERE user_id IN (SELECT id FROM users WHERE central_sub=$1)")
         .bind(human.subject.to_string()).execute(pool).await.unwrap();
     sqlx::query("UPDATE users SET role='viewer' WHERE central_sub=$1")
@@ -359,6 +379,50 @@ pub(super) async fn verify(
         403,
         "V1 task context cannot borrow human admission"
     );
+    let page = catalog(&http, origin, "?limit=1").await;
+    assert_eq!(
+        page.total, 1,
+        "count is filtered, not only the returned page"
+    );
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].id, repository);
+    let later = catalog(&http, origin, "?limit=1&offset=1").await;
+    assert_eq!(later.total, 1);
+    assert!(later.items.is_empty());
+    let hidden_group =
+        sqlx::query_scalar::<_, Uuid>("SELECT group_id FROM repository_catalog WHERE id=$1")
+            .bind(other_repo.id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    let hidden = catalog(&http, origin, &format!("?group_id={hidden_group}&limit=1")).await;
+    assert_eq!(hidden.total, 0);
+    assert!(hidden.items.is_empty());
+    assert_eq!(
+        catalog(
+            &http,
+            origin,
+            &format!("?search={}", other_canonical.to_uppercase())
+        )
+        .await
+        .total,
+        0
+    );
+    assert_eq!(
+        catalog(
+            &http,
+            origin,
+            &format!("?search={}", canonical.to_uppercase())
+        )
+        .await
+        .total,
+        1
+    );
+    assert_eq!(
+        catalog(&http, origin, "?search=%25_").await.total,
+        0,
+        "search remains literal"
+    );
     // The allowed side of RPC is exercised by a real clone while the local role is viewer.
     let cloned = tokio::process::Command::new("git")
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -379,6 +443,11 @@ pub(super) async fn verify(
     // all is evaluated for a Space created after the first admitted request.
     profile.write().unwrap().subject = all_subject;
     assert_eq!(read(name.to_owned()).await.unwrap().status(), 200);
+    assert_eq!(
+        catalog(&http, origin, "?limit=1").await.total,
+        2,
+        "all includes bound groups, not unbound data"
+    );
     let future = SpaceRef {
         registry_instance_id: space.registry_instance_id,
         space_id: Uuid::new_v4(),
@@ -394,7 +463,17 @@ pub(super) async fn verify(
         200,
         "all includes a future Space"
     );
+    assert_eq!(
+        catalog(&http, origin, "?limit=1").await.total,
+        3,
+        "all includes a later group before pagination"
+    );
     *profile.write().unwrap() = human.clone();
+    assert_eq!(
+        catalog(&http, origin, "?limit=1").await.total,
+        1,
+        "selected filters the future catalog"
+    );
     assert_eq!(
         read(future_name).await.unwrap().status(),
         403,
@@ -402,6 +481,24 @@ pub(super) async fn verify(
     );
     // Different immutable identity has no policy; cached selected access is not transferable.
     profile.write().unwrap().subject = Uuid::new_v4();
+    let empty = catalog(&http, origin, "?limit=1").await;
+    assert_eq!(empty.total, 0);
+    assert!(
+        empty.items.is_empty(),
+        "selected empty cannot become unrestricted SQL NULL"
+    );
+    let empty_subject = profile.read().unwrap().subject.to_string();
+    sqlx::query("UPDATE users SET role='admin' WHERE central_sub=$1")
+        .bind(empty_subject)
+        .execute(pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        catalog(&http, origin, "?limit=1").await.total,
+        0,
+        "a local admin role cannot bypass selected empty visibility"
+    );
+
     assert_eq!(
         read(name.to_owned()).await.unwrap().status(),
         403,
@@ -498,6 +595,65 @@ pub(super) async fn verify(
         .status(),
         409,
         "the same admitted identity cannot write after confirmed archive"
+    );
+    let archived_page = catalog(&http, origin, "?limit=1").await;
+    assert_eq!(archived_page.total, 1);
+    assert_eq!(archived_page.items[0].state.as_deref(), Some("archived"));
+    assert_eq!(
+        catalog(&http, origin, "?sync_available=true&limit=1")
+            .await
+            .total,
+        0
+    );
+    // Expire the original actor proof while the actual count query waits.
+    profile.write().unwrap().expires_in = 2;
+    let mut blocked = pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE repository_catalog IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *blocked)
+        .await
+        .unwrap();
+    let delayed_http = http.clone();
+    let delayed_url = format!("{origin}/api/v1/catalog/repositories?limit=1");
+    let delayed = tokio::spawn(async move {
+        delayed_http
+            .get(delayed_url)
+            .bearer_auth("sdlc_pat_fixture_product_roles")
+            .send()
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(3),async {
+        loop {
+            let waiting:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT count(*) FROM repository_catalog r%')")
+                .fetch_one(pool).await.unwrap();
+            if waiting {break;}
+            assert!(!delayed.is_finished(),"request must reach the protected count query");
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }).await.expect("catalog reached the actual SQL lock");
+    tokio::time::sleep(std::time::Duration::from_millis(2200)).await;
+    blocked.rollback().await.unwrap();
+    let expired = delayed.await.unwrap().unwrap();
+    let status = expired.status();
+    let denied = expired.text().await.unwrap();
+    assert_eq!(
+        status, 403,
+        "original proof expired after count IO: {denied}"
+    );
+    assert!(
+        !denied.contains("storage_name"),
+        "no protected catalog body on expiry"
+    );
+    profile.write().unwrap().expires_in = 300;
+    assert_eq!(
+        catalog(&http, origin, "?limit=1").await.total,
+        1,
+        "expired caller cannot poison a new proof or delete legitimate rows"
+    );
+    println!(
+        "REST catalog original proof expires during real SQL wait without returning metadata: PASS"
+    );
+    println!(
+        "REST catalog count/page, selected/all/future/empty, literal search and archived read: PASS"
     );
     println!("Git common admitted push and actual owner archive preserve read-only access: PASS");
     sqlx::query("UPDATE forge_space_admission_state SET active=false")

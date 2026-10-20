@@ -154,6 +154,20 @@ machine/task fences. Настоящий owner archive/ACK сохраняет rea
 при ещё действующем read proof предыдущей revision.
 Это не приёмка с live Admin, Git push по V3, REST/catalog filtering или activation.
 
+## Глобальный repository catalog read: source candidate
+
+[ADR0035](adr/0035-repository-catalog-read-admission.md) сохраняет private verified
+REST identity и original SDK proof до body handoff. Только
+GET /api/v1/catalog/repositories фильтрует group UUID в SQL до count/search/page.
+selected empty — пустой массив, OFF — NULL; local admin не bypass visibility.
+all включает later owner mappings. Archived read сохраняется, sync_available
+дополнительно требует active. Unbound rows не удаляются и не публикуются.
+
+Scoped HTTP/PG cases проверяют counts/offset, hidden group/name, literal query,
+selected/all/future/empty и original expiry после real count SQL wait.
+Другие detail/group/tree/raw/PR/CI/machine routes остаются отдельными gates;
+этот срез не делает весь REST или cohort готовым. Установка не менялась.
+
 ## Lifecycle owner v2: source candidate
 
 [Необязательная Git-группа, original operation/revision, archive fence и real drain](SPACE_LIFECYCLE_V2.md) реализованы в source. Текущая native квалификация хранится отдельно в workspace report. Human Space admission, explicit new group attach и весь serving cohort ещё не завершены.

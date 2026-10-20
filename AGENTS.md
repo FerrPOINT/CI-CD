@@ -99,3 +99,6 @@ Git deadline передавать как private proof с исходным fixed
 и ref preparation; не заменять его новой длительностью. Не освобождать lifecycle
 lease до завершения native owner/cleanup. Custom hooks сохранять; unknown Git
 publication требует exact ref readback без автоматического retry.
+REST identity proof не сводить к claims до выдачи защищённых данных. Общий
+допуск каталогов применять до count/page по owner ID, не по именам. Пустой
+selected не превращать в unrestricted SQL NULL; local admin не visibility bypass.

@@ -280,3 +280,7 @@ Migration0097 выключена по умолчанию; partial activation з�
 [Матрица](docs/UNIFIED_SPACE_SURFACES.md) отдельно показывает REST/machine/V3,
 полный cohort, миграцию, rollback и live gates. Source test не означает,
 что эти изменения уже установлены.
+
+Глобальный [repository catalog read](docs/adr/0035-repository-catalog-read-admission.md)
+также opt-in: SQL admission до count/page, original proof до body handoff.
+Остальные REST endpoints не объявлены покрытыми этим одним срезом.

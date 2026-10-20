@@ -205,7 +205,10 @@ pub(crate) async fn require_auth(
             req.extensions_mut().insert(identity);
             return Ok(next.run(req).await);
         }
-        checked_central = Some(central_identity(pool, &verified).await?);
+        checked_central = Some(VerifiedRequestIdentity {
+            claims: central_identity(pool, &verified).await?,
+            central: Some(verified),
+        });
     }
     let is_platform_token = req
         .headers()
@@ -214,10 +217,11 @@ pub(crate) async fn require_auth(
         .is_some_and(|value| {
             pdlc_auth_core::bearer_from_header(value).is_some_and(pdlc_auth_core::is_personal_token)
         });
-    let claims = match checked_central {
-        Some(claims) => claims,
-        None => bearer_identity(pool, auth_secret, req.headers()).await?,
+    let identity = match checked_central {
+        Some(identity) => identity,
+        None => verified_bearer_identity(pool, auth_secret, req.headers()).await?,
     };
+    let claims = identity.claims.clone();
     if is_platform_token {
         let required = if matches!(method.as_str(), "GET" | "HEAD" | "OPTIONS") {
             "ci-cd:read"
@@ -244,6 +248,7 @@ pub(crate) async fn require_auth(
     }
     let (mut parts, body) = req.into_parts();
     parts.extensions.insert(claims.clone());
+    parts.extensions.insert(identity);
     let req = axum::extract::Request::from_parts(parts, body);
     let allowed = api_token_scope_allows(&claims, &method)
         && crate::authz::allows(role, &method, &path)
@@ -691,11 +696,11 @@ pub(crate) async fn project_membership_role(
 
 /// JWT access tokens are bound to `sessions.id`; PATs (`cicd_...`) are
 /// resolved against api_tokens and carry explicit token scopes/bindings.
-pub(crate) async fn bearer_identity(
+async fn verified_bearer_identity(
     pool: &PgPool,
     auth_secret: &str,
     headers: &axum::http::HeaderMap,
-) -> Result<crate::auth::AccessClaims, ApiError> {
+) -> Result<VerifiedRequestIdentity, ApiError> {
     let value = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -703,7 +708,7 @@ pub(crate) async fn bearer_identity(
     let token = value
         .strip_prefix("Bearer ")
         .ok_or_else(ApiError::unauthorized)?;
-    identity_for_bearer_token(pool, auth_secret, token).await
+    verified_identity_for_bearer_token(pool, auth_secret, token).await
 }
 
 async fn central_identity(
@@ -722,6 +727,7 @@ async fn central_identity(
 }
 
 /// Preserve the authenticated origin in memory; central PATs have no local token ID.
+#[derive(Clone)]
 pub(crate) struct VerifiedRequestIdentity {
     pub(crate) claims: crate::auth::AccessClaims,
     pub(crate) central: Option<pdlc_auth_core::service_bridge::VerifiedCentralToken>,

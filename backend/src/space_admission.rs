@@ -91,3 +91,91 @@ pub(crate) async fn repository(
     }
     Ok(proof)
 }
+
+/// Private proof used only by catalog reads. Empty selected policy is an empty
+/// SQL filter, never NULL/unrestricted. No DTO, role or bearer is exposed.
+pub(crate) struct CatalogRead {
+    proof: ConfirmedSpaceRead,
+    pub(crate) groups: Vec<uuid::Uuid>,
+}
+pub(crate) async fn catalog_read(
+    pool: &PgPool,
+    identity: Option<crate::api::authz_mw::VerifiedRequestIdentity>,
+) -> Result<Option<CatalogRead>, ApiError> {
+    if !active(pool).await? {
+        return Ok(None);
+    }
+    let identity = identity.ok_or_else(ApiError::forbidden)?;
+    identity.require_scope("ci-cd:read")?;
+    let actor = identity.central.as_ref().ok_or_else(ApiError::forbidden)?;
+    let rows: Vec<(uuid::Uuid, uuid::Uuid, uuid::Uuid)> = sqlx::query_as(
+        "SELECT group_id,registry_instance_id,space_id FROM forge_space_catalog \
+         WHERE group_id IS NOT NULL AND state IN ('active','archiving','archived') \
+         ORDER BY registry_instance_id,space_id LIMIT 10001",
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    if rows.len() > 10000 {
+        return Err(ApiError::service_unavailable(
+            "space_admission_catalog_too_large",
+        ));
+    }
+    let spaces: Vec<_> = rows
+        .iter()
+        .map(|(_, registry_instance_id, space_id)| SpaceRef {
+            registry_instance_id: *registry_instance_id,
+            space_id: *space_id,
+        })
+        .collect();
+    let proof = client()
+        .await?
+        .confirm_many_read(&BRIDGE, actor, &spaces)
+        .await
+        .map_err(owner_error)?;
+    let readable: std::collections::HashSet<_> = proof
+        .readable_spaces()
+        .map_err(owner_error)?
+        .into_iter()
+        .collect();
+    let groups = rows
+        .into_iter()
+        .filter_map(|(group, registry_instance_id, space_id)| {
+            readable
+                .contains(&SpaceRef {
+                    registry_instance_id,
+                    space_id,
+                })
+                .then_some(group)
+        })
+        .collect();
+    Ok(Some(CatalogRead { proof, groups }))
+}
+impl CatalogRead {
+    pub(crate) fn response(
+        self,
+        mut response: axum::response::Response,
+    ) -> Result<axum::response::Response, ApiError> {
+        self.proof.admission().map_err(owner_error)?;
+        response.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("private, no-store"),
+        );
+        let (parts, body) = response.into_parts();
+        use tokio_stream::StreamExt;
+        let stream = body.into_data_stream().map(move |chunk| {
+            if !self.proof.is_current() {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "space_admission_expired",
+                ))
+            } else {
+                chunk.map_err(std::io::Error::other)
+            }
+        });
+        Ok(axum::response::Response::from_parts(
+            parts,
+            axum::body::Body::from_stream(stream),
+        ))
+    }
+}
