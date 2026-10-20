@@ -4,8 +4,10 @@ Source candidate: [write admission PR](adr/0037-pull-request-write-admission.md)
 сохраняет прежние DTO/URL, добавляет opaque request permit, atomic PR number
 transaction и original proof до native publication. GET связанных задач PR
 использует общий repository read. Task-link POST и replay используют тот же
-write permit и исходный proof до SQL commit. Qualification и durable unknown recovery
-остаются отдельными gates; runtime и исторические migrations не изменены.
+write permit и исходный proof до SQL commit. [Durable merge recovery](adr/0038-durable-pull-merge-recovery.md) сохраняет intent
+до публикации; повтор восстанавливает только metadata по точным refs, без
+повторного native merge. Добавлена миграция 0098; runtime и исторические
+migrations не изменены. Полный совместимый cohort остаётся отдельным gate.
 
 Source candidate: [общий read admission Git-браузера и PR](adr/0036-repository-browse-read-admission.md)
 использует decoded owner identity и original proof. Read adapters и PR write
@@ -2023,7 +2025,7 @@ attempt directory. Wire API не меняется, новый SDLC receipt endpo
 | POST | `/repos/{repo}/pulls` | Создание pull request |
 | GET | `/repos/{repo}/pulls/page?limit=&offset=&status=&search=` | Основной постраничный каталог; `status` принимает `open`, `closed`, `merged`, поиск охватывает номер, заголовок, ветки и автора |
 | GET | `/repos/{repo}/pulls/{number}` | Один pull request по номеру |
-| POST | `/repos/{repo}/pulls/{number}/action` | `{action:"merge"|"close"|"reopen"}` |
+| POST | `/repos/{repo}/pulls/{number}/action` | `{action:"merge"|"close"|"reopen"}`; повтор merge с сохранённым intent выполняет только exact-ref recovery, см. ADR-0038 |
 | GET | `/git/{repo}/info/refs?service=git-upload-pack` | Git Smart HTTP discovery |
 | POST | `/git/{repo}/git-upload-pack` | Smart HTTP fetch/clone service |
 | POST | `/git/{repo}/git-receive-pack` | Smart HTTP push service |

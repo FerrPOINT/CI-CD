@@ -77,11 +77,11 @@ Timeout не доказывает отсутствия publication. После �
 unknown outcome: требуется exact ref/PR readback, автоматического retry нет.
 Защищённый ответ private/no-store и не переживает original proof.
 
-Существующий PR API не содержит durable idempotency intent для unknown merge.
-Этот срез не добавляет автоматический reconcile или выбор «уже слитого» commit
-по ancestry. Повтор после неизвестного результата требует отдельного решения
-по точным refs; durable recovery и concurrent unknown retry остаются cohort gate.
-PR status сам по себе не подтверждает неизменность Git.
+На момент этого среза PR API не содержал durable intent для unknown merge.
+Эта часть заменена [ADR-0038](0038-durable-pull-merge-recovery.md): сохранённый
+intent разрешает metadata recovery по точным refs и сериализует повтор.
+Выбор по ancestry, повторная native publication и признание одного PR status
+доказательством Git rollback по-прежнему запрещены.
 
 ## Покрытие и приёмка
 

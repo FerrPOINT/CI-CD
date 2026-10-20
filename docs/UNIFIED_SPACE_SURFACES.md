@@ -194,6 +194,11 @@ locks. Native owner сохраняет original fixed clock и custom hook, за
 readback без автоматического повтора; PR status не доказательство Git rollback.
 GET catalog PR tasks теперь находится в repository read boundary.
 
-Qualification этого candidate ещё в работе; full cohort, durable unknown merge
-recovery, task-link write/machine evidence, CI/log/artifact/sync/V3 и serving
-routes остаются открытыми. Существующие timestamps/receipts не backfill.
+[ADR0038](adr/0038-durable-pull-merge-recovery.md) добавляет durable intent до
+publication. Повтор с текущими правами восстанавливает metadata по точным
+source/candidate OID; concurrent recovery не повторяет native effect. Drift и
+неподтверждённый исходный target остаются fail-closed, без ancestry/auto reset.
+
+Полный cohort, реальный process restart/rollback rehearsal, task-link
+write/machine evidence, CI/log/artifact/sync/V3 и serving routes остаются открытыми.
+Существующие timestamps/receipts не backfill.

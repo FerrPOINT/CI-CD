@@ -3,8 +3,10 @@
 Source candidate: [write admission PR](adr/0037-pull-request-write-admission.md)
 сохраняет прежние DTO/URL, добавляет opaque request permit, atomic PR number
 transaction и original proof до native publication. GET связанных задач PR
-использует общий repository read. Qualification и durable unknown recovery
-остаются отдельными gates; runtime и исторические migrations не изменены.
+использует общий repository read. [Durable merge recovery](adr/0038-durable-pull-merge-recovery.md) использует
+сохранённый intent и точные refs; повтор не запускает native publication.
+Добавлена миграция 0098; runtime и исторические migrations не изменены.
+Полный совместимый cohort остаётся отдельным gate.
 
 Native deadline cleanup сначала даёт Git250ms на SIGTERM, затем завершает
 остаток owned process group через SIGKILL. Локальные ref locks убирает сам Git;

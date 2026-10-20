@@ -292,5 +292,6 @@ preflight. PR write/merge, sync и остальные REST endpoints остаю�
 следующий opt-in source candidate: role/lifecycle locks, atomic number+PR,
 detached native owner и exact ref preparation. Native qualification в работе.
 GET task links использует repository read admission, POST — write permit;
-CI/sync/machine,
-unknown merge recovery и полный serving cohort остаются gates.
+[Durable merge recovery](docs/adr/0038-durable-pull-merge-recovery.md) добавляет
+сохранённое намерение и readback без повторной публикации. Это source candidate.
+CI/sync/machine и полный serving cohort остаются gates.

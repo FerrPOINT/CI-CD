@@ -4,8 +4,10 @@ Source candidate: [write admission PR](adr/0037-pull-request-write-admission.md)
 сохраняет прежние DTO/URL, добавляет opaque request permit, atomic PR number
 transaction и original proof до native publication. GET связанных задач PR
 использует общий repository read. Task-link POST и replay используют тот же
-write permit и исходный proof до SQL commit. Qualification и durable unknown recovery
-остаются отдельными gates; runtime и исторические migrations не изменены.
+write permit и исходный proof до SQL commit. [Durable merge recovery](adr/0038-durable-pull-merge-recovery.md) сохраняет intent
+до публикации; повтор восстанавливает только metadata по точным refs, без
+повторного native merge. Добавлена миграция 0098; runtime и исторические
+migrations не изменены. Полный совместимый cohort остаётся отдельным gate.
 
 Аддитивная0096 сохраняет strict-v1 binding/receipts и добавляет Space catalog/operation journal с необязательной Git-группой. Effective lifecycle и общий v1/v2 fence описаны в [SPACE_LIFECYCLE_V2](SPACE_LIFECYCLE_V2.md). Это source candidate; рабочая БД не мигрирована.
 
@@ -287,6 +289,23 @@ Protected branch lookup при PR merge вычисляет `COALESCE(BOOL_OR(...
 | tests_total / tests_passed / tests_failed / tests_skipped | INTEGER | Итоги suite |
 | duration_ms | INTEGER NULL | Время из JUnit `time` (секунды → миллисекунды) |
 
+
+## Durable merge attempts
+
+Миграция `0098_pull_request_merge_attempts.sql` добавляет
+`pull_request_merge_attempts`: UUID попытки, FK PR/repository с RESTRICT,
+исходные source/target refs и OID, подготовленный merge OID,
+`prepared|confirmed|rejected`, created/completed timestamps.
+Частичный UNIQUE по PR для `state <> 'rejected'` допускает только одну
+неотклонённую попытку. Исторические миграции не переписываются.
+
+Intent коммитится до Git publication. PR status и `confirmed` коммитятся вместе.
+Только определённый native reject до publication переводит attempt в `rejected`.
+Unknown сохраняет `prepared`, включая неизменные, удалённые или изменённые refs.
+FK RESTRICT сохраняет evidence; очистка журнала не является обычным retry.
+
+[ADR-0038](adr/0038-durable-pull-merge-recovery.md) определяет locks, recovery,
+границы совместимости и migration/rollback gate.
 
 ## 0.2 pull_requests
 

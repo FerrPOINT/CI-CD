@@ -902,6 +902,22 @@ async fn pr_action_owned(
     let _namespace_lease = crate::repository_catalog::write_lease(&state, &repo).await?;
     let path = resolve_repo_path(&state, &repo).await?;
     let write = RepositoryWrite::for_repository(pool, &repo, permit).await?;
+    // Merge owns the repository before taking SQL locks, including across the intent commit.
+    let mutation_guard = if input.action == "merge" {
+        let repository_id: Uuid =
+            sqlx::query_scalar("SELECT id FROM repository_catalog WHERE storage_name=$1")
+                .bind(&repo)
+                .fetch_one(pool)
+                .await
+                .map_err(ApiError::internal)?;
+        Some(
+            cicd_infra::sync_git::MutationGuard::acquire(&state.git.root, repository_id)
+                .await
+                .map_err(crate::repository_sync::api_error)?,
+        )
+    } else {
+        None
+    };
     let mut transaction = pool.begin().await.map_err(ApiError::internal)?;
     if let Some(permit) = write.as_ref() {
         permit.lock(&mut transaction).await?;
@@ -917,18 +933,26 @@ async fn pr_action_owned(
     .ok_or_else(ApiError::not_found)?;
 
     require_write(write.as_ref())?;
+    if let Some(attempt) = cicd_infra::pull_merge::active(&mut transaction, pr.id)
+        .await
+        .map_err(ApiError::internal)?
+    {
+        if input.action == "merge" {
+            let result =
+                recover_merge(&state, &path, transaction, pr, attempt, write.as_ref()).await;
+            drop(mutation_guard);
+            return result;
+        }
+        if attempt.state == "prepared" {
+            return Err(ApiError::conflict(
+                "Сначала подтвердите результат незавершённого merge",
+            ));
+        }
+    }
     match input.action.as_str() {
         "merge" => {
-            let repository_id: Uuid =
-                sqlx::query_scalar("SELECT id FROM repository_catalog WHERE storage_name=$1")
-                    .bind(&repo)
-                    .fetch_one(pool)
-                    .await
-                    .map_err(ApiError::internal)?;
-            let mutation_guard =
-                cicd_infra::sync_git::MutationGuard::acquire(&state.git.root, repository_id)
-                    .await
-                    .map_err(crate::repository_sync::api_error)?;
+            let mutation_guard = mutation_guard.as_ref().ok_or_else(ApiError::forbidden)?;
+            let repository_id = pr.repository_id.ok_or_else(merge_unconfirmed)?;
             if pr.status != "open" {
                 return Err(ApiError::conflict("pull request is not open"));
             }
@@ -1023,28 +1047,63 @@ async fn pr_action_owned(
                 .trim()
                 .to_string();
             require_write(write.as_ref())?;
-            publish_merge(
-                &path,
-                &source,
-                &target,
-                &merge_sha,
-                Some(&mutation_guard),
-                write.as_ref().map(|permit| (&*state, permit.proof())),
-            )
-            .await?;
-            let updated = sqlx::query_as::<_, PullRequest>(
-                "UPDATE pull_requests SET status = 'merged', merged_at = now(), updated_at = now(), merge_commit_sha = $2 WHERE id = $1 RETURNING id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",
-            )
-            .bind(pr.id)
-            .bind(&merge_sha)
-            .fetch_one(&mut *transaction)
-            .await
-            .map_err(|_| merge_unconfirmed())?;
-            require_write(write.as_ref()).map_err(|_| merge_unconfirmed())?;
+            let attempt = cicd_infra::pull_merge::Attempt {
+                id: Uuid::new_v4(),
+                repository_id,
+                source_ref: source.reference.clone(),
+                source_oid: source.oid.clone(),
+                target_ref: target.reference.clone(),
+                target_oid: target.oid.clone(),
+                merge_oid: merge_sha.clone(),
+                state: "prepared".into(),
+            };
+            cicd_infra::pull_merge::prepare(&mut transaction, pr.id, &attempt)
+                .await
+                .map_err(ApiError::internal)?;
+            require_write(write.as_ref())?;
             transaction
                 .commit()
                 .await
                 .map_err(|_| merge_unconfirmed())?;
+
+            // Restore role/lifecycle SQL locks using the original fixed proof before any ref effect.
+            let mut transaction = pool.begin().await.map_err(|_| merge_unconfirmed())?;
+            if let Some(permit) = write.as_ref() {
+                permit.lock(&mut transaction).await?;
+            }
+            let current: String =
+                sqlx::query_scalar("SELECT status FROM pull_requests WHERE id=$1 FOR UPDATE")
+                    .bind(pr.id)
+                    .fetch_one(&mut *transaction)
+                    .await
+                    .map_err(|_| merge_unconfirmed())?;
+            if current != "open" {
+                return Err(merge_unconfirmed());
+            }
+            require_write(write.as_ref())?;
+            if let Err(error) = publish_merge(
+                &path,
+                &source,
+                &target,
+                &merge_sha,
+                Some(mutation_guard),
+                write.as_ref().map(|permit| (&*state, permit.proof())),
+            )
+            .await
+            {
+                // Only the native owner's definite pre-publication rejection permits a new attempt.
+                if error.status == axum::http::StatusCode::CONFLICT {
+                    cicd_infra::pull_merge::finish(&mut transaction, attempt.id, false)
+                        .await
+                        .map_err(|_| merge_unconfirmed())?;
+                    transaction
+                        .commit()
+                        .await
+                        .map_err(|_| merge_unconfirmed())?;
+                }
+                return Err(error);
+            }
+            let updated = complete_merge(transaction, pr.id, &attempt, write.as_ref()).await?;
             crate::repository_sync::signal(pool, repository_id).await;
             Ok(Json(updated))
         }
@@ -1084,6 +1143,83 @@ async fn pr_action_owned(
             "action must be merge, close or reopen",
         )),
     }
+}
+
+async fn complete_merge(
+    mut transaction: sqlx::Transaction<'_, sqlx::Postgres>,
+    pull: Uuid,
+    attempt: &cicd_infra::pull_merge::Attempt,
+    write: Option<&RepositoryWrite>,
+) -> Result<PullRequest, ApiError> {
+    let updated = sqlx::query_as::<_, PullRequest>(
+        "UPDATE pull_requests SET status='merged',merged_at=now(),updated_at=now(),merge_commit_sha=$2 \
+         WHERE id=$1 AND status='open' RETURNING id,repository_id,repository_name,number,title,description,source_branch,target_branch,status,created_by,created_at,updated_at,merged_at,merge_commit_sha",
+    )
+    .bind(pull)
+    .bind(&attempt.merge_oid)
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(|_| merge_unconfirmed())?;
+    cicd_infra::pull_merge::finish(&mut transaction, attempt.id, true)
+        .await
+        .map_err(|_| merge_unconfirmed())?;
+    require_write(write).map_err(|_| merge_unconfirmed())?;
+    transaction
+        .commit()
+        .await
+        .map_err(|_| merge_unconfirmed())?;
+    Ok(updated)
+}
+
+async fn recover_merge(
+    state: &AppState,
+    path: &std::path::Path,
+    transaction: sqlx::Transaction<'_, sqlx::Postgres>,
+    pr: PullRequest,
+    attempt: cicd_infra::pull_merge::Attempt,
+    write: Option<&RepositoryWrite>,
+) -> Result<Json<PullRequest>, ApiError> {
+    if pr.repository_id != Some(attempt.repository_id)
+        || branch_reference(&pr.source_branch).await?.1 != attempt.source_ref
+        || branch_reference(&pr.target_branch).await?.1 != attempt.target_ref
+    {
+        return Err(merge_unconfirmed());
+    }
+    require_write(write)?;
+    if attempt.state == "confirmed" {
+        if pr.status != "merged" || pr.merge_commit_sha.as_deref() != Some(&attempt.merge_oid) {
+            return Err(merge_unconfirmed());
+        }
+        transaction
+            .commit()
+            .await
+            .map_err(|_| merge_unconfirmed())?;
+        return Ok(Json(pr));
+    }
+    if pr.status != "open" {
+        return Err(merge_unconfirmed());
+    }
+    // Exact refs only: ancestry and PR status cannot identify an interrupted publication.
+    let source = branch_snapshot(path, &pr.source_branch)
+        .await
+        .map_err(|_| merge_unconfirmed())?;
+    let target = branch_snapshot(path, &pr.target_branch)
+        .await
+        .map_err(|_| merge_unconfirmed())?;
+    require_write(write)?;
+    if source.oid != attempt.source_oid {
+        return Err(merge_unconfirmed());
+    }
+    if target.oid == attempt.merge_oid {
+        let updated = complete_merge(transaction, pr.id, &attempt, write).await?;
+        crate::repository_sync::signal(
+            state.pool.as_ref().ok_or_else(ApiError::unavailable)?,
+            attempt.repository_id,
+        )
+        .await;
+        return Ok(Json(updated));
+    }
+    Err(merge_unconfirmed())
 }
 
 // ─── helpers ───

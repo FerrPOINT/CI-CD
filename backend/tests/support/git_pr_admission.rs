@@ -390,6 +390,18 @@ pub(super) async fn verify(
         );
     }
     profile.write().unwrap().expires_in = 300;
+    // An unknown preparation is retained. A fresh readback must never republish it.
+    post(&http, origin, &action, &json!({"action":"merge"}), 503).await;
+    post(&http, origin, &action, &json!({"action":"close"}), 409).await;
+    assert_eq!(
+        git(&bare, &["rev-parse", "refs/heads/qa-pr-target"]).await,
+        base
+    );
+    // A separate legitimate review still reaches its actual custom deny hook.
+    let fresh = post(&http, origin, &collection, &input, 200).await;
+    let number = fresh["number"].as_i64().unwrap();
+    let action = format!("/api/v1/catalog/repositories/{repository}/pulls/{number}/action");
+    let encoded_action = format!("/api/v1/repos/{canonical}%2Frepository/pulls/{number}/action");
     let denied_marker = root.join("pr-denied-prepared");
     let deny = format!(
         "#!/bin/sh\ncat >/dev/null\nif test \"$1\" = prepared; then touch '{}'; exit 1; fi\n",
@@ -468,10 +480,205 @@ pub(super) async fn verify(
     assert!(!root.join("pr-late-committed").exists());
     assert_eq!(tokio::fs::read(&hook_path).await.unwrap(), late.as_bytes());
     match original {
-        Some(bytes) => hook(&hook_path, &bytes).await,
+        Some(ref bytes) => hook(&hook_path, bytes).await,
         None => tokio::fs::remove_file(&hook_path).await.unwrap(),
     }
+    profile.write().unwrap().expires_in = 300;
+    let recovery_action =
+        format!("/api/v1/catalog/repositories/{repository}/pulls/{number}/action");
+    let published = git(&bare, &["rev-parse", "refs/heads/qa-pr-unknown"]).await;
+    let intent: (String, String) = sqlx::query_as(
+        "SELECT merge_oid,state FROM pull_request_merge_attempts WHERE pull_request_id=$1 AND state<>'rejected'",
+    ).bind(unknown_id).fetch_one(pool).await.unwrap();
+    assert_eq!(intent, (published.clone(), "prepared".into()));
+    git(&bare, &["update-ref", "-d", "refs/heads/qa-pr-unknown"]).await;
+    post(
+        &http,
+        origin,
+        &recovery_action,
+        &json!({"action":"merge"}),
+        503,
+    )
+    .await;
+    git(
+        &bare,
+        &["update-ref", "refs/heads/qa-pr-unknown", &published],
+    )
+    .await;
+    let advanced = git(
+        &bare,
+        &[
+            "commit-tree",
+            &format!("{published}^{{tree}}"),
+            "-p",
+            &published,
+            "-m",
+            "later writer",
+        ],
+    )
+    .await;
+    git(
+        &bare,
+        &["update-ref", "refs/heads/qa-pr-unknown", &advanced],
+    )
+    .await;
+    post(
+        &http,
+        origin,
+        &recovery_action,
+        &json!({"action":"merge"}),
+        503,
+    )
+    .await;
+    assert_eq!(
+        git(&bare, &["rev-parse", "refs/heads/qa-pr-unknown"]).await,
+        advanced
+    );
+    git(
+        &bare,
+        &["update-ref", "refs/heads/qa-pr-unknown", &published],
+    )
+    .await;
+    git(&bare, &["update-ref", "refs/heads/qa-pr-source", &base]).await;
+    post(
+        &http,
+        origin,
+        &recovery_action,
+        &json!({"action":"merge"}),
+        503,
+    )
+    .await;
+    git(&bare, &["update-ref", "refs/heads/qa-pr-source", &source]).await;
+    profile.write().unwrap().scopes = vec!["ci-cd:read", "git:read"];
+    post(
+        &http,
+        origin,
+        &recovery_action,
+        &json!({"action":"merge"}),
+        403,
+    )
+    .await;
+    profile.write().unwrap().scopes = vec!["ci-cd:read", "ci-cd:write", "git:read", "git:write"];
+    sqlx::query("UPDATE users SET role='viewer' WHERE central_sub=$1")
+        .bind(saved.subject.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+    post(
+        &http,
+        origin,
+        &recovery_action,
+        &json!({"action":"merge"}),
+        403,
+    )
+    .await;
+    sqlx::query("UPDATE users SET role='developer' WHERE central_sub=$1")
+        .bind(saved.subject.to_string())
+        .execute(pool)
+        .await
+        .unwrap();
+    let untouched = git(
+        &bare,
+        &["for-each-ref", "--format=%(refname) %(objectname)"],
+    )
+    .await;
+    let forbidden_publication = root.join("pr-recovery-republished");
+    hook(
+        &hook_path,
+        format!(
+            "#!/bin/sh\ncat >/dev/null\ntouch '{}'\nexit 1\n",
+            forbidden_publication.display()
+        )
+        .as_bytes(),
+    )
+    .await;
+    let body = json!({"action":"merge"});
+    let (first, second) = tokio::join!(
+        post(&http, origin, &recovery_action, &body, 200),
+        post(&http, origin, &recovery_action, &body, 200),
+    );
+    for result in [first, second] {
+        assert_eq!(result["status"], "merged");
+        assert_eq!(result["merge_commit_sha"], published);
+    }
+    assert!(
+        !forbidden_publication.exists(),
+        "recovery must not invoke a publication hook"
+    );
+    assert_eq!(
+        git(
+            &bare,
+            &["for-each-ref", "--format=%(refname) %(objectname)"]
+        )
+        .await,
+        untouched
+    );
+    let intent_state: String = sqlx::query_scalar(
+        "SELECT state FROM pull_request_merge_attempts WHERE pull_request_id=$1 AND state<>'rejected'",
+    ).bind(unknown_id).fetch_one(pool).await.unwrap();
+    assert_eq!(intent_state, "confirmed");
+    // SQL failure after successful publication leaves a recoverable durable intent.
+    hook(&hook_path, b"#!/bin/sh\ncat >/dev/null\nexit 0\n").await;
+    git(&bare, &["update-ref", "refs/heads/qa-pr-sql", &base]).await;
+    let sql_review = post(&http, origin, &collection,
+        &json!({"title":"SQL commit interruption","source_branch":"qa-pr-source","target_branch":"qa-pr-sql"}), 200).await;
+    let sql_id: Uuid = sql_review["id"].as_str().unwrap().parse().unwrap();
+    let sql_number = sql_review["number"].as_i64().unwrap();
+    let sql_action = format!("/api/v1/catalog/repositories/{repository}/pulls/{sql_number}/action");
+    sqlx::raw_sql(&format!(
+        "CREATE FUNCTION qa_fail_merge_metadata() RETURNS trigger LANGUAGE plpgsql AS @fn@ BEGIN \
+         IF NEW.id='{sql_id}'::uuid AND NEW.status='merged' THEN RAISE EXCEPTION 'fixture_metadata_failure'; END IF; RETURN NEW; END @fn@; \
+         CREATE TRIGGER qa_fail_merge_metadata BEFORE UPDATE ON pull_requests FOR EACH ROW EXECUTE FUNCTION qa_fail_merge_metadata();"
+    ).replace("@fn@", "$$")).execute(pool).await.unwrap();
+    post(&http, origin, &sql_action, &json!({"action":"merge"}), 503).await;
+    let sql_published = git(&bare, &["rev-parse", "refs/heads/qa-pr-sql"]).await;
+    assert_ne!(sql_published, base);
+    let sql_status: String = sqlx::query_scalar("SELECT status FROM pull_requests WHERE id=$1")
+        .bind(sql_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(sql_status, "open");
+    sqlx::raw_sql("DROP TRIGGER qa_fail_merge_metadata ON pull_requests; DROP FUNCTION qa_fail_merge_metadata();")
+        .execute(pool).await.unwrap();
+    let recovered = post(&http, origin, &sql_action, &json!({"action":"merge"}), 200).await;
+    assert_eq!(recovered["merge_commit_sha"], sql_published);
+    assert_eq!(
+        git(&bare, &["rev-parse", "refs/heads/qa-pr-sql"]).await,
+        sql_published
+    );
+    git(
+        &bare,
+        &["update-ref", "refs/heads/qa-pr-unknown", &advanced],
+    )
+    .await;
+    let completed = post(
+        &http,
+        origin,
+        &recovery_action,
+        &json!({"action":"merge"}),
+        200,
+    )
+    .await;
+    assert_eq!(completed["merge_commit_sha"], published);
+    assert_eq!(
+        git(&bare, &["rev-parse", "refs/heads/qa-pr-unknown"]).await,
+        advanced
+    );
+    assert!(!forbidden_publication.exists());
+
+    match original {
+        Some(ref bytes) => hook(&hook_path, bytes).await,
+        None => {
+            if hook_path.exists() {
+                tokio::fs::remove_file(&hook_path).await.unwrap();
+            }
+        }
+    }
     *profile.write().unwrap() = saved;
+    println!(
+        "PR durable merge intent, exact refs, authority and concurrent recovery without republication: PASS"
+    );
     println!(
         "PR post-publication timeout requires exact Git ref readback without retry; task-link read admission: PASS"
     );

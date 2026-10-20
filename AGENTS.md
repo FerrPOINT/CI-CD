@@ -127,3 +127,10 @@ proof после SQL wait входят в одну транзакцию; пре�
 ref locks перед SIGKILL остальной owned group. Это не продлевает proof. Сохранять
 unknown outcome; не удалять locks по предположению. Fixture custom hook обязан
 использовать фактический core.hooksPath и доказывать достижение hook.
+
+Для PR merge сохранять durable intent до ref publication, затем повторно брать
+role/lifecycle/PR SQL locks с исходным proof. MutationGuard берётся до SQL locks
+и держится через intent commit и recovery. Prepared attempt не удалять и не
+перезапускать по таймеру или старому target OID. Повтор требует текущих прав и
+точных source/candidate refs; только metadata recovery, без native retry/ancestry.
+[ADR-0038](docs/adr/0038-durable-pull-merge-recovery.md) определяет журнал и rollout.
