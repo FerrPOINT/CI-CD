@@ -41,6 +41,12 @@ source binding/live lease проверка остаются prerequisite буд�
 [Граница primitive](SDLC_DELIVERY_V1.md#source-slice-filesystem-preparation-primitive-2026-10-04),
 [ADR-0019](adr/0019-local-pinned-workspace-preparation.md).
 
+Центральный Git proof хранится в private request custody до завершения native
+owner и body handoff. Lifecycle lease не освобождается по отмене HTTP caller;
+reference-transaction guard сохраняет custom policy перед проверкой исходного
+срока. [Контракт и границы](UNIFIED_SPACE_SURFACES.md#исходный-deadline-native-git-source-candidate).
+Общая Space policy/public/legacy/task admission остаётся отдельной реализацией.
+
 ## 1. Контекст
 
 Owner-local manifest delivery переиспользует existing candidate observer и

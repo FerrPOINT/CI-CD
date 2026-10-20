@@ -77,6 +77,10 @@ Git Smart HTTP source fix: project-bound SAT проверяет существу
 repository/project и отдельные `git:read`/`git:write` scopes. Native pre-receive
 отклоняет весь push, обновляющий configured default/protected branch, до
 изменения refs; ответ сохраняет стандартный Git report-status, не новый JSON DTO.
+Центральный proof сохраняет исходный срок до native IO/ref preparation и body
+handoff. Unknown/expired execution возвращает503 с требованием exact ref readback,
+без автоматического retry; authentication до запуска сохраняет401/403.
+Подробности: [исходный deadline](UNIFIED_SPACE_SURFACES.md#исходный-deadline-native-git-source-candidate).
 Custom hooks и human ACL сохраняются. Ограниченный initial bootstrap для
 admin/operator описан ниже; SAT его не получает. [Git hosting](GIT_HOSTING.md#8-аутентификация).
 Новые routes/credentials/scopes не вводятся; Rust/PG и installed-image qualification pending.

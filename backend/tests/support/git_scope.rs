@@ -72,6 +72,7 @@ pub(super) async fn verify(pool: &sqlx::PgPool, profile: Arc<RwLock<Profile>>) {
         read.headers()["content-type"],
         "application/x-git-upload-pack-advertisement"
     );
+    assert_eq!(read.headers()["cache-control"], "private, no-store");
     let read_only_write = request("git-receive-pack").await.unwrap();
     assert_eq!(read_only_write.status(), reqwest::StatusCode::FORBIDDEN);
     profile.write().unwrap().scopes = vec!["git:write"];
@@ -133,7 +134,200 @@ pub(super) async fn verify(pool: &sqlx::PgPool, profile: Arc<RwLock<Profile>>) {
         reqwest::StatusCode::UNAUTHORIZED,
         "a token that expired during ACL IO cannot authorize Git discovery"
     );
+    // Exercise the actual HTTP Git transport, not only the discovery endpoint.
     profile.write().unwrap().expires_in = 300;
+    profile.write().unwrap().scopes = vec!["git:read", "git:write"];
+    let checkout = root.join("client");
+    let client_git = |args: Vec<String>| {
+        let checkout = checkout.clone();
+        async move {
+            tokio::process::Command::new("git")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .arg("-c")
+                .arg("http.extraHeader=Authorization: Bearer sdlc_pat_fixture_product_roles")
+                .arg("-C")
+                .arg(checkout)
+                .args(args)
+                .output()
+                .await
+                .unwrap()
+        }
+    };
+    let cloned = tokio::process::Command::new("git")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .arg("-c")
+        .arg("http.extraHeader=Authorization: Bearer sdlc_pat_fixture_product_roles")
+        .args(["clone", &format!("{origin}/git/{name}.git")])
+        .arg(&checkout)
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        cloned.status.success(),
+        "real clone: {}",
+        String::from_utf8_lossy(&cloned.stderr)
+    );
+    for args in [
+        vec!["config", "user.name", "Fixture"],
+        vec!["config", "user.email", "fixture@example.invalid"],
+    ] {
+        assert!(
+            client_git(args.into_iter().map(str::to_owned).collect())
+                .await
+                .status
+                .success()
+        );
+    }
+    tokio::fs::write(checkout.join("data"), "original proof\n")
+        .await
+        .unwrap();
+    assert!(
+        client_git(vec!["add".into(), "data".into()])
+            .await
+            .status
+            .success()
+    );
+    assert!(
+        client_git(vec!["commit".into(), "-m".into(), "fixture".into()])
+            .await
+            .status
+            .success()
+    );
+    let push = |branch: &str| {
+        client_git(vec![
+            "push".into(),
+            "origin".into(),
+            format!("HEAD:refs/heads/task/{branch}"),
+        ])
+    };
+    let accepted = push("current").await;
+    assert!(
+        accepted.status.success(),
+        "current proof push: {}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+    let reference = |branch: &str| {
+        let bare = root.join(format!("{name}.git"));
+        let reference = format!("refs/heads/task/{branch}");
+        async move {
+            tokio::process::Command::new("git")
+                .arg("--git-dir")
+                .arg(bare)
+                .args(["rev-parse", "--verify", &reference])
+                .output()
+                .await
+                .unwrap()
+        }
+    };
+    let original = reference("current").await;
+    assert!(original.status.success());
+    let custom = root.join("custom-hooks");
+    tokio::fs::create_dir(&custom).await.unwrap();
+    let configured = tokio::process::Command::new("git")
+        .arg("--git-dir")
+        .arg(root.join(format!("{name}.git")))
+        .args(["config", "core.hooksPath"])
+        .arg(&custom)
+        .status()
+        .await
+        .unwrap();
+    assert!(configured.success());
+    let hook = custom.join("reference-transaction");
+    let script = format!(
+        "#!/bin/sh\nset -eu\ncat >/dev/null\nif test \"$1\" = prepared; then\n  touch '{}'\n  sleep 4\n  touch '{}'\nfi\n",
+        root.join("prepared-started").display(),
+        root.join("late-hook-effect").display()
+    );
+    tokio::fs::write(&hook, &script).await.unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700))
+            .await
+            .unwrap();
+    }
+    profile.write().unwrap().expires_in = 3;
+    let expired = push("expired").await;
+    assert!(
+        !expired.status.success(),
+        "expired prepared hook must not publish a ref"
+    );
+    assert!(
+        root.join("prepared-started").exists(),
+        "real custom prepared hook was reached"
+    );
+    assert!(
+        !reference("expired").await.status.success(),
+        "expired invocation created no ref"
+    );
+    assert_eq!(
+        original.stdout,
+        reference("current").await.stdout,
+        "neighbor ref unchanged"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(4300)).await;
+    assert!(
+        !root.join("late-hook-effect").exists(),
+        "deadline must stop the owned hook process group"
+    );
+    assert_eq!(
+        tokio::fs::read_to_string(&hook).await.unwrap(),
+        script,
+        "custom hook bytes preserved"
+    );
+    // The next independent invocation retains the original custom hook contract.
+    tokio::fs::write(&hook, "#!/bin/sh\ncat >/dev/null\nexit 1\n")
+        .await
+        .unwrap();
+    profile.write().unwrap().expires_in = 300;
+    assert!(!push("custom-denied").await.status.success());
+    assert!(!reference("custom-denied").await.status.success());
+    tokio::fs::write(&hook, "#!/bin/sh\ncat >/dev/null\nexit 0\n")
+        .await
+        .unwrap();
+    assert!(
+        push("after-expiry").await.status.success(),
+        "new valid proof and custom hook still work"
+    );
+    assert!(reference("after-expiry").await.status.success());
+    // Timeout after publication is an unknown outcome, not proof of rollback.
+    let post = custom.join("post-receive");
+    let post_script = format!(
+        "#!/bin/sh\nset -eu\ncat >/dev/null\ntouch '{}'\nsleep 4\ntouch '{}'\n",
+        root.join("post-started").display(),
+        root.join("late-post-effect").display()
+    );
+    tokio::fs::write(&post, &post_script).await.unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(&post, std::fs::Permissions::from_mode(0o700))
+            .await
+            .unwrap();
+    }
+    profile.write().unwrap().expires_in = 3;
+    let unknown = push("published-before-timeout").await;
+    assert!(
+        !unknown.status.success(),
+        "late post hook must not report confirmed success"
+    );
+    assert!(root.join("post-started").exists());
+    assert!(
+        reference("published-before-timeout").await.status.success(),
+        "actual ref readback distinguishes committed publication from rollback"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(4300)).await;
+    assert!(!root.join("late-post-effect").exists());
+    assert_eq!(tokio::fs::read_to_string(&post).await.unwrap(), post_script);
+    profile.write().unwrap().expires_in = 300;
+    println!("Git post-publication timeout requires actual ref readback: PASS");
+    println!(
+        "Git native clone/push original deadline, custom prepared hook and process-group cleanup: PASS"
+    );
     server.abort();
     let _ = server.await;
     assert!(

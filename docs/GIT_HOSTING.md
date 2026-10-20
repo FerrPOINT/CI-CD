@@ -156,6 +156,15 @@ Git Smart HTTP различает read и write:
 - Private `git-upload-pack` и любой `git-receive-pack` требуют credential.
 - Legacy `CICD_GIT_TOKEN` остаётся operator bypass для совместимости.
 - При непустом `CICD_AUTH_SECRET` можно передать JWT/PAT пользователя: `viewer+` читает связанный project repository, `developer+` может push, `admin` имеет bypass. PAT дополнительно должен иметь `git:read` для fetch/clone или `git:write` для push и, если задан `project_id`, совпадать со связанным проектом. Для центрального PAT исходное подтверждение Auth и scopes сохраняются отдельно от локальных claims: отсутствие локального `api_tokens.id` не означает browser session. Срок повторно проверяется после асинхронной ACL-проверки; scope не заменяет подтверждённую роль.
+  Private proof сохраняет исходный срок также на native advertisement/RPC,
+  owner lock wait и body handoff; private, no-store запрещает кешировать
+  защищённый Git response. Native receive проверяет fixed deadline после custom
+  prepared reference-transaction hook. По истечении native owner завершает
+  собственную process group и ждёт Git, сохраняя write lease до cleanup.
+  Неизвестный результат требует exact ref readback без автоматического retry.
+  Linux boot-clock bridge округляет оставшееся окно вниз; последняя неполная
+  секунда закрывается. Уже отправленные байты отозвать нельзя. Подробности и
+  оставшиеся public/legacy/task admission gates — в [матрице](UNIFIED_SPACE_SURFACES.md).
 - Project-bound `forge_sat_` использует тот же repository UUID → CI project
   predicate, что API, без фиктивного human membership. Нужны отдельные
   `git:read`/`git:write`; `api:read`/`api:write` не дают Git-доступ.

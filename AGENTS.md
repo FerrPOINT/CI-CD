@@ -95,3 +95,7 @@ Desktop fallback. Pulse — приватный Git/pipeline только в CI/C
 applied migrations сохранять; ProjectRef/SpaceRef/V3 отдельны. Полный gate на
 интегрированной вехе, в ходе реализации scoped checks. Runtime не активировать
 по готовности одного продукта; не выбирать первый Project/Space неявно.
+Git deadline передавать как private proof с исходным fixed clock до native IO
+и ref preparation; не заменять его новой длительностью. Не освобождать lifecycle
+lease до завершения native owner/cleanup. Custom hooks сохранять; unknown Git
+publication требует exact ref readback без автоматического retry.

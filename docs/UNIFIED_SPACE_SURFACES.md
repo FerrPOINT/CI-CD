@@ -91,8 +91,40 @@ Native PostgreSQL/HTTP проверяет private discovery: отсутстви�
 read PAT не пишет, git:write не заменяет membership developer, разрешённые read
 и write advertisement доступны. Реальный membership SQL блокируется до expiry;
 после снятия блокировки ответ401. Существующие profile/runner/drain проверки
-также проходят. Это не actual clone/push, не проверка общей Space policy и не
-ограничение lifetime всего дочернего Git IO; эти gates остаются следующими.
+также проходят. Следующий source slice сохраняет исходный deadline на native IO
+и проверяется настоящим clone/push; общая Space policy всё ещё отдельный gate.
+
+## Исходный deadline native Git: source candidate
+
+Private GitAccess сохраняет исходные monotonic/wall deadlines VerifiedCentralToken
+через ACL, lookup, owner waiter, native process и выдачу тела ответа. Discovery,
+RPC и canonical aliases используют эту границу; срок не вычисляется заново
+после SQL, lock wait или передачи в hook.
+
+Receive сохраняет исходный reference-transaction hook и вызывает его с прежним
+stdin/argv. После custom prepared hook проверяется исходный срок, перед native
+ref preparation. Private invocation содержит только fixed boot-clock/wall bounds,
+без bearer и новых credentials. Linux CLOCK_BOOTTIME учитывает suspend; округление
+вниз не продлевает окно при переводе Instant в shell. Недостаток целой секунды
+закрывает запуск. Это проверка перед подготовкой refs, не обещание жёсткого
+реального времени для диска или отзыва уже отправленных клиенту байтов.
+
+Native owner завершает только созданную им process group, ждёт native Git и
+сохраняет lifecycle lease до завершения cleanup. Deadline охватывает наследуемые
+stdout/stderr pipes, даже если parent process уже вышел. Timeout/неизвестная
+публикация требует exact ref readback, автоматический повтор не разрешён.
+Protected responses получают private, no-store и проверяют тот же срок при
+выдаче body frames. Existing buffered IO и прежние legacy/public/task permissions
+не превращаются этим исправлением в общий допуск.
+
+Native HTTP/PG regression выполняет actual clone, разрешённый push, медленный
+custom prepared hook до expiry, отсутствие новой ref и позднего эффекта hook,
+сохранение соседней ref и bytes custom hook. Новый действующий proof снова
+разрешает push; отказ custom hook по-прежнему запрещает публикацию. Отдельный
+slow post-receive case подтверждает обратную границу: timeout после публикации
+не означает rollback; actual ref readback обнаруживает опубликованную ref, а
+поздний эффект hook останавливается. Исходные custom hook bytes сохраняются.
+Это изолированная source qualification, не installed behavior или serving cohort.
 
 ## Lifecycle owner v2: source candidate
 

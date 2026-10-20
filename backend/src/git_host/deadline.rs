@@ -1,0 +1,184 @@
+//! Original proof lifetime across native Git, ref preparation and response handoff.
+use super::*;
+use std::time::{Duration, Instant};
+use tokio::io::AsyncReadExt;
+
+#[derive(Clone, Copy)]
+pub(super) struct GitDeadline {
+    instant: Instant,
+    until: i64,
+}
+impl GitDeadline {
+    pub(super) fn identity(source: &pdlc_auth_core::service_bridge::VerifiedCentralToken) -> Self {
+        Self {
+            instant: source.lifetime.monotonic_deadline(),
+            until: source.lifetime.local_valid_until(),
+        }
+    }
+    pub(super) fn current(self) -> bool {
+        Instant::now() < self.instant && Utc::now().timestamp() < self.until
+    }
+    pub(super) fn require(self) -> Result<(), ApiError> {
+        if self.current() {
+            Ok(())
+        } else {
+            Err(ApiError::unauthorized())
+        }
+    }
+    /// Translate only the remaining fixed window, conservatively rounded down.
+    #[cfg(target_os = "linux")]
+    pub(super) fn hook_bounds(self) -> Result<(u64, i64), ApiError> {
+        let mut clock = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: this is a live timespec; reading BOOTTIME has no side effects.
+        if unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut clock) } != 0 {
+            return Err(ApiError::service_unavailable("Git fixed clock unavailable"));
+        }
+        self.require()?;
+        let remaining = self
+            .instant
+            .saturating_duration_since(Instant::now())
+            .as_secs();
+        let cap = u64::try_from(clock.tv_sec)
+            .ok()
+            .and_then(|seconds| seconds.checked_add(remaining))
+            .filter(|_| remaining > 0)
+            .ok_or_else(|| ApiError::service_unavailable("Git proof window insufficient"))?;
+        Ok((cap, self.until))
+    }
+    #[cfg(not(target_os = "linux"))]
+    pub(super) fn hook_bounds(self) -> Result<(u64, i64), ApiError> {
+        Err(ApiError::service_unavailable(
+            "Git fixed-clock hooks require Linux",
+        ))
+    }
+    pub(super) fn response(self, mut response: Response) -> Response {
+        if let Err(error) = self.require() {
+            return git_access_error(error);
+        }
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            header::HeaderValue::from_static("private, no-store"),
+        );
+        let (parts, body) = response.into_parts();
+        use tokio_stream::StreamExt;
+        let chunks = body.into_data_stream().map(move |chunk| {
+            if !self.current() {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "git_proof_expired",
+                ))
+            } else {
+                chunk.map_err(std::io::Error::other)
+            }
+        });
+        Response::from_parts(parts, axum::body::Body::from_stream(chunks))
+    }
+}
+
+/// The detached native owner retains the lifecycle lease throughout this call.
+pub(super) async fn output(
+    command: &mut Command,
+    body: Bytes,
+    proof: Option<GitDeadline>,
+) -> Result<std::process::Output, ApiError> {
+    if let Some(proof) = proof {
+        proof.require()?;
+    }
+    let expiry = async {
+        match proof {
+            Some(proof) => tokio::time::sleep_until(proof.instant.into()).await,
+            None => std::future::pending::<()>().await,
+        }
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.as_std_mut().process_group(0);
+    }
+    let mut child = command
+        .kill_on_drop(true)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
+    let pid = child.id();
+    let mut stdin = child.stdin.take().expect("configured Git stdin");
+    let mut stdout = child.stdout.take().expect("configured Git stdout");
+    let mut stderr = child.stderr.take().expect("configured Git stderr");
+    let writer = tokio::spawn(async move {
+        stdin.write_all(&body).await?;
+        stdin.shutdown().await
+    });
+    let mut out = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).await.map(|_| bytes)
+    });
+    let mut err = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        stderr.read_to_end(&mut bytes).await.map(|_| bytes)
+    });
+    let completed = async {
+        let status = child.wait().await?;
+        // Include inherited pipe writers, even if their parent has already exited.
+        let stdout = (&mut out).await.map_err(std::io::Error::other)??;
+        let stderr = (&mut err).await.map_err(std::io::Error::other)??;
+        Ok::<_, std::io::Error>(std::process::Output {
+            status,
+            stdout,
+            stderr,
+        })
+    };
+    let stop = async {
+        if proof.is_none() {
+            std::future::pending::<()>().await;
+        }
+        loop {
+            if proof.is_some_and(|proof| !proof.current()) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    };
+    let result = tokio::select! {
+        biased;
+        _=expiry=>None,
+        _=stop=>None,
+        result=completed=>Some(result),
+    };
+    let result = match result {
+        Some(Ok(output)) => Ok(output),
+        other => {
+            #[cfg(unix)]
+            if let Some(pid) = pid {
+                // SAFETY: this invocation created and owns this process group.
+                unsafe {
+                    libc::kill(-(pid as i32), libc::SIGKILL);
+                }
+            }
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            // Handles already consumed by completed must not be polled twice.
+            out.abort();
+            err.abort();
+            match other {
+                Some(Err(error)) => Err(ApiError::internal(sqlx::Error::Io(error))),
+                _ => Err(ApiError::service_unavailable(
+                    "Git proof expired or execution timed out; exact ref readback required",
+                )),
+            }
+        }
+    };
+    writer.abort();
+    let _ = writer.await;
+    let output = result?;
+    if proof.is_some_and(|proof| !proof.current()) {
+        return Err(ApiError::service_unavailable(
+            "Git proof expired during execution; exact ref readback required",
+        ));
+    }
+    Ok(output)
+}
