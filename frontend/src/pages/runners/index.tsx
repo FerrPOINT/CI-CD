@@ -1,18 +1,11 @@
 import { useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus, Search, Server, Trash2 } from "lucide-react";
-import { toast } from "sonner";
+import {toast, Select, Button, Input, Label, ResourceList, ResourceListRow, ConfirmDialog} from '@pdlc/ui/ui'
 import { useDeleteRunner, useRegisterRunner, useRunners } from "@/api/hooks";
 import type { Runner, RunnerStatus } from "@/api/types";
-import {
-  Select,
-  Button,
-  Input,
-  Label,
-  ResourceList,
-  ResourceListRow,
-} from "@pdlc/ui/ui";
-import { ConfirmDialog } from "@pdlc/ui/ui";
+
+
 import { QueryState } from "@/shared/ui/query-state";
 
 const pageSize = 20;
@@ -190,13 +183,30 @@ export function RunnersPage() {
                 <Label htmlFor="runner-status" className="shrink-0">
                   {t("runners.status")}
                 </Label>
-                <Select id="runner-status"
-value={statusFilter}
-onValueChange={(nextValue) => {
+                <Select
+                  id="runner-status"
+                  value={statusFilter}
+                  onValueChange={(nextValue) => {
                     setStatusFilter(nextValue as RunnerStatus | "all");
                     setPage(1);
                   }}
-className="w-auto min-w-0 flex-1 sm:w-40" options={[{ value: "all", label: String(t("runners.allStatuses")) }, { value: "online", label: String(t("runners.status_online")) }, { value: "offline", label: String(t("runners.status_offline")) }, { value: "paused", label: String(t("runners.status_paused")) }]} />
+                  className="w-auto min-w-0 flex-1 sm:w-40"
+                  options={[
+                    { value: "all", label: String(t("runners.allStatuses")) },
+                    {
+                      value: "online",
+                      label: String(t("runners.status_online")),
+                    },
+                    {
+                      value: "offline",
+                      label: String(t("runners.status_offline")),
+                    },
+                    {
+                      value: "paused",
+                      label: String(t("runners.status_paused")),
+                    },
+                  ]}
+                />
               </div>
             </div>
             <p className="text-xs text-text-muted">
@@ -254,7 +264,8 @@ className="w-auto min-w-0 flex-1 sm:w-40" options={[{ value: "all", label: Strin
                             />
                             {t(`runners.status_${runner.status}`)}
                           </span>
-                          <button
+                          <Button
+                            variant="destructive-outline"
                             type="button"
                             aria-label={t("runners.deleteRunner", {
                               name: runner.name,
@@ -267,7 +278,7 @@ className="w-auto min-w-0 flex-1 sm:w-40" options={[{ value: "all", label: Strin
                             onClick={() => setPendingDelete(runner)}
                           >
                             <Trash2 className="h-4 w-4" aria-hidden />
-                          </button>
+                          </Button>
                         </li>
                       </ResourceListRow>
                     );

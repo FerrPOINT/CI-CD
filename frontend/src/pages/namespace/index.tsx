@@ -1,18 +1,10 @@
-import { LoadingState } from '@pdlc/ui/ui'
+import {LoadingState, NamespaceLink as Link, Button, Input, Label, Select, Dialog, DialogContent, DialogTitle} from '@pdlc/ui/ui'
 import { useState, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router'
-import { NamespaceLink as Link } from '@pdlc/ui/ui'
+
 
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import {
-  Button,
-  Input,
-  Label,
-  Select,
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from '@pdlc/ui/ui'
+
 import { useSessionCommand, withNamespaceLocation } from '@pdlc/ui/lib'
 import { api } from '@/api/client'
 import { catalogErrorMessage } from '@/api/catalog-errors'

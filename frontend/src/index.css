@@ -1,30 +1,9 @@
-@import 'tailwindcss';
-@import '@pdlc/ui/tokens.css';
+@import "tailwindcss";
+@import "@pdlc/ui/tokens.css";
 @source "../../../services-base/base-modules/ui/src";
-
-@theme {
-  --color-danger-foreground: var(--color-destructive-foreground);
-  --color-danger-strong: var(--color-danger);
-}
-
-[data-sonner-toast][data-styled='true'] {
-  background-color: var(--color-popover) !important;
-  border-color: var(--color-border-strong) !important;
-  color: var(--color-popover-foreground) !important;
-}
-
-[data-sonner-toast][data-styled='true'] [data-description] {
-  color: var(--color-text-secondary) !important;
-}
 
 body {
   background-color: var(--color-background);
   color: var(--color-text-primary);
-  font-family:
-    Inter,
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    sans-serif;
+  font-family: var(--base-font-sans);
 }

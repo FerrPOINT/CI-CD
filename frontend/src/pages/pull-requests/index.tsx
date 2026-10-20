@@ -1,10 +1,5 @@
 import { useEffect, useState } from "react";
-import {
-  Select,
-  NamespaceLink as Link,
-  ResourceList,
-  ResourceListRow,
-} from "@pdlc/ui/ui";
+import {Select, NamespaceLink as Link, ResourceList, ResourceListRow, toast, InitialsAvatar as UserAvatar, Button, Input, Label, Textarea} from '@pdlc/ui/ui'
 import { useParams, useSearchParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import {
@@ -14,7 +9,7 @@ import {
   Plus,
   Search,
 } from "lucide-react";
-import { toast } from "sonner";
+
 import {
   useCreatePullRequest,
   usePullRequests,
@@ -24,9 +19,9 @@ import { currentSession } from "@/api/auth";
 import type { PullRequest, PullRequestStatus } from "@/api/types";
 import { formatDate } from "@/shared/lib/format";
 import { QueryState } from "@/shared/ui/query-state";
-import { InitialsAvatar as UserAvatar } from "@pdlc/ui/ui";
+
 import { useDebouncedValue } from "@pdlc/ui/lib";
-import { Button, Input, Label, Textarea } from "@pdlc/ui/ui";
+
 import { PullRequestActions } from "./actions";
 
 const pageSize = 20;
@@ -448,12 +443,26 @@ export function PullRequestsPage() {
                 <Label htmlFor="pr-status" className="sr-only">
                   {t("pulls.statusFilter")}
                 </Label>
-                <Select id="pr-status"
-value={status}
-onValueChange={(nextValue) => changeStatus(
-                      nextValue as PullRequestStatus | "all",
-                    )}
-className="w-auto sm:w-40" options={[{ value: "all", label: String(t("pulls.allStatuses")) }, { value: "open", label: String(t("pulls.status_open")) }, { value: "closed", label: String(t("pulls.status_closed")) }, { value: "merged", label: String(t("pulls.status_merged")) }]} />
+                <Select
+                  id="pr-status"
+                  value={status}
+                  onValueChange={(nextValue) =>
+                    changeStatus(nextValue as PullRequestStatus | "all")
+                  }
+                  className="w-auto sm:w-40"
+                  options={[
+                    { value: "all", label: String(t("pulls.allStatuses")) },
+                    { value: "open", label: String(t("pulls.status_open")) },
+                    {
+                      value: "closed",
+                      label: String(t("pulls.status_closed")),
+                    },
+                    {
+                      value: "merged",
+                      label: String(t("pulls.status_merged")),
+                    },
+                  ]}
+                />
               </div>
               <p
                 className="flex flex-wrap gap-2 text-xs text-text-muted"

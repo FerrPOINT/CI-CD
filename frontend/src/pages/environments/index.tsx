@@ -1,4 +1,4 @@
-import { PageNavigation } from "@pdlc/ui/ui";
+import {PageNavigation, Checkbox, Button, toast, Input, Label, Select, ResourceList, ResourceListRow, ConfirmDialog} from '@pdlc/ui/ui'
 import { useState, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams, useSearchParams } from "react-router";
@@ -11,7 +11,7 @@ import {
   Search,
   Trash2,
 } from "lucide-react";
-import { toast } from "sonner";
+
 import {
   useCreateDeployment,
   useCreateEnvironment,
@@ -22,15 +22,8 @@ import {
   useRollbackDeployment,
 } from "@/api/hooks";
 import type { Deployment, Environment, EnvironmentStatus } from "@/api/types";
-import {
-  Button,
-  Input,
-  Label,
-  Select,
-  ResourceList,
-  ResourceListRow,
-} from "@pdlc/ui/ui";
-import { ConfirmDialog } from "@pdlc/ui/ui";
+
+
 import { QueryState } from "@/shared/ui/query-state";
 
 const pageSize = 20;
@@ -190,13 +183,11 @@ export function EnvironmentsPage() {
             />
           </div>
           <label className="flex min-h-10 items-center gap-2 text-sm text-text-secondary">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={form.protected}
-              onChange={(event) =>
-                setForm({ ...form, protected: event.target.checked })
+              onCheckedChange={(checked) =>
+                setForm({ ...form, protected: checked === true })
               }
-              className="h-4 w-4 accent-accent"
             />
             {t("environments.protected")}
           </label>
@@ -269,13 +260,30 @@ export function EnvironmentsPage() {
                   }}
                 />
               </div>
-              <Select aria-label={t("environments.statusFilter")}
-className="w-auto"
-value={status}
-onValueChange={(nextValue) => {
+              <Select
+                aria-label={t("environments.statusFilter")}
+                className="w-auto"
+                value={status}
+                onValueChange={(nextValue) => {
                   setStatus(nextValue as StatusFilter);
                   setPage(1);
-                }} options={[{ value: "all", label: String(t("environments.all")) }, { value: "available", label: String(t("environments.statusAvailable")) }, { value: "stopped", label: String(t("environments.statusStopped")) }, { value: "degraded", label: String(t("environments.statusDegraded")) }]} />
+                }}
+                options={[
+                  { value: "all", label: String(t("environments.all")) },
+                  {
+                    value: "available",
+                    label: String(t("environments.statusAvailable")),
+                  },
+                  {
+                    value: "stopped",
+                    label: String(t("environments.statusStopped")),
+                  },
+                  {
+                    value: "degraded",
+                    label: String(t("environments.statusDegraded")),
+                  },
+                ]}
+              />
             </div>
             <p className="text-xs text-text-muted">
               {t("environments.shown", {
@@ -346,7 +354,8 @@ onValueChange={(nextValue) => {
                                   </span>
                                 ))}
                             </div>
-                            <button
+                            <Button
+                              variant="ghost"
                               type="button"
                               aria-label={t("environments.deploymentsFor", {
                                 name: env.name,
@@ -365,8 +374,9 @@ onValueChange={(nextValue) => {
                                 className={`h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`}
                                 aria-hidden
                               />
-                            </button>
-                            <button
+                            </Button>
+                            <Button
+                              variant="destructive-outline"
                               type="button"
                               aria-label={t("environments.deleteFor", {
                                 name: env.name,
@@ -381,7 +391,7 @@ onValueChange={(nextValue) => {
                               }}
                             >
                               <Trash2 className="h-4 w-4" aria-hidden />
-                            </button>
+                            </Button>
                           </div>
                           {expanded && (
                             <div

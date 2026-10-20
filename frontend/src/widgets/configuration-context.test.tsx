@@ -13,7 +13,7 @@ vi.mock('react-i18next', () => ({
       options?.name ? `${key} ${options.name}` : key,
   }),
 }))
-vi.mock('sonner', () => ({ toast: { success: vi.fn() } }))
+vi.mock('@pdlc/ui/ui', async (importOriginal) => ({...(await importOriginal<typeof import('@pdlc/ui/ui')>()),...await (() => ({ toast: { success: vi.fn() } }))()}))
 
 const first = '11111111-1111-4111-8111-111111111111'
 const second = '22222222-2222-4222-8222-222222222222'

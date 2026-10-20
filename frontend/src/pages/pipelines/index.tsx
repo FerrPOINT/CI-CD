@@ -2,19 +2,15 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import type { Configuration } from "@/api/workspaces";
 import { FormEvent, useEffect, useState } from "react";
-import {
-  NamespaceLink as Link,
-  ResourceList,
-  ResourceListRow,
-} from "@pdlc/ui/ui";
-import { useNamespaceNavigate as useNavigate } from "@pdlc/ui/ui";
+import {NamespaceLink as Link, ResourceList, ResourceListRow, useNamespaceNavigate as useNavigate, toast, Button, Input, Label} from '@pdlc/ui/ui'
+
 import { useParams } from "react-router";
 import { useTranslation } from "react-i18next";
 import { ChevronRight, Clock, Play } from "lucide-react";
-import { toast } from "sonner";
+
 import { usePipelines, useTriggerPipeline } from "@/api/hooks";
 import { QueryState } from "@/shared/ui/query-state";
-import { Button, Input, Label } from "@pdlc/ui/ui";
+
 
 const pageSize = 20;
 const statusColors: Record<string, string> = {

@@ -1,40 +1,34 @@
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { I18nextProvider } from 'react-i18next'
-import { RouterProvider } from 'react-router'
-import { Toaster } from 'sonner'
-import i18n from './shared/i18n/config'
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { I18nextProvider } from "react-i18next";
+import { RouterProvider } from "react-router";
+import { Toaster } from "@pdlc/ui/ui";
+import i18n from "./shared/i18n/config";
 import {
   ThemeProvider,
-  useTheme,
   PlatformProvider,
   PlatformServicesProvider,
-} from '@pdlc/ui/lib'
-import { router } from './app/router'
-import './index.css'
-import { relaySsoCallback, ssoNamespace } from '@pdlc/ui/sso'
+} from "@pdlc/ui/lib";
+import { router } from "./app/router";
+import "./index.css";
+import { relaySsoCallback, ssoNamespace } from "@pdlc/ui/sso";
 import {
   capturePlatformReturn,
   getPlatformProduct,
   setPlatformQueryClient,
-} from '@pdlc/ui/platform'
+} from "@pdlc/ui/platform";
 
-const queryClient = new QueryClient()
-setPlatformQueryClient(queryClient)
-capturePlatformReturn(import.meta.env.VITE_PLATFORM_ORIGIN)
-
-function AppToaster() {
-  const { theme } = useTheme()
-  return <Toaster theme={theme === 'light' ? 'light' : 'dark'} />
-}
+const queryClient = new QueryClient();
+setPlatformQueryClient(queryClient);
+capturePlatformReturn(import.meta.env.VITE_PLATFORM_ORIGIN);
 
 if (!relaySsoCallback(ssoNamespace(import.meta.env.VITE_AUTH_NAMESPACE))) {
-  const root = createRoot(document.getElementById('root')!)
+  const root = createRoot(document.getElementById("root")!);
   getPlatformProduct()?.onRetire(() => {
-    root.unmount()
-    router.dispose()
-  })
+    root.unmount();
+    router.dispose();
+  });
   root.render(
     <StrictMode>
       <I18nextProvider i18n={i18n}>
@@ -49,10 +43,10 @@ if (!relaySsoCallback(ssoNamespace(import.meta.env.VITE_AUTH_NAMESPACE))) {
                 <RouterProvider router={router} />
               </PlatformServicesProvider>
             </PlatformProvider>
-            <AppToaster />
+            <Toaster />
           </ThemeProvider>
         </QueryClientProvider>
       </I18nextProvider>
     </StrictMode>,
-  )
+  );
 }

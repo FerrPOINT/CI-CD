@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { toast } from 'sonner'
+import { toast } from '@pdlc/ui/ui'
 import { SchedulesPage } from './index'
 
 const mocks = vi.hoisted(() => ({
@@ -28,7 +28,7 @@ vi.mock('@/api/hooks', () => ({
   useUpdateSchedule: () => ({ mutate: mocks.update, isPending: mocks.updatePending }),
   useDeleteSchedule: () => ({ mutate: mocks.remove, isPending: mocks.deletePending }),
 }))
-vi.mock('sonner', () => ({ toast: { success: vi.fn() } }))
+vi.mock('@pdlc/ui/ui', async (importOriginal) => ({...(await importOriginal<typeof import('@pdlc/ui/ui')>()),...await (() => ({ toast: { success: vi.fn() } }))()}))
 
 function schedule(index: number) {
   return {
@@ -76,7 +76,7 @@ describe('SchedulesPage UX', () => {
     setup(25)
     expect(screen.getAllByRole('button', { name: /schedules.deleteFor/ })).toHaveLength(20)
     expect(screen.getByRole('button', { name: 'schedules.editFor 0 4 1 * *' })).toHaveClass('h-10', 'w-10')
-    expect(screen.getByText('schedules.errorPaused')).toHaveClass('min-h-10')
+    expect(screen.getByText('schedules.errorPaused').closest('details')).toHaveClass('base-disclosure')
     fireEvent.click(screen.getByText('schedules.errorPaused'))
     expect(screen.getByText('cron must have five fields')).toBeVisible()
 

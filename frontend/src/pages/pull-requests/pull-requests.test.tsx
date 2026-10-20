@@ -2,7 +2,7 @@ import { chooseValue } from '../../test/choice'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { toast } from 'sonner'
+import { toast } from '@pdlc/ui/ui'
 import { PullRequestsPage } from './index'
 import { PullRequestDetailPage } from '@/pages/pull-request-detail'
 import type { PullRequest } from '@/api/types'
@@ -37,7 +37,7 @@ vi.mock('@/api/hooks', () => ({
   usePullRequestAction: () => ({ mutate: mocks.action, isPending: false }),
 }))
 vi.mock('@/api/auth', () => ({ currentSession: () => ({ username: 'reviewer' }) }))
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+vi.mock('@pdlc/ui/ui', async (importOriginal) => ({...(await importOriginal<typeof import('@pdlc/ui/ui')>()),...await (() => ({ toast: { success: vi.fn(), error: vi.fn() } }))()}))
 
 function pullRequest(number: number, status: PullRequest['status'] = 'open'): PullRequest {
   return {

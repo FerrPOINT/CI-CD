@@ -10,9 +10,9 @@ vi.mock('react-i18next', () => ({
     options?.name ? `${key} ${options.name}` : options?.ref ? `${key} ${options.ref}` : options?.count !== undefined ? `${key} ${options.count}/${options.total}` : key }),
 }))
 
-vi.mock('sonner', () => ({
+vi.mock('@pdlc/ui/ui', async (importOriginal) => ({...(await importOriginal<typeof import('@pdlc/ui/ui')>()),...await (() => ({
   toast: { error: vi.fn(), success: vi.fn() },
-}))
+}))()}))
 
 const projectId = '22222222-2222-4222-8222-222222222222'
 const environmentId = '66666666-6666-4666-8666-666666666666'

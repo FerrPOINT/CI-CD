@@ -1,8 +1,9 @@
-import { Select } from '@pdlc/ui/ui'
+import {Disclosure, Select, Button, Radio, Checkbox, Input, Label, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tabs, TabsContent, TabsList, TabsTrigger} from '@pdlc/ui/ui'
+
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router'
 import { ArrowDownToLine, ArrowUpFromLine, ArrowLeft, ArrowLeftRight, CirclePause, GitBranch, Plus, RefreshCw } from 'lucide-react'
-import { Button, Input, Label, Table, TableBody, TableCell, TableHead, TableHeader, TableRow, Tabs, TabsContent, TabsList, TabsTrigger } from '@pdlc/ui/ui'
+
 
 type Provider = 'gitlab' | 'github'
 type Mode = 'disabled' | 'pull' | 'push' | 'both'
@@ -142,7 +143,7 @@ onValueChange={(nextValue) => filter('state', nextValue)} options={[{ value: "al
             const connection = entry.connection!
             const last = entry.runs.find(run => run.remote === remoteUrl(connection))
             return <TableRow key={entry.id}>
-              <TableCell><button type="button" className="min-h-10 text-left font-medium text-accent underline-offset-4 hover:underline" onClick={() => open(entry.id)}>{entry.repository}</button></TableCell>
+              <TableCell><Button variant="link" type="button" className="min-h-10 text-left font-medium text-accent underline-offset-4 hover:underline" onClick={() => open(entry.id)}>{entry.repository}</Button></TableCell>
               <TableCell><span className="block font-medium">{connection.provider === 'gitlab' ? 'Свой GitLab' : 'GitHub.com'}</span><span className="mt-1 block max-w-72 break-all text-xs text-text-secondary">{remoteUrl(connection)}</span></TableCell>
               <TableCell>{modes.find(mode => mode.value === connection.mode)?.title}</TableCell>
               <TableCell>{connection.automatic ? 'Автоматически' : 'Вручную'}</TableCell>
@@ -272,8 +273,8 @@ onValueChange={(nextValue) => { update('provider', nextValue as Provider); setCr
                 <div className="space-y-2"><Label htmlFor="repository">{draft.provider === 'gitlab' ? 'Группа / репозиторий' : 'Владелец / репозиторий'}</Label><Input id="repository" required value={draft.path} onChange={event => update('path', event.target.value)} placeholder="team/service-api" /><p className="text-xs text-text-muted">{draft.provider === 'gitlab' ? 'Подгруппы поддерживаются: team/backend/service-api.' : 'Личный репозиторий или репозиторий организации.'}</p></div>
                 <div className="space-y-2"><Label htmlFor="token">Токен доступа</Label><Input id="token" type="password" autoComplete="off" value={token} onChange={event => { setToken(event.target.value); setMessage(''); setError('') }} placeholder={credential ? 'Токен сохранён · введите новый для замены' : 'Вымышленный токен для предпросмотра'} /><p className="text-xs text-text-muted">{credential ? 'Текущее значение не отображается.' : 'Права должны соответствовать выбранному направлению.'}</p></div>
               </div>
-              <fieldset><legend className="mb-2 text-sm font-medium">Направление синхронизации</legend><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">{modes.map(mode => <label key={mode.value} className={`flex cursor-pointer gap-2 rounded-md border px-3 py-2 ${draft.mode === mode.value ? 'border-accent bg-surface' : 'border-border'}`}><input className="mt-1 shrink-0 accent-accent" type="radio" name="mode" value={mode.value} checked={draft.mode === mode.value} onChange={() => update('mode', mode.value)} /><span className="min-w-0"><strong className="flex items-center gap-2 text-sm"><mode.icon aria-hidden className="h-3.5 w-3.5 shrink-0 text-text-secondary" />{mode.title}</strong><span className="mt-1 block text-xs leading-4 text-text-secondary">{mode.detail}</span></span></label>)}</div></fieldset>
-              <fieldset disabled={draft.mode === 'disabled'} className="grid grid-cols-2 items-center gap-x-3 sm:flex sm:flex-wrap sm:gap-x-6"><legend className="sr-only">Способ запуска</legend><span aria-hidden className="col-span-2 text-sm font-medium">Способ запуска</span><label className="flex min-h-10 items-center gap-2 text-sm"><input type="radio" name={`launch-${entry.id}`} checked={!draft.automatic} onChange={() => update('automatic', false)} />Вручную</label><label className="flex min-h-10 items-center gap-2 text-sm"><input type="radio" name={`launch-${entry.id}`} checked={draft.automatic} onChange={() => update('automatic', true)} />Автоматически</label></fieldset>
+              <fieldset><legend className="mb-2 text-sm font-medium">Направление синхронизации</legend><div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">{modes.map(mode => <label key={mode.value} className={`flex cursor-pointer gap-2 rounded-md border px-3 py-2 ${draft.mode === mode.value ? 'border-accent bg-surface' : 'border-border'}`}><Radio className="mt-1 shrink-0" name="mode" value={mode.value} checked={draft.mode === mode.value} onCheckedChange={() => update('mode', mode.value)} /><span className="min-w-0"><strong className="flex items-center gap-2 text-sm"><mode.icon aria-hidden className="h-3.5 w-3.5 shrink-0 text-text-secondary" />{mode.title}</strong><span className="mt-1 block text-xs leading-4 text-text-secondary">{mode.detail}</span></span></label>)}</div></fieldset>
+              <fieldset disabled={draft.mode === 'disabled'} className="grid grid-cols-2 items-center gap-x-3 sm:flex sm:flex-wrap sm:gap-x-6"><legend className="sr-only">Способ запуска</legend><span aria-hidden className="col-span-2 text-sm font-medium">Способ запуска</span><label className="flex min-h-10 items-center gap-2 text-sm"><Radio name={`launch-${entry.id}`} checked={!draft.automatic} onCheckedChange={() => update('automatic', false)} />Вручную</label><label className="flex min-h-10 items-center gap-2 text-sm"><Radio name={`launch-${entry.id}`} checked={draft.automatic} onCheckedChange={() => update('automatic', true)} />Автоматически</label></fieldset>
               <p className="text-xs text-text-secondary">{draft.mode === 'disabled' ? 'Отключение сохраняет подключение и историю. Ручной и автоматический запуск остановлены.' : !draft.automatic ? 'Синхронизация запускается только вручную.' : draft.mode === 'pull' ? 'Внешний репозиторий проверяется периодически.' : draft.mode === 'push' ? 'Изменения Forge отправляются после push.' : 'Изменения Forge отправляются после push; внешний репозиторий проверяется периодически.'}</p>
               <p className="text-xs text-text-secondary">Расхождение истории и несовпадающие теги требуют решения в Git. Синхронизация не перезаписывает историю принудительно и не удаляет ветки автоматически.</p>
             </fieldset>
@@ -289,11 +290,11 @@ onValueChange={(nextValue) => { update('provider', nextValue as Provider); setCr
         </TabsContent>
       </Tabs>
       {message && <p role="status" className="text-xs text-text-secondary">{message}</p>}
-      <details className="border-t border-border pt-4 text-sm"><summary className="cursor-pointer text-text-muted">Сценарии предпросмотра</summary><div className="mt-4 flex flex-wrap items-end gap-5"><div className="space-y-2"><Label htmlFor="scenario">Результат следующего запуска</Label><Select id="scenario"
+      <Disclosure className="border-t border-border pt-4 text-sm" summary={<>Сценарии предпросмотра</>}><div className="mt-4 flex flex-wrap items-end gap-5"><div className="space-y-2"><Label htmlFor="scenario">Результат следующего запуска</Label><Select id="scenario"
 className="min-w-0"
 disabled={busy}
 value={scenario}
-onValueChange={(nextValue) => setScenario(nextValue as Scenario)} options={[{ value: "success", label: "Успех" }, { value: "auth", label: "Ошибка доступа" }, { value: "unavailable", label: "Провайдер недоступен" }, { value: "conflict", label: "Расхождение истории" }, { value: "partial", label: "Частичный результат" }]} /></div><label className="flex min-h-10 items-center gap-2"><input type="checkbox" disabled={busy} checked={readOnly} onChange={event => setReadOnly(event.target.checked)} />Только чтение</label></div></details>
+onValueChange={(nextValue) => setScenario(nextValue as Scenario)} options={[{ value: "success", label: "Успех" }, { value: "auth", label: "Ошибка доступа" }, { value: "unavailable", label: "Провайдер недоступен" }, { value: "conflict", label: "Расхождение истории" }, { value: "partial", label: "Частичный результат" }]} /></div><label className="flex min-h-10 items-center gap-2"><Checkbox disabled={busy} checked={readOnly} onCheckedChange={checked => setReadOnly((checked === true))} />Только чтение</label></div></Disclosure>
     </main>
   </div>
 }

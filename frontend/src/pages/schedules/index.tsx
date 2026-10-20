@@ -1,8 +1,9 @@
+import {Disclosure, toast, Button, Input, Label, ResourceList, ResourceListRow, Checkbox, ConfirmDialog} from '@pdlc/ui/ui'
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
 import { Clock, Pencil, Plus, Search, Trash2 } from "lucide-react";
-import { toast } from "sonner";
+
 import {
   useCreateSchedule,
   useDeleteSchedule,
@@ -10,14 +11,8 @@ import {
   useUpdateSchedule,
 } from "@/api/hooks";
 import type { Schedule } from "@/api/types";
-import {
-  Button,
-  Input,
-  Label,
-  ResourceList,
-  ResourceListRow,
-} from "@pdlc/ui/ui";
-import { ConfirmDialog } from "@pdlc/ui/ui";
+
+
 import { QueryState } from "@/shared/ui/query-state";
 
 const pageSize = 20;
@@ -177,13 +172,11 @@ export function SchedulesPage() {
             />
           </div>
           <label className="flex min-h-10 items-center gap-2 text-sm sm:col-span-2">
-            <input
-              type="checkbox"
-              className="h-5 w-5 accent-accent"
+            <Checkbox
               checked={form.enabled}
               disabled={saving}
-              onChange={(event) => {
-                setForm({ ...form, enabled: event.target.checked });
+              onCheckedChange={(checked) => {
+                setForm({ ...form, enabled: checked === true });
                 setSaveError("");
               }}
             />
@@ -288,7 +281,8 @@ export function SchedulesPage() {
                                 : "schedules.enabledOff",
                             )}
                           </span>
-                          <button
+                          <Button
+                            variant="ghost"
                             type="button"
                             aria-label={t("schedules.editFor", {
                               name: schedule.cron,
@@ -301,8 +295,9 @@ export function SchedulesPage() {
                             onClick={() => openEditForm(schedule)}
                           >
                             <Pencil className="h-4 w-4" aria-hidden />
-                          </button>
-                          <button
+                          </Button>
+                          <Button
+                            variant="destructive-outline"
                             type="button"
                             aria-label={t("schedules.deleteFor", {
                               name: schedule.cron,
@@ -318,7 +313,7 @@ export function SchedulesPage() {
                             }}
                           >
                             <Trash2 className="h-4 w-4" aria-hidden />
-                          </button>
+                          </Button>
                         </div>
                         <div className="ml-6 flex flex-wrap gap-x-4 gap-y-1 text-xs text-text-muted">
                           <span>
@@ -331,14 +326,14 @@ export function SchedulesPage() {
                           </span>
                         </div>
                         {schedule.last_fire_error && (
-                          <details className="ml-6 min-w-0 text-xs text-danger-strong">
-                            <summary className="inline-flex min-h-10 cursor-pointer items-center">
-                              {t("schedules.errorPaused")}
-                            </summary>
+                          <Disclosure
+                            className="ml-6 min-w-0 text-xs text-danger-strong"
+                            summary={<>{t("schedules.errorPaused")}</>}
+                          >
                             <p className="break-all pb-1">
                               {schedule.last_fire_error}
                             </p>
-                          </details>
+                          </Disclosure>
                         )}
                       </li>
                     </ResourceListRow>

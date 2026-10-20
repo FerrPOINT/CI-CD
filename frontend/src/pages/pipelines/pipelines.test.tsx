@@ -28,7 +28,7 @@ vi.mock('@/api/hooks', () => ({
   usePipelines: mocks.usePipelines,
   useTriggerPipeline: () => ({ mutate: mocks.trigger, isPending: false }),
 }))
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+vi.mock('@pdlc/ui/ui', async (importOriginal) => ({...(await importOriginal<typeof import('@pdlc/ui/ui')>()),...await (() => ({ toast: { success: vi.fn(), error: vi.fn() } }))()}))
 
 function pipeline(index: number) {
   return {

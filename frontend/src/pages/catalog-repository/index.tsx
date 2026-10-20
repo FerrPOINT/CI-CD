@@ -1,25 +1,16 @@
-import { LoadingState } from '@pdlc/ui/ui'
+import {LoadingState, NamespaceLink as Link, Button, Input, Label, SectionNavigation, SectionNavigationItem, Dialog, DialogContent, DialogTitle, ProjectAvatar} from '@pdlc/ui/ui'
 import { useState, type FormEvent } from 'react'
-import { NamespaceLink as Link } from '@pdlc/ui/ui'
+
 import { useParams, useSearchParams } from 'react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import {
-  Button,
-  Input,
-  Label,
-  SectionNavigation,
-  SectionNavigationItem,
-  Dialog,
-  DialogContent,
-  DialogTitle,
-} from '@pdlc/ui/ui'
+
 import { withNamespaceLocation } from '@pdlc/ui/lib'
 import { api } from '@/api/client'
 import { RepositoryConfigurations } from '@/widgets/repository-configurations'
 import { RepositoryBrowserPage } from '@/pages/repository-browser'
 import { ExecutionList } from '@/widgets/execution-list'
 import { useWorkspace, workspacePath } from '@/api/workspaces'
-import { ProjectAvatar } from '@pdlc/ui/ui'
+
 import type { components } from '@/api/schema'
 import { useNamespaceContext } from '@/widgets/namespace-context'
 export function CatalogRepositoryPage() {

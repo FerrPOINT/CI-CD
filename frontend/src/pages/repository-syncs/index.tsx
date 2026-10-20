@@ -26,8 +26,7 @@ import {
   Tabs,
   TabsContent,
   TabsList,
-  TabsTrigger,
-} from '@pdlc/ui/ui'
+  TabsTrigger, Radio } from '@pdlc/ui/ui'
 import { withNamespaceLocation } from '@pdlc/ui/lib'
 import { api, ApiError } from '@/api/client'
 import {
@@ -744,16 +743,15 @@ onValueChange={(nextValue) => patch({
                     key={mode.value}
                     className={`flex cursor-pointer gap-2 rounded-md border px-3 py-2 ${draft.direction === mode.value ? 'border-accent bg-surface' : 'border-border'}`}
                   >
-                    <input
-                      className="mt-1 shrink-0 accent-accent"
-                      type="radio"
+                    <Radio
+                      className="mt-1 shrink-0"
                       name="direction"
                       disabled={
                         !!connection.active_run && mode.value !== 'disabled'
                       }
                       value={mode.value}
                       checked={draft.direction === mode.value}
-                      onChange={() => patch({ direction: mode.value })}
+                      onCheckedChange={() => patch({ direction: mode.value })}
                     />
                     <span className="min-w-0">
                       <strong className="flex items-center gap-2 text-sm">
@@ -776,11 +774,10 @@ onValueChange={(nextValue) => patch({
                     key={String(automatic)}
                     className={`flex cursor-pointer gap-3 rounded-md border p-3 ${draft.automatic === automatic ? 'border-accent' : 'border-border'}`}
                   >
-                    <input
-                      type="radio"
+                    <Radio
                       name="automatic"
                       checked={draft.automatic === automatic}
-                      onChange={() => patch({ automatic })}
+                      onCheckedChange={() => patch({ automatic })}
                     />
                     <span>
                       <strong className="block text-sm">
@@ -959,12 +956,12 @@ function SyncHistory({
               {runs.data.items.map((run: SyncRun) => (
                 <TableRow key={run.id}>
                   <TableCell>
-                    <button
+                    <Button variant="ghost"
                       className="min-h-10 text-left text-accent"
                       onClick={() => update('run_id', run.id)}
                     >
                       {time(run.created_at)}
-                    </button>
+                    </Button>
                   </TableCell>
                   <TableCell>{sources[run.source] ?? run.source}</TableCell>
                   <TableCell>

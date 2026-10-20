@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { useNamespaceNavigate as useNavigate } from '@pdlc/ui/ui'
+import {useNamespaceNavigate as useNavigate, SsoCallbackView} from '@pdlc/ui/ui'
 
 import { completeSso } from '@pdlc/ui/sso'
-import { SsoCallbackView } from '@pdlc/ui/ui'
+
 import { ssoConfig, useAuth } from '@/shared/auth/auth-provider'
 import { finishPlatformLogin } from '@pdlc/ui/platform'
 

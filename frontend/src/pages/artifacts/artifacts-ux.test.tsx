@@ -2,7 +2,7 @@ import { chooseValue } from '../../test/choice'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { toast } from 'sonner'
+import { toast } from '@pdlc/ui/ui'
 import { ArtifactsPage } from './index'
 
 const mocks = vi.hoisted(() => ({
@@ -25,7 +25,7 @@ vi.mock('@/api/client', () => ({
   downloadArtifact: mocks.download,
   saveDownloadedArtifact: mocks.save,
 }))
-vi.mock('sonner', () => ({ toast: { success: vi.fn() } }))
+vi.mock('@pdlc/ui/ui', async (importOriginal) => ({...(await importOriginal<typeof import('@pdlc/ui/ui')>()),...await (() => ({ toast: { success: vi.fn() } }))()}))
 
 const originalClipboard = navigator.clipboard
 

@@ -101,3 +101,14 @@ bridge принадлежит только Base; SSR использует шта
 явный refresh после программных value/options и native fallback до успешного init.
 Правила выбора и подключения: Base docs/platform/CHOICE_CONTROLS.md.
 UI/SDK/skills pins независимы; установка и production — отдельные операции.
+
+## Единая дизайн-система Base
+
+Перед созданием UI: pdlc-ui search → show → один example. Button, Input,
+Textarea, Checkbox, RadioGroup/Radio, Switch, меню, Card, Table, Disclosure,
+Dialog и Toaster/toast использовать из публичного @pdlc/ui. Общий дефект
+исправлять в Base; продукт сохраняет данные, права и сохранение. Прямой Sonner,
+копии примитивов и продуктовые определения общих tokens не добавлять.
+Брендинг применяется общим runtime; draft preview изолируется BrandingScope.
+Канонический контракт — Base docs/platform/DESIGN_SYSTEM.md и docs/BRANDING.md.
+UI/SDK/skills pins независимы; source-изменения не означают установку.

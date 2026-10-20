@@ -45,9 +45,6 @@ importers:
       react-router:
         specifier: ^8.4.0
         version: 8.4.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      sonner:
-        specifier: ^2.0.3
-        version: 2.0.8(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       tailwind-merge:
         specifier: ^3.2.0
         version: 3.6.0
@@ -2716,6 +2713,7 @@ snapshots:
       react-dom: 19.2.8(react@19.2.8)
       react-i18next: 15.7.4(i18next@26.4.0(typescript@5.9.3))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3)
       react-router: 8.4.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      sonner: 2.0.8(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       tailwind-merge: 3.7.0
       zustand: 5.0.15(@types/react@19.2.18)(react@19.2.8)
     transitivePeerDependencies:
