@@ -151,31 +151,102 @@ pub(crate) async fn catalog_read(
         .collect();
     Ok(Some(CatalogRead { proof, groups }))
 }
+/// Only these human GET/HEAD adapters consume this repository read proof.
+/// Writes, CI, downloads and machine adapters need their own effect boundary.
+pub(crate) fn repository_read_route(method: &axum::http::Method, route: &str) -> bool {
+    matches!(*method, axum::http::Method::GET | axum::http::Method::HEAD)
+        && matches!(
+            route,
+            "/api/v1/repos/{repo}/refs"
+                | "/api/v1/repos/{repo}/tree"
+                | "/api/v1/repos/{repo}/blob"
+                | "/api/v1/repos/{repo}/tags"
+                | "/api/v1/repos/{repo}/commits"
+                | "/api/v1/repos/{repo}/compare"
+                | "/api/v1/repos/{repo}/pulls"
+                | "/api/v1/repos/{repo}/pulls/page"
+                | "/api/v1/repos/{repo}/pulls/{number}"
+                | "/api/v1/catalog/repositories/{id}/pulls"
+                | "/api/v1/catalog/repositories/{id}/pulls/{number}"
+        )
+}
+
+/// Match the framework route, then use the same decoded params as the handler.
+/// Raw URI parsing must never turn an encoded owner into unscoped access.
+pub(crate) async fn repository_read_storage(
+    pool: &PgPool,
+    parts: &mut axum::http::request::Parts,
+) -> Result<Option<String>, ApiError> {
+    let route = parts
+        .extensions
+        .get::<axum::extract::MatchedPath>()
+        .map(|path| path.as_str())
+        .unwrap_or("");
+    if !repository_read_route(&parts.method, route) {
+        return Ok(None);
+    }
+    use axum::extract::FromRequestParts;
+    let params = axum::extract::RawPathParams::from_request_parts(parts, &())
+        .await
+        .map_err(|_| ApiError::bad_request("invalid_repository_path"))?;
+    // Resolve identity only. Kind/readiness are protected metadata and remain
+    // the handler's responsibility after admission, never a pre-admission oracle.
+    let storage: Option<String> = if let Some((_, repo)) =
+        params.iter().find(|(key, _)| *key == "repo")
+    {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT r.storage_name FROM repository_aliases a JOIN repository_catalog r ON r.id=a.repository_id WHERE a.alias=$1",
+        ).bind(repo.trim_end_matches(".git")).fetch_optional(pool).await.map_err(ApiError::internal)?.flatten()
+    } else {
+        let id = params
+            .iter()
+            .find(|(key, _)| *key == "id")
+            .and_then(|(_, value)| uuid::Uuid::parse_str(value).ok())
+            .ok_or_else(|| ApiError::bad_request("invalid_repository_id"))?;
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT storage_name FROM repository_catalog WHERE id=$1",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(ApiError::internal)?
+        .flatten()
+    };
+    storage.map(Some).ok_or_else(ApiError::not_found)
+}
+
 impl CatalogRead {
     pub(crate) fn response(
         self,
-        mut response: axum::response::Response,
+        response: axum::response::Response,
     ) -> Result<axum::response::Response, ApiError> {
-        self.proof.admission().map_err(owner_error)?;
-        response.headers_mut().insert(
-            axum::http::header::CACHE_CONTROL,
-            axum::http::HeaderValue::from_static("private, no-store"),
-        );
-        let (parts, body) = response.into_parts();
-        use tokio_stream::StreamExt;
-        let stream = body.into_data_stream().map(move |chunk| {
-            if !self.proof.is_current() {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::PermissionDenied,
-                    "space_admission_expired",
-                ))
-            } else {
-                chunk.map_err(std::io::Error::other)
-            }
-        });
-        Ok(axum::response::Response::from_parts(
-            parts,
-            axum::body::Body::from_stream(stream),
-        ))
+        read_response(self.proof, response)
     }
+}
+
+pub(crate) fn read_response(
+    proof: ConfirmedSpaceRead,
+    mut response: axum::response::Response,
+) -> Result<axum::response::Response, ApiError> {
+    proof.admission().map_err(owner_error)?;
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("private, no-store"),
+    );
+    let (parts, body) = response.into_parts();
+    use tokio_stream::StreamExt;
+    let stream = body.into_data_stream().map(move |chunk| {
+        if !proof.is_current() {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "space_admission_expired",
+            ))
+        } else {
+            chunk.map_err(std::io::Error::other)
+        }
+    });
+    Ok(axum::response::Response::from_parts(
+        parts,
+        axum::body::Body::from_stream(stream),
+    ))
 }

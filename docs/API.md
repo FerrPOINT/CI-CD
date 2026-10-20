@@ -1,5 +1,10 @@
 # API v1 Specification — Forge CI/CD
 
+Source candidate: [общий read admission Git-браузера и PR](adr/0036-repository-browse-read-admission.md)
+использует decoded owner identity и original proof. Native QA пока не выполнена:
+resource preflight остановил запуск до компилятора. Это не installed behavior,
+не разрешение PR write/merge и не готовность всего serving cohort.
+
 Source candidate общего Space lifecycle добавляет отдельный owner v2 GET/PUT, без изменения строгих v1 DTO: [протокол и ограничения](SPACE_LIFECYCLE_V2.md). Endpoint не означает готовность полного admission или установленного cohort.
 
 Source candidate task-child delivery использует existing v1 `variablesSha256`

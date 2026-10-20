@@ -36,7 +36,9 @@ lookup; hidden/not found даёт404 с private/no-store. Hidden group даёт 
 Типизированный get_core не является авторизацией: HTTP передаёт admitted groups.
 Три прежних repository_sync callers сохраняют отдельные ACL и являются ещё
 незавершёнными common-cohort поверхностями; фиктивный HTTP request не создаётся.
-Tree/raw, PR, CI/log/artifact, machine/V3 и остальные маршруты ещё требуют адаптеров.
+Tree/blob и PR read имеют отдельный [source candidate ADR0036](0036-repository-browse-read-admission.md),
+native qualification которого ещё не выполнена. PR writes, CI/log/artifact,
+machine/V3 и остальные маршруты ещё требуют адаптеров.
 Не включать partial policy до полного cohort/migration/rollback gate. DTO/URL,
 зависимости, migrations и pins этим срезом не меняются.
 

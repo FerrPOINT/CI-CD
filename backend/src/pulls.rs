@@ -1164,17 +1164,9 @@ async fn publish_merge(
 }
 
 async fn resolve_repo_path(state: &AppState, raw: &str) -> Result<PathBuf, ApiError> {
-    let name = crate::git_host::validate_repo_name(raw).map_err(ApiError::bad_request)?;
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
-    let exists =
-        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM repositories WHERE name = $1)")
-            .bind(&name)
-            .fetch_one(pool)
-            .await
-            .map_err(ApiError::internal)?;
-    if !exists {
-        return Err(ApiError::not_found());
-    }
+    let storage = crate::repository_catalog::resolve_storage(pool, raw).await?;
+    let name = crate::git_host::validate_repo_name(&storage).map_err(ApiError::bad_request)?;
     Ok(state.git.root.join(format!("{name}.git")))
 }
 

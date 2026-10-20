@@ -283,5 +283,7 @@ Migration0097 выключена по умолчанию; partial activation з�
 
 Глобальный [repository catalog read](docs/adr/0035-repository-catalog-read-admission.md)
 также opt-in: SQL admission до count/page, original proof до body handoff.
-Detail и group repositories list также используют тот же proof. Tree/raw/PR,
-sync и остальные REST endpoints не объявлены покрытыми этим срезом.
+Detail и group repositories list также используют тот же proof.
+[Git-браузер и PR read](docs/adr/0036-repository-browse-read-admission.md) подготовлены
+отдельным source candidate; их native qualification пока остановлена resource
+preflight. PR write/merge, sync и остальные REST endpoints остаются gates.

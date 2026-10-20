@@ -186,6 +186,210 @@ async fn group_page(
     serde_json::from_str(&text).unwrap()
 }
 
+/// Actual HTTP handlers with real Git objects/SQL; only Admin admission is a fixture.
+async fn repository_read(
+    http: &reqwest::Client,
+    origin: &str,
+    path: &str,
+    expected: u16,
+) -> serde_json::Value {
+    let response = http
+        .get(format!("{origin}{path}"))
+        .bearer_auth("sdlc_pat_fixture_product_roles")
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    if expected == 200 {
+        assert_eq!(
+            response.headers().get("cache-control").unwrap(),
+            "private, no-store"
+        );
+    }
+    let text = response.text().await.unwrap();
+    assert_eq!(status.as_u16(), expected, "repository read {path}: {text}");
+    serde_json::from_str(&text).unwrap()
+}
+
+async fn verify_repository_reads(
+    pool: &PgPool,
+    http: &reqwest::Client,
+    origin: &str,
+    visible: (&str, &str, Uuid),
+    hidden: (&str, Uuid),
+    profile: &Arc<RwLock<Profile>>,
+) {
+    let (name, canonical, repository) = visible;
+    let (hidden_name, hidden_id) = hidden;
+    for (storage, id, title) in [
+        (name, repository, "Allowed review"),
+        (hidden_name, hidden_id, "Hidden review"),
+    ] {
+        sqlx::query("INSERT INTO pull_requests(id,repository_name,number,title,source_branch,target_branch,status,created_by) VALUES($1,$2,1,$3,'task/current','main','open','fixture')")
+            .bind(Uuid::new_v4()).bind(storage).bind(title).execute(pool).await.unwrap();
+        let count: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM pull_requests WHERE repository_id=$1")
+                .bind(id)
+                .fetch_one(pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            count, 1,
+            "existing repository identity trigger is preserved"
+        );
+    }
+    let encoded = name.replace('-', "%2D");
+    let public_alias = format!("{canonical}%2Frepository");
+    for alias in [name, &encoded, &public_alias] {
+        let prefix = format!("/api/v1/repos/{alias}");
+        let refs = repository_read(http, origin, &format!("{prefix}/refs"), 200).await;
+        assert!(
+            refs.as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["name"] == "task/current")
+        );
+        let tree = repository_read(
+            http,
+            origin,
+            &format!("{prefix}/tree?ref=task/current"),
+            200,
+        )
+        .await;
+        assert!(tree.as_array().unwrap().iter().any(|r| r["name"] == "data"));
+        let blob = repository_read(
+            http,
+            origin,
+            &format!("{prefix}/blob?ref=task/current&path=data"),
+            200,
+        )
+        .await;
+        assert_eq!(blob["content"], "original proof\n");
+        repository_read(http, origin, &format!("{prefix}/tags"), 200).await;
+        let commits = repository_read(
+            http,
+            origin,
+            &format!("{prefix}/commits?branch=task/current"),
+            200,
+        )
+        .await;
+        assert!(!commits.as_array().unwrap().is_empty());
+        repository_read(
+            http,
+            origin,
+            &format!("{prefix}/compare?from=task/current&to=task/current"),
+            200,
+        )
+        .await;
+        let list = repository_read(http, origin, &format!("{prefix}/pulls"), 200).await;
+        assert_eq!(list.as_array().unwrap().len(), 1);
+        assert_eq!(list[0]["title"], "Allowed review");
+        let page = repository_read(
+            http,
+            origin,
+            &format!("{prefix}/pulls/page?limit=1&offset=1"),
+            200,
+        )
+        .await;
+        assert_eq!(page["total"], 1);
+        assert!(page["items"].as_array().unwrap().is_empty());
+        let detail = repository_read(http, origin, &format!("{prefix}/pulls/1"), 200).await;
+        assert_eq!(detail["title"], "Allowed review");
+    }
+    for id in [
+        repository.to_string(),
+        repository.to_string().replace('-', "%2D"),
+    ] {
+        let list = repository_read(
+            http,
+            origin,
+            &format!("/api/v1/catalog/repositories/{id}/pulls"),
+            200,
+        )
+        .await;
+        assert_eq!(list.as_array().unwrap().len(), 1);
+        let detail = repository_read(
+            http,
+            origin,
+            &format!("/api/v1/catalog/repositories/{id}/pulls/1"),
+            200,
+        )
+        .await;
+        assert_eq!(detail["repository_id"], repository.to_string());
+    }
+    for alias in [hidden_name.to_owned(), hidden_name.replace('-', "%2D")] {
+        for tail in [
+            "refs",
+            "tree?ref=task/current",
+            "blob?ref=task/current&path=data",
+            "tags",
+            "commits",
+            "compare?from=task/current&to=task/current",
+            "pulls",
+            "pulls/page?limit=1",
+            "pulls/1",
+        ] {
+            let denied =
+                repository_read(http, origin, &format!("/api/v1/repos/{alias}/{tail}"), 403).await;
+            assert!(!denied.to_string().contains("Hidden review"));
+        }
+    }
+    for id in [
+        hidden_id.to_string(),
+        hidden_id.to_string().replace('-', "%2D"),
+    ] {
+        for tail in ["pulls", "pulls/1"] {
+            repository_read(
+                http,
+                origin,
+                &format!("/api/v1/catalog/repositories/{id}/{tail}"),
+                403,
+            )
+            .await;
+        }
+    }
+    sqlx::query("UPDATE repository_catalog SET ready=false WHERE id=$1")
+        .bind(hidden_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    repository_read(
+        http,
+        origin,
+        &format!("/api/v1/catalog/repositories/{hidden_id}/pulls"),
+        403,
+    )
+    .await;
+    repository_read(
+        http,
+        origin,
+        &format!("/api/v1/repos/{hidden_name}/tree"),
+        403,
+    )
+    .await;
+    sqlx::query("UPDATE repository_catalog SET ready=true WHERE id=$1")
+        .bind(hidden_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    let saved = profile.read().unwrap().clone();
+    profile.write().unwrap().scopes = vec!["git:read"];
+    repository_read(
+        http,
+        origin,
+        &format!("/api/v1/repos/{name}/blob?ref=task/current&path=data"),
+        403,
+    )
+    .await;
+    *profile.write().unwrap() = saved.clone();
+    profile.write().unwrap().role = "service_account".into();
+    repository_read(http, origin, &format!("/api/v1/repos/{name}/pulls"), 403).await;
+    *profile.write().unwrap() = saved;
+    println!(
+        "REST repository refs/tree/blob/tags/commits/compare/PR, aliases and encoded owner admission: PASS"
+    );
+}
+
 pub(super) async fn verify(
     pool: &PgPool,
     profile: Arc<RwLock<Profile>>,
@@ -368,7 +572,7 @@ pub(super) async fn verify(
     for alias in [
         other_name.clone(),
         format!("{other_canonical}/repository"),
-        unbound_name,
+        unbound_name.clone(),
     ] {
         assert_eq!(
             read(alias).await.unwrap().status(),
@@ -520,6 +724,22 @@ pub(super) async fn verify(
         404,
     )
     .await;
+    verify_repository_reads(
+        pool,
+        &http,
+        origin,
+        (name, &canonical, repository),
+        (&other_name, other_repo.id),
+        &profile,
+    )
+    .await;
+    repository_read(
+        &http,
+        origin,
+        &format!("/api/v1/repos/{}/tree", unbound_name),
+        403,
+    )
+    .await;
     let clone_url = visible.clone_url.unwrap();
     assert_eq!(
         clone_url,
@@ -562,6 +782,17 @@ pub(super) async fn verify(
             .await
             .total,
         1
+    );
+    let reviews = repository_read(
+        &http,
+        origin,
+        &format!("/api/v1/repos/{other_name}/pulls"),
+        200,
+    )
+    .await;
+    assert_eq!(
+        reviews[0]["title"], "Hidden review",
+        "all admits the legitimate neighboring Space"
     );
     let future = SpaceRef {
         registry_instance_id: space.registry_instance_id,
@@ -620,6 +851,8 @@ pub(super) async fn verify(
         "selected empty denies"
     );
     detail(&http, origin, &repository.to_string(), 404).await;
+    repository_read(&http, origin, &format!("/api/v1/repos/{name}/pulls"), 403).await;
+
     assert_eq!(
         group_page(&http, origin, visible_group, "?limit=1")
             .await
@@ -726,6 +959,65 @@ pub(super) async fn verify(
             .await
             .total,
         0
+    );
+    repository_read(
+        &http,
+        origin,
+        &format!("/api/v1/repos/{name}/blob?ref=task/current&path=data"),
+        200,
+    )
+    .await;
+    repository_read(
+        &http,
+        origin,
+        &format!("/api/v1/catalog/repositories/{repository}/pulls/1"),
+        200,
+    )
+    .await;
+    profile.write().unwrap().expires_in = 2;
+    let mut wait = pool.begin().await.unwrap();
+    sqlx::query("LOCK TABLE pull_requests IN ACCESS EXCLUSIVE MODE")
+        .execute(&mut *wait)
+        .await
+        .unwrap();
+    let client = http.clone();
+    let url = format!("{origin}/api/v1/catalog/repositories/{repository}/pulls/1");
+    let delayed = tokio::spawn(async move {
+        client
+            .get(url)
+            .bearer_auth("sdlc_pat_fixture_product_roles")
+            .send()
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(3),async {
+        loop {
+            let waiting:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT id, repository_id, repository_name, number, title%')")
+                .fetch_one(pool).await.unwrap();
+            if waiting {break}
+            assert!(!delayed.is_finished(),"protected PR query must reach SQL wait");
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }).await.expect("actual protected PR query waits");
+    tokio::time::sleep(std::time::Duration::from_millis(2200)).await;
+    wait.rollback().await.unwrap();
+    let expired = delayed.await.unwrap().unwrap();
+    let status = expired.status();
+    let body = expired.text().await.unwrap();
+    assert_eq!(status, 403, "original deadline after PR SQL wait: {body}");
+    assert!(
+        !body.contains("Allowed review"),
+        "expired read returns no PR metadata"
+    );
+    profile.write().unwrap().expires_in = 300;
+    repository_read(
+        &http,
+        origin,
+        &format!("/api/v1/catalog/repositories/{repository}/pulls/1"),
+        200,
+    )
+    .await;
+    println!(
+        "REST repository archived read and original proof expiry during actual PR SQL wait: PASS"
     );
     // Expire the original actor proof while the actual count query waits.
     profile.write().unwrap().expires_in = 2;

@@ -1,5 +1,10 @@
 # Git Hosting — Forge CI/CD
 
+Source candidate: [общий read admission Git-браузера и PR](adr/0036-repository-browse-read-admission.md)
+использует decoded owner identity и original proof. Native QA пока не выполнена:
+resource preflight остановил запуск до компилятора. Это не installed behavior,
+не разрешение PR write/merge и не готовность всего serving cohort.
+
 Opt-in source-only [own-task candidate Git](OWN_TASK_CANDIDATE_GIT.md) проверяет
 confirmed source/current Developer и exact OID CAS через native hooks. Только
 этот child-вариант подавляет post-receive auto-pipeline; обычный human/SAT поток

@@ -169,7 +169,9 @@ Scoped HTTP/PG cases проверяют counts/offset, hidden group/name, litera
 selected/all/future/empty и original expiry после real count SQL wait.
 Percent-encoded UUID не обходит допуск; actual clone использует clone_url из
 допущенной карточки. Internal sync использует typed metadata accessor с прежним
-ACL; это не новый human grant. Tree/raw/PR/CI/sync/machine остаются gates;
+ACL; это не новый human grant. Tree/blob/PR read вынесены в отдельный
+[source candidate ADR0036](adr/0036-repository-browse-read-admission.md), пока без
+native PASS из-за resource preflight. PR writes/CI/sync/machine остаются gates;
 этот срез не делает весь REST или cohort готовым. Установка не менялась.
 
 ## Lifecycle owner v2: source candidate

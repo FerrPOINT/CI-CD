@@ -247,12 +247,39 @@ pub(crate) async fn require_auth(
         return Err(ApiError::forbidden());
     }
     let (mut parts, body) = req.into_parts();
-    parts.extensions.insert(claims.clone());
-    parts.extensions.insert(identity);
-    let req = axum::extract::Request::from_parts(parts, body);
+    let read_storage = crate::space_admission::repository_read_storage(pool, &mut parts).await?;
+    let read_proof = match read_storage.as_ref() {
+        Some(storage) if crate::space_admission::active(pool).await? => {
+            identity.require_scope("ci-cd:read")?;
+            let actor = identity.central.as_ref().ok_or_else(ApiError::forbidden)?;
+            Some(crate::space_admission::repository(pool, storage, actor, false).await?)
+        }
+        _ => None,
+    };
+    let scope_ref = read_storage
+        .as_ref()
+        .map(|storage| ProjectScopeRef::Repository(storage.clone()))
+        .or_else(|| project_scope_ref(&path));
+    let scope_allowed = if read_proof.is_some() {
+        // Confirmed common visibility replaces legacy read membership, not
+        // credential assignment. An explicitly project-bound token stays bound.
+        match claims.token_project_id {
+            Some(project) => {
+                repository_linked_to_project(
+                    pool,
+                    read_storage.as_deref().ok_or_else(ApiError::forbidden)?,
+                    project,
+                )
+                .await?
+            }
+            None => true,
+        }
+    } else {
+        project_scope_allows(&state, &claims, role, &method, &path, scope_ref).await?
+    };
     let allowed = api_token_scope_allows(&claims, &method)
         && crate::authz::allows(role, &method, &path)
-        && project_scope_allows(&state, &claims, role, &method, &path).await?;
+        && scope_allowed;
     if !allowed {
         if let Some(pool) = state.pool.as_ref() {
             let _ = audit(
@@ -266,7 +293,14 @@ pub(crate) async fn require_auth(
         }
         return Err(ApiError::forbidden());
     }
-    Ok(next.run(req).await)
+    parts.extensions.insert(claims);
+    parts.extensions.insert(identity);
+    let req = axum::extract::Request::from_parts(parts, body);
+    let response = next.run(req).await;
+    match read_proof {
+        Some(proof) => crate::space_admission::read_response(proof, response),
+        None => Ok(response),
+    }
 }
 
 // This exception reaches the existing project/token checks, never the wider catalog API.
@@ -314,8 +348,9 @@ async fn project_scope_allows(
     global_role: crate::authz::Role,
     method: &str,
     path: &str,
+    scope_ref: Option<ProjectScopeRef>,
 ) -> Result<bool, ApiError> {
-    let Some(scope_ref) = project_scope_ref(path) else {
+    let Some(scope_ref) = scope_ref else {
         if claims.token_id.is_some() && claims.token_project_id.is_some() {
             return Ok(method == "GET"
                 && matches!(

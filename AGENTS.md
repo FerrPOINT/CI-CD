@@ -105,3 +105,9 @@ selected не превращать в unrestricted SQL NULL; local admin не vi
 Typed metadata accessor не считать human authorization: HTTP adapter передаёт
 admitted filter. При изменении handler signature искать все внутренние callers
 по всему backend; не передавать им фиктивный HTTP request ради обхода границы.
+
+Read adapters должны разрешать framework-decoded owner params одинаково для ACL
+и данных. До общего допуска читать только owner identity; kind/readiness также
+защищены. Common visibility заменяет прежнее read membership, но не scopes,
+project binding credential или права изменения. Read proof не является write
+permit: PR mutation/merge требуют собственной effect/deadline границы.

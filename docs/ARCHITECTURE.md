@@ -1,5 +1,10 @@
 # Архитектура Forge CI/CD
 
+Source candidate: [общий read admission Git-браузера и PR](adr/0036-repository-browse-read-admission.md)
+использует decoded owner identity и original proof. Native QA пока не выполнена:
+resource preflight остановил запуск до компилятора. Это не installed behavior,
+не разрешение PR write/merge и не готовность всего serving cohort.
+
 Admin-owned Space lifecycle использует общий SDK owner v2, необязательное ID-preserving group mapping, прежний Git lease и подтверждённый execution drain. [Границы source candidate](SPACE_LIFECYCLE_V2.md); полного admission/serving cohort этот participant не заменяет.
 
 Opt-in central child для existing task pipeline отделён от legacy SAT identity
