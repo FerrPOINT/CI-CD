@@ -2509,6 +2509,21 @@
         "docs/GIT_HOSTING.md"
       ],
       "commit_subject": "fix(forge): enforce protected branches on Git pushes"
+    },
+    {
+      "original_path": "experimental-forward-port/3255a5ef33e928279b6cb82357eec874562f1721",
+      "sha256": "235ca96e48901064ceeb83fd5a0debcedd861f063f4ec9408432624435e6b482",
+      "payload": "sources/experimental-forward-port/3255a5ef33e928279b6cb82357eec874562f1721.patch.source",
+      "group": "experimental-forward-port",
+      "origins": [
+        {
+          "head": "305f6e0371d6e23df571cd878bd6401940629cac",
+          "worktree": "publication forward-port experiment",
+          "candidate_tree": "3255a5ef33e928279b6cb82357eec874562f1721"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
     }
   ]
 }

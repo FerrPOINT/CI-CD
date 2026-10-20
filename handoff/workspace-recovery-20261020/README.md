@@ -8,6 +8,7 @@
 |---|---:|
 | bug-search-work | 14 |
 | committed-work | 5 |
+| experimental-forward-port | 1 |
 | messaging | 8 |
 | source-recovery | 123 |
 | ui-recovery | 21 |
@@ -32,3 +33,9 @@ Generated OpenAPI/client snapshots, screenshots, private QA evidence, caches и 
 и список включённых путей записаны в индексе. Generated schemas, binary assets
 и private evidence из этих коммитов исключены. Это исторические diffs к своим
 родителям: наличие diff не доказывает отсутствие эквивалентного решения в main.
+
+Попытка переноса BugWork на текущий main сохранена отдельно как
+`experimental-forward-port`; [результат gate](experimental-forward-port.json)
+указывает две ошибки unit tests, Clippy и неквалифицированную PG setup.
+Генерация OpenAPI прошла. Этот артефакт не подключён к активным модулям и не
+является merge-ready реализацией. Исходный payload/история также сохранены.

@@ -1,6 +1,6 @@
 {
   "scope": "inert source payload preservation only",
-  "payloads": 171,
+  "payloads": 172,
   "sha256_and_index_integrity": "passed",
   "real_pat_findings": 0,
   "actual_private_key_findings": 0,
