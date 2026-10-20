@@ -39,3 +39,6 @@ Generated OpenAPI/client snapshots, screenshots, private QA evidence, caches и 
 указывает две ошибки unit tests, Clippy и неквалифицированную PG setup.
 Генерация OpenAPI прошла. Этот артефакт не подключён к активным модулям и не
 является merge-ready реализацией. Исходный payload/история также сохранены.
+
+Scoped `.gitattributes` сохраняет точные LF-байты `.source` при checkout,
+включая Windows с `core.autocrlf=true`; SHA-256 verifier переносим между ОС.
