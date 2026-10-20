@@ -2524,6 +2524,2066 @@
       ],
       "unresolved_markers": false,
       "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "commit/9896538df4d7f87b2bd2962f51b9fcec07a2a749",
+      "sha256": "735b63c98d1a575b982cb61093aefe5b8c5c148c5dd5564ca7c7265e5a0086f4",
+      "payload": "sources/committed-work/9896538df4d7f87b2bd2962f51b9fcec07a2a749.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "9896538df4d7f87b2bd2962f51b9fcec07a2a749",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "AGENTS.md",
+        "backend/src/runner.rs",
+        "docs/COMPOSE_RUNNER.md"
+      ],
+      "commit_subject": "fix(runner): enforce project slots before embedded leases",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/36f6cbac1ae465b9e826cb51b2e2a1788f8182d9",
+      "sha256": "a3e2d06f5cb5a371c398e08ef2692eece9157da2cc99da4b04d0c49c434b9609",
+      "payload": "sources/committed-work/36f6cbac1ae465b9e826cb51b2e2a1788f8182d9.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "36f6cbac1ae465b9e826cb51b2e2a1788f8182d9",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "backend/Dockerfile",
+        "backend/Dockerfile.umbrella"
+      ],
+      "commit_subject": "fix(build): preserve Base workspace in runner image contexts",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/c743933b6023ef42eb482e76c638d5563eb6384a",
+      "sha256": "1884a585bd0c62ccf4caafa24157b1b989ced279e150bd87811c3e56d3e14f75",
+      "payload": "sources/committed-work/c743933b6023ef42eb482e76c638d5563eb6384a.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "c743933b6023ef42eb482e76c638d5563eb6384a",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "README.md"
+      ],
+      "commit_subject": "docs(runner): link Compose operation guide",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/dbc2c2b5f59556c3e5e81de886fa1685bdc6e2e9",
+      "sha256": "1a3d9d33a311d31282788c589ad73b590b6c4a459f43cb2b209061517d1a4e9d",
+      "payload": "sources/committed-work/dbc2c2b5f59556c3e5e81de886fa1685bdc6e2e9.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "dbc2c2b5f59556c3e5e81de886fa1685bdc6e2e9",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "backend/Dockerfile",
+        "backend/Dockerfile.umbrella",
+        "backend/src/api/jobs_routes.rs",
+        "backend/src/lib.rs",
+        "backend/src/runner.rs",
+        "backend/src/runner_docker.rs",
+        "docs/COMPOSE_RUNNER.md",
+        "scripts/backup-stand.sh",
+        "scripts/gate-backend.sh",
+        "scripts/scan_container_images.sh",
+        "scripts/tests/test_base_stand_backup.py"
+      ],
+      "commit_subject": "fix(runner): own job execution and recovery with Compose",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/f678fe17180b1ed223e712ea3cad942fac68e457",
+      "sha256": "1239d12e7e05bef5682b8dbcfc516ab6b1e665d961152bfcc7c0a4599d88209a",
+      "payload": "sources/committed-work/f678fe17180b1ed223e712ea3cad942fac68e457.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "f678fe17180b1ed223e712ea3cad942fac68e457",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "CHANGELOG.md"
+      ],
+      "commit_subject": "test(qa): combine shared kit and central logout candidates [skip ci]",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/df38646a90ef73da4a83cb6c22b8547d81db95cc",
+      "sha256": "1239d12e7e05bef5682b8dbcfc516ab6b1e665d961152bfcc7c0a4599d88209a",
+      "payload": "sources/committed-work/df38646a90ef73da4a83cb6c22b8547d81db95cc.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "df38646a90ef73da4a83cb6c22b8547d81db95cc",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "CHANGELOG.md"
+      ],
+      "commit_subject": "test(integration): combine published Base and logout fixes locally [skip ci]",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/c7e30deb10dd57392ee265ec652a0fcaba527f01",
+      "sha256": "4b7008a5482ea4935b99f9a00529a5ca02966486e286623b13258add1a81b1bf",
+      "payload": "sources/committed-work/c7e30deb10dd57392ee265ec652a0fcaba527f01.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "c7e30deb10dd57392ee265ec652a0fcaba527f01",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "scripts/tests/test_ci_contract_checks.py"
+      ],
+      "commit_subject": "qa: align CLI gate assertion with locked main (local only)",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/7f62c221f17f96188f4fcffae9fc806b98a96caf",
+      "sha256": "7b3b3086dc633f331f701d8607dc1a3a44a7217c8f2ee6ea7ccb95ad009734be",
+      "payload": "sources/committed-work/7f62c221f17f96188f4fcffae9fc806b98a96caf.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "7f62c221f17f96188f4fcffae9fc806b98a96caf",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "docs/DEVELOPMENT_GUIDE.md"
+      ],
+      "commit_subject": "qa: combine feature lint fixes (local only)",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/e5c1157f35867407113b3415e2577d4d5c1698bc",
+      "sha256": "c9ed2ebbffa7edfa39da72060b52911f501ab9af8ce35d99296f06df9e534364",
+      "payload": "sources/committed-work/e5c1157f35867407113b3415e2577d4d5c1698bc.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "e5c1157f35867407113b3415e2577d4d5c1698bc",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "CHANGELOG.md"
+      ],
+      "commit_subject": "qa: combine authenticated policy fixtures (local only)",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/78fce64a04c90ad19b956d2e99ae3988e72d2777",
+      "sha256": "1d0384d85226fd4f5914a2eeeb175d91e7d3f629bbe1bb8e5b85c16ee7b0929c",
+      "payload": "sources/committed-work/78fce64a04c90ad19b956d2e99ae3988e72d2777.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "78fce64a04c90ad19b956d2e99ae3988e72d2777",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml",
+        "CHANGELOG.md",
+        "docs/API.md"
+      ],
+      "commit_subject": "qa: combine published CLI candidate (local only)",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/ef0412eb643a75444ad38163f5cf25f425e574ce",
+      "sha256": "ff84fdfb38d06e586ef82112639ccb63fb9339cbfa4bd354d90d6cfab324f39b",
+      "payload": "sources/committed-work/ef0412eb643a75444ad38163f5cf25f425e574ce.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "ef0412eb643a75444ad38163f5cf25f425e574ce",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "CHANGELOG.md"
+      ],
+      "commit_subject": "qa: combine published logout candidate (local only)",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/2816dbac2a694c11b3874973f7cbcd9ca5195643",
+      "sha256": "c80a7bb7316ef59497b4492293ee87c0a97f5514430662914ed25ed7c08b02af",
+      "payload": "sources/committed-work/2816dbac2a694c11b3874973f7cbcd9ca5195643.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "2816dbac2a694c11b3874973f7cbcd9ca5195643",
+          "worktree": "forge-delegated-child-expiry-20261017"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "backend/src/api/sdlc_workspace/task_pipeline.rs",
+        "backend/src/api/sdlc_workspace/task_pipeline/tests.rs",
+        "backend/src/central_auth.rs",
+        "backend/src/delegated_credentials.rs",
+        "backend/src/delegated_credentials/tests.rs",
+        "docs/API.md",
+        "docs/FORGE_DELEGATED_CREDENTIAL_CONTRACT.md"
+      ],
+      "commit_subject": "fix(auth): bound delegated effects by child expiry [skip ci]",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/1eb30719fbb79cc5ca3f8dc92d19802005f13b13",
+      "sha256": "57c02b22723ef75cec9bc4359ef14227ddcdff0851832f251eca3f5da4b082ac",
+      "payload": "sources/committed-work/1eb30719fbb79cc5ca3f8dc92d19802005f13b13.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "1eb30719fbb79cc5ca3f8dc92d19802005f13b13",
+          "worktree": "forge-delegated-machine-20261017"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "backend/cli/src/main.rs",
+        "backend/cli/tests/cli_contract.rs",
+        "backend/cli/tests/workflows.rs",
+        "backend/infra/src/sdlc_workspace.rs",
+        "backend/migrations/0093_delegated_task_credentials.sql",
+        "backend/src/api/authz_mw.rs",
+        "backend/src/api/mod.rs",
+        "backend/src/api/pipelines_routes.rs",
+        "backend/src/api/sdlc_workspace/task_pipeline.rs",
+        "backend/src/api/sdlc_workspace/task_pipeline/tests.rs",
+        "backend/src/config.rs",
+        "backend/src/delegated_credentials.rs",
+        "backend/src/delegated_credentials/tests.rs",
+        "backend/src/lib.rs",
+        "backend/src/namespace.rs",
+        "backend/src/platform.rs",
+        "backend/src/runner.rs",
+        "backend/tests/integration_db.rs",
+        "backend/tests/support/task_pipeline.rs",
+        "backend/tests/support/task_pipeline_migration.rs",
+        "docs/API.md",
+        "docs/ARCHITECTURE.md",
+        "docs/DATA_MODEL.md",
+        "docs/FORGE_DELEGATED_CREDENTIAL_CONTRACT.md",
+        "docs/adr/0030-delegated-task-credential-custody.md"
+      ],
+      "commit_subject": "feat(auth): bind delegated task credentials to async custody [skip ci]",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/c2fa8a96117c2b32cd255350b70707477c20417a",
+      "sha256": "3a670aecf02de0eb3b9baf5a3319648c02b4e6547efed408845e5e69520f871d",
+      "payload": "sources/committed-work/c2fa8a96117c2b32cd255350b70707477c20417a.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "c2fa8a96117c2b32cd255350b70707477c20417a",
+          "worktree": "forge-own-task-git-20261017"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "backend/cli/src/task_git.rs"
+      ],
+      "commit_subject": "fix(git): sync single-attempt marker directory before push [skip ci]",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/f790d5350550549b25a2b002f1ffae694de3c5b4",
+      "sha256": "9667407700ec9abe82ff91f3260fdd728de4371a381162aa959dffd00ccde9f6",
+      "payload": "sources/committed-work/f790d5350550549b25a2b002f1ffae694de3c5b4.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "f790d5350550549b25a2b002f1ffae694de3c5b4",
+          "worktree": "forge-own-task-git-20261017"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "backend/cli/src/task_git.rs",
+        "backend/src/task_git.rs",
+        "backend/src/task_git/hooks.rs",
+        "backend/src/task_git/tests.rs",
+        "docs/OWN_TASK_CANDIDATE_GIT.md"
+      ],
+      "commit_subject": "feat(git): bind candidate push to confirmed task and current Developer [skip ci]",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/ab26dff70a08e05575d955b33a34ffc7bbecea4d",
+      "sha256": "dc4e0fb573493d3307f70d3bd7f0187f814c4f8bc3bd490d7d2f665b3504f776",
+      "payload": "sources/committed-work/ab26dff70a08e05575d955b33a34ffc7bbecea4d.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "ab26dff70a08e05575d955b33a34ffc7bbecea4d",
+          "worktree": "forge-registered-source-reader-20261017"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "backend/src/registered_source.rs",
+        "backend/src/registered_source_tests.rs",
+        "docs/API.md",
+        "docs/REGISTERED_SOURCE_READER.md"
+      ],
+      "commit_subject": "feat(namespace): observe registered repository source [skip ci]",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/9448c1d0e07df1315f254eee2e01d515e10786be",
+      "sha256": "e37d7ea440338fdf903a05a4c22071118ae3f28e4f4ca969e5e338fbeaaaad56",
+      "payload": "sources/committed-work/9448c1d0e07df1315f254eee2e01d515e10786be.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "9448c1d0e07df1315f254eee2e01d515e10786be",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision",
+        "CHANGELOG.md",
+        "docs/UI_UX_MAP.md",
+        "frontend/e2e/base-standard-source.spec.ts",
+        "frontend/src/pages/projects/index.tsx",
+        "frontend/src/pages/projects/projects.test.tsx"
+      ],
+      "commit_subject": "fix(ui): converge CI-CD sources on the shared Base snapshot",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/85b9493ffd55d06b9f6bac48c2f9565d831bbd93",
+      "sha256": "eda3617de5d9e6fe9aeee4d7ed9b5a7cda25056df7641995ede2c6db13253c4d",
+      "payload": "sources/committed-work/85b9493ffd55d06b9f6bac48c2f9565d831bbd93.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "85b9493ffd55d06b9f6bac48c2f9565d831bbd93",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision",
+        "CHANGELOG.md"
+      ],
+      "commit_subject": "fix(ui): pin the shared Base drawer focus snapshot",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/8623742f6d42e413ebd77a402efd5f3b61b22972",
+      "sha256": "8c4332b0a6b2d007b557f73567067d3d21c6c188b7395f3c1762595d8db475f7",
+      "payload": "sources/committed-work/8623742f6d42e413ebd77a402efd5f3b61b22972.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "8623742f6d42e413ebd77a402efd5f3b61b22972",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision",
+        "CHANGELOG.md"
+      ],
+      "commit_subject": "fix(ui): pin the shared Base SSR state snapshot",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/6271cfeaf5d3f0608d4eb269f9d66e1222cb2a68",
+      "sha256": "db5f2ec3940ed27817bceeb61390e087cc448abf4cc9c154058b078790034a13",
+      "payload": "sources/committed-work/6271cfeaf5d3f0608d4eb269f9d66e1222cb2a68.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "6271cfeaf5d3f0608d4eb269f9d66e1222cb2a68",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "fix(ui): adopt Base closing-modal focus fallback",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/f67ccab97b33c25c1495f14bc989bb0c62803f1e",
+      "sha256": "441c0adac5c040bd730fc9230aef735ab21020cab55a5cfd3ff954174de8fb76",
+      "payload": "sources/committed-work/f67ccab97b33c25c1495f14bc989bb0c62803f1e.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "f67ccab97b33c25c1495f14bc989bb0c62803f1e",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "CHANGELOG.md",
+        "docs/ADR.md",
+        "docs/adr/0002-react-vite-tailwind.md"
+      ],
+      "commit_subject": "docs(ui): mark historical component ownership superseded by Base",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/f60ec35ad9663044034b08febb5c2165d9f783d9",
+      "sha256": "a8e52a25352739e0d4b6f066161392461f9c199d0239d3da8dde4df0f9cdeb81",
+      "payload": "sources/committed-work/f60ec35ad9663044034b08febb5c2165d9f783d9.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "f60ec35ad9663044034b08febb5c2165d9f783d9",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision",
+        "CHANGELOG.md",
+        "frontend/e2e/base-standard-source.spec.ts",
+        "frontend/src/pages/repository-browser/index.tsx",
+        "frontend/src/pages/repository-browser/repository-browser.test.tsx"
+      ],
+      "commit_subject": "fix(ui): adopt verified Base field typography",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/a931d55be82bf4ebec78833c8f4511465098fbb9",
+      "sha256": "10055b31fe7811a2a0591179e60c4705b0fb9df096f757018f29a2f0a0a74b56",
+      "payload": "sources/committed-work/a931d55be82bf4ebec78833c8f4511465098fbb9.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "a931d55be82bf4ebec78833c8f4511465098fbb9",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "CHANGELOG.md",
+        "docs/plans/2026-10-06-static-asset-routing.md",
+        "frontend/nginx.conf"
+      ],
+      "commit_subject": "fix(web): keep missing assets and API paths out of SPA fallback",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/ba0dc46c485ec2d1772e1ba043fcf5f5c29c075e",
+      "sha256": "53651b73c27e0f1c106b40ca08063029cf1f3496fd6c7d4e647be777e41829de",
+      "payload": "sources/committed-work/ba0dc46c485ec2d1772e1ba043fcf5f5c29c075e.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "ba0dc46c485ec2d1772e1ba043fcf5f5c29c075e",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision",
+        "CHANGELOG.md"
+      ],
+      "commit_subject": "chore(ui): pin verified common Base profile and UI snapshot",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/1d5b980d2efd381397e45006b4b0b55442054a26",
+      "sha256": "6ad40574c18ef0bcef2703381a5bd767210b4b4e2cbc24cfd79553113003c0a8",
+      "payload": "sources/committed-work/1d5b980d2efd381397e45006b4b0b55442054a26.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "1d5b980d2efd381397e45006b4b0b55442054a26",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "CHANGELOG.md",
+        "docs/plans/2026-10-05-local-default-integration.md"
+      ],
+      "commit_subject": "chore(ui): integrate local CI/CD default with Base",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/92cbe691ccc17cfe71ff67af663ed37713b302d9",
+      "sha256": "ef514cfb6f998b777ea91e6c1e1a17e5319c2aa67935ac3bf8e5504b0de13320",
+      "payload": "sources/committed-work/92cbe691ccc17cfe71ff67af663ed37713b302d9.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "92cbe691ccc17cfe71ff67af663ed37713b302d9",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "CHANGELOG.md",
+        "docs/ARCHITECTURE.md"
+      ],
+      "commit_subject": "docs(ui): align CI architecture with Base ownership",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/eadcaab753428200bc4c0ce0c6848dd3db02fff4",
+      "sha256": "87408f6056cccf36eb4bff2f760dcaf204209d91853ee7945bb31b60b440e54a",
+      "payload": "sources/committed-work/eadcaab753428200bc4c0ce0c6848dd3db02fff4.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "eadcaab753428200bc4c0ce0c6848dd3db02fff4",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "AGENTS.md",
+        "CHANGELOG.md",
+        "docs/DEVELOPMENT_GUIDE.md"
+      ],
+      "commit_subject": "docs(ui): align CI development with Base ownership",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/a55e2099af17da1db6f915e75c7cf09de3ea44e0",
+      "sha256": "f8d5aac72f14413b21c77d82865264fee8d8561ceed25109be384b0056864846",
+      "payload": "sources/committed-work/a55e2099af17da1db6f915e75c7cf09de3ea44e0.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "a55e2099af17da1db6f915e75c7cf09de3ea44e0",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(ui): pin locally reconciled Base snapshot",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/cc9f4e3b237a9c71fc36429c25f230744eb6485b",
+      "sha256": "f75436514716729014e7ae1f599336294f2823a808ed2e8cf4315260a7015288",
+      "payload": "sources/committed-work/cc9f4e3b237a9c71fc36429c25f230744eb6485b.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "cc9f4e3b237a9c71fc36429c25f230744eb6485b",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision",
+        "CHANGELOG.md",
+        "frontend/scripts/base-openapi-compat.mjs"
+      ],
+      "commit_subject": "fix(ui): pin Base gate and forward compatibility arguments",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/74877371479f5b3b82d7c5c2f7f21dbdbd0801b6",
+      "sha256": "0e8fdfb807d6974f66f4c85082be7c701b02e562541bf897e6f2db2d60a2afdd",
+      "payload": "sources/committed-work/74877371479f5b3b82d7c5c2f7f21dbdbd0801b6.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "74877371479f5b3b82d7c5c2f7f21dbdbd0801b6",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision",
+        "CHANGELOG.md",
+        "docs/UI_UX_MAP.md",
+        "docs/plans/2026-10-05-base-notifications.md",
+        "frontend/e2e/base-standard-source.spec.ts",
+        "frontend/package.json",
+        "frontend/pnpm-lock.yaml",
+        "frontend/src/index.css",
+        "frontend/src/main.notifications.test.tsx",
+        "frontend/src/main.tsx"
+      ],
+      "commit_subject": "fix(ui): consume shared Base notifications",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/dae7c0dc284248276f1c7fd1bf5e186eb2726506",
+      "sha256": "989bd6c8c4eb9fb0936829ec3398aed5ae7b26db497bb0757033000a799f1f07",
+      "payload": "sources/committed-work/dae7c0dc284248276f1c7fd1bf5e186eb2726506.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "dae7c0dc284248276f1c7fd1bf5e186eb2726506",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(ui): pin shared SSR provider snapshot",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/cf61fabed12183a6b7d50acffbe5d8b71171a547",
+      "sha256": "e53b6838e6457e8d5efc69f985022362dbc20d460176317fee5770e5bb489f07",
+      "payload": "sources/committed-work/cf61fabed12183a6b7d50acffbe5d8b71171a547.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "cf61fabed12183a6b7d50acffbe5d8b71171a547",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(ui): pin verified shared Base snapshot",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/172f73854a59e25f31c9d064b459a6b9eb9d815f",
+      "sha256": "f212c79629807fa2350cf39cd6a3bd22e588672439cc4e2c8f26c29587cd46d2",
+      "payload": "sources/committed-work/172f73854a59e25f31c9d064b459a6b9eb9d815f.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "172f73854a59e25f31c9d064b459a6b9eb9d815f",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision",
+        "frontend/AGENTS.md"
+      ],
+      "commit_subject": "chore(ui): adopt shared frontend rules and Base context snapshot",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/10e19398d76b96e90dabc7342d6962c4ec64f73c",
+      "sha256": "a5771b17e74b29a077bb41cf0a3235e0b608cd72adc26c6b342b5cc10fa14c9b",
+      "payload": "sources/committed-work/10e19398d76b96e90dabc7342d6962c4ec64f73c.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "10e19398d76b96e90dabc7342d6962c4ec64f73c",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "fix(ui): pin Base form text wrapping snapshot",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/4a083972995000fc4fe4d22595ac2710dc547597",
+      "sha256": "b786e26e712dd170502b7faf31ea089eeafd6aa35c80eb623a329a26100f6533",
+      "payload": "sources/committed-work/4a083972995000fc4fe4d22595ac2710dc547597.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "4a083972995000fc4fe4d22595ac2710dc547597",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "CHANGELOG.md",
+        "docs/UI_UX_MAP.md",
+        "frontend/e2e/base-standard-source.spec.ts",
+        "frontend/src/pages/reports/index.tsx",
+        "frontend/src/pages/reports/reports.test.tsx",
+        "frontend/src/shared/i18n/locales/en.json",
+        "frontend/src/shared/i18n/locales/ru.json"
+      ],
+      "commit_subject": "refactor(ui): compose project reports through Base state patterns",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/d5497cc927b3d49ba55e19135cd13a7dcc070da1",
+      "sha256": "4976f4e90906d612c3eae6d588d26231096dda70c282956d635ee3733b67da64",
+      "payload": "sources/committed-work/d5497cc927b3d49ba55e19135cd13a7dcc070da1.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "d5497cc927b3d49ba55e19135cd13a7dcc070da1",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "CHANGELOG.md",
+        "docs/BASE_INTEGRATION.md",
+        "docs/ui-routes.json",
+        "frontend/Dockerfile",
+        "frontend/Dockerfile.umbrella"
+      ],
+      "commit_subject": "build(ui): attest both CI frontend build entry points",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/88a90b30e77d74b1038759180fa12792a5aa52e0",
+      "sha256": "2dc1fbdae69dc7b78e7abf280404046414445144096121e6881b76e564a8f1af",
+      "payload": "sources/committed-work/88a90b30e77d74b1038759180fa12792a5aa52e0.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "88a90b30e77d74b1038759180fa12792a5aa52e0",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(ui): pin Base reconciliation controls",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/ed2ad8572c11968711d76b18556e79cbb993ec46",
+      "sha256": "c1d96e5d716801c01f7d8d1764f07045e884d2839deaa054f3a21bb02b4b0228",
+      "payload": "sources/committed-work/ed2ad8572c11968711d76b18556e79cbb993ec46.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "ed2ad8572c11968711d76b18556e79cbb993ec46",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(ui): pin confirmation lifecycle Base snapshot",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/7a2036fc0ca946a6715efbaf689cc412e7ad5aec",
+      "sha256": "0ba21d8a46a9d6e90a5e7adb6c165b887728d34234772c6c9e2727e0ac64d926",
+      "payload": "sources/committed-work/7a2036fc0ca946a6715efbaf689cc412e7ad5aec.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "7a2036fc0ca946a6715efbaf689cc412e7ad5aec",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(ui): sync Base non-submitting retry controls",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/d8a7329bed720d8b28d77fb90c0cc575850a1be5",
+      "sha256": "f1f5113127af9ab53aac4f26607fcb423e2352b9c82366402c2999847b02787a",
+      "payload": "sources/committed-work/d8a7329bed720d8b28d77fb90c0cc575850a1be5.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "d8a7329bed720d8b28d77fb90c0cc575850a1be5",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(ui): pin Base validation focus and SSO history fixes",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/754b703ac8ea35cec04f77e08f64a922b485640a",
+      "sha256": "64a3e6e0c17020af80eb4bc2cdf0674c7c153067c8eb3714bbfe055986b8d698",
+      "payload": "sources/committed-work/754b703ac8ea35cec04f77e08f64a922b485640a.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "754b703ac8ea35cec04f77e08f64a922b485640a",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(ui): pin Base focus and CLI reliability snapshot",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/60797ef966e0d8b9aa94d55bb30bc9f0af1b4e44",
+      "sha256": "5a7d503f28c3053ddf4d25d18ec256c0a6de010551111e12db0f1fd045f60463",
+      "payload": "sources/committed-work/60797ef966e0d8b9aa94d55bb30bc9f0af1b4e44.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "60797ef966e0d8b9aa94d55bb30bc9f0af1b4e44",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "CHANGELOG.md",
+        "backend/cli/tests/cli_real_api.rs"
+      ],
+      "commit_subject": "chore: reconcile saved default CLI changes with Base UI standard",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/d46695e68d605fb76feab20a8e253fcc4f026abc",
+      "sha256": "8fa2647db5961b17ba31f890d346a4f319ac92887d37415ca125f0d38e47932a",
+      "payload": "sources/committed-work/d46695e68d605fb76feab20a8e253fcc4f026abc.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "d46695e68d605fb76feab20a8e253fcc4f026abc",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision",
+        "CHANGELOG.md"
+      ],
+      "commit_subject": "chore(ui): align verified Base draft and editor snapshot",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/b8a089dca674b551668ad4fb42ad306db40a40ce",
+      "sha256": "b18a6fb79ea38f08a3e57ba41bcfea1b9526a40d8e5fdce417cb28e7ce4dccb7",
+      "payload": "sources/committed-work/b8a089dca674b551668ad4fb42ad306db40a40ce.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "b8a089dca674b551668ad4fb42ad306db40a40ce",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision",
+        "CHANGELOG.md",
+        "docs/UI_UX_MAP.md",
+        "plans/2026-10-02-base-ui-default-reconciliation.md"
+      ],
+      "commit_subject": "chore(ui): pin shared Base and index historical source evidence",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/b46995b76eea3ec90bbcf7f3f972521757074b5d",
+      "sha256": "95560bb983298f18155a4ce85623019c457ce3c6a411605c1befe3529c0205a3",
+      "payload": "sources/committed-work/b46995b76eea3ec90bbcf7f3f972521757074b5d.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "b46995b76eea3ec90bbcf7f3f972521757074b5d",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "docs/uiux-source-evidence-2026-10-02.md"
+      ],
+      "commit_subject": "docs(ui): record reconciled source and image candidates",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/d2dfbb5b0136e87f4b2afc9e26f9645e5fb12a62",
+      "sha256": "48b2ecfec96ba7d8d7705476ecef3c1ee3d64516a9f2e119bbc4b5dd2bdd0986",
+      "payload": "sources/committed-work/d2dfbb5b0136e87f4b2afc9e26f9645e5fb12a62.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "d2dfbb5b0136e87f4b2afc9e26f9645e5fb12a62",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision",
+        "backend/cli/tests/cli_real_api.rs",
+        "docs/API.md",
+        "docs/CLI.md",
+        "frontend/src/pages/login/login.test.tsx",
+        "plans/2026-10-02-base-ui-default-reconciliation.md"
+      ],
+      "commit_subject": "chore(base): reconcile UI candidate with default auth and delivery fixes",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/07f6665aee1d0940a84f898b2f7153ae8228be59",
+      "sha256": "f417881f5e0487d67d7541b8f06c3f564d301c692341af7a0230812fc09c1b03",
+      "payload": "sources/committed-work/07f6665aee1d0940a84f898b2f7153ae8228be59.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "07f6665aee1d0940a84f898b2f7153ae8228be59",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "docs/uiux-source-evidence-2026-10-02.md"
+      ],
+      "commit_subject": "docs(ui): record the shared URL snapshot evidence",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/962905469c985d435ac9f1dce6c3786cef2ee64a",
+      "sha256": "37134611372cd4cb8edc06470ec5c5b2a8514f02159fd47a41b352fe66f1dff5",
+      "payload": "sources/committed-work/962905469c985d435ac9f1dce6c3786cef2ee64a.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "962905469c985d435ac9f1dce6c3786cef2ee64a",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(ui): align CI/CD with the shared URL-state snapshot",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/76a66f0c6e923ffe8a5390e53cf8754c3c4c9a3f",
+      "sha256": "0179f4fd1a1c1ca675085a56e3717225a3e8522769bfc2c601dead01c02f5da4",
+      "payload": "sources/committed-work/76a66f0c6e923ffe8a5390e53cf8754c3c4c9a3f.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "76a66f0c6e923ffe8a5390e53cf8754c3c4c9a3f",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "docs/uiux-source-evidence-2026-10-02.md"
+      ],
+      "commit_subject": "docs(ui): record reconciled Base source acceptance and remaining gates",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/9e8496df0a82d9dcd412c335ae6d000911879eb4",
+      "sha256": "dd40dd50ac5072decc4e72ea965fce2d8c057e41df1fe479f3f1bc7a20bd546b",
+      "payload": "sources/committed-work/9e8496df0a82d9dcd412c335ae6d000911879eb4.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "9e8496df0a82d9dcd412c335ae6d000911879eb4",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision",
+        "frontend/package.json"
+      ],
+      "commit_subject": "chore(ui): pin the reconciled Base snapshot for local acceptance",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/c00de5ced04b1917d3b570a658e65652ef118523",
+      "sha256": "dff89f86decb9369a448ad9d2509e95fda679f1e80639bfebe4df0a384b67713",
+      "payload": "sources/committed-work/c00de5ced04b1917d3b570a658e65652ef118523.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "c00de5ced04b1917d3b570a658e65652ef118523",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "docs/uiux-source-evidence-2026-10-02.md"
+      ],
+      "commit_subject": "docs(ui): record Base shell and audit source evidence",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/4c2e7e192af84bef321b610a3e69baaf63f4984f",
+      "sha256": "ac22b68b29cb027be1bb283aa7438d9103122918d0509a272d4ec15d05cb130e",
+      "payload": "sources/committed-work/4c2e7e192af84bef321b610a3e69baaf63f4984f.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "4c2e7e192af84bef321b610a3e69baaf63f4984f",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "docs/ACCESSIBILITY.md",
+        "docs/UI_SHELL.md",
+        "docs/UI_UX_MAP.md",
+        "docs/ui-routes.json",
+        "frontend/e2e/base-standard-source.spec.ts",
+        "frontend/package.json",
+        "frontend/playwright.source-ui.config.ts",
+        "frontend/src/api/hooks.ts",
+        "frontend/src/app/router.tsx",
+        "frontend/src/pages/audit-log/index.test.tsx",
+        "frontend/src/pages/audit-log/index.tsx",
+        "frontend/src/pages/forbidden/index.tsx",
+        "frontend/src/pages/not-found/index.tsx",
+        "frontend/src/pages/pipelines/pipelines.test.tsx",
+        "frontend/src/pages/pull-requests/pull-requests.test.tsx",
+        "frontend/src/shared/auth/protected-route.test.tsx",
+        "frontend/src/shared/auth/protected-route.tsx",
+        "frontend/src/shared/i18n/locales/en.json",
+        "frontend/src/shared/i18n/locales/ru.json",
+        "frontend/src/shared/ui/query-state.test.tsx",
+        "frontend/src/shared/ui/query-state.tsx",
+        "frontend/src/widgets/app-shell.test.tsx",
+        "frontend/src/widgets/app-shell.tsx"
+      ],
+      "commit_subject": "feat(ui): adopt Base shell and audit page contracts",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/22eedfc6f12f2769bbe2e6a5498a3df862dfa2e0",
+      "sha256": "4dabe052a69e4e236cbba1c975be38dc97efe88fd0bcdfed36c8d9098113d8ad",
+      "payload": "sources/committed-work/22eedfc6f12f2769bbe2e6a5498a3df862dfa2e0.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "22eedfc6f12f2769bbe2e6a5498a3df862dfa2e0",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin form retry compatibility fix",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/8f08ba435fd748ac03ccb945fbda3d369ed4ed54",
+      "sha256": "a20064979f2c8eb25b122e6478446879d1d7961f1e9fa4c44c14ed87876fb49c",
+      "payload": "sources/committed-work/8f08ba435fd748ac03ccb945fbda3d369ed4ed54.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "8f08ba435fd748ac03ccb945fbda3d369ed4ed54",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin archive and Auth acceptance fixes",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/ce90136c99146c53d27ac93ce26792637f34df86",
+      "sha256": "d70cc19ca3480fd7f4a9a23944ff90d2230a62ac8f12ab388d518141a869d012",
+      "payload": "sources/committed-work/ce90136c99146c53d27ac93ce26792637f34df86.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "ce90136c99146c53d27ac93ce26792637f34df86",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "docs/plans/2026-10-05-request-id-precedence.md",
+        "frontend/src/api/client.test.ts",
+        "frontend/src/api/client.ts"
+      ],
+      "commit_subject": "fix(frontend): prefer response request ID",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/1cc3fd6f1767f190426a84bdd13a794072bd4215",
+      "sha256": "83907dd9fe879a61a29abd77dc35a799f83837f932477daca3389bbd70dcc8e9",
+      "payload": "sources/committed-work/1cc3fd6f1767f190426a84bdd13a794072bd4215.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "1cc3fd6f1767f190426a84bdd13a794072bd4215",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision",
+        "docs/BASE_INTEGRATION.md"
+      ],
+      "commit_subject": "chore(base): pin named SSR regions and canonical build guidance",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/becf53c5c57180f248893a9f77937c19c4cb652e",
+      "sha256": "cb8f71baa6ac0c2860d70bb4b65fbd1152c58f8cc4e2b0d391c46b9a95487d7b",
+      "payload": "sources/committed-work/becf53c5c57180f248893a9f77937c19c4cb652e.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "becf53c5c57180f248893a9f77937c19c4cb652e",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "docs/plans/2026-10-05-settings-keyboard-focus.md",
+        "frontend/src/pages/settings/index.tsx"
+      ],
+      "commit_subject": "fix(ui): restore settings search keyboard focus",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/d6db37e0270ccb5136b66726fe8762dd4d15e754",
+      "sha256": "9b51b591565d6ed06e9e773ac0c0676025323cdc372ec72062f697115d857f2f",
+      "payload": "sources/committed-work/d6db37e0270ccb5136b66726fe8762dd4d15e754.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "d6db37e0270ccb5136b66726fe8762dd4d15e754",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/af34edc6b8c9540e64338c2f4f4dfa142ce73c01",
+      "sha256": "ffd679610a2dcda1b1d3d2b535649de23bbb40d95da7158a8336a912771182e9",
+      "payload": "sources/committed-work/af34edc6b8c9540e64338c2f4f4dfa142ce73c01.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "af34edc6b8c9540e64338c2f4f4dfa142ce73c01",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/e170ce1317f2315f6c8b7beb981daf50cf3d9b7c",
+      "sha256": "74f3855e309dd5b1b7fe5c7f558ebed5292b611f324bad972bc2c33dad242a0a",
+      "payload": "sources/committed-work/e170ce1317f2315f6c8b7beb981daf50cf3d9b7c.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "e170ce1317f2315f6c8b7beb981daf50cf3d9b7c",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/907159a192fc0bdf8b30f07e6fe7770d72b9126f",
+      "sha256": "6e76cab2785a5a9332c7a9a9037dfdb11429d18b44adc73ae197844c4981249b",
+      "payload": "sources/committed-work/907159a192fc0bdf8b30f07e6fe7770d72b9126f.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "907159a192fc0bdf8b30f07e6fe7770d72b9126f",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/fb87639a2ead6a355c7697aa7ae25022c7d27f06",
+      "sha256": "ca88e60dcace676477a7651702e8f7a4bbfe5b465b7ed0d12f467b672965aa18",
+      "payload": "sources/committed-work/fb87639a2ead6a355c7697aa7ae25022c7d27f06.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "fb87639a2ead6a355c7697aa7ae25022c7d27f06",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/fae641e3e3d7e75e68d76f46615e6a38cb0cbb34",
+      "sha256": "4c61947730b883bf31ba9586c0872f8fc9bc383e007e7f7e6a06bdd035f7578f",
+      "payload": "sources/committed-work/fae641e3e3d7e75e68d76f46615e6a38cb0cbb34.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "fae641e3e3d7e75e68d76f46615e6a38cb0cbb34",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/b54aa5712193edf706702f12ab4c824e96842662",
+      "sha256": "44afd88b4a26ac7cb4ae72a8b372680edf366dae75a73c5571ecf873813707f1",
+      "payload": "sources/committed-work/b54aa5712193edf706702f12ab4c824e96842662.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "b54aa5712193edf706702f12ab4c824e96842662",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/cb4c7b2a4fad04f7906ac99c34c47404abe3e821",
+      "sha256": "06a37d9dad571268cf4644ed056f33058ea468c20633400dbffebe2bcb8621dc",
+      "payload": "sources/committed-work/cb4c7b2a4fad04f7906ac99c34c47404abe3e821.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "cb4c7b2a4fad04f7906ac99c34c47404abe3e821",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/7d47d5a0a989c9d65db8a438b367659bea9c471c",
+      "sha256": "d9cdbcd96d6384ea8847f925c387a69c020109a998d6421c3bd924bb882b31aa",
+      "payload": "sources/committed-work/7d47d5a0a989c9d65db8a438b367659bea9c471c.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "7d47d5a0a989c9d65db8a438b367659bea9c471c",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "AGENTS.md",
+        "docs/plans/2026-10-05-ui-acceptance-contract.md",
+        "docs/ui-routes.json",
+        "frontend/AGENTS.md",
+        "frontend/src/api/client.ts",
+        "frontend/src/pages/artifacts/artifacts-ux.test.tsx",
+        "frontend/src/pages/artifacts/artifacts.test.tsx",
+        "frontend/src/pages/audit-log/audit-log.test.tsx",
+        "frontend/src/pages/audit-log/index.tsx",
+        "frontend/src/pages/dashboard/dashboard-page.test.tsx",
+        "frontend/src/pages/dashboard/index.tsx",
+        "frontend/src/pages/forbidden/index.tsx",
+        "frontend/src/pages/pipeline-detail/index.tsx",
+        "frontend/src/pages/pipeline-detail/pipeline-detail.test.tsx",
+        "frontend/src/pages/projects/index.tsx",
+        "frontend/src/pages/projects/projects.test.tsx",
+        "frontend/src/pages/pull-request-detail/index.tsx",
+        "frontend/src/pages/pull-request-detail/resource-state.test.tsx",
+        "frontend/src/shared/lib/use-project-pipelines.test.tsx",
+        "frontend/src/shared/lib/use-project-pipelines.ts",
+        "frontend/src/shared/ui/query-state.test.tsx",
+        "frontend/src/shared/ui/query-state.tsx"
+      ],
+      "commit_subject": "fix(ui): verify CI/CD identity and terminal resource states",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/ad9bce707a4d83233b8ad8b2d36384572fc59125",
+      "sha256": "dc4f4a26f7b740a01035eeb8b2fafc217a2904339fc857cc78011cd42743e568",
+      "payload": "sources/committed-work/ad9bce707a4d83233b8ad8b2d36384572fc59125.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "ad9bce707a4d83233b8ad8b2d36384572fc59125",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/1520c4ad20c28c22e973956d8e397935dd44f637",
+      "sha256": "677dda2dcd95d10e8aa8e2a5a7bde398587c275d5af85fdec866620173b8c976",
+      "payload": "sources/committed-work/1520c4ad20c28c22e973956d8e397935dd44f637.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "1520c4ad20c28c22e973956d8e397935dd44f637",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/f1b2b77759351b05416afb4bfab27622eb60af2c",
+      "sha256": "891a0854b0e01f5516caaa7180a20ea33cd7010bb9a14376cbf02444d9fe37f9",
+      "payload": "sources/committed-work/f1b2b77759351b05416afb4bfab27622eb60af2c.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "f1b2b77759351b05416afb4bfab27622eb60af2c",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/f6170340ae23d1319bdb5b449afed1e954cf3a83",
+      "sha256": "54a61905f97c365879b3c23060f13ac8c777598a7a5b8a404fdac82c91f6c2a1",
+      "payload": "sources/committed-work/f6170340ae23d1319bdb5b449afed1e954cf3a83.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "f6170340ae23d1319bdb5b449afed1e954cf3a83",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision",
+        ".gitattributes"
+      ],
+      "commit_subject": "chore(base): pin portable source acceptance and normalize runtime policy",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/b61bfa579479e5371f9973f13977eb5615ad76ca",
+      "sha256": "37e5fcb51529d82fdbb9571fa946aa0ca11b62614383f1e998c2451c8120d54b",
+      "payload": "sources/committed-work/b61bfa579479e5371f9973f13977eb5615ad76ca.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "b61bfa579479e5371f9973f13977eb5615ad76ca",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/b4000cdc74b5594171be96f21173578d68f6cc2e",
+      "sha256": "e665974f65e56eb62b78b282757dd219b60cb56155dc0e0cdede0dd3ba9f6939",
+      "payload": "sources/committed-work/b4000cdc74b5594171be96f21173578d68f6cc2e.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "b4000cdc74b5594171be96f21173578d68f6cc2e",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/199238fba36f66009d84d8851d920af589d3e647",
+      "sha256": "b9e96525bbd4e601b36c5b3ddfe9f046f3827b480f0803a3355a842d7197850a",
+      "payload": "sources/committed-work/199238fba36f66009d84d8851d920af589d3e647.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "199238fba36f66009d84d8851d920af589d3e647",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/9559972bfe40f4a57f629e06cabe2b0c0c88dcb9",
+      "sha256": "ee3e1d49b490395595d9ec43998f1354258e379cb5ff2315af03cd904b6755c6",
+      "payload": "sources/committed-work/9559972bfe40f4a57f629e06cabe2b0c0c88dcb9.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "9559972bfe40f4a57f629e06cabe2b0c0c88dcb9",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/b9b7e921dc2bb39d50577c9e10698a80cc4661e7",
+      "sha256": "b1e3b23dfc3017fa759823fb51835ec8af7685a50321c0b169ee976d6200458f",
+      "payload": "sources/committed-work/b9b7e921dc2bb39d50577c9e10698a80cc4661e7.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "b9b7e921dc2bb39d50577c9e10698a80cc4661e7",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/f810ffcdf2f74a0ce1f682f092ac3b843791fec8",
+      "sha256": "19e9cae391980b06416314b542a2c7475f60081c426ae55b718613c25a0e62f4",
+      "payload": "sources/committed-work/f810ffcdf2f74a0ce1f682f092ac3b843791fec8.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "f810ffcdf2f74a0ce1f682f092ac3b843791fec8",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin full profile acceptance helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/79111c2632fe51a32f8e179607a33dfdcb149f09",
+      "sha256": "f9882ba9caf3570aeec3c863be2d88498252442e9ae3083583e40af55de4f0bd",
+      "payload": "sources/committed-work/79111c2632fe51a32f8e179607a33dfdcb149f09.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "79111c2632fe51a32f8e179607a33dfdcb149f09",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision",
+        "backend/src/runner_docker.rs",
+        "docs/COMPOSE_RUNNER.md"
+      ],
+      "commit_subject": "fix(runner): validate immutable sources before allocating helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/b8753a2553233d16d9ca18aa0fca5b7a20c4ce85",
+      "sha256": "24a52c9ad32ee52c6dba026ddefb5715f54ec9c755a4cfa67a644d3845f03330",
+      "payload": "sources/committed-work/b8753a2553233d16d9ca18aa0fca5b7a20c4ce85.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "b8753a2553233d16d9ca18aa0fca5b7a20c4ce85",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision",
+        "AGENTS.md",
+        "backend/Cargo.toml",
+        "backend/src/api/readiness.rs",
+        "backend/src/runner_docker.rs",
+        "backend/tests/integration_db.rs",
+        "docs/COMPOSE_RUNNER.md"
+      ],
+      "commit_subject": "fix(runner): verify resource ownership before cleanup",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/da4cb60cc33ed51ce2e51166f5003edea00d463f",
+      "sha256": "43b5f833fcf9175094bec3cea9786417c6d3dd394396fa5c21c04e60521bdb06",
+      "payload": "sources/committed-work/da4cb60cc33ed51ce2e51166f5003edea00d463f.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "da4cb60cc33ed51ce2e51166f5003edea00d463f",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "refactor(platform): unify service contracts, naming and Base UI shell",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/9306d241364365a13f67a503521f9e5a4b49a0c7",
+      "sha256": "2f07ce664c01213f1a0e97bc235dc28d987aa0900e955159be6cd5a3189a4054",
+      "payload": "sources/committed-work/9306d241364365a13f67a503521f9e5a4b49a0c7.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "9306d241364365a13f67a503521f9e5a4b49a0c7",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "refactor(platform): unify service contracts, naming and Base UI shell",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/9fc150860de56844259666dc903357d82e8d7437",
+      "sha256": "27cf5344fa8d13c4bf8f38337946219a215882d6a8faf50801392e93063ff980",
+      "payload": "sources/committed-work/9fc150860de56844259666dc903357d82e8d7437.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "9fc150860de56844259666dc903357d82e8d7437",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "refactor(platform): unify service contracts, naming and Base UI shell",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/bc3810575a7a3705744aade4ab76da62220659d9",
+      "sha256": "44abd9d2869019ec51cd382248833fb71eb26437c87048cdac5aed035829a654",
+      "payload": "sources/committed-work/bc3810575a7a3705744aade4ab76da62220659d9.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "bc3810575a7a3705744aade4ab76da62220659d9",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "refactor(platform): unify service contracts, naming and Base UI shell",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/f7e898c4e043acf9106657196632a2d500183e7c",
+      "sha256": "4850ba1067d886959187b8c3cc28dd5e9fc2330f7a7f64f813173f9d32eef5d3",
+      "payload": "sources/committed-work/f7e898c4e043acf9106657196632a2d500183e7c.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "f7e898c4e043acf9106657196632a2d500183e7c",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision",
+        ".gitattributes"
+      ],
+      "commit_subject": "refactor(platform): unify service contracts, naming and Base UI shell",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/5afb14de6c35b84b5d39b97c86cc9826fd4a0c1a",
+      "sha256": "d02e8231285ace363e4774e4ec3f548ea626ef686b3be4adb5d1eb10be8b300c",
+      "payload": "sources/committed-work/5afb14de6c35b84b5d39b97c86cc9826fd4a0c1a.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "5afb14de6c35b84b5d39b97c86cc9826fd4a0c1a",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision",
+        ".github/workflows/ci.yml",
+        "CHANGELOG.md",
+        "backend/Dockerfile.umbrella",
+        "backend/src/api/authz_mw.rs",
+        "backend/src/api/router.rs",
+        "docker-compose.tls.yml",
+        "docker-compose.yml",
+        "docs/CURRENT_STATE.md",
+        "docs/DISASTER_RECOVERY.md",
+        "docs/OPERATIONS.md",
+        "docs/TEST_PLAN.md",
+        "docs/TROUBLESHOOTING.md",
+        "docs/plans/2026-10-04-unification-completion.md",
+        "docs/ui-routes.json",
+        "frontend/AGENTS.md",
+        "frontend/Dockerfile.umbrella",
+        "frontend/nginx.conf",
+        "frontend/package.json",
+        "frontend/src/widgets/app-shell.test.tsx",
+        "frontend/src/widgets/app-shell.tsx"
+      ],
+      "commit_subject": "refactor(platform): unify service contracts, naming and Base UI shell",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/413d8d098dab2fe8bd4ad9ccb7a65da40ce8ebef",
+      "sha256": "735b63c98d1a575b982cb61093aefe5b8c5c148c5dd5564ca7c7265e5a0086f4",
+      "payload": "sources/committed-work/413d8d098dab2fe8bd4ad9ccb7a65da40ce8ebef.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "413d8d098dab2fe8bd4ad9ccb7a65da40ce8ebef",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "AGENTS.md",
+        "backend/src/runner.rs",
+        "docs/COMPOSE_RUNNER.md"
+      ],
+      "commit_subject": "fix(runner): enforce project slots before embedded leases",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/af5b66601e2472729efc2a3c5cfb67480c2f8d4c",
+      "sha256": "a3e2d06f5cb5a371c398e08ef2692eece9157da2cc99da4b04d0c49c434b9609",
+      "payload": "sources/committed-work/af5b66601e2472729efc2a3c5cfb67480c2f8d4c.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "af5b66601e2472729efc2a3c5cfb67480c2f8d4c",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "backend/Dockerfile",
+        "backend/Dockerfile.umbrella"
+      ],
+      "commit_subject": "fix(build): preserve Base workspace in runner image contexts",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/0805c5ce528c31bf677b7b50f22418e9aada9923",
+      "sha256": "1884a585bd0c62ccf4caafa24157b1b989ced279e150bd87811c3e56d3e14f75",
+      "payload": "sources/committed-work/0805c5ce528c31bf677b7b50f22418e9aada9923.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "0805c5ce528c31bf677b7b50f22418e9aada9923",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "README.md"
+      ],
+      "commit_subject": "docs(runner): link Compose operation guide",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/89a1c9163a4b7266f01b6d69fbf58f220c40c7ad",
+      "sha256": "1a3d9d33a311d31282788c589ad73b590b6c4a459f43cb2b209061517d1a4e9d",
+      "payload": "sources/committed-work/89a1c9163a4b7266f01b6d69fbf58f220c40c7ad.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "89a1c9163a4b7266f01b6d69fbf58f220c40c7ad",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "backend/Dockerfile",
+        "backend/Dockerfile.umbrella",
+        "backend/src/api/jobs_routes.rs",
+        "backend/src/lib.rs",
+        "backend/src/runner.rs",
+        "backend/src/runner_docker.rs",
+        "docs/COMPOSE_RUNNER.md",
+        "scripts/backup-stand.sh",
+        "scripts/gate-backend.sh",
+        "scripts/scan_container_images.sh",
+        "scripts/tests/test_base_stand_backup.py"
+      ],
+      "commit_subject": "fix(runner): own job execution and recovery with Compose",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/e93b8d768f18121da757e69366f4ca949306046c",
+      "sha256": "b5d4679a8e82c219ffc4557ba5929837e3476eb4990ab7c6e68aae9e475225af",
+      "payload": "sources/committed-work/e93b8d768f18121da757e69366f4ca949306046c.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "e93b8d768f18121da757e69366f4ca949306046c",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin main-integrated delivery contracts",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/e0c0ec1c26bcffb1fd3eff0f4aed44df0d9d318e",
+      "sha256": "cee52bdf2c7cbff689b0cc553476b0b16a544f32e0c3979930192cce0d1bc6f6",
+      "payload": "sources/committed-work/e0c0ec1c26bcffb1fd3eff0f4aed44df0d9d318e.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "e0c0ec1c26bcffb1fd3eff0f4aed44df0d9d318e",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin verified delivery contracts and rules",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/5a4d9801c1f1d917e87198dc1b05c7009b7397d6",
+      "sha256": "54ad01fa07151b3a593463fb23e7e495f1d319eb39f5fe0c53ef9b264b9d26b4",
+      "payload": "sources/committed-work/5a4d9801c1f1d917e87198dc1b05c7009b7397d6.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "5a4d9801c1f1d917e87198dc1b05c7009b7397d6",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".gitattributes"
+      ],
+      "commit_subject": "fix(ci): keep generated OpenAPI comparison portable",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/79c4308f4083c9cb319d0465032275e1ba0aacda",
+      "sha256": "39008576d5f4853168147450dd8cd6e0894f88f9f739264d536923109032eac8",
+      "payload": "sources/committed-work/79c4308f4083c9cb319d0465032275e1ba0aacda.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "79c4308f4083c9cb319d0465032275e1ba0aacda",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin verified delivery contracts and rules",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/c29b3b7849a740717ce36860fe1f91caf72b4126",
+      "sha256": "0b85218ac736db84e49b1b8ce3eba56cf3eb0d738116b6a5c0d4f35a2891db57",
+      "payload": "sources/committed-work/c29b3b7849a740717ce36860fe1f91caf72b4126.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "c29b3b7849a740717ce36860fe1f91caf72b4126",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".gitattributes",
+        ".github/workflows/ci.yml"
+      ],
+      "commit_subject": "chore(ci): align PostgreSQL and portable shell helpers",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/9fef6d357d25c78c9a70f70e1c93118f0226b91c",
+      "sha256": "d88e8302a836b467e9f69a4d2047e911ec91ac6762cd68181291c6d33882d572",
+      "payload": "sources/committed-work/9fef6d357d25c78c9a70f70e1c93118f0226b91c.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "9fef6d357d25c78c9a70f70e1c93118f0226b91c",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "scripts/tests/test_verify_docs.py",
+        "scripts/verify_docs.py"
+      ],
+      "commit_subject": "fix(docs): validate directory-scoped pnpm scripts",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/c46747e5bd8449a2c568efbdb53a29f4d15833a8",
+      "sha256": "527728c95a0a69e81769b3e41b74220bd5355d66b8b6be6d7786d1356b299682",
+      "payload": "sources/committed-work/c46747e5bd8449a2c568efbdb53a29f4d15833a8.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "c46747e5bd8449a2c568efbdb53a29f4d15833a8",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin verified delivery contracts and rules",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/2e5e8f73e540f8105fb0f2bdb34b4040a33423e4",
+      "sha256": "f18937181420e88760daeeedf7b1f5a694494948ebf2850bd0668d508757224a",
+      "payload": "sources/committed-work/2e5e8f73e540f8105fb0f2bdb34b4040a33423e4.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "2e5e8f73e540f8105fb0f2bdb34b4040a33423e4",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "frontend/AGENTS.md"
+      ],
+      "commit_subject": "style(frontend): synchronize formatter-compatible Base rules",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/67cdea23c297651beedf6b4cf0a7b460a32f563e",
+      "sha256": "85af5d1db85ca731c46b4418105c286e520baedf469463c6077df73944d6ebbd",
+      "payload": "sources/committed-work/67cdea23c297651beedf6b4cf0a7b460a32f563e.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "67cdea23c297651beedf6b4cf0a7b460a32f563e",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".base-revision"
+      ],
+      "commit_subject": "chore(base): pin delivery contracts after main integration",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
+    },
+    {
+      "original_path": "commit/4881958434510e9ff790a26de2b864b519c746de",
+      "sha256": "2d70d65e1ed90606cb4b841a9dde4261cdb57330e8740c6435012d3343971a6a",
+      "payload": "sources/committed-work/4881958434510e9ff790a26de2b864b519c746de.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "4881958434510e9ff790a26de2b864b519c746de",
+          "worktree": "candidate-source"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "backend/src/registered_devops_evidence_tests.rs",
+        "backend/src/task_delivery/namespace_evidence_pg_tests.rs"
+      ],
+      "commit_subject": "test(namespace): qualify SQL-compatible retained credential fixture",
+      "format": "Git show diff; merge commits retain combined resolution hunks only"
     }
   ]
 }

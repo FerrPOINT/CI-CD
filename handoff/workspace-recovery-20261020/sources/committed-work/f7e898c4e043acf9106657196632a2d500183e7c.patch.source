@@ -1,0 +1,17 @@
+diff --git a/.base-revision b/.base-revision
+index 3620eda..a7ce7f0 100644
+--- a/.base-revision
++++ b/.base-revision
+@@ -1 +1 @@
+-bff9bfa8b7669ef23bd64dba36e78eb750eb43d4
++0466f36afb28a29dd245c9ff82cbbb2942f5a898
+diff --git a/.gitattributes b/.gitattributes
+index 5482f27..2d9fa6c 100644
+--- a/.gitattributes
++++ b/.gitattributes
+@@ -17,3 +17,5 @@ backend/migrations/0032_notification_rules_templates.sql text eol=crlf
+ backend/migrations/0033_aggregation_quiet_hours.sql text eol=crlf
+ backend/migrations/0038_platform_messaging.sql text eol=crlf
+ backend/tests/fixtures/historical_platform_messaging.sql text eol=crlf
++# UI/source evidence must have identical bytes on Windows and Linux.
++frontend/** text=auto eol=lf

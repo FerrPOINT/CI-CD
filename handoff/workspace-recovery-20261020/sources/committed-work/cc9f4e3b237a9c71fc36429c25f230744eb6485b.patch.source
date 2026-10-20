@@ -1,0 +1,34 @@
+diff --git a/.base-revision b/.base-revision
+index 35b27eb..119f6c9 100644
+--- a/.base-revision
++++ b/.base-revision
+@@ -1 +1 @@
+-d22ca2205f5068eba976745ed5fad93c6daacfa1
++deceff88a55675858ca59eb6aee13104bff9b1c7
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index ff1b36a..c61e1a1 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,9 @@
+ 
+ ## [Unreleased]
+ 
++- Base notification ownership gate закреплён единым snapshot. OpenAPI alias
++  передаёт явные параметры в Base; без параметров сравнивает с origin/main.
++
+ - Единственный notification host подключён из `@sdlc/ui/notifications`
+   на Base `d22ca2205f5068eba976745ed5fad93c6daacfa1`. Удалены локальные
+   AppToaster/theme и Sonner CSS overrides; продуктовые callbacks используют
+diff --git a/frontend/scripts/base-openapi-compat.mjs b/frontend/scripts/base-openapi-compat.mjs
+index 095fc2d..3796beb 100644
+--- a/frontend/scripts/base-openapi-compat.mjs
++++ b/frontend/scripts/base-openapi-compat.mjs
+@@ -1,7 +1,7 @@
+ import { spawnSync } from 'node:child_process'
+ import { resolve } from 'node:path'
+ 
+-const result = spawnSync(process.execPath, [resolve('../../services-base/frontend/scripts/sdlc-openapi-compat.mjs'), '--base-ref', 'origin/main'], {
++const result = spawnSync(process.execPath, [resolve('../../services-base/frontend/scripts/sdlc-openapi-compat.mjs'), ...(process.argv.length > 2 ? process.argv.slice(2) : ['--base-ref', 'origin/main'])], {
+   cwd: process.cwd(), stdio: 'inherit', env: { ...process.env, SPEC_NAME: 'openapi/openapi.yaml' },
+ })
+ process.exit(result.status ?? 1)

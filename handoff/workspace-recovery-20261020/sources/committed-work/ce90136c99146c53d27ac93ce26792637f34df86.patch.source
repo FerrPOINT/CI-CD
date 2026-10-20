@@ -1,0 +1,73 @@
+diff --git a/docs/plans/2026-10-05-request-id-precedence.md b/docs/plans/2026-10-05-request-id-precedence.md
+new file mode 100644
+index 0000000..f047cef
+--- /dev/null
++++ b/docs/plans/2026-10-05-request-id-precedence.md
+@@ -0,0 +1,14 @@
++# Приоритет response request ID
++
++CI/CD API client выбирал `request_id` из JSON перед `X-Request-Id`. При
++расхождении этих значений UI показывал идентификатор тела, хотя HTTP header
++связывает ответ с обработанным запросом. Это противоречило общему контракту Base.
++
++Приоритет: header, затем совместимое поле envelope. HTTP status, business code,
++message и details сохраняются. Пустые/non-JSON ошибки остаются `ApiError` с
++исходным HTTP status; SSO, streaming и file responses не меняются.
++
++Регрессионный тест с разными UUID в header/body воспроизводит ошибку до
++исправления. Отдельный тест проверяет пустой HTTP 422 и response request ID.
++Приёмка также включает полный frontend gate и новую source-attested сборку
++до сохранения окончательного browser evidence. Принятый runtime не обновляется.
+diff --git a/frontend/src/api/client.test.ts b/frontend/src/api/client.test.ts
+index bf7ca83..a4294f3 100644
+--- a/frontend/src/api/client.test.ts
++++ b/frontend/src/api/client.test.ts
+@@ -74,6 +74,35 @@ describe('api client errors', () => {
+     expect(apiRetry(2, error)).toBe(false)
+   })
+ 
++  it('uses the response request id when the JSON envelope contains a different id', async () => {
++    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
++      error: {
++        code: 'permission_denied', message: 'forbidden',
++        request_id: '11111111-1111-4111-8111-111111111111',
++      },
++    }), {
++      status: 403,
++      headers: { 'Content-Type': 'application/json', 'X-Request-Id': '22222222-2222-4222-8222-222222222222' },
++    })))
++
++    const error = await captureApiError(() => api('/projects'))
++
++    expect(error).toMatchObject({ kind: 'api', status: 403, code: 'permission_denied', message: 'forbidden',
++      requestId: '22222222-2222-4222-8222-222222222222' })
++  })
++
++  it('retains status and the response request id for an empty HTTP error', async () => {
++    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, {
++      status: 422,
++      headers: { 'X-Request-Id': '33333333-3333-4333-8333-333333333333' },
++    })))
++
++    const error = await captureApiError(() => api('/projects'))
++
++    expect(error).toMatchObject({ kind: 'api', status: 422, requestId: '33333333-3333-4333-8333-333333333333' })
++    expect(error.code).toBeUndefined()
++  })
++
+   it('[REQ-UI-001] maps network failures separately from server responses', async () => {
+     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
+ 
+diff --git a/frontend/src/api/client.ts b/frontend/src/api/client.ts
+index eac70a2..18e7d48 100644
+--- a/frontend/src/api/client.ts
++++ b/frontend/src/api/client.ts
+@@ -133,7 +133,7 @@ async function apiErrorFromResponse(response: Response): Promise<ApiError> {
+     status: response.status,
+     code: envelope?.code,
+     message: envelope?.message ?? (response.statusText || `HTTP ${response.status}`),
+-    requestId: envelope?.requestId ?? requestId,
++    requestId: requestId ?? envelope?.requestId,
+     details: envelope?.details,
+     retryAfterSeconds,
+   })

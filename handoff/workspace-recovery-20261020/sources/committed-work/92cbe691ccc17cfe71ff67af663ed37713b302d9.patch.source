@@ -1,0 +1,99 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index aef8f12..b8f3e8e 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,11 @@
+ 
+ ## [Unreleased]
+ 
++- ARCHITECTURE описывает фактический Base AppShell и продуктовые адаптеры,
++  ссылается на единый UI/UX-контракт и owned workspace launcher вместо второго
++  UI-kit и standalone Compose. Исторический Header plan остаётся историческим;
++  code/API/locks/runner/runtime и local default этим docs-only изменением не меняются.
++
+ - AGENTS/DEVELOPMENT_GUIDE согласованы с Base UI/UX и owned Compose QA:
+   удалены standalone/direct launch и массовое удаление volumes, toolchain
+   соответствует pinned metadata. Приёмка локальная; legacy helper migration
+diff --git a/docs/ARCHITECTURE.md b/docs/ARCHITECTURE.md
+index 5ff786a..4c090e0 100644
+--- a/docs/ARCHITECTURE.md
++++ b/docs/ARCHITECTURE.md
+@@ -35,7 +35,7 @@ Human identity, браузерные сессии и личные API-токен
+ | Framework | react + react-dom | 19 |
+ | Build | vite | 6 |
+ | Styling | tailwindcss + @tailwindcss/vite | 4 |
+-| Components | shadcn/ui | — |
++| Components | Base `@sdlc/ui` | pinned Base snapshot |
+ | Router | react-router | 8 |
+ | Server state | @tanstack/react-query | 5 |
+ | Client state | zustand | 5 |
+@@ -45,14 +45,15 @@ Human identity, браузерные сессии и личные API-токен
+ 
+ ### Infrastructure
+ 
+-Dashboard использует общий `PlatformHeader` из `@sdlc/ui`: он располагается
+-перед sidebar-offset и занимает всю ширину viewport. Leading принадлежит
+-продукту (drawer + PlatformMark), services общему UI (шесть UI из runtime),
+-actions содержит тему и аккаунт с central logout. Sidebar начинается под
+-Header и содержит только локальную навигацию. Полная identity не дублируется
+-в sidebar и не участвует в геометрии Header. Контекстные `PageFrame` режимы
+-рабочих страниц сохраняются; API-only и Pulse не становятся UI-приложениями.
+-Приёмка и неизменяемые границы: [план Header](../plans/2026-10-01-platform-header.md).
++Dashboard использует `AppShell` из Base `@sdlc/ui`: продуктовый адаптер
++`frontend/src/widgets/app-shell.tsx` передаёт identity, navigation, account и
++route layout, не собирает второй header/sidebar/drawer. Геометрия, controls,
++keyboard/focus и общие композиции принадлежат
++[Base UI/UX Standard](../../services-base/docs/platform/UI_UX_STANDARD.md).
++Маршруты и согласованные продуктовые особенности: [UI Shell](UI_SHELL.md),
++[UI/UX Map](UI_UX_MAP.md). Исторический [план Header](../plans/2026-10-01-platform-header.md)
++не заменяет действующий Base-контракт. API-only и Pulse не добавляются в
++платформенную навигацию этим документом.
+ 
+ - PostgreSQL 17, Docker Compose.
+ - Порты: API `22801`, Dashboard `22802`, PostgreSQL `22543`.
+@@ -182,8 +183,8 @@ Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-2
+ ## 7. Frontend архитектура
+ 
+ - **pages/** — 20 рабочих экранов + login: dashboard, projects/project-members, repositories/browser/compare/pulls, pipelines/detail, runners, secrets, artifacts, environments, schedules, webhooks, reports, audit-log, users, settings, login.
+-- **shared/** — ui-kit (shadcn), i18n (ru/en), theme (dark/gray/light).
+-- **widgets/** — AppShell (responsive sidebar/rail + header + Outlet); контракт геометрии и доступности описан в `docs/UI_SHELL.md`.
++- **shared/** — продуктовые адаптеры Base controls, i18n (ru/en), theme (dark/gray/light); не отдельный UI-kit.
++- **widgets/** — адаптер Base AppShell + Outlet; нормативные UI/UX и shell-контракты принадлежат Base, `docs/UI_SHELL.md` содержит продуктовую карту.
+ - **api/** — типизированный клиент/wrappers + generated OpenAPI schema `schema.d.ts`.
+ - Целевое: generated transport boundary после стабилизации API-слоя; текущие DTO уже генерируются из `openapi/openapi.yaml`.
+ 
+@@ -209,20 +210,23 @@ Runners (registry + heartbeat), execution attempts/retry history, secrets (AES-2
+ 
+ ## 10. Dev workflow
+ 
+-```bash
+-just up             # docker compose up --build -d
+-just health         # curl /api/v1/health
+-just readiness      # curl /api/v1/readiness
+-just test-backend   # cargo test --workspace (в rust:1.88-bookworm)
+-just test-frontend  # pnpm test
+-just build-frontend # pnpm build
+-```
+-
+-Backend-проверки без cargo на хосте описаны в `docs/DEVELOPMENT_GUIDE.md`; полный gate: fmt + clippy `--workspace --all-targets -D warnings` + test workspace + release build.
++Постоянные стенды запускаются из корня workspace штатным `start-local.ps1`
++с явным `-Workspace sdlc1` или `sdlc2`; Compose grouping, защищённый runtime и
++owned QA lifecycle описаны в
++[Base LOCAL_GROUPS](../../services-base/deploy/LOCAL_GROUPS.md).
++Legacy standalone/container helpers до миграции на owned Compose не запускать.
++Команды host frontend и полного backend/PostgreSQL gate:
++[Development Guide](DEVELOPMENT_GUIDE.md). Локальная проверка source не заменяет
++candidate images, health, product/Base fingerprints и live SSO приёмку.
+ 
+ ## 11. Deployment
+ 
+-Docker Compose: postgres + backend + frontend (nginx static + `/api`,`/git` proxy). Current MVP включает local backup/verify/restore helper для PostgreSQL, Git storage и artifacts. Restart-policy, monitoring, off-site/PITR backups и full restore drill — Phase E (см. `docs/ROADMAP.md`, `docs/DEPLOYMENT.md`).
++В локальном workspace backend/web входят в выбранный `sdlc1` или `sdlc2`,
++общая инфраструктура — в `sdlc-common`; отдельный постоянный Forge Compose
++не поднимается. Frontend — nginx static + `/api`,`/git` proxy. Current MVP
++включает local backup/verify/restore helper для PostgreSQL, Git storage и
++artifacts. Restart-policy, monitoring, off-site/PITR backups и full restore
++drill — Phase E (см. `docs/ROADMAP.md`, `docs/DEPLOYMENT.md`).
+ 
+ ## References
+ 
