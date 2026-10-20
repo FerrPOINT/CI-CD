@@ -63,15 +63,21 @@ Task/root/assignment permissions, SDLC quarantine/lookup и trusted versioned re
 
 ## External shell process groups
 
-External `forge-runner` выделяет отдельную Unix process group для каждой
-команды. Timeout, cancellation и нормальный выход shell завершают оставшихся
-участников группы до ожидания EOF логов и terminal completion. На Linux runner
-становится subreaper и адресно собирает принятых потомков этой группы, в том
-числе при запуске PID 1 в pod. Неуспешная проверка остановки остаётся
+External `forge-runner` выделяет отдельную Unix process group на attempt.
+Живой служебный child удерживает ID группы, пока исполняются команды этого
+задания; ID завершившегося шага не переиспользуется для адресации чужого процесса.
+Фоновые сервисы задания сохраняются между успешными командами, в том числе если
+они удерживают stdout/stderr. Log readers работают до завершения всего attempt.
+
+Timeout, cancellation, ошибка шага и завершение последней команды останавливают
+группу перед EOF логов, artifact upload, terminal completion и cleanup. На Linux
+runner становится subreaper: direct child сначала собирает Tokio, затем runner
+собирает принятых потомков своей группы. Неуспешная проверка остановки остаётся
 `UnconfirmedExecution`: terminal ACK, свободный slot и cleanup не объявляются.
 
-Это ограничение дерева обычных дочерних процессов, а не sandbox для недоверенного
-кода: escape через новую session/process group не покрывается. Для Kubernetes
-пилота допускается только ограниченный доверенный fixture; host namespaces,
-Docker socket и provider credentials ему не передаются. Windows сохраняет
-прежний direct-child контракт. API, migrations и SDK pins не меняются.
+Это единый контракт Linux runner в Docker/Compose и Kubernetes. Это ограничение
+обычных дочерних процессов, а не sandbox для недоверенного кода: escape через
+новую session/process group не покрывается. Для Kubernetes пилота допускается
+только ограниченный доверенный fixture без host namespaces, Docker socket и
+provider credentials. Windows сохраняет прежний direct-child контракт.
+API, migrations и SDK pins не меняются.
