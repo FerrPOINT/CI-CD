@@ -79,3 +79,9 @@ artifact paths используют один scoped error mapper. Это не в
 предшествующую попытку. Дополнительно реальный owned Git checkout и shell-процесс
 обычного embedded CI доходят до process exit, workspace ACK, marker и drained.
 Это изолированная QA без данных приложений, не модельное или установленное задание.
+
+## Контракт следующего этапа
+
+[Owner provenance, Git/CI границы и совместимость v2](SPACE_ADMISSION_CONTRACT_V2.md)
+уточняют реализацию. Nullable CI repository_id и unbound resources не получают
+выдуманный default Space: требуется явное разрешение происхождения до activation.
