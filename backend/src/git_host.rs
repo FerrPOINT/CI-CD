@@ -352,7 +352,9 @@ async fn check_repo_access(
         return check_git_auth(&state.git, headers).map(|()| false);
     };
     let token = bearer_or_basic_password(headers)?.ok_or_else(ApiError::unauthorized)?;
-    let claims = crate::api::identity_for_bearer_token(pool, auth_secret, token.trim()).await?;
+    let identity =
+        crate::api::verified_identity_for_bearer_token(pool, auth_secret, token.trim()).await?;
+    let claims = &identity.claims;
     let global_role = crate::authz::Role::parse(&claims.role).ok_or_else(ApiError::unauthorized)?;
     if visibility.is_none() {
         return Err(ApiError::not_found());
@@ -365,39 +367,31 @@ async fn check_repo_access(
         GitOperation::Read => "git:read",
         GitOperation::Write => "git:write",
     };
-    if !crate::api::bearer_token_has_scope(&claims, required_scope) {
-        return Err(ApiError::forbidden());
-    }
-    if claims.role == "service_account" {
-        return match claims.token_project_id {
-            Some(project_id) => git_repository_linked_to_project(pool, &name, project_id)
-                .await
-                .map(|()| false),
-            None => Err(ApiError::forbidden()),
-        };
-    }
-    if claims.role != "service_account"
-        && global_role >= min_role
+    identity.require_scope(required_scope)?;
+    let bootstrap = if claims.role == "service_account" {
+        let project_id = claims.token_project_id.ok_or_else(ApiError::forbidden)?;
+        git_repository_linked_to_project(pool, &name, project_id).await?;
+        false
+    } else if global_role >= min_role
         && crate::repository_catalog::shared_human_repository(pool, &name, claims.token_project_id)
             .await?
     {
-        return Ok(global_role == crate::authz::Role::Admin);
-    }
-    if global_role == crate::authz::Role::Admin {
-        return match claims.token_project_id {
-            Some(project_id) => git_repository_linked_to_project(pool, &name, project_id)
-                .await
-                .map(|()| true),
-            None => Ok(true),
-        };
-    }
-
-    if git_project_access_allows(pool, &name, claims.sub, min_role, claims.token_project_id).await?
+        global_role == crate::authz::Role::Admin
+    } else if global_role == crate::authz::Role::Admin {
+        if let Some(project_id) = claims.token_project_id {
+            git_repository_linked_to_project(pool, &name, project_id).await?;
+        }
+        true
+    } else if git_project_access_allows(pool, &name, claims.sub, min_role, claims.token_project_id)
+        .await?
     {
-        Ok(false)
+        false
     } else {
-        Err(ApiError::forbidden())
-    }
+        return Err(ApiError::forbidden());
+    };
+    // A successful asynchronous ACL lookup cannot renew the source token.
+    identity.require_scope(required_scope)?;
+    Ok(bootstrap)
 }
 
 pub fn check_git_auth(config: &GitConfig, headers: &HeaderMap) -> Result<(), ApiError> {

@@ -1,4 +1,6 @@
 //! Native profile persistence plus the real fresh SDK HTTP verification path.
+#[path = "support/git_scope.rs"]
+mod git_scope;
 #[path = "support/group_drain.rs"]
 mod group_drain;
 use axum::{Json, Router, routing::get};
@@ -11,6 +13,7 @@ struct Profile {
     subject: Uuid,
     role: String,
     expires_in: i64,
+    scopes: Vec<&'static str>,
 }
 #[tokio::test]
 #[ignore = "requires owned forge_space_test PostgreSQL and isolated test process"]
@@ -47,6 +50,7 @@ async fn unified_central_profile_keeps_local_roles_and_rejects_machine_or_expire
         subject: Uuid::new_v4(),
         role: "member".into(),
         expires_in: 300,
+        scopes: vec!["ci-cd:read", "ci-cd:write", "git:read", "git:write"],
     }));
     let expected = profile.clone();
     let router=Router::new().route("/oidc/jwks",get(||async{Json(serde_json::json!({"keys":[]}))}))
@@ -54,7 +58,7 @@ async fn unified_central_profile_keeps_local_roles_and_rejects_machine_or_expire
   let profile=expected.read().unwrap().clone();async move{
    assert_eq!(uri.query(),Some("include_lifetime=true"));
    assert_eq!(headers.get("authorization").unwrap(),"Bearer sdlc_pat_fixture_product_roles");
-   Json(serde_json::json!({"sub":profile.subject,"email":"fixture@example.test","subject_role":profile.role,"scopes":["ci-cd:read","ci-cd:write","git:read","git:write"],"observed_at":chrono::Utc::now(),"expires_at":chrono::Utc::now()+chrono::Duration::seconds(profile.expires_in)}))
+   Json(serde_json::json!({"sub":profile.subject,"email":"fixture@example.test","subject_role":profile.role,"scopes":profile.scopes,"observed_at":chrono::Utc::now(),"expires_at":chrono::Utc::now()+chrono::Duration::seconds(profile.expires_in)}))
   }
  }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -148,6 +152,7 @@ async fn unified_central_profile_keeps_local_roles_and_rejects_machine_or_expire
         subject: machine,
         role: "service_account".into(),
         expires_in: 300,
+        scopes: vec!["ci-cd:read", "ci-cd:write", "git:read", "git:write"],
     };
     let machine = try_verified_central("sdlc_pat_fixture_product_roles")
         .await
@@ -165,6 +170,7 @@ async fn unified_central_profile_keeps_local_roles_and_rejects_machine_or_expire
         subject: fresh,
         role: "member".into(),
         expires_in: 300,
+        scopes: vec!["ci-cd:read", "ci-cd:write", "git:read", "git:write"],
     };
     let fresh = try_verified_central("sdlc_pat_fixture_product_roles")
         .await
@@ -180,6 +186,7 @@ async fn unified_central_profile_keeps_local_roles_and_rejects_machine_or_expire
         subject: expired,
         role: "member".into(),
         expires_in: 2,
+        scopes: vec!["ci-cd:read", "ci-cd:write", "git:read", "git:write"],
     };
     let expired = try_verified_central("sdlc_pat_fixture_product_roles")
         .await
@@ -198,6 +205,7 @@ async fn unified_central_profile_keeps_local_roles_and_rejects_machine_or_expire
         subject: waiting_subject,
         role: "member".into(),
         expires_in: 2,
+        scopes: vec!["ci-cd:read", "ci-cd:write", "git:read", "git:write"],
     };
     let waiting_proof = try_verified_central("sdlc_pat_fixture_product_roles")
         .await
@@ -226,6 +234,7 @@ async fn unified_central_profile_keeps_local_roles_and_rejects_machine_or_expire
         n, 0,
         "late JIT INSERT is rolled back, not just hidden by an error response"
     );
+    git_scope::verify(&pool, profile.clone()).await;
     group_drain::verify(&pool).await;
     server.abort();
     pool.close().await;

@@ -25,7 +25,7 @@ use authz_mw::{
 };
 pub(crate) use authz_mw::{
     bearer_token_has_scope, identity_for_bearer_token, list_projects_for_claims,
-    project_membership_role, rate_limit_mw, request_id_mw,
+    project_membership_role, rate_limit_mw, request_id_mw, verified_identity_for_bearer_token,
 };
 #[cfg(test)]
 use axum::http::{Method, header};

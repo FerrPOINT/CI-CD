@@ -721,16 +721,58 @@ async fn central_identity(
     crate::central_auth::link_central_user(pool, verified).await
 }
 
+/// Preserve the authenticated origin in memory; central PATs have no local token ID.
+pub(crate) struct VerifiedRequestIdentity {
+    pub(crate) claims: crate::auth::AccessClaims,
+    pub(crate) central: Option<pdlc_auth_core::service_bridge::VerifiedCentralToken>,
+}
+impl VerifiedRequestIdentity {
+    pub(crate) fn require_scope(&self, required: &str) -> Result<(), ApiError> {
+        if let Some(source) = self.central.as_ref() {
+            if !source.lifetime.is_current() {
+                return Err(ApiError::unauthorized());
+            }
+            if source.context.session_id.is_none() && !source.context.has_scope(required) {
+                return Err(ApiError::forbidden());
+            }
+        } else if !bearer_token_has_scope(&self.claims, required) {
+            return Err(ApiError::forbidden());
+        }
+        Ok(())
+    }
+}
+pub(crate) async fn verified_identity_for_bearer_token(
+    pool: &PgPool,
+    auth_secret: &str,
+    token: &str,
+) -> Result<VerifiedRequestIdentity, ApiError> {
+    if let Some(verified) = crate::central_auth::try_verified_central(token).await? {
+        let claims = central_identity(pool, &verified).await?;
+        return Ok(VerifiedRequestIdentity {
+            claims,
+            central: Some(verified),
+        });
+    }
+    let claims = local_identity_for_bearer_token(pool, auth_secret, token).await?;
+    Ok(VerifiedRequestIdentity {
+        claims,
+        central: None,
+    })
+}
 pub(crate) async fn identity_for_bearer_token(
     pool: &PgPool,
     auth_secret: &str,
     token: &str,
 ) -> Result<crate::auth::AccessClaims, ApiError> {
-    // Central fleet auth-server first (ES256 via JWKS); legacy session JWTs
-    // and cicd_ PATs remain valid during the migration window.
-    if let Some(verified) = crate::central_auth::try_verified_central(token).await? {
-        return central_identity(pool, &verified).await;
-    }
+    Ok(verified_identity_for_bearer_token(pool, auth_secret, token)
+        .await?
+        .claims)
+}
+async fn local_identity_for_bearer_token(
+    pool: &PgPool,
+    auth_secret: &str,
+    token: &str,
+) -> Result<crate::auth::AccessClaims, ApiError> {
     if token.starts_with("forge_sat_") {
         let hash = crate::auth::hash_token(token);
         let row = sqlx::query_as::<_, (Uuid, Uuid, String, Option<Uuid>, Vec<String>)>(

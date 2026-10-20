@@ -155,7 +155,7 @@ Git Smart HTTP различает read и write:
 - `git-upload-pack` для repository с `visibility = public` доступен без credential.
 - Private `git-upload-pack` и любой `git-receive-pack` требуют credential.
 - Legacy `CICD_GIT_TOKEN` остаётся operator bypass для совместимости.
-- При непустом `CICD_AUTH_SECRET` можно передать JWT/PAT пользователя: `viewer+` читает связанный project repository, `developer+` может push, `admin` имеет bypass. PAT дополнительно должен иметь `git:read` для fetch/clone или `git:write` для push и, если задан `project_id`, совпадать со связанным проектом.
+- При непустом `CICD_AUTH_SECRET` можно передать JWT/PAT пользователя: `viewer+` читает связанный project repository, `developer+` может push, `admin` имеет bypass. PAT дополнительно должен иметь `git:read` для fetch/clone или `git:write` для push и, если задан `project_id`, совпадать со связанным проектом. Для центрального PAT исходное подтверждение Auth и scopes сохраняются отдельно от локальных claims: отсутствие локального `api_tokens.id` не означает browser session. Срок повторно проверяется после асинхронной ACL-проверки; scope не заменяет подтверждённую роль.
 - Project-bound `forge_sat_` использует тот же repository UUID → CI project
   predicate, что API, без фиктивного human membership. Нужны отдельные
   `git:read`/`git:write`; `api:read`/`api:write` не дают Git-доступ.
@@ -201,13 +201,13 @@ curl -H "x-git-token: <TOKEN>" ...
 
 ## 9. Ограничения MVP и следующий этап
 
-- Нет organization/tenant-bound repository model и отдельного scoped Git credential class; current read/write RBAC строится на project membership и PAT scopes через `repository_url`.
+- Каталог Git groups/repository UUID и project-bound SAT уже существуют. Общее Space admission ещё не установлено: public/legacy Git и прочие поверхности требуют отдельной квалификации полного совместимого cohort. Current read/write RBAC использует memberships и PAT scopes через `projects.repository_id`, а не URL tail.
 - Нет Git LFS HTTP endpoints несмотря на наличие `git-lfs` в образе.
 - Нет SSH transport: только Smart HTTP.
 - Hook делает best-effort запрос; он не блокирует push при временном сбое CI/CD API.
 - Embedded runner клонирует project repository в workspace перед выполнением job; external runner protocol MVP уже отдаёт `workspace.checkoutUrl`, а `forge-runner` использует его для checkout. Scoped repository credential class и production checkout policy ещё не реализованы.
 
-Следующая фаза: per-project repository mapping вместо URL suffix lookup, scoped Git credentials, signed internal events с one-time event ID, Git LFS, SSH transport, отдельный production runner checkout boundary и stricter checkout/commit identity guarantees.
+Следующая фаза общего пространства: [Space admission v2](SPACE_ADMISSION_CONTRACT_V2.md) и [матрица поверхностей](UNIFIED_SPACE_SURFACES.md). Git LFS/SSH transport и прочие будущие возможности не входят в эту реализацию. Фактические serving listeners и ingress проверяются отдельно перед активацией.
 
 ## 10. Проверка
 

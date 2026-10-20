@@ -80,6 +80,20 @@ artifact paths используют один scoped error mapper. Это не в
 обычного embedded CI доходят до process exit, workspace ACK, marker и drained.
 Это изолированная QA без данных приложений, не модельное или установленное задание.
 
+## Центральный PAT в Git Smart HTTP: source candidate
+
+Git resolver сохраняет private VerifiedCentralToken рядом с локальными claims.
+Отсутствие local token_id больше не превращает центральный PAT в unrestricted
+session; scopes и original token deadline проверяются до и после ACL IO одним
+общим завершением успешных веток. JWT wire schema и api_tokens не менялись.
+
+Native PostgreSQL/HTTP проверяет private discovery: отсутствие git:read даёт403,
+read PAT не пишет, git:write не заменяет membership developer, разрешённые read
+и write advertisement доступны. Реальный membership SQL блокируется до expiry;
+после снятия блокировки ответ401. Существующие profile/runner/drain проверки
+также проходят. Это не actual clone/push, не проверка общей Space policy и не
+ограничение lifetime всего дочернего Git IO; эти gates остаются следующими.
+
 ## Контракт следующего этапа
 
 [Owner provenance, Git/CI границы и совместимость v2](SPACE_ADMISSION_CONTRACT_V2.md)
