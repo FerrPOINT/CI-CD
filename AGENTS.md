@@ -14,7 +14,7 @@
 1. Работать из `/opt/dev/CI-CD`; перед изменениями читать `docs/ARCHITECTURE.md`, `docs/DATA_MODEL.md`, `docs/API.md` и релевантный ADR.
 2. До начала проверять `git status`. Не отменять и не перезаписывать чужие изменения; при неожиданном изменении во время работы остановиться и запросить указания.
 3. Backend сохраняет слои `api -> domain -> store`. `JobStatus::transition_to()` — единственный источник правил перехода статусов. SQL-запросы параметризуются через SQLx.
-4. Frontend использует React, Tailwind и shadcn/ui; новые API-клиенты и DTO остаются типизированными. Vite dev proxy направляет `/api` на `http://localhost:22801`.
+4. Frontend использует React, Tailwind и публичные компоненты Base; новые API-клиенты и DTO остаются типизированными. Vite dev proxy направляет `/api` на `http://localhost:22801`.
 5. Все секреты передаются только через `CICD_` переменные или secret manager. Не коммитить `.env`, токены, пароли и реальные данные.
 
 ## Коммиты и документация
@@ -87,3 +87,17 @@ Desktop fallback. Pulse — приватный Git/pipeline только в CI/C
 Перед изменением платформенных имён прочитайте [интеграцию с Base](docs/PDLC_BASE_INTEGRATION.md) и канонические TERMS/BRANDING.
 Для UI: `pnpm --dir frontend exec pdlc-ui search "задача"` → `show ExportName` → один нужный `example`. В Workflow SSR используйте штатный exporter Base.
 Не переносите продуктовые запросы, DTO и права в общий UI. SDK/UI/skills pins независимы; новое имя платформы не меняет SDLC IDs/scopes или Hermes upstream.
+
+## Общие поля выбора Base
+
+Сначала искать общий UI в Base: search → show → example. Общие исправления
+вносить в Base; продукт передаёт данные, права, преобразования и сохранение.
+Для одного известного значения использовать Select, для нескольких — MultiSelect,
+для каталога с поиском/пагинацией — SearchableSelect из публичного @pdlc/ui.
+Контракт Select/MultiSelect: options, value/defaultValue, onValueChange;
+HTML children/option/onChange/multiple/size больше не являются их API.
+Видимые raw select и локальные копии оформления не добавлять. Технический form
+bridge принадлежит только Base; SSR использует штатный macro и choice-runtime,
+явный refresh после программных value/options и native fallback до успешного init.
+Правила выбора и подключения: Base docs/platform/CHOICE_CONTROLS.md.
+UI/SDK/skills pins независимы; установка и production — отдельные операции.
