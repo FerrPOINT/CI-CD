@@ -1,0 +1,2514 @@
+{
+  "schema": "pdlc/workspace-source-recovery/v1",
+  "repository": "CI-CD",
+  "status": "inert source recovery; not installed; not merge qualification",
+  "base": "305f6e0371d6e23df571cd878bd6401940629cac",
+  "normalization": "CRLF to LF, otherwise exact original bytes",
+  "versions": [
+    {
+      "original_path": ".env.example",
+      "sha256": "c14cc273b73a9a8e640516469295ee04deb477da963989c916a9c090100fb1ef",
+      "payload": "sources/source-recovery/c14cc273b73a9a8e-a3046da0-.env.example.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "AGENTS.md",
+      "sha256": "26feab1cfe58731544e74ef6f3e239a1c8fc9a89e908501e05c9efbdc96050c5",
+      "payload": "sources/source-recovery/26feab1cfe587315-a54ff182-AGENTS.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        },
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "CHANGELOG.md",
+      "sha256": "b8f21c291ae2ecf392434457a38ce09ce22d0852db4991ea0d872ba872da6a6b",
+      "payload": "sources/source-recovery/b8f21c291ae2ecf3-06572a96-CHANGELOG.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "README.md",
+      "sha256": "5c36196046a81c8379d0b0d2db7c46f7cfa62578eed6581ce4a896dbfc5ba5a2",
+      "payload": "sources/source-recovery/5c36196046a81c83-b3356305-README.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/Cargo.lock",
+      "sha256": "98f35a0fb27cd25049909e73cd13a9221b0a626b3bab67ec63f83eca4cacd496",
+      "payload": "sources/source-recovery/98f35a0fb27cd250-3f79cdab-Cargo.lock.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/Cargo.toml",
+      "sha256": "7a6f52dcaf64383f23f550457fe6404d2d02eaee7c895dfe51594a319f03787b",
+      "payload": "sources/source-recovery/7a6f52dcaf64383f-abf5cd6f-Cargo.toml.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/Dockerfile",
+      "sha256": "5d0febcd7b6726f8647657e567e2d2bdb67ad825e216efa9978b9930551bc8cb",
+      "payload": "sources/source-recovery/5d0febcd7b6726f8-fed51f49-Dockerfile.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/Dockerfile.umbrella",
+      "sha256": "1f8d64d75f08d94d059b5aab589cdba6e7d2ee912c1d605abe1b488debc48e43",
+      "payload": "sources/source-recovery/1f8d64d75f08d94d-73f2c960-Dockerfile.umbrella.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/app/src/lib.rs",
+      "sha256": "361fa19381ade34cbab873a1c3b8c584221b844192ca2b400afdc3ec67ba9e40",
+      "payload": "sources/source-recovery/361fa19381ade34c-fc5c3c76-lib.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/cli/tests/cli_contract.rs",
+      "sha256": "792f40648d53e0edd6623db1131c5eb1eb834c25ae5d6cbf818b437699f342f1",
+      "payload": "sources/source-recovery/792f40648d53e0ed-f815adfe-cli_contract.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/cli/tests/cli_real_api.rs",
+      "sha256": "5591bb1fac35c7068487026a450a5c3db7f0a6810291fa1d620ac93121d5ecf0",
+      "payload": "sources/source-recovery/5591bb1fac35c706-ceba1ebe-cli_real_api.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/infra/src/lib.rs",
+      "sha256": "52e1642bad8ad9db2e925257ea1a244dac990b8cbd390505998d6af4afb03dc7",
+      "payload": "sources/source-recovery/52e1642bad8ad9db-37691c95-lib.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/api/authz_mw.rs",
+      "sha256": "a55647551afe19ba06437b88c5a2f77cdee6be4c7b0bc7be205fdc51e3afb3dd",
+      "payload": "sources/source-recovery/a55647551afe19ba-2c545a9e-authz_mw.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/api/dto.rs",
+      "sha256": "56556b0176370b7ced7ef26f72336861942b8dd028312746645d41941f7160e6",
+      "payload": "sources/source-recovery/56556b0176370b7c-fb266093-dto.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/api/jobs_routes.rs",
+      "sha256": "87d5f16b69f369894606c702c36076e5e17cff599e4df802158f818ec75fe91c",
+      "payload": "sources/source-recovery/87d5f16b69f36989-27eaf822-jobs_routes.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/api/mod.rs",
+      "sha256": "a388e9f287a95ef2a9d0a69bab4253be29475b3a39dafbde4870e1b34297da8e",
+      "payload": "sources/source-recovery/a388e9f287a95ef2-7b86efc9-mod.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/api/pipelines_routes.rs",
+      "sha256": "b279b0e941ead33907ee653477b0a9336c3f3c6722dff513757d8c8903bac555",
+      "payload": "sources/source-recovery/b279b0e941ead339-e857be6a-pipelines_routes.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/api/projects_routes.rs",
+      "sha256": "3dab63e425ad72f2aaa5144913c456b22dcb67e283caac7825628d9e6dcac64b",
+      "payload": "sources/source-recovery/3dab63e425ad72f2-149c07e1-projects_routes.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/bin/forge-runner.rs",
+      "sha256": "47e306bed830b191d30a7707885662867c0418bbbfb0b492259ab5fbd92cfecb",
+      "payload": "sources/source-recovery/47e306bed830b191-b91e8547-forge-runner.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/config.rs",
+      "sha256": "1edaa12a348aec5e44129c70926f646931d535a1b62426d2d1855a3b3d58106c",
+      "payload": "sources/source-recovery/1edaa12a348aec5e-4946346a-config.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/git_host.rs",
+      "sha256": "2dcb31b343c8aad063c7e80a8057be04eee2e41f82a74a4ad5e6b5048d4afff8",
+      "payload": "sources/source-recovery/2dcb31b343c8aad0-115371c5-git_host.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/lib.rs",
+      "sha256": "c6fdde85b62478952a64fc65a0301d2643a6754eb92613d8241f6e36d905a68c",
+      "payload": "sources/source-recovery/c6fdde85b6247895-9cd99344-lib.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/main.rs",
+      "sha256": "14915ea4470fe325ffea0935a5b876fc92ebeb1ffeccadbb454b1ac182eae483",
+      "payload": "sources/source-recovery/14915ea4470fe325-03f0e815-main.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/outbox.rs",
+      "sha256": "a220f16b1ffb06f5706e31038a2412507780aabbca97bfc36811244f1039b250",
+      "payload": "sources/source-recovery/a220f16b1ffb06f5-f4f2a069-outbox.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/platform.rs",
+      "sha256": "49a48f0849ffc17ce7bac002401db38af660850a31eb55aab283b80383564167",
+      "payload": "sources/source-recovery/49a48f0849ffc17c-43dd8524-platform.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/pulls.rs",
+      "sha256": "f0c2e82fe954724fce1534346f700e3a53d4eb2d8bda8f4363db2f4bd502bc58",
+      "payload": "sources/source-recovery/f0c2e82fe954724f-dca3673a-pulls.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/runner.rs",
+      "sha256": "d03fa64959a00b967211ea519d7a4dbfe90d1ff22e331424ccb31ab02ad958d1",
+      "payload": "sources/source-recovery/d03fa64959a00b96-39a4259e-runner.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/runner_protocol.rs",
+      "sha256": "96c189536a74cc569c1dd4bf85b906392efe8524179b10f6a39661d7ef207157",
+      "payload": "sources/source-recovery/96c189536a74cc56-2eea8973-runner_protocol.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/tests/integration_db.rs",
+      "sha256": "dd35cbd681faefe5a55c3899a7add4b60e9db5b39312e5667edb1102d9c1a908",
+      "payload": "sources/source-recovery/dd35cbd681faefe5-57df5586-integration_db.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/tests/integration_target_policy.rs",
+      "sha256": "187be38416bb21d44799cb84a9cdbda32b30094cf93a53fb889741c533708cb4",
+      "payload": "sources/source-recovery/187be38416bb21d4-688bf38b-integration_target_policy.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/ADR.md",
+      "sha256": "9d77636941dcd1aec3cb2a761d0599d27a7028c4278a142a79d925fa959dc21a",
+      "payload": "sources/source-recovery/9d77636941dcd1ae-93cb24d7-ADR.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/API.md",
+      "sha256": "3f0b3bd92261efb9dc94138826669e10975340a19e65c0bde7c24a5ee9047e52",
+      "payload": "sources/source-recovery/3f0b3bd92261efb9-b5759096-API.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/ARCHITECTURE.md",
+      "sha256": "ea9d8e19fc33a03dcb0208baf1f579e5b7841744df4abea52e9375307c861688",
+      "payload": "sources/source-recovery/ea9d8e19fc33a03d-ff21b6b9-ARCHITECTURE.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/CLI.md",
+      "sha256": "f7024aec459309bd21d2d8903f7d4bc8f8907b55c65f7f8283ab4b617ab29f2c",
+      "payload": "sources/source-recovery/f7024aec459309bd-7340b8a6-CLI.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/DATA_MODEL.md",
+      "sha256": "9b04e5901d7f9bc05e17c9a899eb3c50e9b427975df6152cf7a2dc558a0cb334",
+      "payload": "sources/source-recovery/9b04e5901d7f9bc0-3bfbbae4-DATA_MODEL.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/DEVELOPMENT_GUIDE.md",
+      "sha256": "aa08e9eca4bd4ca8d8a7282303980e4d308310da1ccf9d20aa8876f650f0f12b",
+      "payload": "sources/source-recovery/aa08e9eca4bd4ca8-6377493e-DEVELOPMENT_GUIDE.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/GIT_HOSTING.md",
+      "sha256": "ba582b8a60898f9f4b88cae1f81a1a63f65de7b27b4c7d07e8074f06f3403eb3",
+      "payload": "sources/source-recovery/ba582b8a60898f9f-166d889e-GIT_HOSTING.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/OPS_RUNBOOK.md",
+      "sha256": "f6e7e45bba12a62969fe4e511ea874f4c65b0a495c5001673580d27c225bfbbc",
+      "payload": "sources/source-recovery/f6e7e45bba12a629-e0510273-OPS_RUNBOOK.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/TESTING.md",
+      "sha256": "cf5869ac5f0d65bfd37c1b7e25b8512735b175f04abf287c166673cbf3e2ca6c",
+      "payload": "sources/source-recovery/cf5869ac5f0d65bf-63e3617f-TESTING.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "frontend/Dockerfile.umbrella",
+      "sha256": "3587a03a5ddc86d8097a9c8629b3ca2f462a54c9cc3cdee60cd74a04b1015d37",
+      "payload": "sources/ui-recovery/3587a03a5ddc86d8-b8446eab-Dockerfile.umbrella.source",
+      "group": "ui-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        },
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "frontend/package.json",
+      "sha256": "ce8bd283509942081a87505bc3f858ade24de46ce24a82c5d27c682da1635c9d",
+      "payload": "sources/ui-recovery/ce8bd28350994208-da649826-package.json.source",
+      "group": "ui-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        },
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "frontend/src/app/router.tsx",
+      "sha256": "9c54a3fad97f92548a6e72dceaae8dabcb5e369147c78edc0ea7cb1eb9ce1e04",
+      "payload": "sources/ui-recovery/9c54a3fad97f9254-9a9373f4-router.tsx.source",
+      "group": "ui-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        },
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "frontend/src/shared/auth/auth-provider.tsx",
+      "sha256": "7c3e6be032d6b3f223513790528a3a47cc90783023dfaf6717cc66fd0305230e",
+      "payload": "sources/ui-recovery/7c3e6be032d6b3f2-1d26a49d-auth-provider.tsx.source",
+      "group": "ui-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "frontend/src/widgets/app-shell.test.tsx",
+      "sha256": "1d31f4e3085f9c1a7b765caec15d89643449315246fc1fa8d015c132ea5b9efe",
+      "payload": "sources/ui-recovery/1d31f4e3085f9c1a-2143d156-app-shell.test.tsx.source",
+      "group": "ui-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        },
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        },
+        {
+          "worktree": "sdlc/.local/branding-publish-20261007/CI-CD",
+          "head": "761352755a952ca6eabd448d9afc31097bbe0723"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "frontend/src/widgets/app-shell.tsx",
+      "sha256": "e3c4c5fd884a8bc3924b6db20e0dfe4f32aee694c559bd0f80f05e6488a1f8e7",
+      "payload": "sources/ui-recovery/e3c4c5fd884a8bc3-278cc8b4-app-shell.tsx.source",
+      "group": "ui-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        },
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        },
+        {
+          "worktree": "sdlc/.local/branding-publish-20261007/CI-CD",
+          "head": "761352755a952ca6eabd448d9afc31097bbe0723"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "frontend/vite.config.ts",
+      "sha256": "5a5cb834e0d527faf3f1cc11179bb57f99ade79587b3a755fa315319201030d6",
+      "payload": "sources/ui-recovery/5a5cb834e0d527fa-97c6e2c4-vite.config.ts.source",
+      "group": "ui-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        },
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/infra/src/pipeline_completion.rs",
+      "sha256": "b2ca04211b1d8d860e825fb1a97ec4af3ba7c3d9decb87795b6039ae7103337f",
+      "payload": "sources/source-recovery/b2ca04211b1d8d86-52e35e37-pipeline_completion.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/migrations/0039_messaging_maintenance_replay.sql",
+      "sha256": "c82bd1010a56821f7dc7df29d262b79581198c5d5ce7237caa7b4d13c973f4eb",
+      "payload": "sources/messaging/c82bd1010a56821f-31c89f7d-0039_messaging_maintenance_replay.sql.source",
+      "group": "messaging",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/bin/cicd-messaging.rs",
+      "sha256": "6c43a31f846c18d4ca9ce8e138dd0da6b6a24e7a27f725048cae4473cfb120e2",
+      "payload": "sources/messaging/6c43a31f846c18d4-1eccb9f3-cicd-messaging.rs.source",
+      "group": "messaging",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/messaging.rs",
+      "sha256": "284c9eb1577e4fe491fefc2941d3684453c14f83835da6846012e2b6c07bcc9b",
+      "payload": "sources/messaging/284c9eb1577e4fe4-62e21d90-messaging.rs.source",
+      "group": "messaging",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/messaging_tests.rs",
+      "sha256": "8f2c2162957f4e3dc4ade16c839b0d1356ebded579802a580c7e42cc8e87e4b0",
+      "payload": "sources/messaging/8f2c2162957f4e3d-2d8cbac5-messaging_tests.rs.source",
+      "group": "messaging",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/runner_docker.rs",
+      "sha256": "43b328fe8b58b74864400268ba608d49868f06ca513672acf9efb7ec52fb6b6d",
+      "payload": "sources/source-recovery/43b328fe8b58b748-f61c1171-runner_docker.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        },
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/tests/support/authenticated_app.rs",
+      "sha256": "134b8f9f824fce73e832e1222099c2a7d82a3c1aa7136b30e857c52b8d03b791",
+      "payload": "sources/source-recovery/134b8f9f824fce73-45768c82-authenticated_app.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/tests/support/release_repository.rs",
+      "sha256": "9f431028acb8cd0aa24b0a429cb266ca36df53c993b436eb67983c3249479844",
+      "payload": "sources/source-recovery/9f431028acb8cd0a-daede56a-release_repository.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docker-compose.pulse-qa.yml",
+      "sha256": "8a8ecb953c99975b428e2927b3a506dcc2eec319a5ae19367d9b0ff5e7e7a70e",
+      "payload": "sources/source-recovery/8a8ecb953c99975b-72a2251b-docker-compose.pulse-qa.yml.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        },
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/PLATFORM_MESSAGING.md",
+      "sha256": "9a636c86be4d88de25ec3a1a3aa48774999aafb5efa4fe0b5680eeb761156502",
+      "payload": "sources/messaging/9a636c86be4d88de-7ca67348-PLATFORM_MESSAGING.md.source",
+      "group": "messaging",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/UI_UX_MAP.md",
+      "sha256": "03c5bc8c6ce3da4acbc8226ed0330d4c9bc4c526dcab0ce23736243f5db3dd7f",
+      "payload": "sources/source-recovery/03c5bc8c6ce3da4a-fcdf4459-UI_UX_MAP.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        },
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/adr/0017-service-pulse-deployment-boundary.md",
+      "sha256": "01e9db40c2e54e951d6a6d43e0fe65b98936df916fe2312a938b14a1ad2036a7",
+      "payload": "sources/source-recovery/01e9db40c2e54e95-1e92b45d-0017-service-pulse-deployment-boundary.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/adr/0018-platform-messaging-terminal-fact.md",
+      "sha256": "f6f032813b629703f75bd1fb7545bc3ebfb2caaccc262781a62802554a66ff4f",
+      "payload": "sources/messaging/f6f032813b629703-feebd8e6-0018-platform-messaging-terminal-fact.md.source",
+      "group": "messaging",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/adr/0019-messaging-retention-recovery.md",
+      "sha256": "678b7a7a714061fac9b7708fb911040d29eba5beea853fda3c74ed4476623979",
+      "payload": "sources/messaging/678b7a7a714061fa-6b12b3f5-0019-messaging-retention-recovery.md.source",
+      "group": "messaging",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/plans/2026-10-03-messaging-hardening.md",
+      "sha256": "92f461a5e336122788b69228f83143b137acf325a091e6e1bdc47bcf2385376c",
+      "payload": "sources/messaging/92f461a5e3361227-b4d0b85e-2026-10-03-messaging-hardening.md.source",
+      "group": "messaging",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/ui-routes.json",
+      "sha256": "cdd753e0f69fb5d1646b426ed5477fbf2fbbbb7359b506b250b7ffa9fd4c0115",
+      "payload": "sources/source-recovery/cdd753e0f69fb5d1-35a0d76d-ui-routes.json.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        },
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": ".env.example",
+      "sha256": "6bcaa53abd1df766915dcc2c9dca0a04ef4aa0a364dcba904570092ecd15f4f4",
+      "payload": "sources/source-recovery/6bcaa53abd1df766-a3046da0-.env.example.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/app/src/lib.rs",
+      "sha256": "b73dcd8892f3156ebc4c0a6ad65083cb817fc334ce4ffa1db7c4d341a1750013",
+      "payload": "sources/source-recovery/b73dcd8892f3156e-fc5c3c76-lib.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/cli/tests/cli_real_api.rs",
+      "sha256": "df4fa882d1c55bfef34cd4be1f0ea1940dccfe1fb9bd535e984e0165845245d8",
+      "payload": "sources/source-recovery/df4fa882d1c55bfe-ceba1ebe-cli_real_api.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/domain/src/lib.rs",
+      "sha256": "0df6f08c97f0d282e71094e1460664bd9f58873f6ea7739709578c35e281d921",
+      "payload": "sources/source-recovery/0df6f08c97f0d282-4d69b20b-lib.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/infra/src/lib.rs",
+      "sha256": "3db3f0494ebc0002afcd21e0cd33c5a24c3ae261334204846acb623f2b13dd72",
+      "payload": "sources/source-recovery/3db3f0494ebc0002-37691c95-lib.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/infra/src/sdlc_workspace.rs",
+      "sha256": "1821a8f1e2e8a8f6cf0afb85d1649fed245008ab5540ce2dbe57a53d8878786b",
+      "payload": "sources/source-recovery/1821a8f1e2e8a8f6-68457ceb-sdlc_workspace.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/api/mod.rs",
+      "sha256": "e4b9adbc3501cdd06b44eb87b6b39c07e58db64d3d889d23e60ee595ead0afc5",
+      "payload": "sources/source-recovery/e4b9adbc3501cdd0-7b86efc9-mod.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/api/pipelines_routes.rs",
+      "sha256": "85e4dc7ae955f27c60f3a4a21f2b4242aef93076036071c69d60aa845e96b1d1",
+      "payload": "sources/source-recovery/85e4dc7ae955f27c-e857be6a-pipelines_routes.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/api/router.rs",
+      "sha256": "a20fef1f7b7c77524d16a9989223fff9320d2987ec2e29c618553877e76d26ae",
+      "payload": "sources/source-recovery/a20fef1f7b7c7752-937b9ddb-router.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/bin/forge-delivery.rs",
+      "sha256": "6c595d6b766649b6e491fc39162268df9dbffc2cf972cc90dcba92c79cfeb59a",
+      "payload": "sources/source-recovery/6c595d6b766649b6-81bbf5ab-forge-delivery.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/config.rs",
+      "sha256": "9c62f7539603ee64b4842b2f7717461bfaa083f3e547249a92b29c6449150f86",
+      "payload": "sources/source-recovery/9c62f7539603ee64-4946346a-config.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/domain.rs",
+      "sha256": "bd2afe0299f711741b6812a7aee5f82bc1ee79268b0d3203f64fe022e44cd9df",
+      "payload": "sources/source-recovery/bd2afe0299f71174-f97ee625-domain.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/git_host.rs",
+      "sha256": "e804f02477a191f69ca48127f232566d8428a6b502673ec5e47a17070cf1d385",
+      "payload": "sources/source-recovery/e804f02477a191f6-115371c5-git_host.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/task_delivery/files.rs",
+      "sha256": "1c63ed529f3221db0739e8c2ee15aeca7931da6703184f42c13dcc2ec62f766e",
+      "payload": "sources/source-recovery/1c63ed529f3221db-ba9ec4fa-files.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/task_delivery/mod.rs",
+      "sha256": "ae6ec9f3afa3d18384bde7b1b67b8d86ba43bb7aad96c612264277e133346493",
+      "payload": "sources/source-recovery/ae6ec9f3afa3d183-e66ecfbd-mod.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/tests/helpers/manifest_target.rs",
+      "sha256": "ba07a9aa2ce64f3d1b429e09e1d4183f580593a2f68f44f9f43abcde37c74a01",
+      "payload": "sources/source-recovery/ba07a9aa2ce64f3d-9411f083-manifest_target.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/tests/integration_db.rs",
+      "sha256": "5e789e4271102390f02854904a212ee230c091cfa8391b1f8a331919ca5ea48f",
+      "payload": "sources/source-recovery/5e789e4271102390-57df5586-integration_db.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/tests/support/sdlc_workspace.rs",
+      "sha256": "e242c5fa2631257f11912ecca01fc46a54544e29a2e151f3b196961bcd434c30",
+      "payload": "sources/source-recovery/e242c5fa2631257f-5bd54684-sdlc_workspace.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/tests/support/task_delivery.rs",
+      "sha256": "93e94aa053c9435828d0d85e2fd5881a40a28311c3bd8be90b7b406e95321d97",
+      "payload": "sources/source-recovery/93e94aa053c94358-22c721f3-task_delivery.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/API.md",
+      "sha256": "d3a873567393c595aba5f2ecc2824368a7d12462604df0b92824e8709eea2ef0",
+      "payload": "sources/source-recovery/d3a873567393c595-b5759096-API.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/ARCHITECTURE.md",
+      "sha256": "64d482f30eb149b5ec1ef797b34911be462cd3dcb99a5a8d5483911dbfbb3637",
+      "payload": "sources/source-recovery/64d482f30eb149b5-ff21b6b9-ARCHITECTURE.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/DATA_MODEL.md",
+      "sha256": "a536c8313f0891390f2c10f7a5b2c82e17a333828754220ffc9ed7e040b914a0",
+      "payload": "sources/source-recovery/a536c8313f089139-3bfbbae4-DATA_MODEL.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/ENV.md",
+      "sha256": "50a220aa19fa321e31129686901c37f8f7d905ceea4b5f48b0658a39d3142294",
+      "payload": "sources/source-recovery/50a220aa19fa321e-14851832-ENV.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/GIT_HOSTING.md",
+      "sha256": "17ae597ed1f93697de5340fe04a9f0ea41c2939b8004ccd1765afd79dedea090",
+      "payload": "sources/source-recovery/17ae597ed1f93697-166d889e-GIT_HOSTING.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/domain/src/bug_work_publication.rs",
+      "sha256": "9cff1397217677483c75ed13b605d22f87ebd93e168f626b29555ed8945725dc",
+      "payload": "sources/bug-search-work/9cff139721767748-ededd1c9-bug_work_publication.rs.source",
+      "group": "bug-search-work",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/domain/src/delivered_target.rs",
+      "sha256": "bb468a573413afd4a402bbf8720a95e3147469c2c9d48a86d03a264a3e328693",
+      "payload": "sources/source-recovery/bb468a573413afd4-d52944b6-delivered_target.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/domain/src/source_snapshot.rs",
+      "sha256": "85b2357362ea1df3b52b46f7a13799250a62f74490724ddfa04f6332c1f1fa3e",
+      "payload": "sources/source-recovery/85b2357362ea1df3-ed091077-source_snapshot.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/domain/tests/fixtures/bug-work-delivery-v1.json",
+      "sha256": "d0eacb318252fc45dc254c7d19c36c184059714a45c85a695db95af87ba03b47",
+      "payload": "sources/bug-search-work/d0eacb318252fc45-253f8492-bug-work-delivery-v1.json.source",
+      "group": "bug-search-work",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/infra/src/bug_work_publication.rs",
+      "sha256": "9b3a92e7467f138d307a8fd1ce57c526f2a5721c053ad78dc68772f4f999fac2",
+      "payload": "sources/bug-search-work/9b3a92e7467f138d-8e300fad-bug_work_publication.rs.source",
+      "group": "bug-search-work",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/infra/src/delivered_target.rs",
+      "sha256": "4a8de41539643591ce6be1babd8af757c42801c8293ab40deac1b54fcf0984b3",
+      "payload": "sources/source-recovery/4a8de41539643591-911f6af1-delivered_target.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/infra/src/source_snapshot.rs",
+      "sha256": "655303235a9cca23f21b40f4a5bd2ba8e7a95499b790b24259fa8a0c1eef40b6",
+      "payload": "sources/source-recovery/655303235a9cca23-5f7c54c4-source_snapshot.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/migrations/0092_bug_work_publications.sql",
+      "sha256": "b51b9a280aef5fe54622b0375c843276226b611e28a14901f5d427acc23f5573",
+      "payload": "sources/bug-search-work/b51b9a280aef5fe5-43810199-0092_bug_work_publications.sql.source",
+      "group": "bug-search-work",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/api/bug_work_operations.rs",
+      "sha256": "4ec89427c54284f817b6ade50093bcb6791129158b9965808b7cb240dcb6d36d",
+      "payload": "sources/bug-search-work/4ec89427c54284f8-f4662a8d-bug_work_operations.rs.source",
+      "group": "bug-search-work",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/api/bug_work_proofs.rs",
+      "sha256": "598b9c92794c5969b4026fd72910a1ca105d0321216e192a3ce65f09c01f96ba",
+      "payload": "sources/bug-search-work/598b9c92794c5969-abe8977b-bug_work_proofs.rs.source",
+      "group": "bug-search-work",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/api/delivered_targets.rs",
+      "sha256": "090da5d8541241c2683dbf3b9e472f83da4495232d931049cac34162f63e6601",
+      "payload": "sources/source-recovery/090da5d8541241c2-def1071f-delivered_targets.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/api/source_snapshots.rs",
+      "sha256": "fc18dfbc4e66e67c0ff171e8a9abf725c06410dfa9c0a898927ebb2b8f77a941",
+      "payload": "sources/source-recovery/fc18dfbc4e66e67c-1045557d-source_snapshots.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/bug_work_authority.rs",
+      "sha256": "ce39aaab1d41879f7274da2363ba25f0e8436629647323599cae31e53c2b4f93",
+      "payload": "sources/bug-search-work/ce39aaab1d41879f-77a1f109-bug_work_authority.rs.source",
+      "group": "bug-search-work",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/bug_work_config.rs",
+      "sha256": "0afc25315bcf8d0f5dddc3c5133e34034e5b9a75c24bb65798e14476be36f06a",
+      "payload": "sources/bug-search-work/0afc25315bcf8d0f-02432c9a-bug_work_config.rs.source",
+      "group": "bug-search-work",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/bug_work_delivery.rs",
+      "sha256": "8e8829b4b66b5e1ce68faac3b0d32f2331458ad60b023ec6bc805af89e784428",
+      "payload": "sources/bug-search-work/8e8829b4b66b5e1c-ba53df67-bug_work_delivery.rs.source",
+      "group": "bug-search-work",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/bug_work_source.rs",
+      "sha256": "f15aae75734fe178cb741457b5fe4456a1e65242e0d5f844c7e303f93082415e",
+      "payload": "sources/bug-search-work/f15aae75734fe178-105f06f6-bug_work_source.rs.source",
+      "group": "bug-search-work",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/task_delivery/delivered_target.rs",
+      "sha256": "d2669973736dd66200ab3d739f556df9810d5a4ac8d474dc617aecc2357e276d",
+      "payload": "sources/source-recovery/d2669973736dd662-a48702aa-delivered_target.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/tests/support/bug_work_actual_chain.rs",
+      "sha256": "470eb757849815e7037b8b4caafbfa3008fdb4c0eea0fedde52e8c746cac4af5",
+      "payload": "sources/bug-search-work/470eb757849815e7-4d0a43a6-bug_work_actual_chain.rs.source",
+      "group": "bug-search-work",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/tests/support/bug_work_publication.rs",
+      "sha256": "74adb996ef5248ea536e1a86b8db53cf4f51e5c2f8b30cd63a0dd065addbf432",
+      "payload": "sources/bug-search-work/74adb996ef5248ea-006d1d0f-bug_work_publication.rs.source",
+      "group": "bug-search-work",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/tests/support/bug_work_publisher.rs",
+      "sha256": "00573f7dfbfd9175b428338cc397093e939af3e53de3db11d4ae528ec6ecb62f",
+      "payload": "sources/bug-search-work/00573f7dfbfd9175-17a92a65-bug_work_publisher.rs.source",
+      "group": "bug-search-work",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/tests/support/delivered_targets.rs",
+      "sha256": "8b0c22f329c3fcb985ab8f7175df76582cf1fdbc20d935e830a318f891258054",
+      "payload": "sources/source-recovery/8b0c22f329c3fcb9-9b2a5812-delivered_targets.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/adr/0025-delivered-target-readback.md",
+      "sha256": "d7ba3abe84ea9e50f65acd231568ed43bface78ac86269ce607b3c2259a7e6c9",
+      "payload": "sources/source-recovery/d7ba3abe84ea9e50-ea2fa4de-0025-delivered-target-readback.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/adr/0026-hosted-source-snapshot.md",
+      "sha256": "1b2e19203f096709217ca928ff4ddbed0064843c6336eac8bf3e715425b69159",
+      "payload": "sources/source-recovery/1b2e19203f096709-071852b2-0026-hosted-source-snapshot.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/adr/0027-scoped-source-git-read.md",
+      "sha256": "6f43caf93683b86747dd9c30941f8d9310ed88cfd51d0998e4f06c9befe7620c",
+      "payload": "sources/source-recovery/6f43caf93683b867-4fa79fa5-0027-scoped-source-git-read.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/adr/0028-bug-work-publication.md",
+      "sha256": "9258376e46e13dc210ad4f353c3c0ed45f0fe5d076d8894362507a3e2e088a67",
+      "payload": "sources/bug-search-work/9258376e46e13dc2-f00d58e6-0028-bug-work-publication.md.source",
+      "group": "bug-search-work",
+      "origins": [
+        {
+          "worktree": "sdlc3/CI-CD",
+          "head": "e0ddacc64b3c69f3814bda3503bdbcd1f1904484"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/api/jobs_routes.rs",
+      "sha256": "aabbfe3d1c3f80d7e8fd22a3b20c3d632cf0c199ce2f26b7b16baae45c1355cc",
+      "payload": "sources/source-recovery/aabbfe3d1c3f80d7-27eaf822-jobs_routes.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/runner.rs",
+      "sha256": "acdb7a5f04e1380e2de000b57bfc8f30c0fab78d52944779a2e4e20b2df98aa3",
+      "payload": "sources/source-recovery/acdb7a5f04e1380e-39a4259e-runner.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/ARCHITECTURE.md",
+      "sha256": "6f56a00644803749e3666ac51f35352077b9148e0ab2c45b5717709861fbea82",
+      "payload": "sources/source-recovery/6f56a00644803749-ff21b6b9-ARCHITECTURE.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "frontend/src/main.tsx",
+      "sha256": "94e7143f2d7d652b969a6689c7cb54ac5826f444688847f64a756364754f6c6f",
+      "payload": "sources/ui-recovery/94e7143f2d7d652b-f687de21-main.tsx.source",
+      "group": "ui-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "frontend/src/pages/pipeline-detail/index.tsx",
+      "sha256": "c12ae8ea4cd9c44c36bbf64523690eb89574cb3b9998bf0af1a2006c803c5e3e",
+      "payload": "sources/ui-recovery/c12ae8ea4cd9c44c-e80828f1-index.tsx.source",
+      "group": "ui-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "frontend/src/pages/sso-callback/index.tsx",
+      "sha256": "e09c84735524ad59f7950d3035df92d96ff4ac2ac8f11b75c5a85d39abfc0653",
+      "payload": "sources/ui-recovery/e09c84735524ad59-2430dbf7-index.tsx.source",
+      "group": "ui-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "frontend/src/shared/auth/auth-provider.test.tsx",
+      "sha256": "5916d43ac291ca9d92613df24f5d78d4656afbf83c21638629ac14ead2f74026",
+      "payload": "sources/ui-recovery/5916d43ac291ca9d-ebd8f9fd-auth-provider.test.tsx.source",
+      "group": "ui-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "frontend/src/shared/auth/auth-provider.tsx",
+      "sha256": "fc1614e163af355f8d2063595278c84786c82887bd27216dee89056e7906f380",
+      "payload": "sources/ui-recovery/fc1614e163af355f-1d26a49d-auth-provider.tsx.source",
+      "group": "ui-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "frontend/src/shared/auth/protected-route.tsx",
+      "sha256": "c5ceaeb903e8e2671a993fef11881c50a82a817211de2ddd8bc8dfc1aa6969e7",
+      "payload": "sources/ui-recovery/c5ceaeb903e8e267-057dd75f-protected-route.tsx.source",
+      "group": "ui-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "frontend/src/shared/ui/confirm-dialog.test.tsx",
+      "sha256": "2e3755ec357c7a955b1ab9e24dbc3814027f2b1c6ebc5e72ac7cc0e8fe8a4fbf",
+      "payload": "sources/ui-recovery/2e3755ec357c7a95-82e18849-confirm-dialog.test.tsx.source",
+      "group": "ui-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "frontend/src/shared/ui/confirm-dialog.tsx",
+      "sha256": "e79478e7efbd9a7f68626c65ac787a89fc8b2efdfa035446bb923501d5a0cacb",
+      "payload": "sources/ui-recovery/e79478e7efbd9a7f-6fe98076-confirm-dialog.tsx.source",
+      "group": "ui-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "frontend/src/shared/ui/query-state.tsx",
+      "sha256": "63096ffc18392c6ae0595365f2aeb9c85d1016e42e9e5ea7d78cc081c619fc5b",
+      "payload": "sources/ui-recovery/63096ffc18392c6a-8be252df-query-state.tsx.source",
+      "group": "ui-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "frontend/AGENTS.md",
+      "sha256": "10cf7d55a262bb2f683a85e45999c707aed3a22d5cc0e50369fb75e474dd307d",
+      "payload": "sources/ui-recovery/10cf7d55a262bb2f-bd492002-AGENTS.md.source",
+      "group": "ui-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/CI-CD",
+          "head": "14bd6fcaccaaa84a8d405c269c4e1f2ea45f1668"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/domain/src/repository_sync.rs",
+      "sha256": "a5d28304fa8fdde2bf09a28fd9917498d2ef627c8d17108e1f22bcf579a70aa8",
+      "payload": "sources/source-recovery/a5d28304fa8fdde2-de7fa26c-repository_sync.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/CI-CD",
+          "head": "178efff51a307665309901b700016d2a10385fb2"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/infra/src/repository_sync.rs",
+      "sha256": "c92519df8fc9b0763958bc9042bdbbd0019d6a5db38732e005747e99e9773f84",
+      "payload": "sources/source-recovery/c92519df8fc9b076-3c0bdedc-repository_sync.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/CI-CD",
+          "head": "178efff51a307665309901b700016d2a10385fb2"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/infra/src/sync_git.rs",
+      "sha256": "424d2fe036447bd5a7478fdbe2ad38231c8e960529afd2e87946caf1556efc18",
+      "payload": "sources/source-recovery/424d2fe036447bd5-9448a0ee-sync_git.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/CI-CD",
+          "head": "178efff51a307665309901b700016d2a10385fb2"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/api/authz_mw.rs",
+      "sha256": "8a0152628bfd36a0da15c2c4f6d4aa0594572f766938c5a86289f8c53e4ec99d",
+      "payload": "sources/source-recovery/8a0152628bfd36a0-2c545a9e-authz_mw.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/CI-CD",
+          "head": "178efff51a307665309901b700016d2a10385fb2"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/src/git_host.rs",
+      "sha256": "a0c73b2bc3724666300e3bf226476d5ff291bc786914f428f46179adeacea74b",
+      "payload": "sources/source-recovery/a0c73b2bc3724666-115371c5-git_host.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/CI-CD",
+          "head": "178efff51a307665309901b700016d2a10385fb2"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/tests/integration_db.rs",
+      "sha256": "4964eaa68706cd2467f79d35f9b97e809118d8968ca115d9d7e224afd5f5c8b2",
+      "payload": "sources/source-recovery/4964eaa68706cd24-57df5586-integration_db.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/CI-CD",
+          "head": "178efff51a307665309901b700016d2a10385fb2"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/tests/support/repository_sync.rs",
+      "sha256": "cfb559dc9022a1b7e0051552136f1bc10b2f159929cbde89b7d23d3eb388b801",
+      "payload": "sources/source-recovery/cfb559dc9022a1b7-a2a3cefa-repository_sync.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/CI-CD",
+          "head": "178efff51a307665309901b700016d2a10385fb2"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/API.md",
+      "sha256": "70ee91ebd3415c0acc22822b5adb668c48c54dab771cc95598a5cb0d63bb11dd",
+      "payload": "sources/source-recovery/70ee91ebd3415c0a-b5759096-API.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/CI-CD",
+          "head": "178efff51a307665309901b700016d2a10385fb2"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/GIT_HOSTING.md",
+      "sha256": "b2ea27599bc7a0b32d6544941263a1b13a119a09f6ed1e93c8232ac85c5ca539",
+      "payload": "sources/source-recovery/b2ea27599bc7a0b3-166d889e-GIT_HOSTING.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/CI-CD",
+          "head": "178efff51a307665309901b700016d2a10385fb2"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/plans/2026-10-17-external-repository-sync.md",
+      "sha256": "5cd655f1c918f6ed4853faa5223869d2037a6f84327ff385b1c93e0381106634",
+      "payload": "sources/source-recovery/5cd655f1c918f6ed-03bc04e5-2026-10-17-external-repository-sync.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/CI-CD",
+          "head": "178efff51a307665309901b700016d2a10385fb2"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "frontend/src/pages/repository-syncs/index.test.tsx",
+      "sha256": "bcc49af9a7ed7ce7fada2ab4c5e74983274656baafdfe5a43217e7dabb7664d9",
+      "payload": "sources/ui-recovery/bcc49af9a7ed7ce7-815ea17f-index.test.tsx.source",
+      "group": "ui-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/CI-CD",
+          "head": "178efff51a307665309901b700016d2a10385fb2"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "frontend/src/pages/repository-syncs/index.tsx",
+      "sha256": "c27971121847e6f7767f36f513da99d3d41519c40ec36a691605d67fbdce4e4b",
+      "payload": "sources/ui-recovery/c27971121847e6f7-78c3fc6a-index.tsx.source",
+      "group": "ui-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/CI-CD",
+          "head": "178efff51a307665309901b700016d2a10385fb2"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/tests/support/repository_sync_live.rs",
+      "sha256": "c97cb5f65914a4fe2744bd2103440af27f8725d657f939d9429c7f5e997055ce",
+      "payload": "sources/source-recovery/c97cb5f65914a4fe-98d76d11-repository_sync_live.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/CI-CD",
+          "head": "178efff51a307665309901b700016d2a10385fb2"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/plans/2026-10-17-repository-sync-capabilities-results.md",
+      "sha256": "dc744720a693b747984845c60f68fd33bb94f07e611bf346f0f2c9682e2523db",
+      "payload": "sources/source-recovery/dc744720a693b747-14b1dc91-2026-10-17-repository-sync-capabilities-results.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/CI-CD",
+          "head": "178efff51a307665309901b700016d2a10385fb2"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/plans/2026-10-17-repository-sync-test-plan.md",
+      "sha256": "0f61a057685a69d67a1ee4607c2e5b1f12bdd3e572667eea38ef0d9fa63bc409",
+      "payload": "sources/source-recovery/0f61a057685a69d6-a8eb4792-2026-10-17-repository-sync-test-plan.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/CI-CD",
+          "head": "178efff51a307665309901b700016d2a10385fb2"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/GIT_HOSTING.md",
+      "sha256": "d57c8f2d7704584e44de95cb39c9257be118f7476d8185be3e51055e094ded7d",
+      "payload": "sources/source-recovery/d57c8f2d7704584e-166d889e-GIT_HOSTING.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/current-review/CI-CD",
+          "head": "97214e5893e91148bbd16c6a72e547950904e41e"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "frontend/src/pages/repository-syncs/index.test.tsx",
+      "sha256": "5a9cc1954c106c83d27a58995cb25cb02e961963a43c236b55b831d44950c246",
+      "payload": "sources/ui-recovery/5a9cc1954c106c83-815ea17f-index.test.tsx.source",
+      "group": "ui-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/current-review/CI-CD",
+          "head": "97214e5893e91148bbd16c6a72e547950904e41e"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "frontend/src/pages/repository-syncs/index.tsx",
+      "sha256": "76c30069ad96348878f8836cb1a1deb86c4e4f9a9c3e799344e98fb6bebb8da6",
+      "payload": "sources/ui-recovery/76c30069ad963488-78c3fc6a-index.tsx.source",
+      "group": "ui-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/current-review/CI-CD",
+          "head": "97214e5893e91148bbd16c6a72e547950904e41e"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/plans/2026-10-18-repository-sync-acceptance-results.md",
+      "sha256": "ba1caa429b444661eacc7311bb56660bcd858bd855f61ad5f86df619668a0553",
+      "payload": "sources/source-recovery/ba1caa429b444661-af328ed5-2026-10-18-repository-sync-acceptance-results.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/current-review/CI-CD",
+          "head": "97214e5893e91148bbd16c6a72e547950904e41e"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/plans/2026-10-18-repository-sync-additional-acceptance.md",
+      "sha256": "37cea3470814ac4dcdf97625a78c352d64f692e892f63d54db298d17b4f99fbd",
+      "payload": "sources/source-recovery/37cea3470814ac4d-5628f8d3-2026-10-18-repository-sync-additional-acceptance.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/current-review/CI-CD",
+          "head": "97214e5893e91148bbd16c6a72e547950904e41e"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/plans/2026-10-18-repository-sync-complete-test-suite.md",
+      "sha256": "5cefdd04185c9a0dceb08de33140d2a32d5591af0ec6a265af088f1683658d43",
+      "payload": "sources/source-recovery/5cefdd04185c9a0d-e47a3077-2026-10-18-repository-sync-complete-test-suite.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/current-review/CI-CD",
+          "head": "97214e5893e91148bbd16c6a72e547950904e41e"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/plans/2026-10-18-repository-sync-coverage-results.md",
+      "sha256": "0f1df7d20e6357e6d950d03be18f6e7ee036b44c5434ebe188e9fa2952d5a852",
+      "payload": "sources/source-recovery/0f1df7d20e6357e6-36455f5b-2026-10-18-repository-sync-coverage-results.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/current-review/CI-CD",
+          "head": "97214e5893e91148bbd16c6a72e547950904e41e"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/plans/2026-10-18-repository-sync-final-live.md",
+      "sha256": "7162bf660a9d8f4320f81545494e029a0918c0457a207fc51f5e473dade020bf",
+      "payload": "sources/source-recovery/7162bf660a9d8f43-119cda3a-2026-10-18-repository-sync-final-live.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/current-review/CI-CD",
+          "head": "97214e5893e91148bbd16c6a72e547950904e41e"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/plans/2026-10-18-repository-sync-functional-coverage.md",
+      "sha256": "e807cd94f8a9e43fa188b048574cdc44e8a1a1b41bda9d8436bdc30cfde199f3",
+      "payload": "sources/source-recovery/e807cd94f8a9e43f-502b7a2d-2026-10-18-repository-sync-functional-coverage.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/current-review/CI-CD",
+          "head": "97214e5893e91148bbd16c6a72e547950904e41e"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/plans/2026-10-18-repository-sync-resumed-results.md",
+      "sha256": "d351c8bfab06d37bbfa238704a407f4120a29aef660af73a89e5140460f3e578",
+      "payload": "sources/source-recovery/d351c8bfab06d37b-3d14d8c7-2026-10-18-repository-sync-resumed-results.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/current-review/CI-CD",
+          "head": "97214e5893e91148bbd16c6a72e547950904e41e"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/plans/2026-10-18-repository-sync-verification.md",
+      "sha256": "8e6c808a9d9fb6d857fe4481c969761f2aa2853ec811f8b8f75448492a42c0f3",
+      "payload": "sources/source-recovery/8e6c808a9d9fb6d8-9aa3a0fb-2026-10-18-repository-sync-verification.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc2/.local/external-repository-sync/current-review/CI-CD",
+          "head": "97214e5893e91148bbd16c6a72e547950904e41e"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": ".github/workflows/ci.yml",
+      "sha256": "176caaca57ef0435c156fc335df3b7d4ec5c3ca6470b2258b9ff1551db7e3914",
+      "payload": "sources/source-recovery/176caaca57ef0435-b803fcb7-ci.yml.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/forge-task-delivery-20261007/CI-CD",
+          "head": "d0e78e7bf0891b6e4fdb0963057f20e4e22c3c3d"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "AGENTS.md",
+      "sha256": "6f60eaf590c3f02c2d924d795cff500bc5d8f278c739cc62c04d16b590640bef",
+      "payload": "sources/source-recovery/6f60eaf590c3f02c-a54ff182-AGENTS.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/forge-task-delivery-20261007/CI-CD",
+          "head": "d0e78e7bf0891b6e4fdb0963057f20e4e22c3c3d"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "CHANGELOG.md",
+      "sha256": "8ed478eeb8818b1bc5dc68d06683d8ee7ccb637c9e922324c4435082c134f789",
+      "payload": "sources/source-recovery/8ed478eeb8818b1b-06572a96-CHANGELOG.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/forge-task-delivery-20261007/CI-CD",
+          "head": "d0e78e7bf0891b6e4fdb0963057f20e4e22c3c3d"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/API.md",
+      "sha256": "2c130a9c4390f9315def7c40616f570960ed5084f9f239c1b684ed4512a6de8c",
+      "payload": "sources/source-recovery/2c130a9c4390f931-b5759096-API.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/forge-task-delivery-20261007/CI-CD",
+          "head": "d0e78e7bf0891b6e4fdb0963057f20e4e22c3c3d"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/ARCHITECTURE.md",
+      "sha256": "8bd9b9a923ae579099a609f9160c9fdafdb849b4f5caf27c7c9902a1caa661c4",
+      "payload": "sources/source-recovery/8bd9b9a923ae5790-ff21b6b9-ARCHITECTURE.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/forge-task-delivery-20261007/CI-CD",
+          "head": "d0e78e7bf0891b6e4fdb0963057f20e4e22c3c3d"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/CURRENT_STATE.md",
+      "sha256": "c3cfc61c982f0f7abfb96f46ca320f61690871a9ea071c3c8744bbf5955268f4",
+      "payload": "sources/source-recovery/c3cfc61c982f0f7a-5952391d-CURRENT_STATE.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/forge-task-delivery-20261007/CI-CD",
+          "head": "d0e78e7bf0891b6e4fdb0963057f20e4e22c3c3d"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/DATA_MODEL.md",
+      "sha256": "1268e2bfc3822265a1c73a541a405cd39fbd01d0a6565905496e5aed2f94a437",
+      "payload": "sources/source-recovery/1268e2bfc3822265-3bfbbae4-DATA_MODEL.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/forge-task-delivery-20261007/CI-CD",
+          "head": "d0e78e7bf0891b6e4fdb0963057f20e4e22c3c3d"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/DEVELOPMENT_GUIDE.md",
+      "sha256": "41dee3efeb0c3ae9b597ab527e90dae73e4d72f899a60cc704db6755cb506964",
+      "payload": "sources/source-recovery/41dee3efeb0c3ae9-6377493e-DEVELOPMENT_GUIDE.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/forge-task-delivery-20261007/CI-CD",
+          "head": "d0e78e7bf0891b6e4fdb0963057f20e4e22c3c3d"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/OPERATIONS.md",
+      "sha256": "49f577c8b47a22817e74b998946151cad31e93cd07e1c63d72b5c52056d9b8e7",
+      "payload": "sources/source-recovery/49f577c8b47a2281-3b441db8-OPERATIONS.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/forge-task-delivery-20261007/CI-CD",
+          "head": "d0e78e7bf0891b6e4fdb0963057f20e4e22c3c3d"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/SECURITY.md",
+      "sha256": "38e03974e42547513533dcbe57f1dec7d00db333eafb9df1c724c32cd0258025",
+      "payload": "sources/source-recovery/38e03974e4254751-2605206b-SECURITY.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/forge-task-delivery-20261007/CI-CD",
+          "head": "d0e78e7bf0891b6e4fdb0963057f20e4e22c3c3d"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/TASK_DELIVERY_VERIFICATION.md",
+      "sha256": "5086a143e61d296e08ce789633f7dec200e08eb790f5211d42cee4e02028b2ee",
+      "payload": "sources/source-recovery/5086a143e61d296e-cf3bbef2-TASK_DELIVERY_VERIFICATION.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/forge-task-delivery-20261007/CI-CD",
+          "head": "d0e78e7bf0891b6e4fdb0963057f20e4e22c3c3d"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/THREAT_MODEL.md",
+      "sha256": "147e11e719046f3a6e9550aea392277963b42c81b59fc323c98b6dc314cc7ead",
+      "payload": "sources/source-recovery/147e11e719046f3a-cd67030b-THREAT_MODEL.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/forge-task-delivery-20261007/CI-CD",
+          "head": "d0e78e7bf0891b6e4fdb0963057f20e4e22c3c3d"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/adr/0021-owner-local-oci-readonly-data.md",
+      "sha256": "31c5df1ad7a2a50b3de8051871bdf9c604d5296942b7deb4d7c1d44d58fc6a0a",
+      "payload": "sources/source-recovery/31c5df1ad7a2a50b-ef260f2d-0021-owner-local-oci-readonly-data.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/forge-task-delivery-20261007/CI-CD",
+          "head": "d0e78e7bf0891b6e4fdb0963057f20e4e22c3c3d"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/adr/0022-owner-local-postgres-shadow-delivery.md",
+      "sha256": "ebc919f87fb84d813af2b381a30cb699490e43ae5f5d3938a9d7b9cc038e06c3",
+      "payload": "sources/source-recovery/ebc919f87fb84d81-e805f4f3-0022-owner-local-postgres-shadow-delivery.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/forge-task-delivery-20261007/CI-CD",
+          "head": "d0e78e7bf0891b6e4fdb0963057f20e4e22c3c3d"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "docs/contracts/MUTABLE_POSTGRES_DELIVERY.md",
+      "sha256": "acce2836511a09da84b075e78323bd19d64d2c4db3844a84d45236c0a3c4453b",
+      "payload": "sources/source-recovery/acce2836511a09da-b8522cac-MUTABLE_POSTGRES_DELIVERY.md.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/forge-task-delivery-20261007/CI-CD",
+          "head": "d0e78e7bf0891b6e4fdb0963057f20e4e22c3c3d"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "backend/tests/integration_db.rs",
+      "sha256": "d7ddf15eed40b3364ab9b03c2f5d465d6e0b5e55f2eeaff31cdcfb94cc3262f9",
+      "payload": "sources/source-recovery/d7ddf15eed40b336-57df5586-integration_db.rs.source",
+      "group": "source-recovery",
+      "origins": [
+        {
+          "worktree": "sdlc/.local/pulse-forge-workspace/CI-CD",
+          "head": "6e5c557fa479f622a1f8543a80182f8a3282e516"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false
+    },
+    {
+      "original_path": "commit/91e51891d2ca189102925f18a637ca6ae099fd0e",
+      "sha256": "927c105b700510d936b22aca5ab06081a46384de2923b3472232b571438ca6df",
+      "payload": "sources/committed-work/91e51891d2ca189102925f18a637ca6ae099fd0e.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "91e51891d2ca189102925f18a637ca6ae099fd0e",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "docs/GIT_HOSTING.md",
+        "frontend/src/pages/pull-request-detail/diff.test.tsx",
+        "frontend/src/pages/pull-request-detail/index.tsx",
+        "frontend/src/pages/pull-request-detail/pull-request-detail.test.ts",
+        "frontend/src/shared/i18n/locales/en.json",
+        "frontend/src/shared/i18n/locales/ru.json"
+      ],
+      "commit_subject": "fix(pulls): preserve merged PR diffs by immutable commit"
+    },
+    {
+      "original_path": "commit/0909f7f07b52f37a7a79fc94d2650ade74a4e237",
+      "sha256": "2ce7482264266d080c71a21cdc98a3a0b6760de4d758cac9cd99acee4fe95510",
+      "payload": "sources/committed-work/0909f7f07b52f37a7a79fc94d2650ade74a4e237.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "0909f7f07b52f37a7a79fc94d2650ade74a4e237",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        ".github/workflows/ci.yml",
+        "backend/cli/tests/cli_contract.rs",
+        "backend/cli/tests/cli_real_api.rs",
+        "backend/src/api/authz_mw.rs",
+        "backend/src/pulls.rs",
+        "backend/tests/integration_db.rs",
+        "backend/tests/integration_target_policy.rs",
+        "backend/tests/support/authenticated_app.rs",
+        "backend/tests/support/release_repository.rs",
+        "docs/API.md",
+        "docs/CLI.md",
+        "docs/DEVELOPMENT_GUIDE.md"
+      ],
+      "commit_subject": "fix(api): restore repository merges and member project reads"
+    },
+    {
+      "original_path": "commit/71a8524c448a28b8ebe25c709eba4e24e966f174",
+      "sha256": "dd1dbd5ed683d9fae01b3e75e2fa7486415fb966bf75cabf172be045ecfaeecc",
+      "payload": "sources/committed-work/71a8524c448a28b8ebe25c709eba4e24e966f174.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "71a8524c448a28b8ebe25c709eba4e24e966f174",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "backend/Cargo.lock"
+      ],
+      "commit_subject": "chore: align locked dependencies and generated API contracts"
+    },
+    {
+      "original_path": "commit/3aa12a4cdf077db720ef1e2e4c715db7fa443620",
+      "sha256": "1495010d1f8b2bc445ccfe0afb9b080f8a8f196c3a6d72bf91ec217d89e1d3cb",
+      "payload": "sources/committed-work/3aa12a4cdf077db720ef1e2e4c715db7fa443620.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "3aa12a4cdf077db720ef1e2e4c715db7fa443620",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "backend/app/src/lib.rs",
+        "backend/migrations/0036_deployment_idempotency.sql",
+        "backend/migrations/0037_deployment_plan_source.sql",
+        "backend/src/api/jobs_routes.rs",
+        "backend/src/api/mod.rs",
+        "backend/src/api/pipelines_routes.rs",
+        "backend/src/bin/forge-runner.rs",
+        "backend/src/config.rs",
+        "backend/src/platform.rs",
+        "backend/src/runner.rs",
+        "backend/src/runner_protocol.rs",
+        "deploy/pulse-runner.Dockerfile",
+        "deploy/pulse-runner.compose.yml",
+        "deploy/service-pulse-demo.compose.yml",
+        "deploy/service-pulse-deploy",
+        "docs/API.md",
+        "docs/DATA_MODEL.md",
+        "docs/adr/0017-service-pulse-deployment-boundary.md"
+      ],
+      "commit_subject": "feat(forge): gate explicit Pulse deployments with isolated runner"
+    },
+    {
+      "original_path": "commit/086f3eaacb8b94f1b8eeaa01c0a1451c237d1821",
+      "sha256": "d1b5f80d64e8ba514fbadb12b9ffb3864a194424e676a82c6cb0aef6234b56f6",
+      "payload": "sources/committed-work/086f3eaacb8b94f1b8eeaa01c0a1451c237d1821.patch.source",
+      "group": "committed-work",
+      "origins": [
+        {
+          "head": "086f3eaacb8b94f1b8eeaa01c0a1451c237d1821",
+          "worktree": "CI-CD"
+        }
+      ],
+      "unresolved_markers": false,
+      "synthetic_credential_fixture_reviewed": false,
+      "included_paths": [
+        "backend/src/api/authz_mw.rs",
+        "backend/src/api/dto.rs",
+        "backend/src/api/projects_routes.rs",
+        "backend/src/git_host.rs",
+        "docs/API.md",
+        "docs/DATA_MODEL.md",
+        "docs/GIT_HOSTING.md"
+      ],
+      "commit_subject": "fix(forge): enforce protected branches on Git pushes"
+    }
+  ]
+}

@@ -1,0 +1,165 @@
+# Проверка синхронизации репозиториев — 18 октября 2026
+
+Проверяется текущая интеграция с main, а не прежний прототип или старая
+feature-ветка. База — `97214e5893e91148bbd16c6a72e547950904e41e`;
+проверенный code tree — `01aa670e292db8d408f2383801bbf51be5a6bf9a`.
+SDK Base — `2ad0834d06d3aa703fa1791a932bfc76650c8e42`, UI Base —
+`e0759e070326c905f365182d0107f8c87a2e67f6`. Pins проверяются независимо.
+Рабочая ветка: `fix/repository-sync-git-io-recovery-20261018`.
+
+Evidence этого прохода: `.local/external-repository-sync/evidence/review-20261018`
+от корня workspace. Исторические результаты 17 октября не подменяют эту проверку.
+
+## Найденная и исправленная ошибка
+
+Git adapter ограничивал ожидание основного процесса, но затем без таймаута
+дожидался чтения stdout/stderr. После выхода Git дочерний helper мог сохранять
+открытые каналы, и отмена переставала действовать. Это могло удерживать run
+и блокировку репозитория без завершения.
+
+Общий deadline и отмена теперь охватывают ожидание процесса и чтение каналов.
+При ошибке завершается принадлежащая команде группа процессов и отменяются
+задачи чтения. Неподтверждённый результат остаётся `git_outcome_unknown`;
+worker должен наблюдать refs перед подтверждением или повтором.
+
+Регрессия с настоящим shell и дочерним `sleep` падает на прежней реализации
+и проходит после исправления. Неудачный запуск сохранён в
+`cancellation-before-fix.log/json`; это ожидаемый FAIL, а не результат поставки.
+Production change находится в `backend/infra/src/sync_git.rs`.
+
+## Новые проверки
+
+- Пустые bare repositories: fetch без изменения live refs, импорт ветки и
+  annotated tag, сохранение HEAD, исключение provider/internal refs.
+- Ошибки Git: недоступный executable, безопасная диагностика с canary,
+  очистка окружения, отсутствие запуска заранее отменённой команды.
+- Настоящий ENOSPC в отдельном `/dev/shm` тестового контейнера: live repository
+  не изменяется; освобождение собственного filler позволяет повторить операцию.
+- SIGKILL отдельной PostgreSQL: сохранность settings, idempotency и unknown intent,
+  rollback незавершённой транзакции, освобождение advisory slot, восстановление
+  generation и отказ старому owner в подтверждении ref.
+- UI: повтор неизвестного ручного запуска с прежним operation ID; отключение
+  активного запуска через CAS сохранение без повторной отправки credential.
+
+Тесты находятся в `backend/infra/src/sync_git.rs`,
+`backend/tests/support/repository_sync.rs` и
+`frontend/src/pages/repository-syncs/index.test.tsx`.
+
+## Результаты на проверенном code tree
+
+| Проверка | Результат | Evidence |
+|---|---|---|
+| Rust fmt; clippy workspace/all-targets/integration | PASS | `main-backend-gates.log` |
+| Clippy workspace/all-targets/all-features, warnings denied | PASS | `main-extra-gates.log/json` |
+| Полный Rust workspace | 443 passed, 3 opt-in ignored | `main-backend-gates.log` |
+| Полный normal PostgreSQL suite | 121 passed, 20 opt-in ignored | `main-backend-completion.log` |
+| Дополнительные task pipeline / HTTP / migration opt-in | 8 passed | `main-extra-gates.log` |
+| PostgreSQL crash recovery | 1 passed, настоящий SIGKILL | `postgres-crash-recovery.log/json` |
+| Scratch ENOSPC и private CA/TLS/redirect | По одному opt-in PASS | `main-backend-completion.log` |
+| Frontend tests | 246 passed, 44 файла | `main-frontend-gates.log/json` |
+| Frontend lint, typecheck, production build | PASS | `main-frontend-gates.log` |
+| OpenAPI types drift и compatibility с main | PASS | `main-frontend-gates.log` |
+| Release workspace и точное сравнение backend OpenAPI | PASS | `main-backend-completion.log/json` |
+
+Восемь дополнительных PG cases включают настоящий task Git receive при занятом
+sync guard без dispatch пайплайна, shell checkout/ack/artifact, credential custody,
+workspace deployment admission и историческую миграцию заполненной БД 0091→0092.
+Проверяются также additive 0093, общая цепочка до 0094, default-branch protection,
+CAS, права/scopes, archive admission, пагинация и конкурентные Git/PR операции.
+
+## Реальные GitHub и GitLab
+
+Используются выделенные приватные QA repositories и HTTPS Git, полный HTTP router,
+хранилище и настоящий worker. Процессы и DB отдельны от установленного runtime.
+Проверка SHA выполняется чтением refs/objects, а не только статуса API.
+
+| Сценарий | GitHub.com | Свой GitLab |
+|---|---|---|
+| Все направления, ручной/автоматический режимы, FF/no-op, ветки/теги, конфликты, CI SHA/dedupe | PASS | PASS |
+| Настоящий периодический запуск без локального сигнала | 300,421298 с | 300,504244 с |
+| Падение worker после принятого push; живой child; offline reconciliation | PASS | PASS |
+| Сбой до push, отключение до/после принятия, Git HTTP/PR и concurrent writer | PASS | PASS |
+| Минимальные Git-only scopes и отозванный credential | Отдельный read-only токен отсутствует | PASS |
+| Защита внешней приватной ветки | Ограничение тарифа: provider 403 | PASS |
+
+Подробности — `live-<provider>-<scenario>.log/json`, реальные timestamps расписания —
+`actual-schedule-timing.json`. Интервал оставлен равным 300 секундам.
+Предсуществующие refs сохраняются; собственные новые refs имеют `qa/<UUID>/...`.
+Всего выполнено 15 живых cases на этом code tree. Manifest новых refs сохранён
+в `owned-ref-prefixes.json`. Созданные scope-тестом GitLab project tokens183/184
+отозваны: API больше их не возвращает, active tokens отсутствуют; Git с отозванным
+credential отклонён. Основной пользовательский credential не отзывался.
+
+## Неудачные прогоны и ограничения доказательств
+
+Первый frontend-прогон дал четыре 5-секундных таймаута существующих экранов.
+Последовательный запуск с теми же assertions и таймаутами прошёл. В первоначальной
+старой рабочей копии compatibility закономерно обнаружил отсутствие новых API
+из main. Проверка перенесена на указанную актуальную базу; контракт не подгонялся
+под старую ветку и теперь совпадает с backend dump.
+
+Первый полный PG-прогон: 120 passed, один существующий delivery HTTP test
+завершился по прежнему curl deadline 3 секунды. Отдельный повтор и весь
+последовательный normal suite прошли с тем же deadline; assertion не ослаблялся.
+Исходные журналы сохраняются. Учитывалось ожидание PostgreSQL WAL sync.
+
+При crash recovery Compose объявил PostgreSQL unhealthy во время WAL recovery
+и завершающего checkpoint. Сохранялись те же volume и данные; после фактической
+готовности БД координатор продолжен, исходный тест прошёл за 129 секунд в своём
+180-секундном бюджете. Начальный отказ readiness и продолжение отражены в
+`postgres-crash-coordinator.log/json`. Fsync не отключался, БД не заменялась.
+
+Это не заявление о 100% line/branch coverage. Отдельно не подтверждены:
+
+- GitHub отказ записи именно с fine-grained Contents: Read credential: нужен
+  отдельный токен; отсутствие права записи не подменяется случайным неверным токеном.
+- Настоящее правило защиты приватной ветки GitHub: создание запрещено тарифом.
+  Видимость repository, тариф и права аккаунта не менялись.
+- Полностью пустой внешний hosted repository: пустой локальный Git проверен,
+  используемые внешние QA repositories уже содержат refs.
+- Физическое убийство API во время check, отдельные output-limit/cleanup-failure
+  опыты и отдельный browser login viewer. Проверки примитивов/прав не выдаются
+  за эти самостоятельные опыты.
+- Новая browser E2E приёмка установленной версии: текущий проход не обновляет runtime.
+  Тесты production-компонентов и build не подменяют такую приёмку.
+
+Часть opt-in definitions запускается отдельными процессами/для двух providers;
+их число в normal suite не равно числу непроверенных возможностей. Старые
+seeded adapter/worker scenarios не повторяются вместо более полной API/worker
+матрицы и не отмечаются как самостоятельно выполненные.
+
+## Credentials, артефакты и очистка
+
+Проверены предоставленные GitHub/GitLab credentials в исходниках, всех Git objects
+(включая недостижимые), evidence и содержимом source/release/frontend archives.
+Проверялись исходное значение и три base64/Basic представления; совпадений нет.
+Итоговые счётчики сохранены в `credential-audit-github.json` и
+`credential-audit-gitlab.json`. Значения токенов не включались в команды,
+Git config, журналы или build contexts; использовались защищённый stdin/FD
+и отдельное зашифрованное хранилище credentials.
+
+Сохранены release binaries с migrations, production frontend и точный Git export
+проверенного code tree. SHA-256:
+
+- `backend-review-candidate.tar.gz`:
+  `53e0284bae5e3eae22fa4ffe9bf52e1da3e40bb3d244f9f8a228ef426399562f`.
+- `frontend-review-candidate.tar.gz`:
+  `14f3f3f8318faa175280d9507b2254a2a783783f3ce577db243e87d08dee0c17`.
+- `source-01aa670e292db8d408f2383801bbf51be5a6bf9a.tar.gz`:
+  `ba6096009eb415f5048b74d0f72bc3d7969b219e326632f60a40dfc3904c4249`.
+
+Frontend archive не содержит preview entrypoint. Это локальные проверенные
+артефакты; установка и квалификация runtime являются отдельным этапом.
+
+Проект `sdlc-qa-sync-review-529212abaf` очищен через Base ComposeHelper v2:
+0 containers, 0 networks, 0 disposable volumes. Target, synthetic DB, nodework
+и собственные exports удалены. Shared Cargo cache, исходные рабочие копии,
+evidence, runtime, backups и rollback images сохранены. Проверка —
+`cleanup-final.json`, journal имеет phase `cleaned`. Перед QA было более 30 ГиБ
+свободного места; после очистки — более 57 ГиБ.
+
+Общий Docker group audit имеет exit1 из-за трёх предсуществующих чужих ресурсов:
+одного sdlc1 agent runtime и двух завершённых OCI transport containers на
+sdlc2-runner. Собственный проект не имеет остатков; чужие ресурсы не менялись.
+
+Изменение установленного runtime, push, commit и PR этим проходом не выполняются.

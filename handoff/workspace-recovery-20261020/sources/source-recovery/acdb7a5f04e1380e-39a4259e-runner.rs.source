@@ -1,0 +1,2321 @@
+#![allow(dead_code)]
+
+use std::{
+    collections::HashMap,
+    path::{Component, Path, PathBuf},
+    process::Stdio,
+    sync::Arc,
+    time::Duration,
+};
+
+use axum::body::Bytes;
+use sqlx::PgPool;
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
+    sync::Mutex,
+};
+use uuid::Uuid;
+
+use crate::{
+    api::ApiError,
+    config::{ArtifactsConfig, RunnerMode, RuntimeConfig, SecretsConfig},
+};
+
+const RUNNER_RECONCILE_INTERVAL_SECONDS: u64 = 2;
+const RUNNER_STALE_OFFLINE_AFTER_SECONDS: i64 = 120;
+const DEFAULT_RUNNER_QUEUE_TIMEOUT_SECONDS: i64 =
+    crate::config::DEFAULT_RUNNER_QUEUE_TIMEOUT_SECONDS;
+const MAX_RUNNER_QUEUE_TIMEOUT_SECONDS: i64 = crate::config::MAX_RUNNER_QUEUE_TIMEOUT_SECONDS;
+
+/// Job processes currently executed by the embedded runner.
+/// Maps job_id -> child process id; zero reserves preparation/cleanup.
+pub type RunningJobs = Arc<Mutex<HashMap<Uuid, u32>>>;
+
+#[derive(Debug)]
+struct EmbeddedJobLease {
+    id: Uuid,
+    attempt_id: Uuid,
+    #[allow(dead_code)]
+    generation: i64,
+}
+
+#[derive(Clone, Debug)]
+pub struct RuntimeRunnerConfig {
+    pub mode: RunnerMode,
+    pub embedded_enabled: bool,
+    pub queue_timeout_seconds: Option<i64>,
+    pub keep_workspace: bool,
+    pub git_root: PathBuf,
+    pub workspace_volume: String,
+    pub docker_network: String,
+    pub shared_sources_volume: Option<String>,
+    pub artifacts: ArtifactsConfig,
+    pub secrets: SecretsConfig,
+}
+
+impl RuntimeRunnerConfig {
+    pub fn from_config(config: &RuntimeConfig) -> Self {
+        Self {
+            mode: config.runner.mode,
+            embedded_enabled: config.runner.embedded_enabled,
+            queue_timeout_seconds: config.runner.queue_timeout_seconds,
+            keep_workspace: config.runner.keep_workspace,
+            git_root: config.git.root.clone(),
+            workspace_volume: config.runner.workspace_volume.clone(),
+            docker_network: config.runner.docker_network.clone(),
+            shared_sources_volume: config.runner.shared_sources_volume.clone(),
+            artifacts: config.artifacts.clone(),
+            secrets: config.secrets.clone(),
+        }
+    }
+
+    fn from_env_lossy() -> Self {
+        match RuntimeConfig::from_env_for_app() {
+            Ok(config) => Self::from_config(&config),
+            Err(error) => {
+                tracing::warn!(%error, "invalid runner runtime config; using test defaults");
+                Self::from_config(&RuntimeConfig::test_default())
+            }
+        }
+    }
+}
+
+pub fn embedded_runner_enabled_from_env(raw: Option<String>) -> Result<bool, std::io::Error> {
+    crate::config::bool_from_env("CICD_EMBEDDED_RUNNER_ENABLED", raw, true)
+        .map_err(crate::config::ConfigError::into_io_error)
+}
+
+fn embedded_runner_enabled() -> bool {
+    RuntimeRunnerConfig::from_env_lossy().embedded_enabled
+}
+
+pub fn runner_queue_timeout_seconds_from_env(
+    raw: Option<String>,
+) -> Result<Option<i64>, std::io::Error> {
+    crate::config::runner_queue_timeout_seconds_from_env(raw)
+        .map_err(crate::config::ConfigError::into_io_error)
+}
+
+fn runner_queue_timeout_seconds() -> Option<i64> {
+    RuntimeRunnerConfig::from_env_lossy().queue_timeout_seconds
+}
+
+/// Executes a single job: marks running, streams stdout/stderr into job_logs,
+/// sets success/failed from the exit code and refreshes stage/pipeline status.
+pub async fn run_job(pool: PgPool, job_id: Uuid, running: RunningJobs) {
+    run_job_with_config(pool, job_id, running, RuntimeRunnerConfig::from_env_lossy()).await;
+}
+
+pub async fn run_job_with_config(
+    pool: PgPool,
+    job_id: Uuid,
+    running: RunningJobs,
+    config: RuntimeRunnerConfig,
+) {
+    {
+        let mut guard = running.lock().await;
+        if guard.contains_key(&job_id) {
+            return;
+        }
+        guard.insert(job_id, 0);
+    }
+    if let Err(error) = run_job_inner(pool.clone(), job_id, running.clone(), &config).await {
+        tracing::error!(%job_id, error = ?error, "runner job failed");
+        finish_job_after_runner_error(&pool, job_id, &error).await;
+    }
+    running.lock().await.remove(&job_id);
+}
+
+async fn finish_job_after_runner_error(pool: &PgPool, job_id: Uuid, error: &ApiError) {
+    // A canceled/superseded attempt must not fail a newly queued retry.
+    if !matches!(active_embedded_job_lease(pool, job_id).await, Ok(Some(_))) {
+        return;
+    }
+    let message = truncate_error_tail(format!("runner: internal failure: {}", error.message));
+    let status = match sqlx::query_scalar::<_, String>("SELECT status FROM jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(pool)
+        .await
+    {
+        Ok(status) => status,
+        Err(db_error) => {
+            tracing::warn!(%job_id, error = ?db_error, "could not read job status after runner error");
+            None
+        }
+    };
+
+    if matches!(status.as_deref(), Some("success" | "canceled") | None) {
+        return;
+    }
+
+    if let Err(db_error) = sqlx::query(
+        "UPDATE jobs SET status = 'failed', finished_at = now() \
+         WHERE id = $1 AND status IN ('queued','running')",
+    )
+    .bind(job_id)
+    .execute(pool)
+    .await
+    {
+        tracing::warn!(%job_id, error = ?db_error, "could not mark job failed after runner error");
+    }
+
+    match crate::store::active_or_latest_attempt_id(pool, job_id).await {
+        Ok(attempt_id) => {
+            if let Err(log_error) = append_attempt_log(pool, job_id, attempt_id, &message).await {
+                tracing::warn!(%job_id, %attempt_id, error = ?log_error, "could not append runner error log");
+            }
+            if let Err(db_error) = mark_attempt_failed(pool, attempt_id, &message).await {
+                tracing::warn!(%job_id, %attempt_id, error = ?db_error, "could not mark attempt failed after runner error");
+            }
+        }
+        Err(db_error) => {
+            tracing::warn!(%job_id, error = ?db_error, "could not resolve attempt after runner error");
+        }
+    }
+
+    if let Err(db_error) =
+        complete_active_lease_for_job(pool, job_id, "failed", Some(&message)).await
+    {
+        tracing::warn!(%job_id, error = ?db_error, "could not close lease after runner error");
+    }
+
+    if let Err(refresh_error) = refresh_stage(pool.clone(), job_id).await {
+        tracing::warn!(%job_id, error = ?refresh_error, "could not refresh statuses after runner error");
+    }
+}
+
+async fn claim_embedded_job_lease(
+    pool: &PgPool,
+    job_id: Uuid,
+) -> Result<Option<EmbeddedJobLease>, ApiError> {
+    crate::store::enqueue_missing_ready_jobs(pool)
+        .await
+        .map_err(ApiError::internal)?;
+    let row = sqlx::query_as::<_, (Uuid, Uuid, i64)>(
+        r#"
+        WITH queue_row AS (
+            SELECT
+                q.id AS queue_id,
+                j.id AS job_id,
+                q.attempt_id,
+                LEAST(GREATEST(COALESCE(j.timeout_seconds, 3600), 5), 86400)::bigint
+                    AS lease_ttl_seconds
+            FROM job_queue q
+            JOIN jobs j ON j.id = q.job_id
+            JOIN execution_attempts a ON a.id = q.attempt_id
+            JOIN stages s ON s.id = j.stage_id
+            JOIN pipelines p ON p.id = s.pipeline_id
+            WHERE j.id = $1
+              AND q.state = 'queued'
+              AND q.not_before <= now()
+              AND cardinality(q.required_tags) = 0
+              AND j.status = 'queued'
+              AND a.status = 'queued'
+              AND NOT j.manual
+              AND p.status IN ('queued','running')
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM job_leases l
+                  WHERE l.job_id = j.id AND l.lease_status = 'active'
+              )
+            FOR UPDATE OF q SKIP LOCKED
+        ),
+        claimed_job AS (
+            UPDATE jobs j
+            SET status = 'running', started_at = now()
+            FROM queue_row q
+            WHERE j.id = q.job_id
+              AND j.status = 'queued'
+            RETURNING j.id
+        ),
+        claimed_attempt AS (
+            UPDATE execution_attempts a
+            SET status = 'running',
+                trigger = 'runner',
+                started_at = COALESCE(started_at, now())
+            FROM queue_row q
+            WHERE a.id = q.attempt_id
+              AND a.status = 'queued'
+              AND EXISTS (SELECT 1 FROM claimed_job)
+            RETURNING a.id
+        ),
+        next_generation AS (
+            SELECT COALESCE(MAX(generation), 0) + 1 AS generation
+            FROM job_leases
+            WHERE job_id = $1
+        ),
+        created_lease AS (
+            INSERT INTO job_leases (
+                id,
+                job_id,
+                attempt_id,
+                runner_name,
+                lease_status,
+                generation,
+                lease_expires_at
+            )
+            SELECT
+                $2,
+                q.job_id,
+                claimed_attempt.id,
+                'embedded',
+                'active',
+                next_generation.generation,
+                now() + ((q.lease_ttl_seconds + 60) * interval '1 second')
+            FROM queue_row q
+            CROSS JOIN claimed_attempt
+            CROSS JOIN next_generation
+            RETURNING id, attempt_id, generation
+        ),
+        claimed_queue AS (
+            UPDATE job_queue q
+            SET state = 'leased',
+                lease_id = created_lease.id,
+                leased_at = now(),
+                updated_at = now()
+            FROM queue_row qr
+            CROSS JOIN created_lease
+            WHERE q.id = qr.queue_id
+              AND q.state = 'queued'
+            RETURNING created_lease.id, created_lease.attempt_id, created_lease.generation
+        )
+        SELECT id, attempt_id, generation FROM claimed_queue
+        "#,
+    )
+    .bind(job_id)
+    .bind(Uuid::new_v4())
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?;
+
+    Ok(row.map(|(id, attempt_id, generation)| EmbeddedJobLease {
+        id,
+        attempt_id,
+        generation,
+    }))
+}
+
+async fn active_embedded_job_lease(
+    pool: &PgPool,
+    job_id: Uuid,
+) -> Result<Option<EmbeddedJobLease>, ApiError> {
+    let row = sqlx::query_as::<_, (Uuid, Uuid, i64)>(
+        "SELECT id, attempt_id, generation \
+         FROM job_leases \
+         WHERE job_id = $1 AND lease_status = 'active' \
+         ORDER BY generation DESC \
+         LIMIT 1",
+    )
+    .bind(job_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(row.map(|(id, attempt_id, generation)| EmbeddedJobLease {
+        id,
+        attempt_id,
+        generation,
+    }))
+}
+
+async fn complete_embedded_job_lease(
+    pool: &PgPool,
+    lease_id: Uuid,
+    terminal_status: &str,
+    error_tail: Option<&str>,
+) -> Result<(), ApiError> {
+    complete_lease_by_id(pool, lease_id, terminal_status, error_tail)
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(())
+}
+
+async fn complete_lease_by_id(
+    pool: &PgPool,
+    lease_id: Uuid,
+    terminal_status: &str,
+    error_tail: Option<&str>,
+) -> Result<u64, sqlx::Error> {
+    let lease_status = lease_status_for_terminal(terminal_status);
+    let bounded_tail = error_tail.map(|value| truncate_error_tail(value.to_owned()));
+    let result = sqlx::query(
+        "UPDATE job_leases \
+         SET lease_status = $2, \
+             completed_at = COALESCE(completed_at, now()), \
+             terminal_status = $3, \
+             error_tail = COALESCE(error_tail, $4) \
+         WHERE id = $1 AND lease_status = 'active'",
+    )
+    .bind(lease_id)
+    .bind(lease_status)
+    .bind(terminal_status)
+    .bind(bounded_tail.as_deref())
+    .execute(pool)
+    .await?;
+    if result.rows_affected() > 0 {
+        crate::store::close_job_queue_for_lease(pool, lease_id, terminal_status).await?;
+    }
+    Ok(result.rows_affected())
+}
+
+pub async fn complete_active_lease_for_job(
+    pool: &PgPool,
+    job_id: Uuid,
+    terminal_status: &str,
+    error_tail: Option<&str>,
+) -> Result<u64, sqlx::Error> {
+    let lease_status = lease_status_for_terminal(terminal_status);
+    let bounded_tail = error_tail.map(|value| truncate_error_tail(value.to_owned()));
+    let result = sqlx::query(
+        "UPDATE job_leases \
+         SET lease_status = $2, \
+             completed_at = COALESCE(completed_at, now()), \
+             terminal_status = $3, \
+             error_tail = COALESCE(error_tail, $4) \
+         WHERE job_id = $1 AND lease_status = 'active'",
+    )
+    .bind(job_id)
+    .bind(lease_status)
+    .bind(terminal_status)
+    .bind(bounded_tail.as_deref())
+    .execute(pool)
+    .await?;
+    crate::store::close_job_queue_for_job(pool, job_id, terminal_status).await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn cancel_active_leases_for_pipeline(
+    pool: &PgPool,
+    pipeline_id: Uuid,
+    reason: &str,
+) -> Result<u64, sqlx::Error> {
+    let bounded_reason = truncate_error_tail(reason.to_owned());
+    let signaled_external = sqlx::query(
+        "UPDATE job_leases \
+         SET cancel_requested_at = COALESCE(cancel_requested_at, now()), \
+             error_tail = COALESCE(error_tail, $2) \
+         WHERE lease_status = 'active' \
+           AND cancel_requested_at IS NULL \
+           AND runner_id IS NOT NULL \
+           AND lease_token_hash IS NOT NULL \
+           AND job_id IN ( \
+             SELECT j.id \
+             FROM jobs j \
+             JOIN stages s ON s.id = j.stage_id \
+             WHERE s.pipeline_id = $1 \
+           )",
+    )
+    .bind(pipeline_id)
+    .bind(&bounded_reason)
+    .execute(pool)
+    .await?;
+    let closed_embedded = sqlx::query(
+        "UPDATE job_leases \
+         SET lease_status = 'canceled', \
+             completed_at = COALESCE(completed_at, now()), \
+             terminal_status = 'canceled', \
+             error_tail = COALESCE(error_tail, $2) \
+         WHERE lease_status = 'active' \
+           AND NOT (runner_id IS NOT NULL AND lease_token_hash IS NOT NULL) \
+           AND job_id IN ( \
+             SELECT j.id \
+             FROM jobs j \
+             JOIN stages s ON s.id = j.stage_id \
+             WHERE s.pipeline_id = $1 \
+           )",
+    )
+    .bind(pipeline_id)
+    .bind(bounded_reason)
+    .execute(pool)
+    .await?;
+    crate::store::close_job_queue_for_pipeline(pool, pipeline_id, "canceled").await?;
+    Ok(signaled_external.rows_affected() + closed_embedded.rows_affected())
+}
+
+pub async fn force_cancel_active_leases_for_pipeline(
+    pool: &PgPool,
+    pipeline_id: Uuid,
+    reason: &str,
+) -> Result<u64, sqlx::Error> {
+    let bounded_reason = truncate_error_tail(reason.to_owned());
+    let result = sqlx::query(
+        "UPDATE job_leases \
+         SET lease_status = 'canceled', \
+             completed_at = COALESCE(completed_at, now()), \
+             terminal_status = 'canceled', \
+             error_tail = COALESCE(error_tail, $2) \
+         WHERE lease_status = 'active' \
+           AND job_id IN ( \
+             SELECT j.id \
+             FROM jobs j \
+             JOIN stages s ON s.id = j.stage_id \
+             WHERE s.pipeline_id = $1 \
+           )",
+    )
+    .bind(pipeline_id)
+    .bind(bounded_reason)
+    .execute(pool)
+    .await?;
+    crate::store::close_job_queue_for_pipeline(pool, pipeline_id, "canceled").await?;
+    Ok(result.rows_affected())
+}
+
+async fn cancel_active_leases_for_canceled_pipelines(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let signaled_external = sqlx::query(
+        "UPDATE job_leases \
+         SET cancel_requested_at = COALESCE(cancel_requested_at, now()), \
+             error_tail = COALESCE(error_tail, 'pipeline canceled') \
+         WHERE lease_status = 'active' \
+           AND cancel_requested_at IS NULL \
+           AND runner_id IS NOT NULL \
+           AND lease_token_hash IS NOT NULL \
+           AND job_id IN ( \
+             SELECT j.id \
+             FROM jobs j \
+             JOIN stages s ON s.id = j.stage_id \
+             JOIN pipelines p ON p.id = s.pipeline_id \
+             WHERE p.status = 'canceled' \
+           )",
+    )
+    .execute(pool)
+    .await?;
+    let closed_embedded = sqlx::query(
+        "UPDATE job_leases \
+         SET lease_status = 'canceled', \
+             completed_at = COALESCE(completed_at, now()), \
+             terminal_status = 'canceled', \
+             error_tail = COALESCE(error_tail, 'pipeline canceled') \
+         WHERE lease_status = 'active' \
+           AND NOT (runner_id IS NOT NULL AND lease_token_hash IS NOT NULL) \
+           AND job_id IN ( \
+             SELECT j.id \
+             FROM jobs j \
+             JOIN stages s ON s.id = j.stage_id \
+             JOIN pipelines p ON p.id = s.pipeline_id \
+             WHERE p.status = 'canceled' \
+           )",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "UPDATE job_queue \
+         SET state = 'canceled', completed_at = COALESCE(completed_at, now()), updated_at = now() \
+         WHERE state IN ('queued','leased') \
+           AND pipeline_id IN (SELECT id FROM pipelines WHERE status = 'canceled')",
+    )
+    .execute(pool)
+    .await?;
+    Ok(signaled_external.rows_affected() + closed_embedded.rows_affected())
+}
+
+pub async fn reconcile_expired_leases(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let expired_jobs = sqlx::query_as::<_, (Uuid, Uuid)>(
+        "WITH expired AS ( \
+             UPDATE job_leases \
+             SET lease_status = CASE WHEN cancel_requested_at IS NOT NULL THEN 'canceled' ELSE 'expired' END, \
+                 completed_at = COALESCE(completed_at, now()), \
+                 terminal_status = CASE WHEN cancel_requested_at IS NOT NULL THEN 'canceled' ELSE 'failed' END, \
+                 error_tail = COALESCE(error_tail, CASE WHEN cancel_requested_at IS NOT NULL THEN 'pipeline canceled' ELSE 'runner lease expired' END) \
+             WHERE lease_status = 'active' AND lease_expires_at <= now() \
+             RETURNING id AS lease_id, job_id, attempt_id, terminal_status \
+         ), updated_attempts AS ( \
+             UPDATE execution_attempts a \
+             SET status = e.terminal_status, \
+                 finished_at = COALESCE(a.finished_at, now()), \
+                 error_tail = COALESCE(a.error_tail, CASE WHEN e.terminal_status = 'canceled' THEN 'pipeline canceled' ELSE 'runner lease expired' END) \
+             FROM expired e \
+             WHERE a.id = e.attempt_id AND a.status IN ('queued','running') \
+             RETURNING a.job_id \
+         ), updated_jobs AS ( \
+             UPDATE jobs j \
+             SET status = e.terminal_status, finished_at = COALESCE(j.finished_at, now()) \
+             FROM expired e \
+             WHERE j.id = e.job_id AND j.status IN ('queued','running') \
+             RETURNING j.id, j.stage_id \
+         ), updated_queue AS ( \
+             UPDATE job_queue q \
+             SET state = CASE WHEN e.terminal_status = 'canceled' THEN 'canceled' ELSE 'completed' END, \
+                 completed_at = COALESCE(q.completed_at, now()), \
+                 updated_at = now() \
+             FROM expired e \
+             WHERE q.state IN ('queued','leased') \
+               AND (q.lease_id = e.lease_id OR q.attempt_id = e.attempt_id) \
+             RETURNING q.id \
+         ) \
+         SELECT id, stage_id FROM updated_jobs",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    for (job_id, stage_id) in &expired_jobs {
+        if let Err(error) = crate::api::refresh_statuses(pool, *stage_id).await {
+            tracing::warn!(%job_id, %stage_id, error = ?error, "could not refresh statuses after lease expiry");
+        }
+    }
+
+    Ok(expired_jobs.len() as u64)
+}
+
+pub async fn reconcile_unacknowledged_leases(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let requeued_jobs = sqlx::query_as::<_, (Uuid, Uuid)>(
+        "WITH requeued AS ( \
+             UPDATE job_leases l \
+             SET lease_status = 'expired', \
+                 completed_at = COALESCE(l.completed_at, now()), \
+                 terminal_status = 'failed', \
+                 error_tail = COALESCE(l.error_tail, 'runner lease ack deadline exceeded') \
+             FROM job_queue q \
+             JOIN jobs j ON j.id = q.job_id \
+             JOIN execution_attempts a ON a.id = q.attempt_id \
+             JOIN stages s ON s.id = j.stage_id \
+             JOIN pipelines p ON p.id = s.pipeline_id \
+             WHERE l.lease_status = 'active' \
+               AND l.acknowledged_at IS NULL \
+               AND l.ack_deadline IS NOT NULL \
+               AND l.ack_deadline <= now() \
+               AND q.state = 'leased' \
+               AND q.job_id = l.job_id \
+               AND q.attempt_id = l.attempt_id \
+               AND (q.lease_id = l.id OR q.lease_id IS NULL) \
+               AND j.status = 'running' \
+               AND a.status = 'running' \
+               AND p.status IN ('queued','running') \
+             RETURNING l.id AS lease_id, l.job_id, l.attempt_id \
+         ), updated_attempts AS ( \
+             UPDATE execution_attempts a \
+             SET status = 'queued', started_at = NULL, \
+                 finished_at = NULL, exit_code = NULL, error_tail = NULL \
+             FROM requeued e \
+             WHERE a.id = e.attempt_id AND a.status = 'running' \
+             RETURNING a.job_id \
+         ), updated_jobs AS ( \
+             UPDATE jobs j \
+             SET status = 'queued', started_at = NULL, finished_at = NULL \
+             FROM requeued e \
+             WHERE j.id = e.job_id AND j.status = 'running' \
+             RETURNING j.id, j.stage_id \
+         ), updated_queue AS ( \
+             UPDATE job_queue q \
+             SET state = 'queued', lease_id = NULL, leased_at = NULL, completed_at = NULL, \
+                 not_before = now(), updated_at = now() \
+             FROM requeued e \
+             WHERE q.state = 'leased' \
+               AND (q.lease_id = e.lease_id OR q.attempt_id = e.attempt_id) \
+             RETURNING q.id \
+         ) \
+         SELECT id, stage_id FROM updated_jobs",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    for (job_id, stage_id) in &requeued_jobs {
+        if let Err(error) = crate::api::refresh_statuses(pool, *stage_id).await {
+            tracing::warn!(%job_id, %stage_id, error = ?error, "could not refresh statuses after unacknowledged lease reconciliation");
+        }
+    }
+
+    Ok(requeued_jobs.len() as u64)
+}
+
+pub async fn reconcile_stale_runners(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE runners r \
+         SET status = 'offline', draining = false, capacity_busy_slots = 0 \
+         WHERE r.disabled_at IS NULL \
+           AND r.status = 'online' \
+           AND r.last_seen_at IS NOT NULL \
+           AND r.last_seen_at <= now() - ($1::bigint * interval '1 second') \
+           AND NOT EXISTS ( \
+             SELECT 1 \
+             FROM job_leases l \
+             WHERE l.runner_id = r.id \
+               AND l.lease_status = 'active' \
+               AND l.lease_expires_at > now() \
+           )",
+    )
+    .bind(RUNNER_STALE_OFFLINE_AFTER_SECONDS)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
+}
+
+/// Cancels queue entries that can no longer run because their pipeline already
+/// reached a terminal state. Terminal pipeline transitions can leave later DAG
+/// stages queued; they must not remain visible as runnable work forever.
+pub async fn reconcile_terminal_pipeline_queues(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let reconciled: i64 = sqlx::query_scalar(
+        "WITH terminal_queues AS ( \
+             SELECT q.id AS queue_id, q.job_id, q.attempt_id \
+             FROM job_queue q \
+             JOIN pipelines p ON p.id = q.pipeline_id \
+             WHERE q.state = 'queued' \
+               AND p.status IN ('success', 'failed', 'canceled') \
+         ), updated_attempts AS ( \
+             UPDATE execution_attempts a \
+             SET status = 'canceled', \
+                 finished_at = COALESCE(a.finished_at, now()), \
+                 error_tail = COALESCE(a.error_tail, 'pipeline reached a terminal state') \
+             FROM terminal_queues t \
+             WHERE a.id = t.attempt_id AND a.status = 'queued' \
+         ), updated_jobs AS ( \
+             UPDATE jobs j \
+             SET status = 'canceled', finished_at = COALESCE(j.finished_at, now()) \
+             FROM terminal_queues t \
+             WHERE j.id = t.job_id AND j.status = 'queued' \
+         ), updated_queue AS ( \
+             UPDATE job_queue q \
+             SET state = 'canceled', \
+                 completed_at = COALESCE(q.completed_at, now()), \
+                 updated_at = now() \
+             FROM terminal_queues t \
+             WHERE q.id = t.queue_id AND q.state = 'queued' \
+             RETURNING q.id \
+         ) \
+         SELECT count(*) FROM updated_queue",
+    )
+    .fetch_one(pool)
+    .await?;
+
+    Ok(reconciled as u64)
+}
+
+pub async fn reconcile_queue_timeouts(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let config = RuntimeRunnerConfig::from_env_lossy();
+    reconcile_queue_timeouts_for_config(pool, &config).await
+}
+
+pub async fn reconcile_queue_timeouts_for_config(
+    pool: &PgPool,
+    config: &RuntimeRunnerConfig,
+) -> Result<u64, sqlx::Error> {
+    reconcile_queue_timeouts_with_config(
+        pool,
+        config.queue_timeout_seconds,
+        config.embedded_enabled,
+    )
+    .await
+}
+
+pub async fn reconcile_queue_timeouts_with_config(
+    pool: &PgPool,
+    timeout_seconds: Option<i64>,
+    embedded_enabled: bool,
+) -> Result<u64, sqlx::Error> {
+    let Some(timeout_seconds) = timeout_seconds else {
+        return Ok(0);
+    };
+    let timed_out_jobs = sqlx::query_as::<_, (Uuid, Uuid)>(
+        "WITH timed_out AS ( \
+             SELECT q.id AS queue_id, q.job_id, q.attempt_id, q.stage_id \
+             FROM job_queue q \
+             JOIN jobs j ON j.id = q.job_id \
+             JOIN execution_attempts a ON a.id = q.attempt_id \
+             JOIN stages s ON s.id = q.stage_id \
+             JOIN pipelines p ON p.id = q.pipeline_id \
+             WHERE q.state = 'queued' \
+               AND q.not_before <= now() \
+               AND q.queued_at <= now() - ($1::bigint * interval '1 second') \
+               AND j.status = 'queued' \
+               AND a.status = 'queued' \
+               AND NOT j.manual \
+               AND p.status IN ('queued','running') \
+               AND NOT EXISTS ( \
+                 SELECT 1 FROM job_leases l \
+                 WHERE l.job_id = q.job_id AND l.lease_status = 'active' \
+               ) \
+               AND NOT EXISTS ( \
+                 SELECT 1 FROM jobs x JOIN stages xs ON xs.id = x.stage_id \
+                 WHERE xs.pipeline_id = p.id AND xs.position < s.position \
+                   AND x.status NOT IN ('success') \
+                   AND NOT (x.status = 'failed' AND x.allow_failure) \
+               ) \
+               AND NOT EXISTS ( \
+                 SELECT 1 FROM jobs y JOIN stages ys ON ys.id = y.stage_id \
+                 WHERE ys.pipeline_id = p.id AND ys.position = s.position \
+                   AND y.status = 'failed' AND NOT y.allow_failure \
+               ) \
+               AND NOT ($2::boolean AND cardinality(q.required_tags) = 0) \
+               AND NOT EXISTS ( \
+                 SELECT 1 \
+                 FROM runners r \
+                 WHERE r.disabled_at IS NULL \
+                   AND r.status = 'online' \
+                   AND NOT r.draining \
+                   AND r.credential_hash IS NOT NULL \
+                   AND (r.credential_expires_at IS NULL OR r.credential_expires_at > now()) \
+                   AND q.required_tags <@ r.tags \
+                   AND ( \
+                     NOT (r.capabilities ? 'executorKinds') \
+                     OR EXISTS ( \
+                       SELECT 1 \
+                       FROM jsonb_array_elements_text( \
+                         CASE \
+                           WHEN jsonb_typeof(r.capabilities->'executorKinds') = 'array' \
+                           THEN r.capabilities->'executorKinds' \
+                           ELSE '[]'::jsonb \
+                         END \
+                       ) AS executor(kind) \
+                       WHERE btrim(executor.kind) = 'shell' \
+                     ) \
+                   ) \
+               ) \
+         ), updated_attempts AS ( \
+             UPDATE execution_attempts a \
+             SET status = 'failed', \
+                 finished_at = COALESCE(a.finished_at, now()), \
+                 error_tail = COALESCE(a.error_tail, 'no compatible runner before queue timeout') \
+             FROM timed_out t \
+             WHERE a.id = t.attempt_id AND a.status = 'queued' \
+             RETURNING a.job_id \
+         ), updated_jobs AS ( \
+             UPDATE jobs j \
+             SET status = 'failed', finished_at = COALESCE(j.finished_at, now()) \
+             FROM timed_out t \
+             WHERE j.id = t.job_id AND j.status = 'queued' \
+             RETURNING j.id, j.stage_id \
+         ), updated_queue AS ( \
+             UPDATE job_queue q \
+             SET state = 'completed', \
+                 completed_at = COALESCE(q.completed_at, now()), \
+                 updated_at = now() \
+             FROM timed_out t \
+             WHERE q.id = t.queue_id AND q.state = 'queued' \
+             RETURNING q.id \
+         ) \
+         SELECT id, stage_id FROM updated_jobs",
+    )
+    .bind(timeout_seconds)
+    .bind(embedded_enabled)
+    .fetch_all(pool)
+    .await?;
+
+    for (job_id, stage_id) in &timed_out_jobs {
+        if let Err(error) = crate::api::refresh_statuses(pool, *stage_id).await {
+            tracing::warn!(%job_id, %stage_id, error = ?error, "could not refresh statuses after queue timeout reconciliation");
+        }
+    }
+
+    Ok(timed_out_jobs.len() as u64)
+}
+
+async fn reconcile_unleased_running_jobs(pool: &PgPool) -> Result<u64, sqlx::Error> {
+    let stale_jobs = sqlx::query_as::<_, (Uuid, Uuid)>(
+        "WITH stale AS ( \
+             SELECT j.id, j.stage_id \
+             FROM jobs j \
+             WHERE j.status = 'running' \
+               AND (j.started_at IS NULL OR j.started_at <= now() - interval '5 minutes') \
+               AND NOT EXISTS ( \
+                 SELECT 1 FROM job_leases l \
+                 WHERE l.job_id = j.id AND l.lease_status = 'active' \
+               ) \
+         ), updated_attempts AS ( \
+             UPDATE execution_attempts a \
+             SET status = 'failed', \
+                 finished_at = COALESCE(a.finished_at, now()), \
+                 error_tail = COALESCE(a.error_tail, 'runner lease missing') \
+             FROM stale s \
+             WHERE a.job_id = s.id AND a.status IN ('queued','running') \
+             RETURNING a.job_id \
+         ), updated_jobs AS ( \
+             UPDATE jobs j \
+             SET status = 'failed', finished_at = COALESCE(j.finished_at, now()) \
+             FROM stale s \
+             WHERE j.id = s.id AND j.status = 'running' \
+             RETURNING j.id, j.stage_id \
+         ), updated_queue AS ( \
+             UPDATE job_queue q \
+             SET state = 'completed', \
+                 completed_at = COALESCE(q.completed_at, now()), \
+                 updated_at = now() \
+             FROM stale s \
+             WHERE q.job_id = s.id AND q.state IN ('queued','leased') \
+             RETURNING q.id \
+         ) \
+         SELECT id, stage_id FROM updated_jobs",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    for (job_id, stage_id) in &stale_jobs {
+        if let Err(error) = crate::api::refresh_statuses(pool, *stage_id).await {
+            tracing::warn!(%job_id, %stage_id, error = ?error, "could not refresh statuses after missing lease reconciliation");
+        }
+    }
+
+    Ok(stale_jobs.len() as u64)
+}
+
+fn lease_status_for_terminal(terminal_status: &str) -> &'static str {
+    match terminal_status {
+        "canceled" => "canceled",
+        _ => "completed",
+    }
+}
+
+async fn run_job_inner(
+    pool: PgPool,
+    job_id: Uuid,
+    running: RunningJobs,
+    config: &RuntimeRunnerConfig,
+) -> Result<(), ApiError> {
+    let job = sqlx::query_as::<_, JobRow>(
+        "SELECT j.id, j.stage_id, j.name, j.image, j.command, j.required_secrets, j.artifact_paths, j.status, \
+                s.pipeline_id, p.project_id, s.name AS stage_name, \
+                p.git_ref, p.commit_sha, pr.name AS project_name \
+         FROM jobs j JOIN stages s ON s.id = j.stage_id \
+         JOIN pipelines p ON p.id = s.pipeline_id \
+         JOIN projects pr ON pr.id = p.project_id \
+         WHERE j.id = $1",
+    )
+    .bind(job_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::not_found)?;
+
+    if job.status != "queued" && job.status != "running" {
+        return Ok(()); // terminal already
+    }
+
+    let lease = if job.status == "queued" {
+        let Some(lease) = claim_embedded_job_lease(&pool, job_id).await? else {
+            return Ok(());
+        };
+        lease
+    } else {
+        let Some(lease) = active_embedded_job_lease(&pool, job_id).await? else {
+            tracing::warn!(%job_id, "running job has no active lease; skipping embedded execution");
+            return Ok(());
+        };
+        lease
+    };
+    let attempt_id = lease.attempt_id;
+
+    let workspace = prepare_workspace(&pool, &job, config).await?;
+
+    // REQ-SEC-002: inject only job-declared project secrets as env vars.
+    let secrets = crate::platform::project_secret_pairs_for_names_with_config(
+        &pool,
+        job.project_id,
+        &job.required_secrets,
+        &config.secrets,
+    )
+    .await?;
+    let masks: Vec<String> = secrets
+        .iter()
+        .filter(|(_, v)| !v.is_empty())
+        .map(|(_, v)| v.clone())
+        .collect();
+
+    // P0-2/P0-3: per-job timeout + shared pipeline artifacts directory.
+    let timeout_secs =
+        sqlx::query_scalar::<_, Option<i32>>("SELECT timeout_seconds FROM jobs WHERE id = $1")
+            .bind(job_id)
+            .fetch_one(&pool)
+            .await
+            .map_err(ApiError::internal)?
+            .unwrap_or(3600)
+            .clamp(5, 24 * 3600);
+    let pipeline_artifacts = config
+        .artifacts
+        .root
+        .join("pipelines")
+        .join(job.pipeline_id.to_string());
+    let job_artifacts = pipeline_artifacts.join("jobs").join(job_id.to_string());
+    tokio::fs::create_dir_all(&job_artifacts)
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+
+    append_attempt_log(
+        &pool,
+        job_id,
+        attempt_id,
+        &format!("runner: starting job {}", job.name),
+    )
+    .await?;
+    refresh_stage(pool.clone(), job.id).await?;
+
+    let command_shell = shell_capture_command(&job.command);
+
+    // P1-8: pipeline run variables -> CICD_VAR_<KEY>.
+    let run_vars: serde_json::Map<String, serde_json::Value> =
+        sqlx::query_scalar::<_, Option<serde_json::Value>>(
+            "SELECT variables FROM pipelines WHERE id = $1",
+        )
+        .bind(job.pipeline_id)
+        .fetch_one(&pool)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+
+    // P0-1: GitLab/Jenkins-style CI variables, CICD_-prefixed.
+    let mut envs: Vec<(String, String)> = vec![
+        ("CICD_PIPELINE_ID".into(), job.pipeline_id.to_string()),
+        ("CICD_JOB_ID".into(), job_id.to_string()),
+        ("CICD_JOB_NAME".into(), job.name.clone()),
+        ("CICD_STAGE_NAME".into(), job.stage_name.clone()),
+        ("CICD_PROJECT_ID".into(), job.project_id.to_string()),
+        ("CICD_PROJECT_NAME".into(), job.project_name.clone()),
+        ("CICD_COMMIT_REF".into(), job.git_ref.clone()),
+        (
+            "CICD_COMMIT_SHA".into(),
+            job.commit_sha.clone().unwrap_or_default(),
+        ),
+        (
+            "CICD_ARTIFACTS_DIR".into(),
+            job_artifacts.display().to_string(),
+        ),
+        (
+            "CICD_PIPELINE_ARTIFACTS_DIR".into(),
+            pipeline_artifacts.display().to_string(),
+        ),
+    ];
+    for (key, value) in &run_vars {
+        if let Ok(s) = serde_json::to_string(value) {
+            let trimmed = s.trim_matches('"').to_string();
+            envs.push((
+                format!("CICD_VAR_{}", key.to_uppercase().replace('-', "_")),
+                trimmed,
+            ));
+        }
+    }
+    envs.extend(secrets.iter().cloned());
+
+    let mut remote_job = if config.mode == RunnerMode::Docker && crate::runner_docker::enabled() {
+        Some(
+            crate::runner_docker::RemoteJob::prepare(job_id, &workspace)
+                .await
+                .map_err(|error| {
+                    ApiError::bad_request(mask_secrets(
+                        &format!("runner: isolated Docker preparation failed: {error}"),
+                        &masks,
+                    ))
+                })?,
+        )
+    } else {
+        None
+    };
+    if let Some(remote) = &remote_job {
+        remote
+            .stage_artifacts(&pipeline_artifacts)
+            .await
+            .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
+        for (key, value) in &mut envs {
+            if key == "CICD_ARTIFACTS_DIR" {
+                *value = "/workspace/artifacts".into();
+            }
+            if key == "CICD_PIPELINE_ARTIFACTS_DIR" {
+                *value = "/workspace/pipeline-artifacts".into();
+            }
+        }
+    }
+    let mut child = if config.mode == RunnerMode::Docker {
+        // prepare_workspace returns <root>/forge-runner-<job>/workspace; the
+        // bind source must be the per-job directory (one level up from the
+        // clone checkout).
+        let workspace_subdir = workspace
+            .parent()
+            .and_then(|parent| parent.file_name())
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| format!("forge-runner-{job_id}"));
+        let mut cmd = if let Some(remote) = &remote_job {
+            remote.command()
+        } else {
+            tokio::process::Command::new("docker")
+        };
+        let mut args = docker_run_args(
+            &format!("forge-job-{job_id}"),
+            &job.image,
+            &command_shell,
+            &config.workspace_volume,
+            &config.docker_network,
+            config.shared_sources_volume.as_deref(),
+            &workspace_subdir,
+        );
+        if remote_job.is_some() {
+            let position = args.len() - 4;
+            let forwarded = envs
+                .iter()
+                .filter(|(key, _)| {
+                    !key.starts_with("DOCKER_") && key != "CICD_RUNNER_DOCKER_DAEMON_ID"
+                })
+                .flat_map(|(key, _)| ["--env".to_string(), key.clone()]);
+            args.splice(position..position, forwarded);
+        }
+        cmd.args(if let Some(remote) = &remote_job {
+            crate::runner_docker::remote_mounts(args, &remote.volume)
+        } else {
+            args
+        });
+        for (k, v) in &envs {
+            cmd.env(k, v);
+        }
+        if let Some(remote) = &remote_job {
+            remote.apply(&mut cmd);
+        }
+        cmd.current_dir(&workspace)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        cmd
+    } else {
+        let mut cmd = tokio::process::Command::new("sh");
+        cmd.arg("-c")
+            .arg(&command_shell)
+            .current_dir(&workspace)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        for (k, v) in &envs {
+            cmd.env(k, v);
+        }
+        cmd
+    };
+
+    let mut guard = running.lock().await;
+    let active: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM execution_attempts a JOIN job_leases l ON l.attempt_id=a.id \
+         JOIN jobs j ON j.id=a.job_id WHERE a.id=$1 AND l.id=$2 \
+         AND a.status='running' AND j.status='running' AND l.lease_status='active' \
+         AND l.cancel_requested_at IS NULL)",
+    )
+    .bind(attempt_id)
+    .bind(lease.id)
+    .fetch_one(&pool)
+    .await
+    .map_err(ApiError::internal)?;
+    if !active {
+        drop(guard);
+        if let Some(remote) = &mut remote_job {
+            remote.cleanup().await;
+        }
+        if !config.keep_workspace {
+            remove_workspace(&workspace).await;
+        }
+        return Ok(());
+    }
+    let mut child = child
+        .spawn()
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+
+    if let Some(pid) = child.id() {
+        guard.insert(job_id, pid);
+    }
+    drop(guard);
+
+    let mut stdout_task = child.stdout.take().map(|stdout| {
+        let pool = pool.clone();
+        let masks = masks.clone();
+        tokio::spawn(async move {
+            stream_output_to_attempt(pool, job_id, attempt_id, stdout, masks).await
+        })
+    });
+    // Docker client failures (exit 125: bad mounts, missing image, network
+    // errors) are printed to stderr — stream them into the attempt log or
+    // they vanish silently.
+    let mut stderr_task = child.stderr.take().map(|stderr| {
+        let pool = pool.clone();
+        let masks = masks.clone();
+        tokio::spawn(async move {
+            stream_output_to_attempt(pool, job_id, attempt_id, stderr, masks).await
+        })
+    });
+    let exit_status = tokio::select! {
+        status = child.wait() => status,
+        _ = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs as u64)) => {
+            let message = format!("runner: job timed out after {timeout_secs}s, killing");
+            append_attempt_log(&pool, job_id, attempt_id, &message).await?;
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            if let Some(remote) = &mut remote_job {
+                remote.cleanup().await;
+            }
+            if let Some(task) = stdout_task.take() {
+                await_stdout_task(task).await?;
+            }
+            if let Some(task) = stderr_task.take() {
+                let _ = await_stdout_task(task).await;
+            }
+            let updated = sqlx::query(
+                "UPDATE jobs SET status = 'failed', finished_at = now() \
+                 WHERE id = $1 AND status='running' \
+                 AND EXISTS(SELECT 1 FROM execution_attempts WHERE id=$2 AND status='running')",
+            )
+                .bind(job_id)
+                .bind(attempt_id)
+                .execute(&pool)
+                .await
+                .map_err(ApiError::internal)?;
+            if updated.rows_affected() == 0 {
+                mark_attempt_canceled(
+                    &pool,
+                    attempt_id,
+                    "runner: job canceled before timeout result",
+                )
+                .await?;
+                complete_embedded_job_lease(
+                    &pool,
+                    lease.id,
+                    "canceled",
+                    Some("runner: job canceled before timeout result"),
+                )
+                .await?;
+                refresh_stage(pool.clone(), job.id).await?;
+                if !config.keep_workspace {
+                    remove_workspace(&workspace).await;
+                }
+                return Ok(());
+            }
+            mark_attempt_failed(&pool, attempt_id, &message).await?;
+            complete_embedded_job_lease(&pool, lease.id, "failed", Some(&message)).await?;
+            refresh_stage(pool.clone(), job.id).await?;
+            if !config.keep_workspace {
+                remove_workspace(&workspace).await;
+            }
+            return Ok(());
+        }
+    };
+
+    if let Some(task) = stdout_task {
+        await_stdout_task(task).await?;
+    }
+    if let Some(task) = stderr_task.take() {
+        let _ = await_stdout_task(task).await;
+    }
+
+    let (final_status, exit_code, error_tail) = match exit_status {
+        Ok(status) if status.success() => ("success", status.code(), None),
+        Ok(status) => (
+            "failed",
+            status.code(),
+            Some(format!("runner: process exited with status {status}")),
+        ),
+        Err(error) => (
+            "failed",
+            None,
+            Some(format!("runner: failed to wait for process: {error}")),
+        ),
+    };
+    let mut final_status = final_status;
+    let mut exit_code = exit_code;
+    let mut error_tail = error_tail;
+    if let Some(remote) = &mut remote_job {
+        if let Err(error) = remote.copy_back(&workspace).await {
+            final_status = "failed";
+            error_tail = Some(format!("runner: remote artifact transfer failed: {error}"));
+        }
+        if let Err(error) = remote
+            .return_artifacts(&job_artifacts, &pipeline_artifacts)
+            .await
+        {
+            final_status = "failed";
+            error_tail = Some(format!("runner: remote artifact transfer failed: {error}"));
+        }
+        remote.cleanup().await;
+    }
+    let artifact_error = collect_declared_artifacts(
+        &pool,
+        &config.artifacts,
+        job_id,
+        attempt_id,
+        &workspace,
+        &job.artifact_paths,
+    )
+    .await
+    .err();
+    if final_status == "success" {
+        if let Some(error) = artifact_error {
+            final_status = "failed";
+            exit_code = None;
+            error_tail = Some(truncate_error_tail(format!(
+                "runner: artifact upload failed: {}",
+                error.message
+            )));
+        }
+    }
+
+    // Cleanup workspace unless CICD_RUNNER_KEEP_WORKSPACE is enabled.
+    if !config.keep_workspace {
+        remove_workspace(&workspace).await;
+    }
+
+    let updated = sqlx::query(
+        "UPDATE jobs SET status = $2, finished_at = now() \
+         WHERE id = $1 AND status='running' \
+         AND EXISTS(SELECT 1 FROM execution_attempts WHERE id=$3 AND status='running')",
+    )
+    .bind(job_id)
+    .bind(final_status)
+    .bind(attempt_id)
+    .execute(&pool)
+    .await
+    .map_err(ApiError::internal)?;
+    if updated.rows_affected() == 0 {
+        mark_attempt_canceled(
+            &pool,
+            attempt_id,
+            "runner: job canceled before process result",
+        )
+        .await?;
+        complete_embedded_job_lease(
+            &pool,
+            lease.id,
+            "canceled",
+            Some("runner: job canceled before process result"),
+        )
+        .await?;
+        refresh_stage(pool, job.id).await?;
+        return Ok(());
+    }
+    sqlx::query(
+        "UPDATE execution_attempts \
+         SET status = $2, finished_at = now(), exit_code = $3, error_tail = $4 \
+         WHERE id = $1 AND status NOT IN ('success','failed','canceled')",
+    )
+    .bind(attempt_id)
+    .bind(final_status)
+    .bind(exit_code)
+    .bind(error_tail.as_deref())
+    .execute(&pool)
+    .await
+    .map_err(ApiError::internal)?;
+    complete_embedded_job_lease(&pool, lease.id, final_status, error_tail.as_deref()).await?;
+    refresh_stage(pool, job.id).await?;
+    Ok(())
+}
+
+fn cleanup_root(workspace: &Path) -> &Path {
+    if workspace
+        .file_name()
+        .is_some_and(|name| name == "workspace")
+    {
+        return workspace.parent().unwrap_or(workspace);
+    }
+    workspace
+}
+
+async fn remove_workspace(workspace: &Path) {
+    let _ = tokio::fs::remove_dir_all(cleanup_root(workspace)).await;
+}
+
+async fn mark_attempt_failed(
+    pool: &PgPool,
+    attempt_id: Uuid,
+    error_tail: &str,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE execution_attempts \
+         SET status = 'failed', finished_at = COALESCE(finished_at, now()), error_tail = $2 \
+         WHERE id = $1 AND status NOT IN ('success','failed','canceled')",
+    )
+    .bind(attempt_id)
+    .bind(error_tail)
+    .execute(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(())
+}
+
+async fn mark_attempt_canceled(
+    pool: &PgPool,
+    attempt_id: Uuid,
+    error_tail: &str,
+) -> Result<(), ApiError> {
+    sqlx::query(
+        "UPDATE execution_attempts \
+         SET status = 'canceled', \
+             finished_at = COALESCE(finished_at, now()), \
+             error_tail = COALESCE(error_tail, $2) \
+         WHERE id = $1 AND status NOT IN ('success','failed','canceled')",
+    )
+    .bind(attempt_id)
+    .bind(error_tail)
+    .execute(pool)
+    .await
+    .map_err(ApiError::internal)?;
+    Ok(())
+}
+
+fn truncate_error_tail(value: String) -> String {
+    const MAX_ERROR_TAIL_CHARS: usize = 1000;
+    value.chars().take(MAX_ERROR_TAIL_CHARS).collect()
+}
+
+async fn await_stdout_task(
+    task: tokio::task::JoinHandle<Result<(), ApiError>>,
+) -> Result<(), ApiError> {
+    task.await.map_err(|error| {
+        ApiError::internal(sqlx::Error::Protocol(format!(
+            "stdout reader task failed: {error}"
+        )))
+    })?
+}
+
+async fn stream_output_to_attempt<R: tokio::io::AsyncRead + Unpin>(
+    pool: PgPool,
+    job_id: Uuid,
+    attempt_id: Uuid,
+    stdout: R,
+    masks: Vec<String>,
+) -> Result<(), ApiError> {
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    loop {
+        line.clear();
+        let n = reader.read_line(&mut line).await.unwrap_or(0);
+        if n == 0 {
+            break;
+        }
+        append_attempt_log(
+            &pool,
+            job_id,
+            attempt_id,
+            &mask_secrets(line.trim_end(), &masks),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn collect_declared_artifacts(
+    pool: &PgPool,
+    artifacts: &ArtifactsConfig,
+    job_id: Uuid,
+    attempt_id: Uuid,
+    workspace: &Path,
+    artifact_paths: &[String],
+) -> Result<(), ApiError> {
+    if artifact_paths.is_empty() {
+        return Ok(());
+    }
+    let workspace = tokio::fs::canonicalize(workspace)
+        .await
+        .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
+    for artifact_path in artifact_paths {
+        let file = resolve_workspace_artifact(&workspace, artifact_path).await?;
+        let metadata = tokio::fs::metadata(&file)
+            .await
+            .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
+        if metadata.len() == 0 || metadata.len() > crate::body_limits::ARTIFACT_UPLOAD_BYTES as u64
+        {
+            return Err(ApiError::bad_request(
+                "artifact must be between 1 byte and 50 MiB",
+            ));
+        }
+        let bytes = tokio::fs::read(&file)
+            .await
+            .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
+        let name = artifact_name_from_declared_path(artifact_path);
+        crate::platform::store_job_artifact_with_config(
+            pool,
+            artifacts,
+            job_id,
+            Some(attempt_id),
+            &name,
+            "application/octet-stream",
+            Bytes::from(bytes),
+        )
+        .await?;
+        append_attempt_log(
+            pool,
+            job_id,
+            attempt_id,
+            &format!("runner: uploaded artifact {artifact_path}"),
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn resolve_workspace_artifact(
+    workspace: &Path,
+    artifact_path: &str,
+) -> Result<PathBuf, ApiError> {
+    let requested = Path::new(artifact_path);
+    if requested.components().any(|component| {
+        matches!(
+            component,
+            Component::Prefix(_) | Component::RootDir | Component::ParentDir
+        )
+    }) {
+        return Err(ApiError::bad_request(
+            "artifact path must stay within workspace",
+        ));
+    }
+    let file = tokio::fs::canonicalize(workspace.join(requested))
+        .await
+        .map_err(|_| ApiError::bad_request("declared artifact file does not exist"))?;
+    if !file.starts_with(workspace) {
+        return Err(ApiError::bad_request(
+            "artifact path must stay within workspace",
+        ));
+    }
+    let metadata = tokio::fs::metadata(&file)
+        .await
+        .map_err(|error| ApiError::internal(sqlx::Error::Io(error)))?;
+    if !metadata.is_file() {
+        return Err(ApiError::bad_request(
+            "declared artifact path must be a file",
+        ));
+    }
+    Ok(file)
+}
+
+fn artifact_name_from_declared_path(path: &str) -> String {
+    path.replace(['/', '\\'], "__")
+}
+
+#[derive(Debug, sqlx::FromRow)]
+#[allow(dead_code)]
+struct JobRow {
+    id: Uuid,
+    #[allow(dead_code)]
+    stage_id: Uuid,
+    name: String,
+    #[allow(dead_code)]
+    image: String,
+    command: String,
+    required_secrets: Vec<String>,
+    artifact_paths: Vec<String>,
+    status: String,
+    #[allow(dead_code)]
+    pipeline_id: Uuid,
+    #[allow(dead_code)]
+    project_id: Uuid,
+    #[allow(dead_code)]
+    stage_name: String,
+    #[allow(dead_code)]
+    git_ref: String,
+    commit_sha: Option<String>,
+    #[allow(dead_code)]
+    project_name: String,
+}
+
+/// Clones the project repository (bare) into /tmp/forge-runner/<job> at git_ref.
+async fn prepare_workspace(
+    pool: &PgPool,
+    job: &JobRow,
+    config: &RuntimeRunnerConfig,
+) -> Result<std::path::PathBuf, ApiError> {
+    let repo_url: String = sqlx::query_scalar("SELECT repository_url FROM projects WHERE id = $1")
+        .bind(job.project_id)
+        .fetch_one(pool)
+        .await
+        .map_err(ApiError::internal)?;
+
+    let git_ref: String = sqlx::query_scalar("SELECT git_ref FROM pipelines WHERE id = $1")
+        .bind(job.pipeline_id)
+        .fetch_one(pool)
+        .await
+        .map_err(ApiError::internal)?;
+
+    let workspace = workspace_root(config).join(format!("forge-runner-{}", job.id));
+    let _ = tokio::fs::remove_dir_all(&workspace).await;
+    tokio::fs::create_dir_all(&workspace)
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+
+    append_log(
+        pool,
+        job.id,
+        &format!("runner: cloning {repo_url} at {git_ref}"),
+    )
+    .await?;
+
+    // Reject SSH URLs early: the embedded runner container does not ship an
+    // SSH client, so `git clone git@…` dies with "cannot run ssh: No such file
+    // or directory" — a confusing error that leaves the pipeline stuck.
+    if repo_url.starts_with("git@") || repo_url.starts_with("ssh://") {
+        append_log(
+            pool,
+            job.id,
+            &format!(
+                "runner: SSH clone URLs are not supported by the embedded runner; \
+                 configure an HTTP URL or use an external runner with SSH access: {repo_url}"
+            ),
+        )
+        .await?;
+        let _ = tokio::fs::remove_dir_all(&workspace).await;
+        return Err(ApiError::bad_request(
+            "SSH clone URLs are not supported by the embedded runner; \
+             use an HTTP URL or an external runner with SSH access",
+        ));
+    }
+
+    // Prefer local bare repo: avoid HTTP round-trips that can deadlock if the
+    // repository_url points back at the same backend serving this runner.
+    let cloned = clone_from_local_bare(&repo_url, &git_ref, &workspace, &config.git_root).await;
+    if !cloned {
+        if let Err(error) = clone_via_http(&repo_url, &git_ref, &workspace, pool, job.id).await {
+            let _ = tokio::fs::remove_dir_all(&workspace).await;
+            return Err(error);
+        }
+    }
+    Ok(workspace.join("workspace"))
+}
+
+/// Attempts `git clone` from a local bare repo under `CICD_GIT_ROOT`.
+async fn clone_from_local_bare(
+    repo_url: &str,
+    git_ref: &str,
+    workspace: &std::path::Path,
+    git_root: &Path,
+) -> bool {
+    let Some(name) = extract_repo_name_from_url(repo_url) else {
+        return false;
+    };
+    let bare_path = git_root.join(format!("{name}.git"));
+    if !bare_path.is_dir() {
+        return false;
+    }
+    let output = tokio::process::Command::new("git")
+        .arg("clone")
+        .arg("--quiet")
+        .arg("--depth")
+        .arg("50")
+        .arg("--branch")
+        .arg(git_ref)
+        .arg(&bare_path)
+        .arg("workspace")
+        .current_dir(workspace)
+        .output()
+        .await;
+    match output {
+        Ok(out) if out.status.success() => true,
+        Ok(out) => {
+            tracing::warn!(
+                "local bare clone failed for {repo_url}: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+            false
+        }
+        Err(err) => {
+            tracing::warn!("local bare clone spawn failed for {repo_url}: {err}");
+            false
+        }
+    }
+}
+
+async fn clone_via_http(
+    repo_url: &str,
+    git_ref: &str,
+    workspace: &std::path::Path,
+    pool: &PgPool,
+    job_id: Uuid,
+) -> Result<(), ApiError> {
+    let clone = tokio::process::Command::new("git")
+        .arg("clone")
+        .arg("--quiet")
+        .arg("--depth")
+        .arg("50")
+        .arg("--branch")
+        .arg(git_ref)
+        .arg(repo_url)
+        .arg("workspace")
+        .current_dir(workspace)
+        .output()
+        .await
+        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+    if !clone.status.success() {
+        let stderr = String::from_utf8_lossy(&clone.stderr);
+        append_log(
+            pool,
+            job_id,
+            &format!("runner: clone failed: {}", stderr.trim()),
+        )
+        .await?;
+        return Err(ApiError::bad_request(stderr.to_string()));
+    }
+    Ok(())
+}
+
+fn extract_repo_name_from_url(url: &str) -> Option<String> {
+    let path = url.split('/').next_back()?;
+    let name = path.strip_suffix(".git").unwrap_or(path);
+    Some(name.to_string())
+}
+
+async fn refresh_stage(pool: PgPool, job_id: Uuid) -> Result<(), ApiError> {
+    let stage_id: Option<Uuid> = sqlx::query_scalar("SELECT stage_id FROM jobs WHERE id = $1")
+        .bind(job_id)
+        .fetch_optional(&pool)
+        .await
+        .map_err(ApiError::internal)?;
+    if let Some(stage_id) = stage_id {
+        crate::api::refresh_statuses(&pool, stage_id).await?;
+    }
+    Ok(())
+}
+
+fn mask_secrets(line: &str, masks: &[String]) -> String {
+    let mut out = line.to_string();
+    for secret in masks {
+        if !out.contains(secret.as_str()) {
+            continue;
+        }
+        out = out.replace(secret.as_str(), "***");
+    }
+    out
+}
+
+async fn append_log(pool: &PgPool, job_id: Uuid, message: &str) -> Result<(), ApiError> {
+    let attempt_id = crate::store::active_or_latest_attempt_id(pool, job_id)
+        .await
+        .map_err(ApiError::internal)?;
+    append_attempt_log(pool, job_id, attempt_id, message).await
+}
+
+async fn append_attempt_log(
+    pool: &PgPool,
+    job_id: Uuid,
+    attempt_id: Uuid,
+    message: &str,
+) -> Result<(), ApiError> {
+    crate::store::append_job_log(pool, job_id, attempt_id, message)
+        .await
+        .map_err(ApiError::internal)?;
+    Ok(())
+}
+
+/// Wakes up on newly queued pipelines and executes stage-by-stage.
+pub async fn supervisor_loop(pool: PgPool, running: RunningJobs) {
+    supervisor_loop_with_config(pool, running, RuntimeRunnerConfig::from_env_lossy()).await;
+}
+
+pub async fn supervisor_loop_with_config(
+    pool: PgPool,
+    running: RunningJobs,
+    config: RuntimeRunnerConfig,
+) {
+    loop {
+        match poll_and_dispatch_with_config(&pool, running.clone(), &config).await {
+            Ok(()) => {}
+            Err(error) => tracing::error!(%error, "runner poll failed"),
+        }
+        tokio::time::sleep(Duration::from_secs(RUNNER_RECONCILE_INTERVAL_SECONDS)).await;
+    }
+}
+
+/// Reconciles leases and runner health when the embedded executor is disabled.
+pub async fn maintenance_loop(pool: PgPool) {
+    maintenance_loop_with_config(pool, RuntimeRunnerConfig::from_env_lossy()).await;
+}
+
+pub async fn maintenance_loop_with_config(pool: PgPool, config: RuntimeRunnerConfig) {
+    loop {
+        match reconcile_runtime_state_with_config(&pool, &config).await {
+            Ok(()) => {}
+            Err(error) => tracing::error!(%error, "runner maintenance failed"),
+        }
+        tokio::time::sleep(Duration::from_secs(RUNNER_RECONCILE_INTERVAL_SECONDS)).await;
+    }
+}
+
+/// Picks the first queued job of every non-terminal pipeline whose previous
+/// stages all finished successfully, and spawns it.
+async fn poll_and_dispatch(pool: &PgPool, running: RunningJobs) -> Result<(), sqlx::Error> {
+    let config = RuntimeRunnerConfig::from_env_lossy();
+    poll_and_dispatch_with_config(pool, running, &config).await
+}
+
+async fn poll_and_dispatch_with_config(
+    pool: &PgPool,
+    running: RunningJobs,
+    config: &RuntimeRunnerConfig,
+) -> Result<(), sqlx::Error> {
+    reconcile_runtime_state_with_config(pool, config).await?;
+
+    let enqueued = crate::store::enqueue_missing_ready_jobs(pool).await?;
+    if enqueued > 0 {
+        tracing::debug!(enqueued, "runner materialized missing job queue rows");
+    }
+
+    let candidates = sqlx::query_as::<_, Candidate>(
+        "SELECT j.id, j.stage_id \
+         FROM job_queue q \
+         JOIN jobs j ON j.id = q.job_id \
+         JOIN execution_attempts a ON a.id = q.attempt_id \
+         JOIN stages s ON s.id = j.stage_id \
+         JOIN pipelines p ON p.id = s.pipeline_id \
+         WHERE q.state = 'queued' \
+           AND q.not_before <= now() \
+           AND cardinality(q.required_tags) = 0 \
+           AND j.status = 'queued' \
+           AND a.status = 'queued' \
+           AND NOT j.manual \
+           AND p.status IN ('queued','running') \
+           AND NOT EXISTS ( \
+             SELECT 1 FROM job_leases l \
+             WHERE l.job_id = j.id AND l.lease_status = 'active' \
+           ) \
+           AND NOT EXISTS ( \
+             SELECT 1 FROM jobs x JOIN stages xs ON xs.id = x.stage_id \
+             WHERE xs.pipeline_id = p.id AND xs.position < s.position \
+               AND x.status NOT IN ('success') \
+               AND NOT (x.status = 'failed' AND x.allow_failure) \
+           ) \
+           AND NOT EXISTS ( \
+             SELECT 1 FROM jobs y JOIN stages ys ON ys.id = y.stage_id \
+             WHERE ys.pipeline_id = p.id AND ys.position = s.position \
+               AND y.status = 'failed' AND NOT y.allow_failure \
+           ) \
+         ORDER BY q.priority DESC, q.not_before, q.queued_at, p.created_at, s.position, j.position, q.id \
+         LIMIT 16",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    for candidate in candidates {
+        let pool2 = pool.clone();
+        let running2 = running.clone();
+        let config2 = config.clone();
+        tokio::spawn(async move {
+            run_job_with_config(pool2, candidate.id, running2, config2).await;
+        });
+    }
+    Ok(())
+}
+
+async fn reconcile_runtime_state(pool: &PgPool) -> Result<(), sqlx::Error> {
+    let config = RuntimeRunnerConfig::from_env_lossy();
+    reconcile_runtime_state_with_config(pool, &config).await
+}
+
+async fn reconcile_runtime_state_with_config(
+    pool: &PgPool,
+    config: &RuntimeRunnerConfig,
+) -> Result<(), sqlx::Error> {
+    let unacknowledged = reconcile_unacknowledged_leases(pool).await?;
+    if unacknowledged > 0 {
+        tracing::warn!(
+            unacknowledged,
+            "runner reconciled unacknowledged lease offers"
+        );
+    }
+
+    let expired = reconcile_expired_leases(pool).await?;
+    if expired > 0 {
+        tracing::warn!(expired, "runner reconciled expired leases");
+    }
+
+    let stale_runners = reconcile_stale_runners(pool).await?;
+    if stale_runners > 0 {
+        tracing::warn!(stale_runners, "runner marked stale runners offline");
+    }
+
+    let terminal_queues = reconcile_terminal_pipeline_queues(pool).await?;
+    if terminal_queues > 0 {
+        tracing::warn!(
+            terminal_queues,
+            "runner canceled queues from terminal pipelines"
+        );
+    }
+
+    let queue_timeouts = reconcile_queue_timeouts_for_config(pool, config).await?;
+    if queue_timeouts > 0 {
+        tracing::warn!(queue_timeouts, "runner reconciled queue timeouts");
+    }
+
+    let unleased = reconcile_unleased_running_jobs(pool).await?;
+    if unleased > 0 {
+        tracing::warn!(
+            unleased,
+            "runner reconciled running jobs without active leases"
+        );
+    }
+
+    let canceled_leases = cancel_active_leases_for_canceled_pipelines(pool).await?;
+    if canceled_leases > 0 {
+        tracing::info!(
+            canceled_leases,
+            "runner signaled or closed active leases for canceled pipelines"
+        );
+    }
+
+    cancel_jobs_for_canceled_pipelines(pool).await?;
+    Ok(())
+}
+
+async fn cancel_jobs_for_canceled_pipelines(pool: &PgPool) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE jobs SET status = 'canceled', finished_at = now() \
+         WHERE status IN ('queued','running') AND stage_id IN \
+         (SELECT id FROM stages WHERE pipeline_id IN \
+          (SELECT id FROM pipelines WHERE status = 'canceled'))",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "UPDATE execution_attempts \
+         SET status = 'canceled', \
+             finished_at = COALESCE(finished_at, now()), \
+             error_tail = COALESCE(error_tail, 'pipeline canceled') \
+         WHERE status IN ('queued','running') \
+           AND job_id IN ( \
+             SELECT j.id FROM jobs j \
+             JOIN stages s ON s.id = j.stage_id \
+             JOIN pipelines p ON p.id = s.pipeline_id \
+             WHERE p.status = 'canceled' \
+           )",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "UPDATE stages SET status = 'canceled' \
+         WHERE status IN ('queued','running') \
+           AND pipeline_id IN (SELECT id FROM pipelines WHERE status = 'canceled')",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "UPDATE job_queue \
+         SET state = 'canceled', completed_at = COALESCE(completed_at, now()), updated_at = now() \
+         WHERE state IN ('queued','leased') \
+           AND pipeline_id IN (SELECT id FROM pipelines WHERE status = 'canceled')",
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct Candidate {
+    id: Uuid,
+    #[allow(dead_code)]
+    stage_id: Uuid,
+}
+
+/// Builds the `docker run` argument vector for executing a job in an
+/// isolated container. Exported for unit tests.
+/// Workspace root for job checkouts.
+///
+/// Docker mode binds the workspace directory into job containers; a bind
+/// source must exist on the docker *host*, so the workspace has to live in
+/// the shared `forge_runner_workspaces` volume rather than the container's
+/// private /tmp. Host-shell mode keeps /tmp.
+fn workspace_root(config: &RuntimeRunnerConfig) -> std::path::PathBuf {
+    if config.mode == RunnerMode::Docker {
+        std::path::Path::new("/workspaces").to_path_buf()
+    } else {
+        std::env::temp_dir()
+    }
+}
+
+/// K4.4 resource classes: cap the job container footprint per class so a
+/// heavy linker job cannot starve the host while small jobs stay cheap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResourceClass {
+    Small,
+    Standard,
+    Large,
+}
+
+impl ResourceClass {
+    fn from_env() -> Self {
+        match std::env::var("CICD_RUNNER_RESOURCE_CLASS")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "small" => Self::Small,
+            "large" => Self::Large,
+            _ => Self::Standard,
+        }
+    }
+
+    fn memory(&self) -> &'static str {
+        match self {
+            Self::Small => "1g",
+            Self::Standard => "4g",
+            Self::Large => "8g",
+        }
+    }
+
+    fn pids_limit(&self) -> &'static str {
+        match self {
+            Self::Small => "256",
+            Self::Standard => "512",
+            Self::Large => "1024",
+        }
+    }
+
+    fn tmpfs_size(&self) -> &'static str {
+        match self {
+            Self::Small => "1g",
+            Self::Standard => "2g",
+            Self::Large => "4g",
+        }
+    }
+}
+
+/// Absolute path to the hardened seccomp profile shipped in `deploy/`.
+/// Mounted into the runner container by docker-compose (`/seccomp/…`), with a
+/// host fallback for bare-metal runners.
+fn seccomp_profile_path() -> Option<String> {
+    for candidate in [
+        "/seccomp/forge-job-seccomp.json",
+        "/opt/dev/sdlc/CI-CD/deploy/forge-job-seccomp.json",
+    ] {
+        let path = std::path::Path::new(candidate);
+        if path.is_file() {
+            return Some(candidate.to_string());
+        }
+    }
+    None
+}
+
+fn docker_run_args(
+    name: &str,
+    image: &str,
+    command: &str,
+    volume_name: &str,
+    docker_network: &str,
+    shared_sources_volume: Option<&str>,
+    workspace_subdir: &str,
+) -> Vec<String> {
+    let class = ResourceClass::from_env();
+    let mut args = vec![
+        "run".into(),
+        "--rm".into(),
+        "--name".into(),
+        name.into(),
+        // Jobs that need crates.io run with egress to the compose network
+        // (crates.nu + git smart-http only); no-new-privileges and the rest
+        // of the sandbox stay. `none` starves cargo of its registry.
+        "--network".into(),
+        docker_network.into(),
+        "--cap-drop".into(),
+        "ALL".into(),
+        "--security-opt".into(),
+        "no-new-privileges".into(),
+    ];
+    if let Some(profile) = seccomp_profile_path() {
+        args.push("--security-opt".into());
+        args.push(format!("seccomp={profile}"));
+    }
+    args.extend([
+        "--read-only".into(),
+        "--tmpfs".into(),
+        format!("/tmp:rw,exec,size={}", class.tmpfs_size()),
+        "--memory".into(),
+        class.memory().into(),
+        "--memory-swap".into(),
+        class.memory().into(),
+        "--pids-limit".into(),
+        class.pids_limit().into(),
+        "--workdir".into(),
+        "/workspace/workspace".into(),
+        "--mount".into(),
+        format!("type=volume,src={volume_name},dst=/workspaces"),
+        "--mount".into(),
+        // Bind sources resolve on the docker HOST, not inside this container:
+        // point at the local-driver volume mountpoint so the per-job
+        // workspace (shared through the same volume) is visible host-side.
+        format!(
+            "type=bind,src=/var/lib/docker/volumes/{volume_name}/_data/{workspace_subdir},dst=/workspace,readonly=false"
+        ),
+        // Job commands run as the workspace owner (uid 10001) so cargo can
+        // write target/ and the shell can create sibling directories next to
+        // the checkout (path-dependency provisioning).
+        "--user".into(),
+        "10001:10001".into(),
+        // Writable registry cache for cargo: mounted at the registry root
+        // only, so the image toolchain (/usr/local/cargo/bin) stays intact.
+        "--mount".into(),
+        format!("type=volume,src={volume_name}_cargo,dst=/usr/local/cargo/registry"),
+    ]);
+    if let Some(volume) = shared_sources_volume {
+        args.extend([
+            "--mount".into(),
+            format!("type=volume,src={volume},dst=/runner-sources,readonly"),
+        ]);
+    }
+    args.extend([
+        image.into(),
+        "sh".into(),
+        // NOT a login shell: `-l` sources /etc/profile and resets PATH,
+        // hiding image toolchains like /usr/local/cargo/bin (rust images).
+        "-c".into(),
+        command.into(),
+    ]);
+    args
+}
+
+fn shell_capture_command(command: &str) -> String {
+    format!("{{\n{command}\n}} 2>&1")
+}
+
+/// Mirrors the SQL `CASE WHEN` aggregation used in `refresh_statuses` so it
+/// can be unit-tested without a database. Priority: failed > running >
+/// canceled > queued; success only when everything succeeded.
+fn aggregate_statuses<'a, I, S>(statuses: I) -> &'static str
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str> + 'a,
+{
+    let mut has_failed = false;
+    let mut has_running = false;
+    let mut has_canceled = false;
+    let mut all_success = true;
+    let mut any = false;
+    for status in statuses {
+        any = true;
+        match status.as_ref() {
+            "failed" => {
+                has_failed = true;
+                all_success = false;
+            }
+            "running" => {
+                has_running = true;
+                all_success = false;
+            }
+            "canceled" => {
+                has_canceled = true;
+                all_success = false;
+            }
+            "success" => {}
+            _ => {
+                all_success = false;
+            }
+        }
+    }
+    if !any {
+        return "queued";
+    }
+    if has_failed {
+        "failed"
+    } else if has_running {
+        "running"
+    } else if has_canceled {
+        "canceled"
+    } else if all_success {
+        "success"
+    } else {
+        "queued"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cleanup_root_removes_the_job_directory_not_only_checkout() {
+        let root = Path::new("/workspaces/forge-runner-123");
+        assert_eq!(cleanup_root(root), root);
+        assert_eq!(cleanup_root(&root.join("workspace")), root);
+    }
+
+    #[test]
+    fn docker_execution_uses_the_declared_image_and_isolated_workspace_volume() {
+        let args = docker_run_args(
+            "forge-job-123",
+            "rust:1.86",
+            "cargo test",
+            "forge_runner_workspaces",
+            "workspace_cicd",
+            Some("runner_sources"),
+            "forge-runner-123",
+        );
+        assert!(args.iter().any(|arg| {
+            arg.contains("/var/lib/docker/volumes/forge_runner_workspaces/_data/forge-runner-123")
+        }));
+
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--name", "forge-job-123"])
+        );
+        // Jobs run with compose-network egress (cargo needs crates.io);
+        // isolation comes from no-new-privileges + cap-drop + read-only rootfs.
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--network", "workspace_cicd"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--security-opt", "no-new-privileges"])
+        );
+        assert!(args.windows(2).any(|pair| pair == ["--cap-drop", "ALL"]));
+        assert!(args.iter().any(|arg| arg == "rust:1.86"));
+        assert!(
+            args.iter().any(|arg| {
+                arg == "type=volume,src=runner_sources,dst=/runner-sources,readonly"
+            })
+        );
+        assert!(
+            args.windows(3)
+                .any(|pair| pair == ["sh", "-c", "cargo test"])
+        );
+        assert!(!args.iter().any(|arg| arg == "cargo"));
+        // A duplicated --volume/--mount pair for the same destination used to
+        // make every docker execution fail with "Duplicate mount point".
+        let workspace_mounts = args
+            .windows(2)
+            .filter(|pair| pair[0] == "--mount" || pair[0] == "--volume")
+            .filter(|pair| pair[1].ends_with(":/workspaces") || pair[1].contains("dst=/workspaces"))
+            .count();
+        assert_eq!(
+            workspace_mounts, 1,
+            "exactly one /workspaces mount expected"
+        );
+    }
+
+    #[test]
+    fn shell_capture_wraps_multiline_commands_as_one_redirected_group() {
+        assert_eq!(
+            shell_capture_command("set -e\ncargo test\ncargo clippy"),
+            "{\nset -e\ncargo test\ncargo clippy\n} 2>&1"
+        );
+    }
+
+    #[test]
+    fn embedded_runner_enabled_defaults_to_true_and_parses_boolish_values() {
+        assert!(embedded_runner_enabled_from_env(None).unwrap());
+        assert!(embedded_runner_enabled_from_env(Some(" ".to_string())).unwrap());
+        assert!(embedded_runner_enabled_from_env(Some("true".to_string())).unwrap());
+        assert!(embedded_runner_enabled_from_env(Some("1".to_string())).unwrap());
+        assert!(!embedded_runner_enabled_from_env(Some("false".to_string())).unwrap());
+        assert!(!embedded_runner_enabled_from_env(Some("off".to_string())).unwrap());
+        assert!(embedded_runner_enabled_from_env(Some("maybe".to_string())).is_err());
+    }
+
+    #[test]
+    fn runner_queue_timeout_defaults_to_one_day_and_can_be_disabled() {
+        assert_eq!(
+            runner_queue_timeout_seconds_from_env(None).unwrap(),
+            Some(DEFAULT_RUNNER_QUEUE_TIMEOUT_SECONDS)
+        );
+        assert_eq!(
+            runner_queue_timeout_seconds_from_env(Some(" ".to_string())).unwrap(),
+            Some(DEFAULT_RUNNER_QUEUE_TIMEOUT_SECONDS)
+        );
+        assert_eq!(
+            runner_queue_timeout_seconds_from_env(Some("0".to_string())).unwrap(),
+            None
+        );
+        assert_eq!(
+            runner_queue_timeout_seconds_from_env(Some("900".to_string())).unwrap(),
+            Some(900)
+        );
+        assert!(runner_queue_timeout_seconds_from_env(Some("-1".to_string())).is_err());
+        assert!(
+            runner_queue_timeout_seconds_from_env(Some(
+                (MAX_RUNNER_QUEUE_TIMEOUT_SECONDS + 1).to_string()
+            ))
+            .is_err()
+        );
+        assert!(runner_queue_timeout_seconds_from_env(Some("oops".to_string())).is_err());
+    }
+
+    #[test]
+    fn aggregate_orders_priority_failed_running_canceled_then_queued() {
+        assert_eq!(aggregate_statuses(["success", "queued"]), "queued");
+        assert_eq!(aggregate_statuses(["success", "running"]), "running");
+        assert_eq!(aggregate_statuses(["success", "canceled"]), "canceled");
+        assert_eq!(aggregate_statuses(["success", "failed"]), "failed");
+    }
+
+    #[test]
+    fn resource_classes_bound_memory_pids_and_tmpfs() {
+        assert_eq!(ResourceClass::Small.memory(), "1g");
+        assert_eq!(ResourceClass::Standard.memory(), "4g");
+        assert_eq!(ResourceClass::Large.memory(), "8g");
+        assert_eq!(ResourceClass::Small.pids_limit(), "256");
+        assert_eq!(ResourceClass::Standard.pids_limit(), "512");
+        assert_eq!(ResourceClass::Large.pids_limit(), "1024");
+        assert_eq!(ResourceClass::Small.tmpfs_size(), "1g");
+        assert_eq!(ResourceClass::Standard.tmpfs_size(), "2g");
+        assert_eq!(ResourceClass::Large.tmpfs_size(), "4g");
+    }
+
+    #[test]
+    fn docker_args_carry_resource_class_limits() {
+        let args = docker_run_args(
+            "forge-job-rc",
+            "alpine:3.21",
+            "true",
+            "v",
+            "workspace_cicd",
+            None,
+            "sub",
+        );
+        // Standard class defaults from env.
+        assert!(args.windows(2).any(|p| p == ["--memory", "4g"]));
+        assert!(args.windows(2).any(|p| p == ["--pids-limit", "512"]));
+        assert!(
+            args.windows(2)
+                .any(|p| p[0] == "--tmpfs" && p[1].contains("size=2g"))
+        );
+        // Memory == swap keeps the cap hard (no disk-backed overflow).
+        let mem = args
+            .windows(2)
+            .find(|p| p[0] == "--memory")
+            .expect("memory");
+        let swap = args
+            .windows(2)
+            .find(|p| p[0] == "--memory-swap")
+            .expect("swap");
+        assert_eq!(mem[1], swap[1]);
+    }
+
+    #[test]
+    fn seccomp_profile_mounted_into_job_container_when_available() {
+        let args = docker_run_args(
+            "forge-job-sec",
+            "alpine:3.21",
+            "true",
+            "v",
+            "workspace_cicd",
+            None,
+            "sub",
+        );
+        if let Some(profile) = seccomp_profile_path() {
+            let expected = format!("seccomp={profile}");
+            assert!(
+                args.windows(2)
+                    .any(|p| p[0] == "--security-opt" && p[1] == expected)
+            );
+        } else {
+            assert!(!args.iter().any(|a| a.starts_with("seccomp=")));
+        }
+    }
+
+    #[test]
+    fn seccomp_profile_allows_package_manager_filesystem_syscalls() {
+        let profile_path =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../deploy/forge-job-seccomp.json");
+        let profile: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&profile_path).expect("read seccomp profile"),
+        )
+        .expect("parse seccomp profile");
+        let allowed = profile["syscalls"]
+            .as_array()
+            .expect("syscalls array")
+            .iter()
+            .filter(|rule| rule["action"] == "SCMP_ACT_ALLOW")
+            .filter_map(|rule| rule["names"].as_array())
+            .flatten()
+            .filter_map(serde_json::Value::as_str)
+            .collect::<std::collections::HashSet<_>>();
+
+        assert!(allowed.contains("symlink"));
+        assert!(allowed.contains("symlinkat"));
+        assert!(allowed.contains("sendfile"));
+    }
+
+    #[test]
+    fn ssh_urls_are_detected_for_early_rejection() {
+        // The embedded runner cannot SSH-clone; these URLs must be caught
+        // before spawning git so the job gets a clear error, not "cannot
+        // run ssh".
+        assert!("git@github.com:org/repo.git".starts_with("git@"));
+        assert!("ssh://git@gitlab.com/org/repo.git".starts_with("ssh://"));
+        // HTTP URLs must NOT be rejected.
+        assert!(!"http://backend:22801/git/demo.git".starts_with("git@"));
+        assert!(!"http://backend:22801/git/demo.git".starts_with("ssh://"));
+        assert!(!"https://github.com/org/repo.git".starts_with("git@"));
+        assert!(!"https://github.com/org/repo.git".starts_with("ssh://"));
+    }
+}

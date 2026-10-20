@@ -1,0 +1,125 @@
+//! Immutable Issue intent/Accepted phases on the existing operation ledger.
+//! HTTP/Tracker/Git I/O is forbidden while these caller-owned transactions are held.
+use cicd_domain::bug_work_publication::{BugWorkOperationAccepted, BugWorkOperationIntent};
+use sqlx::PgConnection;
+use uuid::Uuid;
+
+pub async fn lock_operation(
+    conn: &mut PgConnection,
+    configuration: Uuid,
+    key: &str,
+) -> Result<(), sqlx::Error> {
+    if sqlx::query_scalar::<_, Uuid>("SELECT id FROM projects WHERE id=$1 FOR UPDATE")
+        .bind(configuration)
+        .fetch_optional(&mut *conn)
+        .await?
+        .is_none()
+    {
+        return Err(sqlx::Error::Protocol(
+            "Bug work configuration is unavailable".into(),
+        ));
+    }
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+        .bind(format!("workspace-operation:{configuration}:{key}"))
+        .execute(conn)
+        .await?;
+    Ok(())
+}
+
+pub async fn logical_key_exists(
+    conn: &mut PgConnection,
+    configuration: Uuid,
+    key: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sdlc_workspace_operations WHERE project_id=$1 AND operation_key=$2 AND operation_phase IN('task','intent'))")
+        .bind(configuration).bind(key).fetch_one(conn).await
+}
+
+pub async fn intent(
+    conn: &mut PgConnection,
+    configuration: Uuid,
+    key: &str,
+) -> Result<Option<(Uuid, BugWorkOperationIntent)>, sqlx::Error> {
+    let row=sqlx::query_as::<_,(Uuid,sqlx::types::Json<BugWorkOperationIntent>)>(
+        "SELECT service_account_id,receipt FROM sdlc_workspace_operations WHERE project_id=$1 AND operation_key=$2 AND purpose='bug_work' AND operation_phase='intent'")
+        .bind(configuration).bind(key).fetch_optional(conn).await?;
+    Ok(row.map(|(subject, receipt)| (subject, receipt.0)))
+}
+
+pub async fn accepted(
+    conn: &mut PgConnection,
+    configuration: Uuid,
+    key: &str,
+) -> Result<Option<(Uuid, BugWorkOperationAccepted)>, sqlx::Error> {
+    let row=sqlx::query_as::<_,(Uuid,sqlx::types::Json<BugWorkOperationAccepted>)>(
+        "SELECT service_account_id,receipt FROM sdlc_workspace_operations WHERE project_id=$1 AND operation_key=$2 AND purpose='bug_work' AND operation_phase='accepted'")
+        .bind(configuration).bind(key).fetch_optional(conn).await?;
+    Ok(row.map(|(subject, receipt)| (subject, receipt.0)))
+}
+
+/// Call only after fresh fixed owner reads and local machine/namespace guards.
+/// This immutable row must COMMIT before a source ref/import effect.
+pub async fn append_intent(
+    conn: &mut PgConnection,
+    subject: Uuid,
+    receipt: &BugWorkOperationIntent,
+) -> Result<(), sqlx::Error> {
+    receipt
+        .request
+        .validate()
+        .map_err(|s| sqlx::Error::Protocol(s.into()))?;
+    if receipt.schema != "forge/bug-work-operation-intent/v1"
+        || receipt.operation_id.is_nil()
+        || receipt.configuration_id.is_nil()
+        || !cicd_domain::bug_work_publication::sha256(&receipt.request_sha256)
+    {
+        return Err(sqlx::Error::Protocol("Invalid Bug work intent".into()));
+    }
+    let r = &receipt.request;
+    let b = &r.bug_work;
+    sqlx::query("INSERT INTO sdlc_workspace_operations(id,project_id,service_account_id,operation_key,request_hash,assignment_id,fencing_token,source_commit,receipt,recorded_at,purpose,operation_phase,bug_id,bug_work_repository_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'bug_work','intent',$11,$12)")
+        .bind(receipt.operation_id).bind(receipt.configuration_id).bind(subject).bind(&r.operation_key).bind(&receipt.request_sha256)
+        .bind(b.assignment_id).bind(b.fence).bind(&b.candidate_commit_sha).bind(sqlx::types::Json(receipt)).bind(receipt.recorded_at)
+        .bind(b.bug_id).bind(r.repository_id).execute(conn).await?;
+    Ok(())
+}
+
+/// Must be in the SAME transaction as pipeline/jobs/plan/trigger insertion.
+/// The database guard also checks exact immutable intent +actual pipeline plan.
+pub async fn append_accepted(
+    conn: &mut PgConnection,
+    subject: Uuid,
+    receipt: &BugWorkOperationAccepted,
+) -> Result<(), sqlx::Error> {
+    receipt
+        .validate()
+        .map_err(|s| sqlx::Error::Protocol(s.into()))?;
+    let r = &receipt.request;
+    let b = &r.bug_work;
+    sqlx::query("INSERT INTO sdlc_workspace_operations(id,project_id,service_account_id,operation_key,request_hash,assignment_id,fencing_token,source_commit,receipt,recorded_at,purpose,operation_phase,bug_id,bug_work_repository_id,parent_intent_id,pipeline_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'bug_work','accepted',$11,$12,$13,$14)")
+        .bind(receipt.operation.operation_id).bind(receipt.configuration_id).bind(subject).bind(&r.operation_key).bind(&receipt.operation.request_sha256)
+        .bind(b.assignment_id).bind(b.fence).bind(&b.candidate_commit_sha).bind(sqlx::types::Json(receipt)).bind(receipt.accepted_at)
+        .bind(b.bug_id).bind(r.repository_id).bind(receipt.intent_operation_id).bind(receipt.pipeline.pipeline_id).execute(conn).await?;
+    Ok(())
+}
+
+/// Actual local pipeline/configuration/catalog authority, not an external Issue FK.
+pub async fn candidate_pipeline(
+    conn: &mut PgConnection,
+    accepted: &BugWorkOperationAccepted,
+) -> Result<Option<crate::sdlc_workspace::CandidatePipelineObservation>, sqlx::Error> {
+    sqlx::query_as("SELECT p.id AS pipeline_id,r.storage_name AS repository_name,p.status,p.finished_at,p.commit_sha,pp.config_source,pp.resolved_commit_sha,pp.config_sha256,pp.plan_sha256,pp.raw_config,pp.plan FROM sdlc_workspace_operations o JOIN pipelines p ON p.id=o.pipeline_id AND p.project_id=o.project_id JOIN projects c ON c.id=p.project_id AND c.repository_id=o.bug_work_repository_id JOIN repository_catalog r ON r.id=c.repository_id JOIN pipeline_plans pp ON pp.pipeline_id=p.id WHERE o.id=$1 AND o.purpose='bug_work' AND o.operation_phase='accepted' AND o.receipt=$2 AND r.ready AND r.kind='hosted'")
+        .bind(accepted.operation.operation_id).bind(sqlx::types::Json(accepted)).fetch_optional(conn).await
+}
+
+pub async fn matches_artifact(
+    conn: &mut PgConnection,
+    manifest: &cicd_domain::bug_work_publication::BugWorkStaticManifest,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sdlc_workspace_operations o JOIN pipelines p ON p.id=o.pipeline_id AND p.project_id=o.project_id JOIN projects c ON c.id=p.project_id AND c.repository_id=o.bug_work_repository_id JOIN pipeline_plans pp ON pp.pipeline_id=p.id JOIN stages s ON s.pipeline_id=p.id JOIN jobs j ON j.stage_id=s.id JOIN artifacts a ON a.job_id=j.id WHERE o.id=$1 AND o.purpose='bug_work' AND o.operation_phase='accepted' AND o.receipt=$2 AND p.id=$3 AND p.commit_sha=$4 AND pp.config_source='repository' AND pp.config_sha256=$5 AND pp.plan_sha256=$6 AND a.id=$7 AND a.attempt_id=$8 AND a.sha256=$9 AND a.size_bytes=$10 AND a.job_id=$11 AND a.purged_at IS NULL AND a.expires_at>clock_timestamp())")
+        .bind(manifest.operation_receipt.operation.operation_id).bind(sqlx::types::Json(&manifest.operation_receipt))
+        .bind(manifest.pipeline_id).bind(&manifest.operation_receipt.request.bug_work.candidate_commit_sha)
+        .bind(&manifest.config_sha256).bind(&manifest.plan_sha256).bind(manifest.artifact.artifact_id)
+        .bind(manifest.artifact.attempt_id).bind(&manifest.artifact.sha256).bind(manifest.artifact.size_bytes)
+        .bind(manifest.artifact.job_id).fetch_one(conn).await
+}

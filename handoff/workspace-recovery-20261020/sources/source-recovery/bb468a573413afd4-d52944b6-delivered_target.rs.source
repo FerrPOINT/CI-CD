@@ -1,0 +1,83 @@
+//! Read-only technical serving identity, never a business verification verdict.
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeliveredProjectRef {
+    pub tracker_instance_id: Uuid,
+    pub project_id: Uuid,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DeliveredTargetStatus {
+    Confirmed,
+    Unavailable,
+    Changed,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ServingIdentity {
+    /// Digests of actual fresh HTTP response bodies, not caller assertions.
+    pub version_body_sha256: String,
+    pub artifact_body_sha256: String,
+    pub observed_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeliveredTarget {
+    pub delivery_ref: String,
+    pub operation_key: String,
+    /// Positive decimal string. A JSON number would lose u64 precision in JS.
+    pub generation: String,
+    pub manifest_sha256: String,
+    pub commit_sha: String,
+    pub artifact_id: Uuid,
+    pub artifact_digest: String,
+    /// Credential-free owner-configured target, never supplied by an API caller.
+    pub target_url: String,
+    pub serving_identity: ServingIdentity,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeliveredTargetReadback {
+    pub schema: String,
+    pub producer_version: String,
+    pub project: DeliveredProjectRef,
+    pub configuration_id: Uuid,
+    pub repository_id: Uuid,
+    pub environment_id: Uuid,
+    pub target_ref: String,
+    pub status: DeliveredTargetStatus,
+    pub observed_at: DateTime<Utc>,
+    pub blocked_reasons: Vec<String>,
+    /// Absent unless the complete fresh serving observation succeeded.
+    pub target: Option<DeliveredTarget>,
+}
+
+pub fn valid_target_ref(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_.:".contains(&b))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn target_locator_cannot_be_a_url_path_or_unbounded_command() {
+        assert!(valid_target_ref("qa:portal-v1"));
+        for value in ["", "http://localhost/", "../qa", "qa?verified=true", "qa\n"] {
+            assert!(!valid_target_ref(value), "{value:?}");
+        }
+        assert!(!valid_target_ref(&"a".repeat(129)));
+    }
+}

@@ -1,0 +1,381 @@
+//! Fault boundaries on actual runner artifact + existing static publisher.
+//! The attached remote Bug metadata is synthetic SQL input, not Tracker authority qualification.
+use super::*;
+use cicd::{domain::bug_work_publication::*, store::bug_work_publication as bug_ledger};
+
+pub(super) async fn fixture() -> (ActualDelivery, Uuid, Uuid, Uuid) {
+    // The QA driver supplies this process-only origin; reserve it before the
+    // fixture creates any ephemeral servers. Never mutate process environment.
+    let origin = reqwest::Url::parse(
+        &std::env::var("CICD_NAMESPACE__PUBLIC_GIT_ORIGIN")
+            .expect("owned loopback public Git origin required"),
+    )
+    .unwrap();
+    assert_eq!(origin.scheme(), "http");
+    assert_eq!(origin.host_str(), Some("127.0.0.1"));
+    assert_eq!(origin.path(), "/");
+    assert!(origin.username().is_empty() && origin.password().is_none());
+    assert!(origin.query().is_none() && origin.fragment().is_none());
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", origin.port().unwrap()))
+        .await
+        .unwrap();
+    let mut t = ActualDelivery::new().await;
+    let tracker = Uuid::new_v4();
+    t.f.request.binding.tracker_instance_id = tracker.to_string();
+    let project = t.f.request.binding.tracker_project_id;
+    let repository = t.f.request.repository_id;
+    let group = Uuid::new_v4();
+    let registry: Uuid = std::env::var("CICD_NAMESPACE__REGISTRY_INSTANCE_ID")
+        .unwrap()
+        .parse()
+        .unwrap();
+    let namespace = Uuid::new_v4();
+    let environment = Uuid::new_v4();
+    let reader = Uuid::new_v4();
+    let token_id = Uuid::new_v4();
+    let token = format!("forge_sat_{}", Uuid::new_v4().simple());
+    sqlx::query(
+        "INSERT INTO git_groups(id,slug,name,namespace_managed) VALUES($1,$2,'Delivered QA',true)",
+    )
+    .bind(group)
+    .bind(format!("qa-{}", group.simple()))
+    .execute(&t.f.pool)
+    .await
+    .unwrap();
+    let command = serde_json::json!({
+        "schema_version":1,"namespace":{"registry_instance_id":registry,"namespace_id":namespace},
+        "resource":{"instance_id":std::env::var("CICD_NAMESPACE__INSTANCE_ID").unwrap(),"kind":"git_group","resource_id":group},
+        "operation_id":Uuid::new_v4(),"generation":1,"state":"active","create_spec":null
+    });
+    sqlx::query("INSERT INTO forge_namespace_bindings(resource_id,registry_instance_id,namespace_id,generation,state,command) VALUES($1,$2,$3,1,'active',$4)")
+        .bind(group).bind(registry).bind(namespace).bind(command).execute(&t.f.pool).await.unwrap();
+    sqlx::query("UPDATE repository_catalog SET group_id=$2 WHERE id=$1")
+        .bind(repository)
+        .bind(group)
+        .execute(&t.f.pool)
+        .await
+        .unwrap();
+    // Normal public Smart HTTP checkout of synthetic source, not an auth bypass.
+    // The grouped alias resolves to the fixture's unchanged immutable storage.
+    sqlx::query("UPDATE repositories SET visibility='public' WHERE id=$1")
+        .bind(repository)
+        .execute(&t.f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO repository_aliases(alias,repository_id) SELECT g.slug||'/'||r.slug,r.id FROM repository_catalog r JOIN git_groups g ON g.id=r.group_id WHERE r.id=$1")
+        .bind(repository).execute(&t.f.pool).await.unwrap();
+    sqlx::query("INSERT INTO forge_workspace_projects(registry_instance_id,namespace_id,tracker_instance_id,tracker_project_id,generation,name,project_key,state,observed_at) VALUES($1,$2,$3,$4,1,'Delivered QA','QA','active',now())")
+        .bind(registry).bind(namespace).bind(tracker).bind(project).execute(&t.f.pool).await.unwrap();
+    sqlx::query("INSERT INTO environments(id,project_id,name) VALUES($1,$2,'QA delivered target')")
+        .bind(environment)
+        .bind(t.f.project)
+        .execute(&t.f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO service_accounts(id,name) VALUES($1,$2)")
+        .bind(reader)
+        .bind(format!("delivered-reader-{reader}"))
+        .execute(&t.f.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO api_tokens(id,name,token_hash,token_hint,project_id,scopes,principal_type,service_account_id) VALUES($1,'delivered reader',$2,'qa-only',$3,ARRAY['api:read'],'service_account',$4)")
+        .bind(token_id).bind(cicd::auth::hash_token(&token)).bind(t.f.project).bind(reader).execute(&t.f.pool).await.unwrap();
+    let mapping = t.temp.join("delivered-targets.json");
+    std::fs::write(
+        &mapping,
+        serde_json::to_vec(&serde_json::json!({
+            "schema":"forge/delivered-targets-config/v1", "targets":[{
+                "configurationId":t.f.project,"repositoryId":repository,"environmentId":environment,
+                "targetRef":"qa:app","root":t.target_root,"policy":t.policy_file,
+            }]
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let mut config = cicd::config::RuntimeConfig::test_default()
+        .with_auth_secret(Some("workspace-test-secret".into()));
+    config.sdlc_workspace.operation_subject = Some(t.f.subject);
+    config.sdlc_workspace.local_delivery_root = Some(t.target_root.clone());
+    config.sdlc_workspace.local_delivery_policy = Some(t.policy_file.clone());
+    config.sdlc_workspace.delivered_target_subject = Some(reader);
+    config.sdlc_workspace.source_reader_subject = Some(reader);
+    config.sdlc_workspace.delivered_targets = Some(mapping);
+    config.artifacts.root = t.artifact_root.clone();
+    t.f.app = cicd::api::app_with_git_and_config(
+        Some(t.f.pool.clone()),
+        cicd::git_host::GitConfig {
+            root: t.git_root.clone(),
+            token: None,
+            internal_token: None,
+        },
+        None,
+        config,
+    )
+    .unwrap();
+    // Exercise the same configured AppState through real runner HTTP and curl.
+    t.server.abort();
+    t.address = listener.local_addr().unwrap();
+    let app = t.f.app.clone();
+    t.server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    (t, tracker, project, repository)
+}
+
+async fn accepted(
+    t: &ActualDelivery,
+    tracker: Uuid,
+    project: Uuid,
+    repository: Uuid,
+    artifact: Uuid,
+) -> BugWorkOperationAccepted {
+    let vector: serde_json::Value = serde_json::from_str(include_str!(
+        "../../domain/tests/fixtures/bug-work-delivery-v1.json"
+    ))
+    .unwrap();
+    let mut binding: BugWorkPublicationBinding =
+        serde_json::from_value(vector["proof"]["bugWork"].clone()).unwrap();
+    binding.base_commit_sha = physical_git(&t.source, &["rev-parse", "HEAD^"]);
+    binding.candidate_commit_sha = t.f.request.source_commit.clone();
+    let (pipeline,config,plan):(Uuid,String,String)=sqlx::query_as("SELECT p.id,pp.config_sha256,pp.plan_sha256 FROM artifacts a JOIN jobs j ON j.id=a.job_id JOIN stages s ON s.id=j.stage_id JOIN pipelines p ON p.id=s.pipeline_id JOIN pipeline_plans pp ON pp.pipeline_id=p.id WHERE a.id=$1").bind(artifact).fetch_one(&t.f.pool).await.unwrap();
+    let request = BugWorkOperationRequest {
+        contract_version: 1,
+        operation_key: "bug:actual-artifact".into(),
+        project: cicd::domain::delivered_target::DeliveredProjectRef {
+            tracker_instance_id: tracker,
+            project_id: project,
+        },
+        bug_work: binding,
+        repository_id: repository,
+        candidate_tree_id: physical_git(&t.source, &["rev-parse", "HEAD^{tree}"]),
+        bundle_sha256: "b".repeat(64),
+        bundle_size_bytes: 128,
+    };
+    let intent = BugWorkOperationIntent {
+        schema: "forge/bug-work-operation-intent/v1".into(),
+        operation_id: Uuid::new_v4(),
+        configuration_id: t.f.project,
+        request_sha256: hash(
+            &serde_json::to_vec(&serde_json::to_value(&request).unwrap()).unwrap(),
+        ),
+        request: request.clone(),
+        recorded_at: chrono::Utc::now(),
+    };
+    let accepted = BugWorkOperationAccepted {
+        schema: "forge/bug-work-operation-accepted/v1".into(),
+        operation: BugWorkOperationIdentity {
+            operation_id: Uuid::new_v4(),
+            operation_key: request.operation_key.clone(),
+            request_sha256: intent.request_sha256.clone(),
+        },
+        intent_operation_id: intent.operation_id,
+        configuration_id: t.f.project,
+        candidate_ref: request.candidate_ref(),
+        request,
+        pipeline: BugWorkPipelineIdentity {
+            pipeline_id: pipeline,
+            config_sha256: config,
+            plan_sha256: plan,
+        },
+        accepted_at: chrono::Utc::now(),
+    };
+    let mut tx = t.f.pool.begin().await.unwrap();
+    bug_ledger::append_intent(&mut tx, t.f.subject, &intent)
+        .await
+        .unwrap();
+    bug_ledger::append_accepted(&mut tx, t.f.subject, &accepted)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    accepted
+}
+
+fn process(
+    t: &ActualDelivery,
+    command: &BugWorkPublishCommand,
+    reconcile: bool,
+) -> tokio::process::Command {
+    let file = t.temp.join(format!(
+        "bug-command-{}.json",
+        hash(command.operation_key.as_bytes())
+    ));
+    std::fs::write(&file, serde_json::to_vec(command).unwrap()).unwrap();
+    let token = t.temp.join("unused-owner-reader.token");
+    std::fs::write(&token, "sdlc_pat_synthetic-never-sent").unwrap();
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_forge-delivery"));
+    child
+        .kill_on_drop(true)
+        .args([
+            "--bug-work",
+            "--project-id",
+            &t.f.project.to_string(),
+            "--command-file",
+        ])
+        .arg(file)
+        .env("CICD_DATABASE_URL", &t.database_url)
+        .env("CICD_AUTH_SECRET", "workspace-test-secret")
+        .env("CICD_GIT_ROOT", &t.git_root)
+        .env("CICD_ARTIFACTS_DIR", &t.artifact_root)
+        .env("CICD_BUG_WORK_ENABLED", "true")
+        .env("CICD_BUG_WORK_PRODUCER_SUBJECT", t.f.subject.to_string())
+        .env("CICD_BUG_WORK_TRACKER_ORIGIN", "http://127.0.0.1:9/")
+        .env("CICD_BUG_WORK_TRACKER_READER_TOKEN_FILE", token)
+        .env("CICD_BUG_WORK_CONTROLLER_ROOT", &t.temp)
+        .env(
+            "CICD_DELIVERED_TARGETS",
+            t.temp.join("delivered-targets.json"),
+        )
+        .env("CICD_LOCAL_DELIVERY_MODE", "local-verification")
+        .env("CICD_LOCAL_DELIVERY_TOKEN", &t.f.token)
+        .env_remove("CICD_AUTH__CENTRAL_JWKS_URI")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    if reconcile {
+        child.arg("--reconcile");
+    }
+    child
+}
+pub(super) async fn execute(
+    t: &ActualDelivery,
+    command: &BugWorkPublishCommand,
+    reconcile: bool,
+) -> serde_json::Value {
+    let out = tokio::time::timeout(
+        Duration::from_secs(25),
+        process(t, command, reconcile).output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    serde_json::from_slice(&out.stdout).unwrap()
+}
+async fn entered(t: &ActualDelivery, phase: &str) {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while !t.temp.join(format!("entered-bug-work-{phase}")).exists() {
+        assert!(Instant::now() < deadline, "publication boundary {phase}");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+async fn revoke(t: &ActualDelivery) {
+    let changed = sqlx::query(
+        "UPDATE api_tokens SET revoked_at=now() WHERE token_hash=$1 AND revoked_at IS NULL",
+    )
+    .bind(cicd::auth::hash_token(&t.f.token))
+    .execute(&t.f.pool)
+    .await
+    .unwrap();
+    assert_eq!(changed.rows_affected(), 1);
+}
+async fn rotate(t: &mut ActualDelivery) {
+    let token = format!("forge_sat_{}", Uuid::new_v4().simple());
+    sqlx::query("INSERT INTO api_tokens(id,name,token_hash,token_hint,project_id,scopes,principal_type,service_account_id) VALUES($1,'replacement publication producer',$2,'qa-only',$3,ARRAY['api:read','api:write'],'service_account',$4)")
+        .bind(Uuid::new_v4()).bind(cicd::auth::hash_token(&token)).bind(t.f.project).bind(t.f.subject).execute(&t.f.pool).await.unwrap();
+    t.f.token = token;
+}
+
+#[tokio::test]
+async fn bug_work_actual_publisher_stage_and_probe_revocation_and_original_key_crash_recovery() {
+    let (mut t, tracker, project, repository) = fixture().await;
+    let (built, _) = t
+        .build(
+            "bugwork-publisher-B",
+            "version=B\nhealth=ok\nacceptance=ok\n",
+        )
+        .await;
+    let original = accepted(&t, tracker, project, repository, built.artifact_id.unwrap()).await;
+    let command = BugWorkPublishCommand {
+        schema: "forge/bug-work-publication-command/v1".into(),
+        operation_key: "publish:bug-stage".into(),
+        original_operation_key: original.operation.operation_key.clone(),
+        original_request_sha256: original.operation.request_sha256.clone(),
+        target_ref: "qa:app".into(),
+        artifact_id: built.artifact_id.unwrap(),
+        expected_manifest_sha256: None,
+    };
+    let stage = t.temp.join("block-bug-work-stage");
+    std::fs::write(&stage, b"hold").unwrap();
+    let child = process(&t, &command, false).spawn().unwrap();
+    entered(&t, "stage").await;
+    revoke(&t).await;
+    std::fs::remove_file(&stage).unwrap();
+    let failed = tokio::time::timeout(Duration::from_secs(10), child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!failed.status.success());
+    assert!(
+        !t.target_root.join("current.json").exists(),
+        "revocation after real stage prevents publication"
+    );
+    rotate(&mut t).await;
+    let first = execute(&t, &command, true).await;
+    assert_eq!(first["receipt"]["status"], "verified");
+    let first_pointer = std::fs::read(t.target_root.join("current.json")).unwrap();
+    let confirmed = std::fs::read(t.target_root.join("confirmed.json")).unwrap();
+    let manifest = first["currentManifestSha256"].as_str().unwrap().to_owned();
+    // Genuine serving probes finish first, then fresh producer revocation must
+    // prevent a new confirmation/result. Published bytes are not rolled back.
+    let mut probe = command.clone();
+    probe.operation_key = "publish:bug-probe".into();
+    probe.expected_manifest_sha256 = Some(manifest.clone());
+    std::fs::write(t.temp.join("block-bug-work-probe"), b"hold").unwrap();
+    let child = process(&t, &probe, false).spawn().unwrap();
+    entered(&t, "probe").await;
+    revoke(&t).await;
+    std::fs::remove_file(t.temp.join("block-bug-work-probe")).unwrap();
+    let failed = tokio::time::timeout(Duration::from_secs(10), child.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!failed.status.success());
+    assert_eq!(
+        std::fs::read(t.target_root.join("confirmed.json")).unwrap(),
+        confirmed
+    );
+    assert!(
+        !t.target_root
+            .join("operations")
+            .join(hash(probe.operation_key.as_bytes()))
+            .join("result.json")
+            .exists()
+    );
+    rotate(&mut t).await;
+    assert_eq!(
+        execute(&t, &probe, true).await["receipt"]["status"],
+        "verified"
+    );
+    assert_ne!(
+        std::fs::read(t.target_root.join("current.json")).unwrap(),
+        first_pointer
+    );
+    // Kill after durable intent+real staging but before the pointer. Original
+    // recovery reuses the same Accepted pipeline/body and does not mint a build.
+    let mut crash = command.clone();
+    crash.operation_key = "publish:bug-crash".into();
+    crash.expected_manifest_sha256 = Some(manifest.clone());
+    std::fs::remove_file(t.temp.join("entered-bug-work-stage")).unwrap();
+    std::fs::write(&stage, b"hold").unwrap();
+    let before = std::fs::read(t.target_root.join("current.json")).unwrap();
+    let mut child = process(&t, &crash, false).spawn().unwrap();
+    entered(&t, "stage").await;
+    child.kill().await.unwrap();
+    std::fs::remove_file(&stage).unwrap();
+    assert_eq!(
+        std::fs::read(t.target_root.join("current.json")).unwrap(),
+        before
+    );
+    let recovered = execute(&t, &crash, true).await;
+    assert_eq!(recovered["receipt"]["status"], "verified");
+    let mut next = crash.clone();
+    next.operation_key = "publish:bug-after-recovery".into();
+    assert_eq!(
+        execute(&t, &next, false).await["receipt"]["status"],
+        "verified",
+        "target must be settled after original recovery"
+    );
+    let builds:i64=sqlx::query_scalar("SELECT count(*) FROM sdlc_workspace_operations WHERE project_id=$1 AND operation_key=$2 AND operation_phase='accepted'").bind(t.f.project).bind(&original.operation.operation_key).fetch_one(&t.f.pool).await.unwrap();
+    assert_eq!(builds, 1);
+}

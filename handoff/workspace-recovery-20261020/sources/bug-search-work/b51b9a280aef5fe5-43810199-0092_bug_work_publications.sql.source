@@ -1,0 +1,127 @@
+-- Closed Issue purpose on the existing immutable operation ledger. No Task surrogate or queue.
+ALTER TABLE sdlc_workspace_operations
+ ADD COLUMN purpose text NOT NULL DEFAULT 'task',
+ ADD COLUMN operation_phase text NOT NULL DEFAULT 'task',
+ ADD COLUMN parent_intent_id uuid REFERENCES sdlc_workspace_operations(id) ON DELETE RESTRICT,
+ ADD COLUMN bug_id uuid,
+ ADD COLUMN bug_work_repository_id uuid REFERENCES repository_catalog(id) ON DELETE RESTRICT,
+ ADD COLUMN pipeline_id uuid REFERENCES pipelines(id) ON DELETE RESTRICT;
+
+-- Keep every original CHECK expression intact on legacy Task rows. Unknown
+-- future CHECKs are retained too; no original0040 SQL/checksum/data is rewritten.
+DO $$ DECLARE c record; BEGIN
+ FOR c IN SELECT conname,pg_get_expr(conbin,conrelid) AS expression
+  FROM pg_constraint WHERE conrelid='sdlc_workspace_operations'::regclass AND contype='c'
+ LOOP
+  EXECUTE format('ALTER TABLE sdlc_workspace_operations DROP CONSTRAINT %I',c.conname);
+  EXECUTE format('ALTER TABLE sdlc_workspace_operations ADD CONSTRAINT %I CHECK ((purpose=''bug_work'' OR (%s)) IS TRUE)',c.conname,c.expression);
+ END LOOP;
+END $$;
+
+ALTER TABLE sdlc_workspace_operations
+ ALTER COLUMN task_id DROP NOT NULL,
+ ALTER COLUMN root_task_id DROP NOT NULL,
+ ALTER COLUMN execution_id DROP NOT NULL,
+ ALTER COLUMN lease_id DROP NOT NULL,
+ ALTER COLUMN attempt_id DROP NOT NULL,
+ ALTER COLUMN workspace_generation DROP NOT NULL,
+ ALTER COLUMN repository_id DROP NOT NULL,
+ ADD CONSTRAINT workspace_operation_purpose CHECK(purpose IN('task','bug_work')),
+ ADD CONSTRAINT workspace_operation_phase CHECK(
+   (purpose='task' AND operation_phase='task' AND parent_intent_id IS NULL AND bug_id IS NULL AND bug_work_repository_id IS NULL AND pipeline_id IS NULL
+     AND task_id IS NOT NULL AND root_task_id IS NOT NULL AND execution_id IS NOT NULL AND lease_id IS NOT NULL
+     AND attempt_id IS NOT NULL AND workspace_generation IS NOT NULL AND repository_id IS NOT NULL)
+   OR (purpose='bug_work' AND operation_phase IN('intent','accepted')
+     AND task_id IS NULL AND root_task_id IS NULL AND execution_id IS NULL AND lease_id IS NULL
+     AND attempt_id IS NULL AND workspace_generation IS NULL AND repository_id IS NULL
+     AND bug_id IS NOT NULL AND bug_id<>'00000000-0000-0000-0000-000000000000'::uuid
+     AND bug_work_repository_id IS NOT NULL
+     AND ((operation_phase='intent' AND parent_intent_id IS NULL AND pipeline_id IS NULL)
+       OR (operation_phase='accepted' AND parent_intent_id IS NOT NULL AND pipeline_id IS NOT NULL)))),
+ ADD CONSTRAINT bug_work_operation_closed CHECK(purpose='task' OR ((
+   id<>'00000000-0000-0000-0000-000000000000'::uuid
+   AND assignment_id<>'00000000-0000-0000-0000-000000000000'::uuid
+   AND operation_key ~ '^[A-Za-z0-9_.:-]{1,128}$'
+   AND request_hash ~ '^[0-9a-f]{64}$'
+   AND fencing_token BETWEEN 1 AND 9007199254740991
+   AND source_commit ~ '^([0-9a-f]{40}|[0-9a-f]{64})$'
+   AND jsonb_typeof(receipt)='object' AND octet_length(receipt::text)<=32768
+   AND receipt->>'configurationId'=project_id::text
+   AND receipt->'request'->>'contractVersion'='1'
+   AND jsonb_typeof(receipt->'request'->'contractVersion')='number'
+   AND (receipt#>>'{request,project,trackerInstanceId}')::uuid<>'00000000-0000-0000-0000-000000000000'::uuid
+   AND (receipt#>>'{request,project,projectId}')::uuid<>'00000000-0000-0000-0000-000000000000'::uuid
+   AND ((receipt#>'{request,project}')-ARRAY['trackerInstanceId','projectId'])='{}'::jsonb
+   AND receipt->'request'->>'operationKey'=operation_key
+   AND receipt->'request'->>'repositoryId'=bug_work_repository_id::text
+   AND receipt#>>'{request,bugWork,bugId}'=bug_id::text
+   AND receipt#>>'{request,bugWork,assignmentId}'=assignment_id::text
+   AND receipt#>>'{request,bugWork,fence}'=fencing_token::text
+   AND jsonb_typeof(receipt#>'{request,bugWork,fence}')='number'
+   AND jsonb_typeof(receipt#>'{request,bugWork,ownerSubject}')='string'
+   AND length(btrim(receipt#>>'{request,bugWork,ownerSubject}')) BETWEEN 1 AND 256
+   AND receipt#>>'{request,bugWork,candidateCommitSha}'=source_commit
+   AND receipt#>>'{request,bugWork,baseCommitSha}'<>source_commit
+   AND receipt#>>'{request,bugWork,baseCommitSha}' ~ '^([0-9a-f]{40}|[0-9a-f]{64})$'
+   AND receipt->'request'->>'candidateTreeId' ~ '^([0-9a-f]{40}|[0-9a-f]{64})$'
+   AND receipt#>>'{request,bugWork,assignmentSha256}' ~ '^[0-9a-f]{64}$'
+   AND receipt#>>'{request,bugWork,runtimeBindingSha256}' ~ '^[0-9a-f]{64}$'
+   AND receipt#>>'{request,bugWork,sourceContextSha256}' ~ '^[0-9a-f]{64}$'
+   AND receipt#>>'{request,bugWork,verificationBasisSha256}' ~ '^[0-9a-f]{64}$'
+   AND receipt#>>'{request,bugWork,canonicalBasisSha256}' ~ '^[0-9a-f]{64}$'
+   AND receipt->'request'->>'bundleSha256' ~ '^[0-9a-f]{64}$'
+   AND (receipt->'request'->>'bundleSizeBytes')::bigint BETWEEN 1 AND 33554432
+   AND jsonb_typeof(receipt->'request'->'bundleSizeBytes')='number'
+   AND ((receipt->'request')-ARRAY['contractVersion','operationKey','project','bugWork','repositoryId','candidateTreeId','bundleSha256','bundleSizeBytes'])='{}'::jsonb
+   AND ((receipt#>'{request,bugWork}')-ARRAY['bugId','assignmentId','assignmentSha256','fence','ownerSubject','runtimeBindingSha256','sourceContextSha256','verificationBasisSha256','canonicalBasisSha256','baseCommitSha','candidateCommitSha'])='{}'::jsonb
+   AND ((operation_phase='intent'
+      AND receipt->>'schema'='forge/bug-work-operation-intent/v1'
+      AND receipt->>'operationId'=id::text AND receipt->>'requestSha256'=request_hash)
+     OR (operation_phase='accepted'
+      AND receipt->>'schema'='forge/bug-work-operation-accepted/v1'
+      AND receipt#>>'{operation,operationId}'=id::text
+      AND receipt#>>'{operation,operationKey}'=operation_key
+      AND receipt#>>'{operation,requestSha256}'=request_hash
+      AND receipt->>'intentOperationId'=parent_intent_id::text
+      AND receipt#>>'{pipeline,pipelineId}'=pipeline_id::text
+      AND receipt#>>'{pipeline,configSha256}' ~ '^[0-9a-f]{64}$'
+      AND receipt#>>'{pipeline,planSha256}' ~ '^[0-9a-f]{64}$'
+      AND receipt->>'candidateRef'='refs/fleet/bug-work/'||assignment_id::text||'/'||source_commit))
+ ) IS TRUE));
+
+-- One logical external key across legacy Task/Issue intents; Accepted is a
+-- second immutable phase of that SAME key, never an UPDATE or a second build.
+ALTER TABLE sdlc_workspace_operations DROP CONSTRAINT sdlc_workspace_operations_project_id_operation_key_key;
+CREATE UNIQUE INDEX workspace_operation_logical_key ON sdlc_workspace_operations(project_id,operation_key)
+ WHERE operation_phase IN('task','intent');
+CREATE UNIQUE INDEX workspace_operation_phase_key ON sdlc_workspace_operations(project_id,operation_key,operation_phase);
+CREATE UNIQUE INDEX bug_work_one_accepted ON sdlc_workspace_operations(parent_intent_id)
+ WHERE purpose='bug_work' AND operation_phase='accepted';
+CREATE INDEX bug_work_original_binding ON sdlc_workspace_operations(project_id,assignment_id,fencing_token)
+ WHERE purpose='bug_work';
+
+CREATE FUNCTION guard_bug_work_operation_parent() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE original sdlc_workspace_operations%ROWTYPE; actual pipelines%ROWTYPE; plan pipeline_plans%ROWTYPE;
+BEGIN
+ IF NEW.purpose<>'bug_work' THEN RETURN NEW; END IF;
+ PERFORM id FROM projects WHERE id=NEW.project_id AND repository_id=NEW.bug_work_repository_id FOR SHARE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'bug_work_configuration_repository_mismatch' USING ERRCODE='23514'; END IF;
+ IF NEW.operation_phase<>'accepted' THEN RETURN NEW; END IF;
+ SELECT * INTO original FROM sdlc_workspace_operations WHERE id=NEW.parent_intent_id FOR SHARE;
+ IF NOT FOUND OR original.purpose<>'bug_work' OR original.operation_phase<>'intent'
+   OR (NEW.project_id,NEW.service_account_id,NEW.operation_key,NEW.request_hash,NEW.assignment_id,NEW.fencing_token,NEW.bug_id,NEW.bug_work_repository_id,NEW.source_commit)
+      IS DISTINCT FROM (original.project_id,original.service_account_id,original.operation_key,original.request_hash,original.assignment_id,original.fencing_token,original.bug_id,original.bug_work_repository_id,original.source_commit)
+   OR NEW.receipt->'request' IS DISTINCT FROM original.receipt->'request'
+ THEN RAISE EXCEPTION 'bug_work_original_intent_mismatch' USING ERRCODE='23514'; END IF;
+ SELECT * INTO actual FROM pipelines WHERE id=NEW.pipeline_id FOR SHARE;
+ IF NOT FOUND OR actual.project_id<>NEW.project_id OR actual.commit_sha IS DISTINCT FROM NEW.source_commit
+ THEN RAISE EXCEPTION 'bug_work_actual_pipeline_mismatch' USING ERRCODE='23514'; END IF;
+ SELECT * INTO plan FROM pipeline_plans WHERE pipeline_id=NEW.pipeline_id FOR SHARE;
+ IF NOT FOUND OR plan.config_source<>'repository' OR plan.resolved_commit_sha IS DISTINCT FROM NEW.source_commit
+   OR plan.config_sha256 IS DISTINCT FROM NEW.receipt#>>'{pipeline,configSha256}'
+   OR plan.plan_sha256 IS DISTINCT FROM NEW.receipt#>>'{pipeline,planSha256}'
+ THEN RAISE EXCEPTION 'bug_work_actual_plan_mismatch' USING ERRCODE='23514'; END IF;
+ RETURN NEW;
+END $$;
+CREATE TRIGGER bug_work_operation_parent BEFORE INSERT ON sdlc_workspace_operations
+ FOR EACH ROW EXECUTE FUNCTION guard_bug_work_operation_parent();

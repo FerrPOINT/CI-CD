@@ -1,0 +1,24 @@
+import { ConfirmDialog as BaseConfirmDialog } from '@sdlc/ui/ui'
+import { useTranslation } from 'react-i18next'
+import type { RefObject } from 'react'
+
+interface ConfirmDialogProps {
+  open: boolean
+  onConfirm: () => void
+  onCancel: () => void
+  title: string
+  description?: string
+  error?: string
+  confirmLabel?: string
+  cancelLabel?: string
+  closeOnConfirm?: boolean
+  pending?: boolean
+  confirmVariant?: 'default' | 'destructive'
+  returnFocusRef?: RefObject<HTMLElement | null>
+  fallbackFocusRef?: RefObject<HTMLElement | null>
+}
+
+export function ConfirmDialog({ onCancel, pending, confirmLabel, closeOnConfirm = true, ...props }: ConfirmDialogProps) {
+  const { t } = useTranslation()
+  return <BaseConfirmDialog {...props} isPending={pending} confirmLabel={confirmLabel ?? t('common.delete')} closeOnConfirm={closeOnConfirm} onOpenChange={open => { if (!open) onCancel() }} />
+}

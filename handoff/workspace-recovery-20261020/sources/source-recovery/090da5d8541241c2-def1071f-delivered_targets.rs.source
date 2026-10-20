@@ -1,0 +1,342 @@
+use super::{ApiError, ApiResult, AppState};
+use crate::{
+    auth::AccessClaims, domain::delivered_target::*, store::delivered_target as store,
+    task_delivery::delivered_target as owner,
+};
+use axum::{
+    Extension, Json, Router,
+    extract::{Path, Query, State},
+    routing::get,
+};
+use serde::Deserialize;
+use std::{
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
+use tokio::sync::Semaphore;
+use uuid::Uuid;
+
+#[derive(Deserialize, utoipa::IntoParams)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DeliveredTargetQuery {
+    tracker_instance_id: Uuid,
+    project_id: Uuid,
+    repository_id: Uuid,
+}
+
+pub(crate) fn routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route(
+            "/api/v1/projects/{project_id}/delivered-targets/{target_ref}",
+            get(read),
+        )
+        .layer(axum::middleware::map_response(
+            |mut response: axum::response::Response| async move {
+                response.headers_mut().insert(
+                    "cache-control",
+                    axum::http::HeaderValue::from_static("no-store"),
+                );
+                response
+            },
+        ))
+}
+
+#[utoipa::path(get, path="/api/v1/projects/{project_id}/delivered-targets/{target_ref}",
+    tag="Delivered targets", params(("project_id"=Uuid,Path,description="Forge configuration UUID, not Tracker project"),
+        ("target_ref"=String,Path), DeliveredTargetQuery),
+    responses((status=200,body=DeliveredTargetReadback),(status=400),(status=401),(status=403),(status=404),(status=503)))]
+pub(crate) async fn read(
+    State(state): State<Arc<AppState>>,
+    claims: Option<Extension<AccessClaims>>,
+    Path((configuration, target_ref)): Path<(Uuid, String)>,
+    Query(query): Query<DeliveredTargetQuery>,
+) -> ApiResult<DeliveredTargetReadback> {
+    let claims = claims.ok_or_else(ApiError::unauthorized)?.0;
+    let subject = state
+        .config
+        .sdlc_workspace
+        .delivered_target_subject
+        .ok_or_else(|| ApiError::service_unavailable("Чтение доставленной версии не настроено"))?;
+    if claims.sub != subject
+        || claims.role != "service_account"
+        || claims.service_account_name.is_none()
+        || claims.token_project_id != Some(configuration)
+        || claims.sid.is_some()
+    {
+        return Err(ApiError::forbidden());
+    }
+    if configuration.is_nil()
+        || query.tracker_instance_id.is_nil()
+        || query.project_id.is_nil()
+        || query.repository_id.is_nil()
+        || !valid_target_ref(&target_ref)
+    {
+        return Err(ApiError::bad_request(
+            "Некорректная ссылка на доставленную версию",
+        ));
+    }
+    let mut tx = state
+        .pool
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("База владельца недоступна"))?
+        .begin()
+        .await
+        .map_err(ApiError::internal)?;
+    if !store::authorize_reader(&mut tx, claims.token_id, subject, configuration)
+        .await
+        .map_err(ApiError::internal)?
+    {
+        return Err(ApiError::forbidden());
+    }
+    let mapping_path = state
+        .config
+        .sdlc_workspace
+        .delivered_targets
+        .as_ref()
+        .ok_or_else(|| ApiError::service_unavailable("Целевые среды не настроены"))?;
+    let mapping = owner::mapping(mapping_path, configuration, &target_ref)
+        .map_err(|_| ApiError::not_found_named("настроенная доставленная версия"))?;
+    if mapping.repository_id != query.repository_id {
+        return Err(ApiError::forbidden());
+    }
+    let Some(projection) = store::lock_binding(
+        &mut tx,
+        configuration,
+        mapping.repository_id,
+        mapping.environment_id,
+        query.tracker_instance_id,
+        query.project_id,
+    )
+    .await
+    .map_err(ApiError::internal)?
+    else {
+        return Err(ApiError::forbidden());
+    };
+    let retained_projection = projection.clone();
+    let projection: sdlc_shared::resource_context::OwnerCommand =
+        serde_json::from_value(projection)
+            .map_err(|_| ApiError::service_unavailable("Некорректная проекция пространства"))?;
+    crate::namespace::validate_projection(&projection)?;
+    // Slow filesystem work and owner probes never retain authorization locks.
+    tx.commit().await.map_err(ApiError::internal)?;
+    static OBSERVERS: OnceLock<Arc<Semaphore>> = OnceLock::new();
+    let permit = Arc::new(
+        OBSERVERS
+            .get_or_init(|| Arc::new(Semaphore::new(2)))
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| {
+                ApiError::service_unavailable("Нет свободного слота проверки доставленной версии")
+            })?,
+    );
+    let project = DeliveredProjectRef {
+        tracker_instance_id: query.tracker_instance_id,
+        project_id: query.project_id,
+    };
+    let worker_mapping = mapping.clone();
+    let worker_state = state.clone();
+    let worker_project = project.clone();
+    let worker_permit = permit.clone();
+    let prepared = tokio::time::timeout(
+        Duration::from_secs(3),
+        tokio::task::spawn_blocking(move || {
+            let _permit = worker_permit;
+            owner::prepare(&worker_mapping, &worker_state, &worker_project)
+        }),
+    )
+    .await;
+    let mut observed_manifest = None;
+    let mut observed_bug_manifest = None;
+    let mut result = match prepared {
+        Ok(Ok(Ok(observation))) => {
+            observed_manifest = Some(observation.manifest.clone());
+            if recheck_owner(
+                &state,
+                &claims,
+                configuration,
+                &mapping,
+                &query,
+                &retained_projection,
+                observed_manifest.as_ref().map(ObservedManifest::Task),
+            )
+            .await?
+            {
+                owner::observe(&mapping, project.clone(), observation).await
+            } else {
+                owner::unavailable(
+                    &mapping,
+                    project.clone(),
+                    "delivered_source_binding_unavailable",
+                )
+            }
+        }
+        _ => {
+            let mapping_copy = mapping.clone();
+            let state_copy = state.clone();
+            let project_copy = project.clone();
+            let held_permit = permit.clone();
+            let prepared = tokio::time::timeout(
+                Duration::from_secs(3),
+                tokio::task::spawn_blocking(move || {
+                    let _permit = held_permit;
+                    crate::task_delivery::bug_work_delivery::prepare_current_target(
+                        &state_copy,
+                        &mapping_copy,
+                        &project_copy,
+                    )
+                }),
+            )
+            .await;
+            if let Ok(Ok(Ok(observation))) = prepared {
+                observed_bug_manifest = Some(observation.manifest.clone());
+                if recheck_owner(
+                    &state,
+                    &claims,
+                    configuration,
+                    &mapping,
+                    &query,
+                    &retained_projection,
+                    observed_bug_manifest
+                        .as_ref()
+                        .map(ObservedManifest::BugWork),
+                )
+                .await?
+                {
+                    let origin =
+                        crate::task_delivery::bug_work_delivery::target_origin(&observation);
+                    let proof = crate::task_delivery::bug_work_delivery::observe_proof(
+                        &mapping,
+                        observation,
+                    )
+                    .await;
+                    crate::task_delivery::bug_work_delivery::as_delivered_target(proof, origin)
+                } else {
+                    owner::unavailable(
+                        &mapping,
+                        project.clone(),
+                        "delivered_source_binding_unavailable",
+                    )
+                }
+            } else {
+                owner::unavailable(
+                    &mapping,
+                    project.clone(),
+                    "versioned_confirmed_delivery_unavailable",
+                )
+            }
+        }
+    };
+    if !recheck_owner(
+        &state,
+        &claims,
+        configuration,
+        &mapping,
+        &query,
+        &retained_projection,
+        observed_bug_manifest
+            .as_ref()
+            .map(ObservedManifest::BugWork)
+            .or_else(|| observed_manifest.as_ref().map(ObservedManifest::Task)),
+    )
+    .await?
+    {
+        result = owner::unavailable(&mapping, project.clone(), "delivered_owner_binding_changed");
+        result.status = DeliveredTargetStatus::Changed;
+    }
+    if !owner::mapping(mapping_path, configuration, &target_ref)
+        .is_ok_and(|current| current == mapping)
+    {
+        result = owner::unavailable(&mapping, project, "target_configuration_changed");
+        result.status = DeliveredTargetStatus::Changed;
+    }
+    drop(permit);
+    Ok(Json(result))
+}
+
+enum ObservedManifest<'a> {
+    Task(&'a crate::domain::task_delivery::DeliveryManifest),
+    BugWork(&'a crate::domain::bug_work_publication::BugWorkStaticManifest),
+}
+
+/// Short fresh transactions bracket the complete probe flow. A revocation can
+/// commit during HTTP and is observed before any confirmed identity is returned.
+async fn recheck_owner(
+    state: &AppState,
+    claims: &AccessClaims,
+    configuration: Uuid,
+    mapping: &owner::TargetMapping,
+    query: &DeliveredTargetQuery,
+    expected: &serde_json::Value,
+    manifest: Option<ObservedManifest<'_>>,
+) -> Result<bool, ApiError> {
+    let mut tx = state
+        .pool
+        .as_ref()
+        .ok_or_else(ApiError::unavailable)?
+        .begin()
+        .await
+        .map_err(ApiError::internal)?;
+    if !store::authorize_reader(&mut tx, claims.token_id, claims.sub, configuration)
+        .await
+        .map_err(ApiError::internal)?
+    {
+        return Err(ApiError::forbidden());
+    }
+    let current = store::lock_binding(
+        &mut tx,
+        configuration,
+        mapping.repository_id,
+        mapping.environment_id,
+        query.tracker_instance_id,
+        query.project_id,
+    )
+    .await
+    .map_err(ApiError::internal)?
+    .ok_or_else(ApiError::forbidden)?;
+    let projection: sdlc_shared::resource_context::OwnerCommand =
+        serde_json::from_value(current.clone())
+            .map_err(|_| ApiError::service_unavailable("Некорректная проекция пространства"))?;
+    crate::namespace::validate_projection(&projection)?;
+    let source = match manifest {
+        Some(ObservedManifest::Task(manifest)) => store::matches_manifest_source(&mut tx, manifest)
+            .await
+            .map_err(ApiError::internal)?,
+        Some(ObservedManifest::BugWork(manifest)) => {
+            crate::store::bug_work_publication::matches_artifact(&mut tx, manifest)
+                .await
+                .map_err(ApiError::internal)?
+        }
+        None => true,
+    };
+    tx.commit().await.map_err(ApiError::internal)?;
+    Ok(current == *expected && source)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generation_keeps_u64_precision_and_caller_flags_are_rejected() {
+        let value = serde_json::json!({
+            "deliveryRef":"forge:delivered:sample", "operationKey":"deliver:1",
+            "generation":u64::MAX.to_string(), "manifestSha256":"a".repeat(64),
+            "commitSha":"b".repeat(40), "artifactId":Uuid::new_v4(),
+            "artifactDigest":format!("sha256:{}", "c".repeat(64)), "targetUrl":"http://qa.invalid",
+            "servingIdentity":{"versionBodySha256":"a".repeat(64),"artifactBodySha256":"c".repeat(64),"observedAt":chrono::Utc::now()}
+        });
+        let target: DeliveredTarget = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(target.generation, u64::MAX.to_string());
+        let mut foreign = value;
+        foreign["verified"] = true.into();
+        assert!(serde_json::from_value::<DeliveredTarget>(foreign).is_err());
+    }
+
+    #[test]
+    fn query_does_not_accept_proof_urls_or_caller_verified_flags() {
+        let mut value = serde_json::json!({"tracker_instance_id":Uuid::new_v4(),"project_id":Uuid::new_v4(),"repository_id":Uuid::new_v4()});
+        assert!(serde_json::from_value::<DeliveredTargetQuery>(value.clone()).is_ok());
+        value["verified"] = true.into();
+        assert!(serde_json::from_value::<DeliveredTargetQuery>(value).is_err());
+    }
+}

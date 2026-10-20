@@ -1,0 +1,571 @@
+//! Fresh read-only projection of the existing static publisher. No publication,
+//! journal writes, history scan, or caller-controlled probe target.
+use super::*;
+use crate::domain::delivered_target::*;
+
+#[derive(Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct TargetMapping {
+    pub configuration_id: Uuid,
+    pub repository_id: Uuid,
+    pub environment_id: Uuid,
+    pub target_ref: String,
+    pub(super) root: PathBuf,
+    pub(super) policy: PathBuf,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Mappings {
+    schema: String,
+    targets: Vec<TargetMapping>,
+}
+
+pub(crate) fn mapping(
+    path: &Path,
+    configuration: Uuid,
+    target_ref: &str,
+) -> anyhow::Result<TargetMapping> {
+    ensure!(path.is_absolute(), "absolute operator mapping required");
+    let mappings: Mappings = read(path)?;
+    ensure!(
+        mappings.schema == "forge/delivered-targets-config/v1"
+            && !mappings.targets.is_empty()
+            && mappings.targets.len() <= 32,
+        "invalid bounded target mapping"
+    );
+    let mut keys = std::collections::HashSet::new();
+    for target in &mappings.targets {
+        ensure!(
+            !target.configuration_id.is_nil()
+                && !target.repository_id.is_nil()
+                && !target.environment_id.is_nil()
+                && valid_target_ref(&target.target_ref)
+                && normalized_absolute(&target.root)
+                && normalized_absolute(&target.policy)
+                && keys.insert((target.configuration_id, &target.target_ref)),
+            "invalid or duplicate target mapping"
+        );
+    }
+    mappings
+        .targets
+        .into_iter()
+        .find(|entry| entry.configuration_id == configuration && entry.target_ref == target_ref)
+        .context("configured target unavailable")
+}
+
+fn normalized_absolute(path: &Path) -> bool {
+    path.is_absolute()
+        && path.components().all(|c| {
+            !matches!(
+                c,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+}
+
+pub(crate) struct Observation {
+    target: Target,
+    pointer: Pointer,
+    receipt: DeliveryReceipt,
+    pub manifest: DeliveryManifest,
+}
+
+pub(crate) fn prepare(
+    mapping: &TargetMapping,
+    state: &AppState,
+    project: &DeliveredProjectRef,
+) -> anyhow::Result<Observation> {
+    let root = mapping.root.canonicalize()?;
+    for protected in [&state.git.root, &state.config.artifacts.root] {
+        if let Ok(protected) = protected.canonicalize() {
+            ensure!(
+                !root.starts_with(&protected) && !protected.starts_with(&root),
+                "target overlaps protected root"
+            );
+        }
+    }
+    let policy: DeliveryPolicy = read(&mapping.policy)?;
+    let target = Target::open(&mapping.root, mapping.configuration_id, policy, false)?;
+    let pointer =
+        read_pointer(&target.root, "current.json")?.context("current target unavailable")?;
+    ensure!(
+        pointer.generation.is_some() && pointer.operation_key.is_some(),
+        "versioned publication required"
+    );
+    ensure!(
+        files::pointer(&target.root, "confirmed.json")?.as_ref() == Some(&pointer.manifest_sha256),
+        "target not confirmed"
+    );
+    let key = pointer.operation_key.as_ref().unwrap();
+    let intent: Intent = read(&operation_dir(&target.root, key).join("intent.json"))?;
+    ensure!(
+        intent.receipt.command.operation_key == *key
+            && intent.receipt.manifest_sha256.as_ref() == Some(&pointer.manifest_sha256),
+        "pointer journal mismatch"
+    );
+    let manifest = target.manifest(&pointer.manifest_sha256)?;
+    let original = &manifest.operation_receipt;
+    ensure!(
+        original.project_id == mapping.configuration_id
+            && original.request.repository_id == mapping.repository_id
+            && original.request.binding.tracker_project_id == project.project_id
+            && Uuid::parse_str(&original.request.binding.tracker_instance_id).ok()
+                == Some(project.tracker_instance_id),
+        "delivered source project mismatch"
+    );
+    let readback = target.readback(&intent.receipt.command, &intent.receipt.original_operation)?;
+    let receipt = readback
+        .reconciled_receipt
+        .as_ref()
+        .unwrap_or(&readback.receipt)
+        .clone();
+    ensure!(
+        !readback.reconciliation_needed
+            && receipt.status == DeliveryStatus::Verified
+            && readback.current_manifest_sha256.as_ref() == Some(&pointer.manifest_sha256)
+            && readback.confirmed_manifest_sha256.as_ref() == Some(&pointer.manifest_sha256),
+        "delivery journal not confirmed"
+    );
+    // Intent and content-addressed manifest must identify the same immutable bytes.
+    ensure!(
+        intent
+            .manifest
+            .as_ref()
+            .is_some_and(|m| serde_json::to_vec(m).ok() == serde_json::to_vec(&manifest).ok()),
+        "intent manifest differs"
+    );
+    Ok(Observation {
+        target,
+        pointer,
+        receipt,
+        manifest,
+    })
+}
+
+pub(crate) async fn observe(
+    mapping: &TargetMapping,
+    project: DeliveredProjectRef,
+    observation: Observation,
+) -> DeliveredTargetReadback {
+    let mut result = unavailable(mapping, project, "serving_observation_unavailable");
+    let fresh = observation
+        .target
+        .observe(observation.receipt, &observation.manifest)
+        .await;
+    result.observed_at = Utc::now();
+    let pointer = read_pointer(&observation.target.root, "current.json");
+    let confirmed = files::pointer(&observation.target.root, "confirmed.json");
+    let policy_unchanged = read::<DeliveryPolicy>(&mapping.policy)
+        .and_then(|policy| policy.sha256())
+        .is_ok_and(|hash| hash == observation.target.policy_sha256);
+    if !matches!(pointer, Ok(Some(ref current)) if current == &observation.pointer)
+        || !matches!(confirmed, Ok(Some(ref hash)) if hash == &observation.pointer.manifest_sha256)
+        || !policy_unchanged
+    {
+        result.status = DeliveredTargetStatus::Changed;
+        result.blocked_reasons = vec!["target_generation_changed".into()];
+        return result;
+    }
+    if fresh.status != DeliveryStatus::Verified {
+        result.status = if fresh.status == DeliveryStatus::Failed {
+            DeliveredTargetStatus::Changed
+        } else {
+            DeliveredTargetStatus::Unavailable
+        };
+        result.blocked_reasons = vec![
+            if fresh.status == DeliveryStatus::Failed {
+                "served_identity_or_owner_check_changed"
+            } else {
+                "fresh_owner_probe_unavailable"
+            }
+            .into(),
+        ];
+        return result;
+    }
+    // These values are actual response-body hashes produced by bounded fresh probes.
+    let (Some(version), Some(artifact)) = (fresh.version, fresh.served_artifact) else {
+        return result;
+    };
+    let (Some(version_hash), Some(artifact_hash)) = (version.body_sha256, artifact.body_sha256)
+    else {
+        return result;
+    };
+    if version.status != DeliveryStatus::Verified
+        || artifact.status != DeliveryStatus::Verified
+        || version.http_status != Some(200)
+        || artifact.http_status != Some(200)
+        || version_hash != observation.pointer.manifest_sha256
+        || artifact_hash != observation.manifest.artifact_sha256
+    {
+        return result;
+    }
+    let generation = observation.pointer.generation.unwrap().to_string();
+    let key = observation.pointer.operation_key.unwrap();
+    let binding = serde_json::to_vec(&(
+        &result.project,
+        mapping.configuration_id,
+        mapping.repository_id,
+        mapping.environment_id,
+        &mapping.target_ref,
+        &key,
+        &generation,
+        &version_hash,
+        &artifact_hash,
+        &observation.manifest.operation_receipt.request.source_commit,
+    ))
+    .expect("serializable serving binding");
+    result.target = Some(DeliveredTarget {
+        delivery_ref: format!("forge:delivered:{}", sha(&binding)),
+        operation_key: key,
+        generation,
+        manifest_sha256: observation.pointer.manifest_sha256,
+        commit_sha: observation.manifest.operation_receipt.request.source_commit,
+        artifact_id: observation.manifest.artifact_id,
+        artifact_digest: format!("sha256:{artifact_hash}"),
+        target_url: observation.target.policy.origin,
+        serving_identity: ServingIdentity {
+            version_body_sha256: version_hash,
+            artifact_body_sha256: artifact_hash,
+            observed_at: version.observed_at,
+        },
+    });
+    result.status = DeliveredTargetStatus::Confirmed;
+    result.blocked_reasons.clear();
+    result
+}
+
+pub(crate) fn unavailable(
+    mapping: &TargetMapping,
+    project: DeliveredProjectRef,
+    reason: &str,
+) -> DeliveredTargetReadback {
+    DeliveredTargetReadback {
+        schema: "forge/delivered-target/v1".into(),
+        producer_version: env!("CARGO_PKG_VERSION").into(),
+        project,
+        configuration_id: mapping.configuration_id,
+        repository_id: mapping.repository_id,
+        environment_id: mapping.environment_id,
+        target_ref: mapping.target_ref.clone(),
+        status: DeliveredTargetStatus::Unavailable,
+        observed_at: Utc::now(),
+        blocked_reasons: vec![reason.into()],
+        target: None,
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use axum::{
+        extract::{OriginalUri, State},
+        http::StatusCode,
+        response::IntoResponse,
+    };
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct App {
+        root: PathBuf,
+        manifest: Vec<u8>,
+        artifact: Vec<u8>,
+        bad_artifact: AtomicBool,
+        change_generation: AtomicBool,
+    }
+    async fn serve(
+        State(app): State<Arc<App>>,
+        OriginalUri(uri): OriginalUri,
+    ) -> impl IntoResponse {
+        let body = match uri.path() {
+            "/.forge/version" => app.manifest.clone(),
+            "/" if app.bad_artifact.load(Ordering::SeqCst) => {
+                b"unrelated served application".to_vec()
+            }
+            "/" => app.artifact.clone(),
+            "/health" => {
+                if app.change_generation.swap(false, Ordering::SeqCst) {
+                    let _lock = Lock::acquire(&app.root).unwrap();
+                    publish_current(&app.root, &sha(&app.manifest), "deploy:changed").unwrap();
+                }
+                b"ok".to_vec()
+            }
+            "/acceptance" => b"accepted".to_vec(),
+            _ => return (StatusCode::NOT_FOUND, Vec::new()),
+        };
+        (StatusCode::OK, body)
+    }
+    struct Fixture {
+        directory: PathBuf,
+        mapping: TargetMapping,
+        project: DeliveredProjectRef,
+        state: AppState,
+        app: Arc<App>,
+        server: tokio::task::JoinHandle<()>,
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            self.server.abort();
+            let _ = std::fs::remove_dir_all(&self.directory);
+        }
+    }
+    impl Fixture {
+        async fn new() -> Self {
+            let directory =
+                std::env::temp_dir().join(format!("forge-delivered-read-{}", Uuid::new_v4()));
+            std::fs::create_dir(&directory).unwrap();
+            let root = directory.join("target");
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let policy = DeliveryPolicy {
+                origin: format!("http://{}", listener.local_addr().unwrap()),
+                health_path: "/health".into(),
+                health_body_sha256: sha(b"ok"),
+                acceptance_path: "/acceptance".into(),
+                acceptance_body_sha256: sha(b"accepted"),
+            };
+            let configuration = Uuid::new_v4();
+            let repository = Uuid::new_v4();
+            let project = DeliveredProjectRef {
+                tracker_instance_id: Uuid::new_v4(),
+                project_id: Uuid::new_v4(),
+            };
+            let attempt = Uuid::new_v4();
+            let request = WorkspaceOperationRequest {
+                contract_version: 1,
+                operation_key: "prepare:1".into(),
+                binding: WorkspaceTaskBinding {
+                    tracker_instance_id: project.tracker_instance_id.to_string(),
+                    tracker_project_id: project.project_id,
+                    task_id: Uuid::new_v4(),
+                    root_task_id: Uuid::new_v4(),
+                    assignment_id: Uuid::new_v4(),
+                    execution_id: Uuid::new_v4(),
+                    routing_snapshot_id: Uuid::new_v4(),
+                    requirement_revision: 1,
+                    fencing_token: 1,
+                    assignment_hash: "a".repeat(64),
+                    workflow_task_ref: "SDLC-1".into(),
+                },
+                repository_id: repository,
+                source_commit: "b".repeat(40),
+                lease_id: Uuid::new_v4(),
+                attempt_id: attempt,
+                workspace_generation: 1,
+                workspace_id: format!("attempt-{attempt}-1-{}", Uuid::new_v4().simple()),
+                role: WorkspaceRole::Analyst,
+                access: WorkspaceAccess::ReadOnly,
+            };
+            assert!(request.validate().is_ok());
+            let original = WorkspaceOperationReceipt {
+                schema: "forge/workspace-operation-receipt/v1".into(),
+                operation_id: Uuid::new_v4(),
+                project_id: configuration,
+                request_hash: sha(&serde_json::to_vec(&request).unwrap()),
+                request,
+                recorded_at: Utc::now(),
+                status: WorkspaceOperationStatus::Blocked,
+                blockers: vec![
+                    WorkspaceOperationBlocker::TrackerAdmissionUnavailable,
+                    WorkspaceOperationBlocker::TrackerWorkspaceBindingUnavailable,
+                ],
+                physical_source_observed: false,
+                dispatch_allowed: false,
+            };
+            let target = Target::open(&root, configuration, policy.clone(), true).unwrap();
+            let artifact = b"actual QA artifact".to_vec();
+            let manifest = DeliveryManifest {
+                schema: "forge/local-static-manifest/v1".into(),
+                operation_receipt: original.clone(),
+                pipeline_id: Uuid::new_v4(),
+                artifact_id: Uuid::new_v4(),
+                artifact_attempt_id: attempt,
+                artifact_sha256: sha(&artifact),
+                artifact_size_bytes: artifact.len() as i64,
+                config_sha256: "c".repeat(64),
+                plan_sha256: "d".repeat(64),
+                target_policy_sha256: policy.sha256().unwrap(),
+            };
+            let bytes = serde_json::to_vec(&manifest).unwrap();
+            let hash = sha(&bytes);
+            immutable_bytes(
+                &root.join("objects").join(&manifest.artifact_sha256),
+                &artifact,
+            )
+            .unwrap();
+            immutable_bytes(&root.join("manifests").join(format!("{hash}.json")), &bytes).unwrap();
+            let command = DeliveryCommand {
+                operation_key: "deploy:1".into(),
+                workspace_operation_key: original.request.operation_key.clone(),
+                original: WorkspaceOperationLookup {
+                    request_hash: original.request_hash.clone(),
+                    task_id: original.request.binding.task_id,
+                    root_task_id: original.request.binding.root_task_id,
+                    assignment_id: original.request.binding.assignment_id,
+                    execution_id: original.request.binding.execution_id,
+                    fencing_token: 1,
+                },
+                action: DeliveryAction::Deploy,
+                artifact_id: Some(manifest.artifact_id),
+                expected_manifest_sha256: None,
+            };
+            let proof = |body: String| {
+                Some(DeliveryProbe {
+                    status: DeliveryStatus::Verified,
+                    http_status: Some(200),
+                    body_sha256: Some(body),
+                    observed_at: Utc::now(),
+                })
+            };
+            let receipt = DeliveryReceipt {
+                schema: "forge/local-delivery-operation/v1".into(),
+                scope: "owner_local_verification".into(),
+                command_sha256: sha(&serde_json::to_vec(&command).unwrap()),
+                command,
+                original_operation: original,
+                manifest_sha256: Some(hash.clone()),
+                previous_manifest_sha256: None,
+                status: DeliveryStatus::Verified,
+                reason: "historical unit receipt".into(),
+                version: proof(hash.clone()),
+                served_artifact: proof(manifest.artifact_sha256.clone()),
+                health: proof(policy.health_body_sha256.clone()),
+                acceptance: proof(policy.acceptance_body_sha256.clone()),
+                recorded_at: Utc::now(),
+                dispatch_allowed: false,
+                sdlc_acceptance_verified: false,
+            };
+            let operation = operation_dir(&root, "deploy:1");
+            std::fs::create_dir(&operation).unwrap();
+            immutable(
+                &operation.join("intent.json"),
+                &Intent {
+                    receipt: receipt.clone(),
+                    manifest: Some(manifest),
+                    policy_sha256: target.policy_sha256,
+                },
+            )
+            .unwrap();
+            immutable(&operation.join("result.json"), &receipt).unwrap();
+            {
+                let _lock = Lock::acquire(&root).unwrap();
+                publish_current(&root, &hash, "deploy:1").unwrap();
+                replace_pointer(&root, "confirmed.json", &hash).unwrap();
+            }
+            let policy_path = directory.join("policy.json");
+            std::fs::write(&policy_path, serde_json::to_vec(&policy).unwrap()).unwrap();
+            let mapping = TargetMapping {
+                configuration_id: configuration,
+                repository_id: repository,
+                environment_id: Uuid::new_v4(),
+                target_ref: "qa:portal".into(),
+                root: root.clone(),
+                policy: policy_path,
+            };
+            let app = Arc::new(App {
+                root,
+                manifest: bytes,
+                artifact,
+                bad_artifact: AtomicBool::new(false),
+                change_generation: AtomicBool::new(false),
+            });
+            let router = axum::Router::new().fallback(serve).with_state(app.clone());
+            let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+            let state = AppState {
+                pool: None,
+                namespace_admission_pool: None,
+                auth_secret: None,
+                git: crate::git_host::GitConfig::default(),
+                config: crate::config::RuntimeConfig::test_default(),
+                running_jobs: None,
+                rate_limiter: Arc::new(crate::rate_limit::RateLimiter::default()),
+            };
+            Self {
+                directory,
+                mapping,
+                project,
+                state,
+                app,
+                server,
+            }
+        }
+        fn prepare(&self) -> anyhow::Result<Observation> {
+            prepare(&self.mapping, &self.state, &self.project)
+        }
+    }
+
+    #[tokio::test]
+    async fn confirmed_identity_uses_actual_served_bytes_and_is_stable_between_reads() {
+        let f = Fixture::new().await;
+        let first = observe(&f.mapping, f.project.clone(), f.prepare().unwrap()).await;
+        let second = observe(&f.mapping, f.project.clone(), f.prepare().unwrap()).await;
+        assert_eq!(first.status, DeliveredTargetStatus::Confirmed);
+        let target = first.target.unwrap();
+        assert_eq!(
+            target.serving_identity.artifact_body_sha256,
+            sha(&f.app.artifact)
+        );
+        assert_eq!(
+            target.serving_identity.version_body_sha256,
+            sha(&f.app.manifest)
+        );
+        assert_eq!(target.generation, "1");
+        assert_eq!(target.delivery_ref, second.target.unwrap().delivery_ref);
+        assert!(target.delivery_ref.starts_with("forge:delivered:"));
+    }
+
+    #[tokio::test]
+    async fn historical_verified_receipt_does_not_authorize_different_served_bytes() {
+        let f = Fixture::new().await;
+        let prepared = f.prepare().unwrap();
+        f.app.bad_artifact.store(true, Ordering::SeqCst);
+        let result = observe(&f.mapping, f.project.clone(), prepared).await;
+        assert_eq!(result.status, DeliveredTargetStatus::Changed);
+        assert!(result.target.is_none());
+    }
+
+    #[tokio::test]
+    async fn generation_change_with_identical_manifest_is_detected_during_probes() {
+        let f = Fixture::new().await;
+        let prepared = f.prepare().unwrap();
+        f.app.change_generation.store(true, Ordering::SeqCst);
+        let result = observe(&f.mapping, f.project.clone(), prepared).await;
+        assert_eq!(result.status, DeliveredTargetStatus::Changed);
+        assert_eq!(result.blocked_reasons, ["target_generation_changed"]);
+        assert!(result.target.is_none());
+    }
+
+    #[tokio::test]
+    async fn legacy_pointer_foreign_project_and_unconfirmed_state_are_never_new_authority() {
+        let f = Fixture::new().await;
+        let original = read_pointer(&f.mapping.root, "current.json")
+            .unwrap()
+            .unwrap();
+        let mut foreign = f.project.clone();
+        foreign.project_id = Uuid::new_v4();
+        assert!(prepare(&f.mapping, &f.state, &foreign).is_err());
+        let legacy = serde_json::json!({"manifestSha256":original.manifest_sha256});
+        std::fs::write(
+            f.mapping.root.join("current.json"),
+            serde_json::to_vec(&legacy).unwrap(),
+        )
+        .unwrap();
+        assert!(pointer(&f.mapping.root, "current.json").unwrap().is_some());
+        assert!(f.prepare().is_err());
+        std::fs::write(
+            f.mapping.root.join("current.json"),
+            serde_json::to_vec(&original).unwrap(),
+        )
+        .unwrap();
+        std::fs::remove_file(f.mapping.root.join("confirmed.json")).unwrap();
+        assert!(f.prepare().is_err());
+    }
+
+    #[tokio::test]
+    async fn unavailable_probe_never_reuses_historical_success() {
+        let f = Fixture::new().await;
+        let prepared = f.prepare().unwrap();
+        f.server.abort();
+        let result = observe(&f.mapping, f.project.clone(), prepared).await;
+        assert_eq!(result.status, DeliveredTargetStatus::Unavailable);
+        assert!(result.target.is_none());
+    }
+}

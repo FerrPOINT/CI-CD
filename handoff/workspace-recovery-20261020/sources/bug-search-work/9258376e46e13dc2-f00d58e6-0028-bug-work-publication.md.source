@@ -1,0 +1,13 @@
+# ADR0028: реальный BugWork candidate поверх существующего CI ledger
+
+Статус: source candidate; Rust/PG/HTTP/publication qualification ещё не выполнена.
+
+Исправляется существующий Issue Bug с103 assignment/actual runtime binding и104 original source A. Подстановка Bug UUID в Task/root/routing или создание фиктивного lease запрещены. Closed BugWork request переносит canonical raw hashes, actual committed B/tree и bounded bundle. CI независимо удостоверяет103/104 через fixed owner reader, затем удерживает immutable intent до Git.
+
+0092 расширяет существующий ledger двумя immutable фазами. SQL parent/config→catalog repository→pipeline/plan relation защищает от сопоставления одинакового SHA чужому репозиторию. Pipeline/jobs/initial attempts/queue/trigger и Accepted коммитятся вместе; lost ACK читается по исходному ключу. Старые Task bytes/checks остаются прежними.
+
+Собственный quarantine защищает shared bare от compressed/decompressed hidden objects, hooks, network и произвольных refs. Долгая проверка не удерживает SQL locks. После неё fresh owner/local reads предшествуют atomic pack/ref publication. CI custody сборки не привязана к жизни SDK worker после Accepted; failed/cancelled user stop не должен зависеть от кандидата/CI.
+
+Existing static Target lock, content-addressed files, versioned pointer и bounded serving probes используются новым отдельным closed BugWork manifest carrier. Legacy Task public models не меняются. Final-v1 proof отличает Accepted/build от artifact и от фактически delivered B; старый deployment A, rework/ABA и opaque caller evidence не дают confirmed. Tracker отдельно проверяет текущую candidate revision и lawful business transition.
+
+Флаги/локаторы по умолчанию выключены. Новый срез не применяет env/pins/миграции к runtime и не включает живой автопоиск.

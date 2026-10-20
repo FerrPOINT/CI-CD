@@ -1,0 +1,29 @@
+import type { ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
+import { LoadingState, ResourceStateView, resourceErrorState } from '@sdlc/ui/ui'
+import { ForbiddenPage } from '@/pages/forbidden'
+
+export function QueryState<T>({
+  data, isLoading, error, errorMessage, isEmpty, empty, onRetry, allowPartial = false, children,
+}: {
+  data: T | undefined
+  isLoading: boolean
+  error: unknown
+  errorMessage?: string
+  isEmpty?: (data: T) => boolean
+  empty?: { title?: string; description?: string }
+  onRetry?: () => void
+  allowPartial?: boolean
+  children: (data: T) => ReactNode
+}) {
+  const { t } = useTranslation()
+  if (isLoading) return <LoadingState message={t('common.loading')} />
+  const state = error ? resourceErrorState(error, onRetry) : undefined
+  if (state?.kind === 'permission-denied') return <ForbiddenPage />
+  if (state?.kind === 'not-found') return <ResourceStateView state={state} />
+  if (state?.kind === 'error' && (!allowPartial || data == null)) return <ResourceStateView state={{ ...state, message: errorMessage ?? state.message }} />
+  if (data == null) return <ResourceStateView state={{ kind: 'empty', message: t('common.noData', 'Нет данных') }} />
+  const warning = state?.kind === 'error' ? <ResourceStateView state={{ ...state, kind: 'partial-error', message: errorMessage ?? state.message }} /> : null
+  if (isEmpty?.(data)) return <>{warning}<ResourceStateView state={{ kind: 'empty', message: [empty?.title ?? t('common.empty', 'Пусто'), empty?.description].filter(Boolean).join(' ') }} /></>
+  return <>{warning}{children(data)}</>
+}
