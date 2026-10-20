@@ -159,13 +159,17 @@ machine/task fences. Настоящий owner archive/ACK сохраняет rea
 [ADR0035](adr/0035-repository-catalog-read-admission.md) сохраняет private verified
 REST identity и original SDK proof до body handoff. Только
 GET /api/v1/catalog/repositories фильтрует group UUID в SQL до count/search/page.
+Его /{id} и group repositories read также защищены: hidden detail404, hidden
+group items=[]/total=0, private/no-store, без преждевременного namespace lookup.
 selected empty — пустой массив, OFF — NULL; local admin не bypass visibility.
 all включает later owner mappings. Archived read сохраняется, sync_available
 дополнительно требует active. Unbound rows не удаляются и не публикуются.
 
 Scoped HTTP/PG cases проверяют counts/offset, hidden group/name, literal query,
 selected/all/future/empty и original expiry после real count SQL wait.
-Другие detail/group/tree/raw/PR/CI/machine routes остаются отдельными gates;
+Percent-encoded UUID не обходит допуск; actual clone использует clone_url из
+допущенной карточки. Internal sync использует typed metadata accessor с прежним
+ACL; это не новый human grant. Tree/raw/PR/CI/sync/machine остаются gates;
 этот срез не делает весь REST или cohort готовым. Установка не менялась.
 
 ## Lifecycle owner v2: source candidate

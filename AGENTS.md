@@ -102,3 +102,6 @@ publication требует exact ref readback без автоматическо�
 REST identity proof не сводить к claims до выдачи защищённых данных. Общий
 допуск каталогов применять до count/page по owner ID, не по именам. Пустой
 selected не превращать в unrestricted SQL NULL; local admin не visibility bypass.
+Typed metadata accessor не считать human authorization: HTTP adapter передаёт
+admitted filter. При изменении handler signature искать все внутренние callers
+по всему backend; не передавать им фиктивный HTTP request ради обхода границы.

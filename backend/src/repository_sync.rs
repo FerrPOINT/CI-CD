@@ -81,7 +81,9 @@ async fn authorize(
         .authorize(repository, access, write)
         .await
         .map_err(api_error)?;
-    let Json(repo) = crate::repository_catalog::get(State(state.clone()), Path(repository)).await?;
+    let repo = crate::repository_catalog::get_core(&state, repository, None)
+        .await?
+        .ok_or_else(ApiError::not_found)?;
     if write
         && (!repo.ready
             || repo.availability.is_some()
@@ -150,8 +152,9 @@ pub async fn list(
         .map_err(api_error)?;
     // Apply the owner's signed namespace projection validation, not just display data.
     for item in &mut items {
-        let Json(repo) =
-            crate::repository_catalog::get(State(state.clone()), Path(item.repository_id)).await?;
+        let repo = crate::repository_catalog::get_core(&state, item.repository_id, None)
+            .await?
+            .ok_or_else(ApiError::not_found)?;
         item.writable = item.writable
             && repo.availability.is_none()
             && store(&state)?
@@ -172,7 +175,9 @@ pub async fn get_connection(
     Path(id): Path<Uuid>,
 ) -> Result<Json<Connection>, ApiError> {
     let access = authorize(&state, id, &claims, false).await?;
-    let Json(repo) = crate::repository_catalog::get(State(state.clone()), Path(id)).await?;
+    let repo = crate::repository_catalog::get_core(&state, id, None)
+        .await?
+        .ok_or_else(ApiError::not_found)?;
     let sync_store = store(&state)?;
     let mut connection = sync_store
         .connection(id, access)

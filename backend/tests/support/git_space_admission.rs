@@ -41,7 +41,7 @@ async fn attach(
         .execute(pool)
         .await
         .unwrap();
-    sqlx::query("UPDATE repository_catalog SET group_id=$1 WHERE id=$2")
+    sqlx::query("UPDATE repository_catalog SET group_id=$1,slug='repository' WHERE id=$2")
         .bind(group)
         .bind(repository)
         .execute(pool)
@@ -134,6 +134,58 @@ async fn catalog(
     serde_json::from_str(&text).unwrap()
 }
 
+async fn detail(
+    http: &reqwest::Client,
+    origin: &str,
+    id: &str,
+    expected: u16,
+) -> Option<cicd::repository_catalog::CatalogRepository> {
+    let request = http
+        .get(format!("{origin}/api/v1/catalog/repositories/{id}"))
+        .bearer_auth("sdlc_pat_fixture_product_roles")
+        .build()
+        .unwrap();
+    if id.contains('%') {
+        assert!(
+            request.url().path().contains('%'),
+            "wire path preserves encoding"
+        );
+    }
+    let response = http.execute(request).await.unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let text = response.text().await.unwrap();
+    assert_eq!(status, expected, "catalog detail {id}: {text}");
+    assert_eq!(headers["cache-control"], "private, no-store");
+    if expected == 200 {
+        Some(serde_json::from_str(&text).unwrap())
+    } else {
+        assert!(!text.contains("clone_url"));
+        None
+    }
+}
+async fn group_page(
+    http: &reqwest::Client,
+    origin: &str,
+    group: Uuid,
+    query: &str,
+) -> cicd::repository_catalog::CatalogPage {
+    let response = http
+        .get(format!(
+            "{origin}/api/v1/git-groups/{group}/repositories{query}"
+        ))
+        .bearer_auth("sdlc_pat_fixture_product_roles")
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let text = response.text().await.unwrap();
+    assert_eq!(status, 200, "group catalog: {text}");
+    assert_eq!(headers["cache-control"], "private, no-store");
+    serde_json::from_str(&text).unwrap()
+}
+
 pub(super) async fn verify(
     pool: &PgPool,
     profile: Arc<RwLock<Profile>>,
@@ -155,6 +207,10 @@ pub(super) async fn verify(
         registry_instance_id: Uuid::new_v4(),
         space_id: Uuid::new_v4(),
     };
+    let previous_origin = std::env::var("CICD_NAMESPACE__PUBLIC_GIT_ORIGIN").ok();
+    unsafe {
+        std::env::set_var("CICD_NAMESPACE__PUBLIC_GIT_ORIGIN", origin);
+    }
     let instance = Uuid::new_v4();
     unsafe {
         std::env::set_var(
@@ -192,9 +248,10 @@ pub(super) async fn verify(
             .unwrap();
     let other_canonical = attach(pool, other_repo.id, &other, &owner_fixture).await;
     let unbound_name = format!("unbound-{}", Uuid::new_v4().simple());
-    cicd::git_host::create_repository_core(pool, &config, &unbound_name, Some("public"))
-        .await
-        .unwrap();
+    let unbound_repo =
+        cicd::git_host::create_repository_core(pool, &config, &unbound_name, Some("public"))
+            .await
+            .unwrap();
     let owner_space = space.clone();
     let owner_subject = human.subject;
     let all_subject = Uuid::new_v4();
@@ -423,6 +480,51 @@ pub(super) async fn verify(
         0,
         "search remains literal"
     );
+    let visible = detail(&http, origin, &repository.to_string(), 200)
+        .await
+        .unwrap();
+    assert_eq!(visible.id, repository);
+    assert_eq!(
+        visible.namespace.as_ref().unwrap().namespace_id,
+        space.space_id
+    );
+    let visible_group = visible.group_id.unwrap();
+    let owner_page = group_page(&http, origin, visible_group, "?limit=1").await;
+    assert_eq!(owner_page.total, 1);
+    assert_eq!(owner_page.items[0].id, repository);
+    let next = group_page(&http, origin, visible_group, "?limit=1&offset=1").await;
+    assert_eq!(next.total, 1);
+    assert!(next.items.is_empty());
+    let hidden = group_page(&http, origin, hidden_group, "?limit=1").await;
+    assert_eq!(hidden.total, 0);
+    assert!(hidden.items.is_empty());
+    assert_eq!(
+        group_page(&http, origin, visible_group, "?search=%25_")
+            .await
+            .total,
+        0
+    );
+    detail(&http, origin, &other_repo.id.to_string(), 404).await;
+    detail(&http, origin, &unbound_repo.id.to_string(), 404).await;
+    detail(
+        &http,
+        origin,
+        &repository.to_string().replace('-', "%2D"),
+        200,
+    )
+    .await;
+    detail(
+        &http,
+        origin,
+        &other_repo.id.to_string().replace('-', "%2D"),
+        404,
+    )
+    .await;
+    let clone_url = visible.clone_url.unwrap();
+    assert_eq!(
+        clone_url,
+        format!("{origin}/git/{canonical}/repository.git")
+    );
     // The allowed side of RPC is exercised by a real clone while the local role is viewer.
     let cloned = tokio::process::Command::new("git")
         .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -430,7 +532,7 @@ pub(super) async fn verify(
         .env("GIT_TERMINAL_PROMPT", "0")
         .arg("-c")
         .arg("http.extraHeader=Authorization: Bearer sdlc_pat_fixture_product_roles")
-        .args(["clone", &format!("{origin}/git/{canonical}/repository.git")])
+        .args(["clone", &clone_url])
         .arg(root.join("common-reader"))
         .output()
         .await
@@ -447,6 +549,19 @@ pub(super) async fn verify(
         catalog(&http, origin, "?limit=1").await.total,
         2,
         "all includes bound groups, not unbound data"
+    );
+    assert_eq!(
+        detail(&http, origin, &other_repo.id.to_string(), 200)
+            .await
+            .unwrap()
+            .id,
+        other_repo.id
+    );
+    assert_eq!(
+        group_page(&http, origin, hidden_group, "?limit=1")
+            .await
+            .total,
+        1
     );
     let future = SpaceRef {
         registry_instance_id: space.registry_instance_id,
@@ -503,6 +618,13 @@ pub(super) async fn verify(
         read(name.to_owned()).await.unwrap().status(),
         403,
         "selected empty denies"
+    );
+    detail(&http, origin, &repository.to_string(), 404).await;
+    assert_eq!(
+        group_page(&http, origin, visible_group, "?limit=1")
+            .await
+            .total,
+        0
     );
     *profile.write().unwrap() = human.clone();
     profile.write().unwrap().role = "service_account".into();
@@ -649,6 +771,25 @@ pub(super) async fn verify(
         1,
         "expired caller cannot poison a new proof or delete legitimate rows"
     );
+    assert_eq!(
+        detail(&http, origin, &repository.to_string(), 200)
+            .await
+            .unwrap()
+            .state
+            .as_deref(),
+        Some("archived")
+    );
+    assert_eq!(
+        group_page(&http, origin, visible_group, "?limit=1")
+            .await
+            .items[0]
+            .state
+            .as_deref(),
+        Some("archived")
+    );
+    println!(
+        "REST catalog detail/group counts, encoded IDs, API clone URL and archived read: PASS"
+    );
     println!(
         "REST catalog original proof expires during real SQL wait without returning metadata: PASS"
     );
@@ -660,6 +801,12 @@ pub(super) async fn verify(
         .execute(pool)
         .await
         .unwrap();
+    unsafe {
+        match previous_origin {
+            Some(value) => std::env::set_var("CICD_NAMESPACE__PUBLIC_GIT_ORIGIN", value),
+            None => std::env::remove_var("CICD_NAMESPACE__PUBLIC_GIT_ORIGIN"),
+        }
+    }
     owner_server.abort();
     legacy_server.abort();
     let _ = owner_server.await;

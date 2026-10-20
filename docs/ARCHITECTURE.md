@@ -49,8 +49,9 @@ Opt-in human Git Space admission реализован отдельно, default 
 [ADR-0034](adr/0034-git-common-space-admission.md). Полный REST/machine/runner/V3
 cohort и установка ещё не завершены. Глобальный repository catalog read
 сохраняет private verified REST context и фильтрует SQL до count/page:
-[ADR0035](adr/0035-repository-catalog-read-admission.md). Это один endpoint,
-не квалификация всего REST.
+[ADR0035](adr/0035-repository-catalog-read-admission.md). Detail и group list
+используют тот же proof; typed metadata accessor отделён от HTTP ответа.
+Это не квалификация sync или всего REST.
 
 ## 1. Контекст
 

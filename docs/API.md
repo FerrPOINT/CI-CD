@@ -303,7 +303,10 @@ Opt-in common Space Git authentication и source-only migration0097 описан
 Публичные DTO/URL не меняются, partial activation запрещена.
 Opt-in GET /api/v1/catalog/repositories применяет тот же допуск до count/page;
 пустой selected даёт items=[]/total=0, включая local admin. Срок SDK proof
-сохраняется после SQL ожиданий. Другие REST поверхности отдельно:
+сохраняется после SQL ожиданий. Detail /{id} и GET /api/v1/git-groups/{id}/repositories используют тот же proof.
+Недоступный detail404 и пустой hidden group не раскрывают metadata/count;
+protected404 также private/no-store. Percent-encoded IDs проверяются после
+framework decoding, без raw-URI исключений. Другие поверхности отдельно:
 [ADR0035](adr/0035-repository-catalog-read-admission.md).
 
 REST API первой версии Forge CI/CD. Контрольная плоскость использует JSON; Git Smart HTTP, artifact download, SSE logs и `/metrics` имеют собственные content types. Основные группы: проекты, запуск пайплайнов, переходы статусов задач, append-only логи, platform resources, auth и Git hosting.

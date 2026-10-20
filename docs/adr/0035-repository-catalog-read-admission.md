@@ -27,12 +27,22 @@ private, no-store исключает кеширование защищённой
 
 ## Границы
 
-Этот срез покрывает GET /api/v1/catalog/repositories. Detail, group list, tree/raw,
-PR, CI/log/artifact, machine/V3 и остальные маршруты ещё требуют своих адаптеров.
+Этот срез покрывает GET /api/v1/catalog/repositories, его /{id} и
+GET /api/v1/git-groups/{id}/repositories. Detail фильтрует owner group до metadata
+lookup; hidden/not found даёт404 с private/no-store. Hidden group даёт пустой
+каталог до namespace/availability lookups, без утечки count. Разрешённый group
+фильтр определён до SQL pagination.
+
+Типизированный get_core не является авторизацией: HTTP передаёт admitted groups.
+Три прежних repository_sync callers сохраняют отдельные ACL и являются ещё
+незавершёнными common-cohort поверхностями; фиктивный HTTP request не создаётся.
+Tree/raw, PR, CI/log/artifact, machine/V3 и остальные маршруты ещё требуют адаптеров.
 Не включать partial policy до полного cohort/migration/rollback gate. DTO/URL,
 зависимости, migrations и pins этим срезом не меняются.
 
 Isolated native HTTP/PG проверяет selected/all/future/empty, admin без допуска,
 literal search, group filter, total/offset, archived read/sync restriction и
-истечение original proof на настоящей SQL-блокировке. Owner admission замокан;
+истечение original proof на настоящей SQL-блокировке. Detail/group tests
+проверяют plain/percent-encoded UUID, hidden public/unbound данные, archived read
+и настоящий clone по clone_url из допущенной карточки API. Owner admission замокан;
 SDK/Git/PG/Forge owner APIs настоящие. Это не live Admin или IAB qualification.
