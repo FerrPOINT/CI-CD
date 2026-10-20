@@ -225,6 +225,15 @@ async fn verify_repository_reads(
         (name, repository, "Allowed review"),
         (hidden_name, hidden_id, "Hidden review"),
     ] {
+        let number: i32 = sqlx::query_scalar("SELECT allocate_repository_pr_number($1)")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            number, 1,
+            "fixture allocates through the real repository counter"
+        );
         sqlx::query("INSERT INTO pull_requests(id,repository_name,number,title,source_branch,target_branch,status,created_by) VALUES($1,$2,1,$3,'task/current','main','open','fixture')")
             .bind(Uuid::new_v4()).bind(storage).bind(title).execute(pool).await.unwrap();
         let count: i64 =
@@ -872,6 +881,15 @@ pub(super) async fn verify(
         .execute(pool)
         .await
         .unwrap();
+    super::git_pr_admission::verify(
+        pool,
+        &profile,
+        root,
+        origin,
+        (name, repository, &canonical),
+        (&other_name, other_repo.id),
+    )
+    .await;
     let pushed = tokio::process::Command::new("git")
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -951,6 +969,17 @@ pub(super) async fn verify(
         409,
         "the same admitted identity cannot write after confirmed archive"
     );
+    let saved = profile.read().unwrap().clone();
+    profile.write().unwrap().scopes = vec!["ci-cd:read", "ci-cd:write", "git:read", "git:write"];
+    let archived_write=http.post(format!("{origin}/api/v1/catalog/repositories/{repository}/pulls"))
+        .bearer_auth("sdlc_pat_fixture_product_roles")
+        .json(&serde_json::json!({"title":"archived denied","source_branch":"task/current","target_branch":"main"}))
+        .send().await.unwrap();
+    assert!(
+        matches!(archived_write.status().as_u16(), 409 | 503),
+        "archived or stale owner cannot authorize PR creation"
+    );
+    *profile.write().unwrap() = saved;
     let archived_page = catalog(&http, origin, "?limit=1").await;
     assert_eq!(archived_page.total, 1);
     assert_eq!(archived_page.items[0].state.as_deref(), Some("archived"));

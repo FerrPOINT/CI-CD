@@ -168,12 +168,154 @@ pub(crate) fn repository_read_route(method: &axum::http::Method, route: &str) ->
                 | "/api/v1/repos/{repo}/pulls/{number}"
                 | "/api/v1/catalog/repositories/{id}/pulls"
                 | "/api/v1/catalog/repositories/{id}/pulls/{number}"
+                | "/api/v1/catalog/repositories/{id}/pulls/{number}/tasks"
         )
+}
+
+pub(crate) fn repository_write_route(method: &axum::http::Method, route: &str) -> bool {
+    *method == axum::http::Method::POST
+        && matches!(
+            route,
+            "/api/v1/repos/{repo}/pulls"
+                | "/api/v1/repos/{repo}/pulls/{number}/action"
+                | "/api/v1/catalog/repositories/{id}/pulls"
+                | "/api/v1/catalog/repositories/{id}/pulls/{number}/action"
+        )
+}
+
+/// Opaque request-owned permit. Only verified middleware may construct it;
+/// neither a caller DTO/header nor an internal metadata accessor supplies it.
+#[derive(Clone)]
+pub struct RepositoryWrite {
+    proof: std::sync::Arc<ConfirmedSpaceRead>,
+    storage: String,
+    actor: uuid::Uuid,
+    min_role: crate::authz::Role,
+}
+impl RepositoryWrite {
+    pub(crate) fn confirmed(
+        proof: ConfirmedSpaceRead,
+        storage: String,
+        actor: uuid::Uuid,
+        min_role: crate::authz::Role,
+    ) -> Self {
+        Self {
+            proof: std::sync::Arc::new(proof),
+            storage,
+            actor,
+            min_role,
+        }
+    }
+    pub(crate) async fn for_repository(
+        pool: &PgPool,
+        storage: &str,
+        permit: Option<Self>,
+    ) -> Result<Option<Self>, ApiError> {
+        if let Some(permit) = permit {
+            permit.require()?;
+            if permit.storage != storage {
+                return Err(ApiError::forbidden());
+            }
+            Ok(Some(permit))
+        } else if active(pool).await? {
+            Err(ApiError::forbidden())
+        } else {
+            Ok(None)
+        }
+    }
+    pub(crate) fn require(&self) -> Result<(), ApiError> {
+        self.proof.admission().map_err(owner_error).map(|_| ())
+    }
+    pub(crate) fn proof(&self) -> &ConfirmedSpaceRead {
+        &self.proof
+    }
+    /// Keep confirmed local role and lifecycle state stable until commit.
+    /// The existing namespace lease has already fenced archive and mapping changes.
+    pub(crate) async fn lock(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> Result<String, ApiError> {
+        self.require()?;
+        let row: Option<(String, String, bool)> =
+            sqlx::query_as("SELECT username,role,enabled FROM users WHERE id=$1 FOR SHARE")
+                .bind(self.actor)
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(ApiError::internal)?;
+        let (username, role, enabled) = row.ok_or_else(ApiError::forbidden)?;
+        if !enabled || !crate::authz::Role::parse(&role).is_some_and(|role| role >= self.min_role) {
+            return Err(ApiError::forbidden());
+        }
+        let row: Option<(uuid::Uuid,uuid::Uuid,i64,String)>=sqlx::query_as(
+            "SELECT c.registry_instance_id,c.space_id,c.revision,c.state FROM repository_catalog r JOIN forge_space_catalog c ON c.group_id=r.group_id WHERE r.storage_name=$1 FOR SHARE OF c",
+        ).bind(&self.storage).fetch_optional(&mut **tx).await.map_err(ApiError::internal)?;
+        let (registry_instance_id, space_id, revision, state) =
+            row.ok_or_else(ApiError::forbidden)?;
+        let admission = self.proof.admission().map_err(owner_error)?;
+        if state != "active" {
+            return Err(ApiError::conflict("space_resource_read_only"));
+        }
+        if !admission.spaces.iter().any(|s| {
+            s.space
+                == SpaceRef {
+                    registry_instance_id,
+                    space_id,
+                }
+                && s.revision == revision
+                && s.state == SpaceState::Active
+        }) {
+            return Err(ApiError::service_unavailable(
+                "space_projection_revision_stale",
+            ));
+        }
+        self.require()?;
+        Ok(username)
+    }
+    pub(crate) fn response(
+        &self,
+        response: axum::response::Response,
+    ) -> Result<axum::response::Response, ApiError> {
+        if !self.proof.is_current() {
+            // A known rejected operation stays rejected without protected detail.
+            // A success or an unknown effect must require exact state readback.
+            if response.status().is_client_error() {
+                return Err(ApiError::forbidden());
+            }
+            return Err(ApiError::service_unavailable(
+                "Результат операции PR не подтверждён; перечитайте состояние перед повтором",
+            ));
+        }
+        // Keep the same proof across response handoff without cloning/minting it.
+        let proof = self.proof.clone();
+        let (mut parts, body) = response.into_parts();
+        parts.headers.insert(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("private, no-store"),
+        );
+        use tokio_stream::StreamExt;
+        let stream = body.into_data_stream().map(move |chunk| {
+            if !proof.is_current() {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "space_admission_expired",
+                ))
+            } else {
+                chunk.map_err(std::io::Error::other)
+            }
+        });
+        Ok(axum::response::Response::from_parts(
+            parts,
+            axum::body::Body::from_stream(stream),
+        ))
+    }
+}
+pub(crate) fn require_write(permit: Option<&RepositoryWrite>) -> Result<(), ApiError> {
+    permit.map(RepositoryWrite::require).transpose().map(|_| ())
 }
 
 /// Match the framework route, then use the same decoded params as the handler.
 /// Raw URI parsing must never turn an encoded owner into unscoped access.
-pub(crate) async fn repository_read_storage(
+pub(crate) async fn repository_request_storage(
     pool: &PgPool,
     parts: &mut axum::http::request::Parts,
 ) -> Result<Option<String>, ApiError> {
@@ -182,7 +324,8 @@ pub(crate) async fn repository_read_storage(
         .get::<axum::extract::MatchedPath>()
         .map(|path| path.as_str())
         .unwrap_or("");
-    if !repository_read_route(&parts.method, route) {
+    if !repository_read_route(&parts.method, route) && !repository_write_route(&parts.method, route)
+    {
         return Ok(None);
     }
     use axum::extract::FromRequestParts;

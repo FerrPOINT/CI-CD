@@ -1,5 +1,11 @@
 # API v1 Specification — Forge CI/CD
 
+Source candidate: [write admission PR](adr/0037-pull-request-write-admission.md)
+сохраняет прежние DTO/URL, добавляет opaque request permit, atomic PR number
+transaction и original proof до native publication. GET связанных задач PR
+использует общий repository read. Qualification и durable unknown recovery
+остаются отдельными gates; runtime и исторические migrations не изменены.
+
 Source candidate: [общий read admission Git-браузера и PR](adr/0036-repository-browse-read-admission.md)
 использует decoded owner identity и original proof. Native QA пока не выполнена:
 resource preflight остановил запуск до компилятора. Это не installed behavior,

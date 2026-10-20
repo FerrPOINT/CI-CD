@@ -247,12 +247,36 @@ pub(crate) async fn require_auth(
         return Err(ApiError::forbidden());
     }
     let (mut parts, body) = req.into_parts();
-    let read_storage = crate::space_admission::repository_read_storage(pool, &mut parts).await?;
+    let read_storage = crate::space_admission::repository_request_storage(pool, &mut parts).await?;
+    let write_route = parts
+        .extensions
+        .get::<axum::extract::MatchedPath>()
+        .is_some_and(|route| {
+            crate::space_admission::repository_write_route(&parts.method, route.as_str())
+        });
+    let mut write_permit = None;
     let read_proof = match read_storage.as_ref() {
         Some(storage) if crate::space_admission::active(pool).await? => {
-            identity.require_scope("ci-cd:read")?;
+            identity.require_scope(if write_route {
+                "ci-cd:write"
+            } else {
+                "ci-cd:read"
+            })?;
             let actor = identity.central.as_ref().ok_or_else(ApiError::forbidden)?;
-            Some(crate::space_admission::repository(pool, storage, actor, false).await?)
+            let proof =
+                crate::space_admission::repository(pool, storage, actor, write_route).await?;
+            if write_route {
+                let (_, min_role) = crate::authz::required_role(&method, &path);
+                write_permit = Some(crate::space_admission::RepositoryWrite::confirmed(
+                    proof,
+                    storage.clone(),
+                    claims.sub,
+                    min_role,
+                ));
+                None
+            } else {
+                Some(proof)
+            }
         }
         _ => None,
     };
@@ -293,13 +317,17 @@ pub(crate) async fn require_auth(
         }
         return Err(ApiError::forbidden());
     }
+    if let Some(permit) = write_permit.as_ref() {
+        parts.extensions.insert(permit.clone());
+    }
     parts.extensions.insert(claims);
     parts.extensions.insert(identity);
     let req = axum::extract::Request::from_parts(parts, body);
     let response = next.run(req).await;
-    match read_proof {
-        Some(proof) => crate::space_admission::read_response(proof, response),
-        None => Ok(response),
+    match (read_proof, write_permit) {
+        (Some(proof), _) => crate::space_admission::read_response(proof, response),
+        (_, Some(permit)) => permit.response(response),
+        _ => Ok(response),
     }
 }
 

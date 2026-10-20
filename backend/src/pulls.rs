@@ -12,6 +12,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
 
 use crate::api::{ApiError, AppState};
+pub use crate::space_admission::RepositoryWrite;
+use crate::space_admission::require_write;
 
 // ─── refs & commits ───
 
@@ -771,6 +773,7 @@ pub async fn create_pull_request(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath(repo): AxumPath<String>,
     claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+    permit: Option<axum::Extension<RepositoryWrite>>,
     Json(mut input): Json<CreatePullRequest>,
 ) -> Result<Json<PullRequest>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
@@ -783,6 +786,13 @@ pub async fn create_pull_request(
     input.repository_name = repository;
     let _namespace_lease =
         crate::repository_catalog::write_lease(&state, &input.repository_name).await?;
+    let write =
+        RepositoryWrite::for_repository(pool, &input.repository_name, permit.map(|p| p.0)).await?;
+    let mut transaction = pool.begin().await.map_err(ApiError::internal)?;
+    let confirmed_author = match write.as_ref() {
+        Some(permit) => Some(permit.lock(&mut transaction).await?),
+        None => None,
+    };
     if input.title.trim().is_empty()
         || input.source_branch.trim().is_empty()
         || input.target_branch.trim().is_empty()
@@ -800,26 +810,28 @@ pub async fn create_pull_request(
     }
     input.source_branch = source_name;
     input.target_branch = target_name;
+    require_write(write.as_ref())?;
     let next_number: i32 = sqlx::query_scalar(
         "SELECT allocate_repository_pr_number(id) FROM repository_catalog WHERE storage_name=$1",
     )
     .bind(&input.repository_name)
-    .fetch_one(pool)
+    .fetch_one(&mut *transaction)
     .await
     .map_err(ApiError::internal)?;
     // Author: authenticated identity wins; explicit input is a fallback for
     // trusted-network mode where no claims exist.
-    let author = match claims.as_ref().map(|c| c.0.sub) {
-        Some(user_id) => {
+    require_write(write.as_ref())?;
+    let author = match (confirmed_author, claims.as_ref().map(|c| c.0.sub)) {
+        (Some(username), _) => username,
+        (None, Some(user_id)) => {
             sqlx::query_scalar::<_, String>("SELECT username FROM users WHERE id = $1")
                 .bind(user_id)
-                .fetch_optional(pool)
+                .fetch_optional(&mut *transaction)
                 .await
-                .ok()
-                .flatten()
+                .map_err(ApiError::internal)?
                 .unwrap_or_default()
         }
-        None => input.author.clone().unwrap_or_default(),
+        (None, None) => input.author.clone().unwrap_or_default(),
     };
     let pr = sqlx::query_as::<_, PullRequest>(
         "INSERT INTO pull_requests (id, repository_name, number, title, description, source_branch, target_branch, status, created_by) VALUES ($1, $2, $3, $4, $5, $6, $7, 'open', $8) RETURNING id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",
@@ -832,9 +844,11 @@ pub async fn create_pull_request(
     .bind(input.source_branch.trim())
     .bind(input.target_branch.trim())
     .bind(&author)
-    .fetch_one(pool)
+    .fetch_one(&mut *transaction)
     .await
     .map_err(ApiError::internal)?;
+    require_write(write.as_ref())?;
+    transaction.commit().await.map_err(ApiError::internal)?;
     Ok(Json(pr))
 }
 
@@ -857,29 +871,41 @@ pub struct PrAction {
 pub async fn pr_action(
     State(state): State<std::sync::Arc<AppState>>,
     AxumPath((repo, number)): AxumPath<(String, i32)>,
+    permit: Option<axum::Extension<RepositoryWrite>>,
     Json(input): Json<PrAction>,
 ) -> Result<Json<PullRequest>, ApiError> {
     // An accepted native merge keeps its admission and row lock if the HTTP caller disconnects.
-    tokio::spawn(pr_action_owned(state, repo, number, input))
-        .await
-        .map_err(|_| {
-            ApiError::service_unavailable(
-                "Результат операции PR не подтверждён; перечитайте состояние перед повтором",
-            )
-        })?
+    tokio::spawn(pr_action_owned(
+        state,
+        repo,
+        number,
+        permit.map(|p| p.0),
+        input,
+    ))
+    .await
+    .map_err(|_| {
+        ApiError::service_unavailable(
+            "Результат операции PR не подтверждён; перечитайте состояние перед повтором",
+        )
+    })?
 }
 
 async fn pr_action_owned(
     state: std::sync::Arc<AppState>,
     repo: String,
     number: i32,
+    permit: Option<RepositoryWrite>,
     input: PrAction,
 ) -> Result<Json<PullRequest>, ApiError> {
     let pool = state.pool.as_ref().ok_or_else(ApiError::unavailable)?;
     let repo = crate::repository_catalog::resolve_storage(pool, &repo).await?;
     let _namespace_lease = crate::repository_catalog::write_lease(&state, &repo).await?;
     let path = resolve_repo_path(&state, &repo).await?;
+    let write = RepositoryWrite::for_repository(pool, &repo, permit).await?;
     let mut transaction = pool.begin().await.map_err(ApiError::internal)?;
+    if let Some(permit) = write.as_ref() {
+        permit.lock(&mut transaction).await?;
+    }
     let pr = sqlx::query_as::<_, PullRequest>(
         "SELECT id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha FROM pull_requests WHERE repository_name = $1 AND number = $2 FOR UPDATE",
     )
@@ -890,6 +916,7 @@ async fn pr_action_owned(
     .map_err(ApiError::internal)?
     .ok_or_else(ApiError::not_found)?;
 
+    require_write(write.as_ref())?;
     match input.action.as_str() {
         "merge" => {
             let repository_id: Uuid =
@@ -944,17 +971,15 @@ async fn pr_action_owned(
                 }
             }
             // Use git merge-tree for bare repos (no worktree needed)
-            let mut merge_command = tokio::process::Command::new("git");
-            merge_command
-                .arg(format!("--git-dir={}", path.display()))
-                .args(["merge-tree", "--write-tree", "-z", &target.oid, &source.oid]);
-            mutation_guard
-                .inherit(&mut merge_command)
-                .map_err(crate::repository_sync::api_error)?;
-            let merge_output = merge_command
-                .output()
-                .await
-                .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+            let merge_output = crate::git_host::pr_output(
+                &state,
+                &path,
+                &["merge-tree", "--write-tree", "-z", &target.oid, &source.oid],
+                axum::body::Bytes::new(),
+                write.as_ref().map(RepositoryWrite::proof),
+                &mutation_guard,
+            )
+            .await?;
             if !merge_output.status.success() {
                 return Err(ApiError::conflict(
                     String::from_utf8_lossy(&merge_output.stderr).to_string(),
@@ -966,10 +991,11 @@ async fn pr_action_owned(
                 .unwrap_or("")
                 .to_string();
             // Create merge commit
-            let mut commit_command = tokio::process::Command::new("git");
-            commit_command
-                .arg(format!("--git-dir={}", path.display()))
-                .args([
+            let message = format!("Merge PR #{}: {}", pr.number, pr.title);
+            let commit_output = crate::git_host::pr_output(
+                &state,
+                &path,
+                &[
                     "-c",
                     "user.name=Forge CI/CD",
                     "-c",
@@ -981,15 +1007,13 @@ async fn pr_action_owned(
                     "-p",
                     &source.oid,
                     "-m",
-                    &format!("Merge PR #{}: {}", pr.number, pr.title),
-                ]);
-            mutation_guard
-                .inherit(&mut commit_command)
-                .map_err(crate::repository_sync::api_error)?;
-            let commit_output = commit_command
-                .output()
-                .await
-                .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+                    &message,
+                ],
+                axum::body::Bytes::new(),
+                write.as_ref().map(RepositoryWrite::proof),
+                &mutation_guard,
+            )
+            .await?;
             if !commit_output.status.success() {
                 return Err(ApiError::bad_request(
                     String::from_utf8_lossy(&commit_output.stderr).to_string(),
@@ -998,7 +1022,16 @@ async fn pr_action_owned(
             let merge_sha = String::from_utf8_lossy(&commit_output.stdout)
                 .trim()
                 .to_string();
-            publish_merge(&path, &source, &target, &merge_sha, Some(&mutation_guard)).await?;
+            require_write(write.as_ref())?;
+            publish_merge(
+                &path,
+                &source,
+                &target,
+                &merge_sha,
+                Some(&mutation_guard),
+                write.as_ref().map(|permit| (&*state, permit.proof())),
+            )
+            .await?;
             let updated = sqlx::query_as::<_, PullRequest>(
                 "UPDATE pull_requests SET status = 'merged', merged_at = now(), updated_at = now(), merge_commit_sha = $2 WHERE id = $1 RETURNING id, repository_id, repository_name, number, title, description, source_branch, target_branch, status, created_by, created_at, updated_at, merged_at, merge_commit_sha",
             )
@@ -1006,8 +1039,12 @@ async fn pr_action_owned(
             .bind(&merge_sha)
             .fetch_one(&mut *transaction)
             .await
-            .map_err(ApiError::internal)?;
-            transaction.commit().await.map_err(ApiError::internal)?;
+            .map_err(|_| merge_unconfirmed())?;
+            require_write(write.as_ref()).map_err(|_| merge_unconfirmed())?;
+            transaction
+                .commit()
+                .await
+                .map_err(|_| merge_unconfirmed())?;
             crate::repository_sync::signal(pool, repository_id).await;
             Ok(Json(updated))
         }
@@ -1022,6 +1059,7 @@ async fn pr_action_owned(
             .fetch_one(&mut *transaction)
             .await
             .map_err(ApiError::internal)?;
+            require_write(write.as_ref())?;
             transaction.commit().await.map_err(ApiError::internal)?;
             Ok(Json(updated))
         }
@@ -1038,6 +1076,7 @@ async fn pr_action_owned(
             .fetch_one(&mut *transaction)
             .await
             .map_err(ApiError::internal)?;
+            require_write(write.as_ref())?;
             transaction.commit().await.map_err(ApiError::internal)?;
             Ok(Json(updated))
         }
@@ -1110,46 +1149,70 @@ pub(crate) async fn branch_snapshot(
     })
 }
 
+fn merge_unconfirmed() -> ApiError {
+    ApiError::service_unavailable(
+        "Публикация merge не подтверждена; перечитайте состояние веток перед повтором",
+    )
+}
+
 async fn publish_merge(
     path: &std::path::Path,
     source: &BranchSnapshot,
     target: &BranchSnapshot,
     merged: &str,
     guard: Option<&cicd_infra::sync_git::MutationGuard>,
+    permit: Option<(
+        &AppState,
+        &pdlc_auth_core::service_bridge::ConfirmedSpaceRead,
+    )>,
 ) -> Result<(), ApiError> {
     // Git locks/verifies both refs in one transaction; no stale source or target can be published.
     let plan = format!(
         "start\nverify {} {}\nupdate {} {} {}\nprepare\ncommit\n",
         source.reference, source.oid, target.reference, merged, target.oid
     );
-    let mut command = tokio::process::Command::new("git");
-    command
-        .arg("--git-dir")
-        .arg(path)
-        .args(["update-ref", "--stdin"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    if let Some(guard) = guard {
-        guard
-            .inherit(&mut command)
-            .map_err(crate::repository_sync::api_error)?;
-    }
-    let mut child = command
-        .spawn()
-        .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
-    let mut input = child
-        .stdin
-        .take()
-        .ok_or_else(|| ApiError::service_unavailable("Ввод Git-транзакции недоступен"))?;
-    let written = input.write_all(plan.as_bytes()).await;
-    drop(input);
-    let observed = child.wait_with_output().await.map_err(|_| {
-        ApiError::service_unavailable(
-            "Публикация merge не подтверждена; перечитайте состояние веток перед повтором",
+    let (written, observed) = if let Some((state, proof)) = permit {
+        let observed = crate::git_host::pr_output(
+            state,
+            path,
+            &["update-ref", "--stdin"],
+            axum::body::Bytes::from(plan),
+            Some(proof),
+            guard.ok_or_else(ApiError::forbidden)?,
         )
-    })?;
+        .await?;
+        (Ok::<(), std::io::Error>(()), observed)
+    } else {
+        let mut command = tokio::process::Command::new("git");
+        command
+            .arg("--git-dir")
+            .arg(path)
+            .args(["update-ref", "--stdin"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true);
+        if let Some(guard) = guard {
+            guard
+                .inherit(&mut command)
+                .map_err(crate::repository_sync::api_error)?;
+        }
+        let mut child = command
+            .spawn()
+            .map_err(|e| ApiError::internal(sqlx::Error::Io(e)))?;
+        let mut input = child
+            .stdin
+            .take()
+            .ok_or_else(|| ApiError::service_unavailable("Ввод Git-транзакции недоступен"))?;
+        let written = input.write_all(plan.as_bytes()).await;
+        drop(input);
+        let observed = child.wait_with_output().await.map_err(|_| {
+            ApiError::service_unavailable(
+                "Публикация merge не подтверждена; перечитайте состояние веток перед повтором",
+            )
+        })?;
+        (written, observed)
+    };
     if written.is_ok() && observed.status.success() && observed.stdout.ends_with(b"commit: ok\n") {
         return Ok(());
     }

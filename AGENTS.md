@@ -111,3 +111,9 @@ Read adapters должны разрешать framework-decoded owner params о�
 защищены. Common visibility заменяет прежнее read membership, но не scopes,
 project binding credential или права изменения. Read proof не является write
 permit: PR mutation/merge требуют собственной effect/deadline границы.
+
+PR write permit должен оставаться у typed/detached owner до SQL commit/native
+ref preparation. После SQL wait повторно проверять исходный proof; роль/lifecycle
+держать под существующими locks. Counter и создание PR атомарны. Timeout после
+возможной публикации — unknown outcome с exact ref readback, без auto retry,
+отката refs по предположению или признания PR status доказательством Git rollback.

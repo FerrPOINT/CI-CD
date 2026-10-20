@@ -1,7 +1,7 @@
 # ADR-0036: общий допуск чтения Git-браузера и PR
 
-Статус: opt-in source candidate. Native qualification этого среза ещё не выполнена:
-preflight остановил запуск до компилятора из-за недостаточного запаса памяти.
+Статус: opt-in source candidate. Compilation и native qualification учитываются
+отдельно в task report; подготовленные cases не являются полученным native PASS.
 Установленный runtime и activation state не изменялись.
 
 ## Причина
@@ -39,10 +39,11 @@ Git-браузер разрешает decoded alias в storage через сущ
 ## Поверхности и ограничения
 
 Read adapters: legacy refs/tree/blob/tags/commits/compare, PR list/page/detail,
-catalog PR list/detail. GET обрабатывается явно; HEAD не получает отдельного
+catalog PR list/detail и GET связанных задач PR. GET обрабатывается явно; HEAD не получает отдельного
 разрешения и по-прежнему подчиняется общей route policy.
 
-Create/action/merge PR, task links, releases, CI, sync, artifact/download и
+Create/action/merge PR имеют отдельный [candidate ADR0037](0037-pull-request-write-admission.md).
+Task-link write/machine evidence, releases, CI, sync, artifact/download и
 machine/V3 adapters этим срезом не квалифицированы. Частичную политику включать
 нельзя. DTO, URL, зависимости, historical migrations и image/SDK pins не меняются.
 

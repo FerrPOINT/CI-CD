@@ -21,6 +21,45 @@ use crate::api::{ApiError, AppState};
 mod deadline;
 mod receive_hooks;
 
+/// PR native effects share the same fixed-clock owner and reference preparation
+/// guard as receive-pack. The detached PR owner holds its lease/MutationGuard.
+pub(crate) async fn pr_output(
+    state: &AppState,
+    path: &Path,
+    args: &[&str],
+    input: Bytes,
+    proof: Option<&pdlc_auth_core::service_bridge::ConfirmedSpaceRead>,
+    guard: &cicd_infra::sync_git::MutationGuard,
+) -> Result<std::process::Output, ApiError> {
+    let deadline = proof.map(deadline::GitDeadline::admission);
+    let mut command = Command::new("git");
+    guard
+        .inherit(&mut command)
+        .map_err(crate::repository_sync::api_error)?;
+    let hooks = if let Some(deadline) = deadline.filter(|_| args.first() == Some(&"update-ref")) {
+        let hooks = receive_hooks::ReceiveHooks::prepare(
+            state.pool.as_ref().ok_or_else(ApiError::unavailable)?,
+            path,
+            false,
+        )
+        .await?;
+        if let Err(error) = hooks.proof_deadline(deadline) {
+            hooks.cleanup();
+            return Err(error);
+        }
+        command.arg("-c").arg(hooks.config());
+        Some(hooks)
+    } else {
+        None
+    };
+    command.arg("--git-dir").arg(path).args(args);
+    let output = deadline::output(&mut command, input, deadline).await;
+    if let Some(hooks) = hooks {
+        hooks.cleanup();
+    }
+    output
+}
+
 #[derive(Clone, Copy, Default)]
 struct GitAccess {
     bootstrap: bool,

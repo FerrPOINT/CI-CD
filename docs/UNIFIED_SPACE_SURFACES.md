@@ -183,3 +183,17 @@ native PASS из-за resource preflight. PR writes/CI/sync/machine остают
 [Owner provenance, Git/CI границы и совместимость v2](SPACE_ADMISSION_CONTRACT_V2.md)
 уточняют реализацию. Nullable CI repository_id и unbound resources не получают
 выдуманный default Space: требуется явное разрешение происхождения до activation.
+
+## PR write и task-link read: source candidate
+
+[ADR0037](adr/0037-pull-request-write-admission.md) сохраняет private request
+permit до SQL commit/native ref preparation. Common visibility не повышает роль.
+Создание PR и counter атомарны; роль/lifecycle защищены прежними SQL/namespace
+locks. Native owner сохраняет original fixed clock и custom hook, завершает
+свою process group до освобождения lease. Unknown publication требует exact
+readback без автоматического повтора; PR status не доказательство Git rollback.
+GET catalog PR tasks теперь находится в repository read boundary.
+
+Qualification этого candidate ещё в работе; full cohort, durable unknown merge
+recovery, task-link write/machine evidence, CI/log/artifact/sync/V3 и serving
+routes остаются открытыми. Существующие timestamps/receipts не backfill.

@@ -890,6 +890,7 @@ pub async fn create_pull(
     State(state): State<Arc<AppState>>,
     Path(id): Path<Uuid>,
     claims: Option<axum::Extension<crate::auth::AccessClaims>>,
+    permit: Option<axum::Extension<crate::pulls::RepositoryWrite>>,
     Json(input): Json<CreatePull>,
 ) -> Result<Json<crate::pulls::PullRequest>, ApiError> {
     let storage = storage_by_id(state.pool.as_ref().ok_or_else(ApiError::unavailable)?, id).await?;
@@ -897,6 +898,7 @@ pub async fn create_pull(
         State(state),
         Path(storage.clone()),
         claims,
+        permit,
         Json(crate::pulls::CreatePullRequest {
             repository_name: storage,
             title: input.title,
@@ -912,8 +914,9 @@ pub async fn create_pull(
 pub async fn pull_action(
     State(state): State<Arc<AppState>>,
     Path((id, number)): Path<(Uuid, i32)>,
+    permit: Option<axum::Extension<crate::pulls::RepositoryWrite>>,
     Json(input): Json<crate::pulls::PrAction>,
 ) -> Result<Json<crate::pulls::PullRequest>, ApiError> {
     let storage = storage_by_id(state.pool.as_ref().ok_or_else(ApiError::unavailable)?, id).await?;
-    crate::pulls::pr_action(State(state), Path((storage, number)), Json(input)).await
+    crate::pulls::pr_action(State(state), Path((storage, number)), permit, Json(input)).await
 }
