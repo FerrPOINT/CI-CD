@@ -60,3 +60,18 @@ Task/root/assignment permissions, SDLC quarantine/lookup и trusted versioned re
 - [SDLC_DELIVERY_V1](../SDLC_DELIVERY_V1.md)
 - [Operations](../OPERATIONS.md)
 - [ADR-0007](0007-runner-security-boundary.md)
+
+## External shell process groups
+
+External `forge-runner` выделяет отдельную Unix process group для каждой
+команды. Timeout, cancellation и нормальный выход shell завершают оставшихся
+участников группы до ожидания EOF логов и terminal completion. На Linux runner
+становится subreaper и адресно собирает принятых потомков этой группы, в том
+числе при запуске PID 1 в pod. Неуспешная проверка остановки остаётся
+`UnconfirmedExecution`: terminal ACK, свободный slot и cleanup не объявляются.
+
+Это ограничение дерева обычных дочерних процессов, а не sandbox для недоверенного
+кода: escape через новую session/process group не покрывается. Для Kubernetes
+пилота допускается только ограниченный доверенный fixture; host namespaces,
+Docker socket и provider credentials ему не передаются. Windows сохраняет
+прежний direct-child контракт. API, migrations и SDK pins не меняются.
