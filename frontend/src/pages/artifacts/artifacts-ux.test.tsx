@@ -89,7 +89,8 @@ describe('ArtifactsPage UX', () => {
     expect(screen.getByRole('combobox', { name: 'artifacts.status' })).toHaveTextContent('artifacts.expired')
     expect(screen.queryByRole('button', { name: 'artifacts.downloadFor report-02.txt' })).not.toBeInTheDocument()
     await chooseValue(screen.getByRole('combobox', { name: 'artifacts.status' }), 'purged')
-    expect(screen.getAllByText('artifacts.purged')).toHaveLength(2)
+    expect(screen.getByRole('listitem')).toHaveTextContent('artifacts.purged')
+    expect(screen.getByRole('combobox', { name: 'artifacts.status' })).toHaveTextContent('artifacts.purged')
     expect(screen.queryByRole('button', { name: 'artifacts.downloadFor report-03.txt' })).not.toBeInTheDocument()
   })
 
