@@ -45,6 +45,12 @@
   Без настройки сохраняется прежнее размещение jobs. Umbrella-сборка backend
   ограничивает параллелизм через `CARGO_BUILD_JOBS` (по умолчанию 2).
 
+- Git-синхронизация при потере namespace admission останавливает и дожидается
+  дочерних процессов, сохраняя неизвестный результат до сверки refs. Общие
+  файловые слоты удерживают лимит параллелизма после потери PostgreSQL-сессии.
+  Регрессии проверяют реальные процессы, SHA и восстановление. Namespace-bound
+  PostgreSQL fixtures получают явный public Git origin в CI.
+
 - Task child может читать PipelineDetail своего исходного pipeline с проверкой
   current credential, task/source binding и live lease; чужие pipeline закрыты.
 
