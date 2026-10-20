@@ -118,20 +118,13 @@ export function ArtifactsPage() {
                   }}
                 />
               </div>
-              <Select
-                aria-label={t("artifacts.status")}
-                className="w-auto"
-                value={status}
-                onChange={(event) => {
-                  setStatus(event.target.value as StatusFilter);
+              <Select aria-label={t("artifacts.status")}
+className="w-auto"
+value={status}
+onValueChange={(nextValue) => {
+                  setStatus(nextValue as StatusFilter);
                   setPage(1);
-                }}
-              >
-                <option value="all">{t("artifacts.all")}</option>
-                <option value="available">{t("artifacts.available")}</option>
-                <option value="expired">{t("artifacts.expired")}</option>
-                <option value="purged">{t("artifacts.purged")}</option>
-              </Select>
+                }} options={[{ value: "all", label: String(t("artifacts.all")) }, { value: "available", label: String(t("artifacts.available")) }, { value: "expired", label: String(t("artifacts.expired")) }, { value: "purged", label: String(t("artifacts.purged")) }]} />
             </div>
             <p className="text-xs text-text-muted">
               {t("artifacts.shown", {

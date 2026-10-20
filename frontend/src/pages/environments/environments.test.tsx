@@ -1,3 +1,4 @@
+import { chooseValue } from '../../test/choice'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router'
@@ -190,7 +191,7 @@ describe('EnvironmentsPage protected delivery controls', () => {
     fireEvent.change(screen.getByRole('searchbox', { name: 'environments.search' }), { target: { value: 'env-07' } })
     expect(screen.getAllByRole('listitem')).toHaveLength(1)
     fireEvent.change(screen.getByRole('searchbox', { name: 'environments.search' }), { target: { value: '' } })
-    fireEvent.change(screen.getByRole('combobox', { name: 'environments.statusFilter' }), { target: { value: 'stopped' } })
+    await chooseValue(screen.getByRole('combobox', { name: 'environments.statusFilter' }), 'stopped')
     expect(screen.getAllByRole('listitem')).toHaveLength(1)
     expect(screen.getAllByText('environments.statusStopped')).toHaveLength(2)
   })

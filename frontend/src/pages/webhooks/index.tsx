@@ -450,45 +450,21 @@ function DeliveryHistorySection() {
                   <Label htmlFor="delivery-status" className="sr-only">
                     {t("deliveries.statusFilter")}
                   </Label>
-                  <Select
-                    id="delivery-status"
-                    value={status}
-                    onChange={(event) =>
-                      changeFilter("status", event.target.value)
-                    }
-                    className="w-full"
-                  >
-                    <option value="all">{t("deliveries.allStatuses")}</option>
-                    {deliveryStatuses.map((value) => (
-                      <option key={value} value={value}>
-                        {t(
-                          value === "retry_scheduled"
-                            ? "deliveries.retryScheduled"
-                            : `deliveries.${value}`,
-                        )}
-                      </option>
-                    ))}
-                  </Select>
+                  <Select id="delivery-status"
+value={status}
+onValueChange={(nextValue) => changeFilter("status", nextValue)}
+className="w-full" options={[{ value: "all", label: String(t("deliveries.allStatuses")) }, ...(deliveryStatuses.map((value) => ({ value: String(value), label: String(t(value === "retry_scheduled"
+            ? "deliveries.retryScheduled"
+            : `deliveries.${value}`)) })) ?? [])]} />
                 </div>
                 <div>
                   <Label htmlFor="delivery-channel" className="sr-only">
                     {t("deliveries.channelFilter")}
                   </Label>
-                  <Select
-                    id="delivery-channel"
-                    value={channel}
-                    onChange={(event) =>
-                      changeFilter("channel", event.target.value)
-                    }
-                    className="w-full"
-                  >
-                    <option value="all">{t("deliveries.allChannels")}</option>
-                    {deliveryChannels.map((value) => (
-                      <option key={value} value={value}>
-                        {t(`deliveries.channel_${value}`)}
-                      </option>
-                    ))}
-                  </Select>
+                  <Select id="delivery-channel"
+value={channel}
+onValueChange={(nextValue) => changeFilter("channel", nextValue)}
+className="w-full" options={[{ value: "all", label: String(t("deliveries.allChannels")) }, ...(deliveryChannels.map((value) => ({ value: String(value), label: String(t(`deliveries.channel_${value}`)) })) ?? [])]} />
                 </div>
               </div>
               <p

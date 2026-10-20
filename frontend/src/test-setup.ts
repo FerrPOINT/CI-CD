@@ -47,3 +47,9 @@ function installStorage(name: 'localStorage' | 'sessionStorage') {
 
 installStorage('localStorage')
 installStorage('sessionStorage')
+
+// Layout/Pointer APIs used by the real Radix choice primitives.
+HTMLElement.prototype.scrollIntoView ??= () => {}
+HTMLElement.prototype.hasPointerCapture ??= () => false
+HTMLElement.prototype.setPointerCapture ??= () => {}
+HTMLElement.prototype.releasePointerCapture ??= () => {}

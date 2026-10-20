@@ -190,20 +190,13 @@ export function RunnersPage() {
                 <Label htmlFor="runner-status" className="shrink-0">
                   {t("runners.status")}
                 </Label>
-                <Select
-                  id="runner-status"
-                  value={statusFilter}
-                  onChange={(event) => {
-                    setStatusFilter(event.target.value as RunnerStatus | "all");
+                <Select id="runner-status"
+value={statusFilter}
+onValueChange={(nextValue) => {
+                    setStatusFilter(nextValue as RunnerStatus | "all");
                     setPage(1);
                   }}
-                  className="w-auto min-w-0 flex-1 sm:w-40"
-                >
-                  <option value="all">{t("runners.allStatuses")}</option>
-                  <option value="online">{t("runners.status_online")}</option>
-                  <option value="offline">{t("runners.status_offline")}</option>
-                  <option value="paused">{t("runners.status_paused")}</option>
-                </Select>
+className="w-auto min-w-0 flex-1 sm:w-40" options={[{ value: "all", label: String(t("runners.allStatuses")) }, { value: "online", label: String(t("runners.status_online")) }, { value: "offline", label: String(t("runners.status_offline")) }, { value: "paused", label: String(t("runners.status_paused")) }]} />
               </div>
             </div>
             <p className="text-xs text-text-muted">

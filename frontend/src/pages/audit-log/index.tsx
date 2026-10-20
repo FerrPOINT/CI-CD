@@ -224,21 +224,12 @@ export function AuditLogPage() {
                   <Label htmlFor="audit-action" className="sr-only">
                     {t("auditLog.actionFilter")}
                   </Label>
-                  <Select
-                    id="audit-action"
-                    value={action}
-                    onChange={(event) => changeAction(event.target.value)}
-                    className="w-full min-w-0"
-                  >
-                    <option value="">{t("auditLog.allActions")}</option>
-                    {actionOptions.map((value) => (
-                      <option key={value} value={value}>
-                        {t(`auditLog.actions.${value}`, {
-                          defaultValue: value,
-                        })}
-                      </option>
-                    ))}
-                  </Select>
+                  <Select id="audit-action"
+value={action}
+onValueChange={(nextValue) => changeAction(nextValue)}
+className="w-full min-w-0" options={[{ value: "", label: String(t("auditLog.allActions")) }, ...(actionOptions.map((value) => ({ value: String(value), label: String(t(`auditLog.actions.${value}`, {
+            defaultValue: value,
+        })) })) ?? [])]} />
                 </div>
               </div>
 

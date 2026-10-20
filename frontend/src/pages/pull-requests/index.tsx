@@ -448,21 +448,12 @@ export function PullRequestsPage() {
                 <Label htmlFor="pr-status" className="sr-only">
                   {t("pulls.statusFilter")}
                 </Label>
-                <Select
-                  id="pr-status"
-                  value={status}
-                  onChange={(event) =>
-                    changeStatus(
-                      event.target.value as PullRequestStatus | "all",
-                    )
-                  }
-                  className="w-auto sm:w-40"
-                >
-                  <option value="all">{t("pulls.allStatuses")}</option>
-                  <option value="open">{t("pulls.status_open")}</option>
-                  <option value="closed">{t("pulls.status_closed")}</option>
-                  <option value="merged">{t("pulls.status_merged")}</option>
-                </Select>
+                <Select id="pr-status"
+value={status}
+onValueChange={(nextValue) => changeStatus(
+                      nextValue as PullRequestStatus | "all",
+                    )}
+className="w-auto sm:w-40" options={[{ value: "all", label: String(t("pulls.allStatuses")) }, { value: "open", label: String(t("pulls.status_open")) }, { value: "closed", label: String(t("pulls.status_closed")) }, { value: "merged", label: String(t("pulls.status_merged")) }]} />
               </div>
               <p
                 className="flex flex-wrap gap-2 text-xs text-text-muted"

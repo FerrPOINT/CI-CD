@@ -1,3 +1,4 @@
+import { chooseValue } from '../../test/choice'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
@@ -245,7 +246,7 @@ describe('WebhooksPage', () => {
     ))
     expect(screen.getByTestId('location')).toHaveTextContent('page=3')
 
-    fireEvent.change(screen.getByRole('combobox', { name: 'deliveries.statusFilter' }), { target: { value: 'delivered' } })
+    await chooseValue(screen.getByRole('combobox', { name: 'deliveries.statusFilter' }), 'delivered')
     expect(await screen.findByText('deliveries.noMatches')).toBeInTheDocument()
     expect(screen.getByTestId('location')).toHaveTextContent('?view=deliveries&status=delivered&channel=notification')
     expect(screen.getByTestId('location')).not.toHaveTextContent('page=')

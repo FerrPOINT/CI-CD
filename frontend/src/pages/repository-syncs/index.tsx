@@ -218,19 +218,10 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
               <Label htmlFor="new-repository">
                 Доступный hosted-репозиторий без подключения
               </Label>
-              <Select
-                id="new-repository"
-                className="w-full"
-                value={selection}
-                onChange={(event) => setSelection(event.target.value)}
-              >
-                <option value="">Выберите репозиторий</option>
-                {available.data.items.map((repo) => (
-                  <option key={repo.id} value={repo.id}>
-                    {repo.public_name}
-                  </option>
-                ))}
-              </Select>
+              <Select id="new-repository"
+className="w-full"
+value={selection}
+onValueChange={(nextValue) => setSelection(nextValue)} options={[{ value: "", label: "Выберите репозиторий" }, ...(available.data.items.map((repo) => ({ value: String(repo.id), label: String(repo.public_name) })) ?? [])]} />
               {selection &&
                 available.data.items.some((repo) => repo.id === selection) && (
                   <Button asChild>
@@ -270,44 +261,27 @@ export function RepositorySyncsPage({ groupId }: { groupId?: string }) {
         </div>
         <div>
           <Label htmlFor="provider-filter">Провайдер</Label>
-          <Select
-            id="provider-filter"
-            className="w-full"
-            value={params.get('provider') ?? ''}
-            onChange={(event) => update('provider', event.target.value)}
-          >
-            <option value="">Все провайдеры</option>
-            <option value="github">GitHub.com</option>
-            <option value="gitlab">Свой GitLab</option>
-          </Select>
+          <Select id="provider-filter"
+className="w-full"
+value={params.get('provider') ?? ''}
+onValueChange={(nextValue) => update('provider', nextValue)} options={[{ value: "", label: "Все провайдеры" }, { value: "github", label: "GitHub.com" }, { value: "gitlab", label: "Свой GitLab" }]} />
         </div>
         <div>
           <Label htmlFor="state-filter">Состояние</Label>
-          <Select
-            id="state-filter"
-            className="w-full"
-            value={params.get('state') ?? ''}
-            onChange={(event) => update('state', event.target.value)}
-          >
-            <option value="">Все подключения</option>
-            <option value="enabled">Включённые</option>
-            <option value="disabled">Отключённые</option>
-            {[
-              'queued',
-              'running',
-              'stopping',
-              'reconciling',
-              'success',
-              'partial',
-              'conflict',
-              'failed',
-              'canceled',
-            ].map((value) => (
-              <option key={value} value={value}>
-                {states[value]}
-              </option>
-            ))}
-          </Select>
+          <Select id="state-filter"
+className="w-full"
+value={params.get('state') ?? ''}
+onValueChange={(nextValue) => update('state', nextValue)} options={[{ value: "", label: "Все подключения" }, { value: "enabled", label: "Включённые" }, { value: "disabled", label: "Отключённые" }, ...([
+        'queued',
+        'running',
+        'stopping',
+        'reconciling',
+        'success',
+        'partial',
+        'conflict',
+        'failed',
+        'canceled'
+    ].map((value) => ({ value: String(value), label: String(states[value]) })) ?? [])]} />
         </div>
       </div>
       {list.isError && (
@@ -687,23 +661,16 @@ export function RepositorySyncEditor({
             >
               <div className="space-y-1">
                 <Label htmlFor="provider">Провайдер</Label>
-                <Select
-                  id="provider"
-                  className="w-full"
-                  value={draft.provider}
-                  onChange={(event) =>
-                    patch({
-                      provider: event.target.value as SyncSettings['provider'],
+                <Select id="provider"
+className="w-full"
+value={draft.provider}
+onValueChange={(nextValue) => patch({
+                      provider: nextValue as SyncSettings['provider'],
                       instance_url:
-                        event.target.value === 'github'
+                        nextValue === 'github'
                           ? 'https://github.com'
                           : '',
-                    })
-                  }
-                >
-                  <option value="github">GitHub.com</option>
-                  <option value="gitlab">Свой GitLab</option>
-                </Select>
+                    })} options={[{ value: "github", label: "GitHub.com" }, { value: "gitlab", label: "Свой GitLab" }]} />
               </div>
               <div className="space-y-1">
                 <Label htmlFor="instance">
