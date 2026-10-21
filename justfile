@@ -12,11 +12,19 @@ down:
 logs:
     docker compose logs -f
 
+# Run inside the prepared pinned development environment.
 test-backend:
-    docker run --rm --entrypoint /bin/bash -v "{{justfile_directory()}}/backend:/workspace" -w /workspace rust:1.88-bookworm -lc '/usr/local/cargo/bin/cargo test'
+    cd backend && cargo test --locked -p cicd-domain --lib
+
+# Manual full workspace acceptance; database/CLI cases remain in release.yml.
+test-backend-all:
+    cd backend && cargo test --locked --workspace
 
 test-frontend:
-    cd frontend && pnpm test
+    cd frontend && pnpm test:unit
+
+test-frontend-all:
+    cd frontend && pnpm test:all
 
 build-frontend:
     cd frontend && pnpm build

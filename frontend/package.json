@@ -6,8 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
-    "build": "tsc --noEmit && vite build",
-    "test": "vitest run",
+    "build": "pnpm run test:unit && tsc --noEmit && vite build",
+    "test": "pnpm run test:unit",
     "lint": "eslint src && pnpm lint:semantic",
     "lint:semantic": "node scripts/sdlc-semantic-classes-check.mjs --css src/index.css --src src",
     "e2e": "playwright test --config playwright.config.ts",
@@ -18,7 +18,9 @@
     "openapi:check": "node node_modules/@sdlc/ui/scripts/sdlc-openapi-check.mjs",
     "openapi:compat": "node scripts/base-openapi-compat.mjs",
     "postinstall": "pnpm run openapi:generate",
-    "theme:check": "node ../../services-base/frontend/scripts/sdlc-effective-theme-check.mjs"
+    "theme:check": "node ../../services-base/frontend/scripts/sdlc-effective-theme-check.mjs",
+    "test:unit": "vitest run --exclude \"**/*.integration.test.*\" --exclude \"**/*.slow.test.*\" --exclude \"**/*.e2e.test.*\" --exclude \"**/*.integration.spec.*\" --exclude \"**/*.slow.spec.*\" --exclude \"**/*.e2e.spec.*\"",
+    "test:all": "vitest run"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.1.13",

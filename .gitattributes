@@ -17,3 +17,6 @@ backend/migrations/0032_notification_rules_templates.sql text eol=crlf
 backend/migrations/0033_aggregation_quiet_hours.sql text eol=crlf
 backend/migrations/0038_platform_messaging.sql text eol=crlf
 backend/tests/fixtures/historical_platform_messaging.sql text eol=crlf
+
+# Canonical bytes for the exact Base selector.
+scripts/vendor/base_quality_selection.py text eol=lf

@@ -19,11 +19,13 @@ gitignored каталог; `SDLC_HEADER_EVIDENCE_DIR` переопределяе
 - **Configuration only** -- сущность или экран можно настроить, но execution/delivery не реализованы.
 - **Target approved** -- требование принято ADR или контрактом, но не должно выдаваться за работающую возможность.
 
+Scoped quality entrypoint и сохранённые ручные gates описаны в [плане производительности](../plans/2026-10-21-build-performance.md).
+
 ## Быстрый старт
 
 ### Требования
 
-Для полного Docker-цикла достаточно Docker Engine с Compose plugin, `curl` и (опционально) `just`. Локальный режим дополнительно требует Rust 1.88+ и Node.js 22 с pnpm 11. Версии runtime и образов зафиксированы в `docker-compose.yml` и `.github/workflows/ci.yml`.
+Для полного Docker-цикла достаточно Docker Engine с Compose plugin, `curl` и (опционально) `just`. Локальный режим дополнительно требует Rust 1.88.0 и Node.js 22.20.0 с pnpm 10.28.1. Версии runtime и образов зафиксированы в `docker-compose.yml` и `.github/workflows/ci.yml`.
 
 Перед первым запуском создайте только локальный файл конфигурации:
 
@@ -48,9 +50,10 @@ just logs            # docker compose logs -f
 just health          # GET /api/v1/health
 just readiness       # GET /api/v1/readiness (PostgreSQL + SQLx migrations)
 just down            # остановить stack
-just test-backend    # cargo test в rust:1.88-bookworm
+just test-backend    # domain --lib в подготовленном pinned Rust environment
+just test-backend-all # ручной полный workspace
 just test-frontend   # Vitest на хосте
-just build-frontend  # TypeScript check и Vite build на хосте
+just build-frontend  # unit, TypeScript check и Vite build на хосте
 ```
 
 ### Адреса и порты
@@ -191,7 +194,7 @@ docker run --rm --entrypoint /bin/bash \
        /usr/local/cargo/bin/cargo build --release --workspace'
 ```
 
-Для real-DB проверки нужен PostgreSQL и `CICD_TEST_DATABASE_URL`; CI запускает `cargo test --features integration --test integration_db -- --test-threads=1`, потому что scheduler/runner dispatch тесты используют глобальные due/queued scans. CLI real-API smoke запускается тем же PostgreSQL service командой `cargo test -p cicd-cli --features integration --test cli_real_api -- --test-threads=1`. Backend release build входит в current CI gate.
+Для real-DB проверки нужен PostgreSQL и `CICD_TEST_DATABASE_URL`; ручной release workflow запускает `cargo test --features integration --test integration_db -- --test-threads=1`, потому что scheduler/runner dispatch тесты используют глобальные due/queued scans. CLI real-API smoke запускается тем же PostgreSQL service командой `cargo test -p cicd-cli --features integration --test cli_real_api -- --test-threads=1`. Полный backend graph выполняется на ручной release-вехе; ordinary service build выбирает cicd-server и forge-runner.
 
 ### Frontend через Node Docker image
 
@@ -203,10 +206,10 @@ docker run --rm -it \
   -v "$PWD/frontend:/workspace" \
   -w /workspace \
   node:22-bookworm-slim \
-  bash -lc 'corepack enable && pnpm install --frozen-lockfile && pnpm test && pnpm build'
+  bash -lc 'corepack enable && pnpm install --frozen-lockfile && pnpm build'
 ```
 
-Если меняются frontend dependencies, оставьте обновлённый `pnpm-lock.yaml` в diff; CI устанавливает его только с `--frozen-lockfile`. Current GitHub Actions frontend job запускает generated-client drift gate, `pnpm lint`, `pnpm test` и `pnpm build`.
+Если меняются frontend dependencies, оставьте обновлённый `pnpm-lock.yaml` в diff; CI устанавливает его только с `--frozen-lockfile`. Automatic frontend job запускает generated-client drift, types, `pnpm lint`, `pnpm test:unit` и условный Vite producer; manual release использует `test:all` и compile-only без второго unit run.
 
 Для браузерной проверки нужен поднятый disposable Compose stack и synthetic `CICD_SECRETS_KEY` для seeded secrets:
 
@@ -246,16 +249,22 @@ python3 scripts/verify_docs.py --all
 
 ### Current verified
 
-`.github/workflows/ci.yml` запускается на `push` и `pull_request` в `main`, отменяет устаревшие in-progress runs для того же ref через concurrency и ограничивает jobs `docs`, `backend` и `frontend` через `timeout-minutes`.
+`.github/workflows/ci.yml` выбирает backend/frontend по exact selector81467ded.
+Docs/static выполняются отдельно. Неизвестный input расширяет scope; frontend
+test/config-only не запускает production Vite. Этот source-контракт ещё не
+подтверждён hosted run.
 
-| Job | Фактические проверки |
+| Job | Проверки |
 |---|---|
-| `backend` | PostgreSQL 17 service; `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`, `cargo test --features integration --test integration_db -- --test-threads=1`, OpenAPI drift gate |
-| `frontend` | `pnpm install --no-frozen-lockfile`, `pnpm openapi:check`, `pnpm test -- --run`, `pnpm lint`, `pnpm build` |
-| Local extended gate | Release build, CLI real-API smoke, Compose health smoke, Playwright/axe/performance, audits, secret scan, SBOM and image scan run locally when their scope is touched. |
-| `docs` | `python3 -m py_compile scripts/verify_docs.py scripts/generate_sbom.py scripts/scan_secrets.py scripts/forge_backup.py`, backup helper self-test/dry-run, shell wrapper syntax, `python3 scripts/verify_docs.py --all` |
+| automatic `backend` | Один Rust setup/cache; fmt, cicd-domain --lib; условные cicd-server/forge-runner check и OpenAPI drift |
+| automatic `frontend` | Frozen install, types, unit, lint, OpenAPI drift/compatibility; условный Vite producer |
+| automatic `docs` | docs validator, route/CI contract tests, Python/shell syntax и сохранённые static checks |
+| manual `release.yml` | Все исходные четыре jobs, PostgreSQL/integration/CLI, workspace/clippy, MSRV, full frontend, packed consumer и themes |
 
-В current workflow нет release build, CLI real-API smoke с auth/RBAC/PAT, OpenAPI backward compatibility diff, RU/EN i18n contract, Compose smoke, Playwright/axe/performance, dependency/security scans, а также isolated owner/runtime migration matrix, prior-schema upgrade, OpenAPI examples validation, Lighthouse, `cargo-deny`, history/container secret scans или coverage ratchet. Эти расширенные проверки выполняются локально по затронутому scope; часть из них остаётся target, когда требует ещё не поставленного контракта. Не утверждайте, что branch protection, approval policy или checks из устаревших narrative-доков фактически включены, пока это не подтверждено настройками GitHub.
+Ручной workflow запускается только через `workflow_dispatch`. Security/data/live
+acceptance и остальные extended gates выполняются на соответствующей ручной
+вехе. Зелёный unit не подтверждает release/production. Наличие source workflow
+не доказывает branch protection или запуск GitHub Actions.
 
 ### Target approved
 
