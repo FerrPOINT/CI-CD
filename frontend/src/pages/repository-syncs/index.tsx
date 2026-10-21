@@ -100,12 +100,16 @@ const diagnostics: Record<string, string> = {
   git_tls_failed: 'Не удалось проверить TLS-сертификат провайдера.',
   git_network_failed: 'Провайдер недоступен.',
   git_outcome_unknown: 'Результат Git-операции уточняется.',
+  namespace_admission_lost:
+    'Не удалось подтвердить доступ к репозиторию. Результат синхронизации уточняется.',
   sync_version_conflict: 'Сохранённая версия настроек изменилась.',
   sync_running:
     'Настройки нельзя менять во время запуска; доступно отключение.',
 }
 const message = (error: unknown) =>
-  error instanceof Error
+  error instanceof ApiError && error.kind === 'network'
+    ? 'Не удалось связаться с сервером.'
+    : error instanceof Error
     ? (diagnostics[error.message] ?? error.message)
     : 'Не удалось выполнить действие'
 const offsetOf = (value: string | null) => {

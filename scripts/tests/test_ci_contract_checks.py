@@ -1,4 +1,4 @@
-"""Regression checks for isolated CLI integration gates."""
+"""Regression checks for isolated integration fixture environments and CI gates."""
 
 import hashlib
 import json
@@ -35,6 +35,18 @@ class CliIntegrationGateTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         docs = workflow.split("\n  docs:\n", 1)[1].split("\n  backend:\n", 1)[0]
         self.assertIn("scripts.tests.test_ci_contract_checks", docs)
+
+
+class RepositorySyncFixtureEnvironmentTests(unittest.TestCase):
+    def test_namespace_hosted_sync_fixtures_have_explicit_public_git_origin(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        backend = workflow.split("\n  backend:\n", 1)[1].split("\n  frontend:\n", 1)[0]
+        job_env = backend.split("\n    env:\n", 1)[1].split("\n    steps:\n", 1)[0]
+        # Namespace-bound hosted readback needs an origin even when the fixture
+        # never makes a network request. Keep it in the PostgreSQL job scope.
+        self.assertIn("CICD_NAMESPACE__INSTANCE_ID:", job_env)
+        self.assertIn("CICD_NAMESPACE__REGISTRY_INSTANCE_ID:", job_env)
+        self.assertIn("CICD_NAMESPACE__PUBLIC_GIT_ORIGIN: https://forge-qa.invalid", job_env)
 
 
 @unittest.skipUnless(shutil.which("pwsh"), "PowerShell 7 is required for native QA preflight")

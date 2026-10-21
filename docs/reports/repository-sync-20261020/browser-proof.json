@@ -1,0 +1,296 @@
+{
+  "qualified": true,
+  "auth_scope": "synthetic-OIDC-PKCE-and-real-legacy-human-API-session",
+  "backend_scope": "exact owned release API and synthetic PostgreSQL fixtures; no Git effects",
+  "runtime_installation_performed": false,
+  "check_executed": false,
+  "worker_execution_claimed": false,
+  "frontend_artifact_sha256": "fe897faa4563f97bddb97da18fd21a3903bb85d59942a51be85b33cf8d9ac258",
+  "source_tree": "5d97e36ad543c2ec078b1e0eb418bac60b825351",
+  "backend_executable_sha256": "2b33313e1a9a39f851db232f5f8e56d3fba5916011ec8406372e348c0d84d7b9",
+  "metrics": {
+    "oidc_authorizations": 12,
+    "oidc_pkce_exchanges": 12,
+    "oidc_jwks": 12,
+    "blocked_optional_metadata": [
+      "/api/v1/runtime/services",
+      "/api/v1/runtime/branding",
+      "/api/v1/runtime/services",
+      "/api/v1/runtime/branding",
+      "/api/v1/runtime/services",
+      "/api/v1/runtime/branding",
+      "/api/v1/runtime/services",
+      "/api/v1/runtime/branding",
+      "/api/v1/runtime/services",
+      "/api/v1/runtime/branding",
+      "/api/v1/runtime/services",
+      "/api/v1/runtime/branding",
+      "/api/v1/runtime/services",
+      "/api/v1/runtime/branding",
+      "/api/v1/runtime/services",
+      "/api/v1/runtime/branding",
+      "/api/v1/runtime/services",
+      "/api/v1/runtime/branding",
+      "/api/v1/runtime/services",
+      "/api/v1/runtime/branding",
+      "/api/v1/runtime/services",
+      "/api/v1/runtime/branding",
+      "/api/v1/runtime/services",
+      "/api/v1/runtime/branding"
+    ],
+    "forbidden_requests": [],
+    "api_responses": [
+      {
+        "method": "GET",
+        "path": "/api/v1/repository-syncs",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/repository-syncs",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync",
+        "status": 200
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync",
+        "status": 200
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync/runs",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync/runs/923d5396-5d47-4ede-b76b-8ce4e9ba30aa/refs",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync/runs",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync/runs",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync/runs/923d5396-5d47-4ede-b76b-8ce4e9ba30aa/refs",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync/runs/923d5396-5d47-4ede-b76b-8ce4e9ba30aa/refs",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/repository-syncs",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync/runs",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync/runs/923d5396-5d47-4ede-b76b-8ce4e9ba30aa/refs",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/repository-syncs",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync/runs",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync/runs/923d5396-5d47-4ede-b76b-8ce4e9ba30aa/refs",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/repository-syncs",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/repository-syncs",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync/runs",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/catalog/repositories/cf7360d2-99f4-477a-9cc7-eb2fc1f6ac5f/sync/runs/923d5396-5d47-4ede-b76b-8ce4e9ba30aa/refs",
+        "status": 200
+      }
+    ],
+    "axe": [
+      {
+        "view": "list",
+        "width": 375,
+        "geometry": {
+          "viewport": 375,
+          "content": 375
+        },
+        "violations": []
+      },
+      {
+        "view": "connection",
+        "width": 375,
+        "geometry": {
+          "viewport": 375,
+          "content": 375
+        },
+        "violations": []
+      },
+      {
+        "view": "history",
+        "width": 375,
+        "geometry": {
+          "viewport": 375,
+          "content": 375
+        },
+        "violations": []
+      },
+      {
+        "view": "list",
+        "width": 1920,
+        "geometry": {
+          "viewport": 1920,
+          "content": 1920
+        },
+        "violations": []
+      },
+      {
+        "view": "connection",
+        "width": 1920,
+        "geometry": {
+          "viewport": 1920,
+          "content": 1920
+        },
+        "violations": []
+      },
+      {
+        "view": "history",
+        "width": 1920,
+        "geometry": {
+          "viewport": 1920,
+          "content": 1920
+        },
+        "violations": []
+      },
+      {
+        "view": "list",
+        "width": 2560,
+        "geometry": {
+          "viewport": 2560,
+          "content": 2560
+        },
+        "violations": []
+      },
+      {
+        "view": "connection",
+        "width": 2560,
+        "geometry": {
+          "viewport": 2560,
+          "content": 2560
+        },
+        "violations": []
+      },
+      {
+        "view": "history",
+        "width": 2560,
+        "geometry": {
+          "viewport": 2560,
+          "content": 2560
+        },
+        "violations": []
+      }
+    ],
+    "screenshots": [
+      "sync-list-375.png",
+      "sync-connection-375.png",
+      "sync-history-375.png",
+      "sync-list-1920.png",
+      "sync-connection-1920.png",
+      "sync-history-1920.png",
+      "sync-list-2560.png",
+      "sync-connection-2560.png",
+      "sync-history-2560.png"
+    ]
+  },
+  "browser_origin": "http://localhost:38811",
+  "elapsed_seconds": 70.252
+}
