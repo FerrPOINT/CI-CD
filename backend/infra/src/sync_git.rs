@@ -561,10 +561,10 @@ impl GitSession {
         if actual.get(reference).map(String::as_str) != old {
             return Err(Error::Conflict("destination_changed"));
         }
-        if let Some(old) = old {
-            if reference.starts_with("refs/tags/") || !self.ancestor(old, new).await {
-                return Err(Error::Conflict("non_fast_forward"));
-            }
+        if let Some(old) = old
+            && (reference.starts_with("refs/tags/") || !self.ancestor(old, new).await)
+        {
+            return Err(Error::Conflict("non_fast_forward"));
         }
         let destination = if remote {
             self.remote.value()
